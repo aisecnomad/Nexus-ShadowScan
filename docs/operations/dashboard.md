@@ -18,9 +18,11 @@ a fleet of one source. Its findings are read as a merge reads a source, so
 one report shows what it would show among others: each applicable finding's
 [autonomy](../concepts/autonomy.md) interval is classified again and admits
 at least what its own block admits (a report written before autonomy tiers
-is classified, not shown as unclassified), and a report written before
-`inventory_present` existed counts as having an inventory when its
-`inventory_size` is above zero or any finding has a shadow status.
+is classified, not shown as unclassified). A report written before
+`inventory_present` existed is read as `shadowscan merge` reads it: refused
+(exit 1, "rescan before merging") when it records registration (a shadow
+verdict, a registry match or an `inventory_size` above zero), and as having
+no inventory when it records none.
 
 | Option | Effect |
 | --- | --- |
