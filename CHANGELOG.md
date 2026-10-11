@@ -271,7 +271,9 @@ summarizes each release for people who install and operate ShadowScan.
   identifiers keep their text. A Hypothesis property test covers both sides.
 - `shadowscan jwt TOKEN...` and `shadowscan run --set` with a credential value
   print a warning that command-line arguments are visible in process listings
-  and shell history. The value is never echoed and the scan still runs.
+  and shell history. The value is never echoed and the scan still runs. The
+  warning goes to stderr: a wrapper that parses `2>&1` as a report breaks and
+  must read stdout or `-o FILE` alone.
 - With a stable identity key, incremental cache entries carry
   `payload_hmac_sha256` under a key derived from it, and entries without a
   valid MAC are rescanned. The MAC covers the entry's slot, input fingerprint
