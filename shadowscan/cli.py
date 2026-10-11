@@ -79,13 +79,14 @@ from shadowscan.mcp_registry import (
     fetch_snapshot,
     registry_base_url,
 )
-from shadowscan.models import Finding, ScanResult, ScanStats, Surface, now_iso
+from shadowscan.models import Finding, Kind, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.controls import CONTROL_FORMATS, render_controls
 from shadowscan.reporters.dashboard import render_dashboard
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures import Match, SignatureIndex, get_index
+from shadowscan.signatures.loader import VALID_CATEGORIES
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
 from shadowscan.utils.git import terminate_active_clones, terminate_clones_on_signal
 from shadowscan.utils.output import (
@@ -573,6 +574,17 @@ class _UsageError(click.UsageError):
         self.error.show(file)
 
 
+_GLOBAL_OPTIONS = frozenset({"-v", "--verbose", "-q", "--quiet"})
+
+
+def _with_placement_hint(error: click.UsageError) -> click.UsageError:
+    """Say where -v/-q go when they were typed after the command, the natural place."""
+    if isinstance(error, click.NoSuchOption) and error.option_name in _GLOBAL_OPTIONS:
+        hint = " (-v/--verbose and -q/--quiet go before the command: shadowscan -v <command> ...)"
+        return click.NoSuchOption(error.option_name, message=error.format_message() + hint, ctx=error.ctx)
+    return error
+
+
 class _MainGroup(click.Group):
     """Root group: usage errors of every command, raised while parsing or running, exit 1."""
 
@@ -586,14 +598,14 @@ class _MainGroup(click.Group):
         try:
             return super().make_context(info_name, args, parent, **extra)
         except click.UsageError as exc:
-            raise _UsageError(exc) from None
+            raise _UsageError(_with_placement_hint(exc)) from None
 
     def invoke(self, ctx: click.Context) -> Any:
         # Subcommand parsing and callbacks run inside the root invocation.
         try:
             return super().invoke(ctx)
         except click.UsageError as exc:
-            raise _UsageError(exc) from None
+            raise _UsageError(_with_placement_hint(exc)) from None
 
 
 @click.group(cls=_MainGroup, context_settings={"help_option_names": ["-h", "--help"]})
@@ -649,11 +661,21 @@ def scan(config_path: str, only: tuple[str, ...], opts: ScanOptions) -> None:
         cfg.incremental = opts.incremental
     if opts.state_dir is not None:
         cfg.state_dir = opts.state_dir
+    # A mistyped selector is a usage error, as an unknown connector is for `run`:
+    # the engine's own check would report an empty, incomplete scan instead.
+    selectable = {value for spec in cfg.connectors if spec.enabled for value in (spec.id, spec.name)}
+    unknown = [selector for selector in only if selector not in selectable]
+    if unknown:
+        raise click.BadParameter(
+            f"unknown or disabled connector selector(s): {', '.join(unknown)}; "
+            f"use a connector name or label from {config_path}",
+            param_hint="--only",
+        )
     _run_scan(cfg, opts, only=list(only) or None)
 
 
 # ----------------------------------------------------------------------- run
-@main.command()
+@main.command(short_help="Run a single connector by name, configured with --set")
 @click.argument("connector")
 @click.option(
     "--input",
@@ -695,7 +717,12 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
 @click.option("--github-org", help="scan every repository of a GitHub organisation (GITHUB_TOKEN)")
 @click.option("--github-repo", multiple=True, help="owner/name (repeatable)")
 @click.option("--gitlab-group", help="scan every project of a GitLab group (GITLAB_TOKEN)")
-@click.option("--mode", type=click.Choice(["clone", "api"]), default=None, help="remote fetch mode")
+@click.option(
+    "--mode",
+    type=click.Choice(["clone", "api"]),
+    default=None,
+    help="remote fetch mode for --github-org, --github-repo or --gitlab-group",
+)
 @click.option("--exclude", multiple=True, help="extra directory names / globs to skip")
 @click.option(
     "--no-default-excludes",
@@ -756,6 +783,8 @@ def code(
         common["triage"] = True
     if diff_base and not paths:
         raise click.UsageError("--diff-base applies only to local PATHS")
+    if mode and not (github_org or github_repo or gitlab_group):
+        raise click.UsageError("--mode applies only to --github-org, --github-repo or --gitlab-group")
     if paths:
         local: dict[str, Any] = {"paths": list(paths), **common}
         if diff_base:
@@ -802,7 +831,13 @@ GATEWAY_LOG_FORMATS = [
 
 @main.command()
 @click.argument("logs", nargs=-1, required=True, type=click.Path(exists=True))
-@click.option("--log-format", type=click.Choice(GATEWAY_LOG_FORMATS), default="auto", show_default=True)
+@click.option(
+    "--log-format",
+    type=click.Choice(GATEWAY_LOG_FORMATS),
+    default="auto",
+    show_default=True,
+    help="log format; auto detects it from the content",
+)
 @click.option(
     "--min-events",
     type=int,
@@ -903,7 +938,7 @@ def jwt(
 # ---------------------------------------------------------------- connectors
 @main.command("connectors")
 @click.option("--surface", type=click.Choice([s.value for s in Surface]), help="filter by surface")
-@click.option("--json", "as_json", is_flag=True)
+@click.option("--json", "as_json", is_flag=True, help="print JSON instead of the human-readable output")
 def list_connectors(surface: str | None, as_json: bool) -> None:
     """List available connectors and their configuration keys."""
     names = connectors_for_surface(surface) if surface else sorted(available_connectors())
@@ -1009,11 +1044,11 @@ _ALLOW_OVERRIDE_HELP = "allow a reviewed pack to replace built-in signatures"
 @signatures.command("list")
 @click.option(
     "--category",
-    help="framework | provider | protocol | coding-agent | platform | cloud-service | observability | memory"
-    " | sandbox | identity-app | heuristic | policy",
+    type=click.Choice(sorted(VALID_CATEGORIES)),
+    help="show only this signature category",
 )
 @click.option("--signatures", "-s", "signature_dirs", multiple=True, help="extra signature pack directory")
-@click.option("--json", "as_json", is_flag=True)
+@click.option("--json", "as_json", is_flag=True, help="print JSON instead of the human-readable output")
 @click.option("--allow-signature-override", is_flag=True, help=_ALLOW_OVERRIDE_HELP)
 def signatures_list(
     category: str | None,
@@ -1067,7 +1102,7 @@ def signatures_list(
 
 @signatures.command("show")
 @click.argument("signature_id")
-@click.option("--signatures", "-s", "signature_dirs", multiple=True)
+@click.option("--signatures", "-s", "signature_dirs", multiple=True, help="extra signature pack directory")
 @click.option("--allow-signature-override", is_flag=True, help=_ALLOW_OVERRIDE_HELP)
 def signatures_show(
     signature_id: str,
@@ -1111,9 +1146,15 @@ def signatures_show(
     click.echo(yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
 
 
-@signatures.command("test")
+@signatures.command("test", short_help="Show which signatures a value matches")
 @click.argument("value")
-@click.option("--kind", type=click.Choice(["auto", *SIGNATURE_KINDS]), default="auto", show_default=True)
+@click.option(
+    "--kind",
+    type=click.Choice(["auto", *SIGNATURE_KINDS]),
+    default="auto",
+    show_default=True,
+    help="signal kind to test; auto tries every kind",
+)
 @click.option(
     "--ecosystem",
     default="any",
@@ -1121,7 +1162,7 @@ def signatures_show(
     help="for dependency: pypi | npm | go | cargo | maven | nuget | rubygems | composer; 'any' tries every"
     " ecosystem in the loaded packs",
 )
-@click.option("--signatures", "-s", "signature_dirs", multiple=True)
+@click.option("--signatures", "-s", "signature_dirs", multiple=True, help="extra signature pack directory")
 @click.option("--allow-signature-override", is_flag=True, help=_ALLOW_OVERRIDE_HELP)
 def signatures_test(
     value: str,
@@ -1139,17 +1180,23 @@ def signatures_test(
     """
     idx = _load_index(signature_dirs, allow_signature_override)
     kinds = [kind] if kind != "auto" else SIGNATURE_KINDS
+    declared = sorted(
+        {
+            (s.ecosystem or "any").lower()
+            for sig in idx.signatures.values()
+            for s in sig.signals
+            if s.type == "dependency"
+        }
+    )
     if ecosystem.lower() == "any":
-        ecosystems = sorted(
-            {
-                (s.ecosystem or "any").lower()
-                for sig in idx.signatures.values()
-                for s in sig.signals
-                if s.type == "dependency"
-            }
-        )
-    else:
+        ecosystems = declared
+    elif ecosystem.lower() in declared:
         ecosystems = [ecosystem]
+    else:
+        raise click.BadParameter(
+            f"unknown ecosystem {ecosystem!r}; the loaded packs declare {', '.join(declared)} (or 'any')",
+            param_hint="--ecosystem",
+        )
 
     def match_dependency(v: str) -> list[Match]:
         out: list[Match] = []
@@ -1266,10 +1313,23 @@ def inventory_check(paths: tuple[str, ...]) -> None:
     show_default=True,
     help="finding kinds to register",
 )
-@click.option("--min-risk", type=click.Choice(LEVELS), default="low", show_default=True)
+@click.option(
+    "--min-risk",
+    type=click.Choice(LEVELS),
+    default="low",
+    show_default=True,
+    help="register only findings at or above this risk level",
+)
 def inventory_stubs(findings_json: str, out_dir: str, kinds: str, min_risk: str) -> None:
     """Generate Agent Capability Card stubs for shadow findings so they can be reviewed and registered."""
     wanted = {k.strip() for k in kinds.split(",")}
+    unknown_kinds = sorted(wanted - {kind.value for kind in Kind})
+    if unknown_kinds:
+        raise click.BadParameter(
+            f"unknown finding kind(s): {', '.join(unknown_kinds)}; "
+            f"choose from {', '.join(kind.value for kind in Kind)}",
+            param_hint="--kinds",
+        )
     threshold = LEVELS.index(min_risk)
     # Finish validation and card generation before writing any approval stubs.
     # A bad later record must not leave an apparently successful partial import.
@@ -1396,7 +1456,7 @@ def _sha256_option(ctx: click.Context, param: click.Parameter, value: str | None
 @main.command()
 @click.argument("baseline", type=click.Path(exists=True, dir_okay=False))
 @click.argument("current", type=click.Path(exists=True, dir_okay=False))
-@click.option("--json", "as_json", is_flag=True)
+@click.option("--json", "as_json", is_flag=True, help="print JSON instead of the human-readable output")
 @click.option(
     "--fail-on-new",
     is_flag=True,
@@ -1671,8 +1731,18 @@ def controls_command(
 # -------------------------------------------------------------------- merge
 @main.command("merge")
 @click.argument("reports", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("-f", "--format", "fmt", type=click.Choice(FORMATS), default="table", help="output format")
-@click.option("-o", "--output", type=click.Path(), default=None, help="write the merged report to a file")
+@click.option(
+    "-f",
+    "--format",
+    "fmt",
+    type=click.Choice(FORMATS),
+    default="table",
+    show_default=True,
+    help="output format",
+)
+@click.option(
+    "-o", "--output", type=click.Path(dir_okay=False), default=None, help="write the merged report to a file"
+)
 @click.option("--max-rows", type=int, default=None, help="limit rows printed in table mode")
 def merge_command(reports: tuple[str, ...], fmt: str, output: str | None, max_rows: int | None) -> None:
     """Combine JSON reports from several machines or scans into one fleet report.

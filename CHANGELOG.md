@@ -32,6 +32,30 @@ summarizes each release for people who install and operate ShadowScan.
   (`${TMPDIR:-/tmp}`), so it runs on a stock Linux shell, and the low-code
   connector guide states that Workato classifies by provider and trigger name.
 
+### Command-line and documentation corrections (October 11)
+
+- `shadowscan scan --only` rejects an unknown or disabled connector selector as
+  a usage error (exit 1) before scanning, as `run` rejects an unknown
+  connector; before, the same mistake produced an empty, incomplete report
+  (exit 3). `signatures list --category`, `signatures test --ecosystem` and
+  `inventory stubs --kinds` reject values they do not know instead of silently
+  matching nothing; `code --mode` without a remote target is a usage error;
+  `-v`/`-q` typed after the command say where they go; `merge -o` refuses a
+  directory and `merge -f` shows its default; eight options gained help text
+  and `run` and `signatures test` readable one-line summaries.
+- AI review gate: the publication sanitizer withholds a private key quoted
+  without its footer on one line or with escaped line breaks; before, only
+  real line breaks were recognized and the base64 body was published.
+- Documentation: least-privilege rows for the five live low-code connectors;
+  `cloud.azure` and `cloud.gcp` need no SDK extra with a pre-issued token and
+  `cloud.kubernetes` and `cloud.openshift` are offline only (the sentence said
+  every cloud connector needs its extra); `saas.generic` marks the scan
+  incomplete on any unnamed record, as the code does; `SLACK_TEAM_ID` and
+  `GITHUB_API_URL` are named in the key help; the eight offline inventories
+  have entries of their own in the connector summary; the Kubernetes guide no
+  longer advertises `allow_instance_credentials`, which those connectors
+  reject.
+
 ### Integration review corrections (October 11)
 
 - `shadowscan run --set` no longer warns that a credential is on the command

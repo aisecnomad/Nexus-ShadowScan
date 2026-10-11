@@ -44,7 +44,7 @@ class GitHubAppsConnector(BaseConnector):
             "org admin token (env GITHUB_TOKEN, which code.github also reads by default: "
             "give each connector a variable of its own)"
         ),
-        "api_url": "default https://api.github.com",
+        "api_url": "API base URL (default https://api.github.com, env GITHUB_API_URL)",
         "input": "offline: installations JSON",
         "include_unrecognized_apps": (
             "also report write-capable apps with no AI signature or AI-like name, capped at possible "
