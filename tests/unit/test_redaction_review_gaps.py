@@ -69,3 +69,25 @@ def test_credential_fields_nested_in_an_auth_block_are_withheld() -> None:
         },
         "settings": {"value": "plain"},
     }
+
+
+def test_an_environment_table_inside_an_auth_block_withholds_every_value() -> None:
+    # The environment rule comes first: following the auth block down must not loosen it.
+    record = {"auth": {"type": "basic", "env": {"USERNAME": "svc", "PASSWORD_FILE": "/run/secret"}}}
+    assert sanitize(record, env_values_are_secrets=False) == {
+        "auth": {"type": "basic", "env": {"USERNAME": REDACTED, "PASSWORD_FILE": REDACTED}}
+    }
+
+
+def test_a_list_of_credentials_under_an_auth_field_is_withheld() -> None:
+    record = {"auth": {"key": [SECRET, "second-" + SECRET], "value": ({"id": "k1", "value": SECRET}, SECRET)}}
+    assert sanitize(record) == {
+        "auth": {"key": [REDACTED, REDACTED], "value": ({"id": "k1", "value": REDACTED}, REDACTED)}
+    }
+
+
+def test_an_auth_credential_copied_into_a_sibling_field_is_withheld_too() -> None:
+    record = {"auth": {"basic": {"value": SECRET}}, "note": f"configured with {SECRET} last week"}
+    cleaned = sanitize(record)
+    assert cleaned["auth"] == {"basic": {"value": REDACTED}}
+    assert SECRET not in cleaned["note"] and REDACTED in cleaned["note"]

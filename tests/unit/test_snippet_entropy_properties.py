@@ -113,3 +113,9 @@ def test_the_filesystem_excerpt_cannot_leave_a_truncated_literal() -> None:
     assert snippet.endswith("\u2026") and _SECRET not in snippet
     cleaned = Evidence(signal="s", description="d", snippet=snippet).snippet
     assert cleaned is not None and _SECRET[:20] not in cleaned and REDACTED in cleaned
+
+
+def test_a_random_literal_has_no_upper_length_bound() -> None:
+    long_secret = (_SECRET * 160)[:5000]
+    assert looks_random(long_secret)
+    assert withhold_random_literals(f'token = "{long_secret}"') == f'token = "{REDACTED}"'

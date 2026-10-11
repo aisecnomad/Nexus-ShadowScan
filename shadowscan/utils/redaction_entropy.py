@@ -33,7 +33,7 @@ _MIN_DIGITS = 1
 # line): a literal truncated before its closing quote still starts with the secret.
 # The possessive quantifier keeps the scan linear in the text.
 _QUOTED = re.compile(
-    r"""(?P<q>["'`])(?P<body>[A-Za-z0-9+/_=-]{20,4096}+)(?=(?P=q)|\u2026|$)""",  # 20 = _MIN_LENGTH
+    r"""(?P<q>["'`])(?P<body>[A-Za-z0-9+/_=-]{20,}+)(?=(?P=q)|\u2026|$)""",  # 20 = _MIN_LENGTH
     re.MULTILINE,
 )
 
