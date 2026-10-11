@@ -1448,3 +1448,22 @@ def test_a_walk_cut_short_keeps_every_approval_gate_partial(tmp_path, index):
     assert ctx.stats.incomplete
     [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG and "approval_gate" in f.metadata]
     assert claude.metadata["approval_gate"]["scope"] == "some-actions"
+
+
+@pytest.mark.parametrize("truncated_first", [True, False])
+def test_one_roots_truncation_never_weakens_another_roots_gate(tmp_path, index, truncated_first):
+    # max_files counts per root: root a is cut short, root b is walked in full whatever the order.
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    for i in range(5):
+        (a / f"f{i}.py").write_text("x = 1\n")
+    (b / ".claude").mkdir(parents=True)
+    (b / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"defaultMode": "default"}}))
+    order = [a, b] if truncated_first else [b, a]
+    ctx = ConnectorContext(
+        config={"paths": [str(p) for p in order], "use_git": False, "max_files": 3}, index=index
+    )
+    findings = FilesystemConnector(ctx).run()
+    assert ctx.stats.incomplete
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG and "approval_gate" in f.metadata]
+    assert claude.metadata["approval_gate"]["scope"] == "every-action"
