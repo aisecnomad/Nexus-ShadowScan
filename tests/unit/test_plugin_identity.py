@@ -389,8 +389,9 @@ def test_malformed_or_conflicting_plugin_approvals_are_refused(entries):
 
 
 class _Dist:
-    def __init__(self, name: str, version: str) -> None:
-        self.metadata = {"Name": name}
+    def __init__(self, name: str | None, version: str | None) -> None:
+        # Metadata as importlib reads it: a header that is absent is absent, not None.
+        self.metadata = {k: v for k, v in (("Name", name), ("Version", version)) if v is not None}
         self.version = version
 
 
@@ -414,8 +415,14 @@ def test_distribution_pin_loads_the_reviewed_release(monkeypatch):
 
 @pytest.mark.parametrize(
     "dist",
-    [_Dist("acme-hub-plugin", "1.5.0"), _Dist("typosquat-hub", "1.4.0"), None],
-    ids=["other-version", "other-distribution", "no-metadata"],
+    [
+        _Dist("acme-hub-plugin", "1.5.0"),
+        _Dist("typosquat-hub", "1.4.0"),
+        None,
+        _Dist(None, "1.4.0"),
+        _Dist("acme-hub-plugin", None),
+    ],
+    ids=["other-version", "other-distribution", "no-metadata", "no-name", "no-version"],
 )
 def test_distribution_pin_refuses_another_release_before_import(monkeypatch, dist):
     _, target = _publish_from(monkeypatch, dist)
@@ -425,6 +432,15 @@ def test_distribution_pin_refuses_another_release_before_import(monkeypatch, dis
         registry.get_connector_class(ENTRY, allowed_plugins=[f"{ENTRY}={target}@acme-hub-plugin==1.4.0"])
     assert info.value.diagnostic.rule == "distribution-mismatch"
     assert imported == [] and ENTRY not in registry._cache
+
+
+def test_absent_distribution_metadata_never_matches_a_pin_spelled_none(monkeypatch):
+    # str(None) would read "None"; absent Name or Version is unreadable metadata, refused.
+    _, target = _publish_from(monkeypatch, _Dist(None, None))
+    with pytest.raises(PluginRegistryError) as info:
+        registry.get_connector_class(ENTRY, allowed_plugins=[f"{ENTRY}={target}@None==None"])
+    assert info.value.diagnostic.rule == "distribution-mismatch"
+    assert "unreadable" in info.value.diagnostic.message
 
 
 @pytest.mark.parametrize(

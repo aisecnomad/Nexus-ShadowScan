@@ -453,7 +453,12 @@ def _check_distribution(name: str, path: str, distribution: str, version: str) -
             dist = ep.dist
             if dist is None:
                 continue
-            found.add((_normalized_distribution(str(dist.metadata["Name"])), str(dist.version)))
+            metadata = dist.metadata
+            # A missing header reads as None (with a deprecation warning on 3.13), which str()
+            # would turn into a comparable "None"; absent metadata is unreadable, not a value.
+            if "Name" not in metadata or "Version" not in metadata:
+                raise ValueError("distribution metadata lacks Name or Version")
+            found.add((_normalized_distribution(str(metadata["Name"])), str(metadata["Version"])))
     except Exception as exc:
         raise _refuse(
             name, "distribution-mismatch", f"plugin {_display(name)} distribution metadata is unreadable"
