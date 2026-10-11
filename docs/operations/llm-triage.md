@@ -63,10 +63,12 @@ refused unread (the response body is capped at 64 KiB). A reply that contains
 more than one verdict object, such as one quoted from injected finding text
 beside the model's own, is unparseable too. Requests send no sampling
 parameters such as `temperature`, which current Claude models and OpenAI
-reasoning models reject, and bound the reply to 400 tokens (`max_tokens` for
-Anthropic, `max_completion_tokens` for OpenAI, whose `max_tokens` is deprecated
-and rejected by the o-series models; an OpenAI-compatible endpoint must accept
-it). Free text is truncated (rationale 500 characters, suggested
+reasoning models reject, and bound the response to 4,096 tokens (`max_tokens`
+for Anthropic, `max_completion_tokens` for OpenAI, whose `max_tokens` is
+deprecated and rejected by the o-series models; an OpenAI-compatible endpoint
+must accept it). The bound covers the thinking or reasoning tokens current
+models spend before the verdict, which count toward it; the verdict text itself
+is refused over 16 KiB. Free text is truncated (rationale 500 characters, suggested
 action 200) and sanitized with the rest of the finding when the report is
 written. These controls limit, but cannot prevent, a model being persuaded by
 finding text: never let a pipeline suppress or close findings because of
@@ -125,8 +127,12 @@ text tries to force a verdict (direct instructions, planted verdict objects,
 fake system tags, claims of prior approval, translated instructions).
 `python -m tools.evaluation.triage_canaries` runs them offline against a
 scripted model that obeys or echoes every injection and fails if finding text
-leaves the user turn, a two-verdict reply is accepted, or any reply changes a
-finding. The unit tests run it on every change.
+leaves the user turn, a canary's text does not reach the user turn, a
+two-verdict reply is accepted, or any reply changes a finding. The unit tests
+run it on every change. The corpus is read as the evaluation corpus is: a
+regular file (no symbolic link in its path), at most 1 MiB, unambiguous JSON
+with no duplicate keys, and at least one well-formed case; anything else is a
+usage error.
 
 `--live --model <id>` (with `--provider`, `--api-key-env`, `--base-url` and
 `--structured-output` as needed) sends the canaries to a real model and

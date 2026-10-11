@@ -150,9 +150,30 @@ summarizes each release for people who install and operate ShadowScan.
   refused as `distribution-mismatch` when the installed distribution's metadata
   lacks `Name` or `Version`; the missing header had compared as the string
   "None", and whether the pin was refused depended on the interpreter's warning
-  filters. The triage injection canaries fail when finding text reaches any
+  filters. A connector name that an approval list names twice is refused as
+  `conflicting-approval` by the registry itself (configuration validation
+  already refused it): a later bare name had replaced an earlier pin, so the
+  order of the entries decided whether a typosquatting distribution loaded.
+  The triage injection canaries fail when finding text reaches any
   turn other than the one user turn (a prefilled assistant turn passed every
-  case before), as the guide already said they do.
+  case before), as the guide already said they do, and when a canary's title
+  or evidence did not reach the user turn at all. The canary corpus is read
+  as the evaluation corpus is (no symbolic links, 1 MiB cap, duplicate JSON
+  keys refused, every case validated) and an empty corpus is refused instead
+  of passing vacuously.
+- The last-resort redaction of random-looking literals in evidence snippets
+  also withholds a literal that an excerpt cut before its closing quote (the
+  160-character line trim appends an ellipsis), so the secret's prefix no longer
+  reaches the report, and has no upper length bound. Its module joins the
+  redaction namespace, so `policy_token()` changes when one of its rules does
+  and a finding verified clean under the earlier rules is sanitized again.
+- The `auth` block rule withholds a list of credentials under `value`, `key`
+  or `credential`, learns those values so a copy in a sibling field is
+  withheld too, and no longer takes precedence over the environment rule: an
+  `env` table inside an auth block withholds every value, as it does anywhere
+  else (a regression of the rule's first extension on this branch). Every
+  other member of the block keeps the mapping rules, so a numeric or boolean
+  `password` or `client_secret` there is withheld as before (#190).
 - `tests/test_repository_policy.py` requires every workflow job `container:`
   and service image to be pinned by sha256 digest, with the reviewed tag named
   in a comment on the line above, as the Semgrep container is.
@@ -242,7 +263,10 @@ summarizes each release for people who install and operate ShadowScan.
   example one quoted from injected finding text) as `status: unparseable`.
   Requests send no sampling parameters, which current Claude models reject,
   and OpenAI requests bound the reply with `max_completion_tokens` instead of
-  the deprecated `max_tokens`, which the o-series reasoning models reject.
+  the deprecated `max_tokens`, which the o-series reasoning models reject. The
+  bound is 4,096 tokens on both providers: thinking and reasoning tokens count
+  toward it, and the earlier 400 ended responses before any verdict on models
+  that think; the verdict text is still refused over 16 KiB.
   `options.llm_triage.structured_output: true` asks the provider to constrain
   the reply to the verdict JSON schema (`output_config.format` or a strict
   `response_format`); it is off by default because not every model supports it.

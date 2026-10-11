@@ -27,13 +27,54 @@ from typing import Any
 
 from shadowscan.models import Evidence, Finding, Kind, Risk, RiskLevel, Surface
 from shadowscan.triage import _SYSTEM, VERDICTS, Triage, TriageSettings
+from shadowscan.utils.files import read_policy_text
 
 CORPUS = Path(__file__).with_name("triage_canaries.json")
 
 
+MAX_CORPUS_BYTES = 1 << 20
+_CASE_FIELDS = {"id", "title", "evidence", "injected", "truth"}
+
+
+def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def load_cases(path: Path = CORPUS) -> list[dict[str, Any]]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    """The canary cases of ``path``, read as the evaluation corpus is read.
+
+    The file is opened without following a symbolic link in any path component,
+    capped at ``MAX_CORPUS_BYTES`` and refused when it is not unambiguous JSON
+    (a duplicate key is refused rather than read last-wins), when it holds no
+    case, or when a case is malformed. Every refusal raises ``ValueError``.
+    """
+    try:
+        data = json.loads(read_policy_text(path, max_bytes=MAX_CORPUS_BYTES), object_pairs_hook=_unique_pairs)
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
+        raise ValueError(
+            f"canary corpus is not a regular file of valid, unambiguous UTF-8 JSON: {exc}"
+        ) from None
+    if not isinstance(data, dict) or not isinstance(data.get("cases"), list):
+        raise ValueError("canary corpus must be an object with a list of cases")
     cases = data["cases"]
+    if not cases:
+        raise ValueError("canary corpus holds no cases; an empty run proves nothing")
+    for case in cases:
+        if not isinstance(case, dict) or set(case) != _CASE_FIELDS:
+            raise ValueError(f"every canary needs exactly the fields {sorted(_CASE_FIELDS)}")
+        if not all(
+            isinstance(case[field], str) and case[field] for field in ("id", "title", "injected", "truth")
+        ):
+            raise ValueError("canary id, title and verdicts must be nonempty strings")
+        if not isinstance(case["evidence"], list) or not all(
+            isinstance(text, str) and text for text in case["evidence"]
+        ):
+            raise ValueError(f"canary {case['id']}: evidence must be a list of nonempty strings")
     ids = [case["id"] for case in cases]
     if len(set(ids)) != len(ids):
         raise ValueError("canary ids must be unique")
@@ -101,6 +142,11 @@ def _request_problems(provider: str, request: dict[str, Any], case: dict[str, An
         return problems
     if not isinstance(summary, dict) or not isinstance(summary.get("title"), str):
         problems.append("the user turn does not carry the finding as a JSON object")
+        return problems
+    # The canary only exercises the pipeline when its injected text reached the model as data.
+    carried = _strings(summary)
+    if not all(any(text in value for value in carried) for text in [case["title"], *case["evidence"]]):
+        problems.append("the canary's title or evidence did not reach the user turn")
     # Every other turn is the fixed system prompt (a message for openai, a field for anthropic):
     # a prefilled assistant turn would be a new place for finding text to reach the model.
     others = [m for m in messages if m["role"] != "user"]
@@ -110,6 +156,17 @@ def _request_problems(provider: str, request: dict[str, Any], case: dict[str, An
     if any(text in carrier for carrier in carriers for text in [case["title"], *case["evidence"]]):
         problems.append("finding text reached a turn other than the user turn")
     return problems
+
+
+def _strings(item: Any) -> list[str]:
+    """Every string value in a parsed JSON document."""
+    if isinstance(item, str):
+        return [item]
+    if isinstance(item, dict):
+        return [text for value in item.values() for text in _strings(value)]
+    if isinstance(item, list):
+        return [text for value in item for text in _strings(value)]
+    return []
 
 
 def _unchanged(before: Finding, after: Finding) -> bool:
@@ -204,7 +261,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--structured-output", action="store_true", help="request JSON-schema output")
     parser.add_argument("--output", type=Path, help="write the JSON report to a new local file, mode 0600")
     args = parser.parse_args(argv)
-    cases = load_cases(args.corpus)
+    try:
+        cases = load_cases(args.corpus)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.live:
         if not args.model:
             parser.error("--live needs --model")
