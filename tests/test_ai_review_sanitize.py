@@ -10,7 +10,7 @@ check_secrets.py remains the authoritative file gate with exact approvals.
 from __future__ import annotations
 
 from tools.ai_review.sanitize import redact
-from tools.check_secrets import findings
+from tools.check_secrets import PATTERNS, findings
 
 
 def test_every_check_secrets_family_is_redacted() -> None:
@@ -19,6 +19,7 @@ def test_every_check_secrets_family_is_redacted() -> None:
         "OpenAI project key": "key sk-proj-" + "Ab1-" * 9,
         "Anthropic API key": "sk-ant-api03-" + "Zz9_" * 6,
         "AWS access key ID": "AKIA" + "1A2B" * 4,
+        "AWS secret access key": "aws_secret_access_key = " + "A1b2/+" * 6 + "C3d4",
         "GitHub token": "ghp_" + "a1" * 20,
         "GitHub fine-grained token": "github_pat_" + "a" * 22 + "_" + "b" * 59,
         "GitLab token": "glpat-" + "x1-" * 8,
@@ -31,6 +32,9 @@ def test_every_check_secrets_family_is_redacted() -> None:
         "Azure account or shared access key": "AccountKey=" + "QWxhZGRpbjEyMzQ1" * 3 + "==",
         "password in a URL": "https://" + "user:" + "synthetic-password@" + "example.internal/path",
     }
+    # The two lists cannot drift: a family check_secrets.py learns needs a
+    # redacted sample here, and a sample here must still be a known family.
+    assert set(samples) == {family for family, _ in PATTERNS}
     for family, sample in samples.items():
         detected = {fam for _, fam, _ in findings(sample)}
         assert family in detected, f"test sample for {family!r} is not shaped like one"

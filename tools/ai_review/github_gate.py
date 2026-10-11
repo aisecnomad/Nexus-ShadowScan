@@ -120,16 +120,31 @@ def diff_digest(files: list[Any]) -> str:
     ).hexdigest()
 
 
-def validate_evidence(root: Path, digest: str) -> None:
+def validate_evidence(root: Path, digest: str) -> dict[str, list[Path]]:
+    """Check the evidence tree and return each role's finding files.
+
+    The publisher copies every validated file into one directory for the
+    synthesizer, so the aggregate is held to the synthesizer's own limit here,
+    before anything is copied: evidence that validates always synthesizes.
+    """
     manifest = json.loads(synthesize.read_input(root / "manifest.json"))
     roles = set(AGENTS) - {"orchestrator"}
     if manifest != {"schema_version": "1", "diff_digest": digest, "agents": sorted(roles)}:
         raise GateError("evidence manifest malformed or stale")
-    for role in roles:
-        findings, invalid = synthesize.load_findings(root / "findings" / role)
+    validated: dict[str, list[Path]] = {}
+    total = 0
+    for role in sorted(roles):
+        try:
+            files = synthesize.findings_files(root / "findings" / role)
+        except synthesize.GateInputError:
+            raise GateError("specialist evidence malformed or unavailable") from None
+        total += len(files)
+        if total > synthesize.MAX_FINDINGS_FILES:
+            raise GateError("findings artifact limit exceeded")
+        findings, invalid = synthesize.read_findings(files)
         if invalid or not findings or any(finding.agent != role for finding in findings):
             raise GateError("specialist evidence malformed or unavailable")
-        for file in sorted((root / "findings" / role).glob("*.json")):
+        for file in files:
             data = json.loads(synthesize.read_input(file))
             for entry in data if isinstance(data, list) else [data]:
                 if (
@@ -144,7 +159,9 @@ def validate_evidence(root: Path, digest: str) -> None:
                     for field in ("scenario", "recommendation", "assumptions")
                 ):
                     raise GateError("structured review details missing")
+        validated[role] = files
     synthesize._read_scanner_fingerprints(root / "scanner-fingerprints.json")
+    return validated
 
 
 def prepare(api: GitHub, number: int, head: str, root: Path, out: Path) -> int:
@@ -152,6 +169,11 @@ def prepare(api: GitHub, number: int, head: str, root: Path, out: Path) -> int:
     files, labels = snapshot(api, number, head)
     paths = [file["filename"] for file in files]
     (out / "diff.txt").write_text("".join(path + "\n" for path in paths), encoding="utf-8")
+    # The digest derives from the API snapshot, not from the evidence, so it is
+    # persisted before validation: publish() compares it again even when the
+    # evidence fails validation, and that failure must still reach the review.
+    digest = diff_digest(files)
+    (out / "validated-digest.txt").write_text(digest, encoding="utf-8")
     os.environ.update(
         AI_REVIEW_OUT_DIR=str(out),
         AI_REVIEW_FINDINGS_DIR=str(out / "validated"),
@@ -161,13 +183,11 @@ def prepare(api: GitHub, number: int, head: str, root: Path, out: Path) -> int:
         AI_REVIEW_HIGH_RISK=str(high_risk(paths)).lower(),
     )
     try:
-        digest = diff_digest(files)
-        validate_evidence(root, digest)
-        (out / "validated-digest.txt").write_text(digest, encoding="utf-8")
+        validated = validate_evidence(root, digest)
         target = out / "validated"
         target.mkdir()
-        for role in sorted(set(AGENTS) - {"orchestrator"}):
-            for index, file in enumerate(sorted((root / "findings" / role).glob("*.json"))):
+        for role, role_files in sorted(validated.items()):
+            for index, file in enumerate(role_files):
                 data = json.loads(synthesize.read_input(file))
                 entries = data if isinstance(data, list) else [data]
                 for entry in entries:
@@ -201,15 +221,19 @@ def publish(
 ) -> int:
     # Re-evaluate against current labels/diff; never replay a prior decision.
     if failed:
-        decision = {"event": "COMMENT", "conclusion": "failure", "reason": "bypass_unavailable"}
+        decision: dict[str, Any] = {
+            "conclusion": "failure",
+            "reason": "bypass_unavailable",
+            "high_risk": False,
+        }
         body = (
-            "## AI Review Gate\n\nEvidence unavailable. Gate failed closed.\n\nNot independent human review."
+            "## AI Review Gate\n\n"
+            + synthesize.decision_line("failure", "bypass_unavailable", False)
+            + "\n\nEvidence unavailable. Gate failed closed.\n\nNot independent human review."
         )
-        comments: list[Any] = []
     else:
         decision = json.loads(synthesize.read_input(out / "decision.json"))
         body = synthesize.read_input(out / "review-body.md")
-        comments = json.loads(synthesize.read_input(out / "review-comments.json"))
     if (
         os.environ.get("AI_REVIEW_PREFLIGHT_RESULT", "success") != "success"
         and decision["conclusion"] != "failure"
@@ -220,12 +244,19 @@ def publish(
     if not failed and diff_digest(files) != synthesize.read_input(out / "validated-digest.txt"):
         raise GateError("superseded evidence")
     if synthesize.BLOCKED_LABEL in labels:
-        decision.update(event="REQUEST_CHANGES", conclusion="failure", reason="blocked_label")
+        decision.update(conclusion="failure", reason="blocked_label")
         body += "\n\nBlocked by maintainer label."
-    # File presence alone cannot prove a line is commentable. Preserve all
-    # findings in the summary instead of risking a partial review POST (422).
-    for comment in comments:
-        body += "\n\n" + comment["body"]
+    # A late override changes the verdict after synthesis: restate the header
+    # so the review and the check agree. The synthesizer already rendered every
+    # finding, located ones with path:line, within the review size limit; file
+    # presence alone cannot prove a line is commentable, so nothing is posted
+    # inline and no partial review POST (422) is risked.
+    body = synthesize.restate(
+        body,
+        conclusion=decision["conclusion"],
+        reason=decision["reason"],
+        high_risk=decision.get("high_risk") is True,
+    )
     check = check or api.request(
         "check-runs",
         {
@@ -239,7 +270,7 @@ def publish(
             f"pulls/{number}/reviews",
             {
                 "commit_id": head,
-                "event": decision["event"],
+                "event": synthesize.REVIEW_EVENT,
                 "body": redact(body),
             },
         )

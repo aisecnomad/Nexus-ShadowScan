@@ -19,8 +19,10 @@ request that carries evidence runs the gate from that base.
 to the pull request by the pull request's author, who can also edit the
 workflow definition, so "no blocking finding" proves nothing about the change.
 The best outcome is a `neutral` check with reason `advisory_only`, never
-`success`, and the review it posts is always `COMMENT` or `REQUEST_CHANGES`,
-never `APPROVE`. A `failure` (blocking finding, malformed, stale or missing
+`success`, and the review it posts is always a `COMMENT`, never `APPROVE` and
+never `REQUEST_CHANGES`: a bot that never approves must not leave a sticky
+changes-requested state behind, so the check run's conclusion carries the
+verdict. A `failure` (blocking finding, malformed, stale or missing
 evidence, or a blocking label) is a signal worth acting on; a `neutral`
 result is not a review.
 
@@ -59,6 +61,10 @@ Evidence lives under `.github/ai-review/` in the head checkout:
   list of the six specialist IDs below), and `diff_digest`.
 - `findings/<agent>/*.json`: nonempty arrays or single finding objects using
   `tools.ai_review.schema`. Each specialist must have valid evidence of its own.
+  At most 20 finding files in total across all specialists, each holding at
+  most 50 findings; the same aggregate bound is enforced before the files are
+  copied for synthesis, so evidence that validates always synthesizes. No
+  directory or file in the tree may be a symlink.
 - `scanner-fingerprints.json`: required JSON list of nonempty stable scanner
   identities, e.g. a namespaced CodeQL rule/location identity. An explicit empty
   list is permitted only when the reviewed scanner adapter completed and
@@ -119,23 +125,37 @@ or use PR-provided configuration to select tools.
 
 Missing, empty, unreadable, oversized or symlinked inputs, incomplete API
 pagination, stale manifests, malformed entries, denied APIs and timeouts fail
-closed. Any malformed entry invalidates its artifact, even alongside valid
+closed. A findings directory that is a symlink, or has one anywhere in its
+path, is rejected before it is listed: the trusted job never enumerates a
+directory the pull request pointed it at, and the file limit applies while
+iterating. Any malformed entry invalidates its artifact, even alongside valid
 entries. Out-of-diff locations fail as stale findings. `ai-review: blocked`
-requests changes and fails; critical/high findings do likewise. High-risk
-changes without findings fail as insufficient evidence, never an empty pass.
-Any non-documentation change is conservatively high risk; the high-risk label
-can only strengthen classification, not reduce it.
+fails the check; critical/high findings do likewise. High-risk changes
+without findings fail as insufficient evidence, never an empty pass. Any
+non-documentation change is conservatively high risk; the high-risk label can
+only strengthen classification, not reduce it. Paths may not contain a line
+break of any kind, since the diff list is written one path per line.
 
 The synthesizer produces `review-body.md`, `review-comments.json` (at most
-50 inline comments), and `decision.json` in fresh runner-temporary workspace.
-Only bounded symbolic, credential-redacted content is rendered. Raw evidence
-is not uploaded or logged; validated inputs remain ephemeral. Pattern redaction
-is defense in depth, not proof that arbitrary confidential prose is safe:
-specialists must never put raw secrets, JWTs, unsanitized config or tenant data
-in evidence, including committed JSON. Reviewers inspect output before sharing.
-The publisher folds inline findings into the consolidated body because a file
-list does not prove a line is commentable. Summary-only and overflow findings
-retain their complete scenario/recommendation, not just titles.
+50 inline-comment candidates), and `decision.json` in fresh runner-temporary
+workspace. Only bounded symbolic, credential-redacted content is rendered. Raw
+evidence is not uploaded or logged; validated inputs remain ephemeral. Pattern
+redaction is defense in depth, not proof that arbitrary confidential prose is
+safe: specialists must never put raw secrets, JWTs, unsanitized config or tenant
+data in evidence, including committed JSON. Reviewers inspect output before
+sharing. Every finding is rendered into the consolidated body in severity
+order, located ones with their `path:line`, because a file list does not prove
+a line is commentable; the inline candidates are recorded, never posted. GitHub
+rejects review bodies over 65,536 characters, so the body is budgeted: full
+bodies while they fit, then one bounded line per finding (severity, title,
+location) and a count of what was omitted. The committed evidence keeps every
+finding in full.
+
+The diff digest is persisted before the evidence is validated, so a
+malformed-evidence verdict still reaches the review instead of failing on a
+missing file. When preflight fails or the blocking label is applied after
+synthesis, the publisher restates the review's `Decision` header so the review
+and the check run agree.
 
 An API review-publication error fails the created check. Checkout/interpreter
 or check-creation failures leave the check missing. No passing fallback exists. Repeated workflow runs may create another

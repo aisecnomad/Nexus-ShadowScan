@@ -104,7 +104,12 @@ def _clean(value: Any) -> str | None:
 
 
 def _path(value: Any) -> str | None:
-    """A normalized repository-relative path, or None for anything else."""
+    """A normalized repository-relative path, or None for anything else.
+
+    No line break of any kind survives: the gate writes diff paths one per
+    line and reads them back with ``str.splitlines``, so a path containing one
+    would read as two.
+    """
     text = _clean(value)
     if text is None:
         return None
@@ -114,6 +119,7 @@ def _path(value: Any) -> str | None:
         or path.as_posix() != text
         or any(part in {".", ".."} for part in path.parts)
         or "\\" in text
+        or text.splitlines() != [text]
     ):
         return None
     return text
