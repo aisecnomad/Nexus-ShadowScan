@@ -2565,6 +2565,23 @@ def test_workflow_image_check_sees_every_image_form(tmp_path: Path) -> None:
     assert verdicts == [False, True, True, False]
 
 
+def test_pull_request_jobs_that_need_repository_secrets_skip_dependabot() -> None:
+    # Dependabot pull requests receive no repository secrets, so a vendor scan there
+    # fails on missing credentials instead of being skipped, as a fork's is. Regression:
+    # an integration dropped the condition from two workflows the changelog lists.
+    checked = []
+    for path in WORKFLOWS:
+        workflow = _load(path)
+        if "pull_request" not in _trigger_names(workflow):
+            continue
+        for name, job in workflow["jobs"].items():
+            secrets = set(re.findall(r"\$\{\{\s*secrets\.(\w+)", yaml.safe_dump(job))) - {"GITHUB_TOKEN"}
+            if secrets:
+                checked.append(f"{path.name}:{name}")
+                assert "github.actor != 'dependabot[bot]'" in _if_clauses(job), f"{path.name}:{name}"
+    assert len(checked) >= 3, checked
+
+
 def test_checkmarx_never_receives_the_job_token() -> None:
     # The action defaults github_token to the job's security-events token and hands it to the
     # vendor CLI for pull-request decoration, which the job cannot perform anyway.

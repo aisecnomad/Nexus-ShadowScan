@@ -133,11 +133,11 @@ without structured output, against a scripted model that obeys or echoes
 every injection, and fails if finding text leaves the user turn (another turn
 or any other request field, such as tools or metadata), a canary's text does
 not reach the user turn, a reply that repeats the injected verdict beside its
-own is accepted (whether or not its own is strict JSON), or any reply changes
-a finding. The unit tests run it on every change. The corpus is read as the
-evaluation corpus is: a regular file (no symbolic link in its path), at most
-1 MiB, unambiguous JSON with no duplicate keys, and at least one well-formed
-case; anything else is a usage error.
+own is accepted (whether or not its own is strict JSON or its key is spelled
+with escapes), or any reply changes a finding. The unit tests run it on every
+change. The corpus is read as the evaluation corpus is: a regular file (no
+symbolic link in its path), at most 1 MiB, unambiguous JSON with no duplicate
+keys, and at least one well-formed case; anything else is a usage error.
 
 `--live --model <id>` (with `--provider`, `--api-key-env`, `--base-url` and
 `--structured-output` as needed) sends the canaries to a real model and

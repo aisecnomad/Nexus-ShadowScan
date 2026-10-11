@@ -31,7 +31,9 @@ _MIN_DIGITS = 1
 # module paths, URLs, host names and sentences never qualify. The run ends at its
 # closing quote, or where an excerpt cut the line (an ellipsis or the end of the
 # line): a literal truncated before its closing quote still starts with the secret.
-# The possessive quantifier keeps the scan linear in the text.
+# The closing quote is only looked at, not consumed: in '"v1-"+prefixName2024+"<secret>"'
+# the run between two literals is matched first, and a consumed quote hid the secret's
+# opening quote. The possessive quantifier keeps the scan linear in the text.
 _QUOTED = re.compile(
     r"""(?P<q>["'`])(?P<body>[A-Za-z0-9+/_=-]{20,}+)(?=(?P=q)|\u2026|$)""",  # 20 = _MIN_LENGTH
     re.MULTILINE,
