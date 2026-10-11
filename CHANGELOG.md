@@ -171,7 +171,9 @@ summarizes each release for people who install and operate ShadowScan.
   or `credential`, learns those values so a copy in a sibling field is
   withheld too, and no longer takes precedence over the environment rule: an
   `env` table inside an auth block withholds every value, as it does anywhere
-  else (a regression of the rule's first extension on this branch).
+  else (a regression of the rule's first extension on this branch). Every
+  other member of the block keeps the mapping rules, so a numeric or boolean
+  `password` or `client_secret` there is withheld as before (#190).
 - `tests/test_repository_policy.py` requires every workflow job `container:`
   and service image to be pinned by sha256 digest, with the reviewed tag named
   in a comment on the line above, as the Semgrep container is.

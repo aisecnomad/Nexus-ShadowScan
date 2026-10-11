@@ -91,3 +91,14 @@ def test_an_auth_credential_copied_into_a_sibling_field_is_withheld_too() -> Non
     cleaned = sanitize(record)
     assert cleaned["auth"] == {"basic": {"value": REDACTED}}
     assert SECRET not in cleaned["note"] and REDACTED in cleaned["note"]
+
+
+@pytest.mark.parametrize("container", ["auth", "authentication", "authn"])
+@pytest.mark.parametrize("secret", [31415926535, 2.718, True])
+def test_non_string_credentials_in_an_auth_block_are_withheld(container: str, secret: object) -> None:
+    # The auth-block rule must add to the mapping rules, not replace them: a
+    # sensitive key holds a credential whatever the type of its value (#190).
+    record = {container: {"type": "basic", "username": "svc", "password": secret, "client_secret": secret}}
+    assert sanitize(record) == {
+        container: {"type": "basic", "username": "svc", "password": REDACTED, "client_secret": REDACTED}
+    }
