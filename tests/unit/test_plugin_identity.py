@@ -386,3 +386,58 @@ def test_malformed_or_conflicting_plugin_approvals_are_refused(entries):
 
     with pytest.raises(ConfigValidationError):
         ScanConfig(plugins=entries)
+
+
+class _Dist:
+    def __init__(self, name: str, version: str) -> None:
+        self.metadata = {"Name": name}
+        self.version = version
+
+
+def _publish_from(monkeypatch: pytest.MonkeyPatch, dist: _Dist | None) -> tuple[type, str]:
+    plugin = _connector()
+    _publish(monkeypatch, (ENTRY, plugin))
+    entry = EntryPoint(name=ENTRY, value=f"{MODULE}:Target0", group="shadowscan.connectors")
+    if dist is not None:
+        entry = entry._for(dist)  # type: ignore[arg-type]
+    monkeypatch.setattr(registry, "entry_points", lambda **kwargs: [entry])
+    return plugin, f"{MODULE}:Target0"
+
+
+def test_distribution_pin_loads_the_reviewed_release(monkeypatch):
+    plugin, target = _publish_from(monkeypatch, _Dist("Acme_Hub.Plugin", "1.4.0"))
+    # Distribution names compare normalized, as pip does.
+    approval = f"{ENTRY}={target}@acme-hub-plugin==1.4.0"
+    assert ScanConfig(plugins=[approval]).plugins == [approval]
+    assert registry.get_connector_class(ENTRY, allowed_plugins=[approval]) is plugin
+
+
+@pytest.mark.parametrize(
+    "dist",
+    [_Dist("acme-hub-plugin", "1.5.0"), _Dist("typosquat-hub", "1.4.0"), None],
+    ids=["other-version", "other-distribution", "no-metadata"],
+)
+def test_distribution_pin_refuses_another_release_before_import(monkeypatch, dist):
+    _, target = _publish_from(monkeypatch, dist)
+    imported: list[str] = []
+    monkeypatch.setattr(registry, "_load", lambda path: imported.append(path))
+    with pytest.raises(PluginRegistryError) as info:
+        registry.get_connector_class(ENTRY, allowed_plugins=[f"{ENTRY}={target}@acme-hub-plugin==1.4.0"])
+    assert info.value.diagnostic.rule == "distribution-mismatch"
+    assert imported == [] and ENTRY not in registry._cache
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        f"{ENTRY}=pkg.mod:Cls@",
+        f"{ENTRY}=pkg.mod:Cls@dist",
+        f"{ENTRY}=pkg.mod:Cls@dist==",
+        f"{ENTRY}=pkg.mod:Cls@==1",
+    ],
+)
+def test_malformed_distribution_pins_are_refused(entry):
+    from shadowscan.config import ConfigValidationError
+
+    with pytest.raises(ConfigValidationError):
+        ScanConfig(plugins=[entry])

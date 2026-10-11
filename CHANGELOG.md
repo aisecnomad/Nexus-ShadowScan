@@ -226,17 +226,30 @@ summarizes each release for people who install and operate ShadowScan.
 ### Triage, plugin identity, redaction and cache integrity hardening
 
 - LLM triage refuses a reply that carries more than one verdict object (for
-  example one quoted from injected finding text) as `status: unparseable`, and
-  requests ask for `temperature: 0`.
+  example one quoted from injected finding text) as `status: unparseable`.
+  Requests send no sampling parameters, which current Claude models reject.
+  `options.llm_triage.structured_output: true` asks the provider to constrain
+  the reply to the verdict JSON schema (`output_config.format` or a strict
+  `response_format`); it is off by default because not every model supports it.
+  `python -m tools.evaluation.triage_canaries` runs author-written injection
+  canaries offline (in the unit tests) to check that injected text stays data
+  and cannot change a finding; `--live` sends them to a model, unpublished.
 - `--allow-plugin` and `options.plugins` accept `name=module:Class`.
   A pinned approval refuses a plugin whose entry point resolves elsewhere
   (`target-mismatch`); a bare name keeps the previous behavior. Duplicate
-  approvals for one name are refused.
+  approvals for one name are refused. `name=module:Class@distribution==version`
+  also requires the entry point to come from that installed distribution and
+  version (`distribution-mismatch`), checked from metadata before import.
 - Redaction withholds the value in `Bearer token <value>`, keys ending in
   `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
   literals passed to setter calls such as `setProperty("openai.key", ...)`,
   and `value`, `key` and `credential` fields inside an `auth` mapping, at any
   depth of the mapping and inside lists under it.
+  Evidence snippets also get a last-resort pass that withholds a quoted
+  literal that looks generated (20 or more token characters mixing upper
+  case, lower case and digits, with frequent class switches and high entropy),
+  whatever name or call surrounds it. Hex digests, UUIDs and ordinary
+  identifiers keep their text. A Hypothesis property test covers both sides.
 - `shadowscan jwt TOKEN...` and `shadowscan run --set` with a credential value
   print a warning that command-line arguments are visible in process listings
   and shell history. The value is never echoed and the scan still runs.

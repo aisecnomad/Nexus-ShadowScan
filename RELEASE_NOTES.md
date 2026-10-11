@@ -153,8 +153,15 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
 
 - A triage reply steered by scanned content cannot change a finding's risk,
   shadow status, kind or tags; a reply over 16 KiB is refused unread, a reply
-  that carries more than one verdict object is `unparseable`, and requests set
-  `temperature: 0`.
+  that carries more than one verdict object is `unparseable`, and requests send
+  no sampling parameters (current Claude models reject `temperature`).
+  `options.llm_triage.structured_output: true` constrains the reply to the
+  verdict schema on providers that support it. Offline prompt-injection
+  canaries (`python -m tools.evaluation.triage_canaries`) run in the unit tests.
+- `--allow-plugin name=module:Class@distribution==version` also pins the
+  installed distribution that provides a plugin's entry point. Evidence
+  snippets withhold random-looking quoted literals of 20 or more characters as
+  a last resort; hex digests, UUIDs and identifiers keep their text.
 - MCP launch identity is decided on the configured values, not the sanitized
   record, so a redacted value cannot hide an env name, `cmd` argument or `docker
   -e` value that makes the launch unidentified; every argument and every

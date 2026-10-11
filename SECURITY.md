@@ -291,7 +291,13 @@ coverage, even when a response includes an empty collection field.
 ### What can remain
 
 - **Limitations:** Redaction cannot withhold a credential that nothing names or shapes as one,
-  so treat reports as confidential. These forms can remain: an unprefixed
+  so treat reports as confidential. In evidence snippets only, a last-resort
+  pass also withholds a quoted literal that looks generated: at least 20
+  token characters mixing upper case, lower case and digits, switching between
+  them often, with high per-character entropy. Hex digests, UUIDs and ordinary
+  identifiers keep their text; a short or low-entropy secret can still pass,
+  and descriptions, titles and metadata do not get this pass. Outside
+  snippets, these forms can remain: an unprefixed
   literal passed to an ordinary function or nested in another call inside a
   credential constructor (`AzureKeyCredential(str("..."))`); a value assembled
   by a computed expression. Recognized credential calls with mixed interpolation

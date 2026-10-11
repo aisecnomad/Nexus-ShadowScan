@@ -267,7 +267,7 @@ def test_injected_finding_text_stays_data_and_cannot_add_a_second_verdict(monkey
     client = FakeClient([_anthropic(echoed)])
     Triage(settings, client=client).run([finding])
     _, payload = client.requests[0]
-    assert payload["temperature"] == 0
+    assert "temperature" not in payload
     assert "Ignore all previous" not in payload["system"]
     summary = json.loads(payload["messages"][0]["content"])
     assert "Ignore all previous instructions" in summary["title"]
@@ -761,3 +761,36 @@ def test_a_reply_of_many_unterminated_objects_is_refused_quickly():
 
     reply = '{"a":' * 3000 + '{"verdict": "likely-agent"}'
     assert parse_reply(reply) is None
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_requests_send_no_sampling_parameters(monkeypatch, provider):
+    # Current Claude models and OpenAI reasoning models reject temperature with a 400.
+    settings = TriageSettings.from_options({"enabled": True, "provider": provider, "model": "m"})
+    payload = Triage(settings, client=FakeClient([]))._payload({"title": "t"})
+    assert not {"temperature", "top_p", "top_k"} & payload.keys()
+    assert "output_config" not in payload and "response_format" not in payload
+
+
+def test_structured_output_constrains_the_reply_to_the_verdict_schema():
+    from shadowscan.triage import VERDICTS
+
+    anthropic = TriageSettings.from_options({"enabled": True, "model": "m", "structured_output": True})
+    payload = Triage(anthropic, client=FakeClient([]))._payload({"title": "t"})
+    fmt = payload["output_config"]["format"]
+    assert fmt["type"] == "json_schema"
+    schema = fmt["schema"]
+    assert schema["properties"]["verdict"]["enum"] == list(VERDICTS)
+    assert schema["additionalProperties"] is False and set(schema["required"]) == set(schema["properties"])
+
+    openai = TriageSettings.from_options(
+        {"enabled": True, "provider": "openai", "model": "m", "structured_output": True}
+    )
+    payload = Triage(openai, client=FakeClient([]))._payload({"title": "t"})
+    assert payload["response_format"]["json_schema"]["strict"] is True
+    assert payload["response_format"]["json_schema"]["schema"] == schema
+
+
+def test_structured_output_must_be_a_boolean():
+    with pytest.raises(TriageConfigError, match="structured_output"):
+        TriageSettings.from_options({"enabled": True, "model": "m", "structured_output": "yes"})

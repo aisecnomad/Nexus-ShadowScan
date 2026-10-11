@@ -106,8 +106,12 @@ An approval may also pin the entry point's import target as
 `name=module:Class` (`--allow-plugin name=module:Class`). A name alone approves
 whatever distribution installs that entry point; a pinned approval refuses any
 other target before importing it, for example a later package that registers
-the same name. Pinning binds the import path, not a distribution version or
-file hashes, so keep the plugin itself in a hash-locked install.
+the same name. Append `@distribution==version`
+(`name=module:Class@acme-connectors==1.4.0`) to also require that the entry
+point comes from that installed distribution and version; names compare as pip
+normalizes them, and an entry point without distribution metadata is refused.
+These checks read installed metadata before import. They bind a reviewed
+release, not file contents, so keep the plugin itself in a hash-locked install.
 
 ```yaml
 options:
