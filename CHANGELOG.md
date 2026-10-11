@@ -138,6 +138,14 @@ summarizes each release for people who install and operate ShadowScan.
   that remained after the drop could identify the package. The redaction
   linearity suite covers the `Bearer token <credential>`, credential-named
   setter call and `*_value` patterns added in #187.
+- `shadowscan controls` and the single-report dashboard read a source's
+  inventory presence from its own `inventory_present` alone, as a merge records
+  it: a report that says it had no inventory but carries an `inventory_size`
+  above zero or shadow values no longer reads as reconciled, and a non-boolean
+  value is refused. The dashboard's legacy-fleet note and guide now describe
+  every pre-`fleet-merge/v2` merge (per-source presence and connector runs
+  unrecorded; shadow status kept as written when the merge recorded an
+  inventory) instead of claiming such a report never records one.
 - `tests/test_repository_policy.py` requires every workflow job `container:`
   and service image to be pinned by sha256 digest, with the reviewed tag named
   in a comment on the line above, as the Semgrep container is.
