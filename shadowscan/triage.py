@@ -71,9 +71,14 @@ _KEYS = {
     "min_level",
     "timeout_seconds",
     "budget_seconds",
+    "structured_output",
 }
-# A verdict reply is a few hundred characters (max_tokens is 400); anything
-# longer than this is refused unparsed, and the response body is capped too.
+# A verdict reply is a few hundred characters; anything longer than this is refused unparsed,
+# and the response body is capped too. The request's token bound is larger because current
+# models spend thinking or reasoning tokens before the reply and those count toward it: a cap
+# sized for the reply alone ends the response at the cap with no verdict.
+_MAX_OUTPUT_TOKENS = 4096
+_MAX_REPLY_OBJECTS = 64
 _MAX_REPLY_CHARS = 16 * 1024
 _MAX_RESPONSE_BYTES = 64 * 1024
 
@@ -96,6 +101,19 @@ _SYSTEM = (
 )
 
 
+# The reply contract as a JSON schema, for providers that constrain output to one.
+_REPLY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string", "enum": list(VERDICTS)},
+        "rationale": {"type": "string"},
+        "suggested_action": {"type": "string"},
+    },
+    "required": ["verdict", "rationale", "suggested_action"],
+    "additionalProperties": False,
+}
+
+
 class TriageConfigError(ValueError):
     """The ``options.llm_triage`` mapping is invalid."""
 
@@ -111,6 +129,7 @@ class TriageSettings:
     min_level: str = "medium"
     timeout_seconds: float = 30.0
     budget_seconds: float = 300.0
+    structured_output: bool = False
 
     @classmethod
     def from_options(cls, value: Any) -> TriageSettings:
@@ -157,6 +176,9 @@ class TriageSettings:
         budget = value.get("budget_seconds", 300)
         if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not 1 <= budget <= 3600:
             raise TriageConfigError("llm_triage.budget_seconds must be a number from 1 to 3600")
+        structured = value.get("structured_output", False)
+        if not isinstance(structured, bool):
+            raise TriageConfigError("llm_triage.structured_output must be a YAML boolean")
         return cls(
             enabled=enabled,
             provider=provider,
@@ -167,6 +189,7 @@ class TriageSettings:
             min_level=min_level,
             timeout_seconds=float(timeout),
             budget_seconds=float(budget),
+            structured_output=structured,
         )
 
 
@@ -263,21 +286,34 @@ def skip(findings: list[Finding], settings: TriageSettings) -> int:
 def parse_reply(text: str) -> dict[str, str] | None:
     """The verdict object in a model reply, or None when the reply does not follow the contract.
 
-    The reply is untrusted, so the object is located in linear time (first
-    ``{`` to last ``}``, as a greedy match would) and a reply longer than any
-    verdict needs is refused unread.
+    The reply is untrusted, so one longer than any verdict needs is refused
+    unread. Each JSON object in it is then decoded in turn, up to a fixed
+    number of attempts so decoding stays bounded; exactly one may carry a
+    ``verdict`` key. A reply that quotes several verdict objects, for example
+    one copied from injected finding text next to its own, is ambiguous and
+    refused rather than resolved by position.
     """
     if len(text) > _MAX_REPLY_CHARS:
         return None
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end < start:
+    decoder = json.JSONDecoder()
+    found: list[dict[str, Any]] = []
+    position = text.find("{")
+    attempts = 0
+    while position != -1:
+        attempts += 1
+        if attempts > _MAX_REPLY_OBJECTS:
+            return None
+        try:
+            data, end = decoder.raw_decode(text, position)
+        except (ValueError, RecursionError):  # ValueError also covers an over-long integer
+            position = text.find("{", position + 1)
+            continue
+        if isinstance(data, dict) and "verdict" in data:
+            found.append(data)
+        position = text.find("{", end)
+    if len(found) != 1 or found[0].get("verdict") not in VERDICTS:
         return None
-    try:
-        data = json.loads(text[start : end + 1])
-    except (ValueError, RecursionError):  # ValueError also covers an over-long integer
-        return None
-    if not isinstance(data, dict) or data.get("verdict") not in VERDICTS:
-        return None
+    data = found[0]
     rationale = data.get("rationale")
     action = data.get("suggested_action")
     return {
@@ -327,19 +363,34 @@ class Triage:
             ) from exc
 
     def _payload(self, summary: dict[str, Any]) -> dict[str, Any]:
+        # No sampling parameters: current Claude models and OpenAI reasoning models reject
+        # temperature. The reply contract is enforced by parse_reply, and optionally by the
+        # provider's JSON-schema output, which constrains the reply to one verdict object.
         content = json.dumps(summary, sort_keys=True)
+        structured = self.settings.structured_output
         if self.settings.provider == "anthropic":
-            return {
+            payload: dict[str, Any] = {
                 "model": self.settings.model,
-                "max_tokens": 400,
+                "max_tokens": _MAX_OUTPUT_TOKENS,
                 "system": _SYSTEM,
                 "messages": [{"role": "user", "content": content}],
             }
-        return {
+            if structured:
+                payload["output_config"] = {"format": {"type": "json_schema", "schema": _REPLY_SCHEMA}}
+            return payload
+        payload = {
             "model": self.settings.model,
-            "max_tokens": 400,
+            # max_tokens is deprecated in the chat completions API and rejected by the o-series
+            # reasoning models; max_completion_tokens is the bound every current model accepts.
+            "max_completion_tokens": _MAX_OUTPUT_TOKENS,
             "messages": [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": content}],
         }
+        if structured:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "triage_verdict", "strict": True, "schema": _REPLY_SCHEMA},
+            }
+        return payload
 
     def _reply_text(self, data: Any) -> str:
         if not isinstance(data, dict):

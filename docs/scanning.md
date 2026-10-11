@@ -348,6 +348,10 @@ incomplete depends on what the file could hide:
   credential evidence is lost by skipping it. The warning still names each file
   so the omission is visible. Lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
+  A coding-agent settings file that an operator's glob matches (a
+  `.claude/settings.json` under `*.json`) is still recorded as unread for its
+  project's approval gate, which then covers only some actions (see
+  [approval gating](concepts/autonomy.md#approval-gating-evidence)).
 * With `scan_secrets: false`, an oversize documentation file (`.md`, `.mdc`,
   `.mdx`, `.txt`, not a manifest name) is skipped with a warning and the scan
   stays complete: its body is matched by file name only, so no technology
@@ -363,7 +367,9 @@ incomplete depends on what the file could hide:
   `test_*.py`) is skipped with the warning `skipped oversize test fixture` and
   the scan stays complete: test code is discounted evidence that cannot
   establish a deployment, so its omission is disclosed and counted (one
-  summary warning per root) rather than treated as a gap. With credential
+  summary warning per root) rather than treated as a gap. A coding-agent
+  settings file under such a path is still recorded as unread for its
+  project's approval gate, which then covers only some actions. With credential
   detection on, or `include_tests: true`, the file is analyzable like any
   other and the gap returns; `strict_coverage` records it as an error.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
@@ -789,11 +795,17 @@ one scan: it is `shadow: true` with
 `registry_match_reason: ambiguous-resource-approval` and the candidates in
 `registry_suggestions`. The `shadow` and `registry_match` of a source without
 an inventory, and a `shadow: false` that names no `registry_match`, are
-ignored. Scans made without an inventory never make a finding look
-unregistered: in a mixed fleet, a finding seen only on machines scanned
-without one stays `null` although the merged `inventory_present` is true.
-The terminal table, Markdown and HTML reports label it `unassessed` and count
-such findings in the summary. A scan configured with
+ignored. The match state written beside a verdict follows the verdict the
+merged finding adopts: a shadow finding keeps the `registry_match_reason` and
+`registry_suggestions` of the sources that found it unregistered (the first
+such source's value of each key), a registered finding keeps the
+`registry_match_assurance` and `registry-identity-unverified` tag of the
+sources that matched it, and neither carries the other's. Scans made without
+an inventory never make a finding look unregistered: in a mixed fleet, a
+finding seen only on machines scanned without one stays `null` although the
+merged `inventory_present` is true. The terminal table, CSV, Markdown and HTML
+reports label it `unassessed` (the table, Markdown and HTML reports also count
+such findings in the summary). A scan configured with
 `options.trusted_registries` reconciles its findings even when none of its
 connectors produced registry records, so it reports every unmatched finding
 as unregistered, and in a merge that wins over another source's match. Give
@@ -805,7 +817,12 @@ even an empty one, and `inventory_size` is the largest source inventory.
 Report files are untrusted input. A finding id that another report already
 uses for a finding with another identity (resource, connector, account and
 the other identity fields) is refused (exit 1) rather than merged, as is a
-report whose `inventory_present` is not a boolean. Machines that share a host
+report whose `inventory_present` is not a boolean. A report without
+`inventory_present`, such as one written by the v0.1.x releases, merges as
+inventory-less only when it records no registration (no `shadow` verdict, no
+`registry_match` and an `inventory_size` of 0); otherwise it is refused
+(exit 1) rather than having its shadow verdicts dropped to `unassessed`.
+Rescan such sources with this version before merging. Machines that share a host
 name and home directory, such as clones of one VM image, produce the same
 identities and merge as one machine scanned twice; give each a distinct
 `--label`, such as its asset tag. A registered finding whose reports carry

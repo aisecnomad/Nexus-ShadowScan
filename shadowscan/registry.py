@@ -131,8 +131,10 @@ def clear_match_state(finding: Finding) -> None:
     finding.metadata.pop("registry_suggestions", None)
     finding.metadata.pop("registry_match_reason", None)
     finding.metadata.pop("registry_match_assurance", None)
+    # Every occurrence: an untrusted report can duplicate the tag, and one that
+    # survives clearing would carry a non-adopted verdict's state.
     if UNVERIFIED_IDENTITY_TAG in finding.tags:
-        finding.tags.remove(UNVERIFIED_IDENTITY_TAG)
+        finding.tags = [tag for tag in finding.tags if tag != UNVERIFIED_IDENTITY_TAG]
 
 
 def literal_resource_pattern(resource: str) -> str:

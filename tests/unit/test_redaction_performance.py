@@ -295,6 +295,34 @@ for shape in shapes:
 """)
 
 
+def test_review_gap_patterns_read_hostile_text_in_linear_time():
+    # 'Bearer token <credential>' reads the word once per scheme (its lookaheads stop at the
+    # first blank or at the run's end), a credential-named setter call reads each literal
+    # argument once, and a '*_value' credential name is read like any other name.
+    _bounded_process("""
+from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize_text
+n = 200_000
+secret = 'Zq8' + 'Lm2Xw9Rt4Yu7Io1Pa5Sd3Fg6Hj0Kl'
+shapes = [
+    'Bearer token ' * (n // 13) + 'a' * n, 'Bearer token ' + 'a' * n, 'Bearer token ' + 'a' * n + '1',
+    'Bearer' + ' ' * n + 'token ' + 'a' * 20 + '1', 'Bearer token' + ' ' * n + 'a' * 20 + '1',
+    'Bearer token ' + '=' * n + '1', '\\\\nBearer token ' * (n // 15) + 'a' * 1000 + '1',
+    'm.put("openai.key", "x")\\n' * (n // 25), 'm.put("openai.key", ' + '"a", ' * (n // 5) + ')',
+    'm.put("' + 'a.' * (n // 2) + 'key", "' + secret + '")', 'm.put("openai.key", "' + 'a' * n,
+    'm.put(' + '"openai.key", ' * (n // 14) + ')', 'm.put("openai.key", ' + 'f(' * (n // 2),
+    'secret_value=x\\n' * (n // 15), 'TOKEN_VALUE=' + 'a' * n, 'api_key_value: ' * (n // 15),
+]
+for shape in shapes:
+    try:
+        sanitize_text(shape)
+    except SanitizationLimitError:
+        pass  # a nesting limit fails closed, quickly
+assert sanitize_text('Bearer token ' + 'a' * n + '1') == 'Bearer ' + REDACTED
+assert sanitize_text('m.put("openai.key", "' + secret + '")') == 'm.put("openai.key", "' + REDACTED + '")'
+assert secret not in sanitize_text('secret_value: ' + secret)
+""")
+
+
 def test_quadratic_tokenizer_versions_pay_for_each_line_copy(monkeypatch):
     """CPython 3.12.0 to 3.12.3 copy the whole line into every token.
 

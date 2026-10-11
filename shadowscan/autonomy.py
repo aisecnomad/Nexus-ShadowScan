@@ -130,7 +130,11 @@ _BYPASS_SIGNATURES = frozenset({"heuristic.autonomy"})
 # Signature evidence for code wired to a scheduler, queue or webhook.
 _TRIGGER_SIGNATURES = frozenset({"heuristic.scheduled-agent"})
 
-_SCHEDULE_TAGS = frozenset({"scheduled", "always-on"})
+_SCHEDULE_TAGS = frozenset({"scheduled"})
+# A gateway caller active around the clock. The tag alone is informational (a team sharing one key
+# across time zones is also active around the clock); it is initiation evidence only when the
+# connector corroborated the cadence with tool use, an agent framework or an unattended identity.
+_CADENCE_TAG = "always-on"
 _EVENT_TAGS = frozenset({"event-triggered"})
 # Workflow definition language trigger types (Power Automate and Logic Apps ``trigger_types``).
 _SCHEDULE_TRIGGER_TYPES = frozenset({"recurrence", "slidingwindow"})
@@ -179,6 +183,14 @@ def _approval_scope(finding: Finding) -> str | None:
     return scope if isinstance(scope, str) and scope in {"every-action", "some-actions"} else None
 
 
+def _corroborated_cadence(finding: Finding, tags: set[str]) -> bool:
+    """Whether the ``always-on`` tag comes with the connector's corroboration of an unattended caller."""
+    if _CADENCE_TAG not in tags:
+        return False
+    activity = finding.metadata.get("activity")
+    return isinstance(activity, dict) and activity.get("always_on_corroborated") is True
+
+
 def _trigger_initiation(finding: Finding) -> str | None:
     """``schedule`` or ``event`` from trigger tags or connector trigger metadata, else None."""
     tags = set(_strings(finding.tags))
@@ -186,7 +198,12 @@ def _trigger_initiation(finding: Finding) -> str | None:
     flow = metadata.get("trigger_type")
     flow_trigger = _folded(flow) if isinstance(flow, str) else ""
     types = {_folded(value) for value in _strings(metadata.get("trigger_types"))}
-    if tags & _SCHEDULE_TAGS or flow_trigger in _SCHEDULE_FLOW_TRIGGERS or types & _SCHEDULE_TRIGGER_TYPES:
+    if (
+        tags & _SCHEDULE_TAGS
+        or _corroborated_cadence(finding, tags)
+        or flow_trigger in _SCHEDULE_FLOW_TRIGGERS
+        or types & _SCHEDULE_TRIGGER_TYPES
+    ):
         return "schedule"
     event = metadata.get("trigger")
     if (
@@ -388,8 +405,9 @@ def merge_autonomy(finding: Finding, sources: Sequence[Any]) -> None:
     reports (approval bypassed in one and a schedule trigger in another reach L5). It is then
     widened so it admits at least what any source's block admits: the highest floor and
     ceiling, oversight ``bypassed`` over ``unknown`` over ``gated`` and initiation ``schedule``
-    over ``event`` over ``unknown`` over ``human``. A widened bound keeps the basis of the block
-    that set it. While the merged finding is registered, the lowest level any block declares
+    over ``event`` over ``unknown`` over ``human``. A widened bound keeps the basis of every block
+    that set it, so the merged block does not depend on the order of the reports. While the
+    merged finding is registered, the lowest level any block declares
     for the agent it is registered to is kept, whatever the order of the reports, and compared
     with the merged interval as :func:`apply_autonomy` compares it.
     """
@@ -423,11 +441,19 @@ def merged_autonomy(finding: Finding, sources: Sequence[Any]) -> tuple[dict[str,
         return None, False
     basis = {bound: [item for item in autonomy["basis"] if item["bound"] == bound] for bound in BOUNDS}
     for bound in BOUNDS:
-        # max() keeps the first of equal blocks, so the classified interval wins ties.
-        widest = max([autonomy, *blocks], key=lambda block: _rank(bound, block[bound]))
-        if _rank(bound, widest[bound]) > _rank(bound, autonomy[bound]):
-            autonomy[bound] = widest[bound]
-            basis[bound] = [item for item in widest["basis"] if item["bound"] == bound]
+        classified = _rank(bound, autonomy[bound])
+        widest = max((_rank(bound, block[bound]) for block in blocks), default=classified)
+        if widest > classified:
+            # Every block that set the bound contributes its rules, ordered by rule and value, so
+            # the merged basis does not depend on which report came first.
+            setters = [block for block in blocks if _rank(bound, block[bound]) == widest]
+            autonomy[bound] = setters[0][bound]
+            basis[bound] = _ordered(
+                sorted(
+                    (item for block in setters for item in block["basis"] if item["bound"] == bound),
+                    key=lambda item: (_RULE_ORDER[item["rule"]], item["value"]),
+                )
+            )
     # Every interval here has floor <= ceiling, so the highest floor never exceeds the highest
     # ceiling.
     autonomy["floor_label"] = level_title(autonomy["floor"])

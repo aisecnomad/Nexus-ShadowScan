@@ -5,6 +5,222 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Review corrections after the October 10 integration
+
+- The Semgrep workflow runs `semgrep ci` in the `semgrep/semgrep` image pinned
+  by registry digest (tag 1.180.0) instead of the deprecated
+  `returntocorp/semgrep-action`, whose commit pin still ran a mutable image tag
+  and which did not declare the `publishDeployment` input the workflow passed.
+  Dependabot pull requests are skipped like fork pull requests. The Checkmarx
+  One action is pinned to release 2.3.45 instead of an untagged 2022 commit,
+  Black Duck moves to v2.11.0, every cron has a UTC comment, and
+  `tests/test_repository_policy.py` requires a release comment after every
+  commit pin in the repository's and the example workflows.
+- The drift CronJob example carries `shadowscan-mode: live`: it collects live,
+  and the example NetworkPolicy grants egress to that label only, so the
+  earlier `drift` label left the pod with no egress.
+- `docs/concepts/risk.md` says governance factors weigh 0 and are omitted
+  from `risk.factors` under `risk_basis: danger`, as the code and its tests do;
+  `docs/operations/drift.md` says a fleet report keeps `shadow: null` for
+  findings no source assessed (not `true`); `docs/connectors.md` names
+  `agent-registry:BatchGetDiscoverableRegistryRecord`, the operation
+  `registry_arns` calls.
+- `cloud.gcp`: an invalid Discovery Engine engine name, or a project-number
+  lookup that failed or answered for another project, made the live scan
+  incomplete but left no trace in the `--dump-records` export, so a replay
+  reported a complete scan. The collector records the engine as an incomplete
+  `assistants` listing (`registry-coverage`, `complete: false`) and a failed
+  lookup as a `project-number` record with a null `project_number`; offline
+  analysis warns once for each and the replay is as incomplete as the live scan.
+  A domain-scoped project id (`example.com:my-project`) is kept whole in live
+  scope templates and partitions instead of being split at its colon. An Agent
+  Registry skill names only a publisher listed in its own project; any other
+  reference keeps the publisher id from the skill's record and no tier.
+- `cloud.azure` reads listing diagnostics through the public
+  `diagnostics_recorded()`, so an error recorded during the subscription
+  listing also leaves the live principal unattested.
+- The `plaintext_transport` marker for an MCP URL that redaction hid now
+  reaches as far as the `mcp-plain-http` risk factor it recovers, which scores
+  every plaintext scheme, loopback included: a loopback `http://` URL whose
+  scheme redaction withheld keeps its factor.
+- Low-code triggers a person operates no longer count as autonomy evidence:
+  n8n `manualTrigger`, `chatTrigger` (and its original `manualChatTrigger`
+  type), `formTrigger` and `evaluationTrigger`
+  nodes, Make scenarios scheduled `on-demand`, Workato Workbot commands and
+  Zapier Chrome extension or Interfaces steps add neither the `autonomous`
+  capability nor an initiation tag, and a schedule trigger is tagged
+  `scheduled` only. Make reads `scheduling.type` and webhook modules instead of
+  the first module's name; Workato reads the provider of the recipe's trigger
+  line instead of its keyword, which is `trigger` on every recipe and had made
+  every recipe event-triggered; the `scheduler` body heuristic now backs up
+  only a recipe whose trigger line classified nothing, so a scheduler named in
+  an action step no longer turns a Workbot command into schedule evidence.
+  n8n's `Respond to Webhook` reply step is no longer read as an event trigger
+  of the chat or form workflow it answers. ServiceNow tags a scheduled use-case trigger
+  `scheduled`, records no initiation for a use case without a trigger, carries
+  `tool-use` only when the export holds the agent's `sn_aia_tool` records and
+  `saas-actions` only when one of them is not a retrieval tool, and needs the
+  `autonomous` flag or an `agent_type` of exactly `autonomous` for the
+  `autonomous` capability. Salesforce `RecordBeforeDelete` flows carry the
+  `autonomous` capability like the other record and platform-event triggers.
+  The gateway `always-on` tag is initiation evidence only when
+  `metadata.activity.always_on_corroborated` is true; the tag alone stays
+  informational. The README demo now shows 63 high and 54 medium findings.
+- `code.filesystem`: an oversize coding-agent settings file skipped with a
+  warning while the scan stayed complete (a fixture under a test path with
+  `include_tests` and `scan_secrets` off, or a name matched by
+  `oversize_skip_globs`) was never recorded as unread, so the readable settings
+  beside it could claim an `every-action` approval gate. Such a file now adds a
+  `settings-file = unreadable` entry and the project's gate reads
+  `some-actions`.
+- `code.github`, `code.gitlab`: a truncated GitHub tree listing, or a listing
+  with entries that name no path, warned that coverage was partial but left
+  every project's approval gate at `every-action`; every gate of such a
+  repository now reads `some-actions`. Settings paths from an API tree listing
+  that the snapshot did not write were handed to the filesystem scan
+  unvalidated, so a traversal or absolute path made the project lookup list
+  directories and probe `setup.py` outside the checkout and recorded the path
+  in the finding. Such paths are checked like fetched ones before any download:
+  traversal, absolute and `.git` paths abort the repository, and the
+  filesystem connector refuses any unread settings path that is not confined
+  to the scanned root, marking the scan incomplete and the tree's gates
+  partial. A settings file at a backslash or drive-like path cannot be
+  materialised here but is still one the agent on the scanned workstation
+  reads, so it now marks the listing incomplete (gates read `some-actions`)
+  instead of being left out. A GitLab tree listing that ends with fewer
+  entries than the server's `X-Total` promised is read as cut short: coverage
+  is partial and no gate of the project claims every action, as for a
+  truncated GitHub listing.
+- `shadowscan merge` keeps only the match state of the sources whose
+  registration verdict it adopts: a shadow finding keeps the reason and
+  suggestions of the sources that found it unregistered, a registered finding
+  the assurance and `registry-identity-unverified` tag of the sources that
+  matched it, the first such source winning per key. Clearing removes every
+  occurrence of the tag, so a report that duplicates it cannot carry a
+  non-adopted registration's flag through the merge. When two source blocks
+  raised an autonomy bound equally above the merged classification,
+  `metadata.autonomy.basis` listed only the first report's rules; a widened
+  bound now keeps the basis rules of every block that set it, in rule order,
+  so the output no longer depends on argument order.
+- The CSV report labels a finding only inventory-less sources assessed
+  `unassessed` when the report has an inventory, as the table, Markdown and
+  HTML reports do, and leaves the cell blank when no inventory was involved.
+  The reporters read inventory presence from `inventory_present` (or a
+  reconciled verdict on any finding), as the merge, the dashboard and the
+  control evidence do; a bare `inventory_size` from a report written before
+  the field existed no longer labels its findings `unassessed`.
+- `identity.entra`: a pre-issued `access_token` whose `tid` is not a
+  `tenant_id` given as a tenant ID now skips the connector before any request
+  (exit 3) in every configuration, not only with `include_agent_registry`. A
+  decodable token is bound to its own tenant when `tenant_id` is unset or a
+  domain name, which the coverage marker records; a domain `tenant_id` cannot
+  be compared and an agent collection then reads the records as another
+  tenant's, so give the tenant ID with a pre-issued token. A standalone
+  deprecated card manifest in a foreign-tenant export leaves its registry
+  record unattributed to `tenant_id`, as every other record site does.
+- The AI review gate workflow runs only for pull requests whose changed files
+  include `.github/ai-review/**`: it failed closed on every ordinary pull
+  request for want of evidence, and on the pull request that introduced it
+  because its base ref had no `tools.ai_review` modules.
+- AI review gate (`tools/ai_review`): the findings directory from the pull
+  request head was enumerated with `glob()` before symlinked files were
+  rejected, so a committed directory symlink made the trusted job list an
+  arbitrary runner directory. Evidence directories are opened without following
+  any symlink component and listed through that descriptor with the artifact
+  limit applied while iterating; a symlinked directory or parent is malformed
+  evidence and fails closed before anything is listed. The redaction patterns
+  now cover the AWS secret access key family that `tools/check_secrets.py`
+  detects, and the sanitizer test compares its sample families against
+  `check_secrets.PATTERNS` so the two lists cannot drift. A finding or diff
+  path containing a line break (`\n`, `\r`, U+0085, U+2028, U+2029), which
+  would read back as two paths from the one-per-line diff list, is rejected.
+  A title containing any of those breaks is rejected the same way, and a
+  fingerprint carrying one is dropped for the computed identity, so a finding
+  cannot forge a line of the review body such as the decision header. The
+  workflow also runs on `labeled`/`unlabeled` events of evidence-carrying pull
+  requests, so an `ai-review: blocked` label takes effect without a push, and
+  the label's description says what it does. The policy test for container
+  image tag comments reads the Nth occurrence of a duplicated image instead of
+  handing the first occurrence's comment to both.
+- AI review gate: review bodies were unbounded (nine maximum-size findings
+  exceeded GitHub's 65,536-character limit and publication failed). The body
+  is budgeted: full findings in severity order while they fit, then one line
+  per finding (severity, title, `path:line`) and a count of omitted bodies;
+  located findings show their path and line. One aggregate limit of 20
+  findings files is enforced before files are copied, so six-role evidence
+  that validates always synthesizes instead of failing with
+  `bypass_unavailable`. The diff digest is persisted before validation, so
+  evidence that fails validation posts the fail-closed `malformed_findings`
+  review instead of raising, and a late preflight-failure or blocked-label
+  override restates the `Decision` header so the review and the check run
+  agree. Every review is posted as `COMMENT`: a bot that never approves must
+  not leave a sticky `REQUEST_CHANGES`; the check run's `failure` conclusion
+  carries the verdict, and `decide()` returns `(conclusion, reason)`.
+- `shadowscan dashboard` and `shadowscan controls` read a report written
+  before `inventory_present` existed as `shadowscan merge` reads it: refused
+  with "rescan before merging" (exit 1) when it records registration (a shadow
+  verdict, a registry match or an inventory size), and as having no inventory
+  when it records none. The dashboard guide had said such a report counts as
+  having an inventory, and the controls module read its shadow values as one.
+- MCP configuration parsing (`code.filesystem`, `endpoint.inventory`): a server
+  whose `env` table is not an object or whose `args` list holds a non-string is
+  marked `launch_unidentified` (the field is still reported and dropped), so its
+  record names no package and matches no MCP Registry entry; before, the launch
+  that remained after the drop could identify the package. The redaction
+  linearity suite covers the `Bearer token <credential>`, credential-named
+  setter call and `*_value` patterns added in #187.
+- `shadowscan controls` and the single-report dashboard read a source's
+  inventory presence from its own `inventory_present` alone, as a merge records
+  it: a report that says it had no inventory but carries an `inventory_size`
+  above zero or shadow values no longer reads as reconciled, and a non-boolean
+  value is refused. The dashboard's legacy-fleet note and guide now describe
+  every pre-`fleet-merge/v2` merge (per-source presence and connector runs
+  unrecorded; shadow status kept as written when the merge recorded an
+  inventory) instead of claiming such a report never records one.
+- A plugin distribution pin (`name=module:Class@distribution==version`) is
+  refused as `distribution-mismatch` when the installed distribution's metadata
+  lacks `Name` or `Version`; the missing header had compared as the string
+  "None", and whether the pin was refused depended on the interpreter's warning
+  filters. A connector name that an approval list names twice is refused as
+  `conflicting-approval` by the registry itself (configuration validation
+  already refused it): a later bare name had replaced an earlier pin, so the
+  order of the entries decided whether a typosquatting distribution loaded.
+  The triage injection canaries fail when finding text reaches any
+  turn other than the one user turn (a prefilled assistant turn passed every
+  case before), as the guide already said they do, and when a canary's title
+  or evidence did not reach the user turn at all. The canary corpus is read
+  as the evaluation corpus is (no symbolic links, 1 MiB cap, duplicate JSON
+  keys refused, every case validated) and an empty corpus is refused instead
+  of passing vacuously.
+- The last-resort redaction of random-looking literals in evidence snippets
+  also withholds a literal that an excerpt cut before its closing quote (the
+  160-character line trim appends an ellipsis), so the secret's prefix no longer
+  reaches the report, and has no upper length bound. Its module joins the
+  redaction namespace, so `policy_token()` changes when one of its rules does
+  and a finding verified clean under the earlier rules is sanitized again.
+- The `auth` block rule withholds a list of credentials under `value`, `key`
+  or `credential`, learns those values so a copy in a sibling field is
+  withheld too, and no longer takes precedence over the environment rule: an
+  `env` table inside an auth block withholds every value, as it does anywhere
+  else (a regression of the rule's first extension on this branch). Every
+  other member of the block keeps the mapping rules, so a numeric or boolean
+  `password` or `client_secret` there is withheld as before (#190).
+- `tests/test_repository_policy.py` requires every workflow job `container:`
+  and service image to be pinned by sha256 digest, with the reviewed tag named
+  in a comment on the line above, as the Semgrep container is.
+
+### AI-assisted review gate
+
+- Add a deterministic, fail-closed AI Review Gate with read-only preflight,
+  base-commit-only synthesis, and narrowly scoped review/check publication.
+  Missing or malformed specialist evidence blocks the gate. AI cannot approve
+  or merge; human/CODEOWNER review and branch protections remain required.
+  This is not independent human review and does not authorize a release.
+- The gate's evidence is committed by the pull request's author, so it can
+  block a change but never pass one: with no blocking finding the check
+  concludes `neutral` (`advisory_only`), never `success`. Do not make it a
+  required check; GitHub counts `neutral` as passing.
+
 ### Fleet dashboard and inventory export
 
 - Add `shadowscan dashboard REPORTS... -o dashboard.html`: a static,
@@ -20,9 +236,12 @@ summarizes each release for people who install and operate ShadowScan.
 - One report is read as `merge` reads a source, so it shows what it would
   show among others: each applicable finding's autonomy interval is
   classified again (a report written before autonomy tiers shows its tiers
-  and priority quadrant), and a report without `inventory_present` counts as
-  having an inventory when its `inventory_size` is above zero or a finding
-  has a shadow status. A finding of an applicable kind without a valid
+  and priority quadrant), and a source's inventory presence is its report's
+  own `inventory_present`: a report that says it had none has its shadow
+  values cleared, whatever its `inventory_size`, and a report written before
+  `inventory_present` existed is refused (exit 1, "rescan before merging")
+  when it records registration, as `merge` refuses it. A finding of an
+  applicable kind without a valid
   interval reads "not classified" (unknown, counted and warned about in the
   priority section), not "not applicable".
 - Coverage has no column for scan-level `engine.*` records, stores a cell
@@ -52,13 +271,73 @@ summarizes each release for people who install and operate ShadowScan.
   inventory. The scope fingerprint is unchanged.
 - The dashboard reads shadow status as `shadowscan merge` records it
   (registration only from sources with `inventory_present: true`), labels a
-  finding that inventories matched to different agents, and reads a fleet
-  report merged before `shadowscan.fleet-merge/v2` as having no inventory,
-  with a note to merge its sources again.
+  finding that inventories matched to different agents, and notes that a
+  fleet report merged before `shadowscan.fleet-merge/v2` records neither
+  per-source inventory presence nor connector runs (coverage unknown), reads
+  its AI systems as no inventory when it records none and keeps their shadow
+  status as written when it records an inventory, with a note to merge its
+  sources again.
 - Add authored tests for each view, escaping of hostile report values,
   coverage, determinism, private outputs, a 20,000-finding linear-time
   render budget and a linear-time history budget.
   They use synthetic reports and do not establish acceptance on a live fleet.
+
+### Triage, plugin identity, redaction and cache integrity hardening
+
+- LLM triage refuses a reply that carries more than one verdict object (for
+  example one quoted from injected finding text) as `status: unparseable`.
+  Requests send no sampling parameters, which current Claude models reject,
+  and OpenAI requests bound the reply with `max_completion_tokens` instead of
+  the deprecated `max_tokens`, which the o-series reasoning models reject. The
+  bound is 4,096 tokens on both providers: thinking and reasoning tokens count
+  toward it, and the earlier 400 ended responses before any verdict on models
+  that think; the verdict text is still refused over 16 KiB.
+  `options.llm_triage.structured_output: true` asks the provider to constrain
+  the reply to the verdict JSON schema (`output_config.format` or a strict
+  `response_format`); it is off by default because not every model supports it.
+  `python -m tools.evaluation.triage_canaries` runs author-written injection
+  canaries offline (in the unit tests) to check that injected text stays data
+  and cannot change a finding; `--live` sends them to a model, unpublished.
+- `--allow-plugin` and `options.plugins` accept `name=module:Class`.
+  A pinned approval refuses a plugin whose entry point resolves elsewhere
+  (`target-mismatch`); a bare name keeps the previous behavior. Duplicate
+  approvals for one name are refused. `name=module:Class@distribution==version`
+  also requires the entry point to come from that installed distribution and
+  version (`distribution-mismatch`), checked from metadata before import.
+- Redaction withholds the value in `Bearer token <value>`, keys ending in
+  `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
+  literals passed to setter calls such as `setProperty("openai.key", ...)`,
+  and `value`, `key` and `credential` fields inside an `auth` mapping, at any
+  depth of the mapping and inside lists and sets under it.
+  The token-word credential stops before a glued `--option` or `=name`, and a
+  `.name:` or `.name=` setting path glued into it reads as a setting instead,
+  so the name stays whole for the rule that withholds the value after it. A
+  setter-call path whose name alone identifies a credential
+  (`m.put("openai.token", ...)`, `"Azure:Secret"`, `"app.jwt"`) withholds any
+  literal, as the same names do in settings files; paths whose last word
+  names one (`"openai.key"`) keep withholding only an opaque literal.
+  Evidence snippets also get a last-resort pass that withholds a quoted
+  literal that looks generated (20 or more token characters mixing upper
+  case, lower case and digits, with frequent class switches and high entropy),
+  whatever name or call surrounds it. Hex digests, UUIDs and ordinary
+  identifiers keep their text. A Hypothesis property test covers both sides.
+- `shadowscan jwt TOKEN...` and `shadowscan run --set` with a credential value
+  print a warning that command-line arguments are visible in process listings
+  and shell history. The value is never echoed and the scan still runs.
+- With a stable identity key, incremental cache entries carry
+  `payload_hmac_sha256` under a key derived from it, and entries without a
+  valid MAC are rescanned. Existing keyed entries miss once. Unkeyed caches
+  keep the SHA-256 checksum, which detects damage, not tampering.
+- Incremental Git fingerprinting reads `git` output through the bounded
+  metadata reader, so repository-controlled refs cannot exhaust memory.
+- The HTTP destination policy judges a well-known NAT64 address
+  (`64:ff9b::/96`) by the IPv4 address it embeds, so IPv6-only runners
+  behind DNS64 can reach public APIs. NAT64 forms of private, loopback,
+  link-local and metadata addresses stay refused, as does the local-use
+  prefix `64:ff9b:1::/48`.
+- `shadowscan merge` sets the fleet `finished_at` to the latest source time
+  compared as an instant, not the lexically largest string. A source value
+  that is not an offset-aware ISO 8601 time is ignored.
 
 ### Redaction on CPython 3.12.0 to 3.12.3
 
@@ -176,7 +455,13 @@ summarizes each release for people who install and operate ShadowScan.
   source that reported it had an inventory. A shadow or unassessed finding has
   no `registry_match`. The merged report carries `inventory_present`
   (true when any source had an inventory, even an empty one), and a source
-  whose `inventory_present` is not a boolean is refused (exit 1).
+  whose `inventory_present` is not a boolean is refused (exit 1). A source
+  without `inventory_present` (reports from the v0.1.x releases, which share
+  the finding identity schema) is refused (exit 1) when it records any
+  registration (`shadow`, `registry_match` or a nonzero `inventory_size`):
+  reading the missing key as "no inventory" silently turned its shadow
+  verdicts into `unassessed` and lowered the fleet's shadow count. Rescan
+  such sources before merging.
   The terminal table, Markdown and HTML reports label such a finding
   `unassessed` and count them in the summary when the merged report has an
   inventory, instead of leaving a blank cell that reads as registered.
@@ -237,8 +522,9 @@ summarizes each release for people who install and operate ShadowScan.
   and connector completeness, whether an inventory was supplied). Several
   reports are merged as `merge` merges them; a finding counts as shadow only
   when a report reconciled with an inventory says so, and a report's own
-  `inventory_present: false` is believed over its shadow values. A report
-  that `merge` produced is refused (exit 1): pass the source reports.
+  `inventory_present: false` is believed over its shadow values and over its
+  `inventory_size`. A report that `merge` produced is refused (exit 1): pass
+  the source reports.
 - A control no finding references reads `not observed` only when every report
   is complete; otherwise it reads `unknown (scan incomplete)`, and counts of
   referenced controls are marked as lower bounds. An incomplete input still
@@ -395,8 +681,9 @@ summarizes each release for people who install and operate ShadowScan.
   vocabulary, up to 64 exact-resource bindings with collection coverage, and
   `listing_complete`. A malformed record is ignored and makes the scan
   incomplete (`engine.registries`, exit 3). Record evidence
-  (`registry:<type>`, confidence group `registry-record`) has weight 0.5. No
-  built-in connector emits records yet.
+  (`registry:<type>`, confidence group `registry-record`) has weight 0.5.
+  `cloud.aws`, `cloud.gcp` and `identity.entra` emit records (see their
+  entries below); no other built-in connector does.
 - Only a built-in connector that declares the new `emits_registry_records`
   engine hook may emit records. The engine drops `registry_record` from other
   connectors' findings, including cached ones and those of a plugin that
@@ -570,6 +857,27 @@ summarizes each release for people who install and operate ShadowScan.
   since an HTTP client can read another host from it
   (`http://remote.example\@localhost/` reaches `remote.example`); its evidence
   then names no host.
+- Identity and transport checks no longer read only the sanitized record.
+  Parsing redacts every `env` value of a file wherever it appears and keeps
+  twelve arguments, which could hide the `NODE_OPTIONS` or `PATH` name, the
+  `cmd /c` operator or `%VAR%`, or the `docker run -e` value that leaves a
+  launch unidentified, and let the approved catalog vouch for it. The parser
+  now decides on the configured values and marks a server whose record would
+  name a different package `launch_unidentified: true`, and a plaintext URL
+  that redaction hid `plaintext_transport: true` (it keeps the
+  `mcp-insecure-transport` tag and the `mcp-plain-http` factor); neither
+  marker holds a value. A record with a redacted env name, `docker run -e`
+  value, or `cmd /c` or batch-file argument names no package.
+- A launcher under `/proc` or `/dev` (`/proc/self/cwd/npx`) counts as a
+  relative path, and `PREFIX` and `DESTDIR`, under which npm reads its global
+  npmrc and so its registry, leave a launch unidentified.
+- A remote server with `remotes[]` beside its URL is matched by every
+  endpoint it lists, which one registry name must list together; before, only
+  the first URL was compared.
+- `mcp-insecure-transport` and `a2a-plaintext-interface` read a URL as WHATWG
+  URL parsers do: tab, CR and LF removed, leading control characters stripped,
+  and `http:/host`, `http:\\host` or `http:///host` taken as a plaintext
+  remote host (`http:///host` was not flagged before).
 - The tests use a synthetic snapshot shaped like the live registry API. No
   live registry fetch or tenant acceptance is part of the test suite.
 
@@ -639,7 +947,11 @@ summarizes each release for people who install and operate ShadowScan.
   is not a plain resource name (an `https:` URL, an API version segment, a
   trailing slash) makes that registry's listing incomplete and the scan
   incomplete (exit 3, one warning). It was previously ignored, so the engine
-  it registered could be reported `observed-not-registered`.
+  it registered could be reported `observed-not-registered`. So does a nested
+  name under a reasoning engine or Dialogflow agent (`agents/<id>/flows/<id>`).
+  A plain nested name of a collection the scan does not observe (a publisher
+  model, `publishers/google/models/<id>`) names no engine and is read like a
+  Vertex AI endpoint; it previously made every such scan exit 3.
 - A publisher record must be named as a publisher of the project and location
   it was listed in (`_project` and `_location` are now required), and one named
   with another project's number is dropped like a foreign record, so it can no
@@ -675,7 +987,12 @@ summarizes each release for people who install and operate ShadowScan.
   without a warning or error in that region for the scanned account (an
   export that rejects a runtime or gateway record counts) and every runtime and
   gateway finding of that region could be reported. An auto-detected record
-  still in `DRAFT` binds nothing: nobody submitted it, so it registers nothing.
+  binds whatever its status: a `DRAFT` nobody submitted registers nothing
+  (core reconciliation reports it `not-comparable`, `record-status`), but its
+  binding keeps the registry's account in scope, so the runtime or gateway
+  behind a registry of drafts only reads `observed-not-registered` when the
+  listing is complete. Stripping the draft's binding had left such a registry
+  without scope and its runtimes without any reconciliation.
   Provenance on a record created through the API is the publisher's assertion
   and binds nothing, and a provenance relation this release does not recognize
   binds nothing and makes the scan incomplete.
@@ -716,6 +1033,27 @@ summarizes each release for people who install and operate ShadowScan.
   `registry_coverage: approved-only`, never set `listing_complete`, have no
   bindings and `approval_mode: unknown`, and keep their registry's account
   without being marked unresolved. Batch errors report only their codes.
+- AgentCore gateway findings are named by the gateway ARN, read through
+  `GetGateway` (already covered by `bedrock-agentcore:Get*`): `ListGateways`
+  returns no ARN, so live gateway findings were named by their id and a
+  registry binding to the gateway ARN could never match, reading the record
+  `registered-not-observed` and the gateway `observed-not-registered` in a
+  complete scan. Only the ARN and URL are kept from `GetGateway`. A failed
+  call, or details without an ARN, makes the scan incomplete; a gateway
+  replayed from an older export without its ARN takes its region's bindings
+  out of scope. Live gateway finding ids change: re-baseline them.
+- A runtime, gateway or registry record that analysis rejects, that an export
+  rejects or a replay drops, or whose finding `run` omits for failing
+  sanitization now withdraws the registry claims it could undercut: every
+  record's `listing_complete` becomes false and every in-scope binding
+  `unknown`. Surviving records had kept `listing_complete` and replay had kept
+  the exported in-scope coverage, so an incomplete scan still reported
+  `observed-not-registered` or `registered-not-observed` as facts.
+- Analysis bounds the text of a replayed registry record to the collection
+  limits (names, display names, status reasons and registry names to 300
+  characters, record versions to 64, provenance to the exported fields) and
+  rebuilds its descriptor summary with the collection limits and fields; an
+  edited export had carried unbounded text into titles and metadata.
 - The registry responses and `tests/fixtures/cloud/aws_registry_records.jsonl`
   are synthetic, modeled on the installed SDK models; nothing was validated
   against a live account. The README demo export is unchanged.
@@ -794,14 +1132,26 @@ summarizes each release for people who install and operate ShadowScan.
   request, such as an agent a user shared, is `registered` instead of
   `approved`. A trusted tenant entry accepts it, with the app registration and
   agent identity it binds, only with `allow_registered_only`;
-  `allow_auto_approved` no longer approves it without a reviewer.
+  `allow_auto_approved` no longer approves it without a reviewer. Only a
+  Microsoft or partner package (`type` `microsoft` or `external`) with no
+  request is `approved`; a package with no request whose `type` is missing or
+  any other member (such as `unknownFutureValue`, which Graph returns for a
+  member added later) is `unknown`, so `allow_auto_approved` does not sanction
+  it or the agent identity it names.
 - A binding's coverage is `unknown` instead of `in-scope` when any record of the
   export was rejected as malformed, so a present but malformed app registration
-  or agent identity is not reported `registered-not-observed`.
+  or agent identity is not reported `registered-not-observed`. In a replay, a
+  record the offline loader dropped (an invalid or truncated JSON line, a
+  duplicate key, a provider error record) counts as rejected too: binding
+  coverage is `unknown` and `listing_complete` is `false`.
 - The coverage marker records the tenant the credential is bound to
   (`tenantId`). A replay whose `tenant_id` differs from it is incomplete and its
-  records get an empty registry id, so they cannot be trusted; an older export
-  without the field replays as before.
+  records get an empty registry id and no bindings, so they cannot be trusted
+  and cannot mark the configured tenant's objects `registered-and-observed`. A
+  pre-issued token's decoded `tid` is recorded also when `tenant_id` is not set
+  or names another tenant, and a run whose tenant is unknown writes
+  `tenantId: null`, which a replay with `tenant_id` treats as unattributed and
+  incomplete; only an older export without the field replays as before.
 - The fixtures and Graph payloads in the tests are synthetic, modeled on
   Microsoft's Graph reference pages; nothing was validated against a live
   tenant.
@@ -1224,9 +1574,10 @@ author-written and not independent review.
 - A project whose executable code constructs and serves an MCP server (the
   SDK plus a server-construction idiom outside test code) is reported through
   the `mcp-server` capability, `metadata.mcp_server` and an "MCP server in"
-  title (see "October 8 MCP server capability and model id attribution").
-  The finding kind, resource and identity are
-  unchanged; `mcp-server` findings remain MCP configuration inventories.
+  title (see "October 8 MCP server capability and model id attribution" under
+  "Candidate change history" in `docs/production.md`). The finding kind,
+  resource and identity are unchanged; `mcp-server` findings remain MCP
+  configuration inventories.
   MCP client code stays as before.
 - Spring AI: `ChatClient` builder chains that register concrete tools with
   `defaultTools(new ...)` after setting a system prompt or advisors, and
@@ -1385,9 +1736,9 @@ baselines; rebaseline before comparing (see `docs/production.md`).
 
 - The JS/TS/TSX lexer now lexes brace-less JSX elements as attribute values
   (`title=<span>…</span>`), a legal construct that marked real repositories
-  incomplete. Plain `.js`/`.mjs`/`.cjs` files keep the JSX retry that applies
-  only when the plain reading is ambiguous and the JSX reading completes.
-  Malformed JSX still fails closed.
+  incomplete. Malformed JSX still fails closed. How a plain `.js`, `.mjs` or
+  `.cjs` file is read as JSX is described under "Real-world benchmark
+  follow-up fixes" below.
 - Credential detection scales its per-execution regex allowance linearly
   with declared input size (`LINEAR_SECONDS_PER_MILLION_CHARS`, floor
   0.1 s, always inside the per-file wall budget), so keyword-dense
@@ -1466,8 +1817,8 @@ baselines; rebaseline before comparing (see `docs/production.md`).
   line break and reported `incomplete source lexical analysis`. It now stays open across the
   break, and an unclosed one is still incomplete.
 - Fixed: a `.js`, `.mjs` or `.cjs` file with JSX (React code in a `.js` file) was lexed as
-  plain JavaScript and reported incomplete. Plain lexing is retried as JSX only when it fails,
-  and the JSX reading is used only when it lexes completely. `.ts` files are never read as JSX.
+  plain JavaScript and reported incomplete. Such a file is now also read as JSX, under the rule
+  described under "Real-world benchmark follow-up fixes" below. `.ts` files are never read as JSX.
 - Fixed (fail-open in the two changes above): a quote the Rust lexer misread opened an ordinary
   string that now ran across lines to the next quote, masking the code in between while the file
   reported complete. Rust C raw strings (`cr"..."`, `cr#"..."#`) and character literals with a
@@ -1492,12 +1843,14 @@ baselines; rebaseline before comparing (see `docs/production.md`).
 
 ### Real-world benchmark follow-up fixes
 
-- `.js`, `.mjs` and `.cjs` files with a closing or self-closing tag are read
-  both as plain JavaScript and as JSX. When both readings complete, only what
-  both mask stays masked: element text such as `src/*.js` can no longer open a
-  plain-JavaScript comment that hides code up to a later `*/` while the scan
-  reports complete. A JSX reading that exhausts its look-ahead budget marks the
-  file incomplete.
+- A `.js`, `.mjs` or `.cjs` file is read as plain JavaScript first. When that
+  reading is ambiguous, or the file holds a closing or self-closing tag (`</a`,
+  `/>`), it is also read as JSX. When only one reading completes, that reading
+  is used. When both complete, only what both mask stays masked: element text
+  such as `src/*.js` can no longer open a plain-JavaScript comment that hides
+  code up to a later `*/` while the scan reports complete. When neither
+  completes, or the JSX reading exhausts its look-ahead budget, the file is
+  incomplete (exit 3).
 - Fixed: lossy text decoding checks every bounded window, so an ASCII prefix
   cannot hide an invalid or control-character body. Python and notebook files
   with a UTF-8 byte-order mark retain strict decoding of invalid bytes.
@@ -1954,12 +2307,14 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
   between them: `yield <a> 1` and `await <a> 1` in a script (where both words
   are names), `of <a> 1` after an operand, a keyword cut out of a longer name
   (`a<ZWNJ>typeof <a> 1`, likewise at a combining mark or a `\u{...}` escape)
-  and the second `<` of a left shift (`mask<<shift>limit`). In `.js`, `.mjs`
-  and `.cjs` files JSX is now only tried when the plain walk is ambiguous, and
-  not used where an element follows a word other than a reserved word that
-  cannot be a name (`return`, `typeof`, `case` and the like) or in a file with
-  such a shift; the scan then stays incomplete. Before, the code connector
-  lexed these files as JSX from the start.
+  and the second `<` of a left shift (`mask<<shift>limit`; see "Lexical
+  coverage" above). Before, the code connector lexed `.js`, `.mjs` and `.cjs`
+  files as JSX from the start; they are now read as plain JavaScript first
+  (see "Real-world benchmark follow-up fixes" above). In their JSX reading, a
+  `<` after a word opens an element only after a reserved word that cannot be
+  a name (`return`, `typeof`, `case` and the like) that is not cut out of a
+  longer name; after `yield`, `await`, `of` or any other word the reading is
+  ambiguous and is not used.
 - Fixed: a `.ts` or `.tsx` file that started with `<TS>` or `<tileset` was
   masked whole as a Qt translation or Tiled tileset, although `<TS>expr` is a
   type assertion and `<TS></TS>` a JSX element. Only a file that opens with an
@@ -2495,9 +2850,9 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
 
 ### October 2 integration of #134 and repository hygiene review
 
-Pull request #134 landed through an integration pull request as one
-signed-off commit, rebuilt on the current `main`: its branch predated #123,
-#132 and #133 and conflicted with the SARIF message escaping from #123. The
+Pull request #134 landed through an integration pull request as one signed-off
+commit, rebuilt on the current `main`: its branch predated #123, #132 and #133
+and conflicted with the SARIF message escaping from #123. The
 other changes come from an AI-assisted review of CI, documentation, code and
 repository layout. Each defect was reproduced before it was fixed and has a
 regression test or check; none had a second-person review. Migration notes are

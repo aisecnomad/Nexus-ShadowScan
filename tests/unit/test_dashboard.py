@@ -464,34 +464,60 @@ def test_coverage_grows_with_the_runs_listed_not_sources_times_connectors(monkey
     assert panel.count("class='st-complete'>complete") == 300 + 3
 
 
-def test_reports_without_inventory_present_have_no_inventory(tmp_path):
-    # Reports written before inventory_present, whatever their inventory size or shadow values:
-    # registration counts only from a report that says it reconciled, as shadowscan merge reads it.
-    reports = []
+def test_reports_without_inventory_present_merge_only_without_registration(tmp_path):
+    # Reports written before inventory_present existed: one that records registration (a shadow
+    # verdict, a registry match or an inventory size) is refused, as shadowscan merge refuses it,
+    # rather than having its verdicts dropped to unassessed; one that records none reads as
+    # having no inventory.
+    registering = []
     for name, finding, size in (
         ("a.json", _finding("a", "r1", shadow=True), 3),
         ("b.json", _finding("b", "r2", shadow=False, registry_match="agent-2"), 0),
-        ("c.json", _finding("c", "r3"), 0),
     ):
         report = _result([finding], inventory_size=size).to_dict()
         report.pop("inventory_present")
-        reports.append((name, report))
+        registering.append((name, report))
         _write(tmp_path / name, report)
-    merged = merge_reports(reports)
-    assert [source["inventory_present"] for source in merged.collection_scope["fleet"]["sources"]] == [
-        False,
-        False,
-        False,
-    ]
+    for name, report in registering:
+        with pytest.raises(ValueError, match="predates inventory_present"):
+            merge_reports([(name, report)])
+        with pytest.raises(ValueError, match="predates inventory_present"):
+            report_result(name, report)
+    result, page, inventory = _dashboard(tmp_path, str(tmp_path / "a.json"), str(tmp_path / "b.json"))
+    assert result.exit_code == 1 and "rescan before merging" in result.output
+    assert page == "" and inventory == {}
+
+    plain = _result([_finding("c", "r3")], inventory_size=0).to_dict()
+    plain.pop("inventory_present")
+    _write(tmp_path / "c.json", plain)
+    merged = merge_reports([("c.json", plain)])
+    assert [source["inventory_present"] for source in merged.collection_scope["fleet"]["sources"]] == [False]
     assert merged.inventory_present is False
     # One report reads as it does among others.
-    assert [report_result(name, report).inventory_present for name, report in reports] == [False] * 3
-    assert {
-        finding.shadow for name, report in reports for finding in report_result(name, report).findings
-    } == {None}
-    _, _, inventory = _dashboard(tmp_path, str(tmp_path / "a.json"), str(tmp_path / "b.json"))
-    assert [source["inventory_present"] for source in inventory["sources"]] == [False, False]
-    assert inventory["counts"]["inventory_status"] == {"shadow": 0, "sanctioned": 0, "no-inventory": 2}
+    single = report_result("c.json", plain)
+    assert single.inventory_present is False and {finding.shadow for finding in single.findings} == {None}
+    _, _, inventory = _dashboard(tmp_path, str(tmp_path / "c.json"))
+    assert [source["inventory_present"] for source in inventory["sources"]] == [False]
+    assert inventory["counts"]["inventory_status"] == {"shadow": 0, "sanctioned": 0, "no-inventory": 1}
+
+
+def test_a_report_that_records_no_inventory_reads_the_same_alone_and_merged(tmp_path):
+    # A report's own inventory_present decides, as shadowscan merge reads it: an inventory size
+    # or shadow values in a report that says it had none are not reconciliation evidence, so the
+    # source row and the AI systems agree, and one report reads as it does among others.
+    for name, finding in (
+        ("a.json", _finding("a", "r1", shadow=True)),
+        ("b.json", _finding("b", "r2", shadow=False, registry_match="agent-2")),
+    ):
+        _write(tmp_path / name, _result([finding], inventory_present=False, inventory_size=3).to_dict())
+    result, page, alone = _dashboard(tmp_path, str(tmp_path / "a.json"))
+    assert result.exit_code == 0, result.output
+    assert [source["inventory_present"] for source in alone["sources"]] == [False]
+    assert alone["counts"]["inventory_status"] == {"shadow": 0, "sanctioned": 0, "no-inventory": 1}
+    assert "<td>none</td>" in page and "<td>supplied</td>" not in page
+    _, _, merged = _dashboard(tmp_path, str(tmp_path / "a.json"), str(tmp_path / "b.json"))
+    assert [source["inventory_present"] for source in merged["sources"]] == [False, False]
+    assert merged["counts"]["inventory_status"] == {"shadow": 0, "sanctioned": 0, "no-inventory": 2}
 
 
 def _v1_fleet(tmp_path: Path, *, inventory_size: int = 0) -> Path:
@@ -540,6 +566,31 @@ def test_an_earlier_fleet_merge_without_an_inventory_is_not_shadow(tmp_path):
     # A report that is not a fleet merge is never legacy.
     report = _report(tmp_path, "laptop", {"crew.py": AGENT})
     assert _dashboard(tmp_path, str(report))[2]["legacy_fleet"] is False
+
+
+def test_an_earlier_fleet_merge_with_an_inventory_keeps_its_shadow_status(tmp_path):
+    # A fleet merged after sources recorded inventory_present but before fleet-merge/v2 records
+    # inventory_present: true and three-valued shadow status. The status is read as written, and
+    # the legacy note must not say its AI systems read as no inventory.
+    fleet = merge_reports(
+        [
+            ("a.json", _result([_finding("shadow", "r1", shadow=True)], inventory_present=True).to_dict()),
+            ("b.json", _result([_finding("loose", "r2")], inventory_present=False).to_dict()),
+        ]
+    ).to_dict()
+    fleet["collection_scope"]["fleet"]["schema"] = "shadowscan.fleet-merge/v1"
+    for source in fleet["collection_scope"]["fleet"]["sources"]:
+        for key in ("started_at", "finished_at", "inventory_present", "connectors"):
+            source.pop(key)
+    assert fleet["inventory_present"] is True
+    result, page, inventory = _dashboard(tmp_path, str(_write(tmp_path / "fleet-v1-inventory.json", fleet)))
+    assert result.exit_code == 0, result.output
+    assert inventory["legacy_fleet"] is True
+    assert inventory["counts"]["inventory_status"] == {"shadow": 1, "sanctioned": 0, "no-inventory": 1}
+    assert inventory["coverage"]["unknown_coverage_sources"] == 2
+    assert "merged by an earlier version" in page and "merge the source reports again" in page
+    assert "coverage is unknown" in page and "therefore read as no inventory" not in page
+    assert "shadow status is read as that version recorded it" in page
 
 
 # ------------------------------------------------------------------ shadow status, autonomy and priority

@@ -20,6 +20,7 @@ from shadowscan.utils import (
     redaction_assignments,
     redaction_calls,
     redaction_commands,
+    redaction_entropy,
     redaction_formats,
     redaction_markup,
     redaction_rules,
@@ -35,6 +36,7 @@ SPLIT = [
     redaction_calls,
     redaction_commands,
     redaction_markup,
+    redaction_entropy,
 ]
 MODULES = [redaction, *SPLIT]
 

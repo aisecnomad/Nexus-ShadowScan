@@ -105,6 +105,9 @@ _AGENT_ELEMENT_TYPES = frozenset({"bot", "bots", "declarativeagent", "customengi
 _AGENT_CLASSES = frozenset({"promptagent", "hostedagent", "workflowagent", "managedagent", "unmanaged"})
 # Package types an organization publishes itself; Microsoft and partner packages are vendor-published.
 _ORG_PUBLISHED_TYPES = frozenset({"shared", "custom", "lob"})
+# Package types Microsoft or a partner publishes. Only these are approved without a request: a
+# missing type or another member (``unknownFutureValue``, a new one) may be the organization's own.
+_VENDOR_PUBLISHED_TYPES = frozenset({"microsoft", "external"})
 _AVAILABLE = frozenset({"allowedforall", "all", "allowedforsome", "some"})
 _AVAILABLE_TO_NONE = frozenset({"allowedfornone", "none"})
 # User and group lists of a package; only their sizes are kept.
@@ -380,13 +383,9 @@ class EntraConnector(BaseConnector):
             self._verify_tenant()
             return
         token = self.ctx.get("access_token", env="GRAPH_ACCESS_TOKEN")
-        if token and (self.include_agent_registry or self.include_agent_identities):
-            self._check_app_only_token(token)
-        elif token:
-            # Not bound without agent collections, but a user's token still lists only what that
-            # user may see, so its live collection scope is never attested.
-            self._caller_scoped = not _app_only(_unverified_claims(token) if isinstance(token, str) else None)
-        if not token:
+        if token:
+            self._check_pre_issued_token(token)
+        else:
             cid = self.ctx.get("client_id", env="AZURE_CLIENT_ID")
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
             if not (self.tenant and cid and secret):
@@ -487,25 +486,41 @@ class EntraConnector(BaseConnector):
         self._bound_tenant = claims["tid"]
         return token
 
-    def _check_app_only_token(self, token: Any) -> None:
-        """Bind a pre-issued ``access_token`` before an opt-in agent collection sends any request.
+    def _check_pre_issued_token(self, token: Any) -> None:
+        """Bind a pre-issued ``access_token`` to ``tenant_id`` before it sends any request.
 
-        Registry records are attributed to ``tenant_id``, which operators trust, so with
-        ``include_agent_registry`` a token of another tenant must not produce them (a minted
-        token is bound by its request). A decodable token must be a Microsoft Graph token. A
-        token that is not app-only (it has ``scp``, its ``idtyp`` is not ``app``, or it cannot
-        be decoded) lists only what its user may see: its agent listings are caller-scoped,
-        never a complete registry.
+        Everything collected is attributed to ``tenant_id``, which operators trust. With
+        ``include_agent_registry`` the token must decode and its tenant (``tid``) must be
+        ``tenant_id``, so a token of another tenant never produces registry records (a minted
+        token is bound by its request). Otherwise a token that decodes is still refused when its
+        ``tid`` is not a ``tenant_id`` given as a tenant ID: the mismatch is known before any
+        request, and ``GET /organization`` may be denied later. A domain name in ``tenant_id``
+        cannot be compared; the token is then bound to its own tenant, so a replay with another
+        ``tenant_id`` does not attribute these records to it. With an agent collection a
+        decodable token must be a Microsoft Graph token. A token that is not app-only (it has
+        ``scp``, its ``idtyp`` is not ``app``,
+        or it cannot be decoded) lists only what its user may see: its listings are
+        caller-scoped, never a complete registry, and its live scope is never attested.
         """
-        if self.include_agent_registry and self._binding_account():
+        account = self._binding_account()
+        if self.include_agent_registry and account:
             claims: dict[str, Any] | None = self._check_token_tenant(token, "the access_token")
         else:
             claims = _unverified_claims(token) if isinstance(token, str) else None
         if claims is not None:
-            _check_graph_audience(claims, "the access_token")
-            tenant, account = claims.get("tid"), self._binding_account()
-            if isinstance(tenant, str) and account and tenant.lower() == account.strip().lower():
+            if self.include_agent_registry or self.include_agent_identities:
+                _check_graph_audience(claims, "the access_token")
+            # The token's own tenant, whether or not tenant_id names it: a replay with another
+            # tenant_id must not attribute these records to it. A tenant_id given as a tenant ID
+            # that the token does not name is a mismatch known before any request.
+            tenant = claims.get("tid")
+            configured = account.strip().lower() if account else ""
+            if isinstance(tenant, str) and tenant.strip():
+                if _TENANT_ID.fullmatch(configured) and tenant.lower() != configured:
+                    raise _tenant_mismatch("the access_token")
                 self._bound_tenant = tenant
+            elif _TENANT_ID.fullmatch(configured):
+                raise _tenant_mismatch("the access_token")
         if not _app_only(claims):
             self._caller_scoped = True
 
@@ -519,9 +534,7 @@ class EntraConnector(BaseConnector):
             raise ConnectorError(f"identity.entra: {label} is not a decodable JWT")
         tenant = claims.get("tid")
         if not isinstance(tenant, str) or tenant.lower() != str(self.tenant).strip().lower():
-            raise ConnectorError(
-                f"identity.entra: the tenant (tid) of {label} does not match tenant_id (use the tenant ID)"
-            )
+            raise _tenant_mismatch(label)
         return claims
 
     def _pages(self, path: str, *, template: str | None = None, **kwargs: Any) -> Iterator[dict[str, Any]]:
@@ -608,7 +621,7 @@ class EntraConnector(BaseConnector):
         packages = "not-collected"
         if self.include_agent_registry:
             packages = "complete" if (yield from self._collect_packages()) else "incomplete"
-        marker = {
+        marker: dict[str, Any] = {
             "_kind": COVERAGE_KIND,
             "packages": packages,
             "agentIdentities": identities,
@@ -618,6 +631,10 @@ class EntraConnector(BaseConnector):
         }
         if self._bound_tenant and len(self._bound_tenant) <= MAX_IDENTIFIER_LENGTH:
             marker["tenantId"] = self._bound_tenant
+        elif self.include_agent_registry or self.include_agent_identities:
+            # No tenant could be established (a token without a usable tid): an explicit null,
+            # so a replay cannot mistake the export for an older one and attribute it to tenant_id.
+            marker["tenantId"] = None
         yield marker
 
     def _app_role_assignments(self, principal_ids: Iterable[str]) -> Iterator[dict[str, Any]]:
@@ -782,7 +799,7 @@ class EntraConnector(BaseConnector):
         for card_id, card in graph.card_manifests.items():
             self.ctx.examined()
             if card_id not in embedded_cards:
-                yield self._card_finding(card, graph)
+                yield self._card_finding(card, graph, coverage)
 
     def _index_records(self, records: Iterable[dict[str, Any]]) -> _GraphExport:
         graph = _GraphExport()
@@ -865,18 +882,31 @@ class EntraConnector(BaseConnector):
 
         account = self._binding_account()
         tenants = {m["tenantId"].strip().lower() for m in markers if isinstance(m.get("tenantId"), str)}
+        # A marker with an explicit null tenantId was written by a run whose tenant is unknown (a
+        # live run checked its token against tenant_id before collecting registry records).
+        unbound = self.offline and any("tenantId" in m and m["tenantId"] is None for m in markers)
+        foreign = account is not None and any(t != account.strip().lower() for t in tenants)
         coverage = _Coverage(
             packages=combined("packages"),
             agent_identities=combined("agentIdentities"),
             applications=combined("applications"),
             listing_scope="caller" if any(m["listingScope"] == "caller" for m in markers) else "registry",
-            rejected=graph.rejected,
-            foreign_tenant=account is not None and any(t != account.strip().lower() for t in tenants),
+            # The offline loader drops what it cannot read (an invalid JSON line, a duplicate key,
+            # a provider error record) before analysis sees it and reports an error; the dropped
+            # record may be the object a binding names. All records are consumed by now.
+            rejected=graph.rejected
+            or (self.offline and self.ctx.stats is not None and self.ctx.stats.incomplete),
+            foreign_tenant=account is not None and (foreign or unbound),
         )
-        if coverage.foreign_tenant:
+        if foreign:
             self.ctx.warn(
                 "identity.entra: the export was collected from another tenant than tenant_id; its "
                 "registry records are not attributed to tenant_id and coverage is incomplete"
+            )
+        elif coverage.foreign_tenant:
+            self.ctx.warn(
+                "identity.entra: the export was collected without a known tenant; its registry "
+                "records are not attributed to tenant_id and coverage is incomplete"
             )
         if self.offline:
             # Live collection warned already; a replay must not look complete.
@@ -1534,7 +1564,8 @@ class EntraConnector(BaseConnector):
         (a privileged application, say) must not approve it.
         """
         principal = graph.agent_identity_id(principal_id)
-        if principal is None:
+        # A record not attributed to tenant_id must not register tenant_id's objects either.
+        if principal is None or coverage.foreign_tenant:
             return []
         return [
             {
@@ -1618,7 +1649,7 @@ class EntraConnector(BaseConnector):
         bindings = (
             self._principal_binding(package.get("agentIdentityId"), graph, coverage) if detailed else []
         )
-        app_id = _bindable_app_id(package) if detailed else None
+        app_id = _bindable_app_id(package) if detailed and not coverage.foreign_tenant else None
         if app_id:
             bindings.append(
                 {
@@ -1633,7 +1664,7 @@ class EntraConnector(BaseConnector):
             coverage.listing_scope == "registry"
             and coverage.packages == "complete"
             and not graph.conflicting_packages
-            and not graph.rejected
+            and not coverage.rejected
         )
         access = _access_counts(package)
         f.add_evidence(
@@ -1776,13 +1807,18 @@ class EntraConnector(BaseConnector):
             )
         f.add_tag("registry-record")
         f.metadata[RECORD_KEY] = self._registry_record(
-            DEPRECATED_REGISTRY, instance_id, "deprecated", "agent", bindings
+            DEPRECATED_REGISTRY,
+            instance_id,
+            "deprecated",
+            "agent",
+            bindings,
+            attributed=not coverage.foreign_tenant,
         )
         finalize(f, self.index)
         f.kind = Kind.AGENT
         return f
 
-    def _card_finding(self, card: dict[str, Any], graph: _GraphExport) -> Finding:
+    def _card_finding(self, card: dict[str, Any], graph: _GraphExport, coverage: _Coverage) -> Finding:
         """A deprecated Entra agent registry card manifest that no exported instance embeds."""
         card_id = card["id"]
         conflicting = card_id in graph.conflicting_cards
@@ -1809,7 +1845,16 @@ class EntraConnector(BaseConnector):
             description = f"Deprecated Entra agent registry card '{name}'"
         f.add_evidence(registry_evidence(DEPRECATED_REGISTRY, description))
         f.add_tag("registry-record")
-        f.metadata[RECORD_KEY] = self._registry_record(DEPRECATED_REGISTRY, card_id, "deprecated", "a2a", [])
+        f.metadata[RECORD_KEY] = self._registry_record(
+            DEPRECATED_REGISTRY,
+            card_id,
+            "deprecated",
+            "a2a",
+            [],
+            # A foreign-tenant export's records stay unattributed here as at
+            # every other record site: the registry id is the tenant.
+            attributed=not coverage.foreign_tenant,
+        )
         finalize(f, self.index)
         f.kind = Kind.AGENT
         return f
@@ -1943,8 +1988,8 @@ def _package_status(package: dict[str, Any]) -> str:
     package explicitly not blocked and available to all or some users is approved when its
     request was approved. With no request, an organization's own package (shared, custom,
     lob) is only registered, since no person is known to have approved it, and a vendor
-    package is approved (made available by the tenant). Any other combination (a missing
-    flag, an unknown enum member) is unknown.
+    package (microsoft, external) is approved (made available by the tenant). Any other
+    combination (a missing flag or type, an unknown enum member) is unknown.
     """
     if package.get("isBlocked") is True:
         return "blocked"
@@ -1962,7 +2007,11 @@ def _package_status(package: dict[str, Any]) -> str:
         if request == "approved":
             return "approved"
         if request is None:
-            return "registered" if _enum(package.get("type")) in _ORG_PUBLISHED_TYPES else "approved"
+            package_type = _enum(package.get("type"))
+            if package_type in _ORG_PUBLISHED_TYPES:
+                return "registered"
+            if package_type in _VENDOR_PUBLISHED_TYPES:
+                return "approved"
     return "unknown"
 
 
@@ -1988,6 +2037,13 @@ def _binding_coverage(state: str, coverage: _Coverage) -> str:
 def _app_only(claims: dict[str, Any] | None) -> bool:
     """Whether unverified token claims show an app-only token (``idtyp: app`` and no ``scp``)."""
     return claims is not None and "scp" not in claims and claims.get("idtyp") == "app"
+
+
+def _tenant_mismatch(label: str) -> ConnectorError:
+    """The fixed refusal of a token whose ``tid`` is not ``tenant_id``; ``label`` names the token."""
+    return ConnectorError(
+        f"identity.entra: the tenant (tid) of {label} does not match tenant_id (use the tenant ID)"
+    )
 
 
 def _check_graph_audience(claims: dict[str, Any], label: str) -> None:

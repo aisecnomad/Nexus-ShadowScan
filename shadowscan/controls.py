@@ -24,7 +24,7 @@ from typing import Any
 
 from shadowscan import __version__
 from shadowscan.comparison import _complete, _summary_matches_findings
-from shadowscan.fleet import merge_reports
+from shadowscan.fleet import merge_reports, shows_inventory
 from shadowscan.governance import DECLARED_GOVERNANCE_KEY, GOVERNANCE_FIELDS, valid_declared_governance
 from shadowscan.mappings import MappingIndex, load_mappings
 from shadowscan.mappings.schema import (
@@ -95,9 +95,10 @@ def control_catalogs(frameworks: Sequence[str] = (), index: MappingIndex | None 
 def check_sources(reports: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
     """Refuse a report that ``shadowscan merge`` produced; raises ``ValueError``.
 
-    A merged report records a finding seen without an inventory as shadow and no
-    longer says which source had an inventory, so its shadow and inventory evidence
-    cannot be told apart from a real reconciliation.
+    A merged report's findings are already merged, so it no longer says which source
+    reported each finding with which shadow status, and a merge from before
+    ``shadowscan.fleet-merge/v2`` recorded a finding seen without an inventory as
+    shadow: its shadow evidence cannot be told apart from a real reconciliation.
     """
     for name, report in reports:
         scope = report.get("collection_scope") if isinstance(report, Mapping) else None
@@ -106,18 +107,16 @@ def check_sources(reports: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
 
 
 def _source_has_inventory(report: Mapping[str, Any]) -> bool:
-    """Whether a source report was reconciled with an inventory.
+    """Whether a source report was reconciled with an inventory: its own ``inventory_present``.
 
-    The report's own ``inventory_present`` and ``inventory_size`` decide; shadow
-    values count only in a report from before ``inventory_present`` existed.
+    Only that field decides, as :func:`shadowscan.fleet.merge_reports` reads it: an
+    ``inventory_size`` above zero or shadow values in a report that says it had no
+    inventory are not reconciliation evidence. A report from before ``inventory_present``
+    existed is refused there when it records registration (a shadow verdict, a registry
+    match or an inventory size), so one that reaches here had no inventory; a value that
+    is not a boolean is refused.
     """
-    size = report.get("inventory_size")
-    present = report.get("inventory_present")
-    if isinstance(present, bool):
-        return present or (type(size) is int and size > 0)
-    return (type(size) is int and size > 0) or any(
-        isinstance(record.get("shadow"), bool) for record in report["findings"]
-    )
+    return shows_inventory(dict(report))
 
 
 def _merged_shadow(reports: Sequence[tuple[str, Mapping[str, Any]]]) -> dict[str, bool | None]:

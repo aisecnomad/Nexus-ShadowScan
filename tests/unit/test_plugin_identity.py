@@ -338,3 +338,137 @@ def test_every_builtin_connector_satisfies_the_plugin_identity_rules():
         cls = registry.get_connector_class(name)
         assert registry._verify_connector_class(name, path, cls) is cls
     assert registry.plugin_registry_errors() == ()
+
+
+def test_pinned_approval_loads_only_the_reviewed_target(monkeypatch):
+    plugin = _connector()
+    _publish(monkeypatch, (ENTRY, plugin))
+    target = f"{MODULE}:Target0"
+    assert registry.get_connector_class(ENTRY, allowed_plugins=[f"{ENTRY}={target}"]) is plugin
+
+
+def test_pinned_approval_refuses_another_target_claiming_the_name(monkeypatch):
+    # A later-installed distribution registers the approved name with its own class.
+    _publish(monkeypatch, (ENTRY, _connector()))
+    imported: list[str] = []
+    monkeypatch.setattr(registry, "_load", lambda path: imported.append(path))
+    with pytest.raises(PluginRegistryError) as info:
+        registry.get_connector_class(ENTRY, allowed_plugins=[f"{ENTRY}=reviewed_pkg.connector:Hub"])
+    assert info.value.diagnostic.rule == "target-mismatch"
+    assert imported == [] and ENTRY not in registry._cache
+    config = ScanConfig(plugins=[f"{ENTRY}=reviewed_pkg.connector:Hub"])
+    assert config.plugins == [f"{ENTRY}=reviewed_pkg.connector:Hub"]
+
+
+def test_a_cached_class_is_not_reused_after_its_target_changes(monkeypatch):
+    first, second = _connector(), _connector()
+    _publish(monkeypatch, (ENTRY, first))
+    assert registry.get_connector_class(ENTRY, allowed_plugins=[ENTRY]) is first
+    module = sys.modules[MODULE]
+    module.Other = second
+    other = EntryPoint(name=ENTRY, value=f"{MODULE}:Other", group="shadowscan.connectors")
+    monkeypatch.setattr(registry, "entry_points", lambda **kwargs: [other])
+    assert registry.get_connector_class(ENTRY, allowed_plugins=[ENTRY]) is second
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [f"{ENTRY}="],
+        [f"{ENTRY}=not a target"],
+        [f"{ENTRY}=pkg"],
+        [ENTRY, f"{ENTRY}=pkg.mod:Cls"],
+        ["=pkg.mod:Cls"],
+    ],
+)
+def test_malformed_or_conflicting_plugin_approvals_are_refused(entries):
+    from shadowscan.config import ConfigValidationError
+
+    with pytest.raises(ConfigValidationError):
+        ScanConfig(plugins=entries)
+
+
+class _Dist:
+    def __init__(self, name: str | None, version: str | None) -> None:
+        # Metadata as importlib reads it: a header that is absent is absent, not None.
+        self.metadata = {k: v for k, v in (("Name", name), ("Version", version)) if v is not None}
+        self.version = version
+
+
+def _publish_from(monkeypatch: pytest.MonkeyPatch, dist: _Dist | None) -> tuple[type, str]:
+    plugin = _connector()
+    _publish(monkeypatch, (ENTRY, plugin))
+    entry = EntryPoint(name=ENTRY, value=f"{MODULE}:Target0", group="shadowscan.connectors")
+    if dist is not None:
+        entry = entry._for(dist)  # type: ignore[arg-type]
+    monkeypatch.setattr(registry, "entry_points", lambda **kwargs: [entry])
+    return plugin, f"{MODULE}:Target0"
+
+
+def test_distribution_pin_loads_the_reviewed_release(monkeypatch):
+    plugin, target = _publish_from(monkeypatch, _Dist("Acme_Hub.Plugin", "1.4.0"))
+    # Distribution names compare normalized, as pip does.
+    approval = f"{ENTRY}={target}@acme-hub-plugin==1.4.0"
+    assert ScanConfig(plugins=[approval]).plugins == [approval]
+    assert registry.get_connector_class(ENTRY, allowed_plugins=[approval]) is plugin
+
+
+@pytest.mark.parametrize(
+    "dist",
+    [
+        _Dist("acme-hub-plugin", "1.5.0"),
+        _Dist("typosquat-hub", "1.4.0"),
+        None,
+        _Dist(None, "1.4.0"),
+        _Dist("acme-hub-plugin", None),
+    ],
+    ids=["other-version", "other-distribution", "no-metadata", "no-name", "no-version"],
+)
+def test_distribution_pin_refuses_another_release_before_import(monkeypatch, dist):
+    _, target = _publish_from(monkeypatch, dist)
+    imported: list[str] = []
+    monkeypatch.setattr(registry, "_load", lambda path: imported.append(path))
+    with pytest.raises(PluginRegistryError) as info:
+        registry.get_connector_class(ENTRY, allowed_plugins=[f"{ENTRY}={target}@acme-hub-plugin==1.4.0"])
+    assert info.value.diagnostic.rule == "distribution-mismatch"
+    assert imported == [] and ENTRY not in registry._cache
+
+
+@pytest.mark.parametrize("order", ["pin-first", "name-first"])
+def test_a_name_approved_twice_is_refused_whatever_the_order(monkeypatch, order):
+    # Configuration validation refuses the duplicate; a list that bypasses it must not let the
+    # bare name drop the pin (dict order would otherwise decide which entry wins).
+    _, target = _publish_from(monkeypatch, _Dist("typosquat-hub", "0.1"))
+    pinned = f"{ENTRY}={target}@acme-hub-plugin==1.4.0"
+    approvals = [pinned, ENTRY] if order == "pin-first" else [ENTRY, pinned]
+    imported: list[str] = []
+    monkeypatch.setattr(registry, "_load", lambda path: imported.append(path))
+    with pytest.raises(PluginRegistryError) as info:
+        registry.get_connector_class(ENTRY, allowed_plugins=approvals)
+    assert info.value.diagnostic.rule == "conflicting-approval"
+    assert imported == [] and ENTRY not in registry._cache
+
+
+def test_absent_distribution_metadata_never_matches_a_pin_spelled_none(monkeypatch):
+    # str(None) would read "None"; absent Name or Version is unreadable metadata, refused.
+    _, target = _publish_from(monkeypatch, _Dist(None, None))
+    with pytest.raises(PluginRegistryError) as info:
+        registry.get_connector_class(ENTRY, allowed_plugins=[f"{ENTRY}={target}@None==None"])
+    assert info.value.diagnostic.rule == "distribution-mismatch"
+    assert "unreadable" in info.value.diagnostic.message
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        f"{ENTRY}=pkg.mod:Cls@",
+        f"{ENTRY}=pkg.mod:Cls@dist",
+        f"{ENTRY}=pkg.mod:Cls@dist==",
+        f"{ENTRY}=pkg.mod:Cls@==1",
+    ],
+)
+def test_malformed_distribution_pins_are_refused(entry):
+    from shadowscan.config import ConfigValidationError
+
+    with pytest.raises(ConfigValidationError):
+        ScanConfig(plugins=[entry])

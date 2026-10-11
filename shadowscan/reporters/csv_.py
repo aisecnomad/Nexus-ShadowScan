@@ -7,7 +7,7 @@ import io
 import re
 
 from shadowscan.models import ScanResult
-from shadowscan.reporters._publication import publication_stats, visible_controls
+from shadowscan.reporters._publication import has_inventory, publication_stats, visible_controls
 
 COLUMNS = [
     "id",
@@ -124,14 +124,22 @@ def render_csv(result: ScanResult) -> str:
     w.writeheader()
     if not result.complete:
         w.writerow({key: _safe_cell(value) for key, value in _status_row(result).items()})
+    inventory = has_inventory(result)
     for f in result.findings:
         f.sanitize()
         top_evidence = sorted(f.evidence, key=lambda e: -e.weight)[:3]
+        if f.shadow is None:
+            # A fleet merge leaves a finding that only sources scanned without an inventory
+            # reported without a status; beside assessed rows a blank cell would read as clean,
+            # so it is labelled as in the table, Markdown and HTML reports.
+            shadow = "unassessed" if inventory else ""
+        else:
+            shadow = "yes" if f.shadow else "no"
         row = {
             "id": f.id,
             "risk_level": f.risk.level.value,
             "risk_score": f.risk.score,
-            "shadow": "" if f.shadow is None else ("yes" if f.shadow else "no"),
+            "shadow": shadow,
             "registry_match": f.registry_match or "",
             "surface": f.surface.value,
             "kind": f.kind.value,

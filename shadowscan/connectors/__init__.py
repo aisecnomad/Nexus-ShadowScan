@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -120,6 +121,8 @@ class _NotAConnectorError(TypeError):
 
 
 _cache: dict[str, type[BaseConnector]] = {}
+# The import target each cached class was loaded from; a changed target reloads.
+_cache_targets: dict[str, str] = {}
 # Problems found by the most recent entry-point scan, replaced on every scan.
 _listing_errors: list[PluginDiagnostic] = []
 # Load-time refusals by entry-point name. A class is deterministic within one
@@ -386,16 +389,106 @@ def get_connector_class(name: str, *, allowed_plugins: Sequence[str] | None = No
         registry = available_connectors()
         if name not in registry:
             raise KeyError(f"unknown connector '{name}'. Known: {', '.join(sorted(registry))}")
-        if isinstance(allowed_plugins, str) or name not in (allowed_plugins or ()):
+        approvals = {} if isinstance(allowed_plugins, str) else _plugin_approvals(allowed_plugins or ())
+        if name not in approvals:
             raise ValueError(
                 f"third-party connector '{name}' is not approved; add its exact name to options.plugins"
             )
         path = registry[name]
-    if name in _cache:
+        pin = approvals[name]
+        if pin is _CONFLICTING:
+            # Configuration validation refuses a name approved twice; a list that reaches this
+            # point another way must not let a later bare name drop an earlier pin.
+            raise _refuse(
+                name,
+                "conflicting-approval",
+                f"plugin {_display(name)} is approved more than once; keep one entry for it",
+            )
+        pinned = pin[0] if pin is not None else None
+        if pinned is not None and path != pinned:
+            # The approval names the import target it was reviewed with; any other
+            # distribution now claiming the name is refused before it is imported.
+            raise _refuse(
+                name,
+                "target-mismatch",
+                f"plugin {_display(name)} resolves to {_display(path)}, not its approved target "
+                f"{_display(pinned)}",
+            )
+        if pin is not None and pin[1] is not None:
+            _check_distribution(name, path, pin[1], pin[2] or "")
+    if name in _cache and _cache_targets.get(name) == path:
         return _cache[name]
     cls = _load(path) if name in _BUILTIN else _load_plugin(name, path)
     _cache[name] = cls
+    _cache_targets[name] = path
     return cls
+
+
+_Pin = tuple[str, str | None, str | None]
+# A name approved by more than one entry: neither entry is trusted, whatever their order.
+_CONFLICTING: _Pin = ("", None, None)
+
+
+def _plugin_approvals(entries: Sequence[str]) -> dict[str, _Pin | None]:
+    """Approvals as name -> (target, distribution, version), or None when only the name is approved.
+
+    A name that several entries approve maps to :data:`_CONFLICTING`, which
+    :func:`get_connector_class` refuses: the entries could pin different targets, and the
+    last one must not win.
+    """
+    approvals: dict[str, _Pin | None] = {}
+    for entry in entries:
+        name, pinned, rest = entry.partition("=")
+        key = name.strip()
+        if key in approvals:
+            approvals[key] = _CONFLICTING
+            continue
+        if not pinned:
+            approvals[key] = None
+            continue
+        target, _, release = rest.strip().partition("@")
+        distribution, _, version = release.partition("==")
+        approvals[key] = (target, distribution or None, version or None)
+    return approvals
+
+
+def _normalized_distribution(name: str) -> str:
+    # PEP 503 normalization: "Acme_Plugin" and "acme-plugin" name one project.
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _check_distribution(name: str, path: str, distribution: str, version: str) -> None:
+    """Refuse a plugin whose entry point is not provided by the pinned distribution and version.
+
+    Only installed metadata is read; nothing is imported. The metadata is as
+    trustworthy as the environment it was installed into, so this binds a
+    reviewed release, not file contents: keep plugins in a hash-locked install.
+    """
+    found: set[tuple[str, str]] = set()
+    try:
+        for ep in entry_points(group="shadowscan.connectors"):
+            if ep.name != name or ep.value != path:
+                continue
+            dist = ep.dist
+            if dist is None:
+                continue
+            metadata = dist.metadata
+            # A missing header reads as None (with a deprecation warning on 3.13), which str()
+            # would turn into a comparable "None"; absent metadata is unreadable, not a value.
+            if "Name" not in metadata or "Version" not in metadata:
+                raise ValueError("distribution metadata lacks Name or Version")
+            found.add((_normalized_distribution(str(metadata["Name"])), str(metadata["Version"])))
+    except Exception as exc:
+        raise _refuse(
+            name, "distribution-mismatch", f"plugin {_display(name)} distribution metadata is unreadable"
+        ) from exc
+    if found != {(_normalized_distribution(distribution), version)}:
+        raise _refuse(
+            name,
+            "distribution-mismatch",
+            f"plugin {_display(name)} is not provided by its approved distribution "
+            f"{_display(distribution)}=={_display(version)}",
+        )
 
 
 def connectors_for_surface(surface: Surface | str) -> list[str]:

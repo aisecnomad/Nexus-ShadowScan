@@ -34,6 +34,7 @@ from shadowscan.utils import (
     redaction_assignments,
     redaction_calls,
     redaction_commands,
+    redaction_entropy,
     redaction_formats,
     redaction_markup,
     redaction_rules,
@@ -113,6 +114,11 @@ _CREDENTIAL_DESCRIPTORS = frozenset(
 # Descriptors that are opaque secret material inside a container named for
 # credentials ('credentials.id'), but name an identity elsewhere ('api_key.id').
 _CREDENTIAL_GROUP_IDS = frozenset({"id", "objectid"})
+# An 'auth' block ('{"auth": {"type": "bearer", "value": "..."}}') holds its
+# credential under a generic field name; 'auth' alone is too broad a key to
+# withhold whole, so only these generic credential fields inside it are.
+_AUTH_CONTAINER_KEYS = frozenset({"auth", "authentication", "authn"})
+_AUTH_VALUE_KEYS = frozenset({"value", "key", "credential"})
 
 
 # Leaves that keep their type: JSON's scalars and the standard library's, whose text is
@@ -452,7 +458,7 @@ class _Sanitizer:
         self.known: set[str] = set()
         # The same aliased object can occur both outside and inside an environment
         # block. Revisit it under the stricter naming policy, but still bound cycles.
-        self.discovered: set[tuple[int, bool]] = set()
+        self.discovered: set[tuple[int, bool, bool]] = set()
         self.ordered: list[str] = []
         self.work = 0
         self.cleaning: set[int] = set()
@@ -474,9 +480,11 @@ class _Sanitizer:
                 if escaped != child:
                     self.known.add(escaped)
 
-    def discover(self, item: Any, depth: int = 0, *, environment: bool = False) -> None:
+    def discover(self, item: Any, depth: int = 0, *, environment: bool = False, auth: bool = False) -> None:
+        """``auth``: the item lies under an auth container, whose generic credential fields
+        ``clean`` withholds; their values are learned so a copy in a sibling field goes too."""
         item = _plain(item)
-        identity = (id(item), environment)
+        identity = (id(item), environment, auth)
         if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.discovered):
             return
         if isinstance(item, _CONTAINERS):
@@ -491,6 +499,14 @@ class _Sanitizer:
                 name = str(key)
                 if established and (_sensitive_key(name) or environment and _sensitive_assignment_key(name)):
                     self.remember(child)
+                if established and auth and name.lower() in _AUTH_VALUE_KEYS:
+                    if isinstance(child, (list, tuple, set, frozenset)):
+                        for member in child:
+                            if not isinstance(member, _CONTAINERS):
+                                self.remember(member)
+                    elif not isinstance(child, _CONTAINERS):
+                        self.remember(child)
+                child_auth = auth or name.lower() in _AUTH_CONTAINER_KEYS
                 child_environment = environment or name.lower() in _ENVIRONMENT_KEYS
                 if established and self.env_values_are_secrets and child_environment:
                     if isinstance(child, Mapping):
@@ -500,10 +516,10 @@ class _Sanitizer:
                         for entry in child:
                             if isinstance(entry, Mapping):
                                 self.remember(entry.get("value") or entry.get("Value"))
-                self.discover(child, depth + 1, environment=child_environment)
+                self.discover(child, depth + 1, environment=child_environment, auth=child_auth)
         elif isinstance(item, (set, frozenset)):
             for child in item:
-                self.discover(child, depth + 1, environment=environment)
+                self.discover(child, depth + 1, environment=environment, auth=auth)
         elif isinstance(item, (list, tuple)):
             if self.extended:
                 for index in _aws_configure_argv_secret_indices(item):
@@ -526,7 +542,7 @@ class _Sanitizer:
                     flag, _, flag_value = value.partition("=")
                     if _sensitive_flag(flag.lstrip("-")):
                         self.remember(flag_value)
-                self.discover(child, depth + 1, environment=environment)
+                self.discover(child, depth + 1, environment=environment, auth=auth)
                 previous = child
 
     def text_passes(self, text: str) -> str:
@@ -595,7 +611,9 @@ class _Sanitizer:
             raise SanitizationLimitError("credential replacement size limit exceeded")
         return REDACTED.join(part.replace(secret, REDACTED) for part in parts)
 
-    def clean(self, item: Any, depth: int = 0) -> Any:
+    def clean(self, item: Any, depth: int = 0, *, auth: bool = False) -> Any:
+        """``auth``: the item lies under an ``auth`` container, where a generic ``value``,
+        ``key`` or ``credential`` field is a credential at any depth and inside lists."""
         self.cleaning_steps += 1
         if self.cleaning_steps > _MAX_SANITIZATION_NODES:
             raise SanitizationLimitError("sanitization work limit exceeded")
@@ -606,15 +624,15 @@ class _Sanitizer:
                 return REDACTED
             self.cleaning.add(id(item))
         try:
-            return self.clean_value(item, depth)
+            return self.clean_value(item, depth, auth=auth)
         finally:
             if isinstance(item, _CONTAINERS):
                 self.cleaning.discard(id(item))
 
-    def clean_value(self, item: Any, depth: int) -> Any:
+    def clean_value(self, item: Any, depth: int, *, auth: bool = False) -> Any:
         item = _plain(item)
         if isinstance(item, Mapping):
-            return self.clean_mapping(item, depth)
+            return self.clean_mapping(item, depth, auth=auth)
         if isinstance(item, (list, tuple)):
             sequence_out: list[Any] = []
             redact_next = opaque_next = False
@@ -623,7 +641,7 @@ class _Sanitizer:
                     sequence_out.append(_redact_value(child))
                     redact_next = opaque_next = False
                 else:
-                    sequence_out.append(self.clean(child, depth + 1))
+                    sequence_out.append(self.clean(child, depth + 1, auth=auth))
                     opaque_next = False
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
                         redact_next = _sensitive_flag(child.lstrip("-"))
@@ -644,19 +662,39 @@ class _Sanitizer:
             return self.text(item)
         return item
 
-    def clean_mapping(self, item: Mapping, depth: int) -> dict[str, Any]:
+    def clean_mapping(self, item: Mapping, depth: int, *, auth: bool = False) -> dict[str, Any]:
         mapping_out: dict[str, Any] = {}
         for key, child in item.items():
             name = str(key)
             result: Any
-            if _sensitive_key(name) or (
-                name.lower() == "value" and _record_has_secret_value(item, extended=self.extended)
+            credential_field = auth and name.lower() in _AUTH_VALUE_KEYS
+            if (
+                _sensitive_key(name)
+                or (name.lower() == "value" and _record_has_secret_value(item, extended=self.extended))
+                or (credential_field and not isinstance(child, _CONTAINERS))
             ):
                 result = _redact_value(child)
+            elif credential_field and isinstance(child, (list, tuple, set, frozenset)):
+                # A list or set under a credential field lists credentials; a record in it is a
+                # scheme record whose own credential fields the auth rule withholds.
+                members = [
+                    self.clean(v, depth + 1, auth=True) if isinstance(v, _CONTAINERS) else _redact_value(v)
+                    for v in child
+                ]
+                if isinstance(child, (set, frozenset)):
+                    result = frozenset(members) if isinstance(child, frozenset) else set(members)
+                else:
+                    result = tuple(members) if isinstance(child, tuple) else members
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
+                # The environment rules come before the auth rule: an env table inside an auth
+                # block withholds every value, as it does anywhere else.
                 result = {self.text(str(k)): _redact_value(v) for k, v in child.items()}
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, list):
                 result = [self.clean_environment_entry(entry, depth) for entry in child]
+            elif (auth or name.lower() in _AUTH_CONTAINER_KEYS) and isinstance(child, (Mapping, list, tuple)):
+                # An auth block's credential fields can sit in a nested scheme record
+                # ('auth.basic.value') or in a list of them; the rule follows the block down.
+                result = self.clean(child, depth + 1, auth=True)
             else:
                 result = self.clean(child, depth + 1)
             mapping_out[self.text(name)] = result
@@ -695,7 +733,7 @@ class _NestedSanitizer(_Sanitizer):
         )
         # An aliased object can occur both outside and inside a credential
         # container. Revisit it under the stricter parent, but still bound cycles.
-        self.containers: set[tuple[int, bool, bool, bool]] = set()
+        self.containers: set[tuple[int, bool, bool, bool, bool]] = set()
 
     def discover(
         self,
@@ -705,16 +743,19 @@ class _NestedSanitizer(_Sanitizer):
         environment: bool = False,
         credential: bool = False,
         credential_group: bool = False,
+        auth: bool = False,
     ) -> None:
         """Remember the leaves of the credential containers in ``item``.
 
         ``credential`` marks a container that ``clean`` withholds whole: the
         value of a sensitive key, of a record named for a secret by the
         established or the added rules, or a member of such a container.
-        ``credential_group`` marks a container named for credentials.
+        ``credential_group`` marks a container named for credentials. ``auth``
+        marks the inside of an auth container, whose generic ``value``, ``key``
+        and ``credential`` fields ``clean`` withholds.
         """
         item = _plain(item)
-        identity = (id(item), environment, credential, credential_group)
+        identity = (id(item), environment, credential, credential_group, auth)
         if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.containers):
             return
         if isinstance(item, _CONTAINERS):
@@ -735,8 +776,11 @@ class _NestedSanitizer(_Sanitizer):
                 )
                 # A record's value under any casing ('VALUE'), which clean
                 # withholds, and the members of a credential container.
-                member = (named_secret and lower_name == "value") or (
-                    credential and _credential_member(lower_name, child, group=child_group)
+                credential_field = auth and lower_name in _AUTH_VALUE_KEYS
+                member = (
+                    (named_secret and lower_name == "value")
+                    or (credential and _credential_member(lower_name, child, group=child_group))
+                    or (credential_field and not isinstance(child, _CONTAINERS))
                 )
                 if member:
                     self.remember(child)
@@ -744,8 +788,12 @@ class _NestedSanitizer(_Sanitizer):
                     child,
                     depth + 1,
                     environment=environment or lower_name in _ENVIRONMENT_KEYS,
-                    credential=key_sensitive or member,
+                    # A list or set under an auth credential field lists credentials.
+                    credential=key_sensitive
+                    or member
+                    or (credential_field and isinstance(child, (list, tuple, set, frozenset))),
                     credential_group=child_group,
+                    auth=auth or lower_name in _AUTH_CONTAINER_KEYS,
                 )
         elif isinstance(item, (list, tuple, set, frozenset)):
             for child in item:
@@ -757,6 +805,7 @@ class _NestedSanitizer(_Sanitizer):
                     environment=environment,
                     credential=credential,
                     credential_group=credential_group,
+                    auth=auth,
                 )
 
     def order(self) -> None:
@@ -942,6 +991,7 @@ class _RedactionNamespace(types.ModuleType):
         redaction_calls,
         redaction_commands,
         redaction_markup,
+        redaction_entropy,
     )
     # The modules, this one included, that bind each name once all are loaded.
     _binders: dict[str, tuple[types.ModuleType, ...]] = {}

@@ -25,7 +25,7 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 133 findings  •  129 shadow (inventory: 4 registered agents)               │
-│ critical 16  high 62  medium 55  •  cloud 30 identity 19 endpoint 18 …     │
+│ critical 16  high 63  medium 54  •  cloud 30 identity 19 endpoint 18 …     │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
@@ -500,11 +500,13 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
 
 ## Project status
 
-* **Release state.** Version `0.1.2` is prepared for public alpha distribution
-  as `NexusShadowScan`. Confirm publication and artifact identity on
+* **Release state.** Version `0.1.2` is published to PyPI as `NexusShadowScan`
+  and tagged `v0.1.2`, as an alpha pre-release. Verify the artifact identity on
   [PyPI](https://pypi.org/project/NexusShadowScan/0.1.2/) and the
-  [GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2).
-  The package classifier is `Development Status :: 3 - Alpha`.
+  [GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2)
+  before installing from the production index; publication does not establish
+  independent review or deployment acceptance. Commits on `main` after the tag
+  are unreleased. The package classifier is `Development Status :: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](https://github.com/aisecnomad/Project-Nexus/tree/main/archive/reviews) are AI-assisted, not third-party reviews.

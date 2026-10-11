@@ -434,6 +434,40 @@ def test_gitlab_blob_download_failure_keeps_neighbours(tmp_path, index, failure,
     assert connector.ctx.stats.warnings == [warning]
 
 
+def _gitlab_paginated_tree(connector, entries, total):
+    def paginate(path, params=None, on_page=None, **_):
+        if on_page is not None:
+            on_page(Mock(headers={"X-Total": total}))
+        yield from entries
+
+    connector.http.paginate_link = Mock(side_effect=paginate)
+
+
+def test_gitlab_tree_listing_cut_short_is_partial_coverage(tmp_path, index):
+    # Link pagination ends silently when a 'next' link is dropped; the server's
+    # X-Total says how many entries the collection holds. Fewer than that and
+    # the listing is incomplete: a settings file on a lost page could loosen a
+    # gate, so no gate of the project may claim every action.
+    good = b"from crewai import Agent\n"
+    entries = [
+        {"path": "agent.py", "type": "blob", "id": _sha(good)},
+        {"path": "other.py", "type": "blob", "id": _sha(good)},
+    ]
+    connector = _gitlab_api(index, [], good)
+    _gitlab_paginated_tree(connector, entries, "3")
+    rec = _record()
+    connector._fetch_via_api(rec, str(tmp_path))
+    assert "code.gitlab: tree listing cut short; source coverage partial" in connector.ctx.stats.warnings
+    assert rec["_tree_incomplete"] is True
+
+    complete = _gitlab_api(index, [], good)
+    _gitlab_paginated_tree(complete, entries, "2")
+    rec2 = _record()
+    complete._fetch_via_api(rec2, str(tmp_path / "complete"))
+    assert "code.gitlab: tree listing cut short; source coverage partial" not in complete.ctx.stats.warnings
+    assert rec2["_tree_incomplete"] is False
+
+
 def test_gitlab_unusual_tree_path_costs_only_that_file(tmp_path, index):
     good = b"from crewai import Agent\n"
     connector = _gitlab_api(
@@ -449,6 +483,59 @@ def test_gitlab_unusual_tree_path_costs_only_that_file(tmp_path, index):
     assert connector.ctx.stats.warnings == [
         "code.gitlab: unusual repository tree path skipped; source coverage partial",
     ]
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "../elsewhere/.claude/settings.json",
+        "/etc/.claude/settings.json",
+        "a/../../b/.codex/config.toml",
+        ".git/../.claude/settings.local.json",
+    ],
+)
+def test_api_snapshot_refuses_an_unread_settings_path_that_leaves_the_checkout(
+    tmp_path, index, monkeypatch, cls, hostile
+):
+    # Regression: a settings path of the tree listing that the snapshot did not write reached the
+    # filesystem scan's project lookup as root / path, so a traversal or absolute path from the API
+    # listed directories and probed setup.py outside the checkout. It is refused like a fetched
+    # path, before any download.
+    connector = _connector(index, cls)
+    gated = json.dumps({"permissions": {"defaultMode": "default"}}).encode()
+    downloads: list[str] = []
+    monkeypatch.setattr(connector, "_download_blob", lambda repo, blob_id: downloads.append(blob_id) or gated)
+    blobs = {".claude/settings.json": {connector.blob_id_field: _sha(gated)}}
+    with pytest.raises(ConnectorError, match="unsafe repository tree path"):
+        connector._write_api_snapshot(
+            _record(), blobs, list(blobs), str(tmp_path), tree_paths=[*blobs, hostile]
+        )
+    assert downloads == []
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_api_snapshot_counts_an_unusual_unread_settings_path_as_incomplete(tmp_path, index, monkeypatch, cls):
+    # A backslash or drive-like prefix cannot be materialised and, joined to a root on Windows,
+    # could leave it; on the scanned workstation it is still a directory whose settings a coding
+    # agent honors. Unreadable here, it makes the listing incomplete, so no approval gate of the
+    # repository claims every action on the strength of the files this scan could read.
+    connector = _connector(index, cls)
+    gated = json.dumps({"permissions": {"defaultMode": "default"}}).encode()
+    monkeypatch.setattr(connector, "_download_blob", lambda repo, blob_id: gated)
+    blobs = {".claude/settings.json": {connector.blob_id_field: _sha(gated)}}
+    repo = _record()
+    dest, written = connector._write_api_snapshot(
+        repo,
+        blobs,
+        list(blobs),
+        str(tmp_path),
+        tree_paths=[*blobs, "C:/.claude/settings.json", "..\\.claude\\settings.local.json"],
+    )
+    assert written == 1 and repo["_unread_settings"] == [] and repo["_tree_incomplete"] is True
+    assert any("settings file at an unusual path left unread" in w for w in connector.ctx.stats.warnings)
+    [claude] = [f for f in connector._scan_local(repo, dest) if "approval_gate" in f.metadata]
+    assert claude.metadata["approval_gate"]["scope"] == "some-actions"
 
 
 def test_gitlab_project_level_reports_variables_tokens_and_bots_without_values(index):
@@ -1105,6 +1192,51 @@ def test_api_snapshot_missing_a_settings_file_keeps_the_gate_partial(
     assert {"setting": "settings-file", "file": ".claude/settings.local.json"}.items() <= next(
         s for s in gate["settings"] if s["setting"] == "settings-file"
     ).items()
+
+
+def _api_connector_listing_a_settings_file(index, cls, gated: bytes, damage: str | None):
+    """An API-mode connector whose tree lists one gated settings.json, with the listing damaged or not."""
+    if cls is GitHubConnector:
+        entry = {"path": ".claude/settings.json", "type": "blob", "sha": _sha(gated), "size": len(gated)}
+        tree = {"sha": COMMIT, "tree": [entry]}
+        if damage == "truncated":
+            tree["truncated"] = True
+        if damage == "malformed-entry":
+            tree["tree"].append("not-an-entry")
+        blobs = {_sha(gated): {"encoding": "base64", "content": base64.b64encode(gated).decode()}}
+        return _github_api(index, tree, blobs)
+    entries = [{"path": ".claude/settings.json", "type": "blob", "id": _sha(gated)}]
+    if damage == "malformed-entry":
+        entries.insert(0, {"type": "blob"})
+    return _gitlab_api(index, entries, gated)
+
+
+@pytest.mark.parametrize(
+    "cls,damage",
+    [
+        (GitHubConnector, None),
+        (GitHubConnector, "truncated"),
+        (GitHubConnector, "malformed-entry"),
+        (GitLabConnector, None),
+        (GitLabConnector, "malformed-entry"),
+    ],
+)
+def test_api_tree_listing_cut_short_keeps_every_gate_partial(tmp_path, index, cls, damage):
+    # Regression: a truncated tree listing, or one holding an entry that names no path, warned that
+    # coverage was partial but left the fetched settings.json to claim an every-action gate. A
+    # settings file lost to the cut-short listing cannot be named, so no gate of that repository may
+    # cover every action.
+    gated = json.dumps({"permissions": {"defaultMode": "default"}}).encode()
+    connector = _api_connector_listing_a_settings_file(index, cls, gated, damage)
+    repo = _record()
+    dest = connector._fetch_via_api(repo, str(tmp_path))
+    assert Path(dest, ".claude", "settings.json").read_bytes() == gated
+    assert repo["_unread_settings"] == [] and repo["_tree_incomplete"] is (damage is not None)
+    [claude] = [f for f in connector._scan_local(repo, dest) if "approval_gate" in f.metadata]
+    gate = claude.metadata["approval_gate"]
+    assert gate["scope"] == ("every-action" if damage is None else "some-actions")
+    assert [s["file"] for s in gate["settings"]] == [".claude/settings.json"]
+    assert connector.ctx.stats.incomplete is (damage is not None)
 
 
 @pytest.mark.parametrize("cls", PROVIDERS)

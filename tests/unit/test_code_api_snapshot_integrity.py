@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 
@@ -201,7 +201,7 @@ def test_gitlab_pins_commit_before_pagination_when_default_branch_moves(tmp_path
     connector.http.try_get_json.return_value = {"id": COMMIT}
     original = b"from crewai import Agent\n"
 
-    def tree_pages(path, *, params):
+    def tree_pages(path, *, params, on_page=None):
         # Page 1 comes from the initial branch tip; by page 2 the branch has
         # advanced and its directory entries differ unless the ref was pinned.
         yield {"path": "first.py", "type": "blob", "mode": "100644", "id": _sha(original)}
@@ -220,6 +220,7 @@ def test_gitlab_pins_commit_before_pagination_when_default_branch_moves(tmp_path
     connector.http.paginate_link.assert_called_once_with(
         "/projects/1/repository/tree",
         params={"recursive": "true", "per_page": 100, "ref": COMMIT},
+        on_page=ANY,
     )
     assert not connector.ctx.stats.incomplete
     assert connector.ctx.stats.warnings == []

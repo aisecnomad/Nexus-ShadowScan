@@ -40,6 +40,7 @@ FORMS = sorted(path for path in (GITHUB / "ISSUE_TEMPLATE").glob("*.yml") if pat
 ACTION_PIN = re.compile(r"[\w.-]+/[\w.-]+(?:/[\w./-]+)?@[0-9a-f]{40}")
 # Privileges belong only to the job that needs them, never to every workflow.
 WRITE_SCOPES = {
+    ("ai-review-gate.yml", "orchestrator"): {"pull-requests", "checks"},
     ("codeql.yml", "analyze"): {"security-events"},
     # Optional third-party scanners that upload SARIF to code scanning.
     ("checkmarx-one.yml", "build"): {"security-events"},
@@ -2425,3 +2426,123 @@ def test_kubernetes_drift_cronjob_never_overlaps_and_mounts_inputs_read_only() -
     if shutil.which("sh"):
         checked = subprocess.run(["sh", "-n"], input=script, text=True, capture_output=True, timeout=30)
         assert checked.returncode == 0, checked.stderr
+
+
+# Consumer workflows under examples/ are copied into other repositories, so
+# their pins follow the same rules as this repository's workflows.
+EXAMPLE_WORKFLOWS = sorted((ROOT / "examples").glob("github-action-*.yml"))
+_PINNED_USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(?P<action>[\w.-]+/[\w./-]+@[0-9a-f]{40})(?P<rest>.*)$")
+# The reviewed release the commit was taken from: `# v7.0.1`, `# 2.3.45`.
+_VERSION_COMMENT = re.compile(r"^\s+#\s*v?\d+(?:\.\d+)*\s*$")
+
+
+@pytest.mark.parametrize("path", [*WORKFLOWS, *EXAMPLE_WORKFLOWS], ids=lambda path: path.name)
+def test_pinned_actions_carry_a_version_comment(path: Path) -> None:
+    """A bare commit pin cannot be reviewed against a release; the comment names it."""
+    missing = []
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        match = _PINNED_USES.match(line)
+        if match and not _VERSION_COMMENT.match(match.group("rest")):
+            missing.append(f"{path.name}:{number}: {match.group('action')}")
+    assert not missing, "name the reviewed release after each pin, as `# vX.Y.Z`: " + ", ".join(missing)
+
+
+@pytest.mark.parametrize(
+    ("line", "ok"),
+    [
+        ("      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1", True),
+        ("        uses: checkmarx/ast-github-action@882c03f380f4bdddae2d068540cbd73efe0796ac # 2.3.45", True),
+        ("      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", False),
+        ("      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # latest", False),
+        ("      - uses: ./.github/workflows/dco.yml", False),
+    ],
+)
+def test_version_comment_check_recognises_pins(line: str, ok: bool) -> None:
+    match = _PINNED_USES.match(line)
+    if line.endswith("dco.yml"):
+        assert match is None
+    else:
+        assert match is not None
+        assert bool(_VERSION_COMMENT.match(match.group("rest"))) is ok
+
+
+_IMAGE_DIGEST = re.compile(r"^[\w][\w./:-]*@sha256:[0-9a-f]{64}$")
+# The reviewed tag the digest was taken from: `# semgrep/semgrep:1.180.0; ...`.
+_IMAGE_TAG_COMMENT = re.compile(r"^\s*#\s*[\w][\w./-]*:v?\d+(?:\.\d+)*\b")
+
+
+def _workflow_images(path: Path) -> list[tuple[str, str, int]]:
+    """Each job `container` and `services.*` image a workflow runs, with its line number."""
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    images: list[str] = []
+    for job in (document.get("jobs") or {}).values():
+        container = job.get("container")
+        if isinstance(container, str):
+            images.append(container)
+        elif isinstance(container, dict) and isinstance(container.get("image"), str):
+            images.append(container["image"])
+        for service in (job.get("services") or {}).values():
+            if isinstance(service, dict) and isinstance(service.get("image"), str):
+                images.append(service["image"])
+    lines = path.read_text(encoding="utf-8").splitlines()
+    found = []
+    # The Nth listed occurrence of an image reads its Nth line: two jobs can run
+    # the same image, and a search from the top would hand the first
+    # occurrence's comment to both.
+    taken: dict[str, int] = {}
+    for image in images:
+        matches = [index for index, line in enumerate(lines, 1) if image in line]
+        position = min(taken.get(image, 0), len(matches) - 1)
+        taken[image] = position + 1
+        number = matches[position]
+        found.append((image, lines[number - 2] if number > 1 else "", number))
+    return found
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
+def test_workflow_container_images_are_pinned_by_digest(path: Path) -> None:
+    """A `container:` or service image runs the job's code; a tag can be moved, a digest cannot.
+
+    The digest alone cannot be reviewed against a release, so the comment on the line above
+    names the tag it was taken from.
+    """
+    problems = []
+    for image, comment, number in _workflow_images(path):
+        if not _IMAGE_DIGEST.match(image):
+            problems.append(f"{path.name}:{number}: {image} is not pinned by sha256 digest")
+        elif not _IMAGE_TAG_COMMENT.match(comment):
+            problems.append(f"{path.name}:{number}: name the reviewed tag above {image.split('@')[0]}")
+    assert not problems, "; ".join(problems)
+
+
+def test_workflow_image_check_sees_every_image_form(tmp_path: Path) -> None:
+    workflow = tmp_path / "images.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  a:\n"
+        "    container: ghcr.io/org/tool:1.2.3\n"
+        "    services:\n"
+        "      db:\n"
+        "        # postgres:16.4\n"
+        "        image: postgres@sha256:" + "a" * 64 + "\n"
+        "  b:\n"
+        "    container:\n"
+        "      # semgrep/semgrep:1.180.0; refresh the digest and the tag together after review.\n"
+        "      image: semgrep/semgrep@sha256:" + "b" * 64 + "\n"
+        "  c:\n"
+        "    container:\n"
+        "      image: semgrep/semgrep@sha256:" + "c" * 64 + "\n",
+        encoding="utf-8",
+    )
+    images = _workflow_images(workflow)
+    assert [image.split("@")[0] for image, _, _ in images] == [
+        "ghcr.io/org/tool:1.2.3",
+        "postgres",
+        "semgrep/semgrep",
+        "semgrep/semgrep",
+    ]
+    verdicts = [
+        bool(_IMAGE_DIGEST.match(image)) and bool(_IMAGE_TAG_COMMENT.match(comment))
+        for image, comment, _ in images
+    ]
+    assert verdicts == [False, True, True, False]

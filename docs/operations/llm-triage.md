@@ -16,6 +16,7 @@ options:
     min_level: medium            # lowest heuristic risk level triaged
     timeout_seconds: 30
     budget_seconds: 300          # 1 to 3600, the whole triage run
+    # structured_output: true    # ask the provider to constrain replies to the verdict schema
 ```
 
 The key is read from the environment variable named by `api_key_env`
@@ -58,9 +59,28 @@ Finding text comes from scanned repositories and remote APIs and is
 untrusted. The model is told to treat it as data, and a reply is accepted
 only as a JSON object with one of the four verdicts; anything else is
 recorded as `status: unparseable`, as is a reply longer than 16 KiB, which is
-refused unread (the response body is capped at 64 KiB). Free text is truncated
-(rationale 500 characters, suggested action 200) and sanitized with the rest
-of the finding when the report is written.
+refused unread (the response body is capped at 64 KiB). A reply that contains
+more than one verdict object, such as one quoted from injected finding text
+beside the model's own, is unparseable too. Requests send no sampling
+parameters such as `temperature`, which current Claude models and OpenAI
+reasoning models reject, and bound the response to 4,096 tokens (`max_tokens`
+for Anthropic, `max_completion_tokens` for OpenAI, whose `max_tokens` is
+deprecated and rejected by the o-series models; an OpenAI-compatible endpoint
+must accept it). The bound covers the thinking or reasoning tokens current
+models spend before the verdict, which count toward it; the verdict text itself
+is refused over 16 KiB. Free text is truncated (rationale 500 characters, suggested
+action 200) and sanitized with the rest of the finding when the report is
+written. These controls limit, but cannot prevent, a model being persuaded by
+finding text: never let a pipeline suppress or close findings because of
+`metadata.llm_triage`.
+
+`structured_output: true` also asks the provider to constrain the reply to the
+verdict schema: `output_config.format` for `anthropic`, a strict
+`response_format` JSON schema for `openai`. Enable it only for a model and
+endpoint that support it; otherwise every request fails and is recorded as
+`status: failed`. The reply is still checked the same way, since a schema
+constrains the form of the answer, not whether finding text persuaded the
+model.
 
 A failed request, including an unexpected error in the HTTP client, is
 recorded as `status: failed` on the finding and as a
@@ -99,3 +119,24 @@ in a library scan.
 
 Model verdicts are not measured: no evaluation of triage accuracy is
 published. Treat a verdict as a reviewer's note, not as a label.
+
+## Injection canaries
+
+`tools/evaluation/triage_canaries.json` holds author-written findings whose
+text tries to force a verdict (direct instructions, planted verdict objects,
+fake system tags, claims of prior approval, translated instructions).
+`python -m tools.evaluation.triage_canaries` runs them offline against a
+scripted model that obeys or echoes every injection and fails if finding text
+leaves the user turn, a canary's text does not reach the user turn, a
+two-verdict reply is accepted, or any reply changes a finding. The unit tests
+run it on every change. The corpus is read as the evaluation corpus is: a
+regular file (no symbolic link in its path), at most 1 MiB, unambiguous JSON
+with no duplicate keys, and at least one well-formed case; anything else is a
+usage error.
+
+`--live --model <id>` (with `--provider`, `--api-key-env`, `--base-url` and
+`--structured-output` as needed) sends the canaries to a real model and
+reports how many verdicts followed the injection. The cases and their `truth`
+labels are author-written, so a live count describes this small corpus
+against one model on one day; it is not a measure of robustness and no result
+is published.
