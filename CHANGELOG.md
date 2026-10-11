@@ -304,18 +304,18 @@ summarizes each release for people who install and operate ShadowScan.
   `openai.secret` or `AzureOpenAI:Secret`),
   and `value`, `key` and `credential` fields inside an `auth` mapping, at any
   depth of the mapping and inside lists under it, whatever their shape (a
-  list, set or record there is withheld whole). An opaque value in such a
-  field, or nested in it, is also removed from the record's other fields; a
-  label, placement or URL there ('header', 'in', a Postman token request's
-  `resource` record) is not, so it cannot withhold unrelated fields or keys.
-  In `Bearer token <value>` a credential name followed by an assignment
+  list, set or record there is withheld whole). In `Bearer token <value>` an
+  opaque value is withheld wherever it sits, before a colon or on the next
+  line included, while a credential name followed by an assignment
   (`Bearer token postgres_password_1: v`) is kept for the assignment rules,
-  which withhold its value; an opaque value is withheld wherever it sits,
-  before a colon or on the next line included.
-  Every other member of an `auth`, `authentication` or `authn` mapping keeps
-  the mapping rules, so a numeric or boolean `password` or `client_secret`
-  there is withheld as on 0.1.2, and the environment rule, so an `env` block
-  inside one has every value withheld.
+  which withhold its value. An opaque value in an auth field, or nested in
+  one, is also removed from the record's other fields; a label, placement or
+  URL there ('header', 'in', a Postman token request's `resource` record) is
+  not, so it cannot withhold unrelated fields or keys. Every other member of
+  an `auth`, `authentication` or `authn` mapping keeps the mapping rules, so
+  a numeric or boolean `password` or `client_secret` there is withheld as on
+  0.1.2, and the environment rule, so an `env` block inside one has every
+  value withheld.
   Evidence snippets also get a last-resort pass that withholds a quoted
   literal that looks generated (20 or more token characters mixing upper
   case, lower case and digits, with frequent class switches and high entropy),
@@ -323,9 +323,11 @@ summarizes each release for people who install and operate ShadowScan.
   identifiers keep their text. A Hypothesis property test covers both sides.
 - `shadowscan jwt TOKEN...` and `shadowscan run --set` with a credential value
   print a warning that command-line arguments are visible in process listings
-  and shell history. The value is never echoed and the scan still runs. The
-  warning goes to stderr: a wrapper that parses `2>&1` as a report breaks and
-  must read stdout or `-o FILE` alone.
+  and shell history. The value is never echoed, a `--set` key that is not a
+  plain identifier (a token pasted into the key position) is shown as
+  `<withheld key>`, and the scan still runs. The warning goes to stderr: a
+  wrapper that parses `2>&1` as a report breaks and must read stdout or
+  `-o FILE` alone.
 - With a stable identity key, incremental cache entries carry
   `payload_hmac_sha256` under a key derived from it, and entries without a
   valid MAC are rescanned. The MAC covers the entry's slot, input fingerprint
