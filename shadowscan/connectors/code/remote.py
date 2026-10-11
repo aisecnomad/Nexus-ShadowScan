@@ -685,8 +685,9 @@ class RemoteRepositoryConnector(BaseConnector):
         # blob size limit, past the sample cap, or not downloaded) could loosen an approval gate
         # that a fetched one sets; the filesystem scan records it as unreadable. Its path reaches
         # that scan's project lookup as ``root / path``, so it is checked like a fetched one, before
-        # any request: traversal aborts the repository, and an unusual path, which cannot be
-        # materialised either, is left out (the fetch loop or the sampling warning disclosed it).
+        # any request: traversal aborts the repository. An unusual path (a backslash or a
+        # drive-like prefix) cannot be materialised or joined to the root, but it is a real
+        # settings file to a client that reads it, so every gate of the tree stays partial.
         settings_paths: set[str] = set()
         for p in tree_paths:
             if posture_client(p) is None:
@@ -694,6 +695,7 @@ class RemoteRepositoryConnector(BaseConnector):
             try:
                 repository_relpath(p)
             except UnusualRepositoryPath:
+                tree_complete = False
                 continue
             settings_paths.add(p)
         written = 0

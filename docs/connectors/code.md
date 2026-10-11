@@ -935,9 +935,10 @@ files outside the scanned tree can override it, so treat an L2 ceiling as
 configuration evidence. In `code.github` and `code.gitlab` API mode, a
 settings file of the tree that the sampled snapshot did not write (a link, a
 blob over the size limit, one past the sample cap, or a failed download) is
-recorded as unread the same way, and a tree listing that was truncated or held
-entries naming no path keeps every gate of that repository at `some-actions`:
-a settings file nothing lists could loosen it.
+recorded as unread the same way, and a tree listing that was truncated, held
+entries naming no path, or names a settings file under a path that cannot be
+materialised (a backslash or a drive-like prefix) keeps every gate of that
+repository at `some-actions`: a settings file nothing reads could loosen it.
 
 ## `code.github`
 Enumerates an organization, a user or an explicit `repos:` list, fetches

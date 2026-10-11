@@ -483,7 +483,8 @@ def test_api_snapshot_refuses_an_unread_settings_path_that_leaves_the_checkout(
 @pytest.mark.parametrize("cls", PROVIDERS)
 def test_api_snapshot_leaves_an_unusual_unread_settings_path_out(tmp_path, index, monkeypatch, cls):
     # A backslash or drive-like prefix cannot be materialised and, joined to a root on Windows,
-    # could leave it; the fetch loop and the sampling warning already disclose such a path.
+    # could leave it, so it is never joined. It is still a settings file a client can read
+    # ('w\x/.claude/settings.local.json' on POSIX), so no gate of the tree claims every action.
     connector = _connector(index, cls)
     gated = json.dumps({"permissions": {"defaultMode": "default"}}).encode()
     monkeypatch.setattr(connector, "_download_blob", lambda repo, blob_id: gated)
@@ -496,9 +497,9 @@ def test_api_snapshot_leaves_an_unusual_unread_settings_path_out(tmp_path, index
         str(tmp_path),
         tree_paths=[*blobs, "C:/.claude/settings.json", "..\\.claude\\settings.local.json"],
     )
-    assert written == 1 and repo["_unread_settings"] == [] and repo["_tree_incomplete"] is False
+    assert written == 1 and repo["_unread_settings"] == [] and repo["_tree_incomplete"] is True
     [claude] = [f for f in connector._scan_local(repo, dest) if "approval_gate" in f.metadata]
-    assert claude.metadata["approval_gate"]["scope"] == "every-action"
+    assert claude.metadata["approval_gate"]["scope"] == "some-actions"
 
 
 def test_gitlab_project_level_reports_variables_tokens_and_bots_without_values(index):
