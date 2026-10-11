@@ -2073,9 +2073,11 @@ class FilesystemConnector(BaseConnector):
         # Settings files of the scanned tree that a remote API snapshot did not include (set by
         # the code.github / code.gitlab connectors that delegate to this one).
         self.unread_settings: list[str] = []
-        # Whether the remote API listing of the tree was cut short or held entries it could not
-        # name: settings files may exist that nothing lists, so no approval gate of this tree can
-        # claim every action (``record_approval(complete=False)``).
+        # Whether the listing of the tree was cut short or held entries it could not name: the
+        # remote API listing (set by the delegating connectors), or this walk stopped by
+        # max_files, max_entries, the deadline or a directory it could not list. Settings files
+        # may exist that nothing listed, so no approval gate of this tree can claim every
+        # action (``record_approval(complete=False)``).
         self.tree_listing_incomplete = False
         self._checked_submodules: set[tuple[Path, str]] = set()
         self._gitlink_roots: set[Path] = set()
@@ -2505,6 +2507,7 @@ class FilesystemConnector(BaseConnector):
 
         def walk_error(exc: OSError) -> None:
             self.ctx.error(f"code.filesystem: could not enumerate a directory under {root}")
+            self.tree_listing_incomplete = True
 
         # A gitfile or symlink also signals a checkout, but cannot authorize
         # reading external metadata. The checker reports that unknown coverage
@@ -2647,6 +2650,7 @@ class FilesystemConnector(BaseConnector):
         walk.examined += 1
         if walk.examined > self.max_files:
             self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
+            self.tree_listing_incomplete = True
             return False
         return True
 
@@ -2663,6 +2667,7 @@ class FilesystemConnector(BaseConnector):
                 f"code.filesystem: connector deadline reached while checking symbolic links under {root}; "
                 "results incomplete"
             )
+            self.tree_listing_incomplete = True
             return False
         # A link that resolves inside the scan root loses no coverage only if
         # the target is scanned at its real path.
@@ -2889,6 +2894,7 @@ class FilesystemConnector(BaseConnector):
             self._walk_entries(scan)
         except _WalkLimitError as exc:
             self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
+            self.tree_listing_incomplete = True
         self._report_default_excluded(scan)
         skipped_fixtures = self.skipped_oversize_test_fixtures - fixtures_before
         if skipped_fixtures:
@@ -2925,6 +2931,7 @@ class FilesystemConnector(BaseConnector):
             # files already enumerated are still scanned (in priority order)
             # so partial findings survive, and the limit is recorded.
             self.ctx.error(f"code.filesystem: {scan.label}: {exc}; results incomplete")
+            self.tree_listing_incomplete = True
         entries.sort(key=lambda entry: (_scan_priority(entry[0], entry[1].name), entry[3]))
         examined = 0
         for index, (rel, path, proj_root, size) in enumerate(entries):

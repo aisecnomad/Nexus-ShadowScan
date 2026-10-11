@@ -1432,3 +1432,19 @@ def test_a_case_variant_settings_file_is_read_for_the_approval_gate(tmp_path, in
     [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG and "approval_gate" in f.metadata]
     assert claude.metadata["approval_gate"]["scope"] == "some-actions"
     assert "posture-permissions-bypassed" in claude.tags
+
+
+def test_a_walk_cut_short_keeps_every_approval_gate_partial(tmp_path, index):
+    # max_files stops the walk after the strict settings file, before the bypass beside it:
+    # an unlisted settings file could loosen the gate, so it cannot claim every action.
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"defaultMode": "default"}})
+    )
+    (tmp_path / ".claude" / "settings.local.json").write_text(
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}})
+    )
+    findings, ctx = _run(index, tmp_path, max_files=1)
+    assert ctx.stats.incomplete
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG and "approval_gate" in f.metadata]
+    assert claude.metadata["approval_gate"]["scope"] == "some-actions"

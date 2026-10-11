@@ -828,6 +828,12 @@ summarizes each release for people who install and operate ShadowScan.
   `mcp-insecure-transport` tag and the `mcp-plain-http` factor); neither
   marker holds a value. A record with a redacted env name, `docker run -e`
   value, or `cmd /c` or batch-file argument names no package.
+- A local walk cut short (`max_files`, `max_entries`, the enumeration
+  deadline, a symbolic-link check at the deadline, or a directory that cannot
+  be listed) keeps every approval gate of the tree at `some-actions`, as a
+  truncated API listing already did; `code.github` and `code.gitlab` clone
+  mode delegate to this walk. A strict settings file read before the limit
+  had claimed an every-action gate while a bypass beside it went unread.
 - Coding-agent settings files are recognized as a case-insensitive file
   system resolves them, ignoring the trailing dots and spaces Windows drops:
   macOS and Windows clients read `.CLAUDE/settings.local.json` or
