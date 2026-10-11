@@ -108,16 +108,16 @@ def check_sources(reports: Sequence[tuple[str, Mapping[str, Any]]]) -> None:
 def _source_has_inventory(report: Mapping[str, Any]) -> bool:
     """Whether a source report was reconciled with an inventory.
 
-    The report's own ``inventory_present`` and ``inventory_size`` decide; shadow
-    values count only in a report from before ``inventory_present`` existed.
+    The report's own ``inventory_present`` and ``inventory_size`` decide. A report from
+    before ``inventory_present`` existed is read as :func:`shadowscan.fleet.merge_reports`
+    reads it: refused there when it records registration (a shadow verdict, a registry
+    match or an inventory size), so one that reaches here had no inventory.
     """
     size = report.get("inventory_size")
     present = report.get("inventory_present")
     if isinstance(present, bool):
         return present or (type(size) is int and size > 0)
-    return (type(size) is int and size > 0) or any(
-        isinstance(record.get("shadow"), bool) for record in report["findings"]
-    )
+    return False
 
 
 def _merged_shadow(reports: Sequence[tuple[str, Mapping[str, Any]]]) -> dict[str, bool | None]:

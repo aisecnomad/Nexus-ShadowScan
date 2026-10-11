@@ -99,7 +99,10 @@ says it is shadow, as registered when every report says it is registered, and
 as unknown otherwise. A report without an inventory knows nothing about
 registration, so it never makes a finding look shadow: a report's own
 `inventory_present` decides whether it had one, and its shadow values are
-ignored when it says it had none.
+ignored when it says it had none. A report written before `inventory_present`
+existed is refused (exit 1, "rescan before merging") when it records
+registration, as `shadowscan merge` refuses it, and counts as having no
+inventory when it records none.
 
 Pass the source reports themselves. A report that `shadowscan merge` produced
 (it carries `collection_scope.fleet`) is refused (exit 1): the merge records a
