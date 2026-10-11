@@ -1599,11 +1599,12 @@ class AwsConnector(BaseConnector):
     def _withhold_claims_for_unresolved_resources(self, findings: list[Finding]) -> None:
         """Withdraw registry claims when a runtime or gateway lacks the ARN a binding names.
 
-        Such a finding (a gateway whose GetGateway was denied or returned no ARN, or one
-        in an export written before GetGateway was read) can match no binding, so a
-        complete listing would read it as observed but not registered while its record
-        is out of scope. Every ``listing_complete`` is withdrawn instead. A live run has
-        already warned about the lookup; a replay warns here, so it is as incomplete.
+        Such a finding (a gateway whose GetGateway was denied or returned no ARN, a runtime
+        whose listing named no ARN, or either in an export written before the ARN was read)
+        can match no binding, so a complete listing would read it as observed but not
+        registered while its record is out of scope. Every ``listing_complete`` is withdrawn
+        instead, and the scan is incomplete, live or replayed alike: a replay of a live
+        export then reads exactly as the live scan did.
         """
         unresolved = any(
             f.resource_type in _BOUND_TYPES
@@ -1613,8 +1614,7 @@ class AwsConnector(BaseConnector):
         if not unresolved or not any(RECORD_KEY in f.metadata for f in findings):
             return
         self._registry_tainted = True
-        if self.offline:
-            self.ctx.warn("cloud.aws: AgentCore runtime or gateway without its ARN; registry claims withheld")
+        self.ctx.warn("cloud.aws: AgentCore runtime or gateway without its ARN; registry claims withheld")
 
     def _watched(self, records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
         """``records``, noting a replay whose loader dropped input (it reports every drop)."""

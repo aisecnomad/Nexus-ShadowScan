@@ -221,7 +221,9 @@ approved-only listing is complete. A registry record without these markers, as
 in exports written before they existed, replays as incomplete: regenerate such
 exports. A gateway in an export written before `GetGateway` was read has no
 ARN, so the bindings of its region replay `out-of-scope`, no registry listing
-reads as complete, and the replay is incomplete. Analysis bounds the
+reads as complete, and the replay is incomplete; a live runtime or gateway
+without its ARN does the same, so a live scan and the replay of its export
+agree. Analysis bounds the
 text of a replayed record to the lengths collection keeps (names, display
 names, status reasons and registry names to 300 characters, record versions and
 times to 64) and rebuilds its descriptor summary with the collection limits and fields,
