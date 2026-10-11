@@ -1402,6 +1402,62 @@ def test_pre_issued_token_of_another_tenant_never_produces_registry_records(
     assert len(responses.calls) == 0
 
 
+TENANT_ID = "11111111-2222-3333-4444-555555555555"
+OTHER_TENANT_ID = "99999999-8888-7777-6666-555555555555"
+
+
+@responses.activate
+@pytest.mark.parametrize("collections", [{"include_agent_identities": True}, {}])
+def test_pre_issued_token_of_another_tenant_is_refused_without_the_registry_collection(
+    monkeypatch, index, collections
+):
+    # Regression: the tid of a decodable token was compared with tenant_id only with
+    # include_agent_registry, so another tenant's agent identities, service principals, grants
+    # and applications were collected and attributed to tenant_id.
+    token = _token(tid=OTHER_TENANT_ID, scp=None, idtyp="app")
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", token)
+    ctx = _context(index, tenant_id=TENANT_ID, **collections)
+    findings = EntraConnector(ctx).run()
+    assert findings == [] and ctx.stats.skipped
+    _assert_incomplete(ctx, findings)
+    assert "the tenant (tid) of the access_token does not match tenant_id" in ctx.stats.skip_reason
+    diagnostics = " ".join([ctx.stats.skip_reason, *ctx.stats.errors, *ctx.stats.warnings])
+    assert all(part not in diagnostics for part in token.split(".") if len(part) > 8)
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+@pytest.mark.parametrize("collections", [{"include_agent_identities": True}, {}])
+@pytest.mark.parametrize(
+    "tenant_id,tid,bound",
+    [
+        (TENANT_ID, TENANT_ID.upper(), TENANT_ID.upper()),
+        # A tenant_id that is not a tenant ID cannot be compared with a tid before any request: not
+        # refused, and the token is bound to its own tenant. An agent collection then records that
+        # tenant in the coverage marker, which differs from tenant_id, so the collection reads as
+        # another tenant's (the guide says to give the tenant ID with a pre-issued token).
+        (TENANT, "other-tenant", "other-tenant"),
+    ],
+)
+def test_pre_issued_token_binds_a_tenant_id_without_the_registry_collection(
+    monkeypatch, index, collections, tenant_id, tid, bound
+):
+    monkeypatch.setenv("GRAPH_ACCESS_TOKEN", _token(tid=tid, scp=None, idtyp="app"))
+    responses.get(GRAPH + "/organization", json={"value": [{"id": TENANT_ID}]})
+    for path in ("/servicePrincipals", "/oauth2PermissionGrants", "/applications"):
+        responses.get(GRAPH + path, json={"value": []})
+    responses.get(AGENT_IDENTITIES, json={"value": []})
+    ctx = _context(index, tenant_id=tenant_id, **collections)
+    connector = EntraConnector(ctx)
+    assert connector.run() == []
+    assert not ctx.stats.skipped
+    if collections and tenant_id.lower() != tid.lower():
+        assert ctx.stats.incomplete and ctx.stats.warnings == [FOREIGN_TENANT_WARNING]
+    else:
+        assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert connector._bound_tenant == bound
+
+
 @responses.activate
 def test_pre_issued_token_of_the_tenant_collects_registry_records(monkeypatch, index):
     token = _token(scp=None, idtyp="app", roles=["CopilotPackages.Read.All"])

@@ -115,8 +115,18 @@ sends any request, so a token of another tenant never produces records
 attributed to the configured one; a mismatch or an undecodable token skips the
 connector (exit 3) with fixed text that names neither the token nor its claims.
 Client credentials need no such check: their token is requested for
-`tenant_id`. With `include_agent_registry` or `include_agent_identities`, a
-pre-issued token whose claims decode must also be issued for Microsoft Graph
+`tenant_id`. Without `include_agent_registry` (with `include_agent_identities`
+alone, or with neither collection) a pre-issued token whose claims decode is
+checked the same way when `tenant_id` is a tenant ID: a `tid` that differs
+skips the connector before any request, since agent identities, service
+principals, grants and applications are attributed to `tenant_id` as well. A
+domain name in `tenant_id` cannot be compared with a `tid`, and only the
+`GET /organization` check below applies; an undecodable token is then
+caller-scoped rather than refused, and a decodable one is bound to its own
+tenant, which an agent collection's coverage marker records and compares with
+`tenant_id` literally (give the tenant ID). With `include_agent_registry` or
+`include_agent_identities`, a pre-issued token whose claims decode must also
+be issued for Microsoft Graph
 (`aud` `https://graph.microsoft.com`, with or without a trailing slash, or
 `00000003-0000-0000-c000-000000000000`); a token for another resource skips the
 connector before any request. Only a token that shows it is app-only

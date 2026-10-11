@@ -383,13 +383,9 @@ class EntraConnector(BaseConnector):
             self._verify_tenant()
             return
         token = self.ctx.get("access_token", env="GRAPH_ACCESS_TOKEN")
-        if token and (self.include_agent_registry or self.include_agent_identities):
-            self._check_app_only_token(token)
-        elif token:
-            # Not bound without agent collections, but a user's token still lists only what that
-            # user may see, so its live collection scope is never attested.
-            self._caller_scoped = not _app_only(_unverified_claims(token) if isinstance(token, str) else None)
-        if not token:
+        if token:
+            self._check_pre_issued_token(token)
+        else:
             cid = self.ctx.get("client_id", env="AZURE_CLIENT_ID")
             secret = self.ctx.get("client_secret", env="AZURE_CLIENT_SECRET")
             if not (self.tenant and cid and secret):
@@ -490,27 +486,41 @@ class EntraConnector(BaseConnector):
         self._bound_tenant = claims["tid"]
         return token
 
-    def _check_app_only_token(self, token: Any) -> None:
-        """Bind a pre-issued ``access_token`` before an opt-in agent collection sends any request.
+    def _check_pre_issued_token(self, token: Any) -> None:
+        """Bind a pre-issued ``access_token`` to ``tenant_id`` before it sends any request.
 
-        Registry records are attributed to ``tenant_id``, which operators trust, so with
-        ``include_agent_registry`` a token of another tenant must not produce them (a minted
-        token is bound by its request). A decodable token must be a Microsoft Graph token. A
-        token that is not app-only (it has ``scp``, its ``idtyp`` is not ``app``, or it cannot
-        be decoded) lists only what its user may see: its agent listings are caller-scoped,
-        never a complete registry.
+        Everything collected is attributed to ``tenant_id``, which operators trust. With
+        ``include_agent_registry`` the token must decode and its tenant (``tid``) must be
+        ``tenant_id``, so a token of another tenant never produces registry records (a minted
+        token is bound by its request). Otherwise a token that decodes is still refused when its
+        ``tid`` is not a ``tenant_id`` given as a tenant ID: the mismatch is known before any
+        request, and ``GET /organization`` may be denied later. A domain name in ``tenant_id``
+        cannot be compared; the token is then bound to its own tenant, so a replay with another
+        ``tenant_id`` does not attribute these records to it. With an agent collection a
+        decodable token must be a Microsoft Graph token. A token that is not app-only (it has
+        ``scp``, its ``idtyp`` is not ``app``,
+        or it cannot be decoded) lists only what its user may see: its listings are
+        caller-scoped, never a complete registry, and its live scope is never attested.
         """
-        if self.include_agent_registry and self._binding_account():
+        account = self._binding_account()
+        if self.include_agent_registry and account:
             claims: dict[str, Any] | None = self._check_token_tenant(token, "the access_token")
         else:
             claims = _unverified_claims(token) if isinstance(token, str) else None
         if claims is not None:
-            _check_graph_audience(claims, "the access_token")
+            if self.include_agent_registry or self.include_agent_identities:
+                _check_graph_audience(claims, "the access_token")
             # The token's own tenant, whether or not tenant_id names it: a replay with another
-            # tenant_id must not attribute these records to it.
+            # tenant_id must not attribute these records to it. A tenant_id given as a tenant ID
+            # that the token does not name is a mismatch known before any request.
             tenant = claims.get("tid")
+            configured = account.strip().lower() if account else ""
             if isinstance(tenant, str) and tenant.strip():
+                if _TENANT_ID.fullmatch(configured) and tenant.lower() != configured:
+                    raise _tenant_mismatch("the access_token")
                 self._bound_tenant = tenant
+            elif _TENANT_ID.fullmatch(configured):
+                raise _tenant_mismatch("the access_token")
         if not _app_only(claims):
             self._caller_scoped = True
 
@@ -524,9 +534,7 @@ class EntraConnector(BaseConnector):
             raise ConnectorError(f"identity.entra: {label} is not a decodable JWT")
         tenant = claims.get("tid")
         if not isinstance(tenant, str) or tenant.lower() != str(self.tenant).strip().lower():
-            raise ConnectorError(
-                f"identity.entra: the tenant (tid) of {label} does not match tenant_id (use the tenant ID)"
-            )
+            raise _tenant_mismatch(label)
         return claims
 
     def _pages(self, path: str, *, template: str | None = None, **kwargs: Any) -> Iterator[dict[str, Any]]:
@@ -2020,6 +2028,13 @@ def _binding_coverage(state: str, coverage: _Coverage) -> str:
 def _app_only(claims: dict[str, Any] | None) -> bool:
     """Whether unverified token claims show an app-only token (``idtyp: app`` and no ``scp``)."""
     return claims is not None and "scp" not in claims and claims.get("idtyp") == "app"
+
+
+def _tenant_mismatch(label: str) -> ConnectorError:
+    """The fixed refusal of a token whose ``tid`` is not ``tenant_id``; ``label`` names the token."""
+    return ConnectorError(
+        f"identity.entra: the tenant (tid) of {label} does not match tenant_id (use the tenant ID)"
+    )
 
 
 def _check_graph_audience(claims: dict[str, Any], label: str) -> None:
