@@ -2250,7 +2250,7 @@
     {
      "argv": [
       "/usr/bin/python3",
-      "<repo>/tools/estate_benchmark/simhost.py",
+      "<repo>/tools/shadowbench/simhost.py",
       "--services",
       "<run>/ai_infra_guard/sim/services.json",
       "--",

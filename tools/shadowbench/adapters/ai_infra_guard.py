@@ -1,7 +1,7 @@
 """AI-Infra-Guard: fingerprint the estate's running AI services.
 
 The estate's runtime entities that represent live model servers are mirrored
-as loopback mock services (see `tools/estate_benchmark/simhost.py` and
+as loopback mock services (see `tools/shadowbench/simhost.py` and
 `estate/services/services.json`); the scanner fingerprints those targets.
 Fingerprint and CVE scanning needs no model key; the scan contacts only the
 listed loopback targets.
@@ -15,7 +15,7 @@ from pathlib import Path
 from shutil import copyfile
 from typing import Any
 
-from tools.estate_benchmark.adapters import (
+from tools.shadowbench.adapters import (
     Command,
     Normalized,
     Prediction,
@@ -23,7 +23,7 @@ from tools.estate_benchmark.adapters import (
     ToolSpec,
     run_version,
 )
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench.corpus import EstateCorpus
 
 SPEC = ToolSpec(
     id="ai_infra_guard",

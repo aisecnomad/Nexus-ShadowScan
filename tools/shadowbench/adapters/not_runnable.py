@@ -10,14 +10,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tools.estate_benchmark.adapters import (
+from tools.shadowbench.adapters import (
     Command,
     Normalized,
     ToolConfig,
     ToolSpec,
     run_version,
 )
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench.corpus import EstateCorpus
 
 
 class _NotRunnableAdapter:

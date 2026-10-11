@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.estate_benchmark import taxonomy
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench import taxonomy
+from tools.shadowbench.corpus import EstateCorpus
 
 
 def _pct(value: float | None) -> str:

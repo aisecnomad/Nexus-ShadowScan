@@ -11,7 +11,7 @@ Ground truth is a set of labeled *entities* (positive, control, near-miss),
 each anchored to unique tokens inside the artifacts, so true positives,
 false positives, true negatives and false negatives are all countable.
 The corpus, the protocol and the committed results live in
-`benchmarks/shadow-ai-estate/`. Nothing here is a release artifact, and the
+`benchmarks/shadowbench/`. Nothing here is a release artifact, and the
 results are not independent: the same maintainer wrote ShadowScan, the
 harness and the labels.
 """

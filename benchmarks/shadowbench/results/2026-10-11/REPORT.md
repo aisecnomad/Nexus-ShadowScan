@@ -1,4 +1,4 @@
-# Shadow AI agent discovery estate benchmark
+# ShadowBench: shadow AI agent discovery estate benchmark
 
 Corpus: 137 labeled entities across the nine surfaces (87 positive carrying 104 expected facts, 27 control, 23 near-miss; 4 positives are registered in the supplied agent registry).
 Run started 2026-10-11T17:53:24.976620+00:00 and finished 2026-10-11T17:54:01.548038+00:00; runs are parallel, so timings include contention and are indicative only.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tools.estate_benchmark import taxonomy
+from tools.shadowbench import taxonomy
 
 #: Client display names and ids, as third-party tools print them, mapped onto
 #: `ai-client:` taxonomy values.

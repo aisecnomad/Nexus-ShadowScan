@@ -20,8 +20,8 @@ from shutil import rmtree
 from typing import Any
 
 from tools.discovery_benchmark.runner import MAX_CAPTURE_BYTES, RunPolicy, _wrap, scrubbed_env
-from tools.estate_benchmark.adapters import Adapter, Command, ToolConfig
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench.adapters import Adapter, Command, ToolConfig
+from tools.shadowbench.corpus import EstateCorpus
 
 MAX_TEXT_CHARS = 400
 

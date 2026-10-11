@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "metadata": {
-  "name": "Shadow AI agent discovery estate benchmark corpus",
+  "name": "ShadowBench estate corpus (shadow AI agent discovery)",
   "snapshot_date": "2026-10-11",
   "estate": "Vantor Logistics (fictional): vantor.example, devices dev-laptop-01/dev-laptop-02/win-laptop-03/build-runner-3, AWS 210987654321, GCP vantor-ml, Azure sub-vantor-1, k8s vantor-prod",
   "labeling": "Every entity was authored together with its artifacts and labeled from the artifact's vendor semantics before any tool ran on the merged corpus. Artifact formats were verified parse-clean against ShadowScan's offline loaders during authoring (completeness only); labels were never changed because a tool missed or flagged an entity, and the corpus deliberately keeps positives known to exceed documented detection and negatives known to be over-flagged, including by ShadowScan itself. This is author-written labeling with evidence pointers, not independent human review.",

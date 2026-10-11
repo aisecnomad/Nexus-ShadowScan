@@ -10,10 +10,10 @@ from pathlib import Path
 
 from tools.discovery_benchmark.adapters import ToolConfig
 from tools.discovery_benchmark.runner import RunPolicy
-from tools.estate_benchmark import report as report_mod
-from tools.estate_benchmark import runner as runner_mod
-from tools.estate_benchmark import score as score_mod
-from tools.estate_benchmark.corpus import CorpusError, load_corpus
+from tools.shadowbench import report as report_mod
+from tools.shadowbench import runner as runner_mod
+from tools.shadowbench import score as score_mod
+from tools.shadowbench.corpus import CorpusError, load_corpus
 
 
 def _estate_files(estate: Path) -> list[Path]:
@@ -116,7 +116,7 @@ def cmd_verify_freeze(corpus_path: Path, estate: Path, freeze_path: Path) -> int
 
 
 def _adapters() -> list[object]:
-    from tools.estate_benchmark.adapters.registry import all_adapters
+    from tools.shadowbench.adapters.registry import all_adapters
 
     return list(all_adapters())
 
@@ -172,11 +172,11 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m tools.estate_benchmark")
+    parser = argparse.ArgumentParser(prog="python -m tools.shadowbench")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    default_corpus = Path("benchmarks/shadow-ai-estate/corpus.json")
-    default_estate = Path("benchmarks/shadow-ai-estate/estate")
+    default_corpus = Path("benchmarks/shadowbench/corpus.json")
+    default_estate = Path("benchmarks/shadowbench/estate")
 
     p_validate = sub.add_parser("validate", help="validate the corpus and anchor presence")
     p_validate.add_argument("--corpus", type=Path, default=default_corpus)
@@ -185,12 +185,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_freeze = sub.add_parser("freeze", help="write the sha256 freeze manifest")
     p_freeze.add_argument("--corpus", type=Path, default=default_corpus)
     p_freeze.add_argument("--estate", type=Path, default=default_estate)
-    p_freeze.add_argument("--out", type=Path, default=Path("benchmarks/shadow-ai-estate/FREEZE.json"))
+    p_freeze.add_argument("--out", type=Path, default=Path("benchmarks/shadowbench/FREEZE.json"))
 
     p_verify = sub.add_parser("verify-freeze", help="check the estate against the freeze manifest")
     p_verify.add_argument("--corpus", type=Path, default=default_corpus)
     p_verify.add_argument("--estate", type=Path, default=default_estate)
-    p_verify.add_argument("--freeze", type=Path, default=Path("benchmarks/shadow-ai-estate/FREEZE.json"))
+    p_verify.add_argument("--freeze", type=Path, default=Path("benchmarks/shadowbench/FREEZE.json"))
 
     p_run = sub.add_parser("run", help="run every adapter against its estate units")
     p_run.add_argument("--corpus", type=Path, default=default_corpus)
@@ -212,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--corpus", type=Path, default=default_corpus)
     p_report.add_argument("--metrics", type=Path, required=True)
     p_report.add_argument("--out", type=Path, required=True)
-    p_report.add_argument("--title", default="Shadow AI agent discovery estate benchmark")
+    p_report.add_argument("--title", default="ShadowBench: shadow AI agent discovery estate benchmark")
     return parser
 
 

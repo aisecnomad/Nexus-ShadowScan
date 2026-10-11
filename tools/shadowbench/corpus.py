@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tools.estate_benchmark import taxonomy
+from tools.shadowbench import taxonomy
 
 SCHEMA = 1
 CLASSES = ("positive", "control", "nearmiss")

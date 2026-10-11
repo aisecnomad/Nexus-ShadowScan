@@ -13,8 +13,8 @@ from tools.discovery_benchmark.adapters.shadowscan import (
     _sdk_backed_protocols,
     _slug_facts,
 )
-from tools.estate_benchmark import taxonomy
-from tools.estate_benchmark.adapters import (
+from tools.shadowbench import taxonomy
+from tools.shadowbench.adapters import (
     Command,
     Normalized,
     Prediction,
@@ -23,7 +23,7 @@ from tools.estate_benchmark.adapters import (
     load_json,
     run_version,
 )
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench.corpus import EstateCorpus
 
 SPEC = ToolSpec(
     id="shadowscan",

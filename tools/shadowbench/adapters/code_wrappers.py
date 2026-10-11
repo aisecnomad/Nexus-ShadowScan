@@ -18,7 +18,7 @@ from tools.discovery_benchmark.adapters import Normalized as CodeNormalized
 from tools.discovery_benchmark.adapters.agentdiscover import AgentDiscoverAdapter
 from tools.discovery_benchmark.adapters.agentic_radar import AgenticRadarAdapter
 from tools.discovery_benchmark.adapters.vet import VetAdapter
-from tools.estate_benchmark.adapters import (
+from tools.shadowbench.adapters import (
     Command,
     Normalized,
     Prediction,
@@ -28,8 +28,8 @@ from tools.estate_benchmark.adapters import (
     home_units,
     unit_path,
 )
-from tools.estate_benchmark.adapters.common import client_slug
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench.adapters.common import client_slug
+from tools.shadowbench.corpus import EstateCorpus
 
 
 class _CodeAdapter(Protocol):

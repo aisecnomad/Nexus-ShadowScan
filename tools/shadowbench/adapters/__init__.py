@@ -19,7 +19,7 @@ from tools.discovery_benchmark.adapters import (
     python_package_version,
     run_version,
 )
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench.corpus import EstateCorpus
 
 __all__ = [
     "Adapter",

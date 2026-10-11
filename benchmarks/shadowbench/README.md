@@ -1,4 +1,4 @@
-# Shadow AI agent discovery estate benchmark
+# ShadowBench — shadow AI agent discovery estate benchmark
 
 One question, asked across every surface at once: given a realistic
 organization's artifacts, which discovery tools find the AI agents and AI
@@ -10,7 +10,7 @@ surfaces: code repositories, identity-provider exports, gateway logs,
 low-code platform exports, SaaS app inventories, cloud inventories,
 materialized endpoint home trees plus offline endpoint exports, network
 logs, and runtime process exports. Everything needed to re-run it is in
-this directory and `tools/estate_benchmark/`; nothing requires credentials
+this directory and `tools/shadowbench/`; nothing requires credentials
 or network access beyond installing the tools under test.
 
 **This benchmark is not independent.** The same maintainer wrote
@@ -38,7 +38,7 @@ one laptop. Discovering them is still expected; classifying them as shadow
 is not.
 
 Each entity carries `<category>:<value>` facts from the tool-neutral
-taxonomy in `tools/estate_benchmark/taxonomy.py` (the code surface reuses
+taxonomy in `tools/shadowbench/taxonomy.py` (the code surface reuses
 the code-surface benchmark's eight categories; the other surfaces add
 `oauth-app`, `service-identity`, `token`, `bot-app`, `lowcode-agent`,
 `cloud-ai`, `ai-client`, `model-store`, `gateway-caller`,
@@ -84,7 +84,7 @@ The corpus deliberately includes, in both directions:
    editor). Recorded in `corpus.json` `metadata.errata`. No entity labels
    changed.
 4. **Freeze.** [`FREEZE.json`](FREEZE.json) pins the SHA-256 of all 139
-   corpus files; `python -m tools.estate_benchmark verify-freeze` checks
+   corpus files; `python -m tools.shadowbench verify-freeze` checks
    drift. The published run was produced after the freeze.
 
 ## Execution and isolation
@@ -107,7 +107,7 @@ connection-required design, not a harness failure.
 
 The network live-sim mirrors the estate's two running model servers
 (`estate/services/services.json`) as loopback mock HTTP services via
-`tools/estate_benchmark/simhost.py`, so live network fingerprinting tools
+`tools/shadowbench/simhost.py`, so live network fingerprinting tools
 have something real to probe without anything leaving the machine.
 
 ## Tools
@@ -141,7 +141,7 @@ Exclusion evidence, recorded during provisioning on this machine:
   kernel while kprobe and ringbuf programs load fine; only its
   local-session mode runs here, so its runtime surface stays out of scope.
 
-Adapters live in `tools/estate_benchmark/adapters/`; the registry there is
+Adapters live in `tools/shadowbench/adapters/`; the registry there is
 separate from the code-surface benchmark's registry on purpose. For the
 code surface, vet, Agentic Radar and AgentDiscover run through the exact
 commands and normalization of `tools/discovery_benchmark`, so their code
@@ -196,13 +196,13 @@ report for the full grid.
 ## Reproduce
 
 ```
-python -m tools.estate_benchmark validate
-python -m tools.estate_benchmark verify-freeze
-python -m tools.estate_benchmark run \
+python -m tools.shadowbench validate
+python -m tools.shadowbench verify-freeze
+python -m tools.shadowbench run \
     --tools /srv/estate/tools.json --out /srv/estate/runs --workers 4
-python -m tools.estate_benchmark score \
+python -m tools.shadowbench score \
     --runs /srv/estate/runs/runs.json --out metrics.json
-python -m tools.estate_benchmark report --metrics metrics.json --out REPORT.md
+python -m tools.shadowbench report --metrics metrics.json --out REPORT.md
 ```
 
 `tools.json` maps tool ids to installed binaries

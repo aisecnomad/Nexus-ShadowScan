@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tools.estate_benchmark.adapters import (
+from tools.shadowbench.adapters import (
     Command,
     Normalized,
     Prediction,
@@ -23,7 +23,7 @@ from tools.estate_benchmark.adapters import (
     python_package_version,
     unit_path,
 )
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench.corpus import EstateCorpus
 
 SPEC = ToolSpec(
     id="cisco_mcp_scanner",

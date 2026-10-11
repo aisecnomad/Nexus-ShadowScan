@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from tools.estate_benchmark.adapters import (
+from tools.shadowbench.adapters import (
     Command,
     Normalized,
     Prediction,
@@ -22,8 +22,8 @@ from tools.estate_benchmark.adapters import (
     python_package_version,
     unit_path,
 )
-from tools.estate_benchmark.adapters.common import client_slug
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench.adapters.common import client_slug
+from tools.shadowbench.corpus import EstateCorpus
 
 SPEC = ToolSpec(
     id="mcp_scan",

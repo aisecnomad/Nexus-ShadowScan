@@ -83,7 +83,7 @@ exclude = [
   "archive",
   # Estate benchmark corpus artifacts: authored sample repositories and
   # exports under test, not project code.
-  "benchmarks/shadow-ai-estate/estate",
+  "benchmarks/shadowbench/estate",
 ]
 
 [tool.ruff.lint]
@@ -114,7 +114,7 @@ indent-style = "space"
 [tool.mypy]
 python_version = "3.11"
 # Estate benchmark corpus artifacts are inputs under test, not project code.
-exclude = ["benchmarks/shadow-ai-estate/estate/"]
+exclude = ["benchmarks/shadowbench/estate/"]
 warn_unused_ignores = true
 warn_return_any = true
 warn_unreachable = true

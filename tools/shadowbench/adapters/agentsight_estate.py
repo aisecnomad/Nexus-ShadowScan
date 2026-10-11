@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tools.estate_benchmark.adapters import (
+from tools.shadowbench.adapters import (
     Command,
     Normalized,
     Prediction,
@@ -21,8 +21,8 @@ from tools.estate_benchmark.adapters import (
     run_version,
     unit_path,
 )
-from tools.estate_benchmark.adapters.common import client_slug
-from tools.estate_benchmark.corpus import EstateCorpus
+from tools.shadowbench.adapters.common import client_slug
+from tools.shadowbench.corpus import EstateCorpus
 
 SPEC = ToolSpec(
     id="agentsight",
