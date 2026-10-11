@@ -56,7 +56,7 @@ class GitHub:
                 data = response.read(MAX_RESPONSE + 1)
             if len(data) > MAX_RESPONSE:
                 raise GateError("API response limit exceeded")
-            return json.loads(data)
+            return synthesize.load_json(data)
         except (OSError, ValueError):
             raise GateError("GitHub API unavailable or malformed") from None
 
@@ -95,12 +95,18 @@ def snapshot(api: GitHub, number: int, head: str) -> tuple[list[Any], list[str]]
 
 
 def high_risk(paths: list[str]) -> bool:
+    """Whether the reviewed change touches a high-risk path.
+
+    The evidence under ``.github/ai-review/`` is in every gated diff (the workflow runs only
+    then), so it is left out, as ``diff_digest`` leaves it out: it would make every diff high risk.
+    """
     return any(
         path.startswith((".github/", "tools/", "shadowscan/", "tests/"))
         or path.startswith("requirements")
         or path in {"Dockerfile", "pyproject.toml", "Makefile", "CODEOWNERS", "AGENTS.md"}
         or not path.endswith((".md", ".png", ".svg", ".jpg"))
         for path in paths
+        if not path.startswith(".github/ai-review/")
     )
 
 
@@ -127,7 +133,7 @@ def validate_evidence(root: Path, digest: str) -> dict[str, list[Path]]:
     synthesizer, so the aggregate is held to the synthesizer's own limit here,
     before anything is copied: evidence that validates always synthesizes.
     """
-    manifest = json.loads(synthesize.read_input(root / "manifest.json"))
+    manifest = synthesize.load_json(synthesize.read_input(root / "manifest.json"))
     roles = set(AGENTS) - {"orchestrator"}
     if manifest != {"schema_version": "1", "diff_digest": digest, "agents": sorted(roles)}:
         raise GateError("evidence manifest malformed or stale")
@@ -145,7 +151,7 @@ def validate_evidence(root: Path, digest: str) -> dict[str, list[Path]]:
         if invalid or not findings or any(finding.agent != role for finding in findings):
             raise GateError("specialist evidence malformed or unavailable")
         for file in files:
-            data = json.loads(synthesize.read_input(file))
+            data = synthesize.load_json(synthesize.read_input(file))
             for entry in data if isinstance(data, list) else [data]:
                 if (
                     isinstance(entry.get("fingerprint"), str)
@@ -188,7 +194,7 @@ def prepare(api: GitHub, number: int, head: str, root: Path, out: Path) -> int:
         target.mkdir()
         for role, role_files in sorted(validated.items()):
             for index, file in enumerate(role_files):
-                data = json.loads(synthesize.read_input(file))
+                data = synthesize.load_json(synthesize.read_input(file))
                 entries = data if isinstance(data, list) else [data]
                 for entry in entries:
                     entry["body"] = "\n\n".join(
@@ -232,7 +238,7 @@ def publish(
             + "\n\nEvidence unavailable. Gate failed closed.\n\nNot independent human review."
         )
     else:
-        decision = json.loads(synthesize.read_input(out / "decision.json"))
+        decision = synthesize.load_json(synthesize.read_input(out / "decision.json"))
         body = synthesize.read_input(out / "review-body.md")
     if (
         os.environ.get("AI_REVIEW_PREFLIGHT_RESULT", "success") != "success"

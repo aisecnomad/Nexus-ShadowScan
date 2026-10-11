@@ -169,6 +169,20 @@ def test_invalid_evidence_still_publishes_the_failed_review(tmp_path: Path) -> N
     assert api.calls[-1][1] is not None and api.calls[-1][1]["conclusion"] == "failure"
 
 
+def test_deeply_nested_evidence_is_malformed_and_still_published(tmp_path: Path) -> None:
+    # json.loads raises RecursionError, not ValueError, for deep nesting: the check stayed in
+    # progress and no review was posted.
+    root, out = tmp_path / "input", tmp_path / "out"
+    evidence(root)
+    role = sorted(set(AGENTS) - {"orchestrator"})[0]
+    (root / "findings" / role / "findings-0.json").write_text("[" * 100_000 + "]" * 100_000)
+    api = FakeGitHub()
+    assert prepare(api, 1, HEAD, root, out) == 1
+    assert json.loads((out / "decision.json").read_text())["reason"] == "malformed_findings"
+    assert publish(api, 1, HEAD, out, False) == 1
+    assert api.calls[-1][1] is not None and api.calls[-1][1]["conclusion"] == "failure"
+
+
 @pytest.mark.parametrize("override", ["preflight", "label"])
 def test_late_override_restates_the_decision_header(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: str
@@ -294,6 +308,10 @@ def test_malformed_manifest_fails(
 def test_digest_and_high_risk() -> None:
     assert diff_digest(FILES) == diff_digest(FILES + [{"filename": ".github/ai-review/manifest.json"}])
     assert high_risk(["docs/guide.md"]) is False
+    # The evidence is in every gated diff; it must not make every diff high risk.
+    evidence_paths = [".github/ai-review/manifest.json", ".github/ai-review/findings/appsec/findings-0.json"]
+    assert high_risk(["docs/guide.md", *evidence_paths]) is False
+    assert high_risk(["shadowscan/cli.py", *evidence_paths]) is True
     assert high_risk(["shadowscan/cli.py"]) is True
     assert high_risk(["unknown.sh"]) is True
 
@@ -345,8 +363,12 @@ def test_workflow_security_boundary() -> None:
         "contents": "read",
         "pull-requests": "read",
     }
+    # Regression: without the filter every pull request failed closed on absent evidence.
+    assert workflow[True]["pull_request"]["paths"] == [".github/ai-review/**"]
+    assert "paths-ignore" not in workflow[True]["pull_request"]
     publisher = workflow["jobs"]["orchestrator"]
-    assert publisher["if"] == "always()"
+    # After a failed preflight, never after a cancelled run (always() is true even then).
+    assert publisher["if"] == "${{ !cancelled() }}"
     assert publisher["needs"] == "preflight"
     publish_step = next(step for step in publisher["steps"] if "run" in step)
     assert publish_step["env"]["AI_REVIEW_PREFLIGHT_RESULT"] == "${{ needs.preflight.result }}"

@@ -13,6 +13,15 @@ from tools.ai_review.sanitize import redact
 from tools.check_secrets import PATTERNS, findings
 
 
+def test_a_private_key_block_is_withheld_whole() -> None:
+    body = "\n".join(["MIIEow" + "IBAAKCAQEA" * 6, "Zz9" * 21, "Qq1" * 10 + "=="])
+    # Assembled at runtime so no key-shaped literal sits in the source.
+    begin, end = "-----BEGIN " + "RSA PRIVATE KEY-----", "-----END " + "RSA PRIVATE KEY-----"
+    key = f"{begin}\nProc-Type: 4,ENCRYPTED\n\n{body}\n{end}"
+    out = redact(f"Scenario: key committed:\n{key}\nRotate it.")
+    assert out == "Scenario: key committed:\n[redacted]\nRotate it."
+
+
 def test_every_check_secrets_family_is_redacted() -> None:
     samples = {
         "OpenAI API key": "call with sk-" + "aA1" * 7 + "aA",

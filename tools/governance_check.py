@@ -19,6 +19,16 @@ REQUIRED_CHECKS = frozenset({"CI gate", "analyze", "test (3.11)", "test (3.12)"}
 # counts its `neutral` conclusion as passing, so requiring any of its checks would
 # add a check every author can satisfy (docs/security/ai-review-gate.md).
 ADVISORY_CHECKS = frozenset({"AI Review Gate", "AI review publication", "preflight"})
+
+
+def requires_advisory_check(required: Any) -> bool:
+    """Whether a ruleset's required status checks name an advisory AI review check, in any case."""
+    advisory = {name.casefold() for name in ADVISORY_CHECKS}
+    return isinstance(required, list) and any(
+        isinstance(check, dict) and str(check.get("context", "")).casefold() in advisory for check in required
+    )
+
+
 GITHUB_ACTIONS_APP_ID = 15368
 
 
@@ -84,8 +94,7 @@ def check_ruleset(snapshot: Any) -> list[str]:
                     or matches[0]["integration_id"] != GITHUB_ACTIONS_APP_ID
                 ):
                     failures.append("required_check_missing_or_unbound")
-            advisory = {name.casefold() for name in ADVISORY_CHECKS}
-            if any(str(check.get("context", "")).casefold() in advisory for check in required):
+            if requires_advisory_check(required):
                 failures.append("advisory_check_required")
     for name in ("deletion", "non_fast_forward", "required_signatures", "code_scanning"):
         if name not in rules:

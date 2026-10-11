@@ -31,6 +31,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from tools.ai_review.sanitize import redact
 from tools.ai_review.schema import BLOCKING_SEVERITIES, MAX_FINDINGS_PER_FILE, Finding, parse_finding
@@ -104,6 +105,19 @@ def read_input(path: Path, limit: int = 1_000_000) -> str:
         raise GateInputError("input unavailable") from exc
 
 
+def load_json(text: str | bytes) -> Any:
+    """Decode untrusted JSON; nesting too deep for the decoder is malformed input, not a crash.
+
+    ``json.loads`` raises RecursionError, a RuntimeError, for a deeply nested array or object.
+    Every caller handles ValueError as malformed evidence, so the gate fails closed with a
+    review instead of dying with the check left in progress.
+    """
+    try:
+        return json.loads(text)
+    except RecursionError as exc:
+        raise ValueError("JSON nested too deeply") from exc
+
+
 def _read_diff_files(path: Path) -> set[str]:
     try:
         text = read_input(path)
@@ -122,7 +136,7 @@ def _read_scanner_fingerprints(path: Path | None) -> set[str]:
     if path is None:
         return set()
     try:
-        data = json.loads(read_input(path))
+        data = load_json(read_input(path))
     except (GateInputError, ValueError) as exc:
         raise GateInputError("scanner fingerprint list unreadable or not JSON") from exc
     if not isinstance(data, list) or any(
@@ -175,7 +189,7 @@ def read_findings(files: list[Path]) -> tuple[list[Finding], int]:
     invalid_files = 0
     for file in files:
         try:
-            data = json.loads(read_input(file))
+            data = load_json(read_input(file))
         except (GateInputError, ValueError):
             invalid_files += 1
             continue

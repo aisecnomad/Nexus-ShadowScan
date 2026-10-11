@@ -28,7 +28,14 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<![\w])hf_[A-Za-z0-9]{34,}(?![A-Za-z0-9_])"),
     re.compile(r"(?<![\w])[rs]k_live_[0-9A-Za-z]{20,}(?![A-Za-z0-9_])"),
     re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
-    re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"),
+    # The whole block: the header, then the lines of a PEM body (base64, or an encryption
+    # header such as 'Proc-Type: 4,ENCRYPTED'), then the footer when there is one. Each
+    # repetition consumes a line break, so the match stays linear.
+    re.compile(
+        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+        r"(?:[ \t]*\r?\n[ \t]*(?:[A-Za-z0-9-]+:[^\r\n]*|[A-Za-z0-9+/=]+)?)*"
+        r"(?:[ \t]*-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----)?"
+    ),
     re.compile(r"(?i:\b(?:Account|SharedAccess)Key)\s*=\s*[A-Za-z0-9+/]{40,}={0,2}"),
     re.compile(
         r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://"

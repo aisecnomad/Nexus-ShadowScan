@@ -48,7 +48,10 @@ jobs:
   orchestrator:
     name: AI review publication
     needs: preflight
-    if: always()
+    # Runs after a failed preflight, which the gate must report, but not after a run that a
+    # newer one for the same pull request cancelled: that would post a second, contradictory
+    # review and check on the head. A cancelled run leaves the check absent, never passing.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

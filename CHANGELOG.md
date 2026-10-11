@@ -182,8 +182,18 @@ summarizes each release for people who install and operate ShadowScan.
 - `python -m tools.governance_check`, and the ruleset preparation and release
   checks built on it, refuse a ruleset whose required status checks include
   `AI Review Gate`, `AI review publication` or `preflight`
-  (`advisory_check_required`). A test keeps that list equal to the checks the
-  workflow creates.
+  (`advisory_check_required`); ruleset preparation refuses it on every ruleset
+  of `main`, `Protect main` included, and a test reads every committed and
+  observed ruleset. A test keeps that list equal to the checks the workflow
+  creates, and another pins the workflow's `.github/ai-review/**` paths filter.
+- Gate hardening from review: evidence JSON nested too deeply for the decoder
+  (a `RecursionError`) is `malformed_findings` with a failure review instead of
+  a crash that left the check in progress; a quoted private key is withheld
+  as a whole block, not only its header line; the publication job runs on
+  `!cancelled()` instead of `always()`, so a run superseded on the same head
+  posts no contradictory review; the evidence paths no longer make every gated
+  diff high risk; and the `ai-review: blocked` label no longer claims the gate
+  requests changes.
 
 ### Fleet dashboard and inventory export
 

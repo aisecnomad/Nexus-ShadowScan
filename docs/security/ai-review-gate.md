@@ -134,8 +134,11 @@ iterating. Any malformed entry invalidates its artifact, even alongside valid
 entries. Out-of-diff locations fail as stale findings. `ai-review: blocked`
 fails the check; critical/high findings do likewise. High-risk changes
 without findings fail as insufficient evidence, never an empty pass. Any
-non-documentation change is conservatively high risk; the high-risk label can
-only strengthen classification, not reduce it. Paths may not contain a line
+non-documentation change is conservatively high risk (the evidence under
+`.github/ai-review/`, which every gated diff carries, is left out of that
+classification as it is of the digest); the high-risk label can only
+strengthen classification, not reduce it. Evidence JSON nested too deeply for
+the decoder is malformed, like any other undecodable file. Paths may not contain a line
 break of any kind, since the diff list is written one path per line.
 
 The synthesizer produces `review-body.md`, `review-comments.json` (at most
@@ -160,8 +163,12 @@ synthesis, the publisher restates the review's `Decision` header so the review
 and the check run agree.
 
 An API review-publication error fails the created check. Checkout/interpreter
-or check-creation failures leave the check missing. No passing fallback exists. Repeated workflow runs may create another
-review/check for the same SHA; each run posts at most one of each.
+or check-creation failures leave the check missing. No passing fallback exists.
+The publisher runs after a failed preflight but not after a run that a newer
+one cancelled (`if: ${{ !cancelled() }}`), so a superseded run posts nothing.
+Repeated workflow runs may create another review/check for the same SHA; each
+run posts at most one of each. A private key quoted in a finding is withheld
+as a whole block (header, body and footer), not only its header line.
 
 ## Human gate and branch protection
 
