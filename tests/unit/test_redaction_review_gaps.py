@@ -243,6 +243,23 @@ def test_auth_block_credential_fields_are_withheld_whatever_their_shape(shape) -
     assert SECRET not in repr(out) and "hunter2pass" not in repr(out["auth"])
 
 
+def test_an_environment_entry_value_inside_an_auth_block_is_not_learned_as_a_credential() -> None:
+    # The environment rule withholds the entry's value; the auth rule must not also learn
+    # it as a credential, or a non-secret value ('1') wipes every field that contains it.
+    record = {
+        "auth": {"environment": [{"name": "STAGE", "value": "1"}, {"name": "REGION", "value": "eu"}]},
+        "version": "v1.2",
+        "note": "1 host in eu",
+    }
+    assert sanitize(record, env_values_are_secrets=False) == {
+        "auth": {
+            "environment": [{"name": "STAGE", "value": REDACTED}, {"name": "REGION", "value": REDACTED}]
+        },
+        "version": "v1.2",
+        "note": "1 host in eu",
+    }
+
+
 def test_short_auth_labels_are_not_removed_from_other_fields() -> None:
     # Only an opaque scalar is remembered: a label such as 'header' must not wipe every field.
     record = {"auth": {"type": "apikey", "key": "header", "value": SECRET}, "name": "Get header names"}
