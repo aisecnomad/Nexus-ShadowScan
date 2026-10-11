@@ -199,11 +199,15 @@ summarizes each release for people who install and operate ShadowScan.
 - Gate hardening from review: evidence JSON nested too deeply for the decoder
   (a `RecursionError`) is `malformed_findings` with a failure review instead of
   a crash that left the check in progress; a quoted private key is withheld
-  as a whole block, not only its header line; the publication job runs on
-  `!cancelled()` instead of `always()`, so a run superseded on the same head
-  posts no contradictory review; the evidence paths no longer make every gated
-  diff high risk; and the `ai-review: blocked` label no longer claims the gate
-  requests changes.
+  as a whole block, not only its header line, however the quote breaks its
+  lines, while prose after a quoted header is kept; the publication job runs
+  on `!cancelled()` instead of `always()`, so a run superseded on the same
+  head before it publishes posts no contradictory review, and one cancelled
+  while it publishes completes its check as a failure (`cancelled`) instead
+  of leaving it in progress; the evidence paths no longer make every gated
+  diff high risk, while a rename out of another path into them still counts
+  (and is bound by the digest); and the `ai-review: blocked` label no longer
+  claims the gate requests changes.
 
 ### Fleet dashboard and inventory export
 

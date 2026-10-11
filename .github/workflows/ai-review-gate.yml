@@ -50,7 +50,8 @@ jobs:
     needs: preflight
     # Runs after a failed preflight, which the gate must report, but not after a run that a
     # newer one for the same pull request cancelled: that would post a second, contradictory
-    # review and check on the head. A cancelled run leaves the check absent, never passing.
+    # review and check on the head. A run cancelled while this job runs completes its check as
+    # a failure (it may already have posted its review); it never leaves a passing check.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

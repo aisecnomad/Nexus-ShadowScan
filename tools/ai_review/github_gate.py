@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import sys
 import urllib.request
 from pathlib import Path
@@ -99,6 +100,7 @@ def high_risk(paths: list[str]) -> bool:
 
     The evidence under ``.github/ai-review/`` is in every gated diff (the workflow runs only
     then), so it is left out, as ``diff_digest`` leaves it out: it would make every diff high risk.
+    Pass a rename's previous name as well, so moving a file into that directory still counts.
     """
     return any(
         path.startswith((".github/", "tools/", "shadowscan/", "tests/"))
@@ -118,7 +120,14 @@ def diff_digest(files: list[Any]) -> str:
                 sorted(
                     (file["filename"], file["sha"], file["status"], file.get("previous_filename", ""))
                     for file in files
-                    if not file["filename"].startswith(".github/ai-review/")
+                    # Evidence only: a rename out of another path into the evidence directory
+                    # removes that file, so the digest binds it.
+                    if not (
+                        file["filename"].startswith(".github/ai-review/")
+                        and str(file.get("previous_filename") or ".github/ai-review/").startswith(
+                            ".github/ai-review/"
+                        )
+                    )
                 ),
             ],
             separators=(",", ":"),
@@ -186,7 +195,9 @@ def prepare(api: GitHub, number: int, head: str, root: Path, out: Path) -> int:
         AI_REVIEW_DIFF_FILES=str(out / "diff.txt"),
         AI_REVIEW_SCANNER_FINGERPRINTS=str(root / "scanner-fingerprints.json"),
         AI_REVIEW_LABELS=",".join(labels),
-        AI_REVIEW_HIGH_RISK=str(high_risk(paths)).lower(),
+        AI_REVIEW_HIGH_RISK=str(
+            high_risk([*paths, *(str(f["previous_filename"]) for f in files if f.get("previous_filename"))])
+        ).lower(),
     )
     try:
         validated = validate_evidence(root, digest)
@@ -301,6 +312,14 @@ def publish(
     return 0 if decision["conclusion"] == ADVISORY else 1
 
 
+class _Cancelled(Exception):
+    """The runner cancelled the job (SIGTERM after the SIGINT a cancellation sends)."""
+
+
+def _cancelled(signum: int, frame: Any) -> None:
+    raise _Cancelled
+
+
 def main() -> int:
     try:
         api = GitHub()
@@ -314,6 +333,9 @@ def main() -> int:
         if mode == "preflight":
             return prepare(api, number, head, root, out)
         if mode == "publish":
+            # A cancelled run (a newer one for the same pull request) interrupts this job: the
+            # check it created is then completed as a failure, never left in progress.
+            signal.signal(signal.SIGTERM, _cancelled)
             # The second stage independently executes the trusted synthesizer.
             check = api.request(
                 "check-runs",
@@ -330,6 +352,16 @@ def main() -> int:
                 except (GateError, synthesize.GateInputError, OSError, ValueError, KeyError, TypeError):
                     failed = True
                 return publish(api, number, head, out, failed, check)
+            except (KeyboardInterrupt, _Cancelled):
+                api.request(
+                    f"check-runs/{check['id']}",
+                    {
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "output": {"title": "AI Review Gate", "summary": "cancelled"},
+                    },
+                )
+                return 1
             except (GateError, synthesize.GateInputError, OSError, ValueError, KeyError, TypeError):
                 api.request(
                     f"check-runs/{check['id']}",

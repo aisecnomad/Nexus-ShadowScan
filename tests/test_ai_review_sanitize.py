@@ -9,6 +9,8 @@ check_secrets.py remains the authoritative file gate with exact approvals.
 
 from __future__ import annotations
 
+import pytest
+
 from tools.ai_review.sanitize import redact
 from tools.check_secrets import PATTERNS, findings
 
@@ -20,6 +22,32 @@ def test_a_private_key_block_is_withheld_whole() -> None:
     key = f"{begin}\nProc-Type: 4,ENCRYPTED\n\n{body}\n{end}"
     out = redact(f"Scenario: key committed:\n{key}\nRotate it.")
     assert out == "Scenario: key committed:\n[redacted]\nRotate it."
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        '"private_key": "{begin}\\n{body}\\n{end}\\n"',
+        "{begin} {body} {end}",
+        "> {begin}\n> {body}\n> {end}",
+    ],
+)
+def test_a_private_key_quoted_on_one_line_or_escaped_is_withheld_whole(quote: str) -> None:
+    begin, end = "-----BEGIN " + "PRIVATE KEY-----", "-----END " + "PRIVATE KEY-----"
+    body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2
+    out = redact(quote.format(begin=begin, body=body, end=end) + " Rotate it.")
+    assert body not in out and "END" not in out and out.endswith(" Rotate it.")
+
+
+def test_prose_after_a_quoted_key_header_is_kept() -> None:
+    begin = "-----BEGIN " + "RSA PRIVATE KEY-----"
+    finding = (
+        f"Scenario: the file begins with\n{begin}\n\nRecommendation: Rotate the key.\n\nAssumptions: None."
+    )
+    assert redact(finding) == (
+        "Scenario: the file begins with\n[redacted]\n\nRecommendation: Rotate the key.\n\nAssumptions: None."
+    )
+    assert redact(f"```\n{begin}\n```") == "```\n[redacted]\n```"
 
 
 def test_every_check_secrets_family_is_redacted() -> None:

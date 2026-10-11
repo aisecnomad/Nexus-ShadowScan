@@ -165,10 +165,14 @@ and the check run agree.
 An API review-publication error fails the created check. Checkout/interpreter
 or check-creation failures leave the check missing. No passing fallback exists.
 The publisher runs after a failed preflight but not after a run that a newer
-one cancelled (`if: ${{ !cancelled() }}`), so a superseded run posts nothing.
+one cancelled (`if: ${{ !cancelled() }}`), so a run superseded before it
+publishes posts nothing; one cancelled while it publishes completes its check
+as a failure (`cancelled`) and may already have posted its review.
 Repeated workflow runs may create another review/check for the same SHA; each
 run posts at most one of each. A private key quoted in a finding is withheld
-as a whole block (header, body and footer), not only its header line.
+as a whole block (header, body and footer, however the quote breaks its
+lines), not only its header line; a quoted header without a footer withholds
+the header and the base64 lines after it, never the prose that follows.
 
 ## Human gate and branch protection
 

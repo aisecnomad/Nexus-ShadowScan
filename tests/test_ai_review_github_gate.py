@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, Mock
@@ -9,7 +10,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 import yaml
 
-from tools.ai_review import synthesize
+from tools.ai_review import github_gate, synthesize
 from tools.ai_review.github_gate import (
     GateError,
     GitHub,
@@ -314,6 +315,35 @@ def test_digest_and_high_risk() -> None:
     assert high_risk(["shadowscan/cli.py", *evidence_paths]) is True
     assert high_risk(["shadowscan/cli.py"]) is True
     assert high_risk(["unknown.sh"]) is True
+    # A rename out of a high-risk path into the evidence directory removes that file: the
+    # previous name keeps it high risk, and the digest binds the rename.
+    moved = {
+        "filename": ".github/ai-review/notes.json",
+        "previous_filename": "shadowscan/cli.py",
+        "sha": "c" * 40,
+        "status": "renamed",
+    }
+    assert diff_digest(FILES) != diff_digest([*FILES, moved])
+
+
+def test_a_rename_into_the_evidence_directory_is_high_risk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AI_REVIEW_HIGH_RISK", "unset")  # prepare() sets it; restored afterwards
+    root, out = tmp_path / "input", tmp_path / "out"
+    evidence(root)
+    api = FakeGitHub()
+    api.files = [
+        {"filename": "docs/guide.md", "sha": "b" * 40, "status": "modified"},
+        {
+            "filename": ".github/ai-review/notes.json",
+            "previous_filename": "shadowscan/cli.py",
+            "sha": "c" * 40,
+            "status": "renamed",
+        },
+    ]
+    prepare(api, 1, HEAD, root, out)
+    assert os.environ["AI_REVIEW_HIGH_RISK"] == "true"
 
 
 def test_digest_binds_base(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -413,3 +443,29 @@ def test_pagination_malformed_and_limit() -> None:
     api.request = Mock(return_value=[{}] * 100)  # type: ignore[method-assign]
     with pytest.raises(GateError, match="pagination limit"):
         GitHub.pages(api, "pulls/1/files")
+
+
+def test_a_cancelled_publication_completes_its_check_as_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A newer run cancels this one mid-publication: the created check must not stay in progress.
+    api = FakeGitHub()
+    monkeypatch.setattr("tools.ai_review.github_gate.GitHub", lambda: api)
+    monkeypatch.setattr("sys.argv", ["github_gate", "publish"])
+
+    def interrupted(*args: Any, **kwargs: Any) -> int:
+        # What the SIGTERM handler raises; SIGINT arrives as KeyboardInterrupt, handled alike.
+        raise github_gate._Cancelled
+
+    monkeypatch.setattr("tools.ai_review.github_gate.prepare", interrupted)
+    for name, value in {
+        "PR_NUMBER": "1",
+        "PR_HEAD_SHA": HEAD,
+        "AI_REVIEW_INPUT": str(tmp_path / "input"),
+        "AI_REVIEW_OUT_DIR": str(tmp_path / "out"),
+    }.items():
+        monkeypatch.setenv(name, value)
+    assert main() == 1
+    assert api.calls[0][1] is not None and api.calls[0][1]["status"] == "in_progress"
+    final = api.calls[-1][1]
+    assert final is not None and (final["conclusion"], final["output"]["summary"]) == ("failure", "cancelled")
