@@ -795,11 +795,17 @@ one scan: it is `shadow: true` with
 `registry_match_reason: ambiguous-resource-approval` and the candidates in
 `registry_suggestions`. The `shadow` and `registry_match` of a source without
 an inventory, and a `shadow: false` that names no `registry_match`, are
-ignored. Scans made without an inventory never make a finding look
-unregistered: in a mixed fleet, a finding seen only on machines scanned
-without one stays `null` although the merged `inventory_present` is true.
-The terminal table, Markdown and HTML reports label it `unassessed` and count
-such findings in the summary. A scan configured with
+ignored. The match state written beside a verdict follows the verdict the
+merged finding adopts: a shadow finding keeps the `registry_match_reason` and
+`registry_suggestions` of the sources that found it unregistered (the first
+such source's value of each key), a registered finding keeps the
+`registry_match_assurance` and `registry-identity-unverified` tag of the
+sources that matched it, and neither carries the other's. Scans made without
+an inventory never make a finding look unregistered: in a mixed fleet, a
+finding seen only on machines scanned without one stays `null` although the
+merged `inventory_present` is true. The terminal table, Markdown and HTML
+reports label it `unassessed` and count such findings in the summary. A scan
+configured with
 `options.trusted_registries` reconciles its findings even when none of its
 connectors produced registry records, so it reports every unmatched finding
 as unregistered, and in a merge that wins over another source's match. Give

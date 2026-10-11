@@ -12,6 +12,7 @@ from click.testing import CliRunner
 from shadowscan.cli import main
 from shadowscan.fleet import FLEET_SCHEMA, merge_reports
 from shadowscan.models import Kind
+from shadowscan.registry import UNVERIFIED_IDENTITY_TAG
 from shadowscan.reporters import render
 
 MCP = '{"mcpServers": {"fs": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv"]}}}\n'
@@ -324,6 +325,46 @@ def test_merge_of_conflicting_registrations_is_ambiguous_in_either_order(tmp_pat
         assert (finding.shadow, finding.registry_match) == (True, None)
         assert finding.metadata["registry_match_reason"] == "ambiguous-resource-approval"
         assert finding.metadata["registry_suggestions"] == ["mcp-high", "mcp-low"]
+
+
+def test_merge_keeps_only_the_match_state_of_the_adopted_registration(tmp_path: Path):
+    # Regression: merge() keeps the first source's metadata, adds later sources' keys and unions
+    # tags, so a finding one source found unregistered kept another source's match assurance
+    # and registry-identity-unverified tag, and a registered one another source's suggestions.
+    _report(tmp_path, "laptop", {".mcp.json": MCP})
+    repo = tmp_path / "laptop"
+    registered = _scan(repo, tmp_path / "it.json", "--inventory", str(_inventory(tmp_path, "it", "fs-mcp")))
+    unregistered = _scan(repo, tmp_path / "empty.json", "--inventory", str(_inventory(tmp_path, "agents")))
+    flagged = json.loads(registered.read_text())
+    # A match on an operator-asserted caller name, as the registry flags it for gateway findings.
+    flagged["findings"][0]["metadata"]["registry_match_assurance"] = "operator-asserted"
+    flagged["findings"][0]["tags"].append(UNVERIFIED_IDENTITY_TAG)
+    hinted = json.loads(unregistered.read_text())
+    hinted["findings"][0]["metadata"].update(
+        registry_match_reason="name-only-review-required", registry_suggestions=["fs-mcp"]
+    )
+    for inputs in itertools.permutations([("flagged", flagged), ("hinted", hinted)]):
+        [finding] = merge_reports(
+            [(name, json.loads(json.dumps(report))) for name, report in inputs]
+        ).findings
+        assert (finding.shadow, finding.registry_match) == (True, None)
+        assert "registry_match_assurance" not in finding.metadata
+        assert UNVERIFIED_IDENTITY_TAG not in finding.tags
+        assert finding.metadata["registry_match_reason"] == "name-only-review-required"
+        assert finding.metadata["registry_suggestions"] == ["fs-mcp"]
+    # Registered by both sources: the flag of the source that matched it survives, and nothing
+    # a source wrote about leaving a finding unregistered does.
+    plain = json.loads(registered.read_text())
+    plain["findings"][0]["metadata"]["registry_match_reason"] = "name-only-review-required"
+    for inputs in itertools.permutations([("flagged", flagged), ("plain", plain)]):
+        [finding] = merge_reports(
+            [(name, json.loads(json.dumps(report))) for name, report in inputs]
+        ).findings
+        assert (finding.shadow, finding.registry_match) == (False, "fs-mcp")
+        assert finding.metadata["registry_match_assurance"] == "operator-asserted"
+        assert UNVERIFIED_IDENTITY_TAG in finding.tags
+        assert "registry_match_reason" not in finding.metadata
+        assert "registry_suggestions" not in finding.metadata
 
 
 def test_merge_reports_a_supplied_inventory_even_when_empty(tmp_path: Path):
