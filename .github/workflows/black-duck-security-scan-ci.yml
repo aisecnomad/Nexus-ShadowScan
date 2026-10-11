@@ -24,6 +24,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request supersedes its scan, which would otherwise
+# run the vendor's CLI with every scanner secret again for a stale merge commit.
+# Runs on main and the schedule get a group of their own (the run id).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     if: >-

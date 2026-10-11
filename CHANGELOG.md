@@ -15,7 +15,17 @@ summarizes each release for people who install and operate ShadowScan.
   One action is pinned to release 2.3.45 instead of an untagged 2022 commit,
   Black Duck moves to v2.11.0, every cron has a UTC comment, and
   `tests/test_repository_policy.py` requires a release comment after every
-  commit pin in the repository's and the example workflows.
+  commit pin in the repository's and the example workflows (quoted pins
+  included, with every pin in the parsed workflow counted) and reads the
+  tag comment of every use of a container or service image.
+- The Checkmarx step passes an empty `github_token` and `pr_number`: the
+  action's defaults sent the job's `security-events: write` token to the
+  Checkmarx tenant for a pull-request decoration the job cannot perform. A
+  policy test keeps them empty. The Semgrep, Checkmarx and Black Duck
+  workflows cancel a superseded pull-request run, as CI and CodeQL do, so a
+  quick series of pushes no longer ships the source to each vendor once per
+  push. The Black Duck action still downloads the vendor's current Bridge
+  CLI; pin it with `bridgecli_download_version` once a release is reviewed.
 - The drift CronJob example carries `shadowscan-mode: live`: it collects live,
   and the example NetworkPolicy grants egress to that label only, so the
   earlier `drift` label left the pod with no egress.
