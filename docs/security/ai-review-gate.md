@@ -48,8 +48,10 @@ maintainer-controlled review process, not a privileged trigger workaround.
 
 Trust the reviewed base code and GitHub-hosted runner. Treat PR content, API
 responses, scanner adapters and all model outputs as untrusted. The PR workflow
-definition itself is editable by a PR author: CODEOWNERS review and required
-human review remain essential. This is not a tamper-proof external GitHub App.
+definition itself is editable by a PR author: the human approval the rulesets
+require remains essential. The rulesets do not require code-owner review, so
+CODEOWNERS routes review requests rather than enforcing them. This is not a
+tamper-proof external GitHub App.
 Branch protection's GitHub Actions source cannot distinguish a malicious
 workflow with the same check name.
 
@@ -132,8 +134,11 @@ iterating. Any malformed entry invalidates its artifact, even alongside valid
 entries. Out-of-diff locations fail as stale findings. `ai-review: blocked`
 fails the check; critical/high findings do likewise. High-risk changes
 without findings fail as insufficient evidence, never an empty pass. Any
-non-documentation change is conservatively high risk; the high-risk label can
-only strengthen classification, not reduce it. Paths may not contain a line
+non-documentation change is conservatively high risk (the evidence under
+`.github/ai-review/`, which every gated diff carries, is left out of that
+classification as it is of the digest); the high-risk label can only
+strengthen classification, not reduce it. Evidence JSON nested too deeply for
+the decoder is malformed, like any other undecodable file. Paths may not contain a line
 break of any kind, since the diff list is written one path per line.
 
 The synthesizer produces `review-body.md`, `review-comments.json` (at most
@@ -158,16 +163,26 @@ synthesis, the publisher restates the review's `Decision` header so the review
 and the check run agree.
 
 An API review-publication error fails the created check. Checkout/interpreter
-or check-creation failures leave the check missing. No passing fallback exists. Repeated workflow runs may create another
-review/check for the same SHA; each run posts at most one of each.
+or check-creation failures leave the check missing. No passing fallback exists.
+The publisher runs after a failed preflight but not after a run that a newer
+one cancelled (`if: ${{ !cancelled() }}`), so a run superseded before it
+publishes posts nothing; one cancelled while it publishes completes its check
+as a failure (`cancelled`) and may already have posted its review.
+Repeated workflow runs may create another review/check for the same SHA; each
+run posts at most one of each. A private key quoted in a finding is withheld
+as a whole block (header, body and footer, however the quote breaks its
+lines), not only its header line; a quoted header without a footer withholds
+the header and the base64 lines after it, never the prose that follows.
 
 ## Human gate and branch protection
 
-Do not add **AI Review Gate** or **AI review publication** to the required
-checks: GitHub treats a `neutral` conclusion as passing, and an author who
-controls the evidence and the workflow file controls that result. Merge
-protection stays with the existing CI/scanner checks and human/CODEOWNER
-approval in branch protection/rulesets. Keep
+Do not add **AI Review Gate**, **AI review publication** or **preflight** to
+the required checks: GitHub treats a `neutral` conclusion as passing, and an
+author who controls the evidence and the workflow file controls that result.
+`python -m tools.governance_check` and the ruleset tooling refuse a ruleset
+that requires any of them (`advisory_check_required`). Merge protection stays
+with the existing CI/scanner checks and the human approval the rulesets
+require. Keep
 stale-approval dismissal and prevent the author from self-approving. Do not
 enable a bypass label, lower approval counts or weaken rulesets for this gate.
 CODEOWNERS covers helpers and this guide explicitly, and future agents through

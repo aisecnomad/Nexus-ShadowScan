@@ -932,12 +932,21 @@ lets an action run unapproved. It feeds the
 interval at L2 Supervised. A settings file shows configuration, not how a run
 was started; command-line flags, managed settings, user settings and project
 files outside the scanned tree can override it, so treat an L2 ceiling as
-configuration evidence. In `code.github` and `code.gitlab` API mode, a
+configuration evidence. A settings file is recognized as a case-insensitive
+file system resolves it, ignoring the trailing dots and spaces Windows drops:
+macOS and Windows clients read `.CLAUDE/settings.local.json` as their
+`.claude/settings.local.json`, so such a variant is read for posture and
+approval and establishes its client like the documented spelling. A local
+walk cut short (`max_files`, `max_entries`, the enumeration deadline, the
+symbolic-link deadline, or a directory that cannot be listed) keeps every gate
+of that scanned root at `some-actions`; other roots keep their own gates.
+In `code.github` and `code.gitlab` API mode, a
 settings file of the tree that the sampled snapshot did not write (a link, a
 blob over the size limit, one past the sample cap, or a failed download) is
-recorded as unread the same way, and a tree listing that was truncated or held
-entries naming no path keeps every gate of that repository at `some-actions`:
-a settings file nothing lists could loosen it.
+recorded as unread the same way, and a tree listing that was truncated, held
+entries naming no path, or names a settings file under a path that cannot be
+materialised (a backslash or a drive-like prefix) keeps every gate of that
+repository at `some-actions`: a settings file nothing reads could loosen it.
 
 ## `code.github`
 Enumerates an organization, a user or an explicit `repos:` list, fetches

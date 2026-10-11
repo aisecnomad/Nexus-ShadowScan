@@ -424,3 +424,16 @@ def test_fleet_finish_is_the_latest_instant_and_ignores_malformed_times():
     c[1]["finished_at"] = "9999-not-a-time"
     fleet = merge_reports([a, b, c]).to_dict()
     assert fleet["finished_at"] == tokyo_end.isoformat()
+
+
+def test_fleet_times_do_not_depend_on_report_order_when_instants_tie():
+    tokyo = datetime(2026, 10, 1, 18, 0, tzinfo=timezone(timedelta(hours=9)))
+    utc = tokyo.astimezone(UTC)
+    a, b = _source("host-a.json", utc), _source("host-b.json", tokyo)
+    a[1]["finished_at"], b[1]["finished_at"] = utc.isoformat(), tokyo.isoformat()
+    forward = merge_reports([a, b]).to_dict()
+    backward = merge_reports([b, a]).to_dict()
+    assert (forward["started_at"], forward["finished_at"]) == (
+        backward["started_at"],
+        backward["finished_at"],
+    )

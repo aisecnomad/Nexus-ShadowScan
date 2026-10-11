@@ -1746,8 +1746,11 @@ def dashboard_command(
 ) -> None:
     """Write a static fleet dashboard (and optionally inventory JSON) from JSON reports.
 
-    Several reports are merged as `merge` would; one report, or a fleet report,
-    is used as written. Coverage per source and connector comes first, and data
+    Several reports are merged as `merge` would. One report is read as `merge`
+    reads a source: autonomy is classified again, registration counts only from
+    its own `inventory_present`, and a report written before that field existed
+    that records registration is refused (exit 1). A fleet report is used as
+    written. Coverage per source and connector comes first, and data
     that was not collected never reads as zero. The page loads nothing and runs
     one hashed script. Exit 3 when any input is incomplete or the baseline
     comparison is incomplete; the files are still written."""

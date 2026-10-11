@@ -1925,10 +1925,13 @@ def test_gateway_without_its_arn_leaves_its_region_out_of_scope(index, detail, e
     instance = connector(index, clients)
     findings = instance.run()
     assert instance.ctx.stats.incomplete and expected in warnings(instance)
-    record, _ = _record_and_gateway(findings)
+    record, gateway = _record_and_gateway(findings)
     assert [b["coverage"] for b in record.metadata[RECORD_KEY]["bindings"]] == ["out-of-scope"]
     reconcile_registries(findings)
     assert record.metadata[RECONCILIATION_KEY]["status"] == "not-comparable"
+    # The gateway cannot be matched either, so no listing claims it is unregistered.
+    assert record.metadata[RECORD_KEY]["listing_complete"] is False
+    assert gateway.metadata.get(RECONCILIATION_KEY, {}).get("status") != "observed-not-registered"
 
 
 def test_gateway_identity_follows_the_installed_sdk_models():
@@ -1985,6 +1988,10 @@ def test_replayed_gateway_without_its_arn_leaves_its_region_out_of_scope(tmp_pat
     record = _by_resource(result)[f"{REGISTRY_ARN}/record/gtw000000001"]
     assert [b["coverage"] for b in record.metadata[RECORD_KEY]["bindings"]] == ["out-of-scope"]
     assert record.metadata[RECONCILIATION_KEY]["status"] == "not-comparable"
+    # Regression: the gateway itself read as observed but not registered on a complete replay.
+    [gateway] = [f for f in result.findings if f.resource_type == "agentcore-gateway"]
+    assert gateway.metadata.get(RECONCILIATION_KEY, {}).get("status") != "observed-not-registered"
+    assert not result.complete
 
 
 def _registry_claims(result: ScanResult) -> dict[str, Any]:
@@ -2134,6 +2141,9 @@ def test_replayed_record_text_is_bounded_like_collected_text(tmp_path, index):
         record["_descriptor_summary"]["a2a"]["skills"] = ["x"] * 10_000
         record["_descriptor_summary"]["extra"] = "e" * 10_000
         record["provenance"][0]["unexpected"] = "u" * 10_000
+        record["createdByAutoDetection"] = {"k": "a" * 200_000}
+        record["createdAt"] = "c" * 200_000
+        record["updatedAt"] = "u" * 200_000
         lines[position] = json.dumps(record)
 
     ctx = context(index, input=str(_fixture_lines(tmp_path, edit)))
@@ -2148,6 +2158,10 @@ def test_replayed_record_text_is_bounded_like_collected_text(tmp_path, index):
     assert "extra" not in record.metadata["descriptor"]
     assert "unexpected" not in record.metadata["provenance"][0]
     assert all(len(e.description) < 1000 for e in record.evidence)
+    # Times and the auto-detection flag are bounded too: only a boolean flag is kept.
+    assert record.metadata["created_by_auto_detection"] is None
+    assert len(record.first_seen) == 64 and len(record.last_seen) == 64
+    assert len(record.metadata[RECORD_KEY]["updated_at"]) == 64
 
 
 def test_bounding_leaves_collected_and_exported_summaries_unchanged():
@@ -2158,3 +2172,33 @@ def test_bounding_leaves_collected_and_exported_summaries_unchanged():
             assert bounded_summary(record["_descriptor_summary"]) == record["_descriptor_summary"]
     summary, parse = descriptor_summary(AGENT_REGISTRY, record_detail()["descriptors"])
     assert parse == "ok" and bounded_summary(summary) == summary
+
+
+class _RuntimeWithoutArn(FakeClient):
+    def __init__(self) -> None:
+        runtime = {
+            "agentRuntimeId": "support_agent-AbCdE12345",
+            "agentRuntimeName": "support_agent",
+            "status": "READY",
+        }
+        super().__init__(listings={"list_agent_runtimes": [{"agentRuntimes": [runtime]}]})
+
+    def get_agent_runtime(self, *, agentRuntimeId: str) -> dict[str, Any]:
+        return {"roleArn": f"arn:aws:iam::{ACCOUNT}:role/x"}
+
+
+def test_runtime_without_its_arn_is_incomplete_live_and_on_replay(tmp_path, index):
+    # Regression: the claims were withheld silently on a live scan (exit 0) while the replay of
+    # its own export warned and exited 3; both now read the same.
+    dump = tmp_path / "aws.jsonl"
+    clients = {
+        "agent-registry-control": agent_registry_client(),
+        "bedrock-agentcore-control": _RuntimeWithoutArn(),
+    }
+    live = connector(index, clients, _dump_path=str(dump))
+    [record] = [f for f in live.run() if RECORD_KEY in f.metadata]
+    assert record.metadata[RECORD_KEY]["listing_complete"] is False
+    replay = context(index, input=str(dump), account_id=ACCOUNT)
+    AwsConnector(replay).run()
+    assert live.ctx.stats.incomplete and replay.stats.incomplete
+    assert live.ctx.stats.warnings == replay.stats.warnings

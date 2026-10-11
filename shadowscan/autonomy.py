@@ -285,7 +285,11 @@ def _classify(
     capabilities = set(_strings(finding.capabilities))
     tags = set(_strings(finding.tags))
     trigger = _trigger_initiation(finding)
-    bypassed = bypassed or _bypass_evidence(finding, trigger is not None)
+    # The always-on tag explains a gateway caller's 'autonomous' capability as initiation
+    # evidence even when the surviving metadata does not corroborate the cadence: a fleet
+    # merge keeps the first observation's metadata but every observation's capabilities, so
+    # reading it as a bypass would invent one that depends on the order of the reports.
+    bypassed = bypassed or _bypass_evidence(finding, trigger is not None or _CADENCE_TAG in tags)
     scope = _approval_scope(finding)
     # Positive gating cannot rule a level out while other evidence says approval is bypassed.
     every_action = scope == "every-action" and not bypassed

@@ -18,7 +18,12 @@ from typing import Any
 
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.safe_json import strict_json_loads
-from tools.governance_check import GITHUB_ACTIONS_APP_ID, REQUIRED_CHECKS, check_ruleset
+from tools.governance_check import (
+    GITHUB_ACTIONS_APP_ID,
+    REQUIRED_CHECKS,
+    check_ruleset,
+    requires_advisory_check,
+)
 
 REPOSITORY = "aisecnomad/Project-Nexus"
 RULESETS = {23892853: "Protect main", 23913372: "Require CI and CodeQL"}
@@ -149,6 +154,12 @@ def prepare_payload(snapshot: Any, *, ruleset_id: int) -> dict[str, Any]:
             payload["rules"].append({"type": "deletion"})
         if failures := check_ruleset(payload):
             raise ValueError("prepared policy fails the minimum merge policy: " + ", ".join(failures))
+    # Every ruleset on main, not only the CI one: a required advisory AI review check is one any
+    # pull request author can satisfy (docs/security/ai-review-gate.md).
+    if "required_status_checks" in rules and requires_advisory_check(
+        _parameters(rules["required_status_checks"]).get("required_status_checks")
+    ):
+        raise ValueError("an advisory AI review check is required; remove it (advisory_check_required)")
     return payload
 
 

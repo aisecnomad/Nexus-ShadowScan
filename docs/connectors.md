@@ -98,11 +98,7 @@ are not imported while parsing, so their keys are not checked at that point.
 ## Third-party plugin execution
 
 Plugins still require an explicit allowlist in `options.plugins` or
-`--allow-plugin NAME`. The default `options.plugin_execution: thread` retains
-existing behavior. For reviewed plugins that can block inside an SDK or native
-extension, select a dedicated spawned process per connector:
-
-An approval may also pin the entry point's import target as
+`--allow-plugin NAME`. An approval may also pin the entry point's import target as
 `name=module:Class` (`--allow-plugin name=module:Class`). A name alone approves
 whatever distribution installs that entry point; a pinned approval refuses any
 other target before importing it, for example a later package that registers
@@ -112,6 +108,10 @@ point comes from that installed distribution and version; names compare as pip
 normalizes them, and an entry point without distribution metadata is refused.
 These checks read installed metadata before import. They bind a reviewed
 release, not file contents, so keep the plugin itself in a hash-locked install.
+
+The default `options.plugin_execution: thread` retains
+existing behavior. For reviewed plugins that can block inside an SDK or native
+extension, select a dedicated spawned process per connector:
 
 ```yaml
 options:
@@ -310,7 +310,9 @@ and limit names alone do not imply autonomy. See the [code connector guide](conn
 for supported options, primary SDK contracts and dynamic-configuration limits.
 Coding-agent settings that make a person approve actions (Claude Code, Codex,
 Goose) are recorded as `metadata.approval_gate` for the
-[autonomy tiers](concepts/autonomy.md).
+[autonomy tiers](concepts/autonomy.md). Settings files are recognized
+case-insensitively, as macOS and Windows clients read them, and a walk or
+listing cut short keeps every gate of that tree at `some-actions`.
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong

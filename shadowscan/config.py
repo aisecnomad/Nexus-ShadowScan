@@ -242,13 +242,17 @@ def _warn_deprecated_once(key: str, message: str) -> None:
     log.warning("%s", message)
 
 
-def _display_identifier(value: Any, fallback: str) -> str:
-    """Quote a key or connector name for a diagnostic only when it is plainly an identifier."""
+def _plain_identifier(value: Any) -> bool:
+    """Whether a key or connector name is plainly an identifier that redaction leaves alone."""
     if isinstance(value, str) and _IDENTIFIER_RX.fullmatch(value):
         shown = sanitize_text(value)
-        if shown == value and REDACTED not in shown:
-            return f"'{value}'"
-    return fallback
+        return shown == value and REDACTED not in shown
+    return False
+
+
+def _display_identifier(value: Any, fallback: str) -> str:
+    """Quote a key or connector name for a diagnostic only when it is plainly an identifier."""
+    return f"'{value}'" if _plain_identifier(value) else fallback
 
 
 def accepted_connector_keys(name: str) -> frozenset[str] | None:
@@ -349,9 +353,14 @@ def argv_credential_keys(config: dict[str, Any]) -> list[str]:
     so the caller warns and points to environment references or files.
     """
     shown = _redacted_config(config)
-    if not isinstance(shown, dict):
-        return sorted(config)
-    return sorted(key for key in config if shown.get(key) != config[key] and key != "input")
+    if isinstance(shown, dict):
+        exposed = [key for key in config if shown.get(key) != config[key] and key != "input"]
+    else:
+        exposed = list(config)
+    # A key is named only when it is plainly an identifier: a credential pasted into
+    # the key position ('--set ghp_...=1' for a plugin, whose keys are not checked)
+    # must not be echoed by the warning about credentials on the command line.
+    return sorted({key if _plain_identifier(key) else "<withheld key>" for key in exposed})
 
 
 @dataclass(slots=True)

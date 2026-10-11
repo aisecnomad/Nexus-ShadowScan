@@ -283,20 +283,45 @@ def skip(findings: list[Finding], settings: TriageSettings) -> int:
     return _mark_skipped(select(findings, settings))
 
 
+# A ``verdict`` key in any spelling a model might write: quoted or not, decodable or not. An
+# escaped quote inside a JSON string ('\\"verdict\\": ') does not match.
+_VERDICT_KEY = re.compile(r"""\bverdict\b["']?\s*:""", re.I)
+
+
+class _DuplicateKey(ValueError):
+    """A reply object repeated a key."""
+
+
+def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A decoded object; a repeated key is ambiguous (the last value would silently win)."""
+    data: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in data:
+            raise _DuplicateKey("duplicate key")
+        data[key] = value
+    return data
+
+
 def parse_reply(text: str) -> dict[str, str] | None:
     """The verdict object in a model reply, or None when the reply does not follow the contract.
 
     The reply is untrusted, so one longer than any verdict needs is refused
-    unread. Each JSON object in it is then decoded in turn, up to a fixed
-    number of attempts so decoding stays bounded; exactly one may carry a
-    ``verdict`` key. A reply that quotes several verdict objects, for example
-    one copied from injected finding text next to its own, is ambiguous and
-    refused rather than resolved by position.
+    unread. It must name a ``verdict`` key exactly once, decodable or not, and
+    that key must lie in the one object that decodes with a verdict: a reply
+    that quotes a verdict copied from injected finding text beside its own
+    (which may not be strict JSON, may be nested or may spell its key with
+    escapes) is ambiguous and refused rather than resolved by whichever
+    object decodes. Each JSON object is decoded in turn, up to a fixed number
+    of attempts so decoding stays bounded; a repeated key anywhere refuses
+    the reply, so an object is never replaced by one nested in it.
     """
     if len(text) > _MAX_REPLY_CHARS:
         return None
-    decoder = json.JSONDecoder()
-    found: list[dict[str, Any]] = []
+    keys = [match.start() for match in _VERDICT_KEY.finditer(text)]
+    if len(keys) != 1:
+        return None
+    decoder = json.JSONDecoder(object_pairs_hook=_unique_pairs)
+    found: list[tuple[dict[str, Any], int, int]] = []
     position = text.find("{")
     attempts = 0
     while position != -1:
@@ -305,15 +330,21 @@ def parse_reply(text: str) -> dict[str, str] | None:
             return None
         try:
             data, end = decoder.raw_decode(text, position)
+        except _DuplicateKey:
+            return None
         except (ValueError, RecursionError):  # ValueError also covers an over-long integer
             position = text.find("{", position + 1)
             continue
         if isinstance(data, dict) and "verdict" in data:
-            found.append(data)
+            found.append((data, position, end))
         position = text.find("{", end)
-    if len(found) != 1 or found[0].get("verdict") not in VERDICTS:
+    if len(found) != 1:
         return None
-    data = found[0]
+    data, start, end = found[0]
+    # An injected object whose key is spelled with escapes ('\\u0076erdict') decodes to a
+    # verdict without matching the textual count: the one textual key must be this object's.
+    if not start <= keys[0] < end or data.get("verdict") not in VERDICTS:
+        return None
     rationale = data.get("rationale")
     action = data.get("suggested_action")
     return {

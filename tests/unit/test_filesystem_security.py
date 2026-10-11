@@ -1413,3 +1413,77 @@ def test_unread_settings_path_outside_the_root_drives_no_lookup_outside_it(tmp_p
     gate = claude.metadata["approval_gate"]
     assert gate["scope"] == "some-actions"
     assert rel not in json.dumps(claude.to_dict())
+
+
+@pytest.mark.parametrize("variant", [(".CLAUDE", "settings.local.json"), (".claude", "SETTINGS.LOCAL.JSON")])
+def test_a_case_variant_settings_file_is_read_for_the_approval_gate(tmp_path, index, variant):
+    # macOS and Windows clients read a case variant as their settings file: a bypass there
+    # must not leave a strict sibling claiming a gate on every action.
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"defaultMode": "default"}})
+    )
+    directory, name = variant
+    (tmp_path / directory).mkdir(exist_ok=True)
+    (tmp_path / directory / name).write_text(
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}})
+    )
+    findings, _ = _run(index, tmp_path)
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG and "approval_gate" in f.metadata]
+    assert claude.metadata["approval_gate"]["scope"] == "some-actions"
+    assert "posture-permissions-bypassed" in claude.tags
+
+
+def test_a_walk_cut_short_keeps_every_approval_gate_partial(tmp_path, index):
+    # max_files stops the walk after the strict settings file, before the bypass beside it:
+    # an unlisted settings file could loosen the gate, so it cannot claim every action.
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"defaultMode": "default"}})
+    )
+    (tmp_path / ".claude" / "settings.local.json").write_text(
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}})
+    )
+    findings, ctx = _run(index, tmp_path, max_files=1)
+    assert ctx.stats.incomplete
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG and "approval_gate" in f.metadata]
+    assert claude.metadata["approval_gate"]["scope"] == "some-actions"
+
+
+@pytest.mark.parametrize("truncated_first", [True, False])
+def test_one_roots_truncation_never_weakens_another_roots_gate(tmp_path, index, truncated_first):
+    # max_files counts per root: root a is cut short, root b is walked in full whatever the order.
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    for i in range(5):
+        (a / f"f{i}.py").write_text("x = 1\n")
+    (b / ".claude").mkdir(parents=True)
+    (b / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"defaultMode": "default"}}))
+    order = [a, b] if truncated_first else [b, a]
+    ctx = ConnectorContext(
+        config={"paths": [str(p) for p in order], "use_git": False, "max_files": 3}, index=index
+    )
+    findings = FilesystemConnector(ctx).run()
+    assert ctx.stats.incomplete
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG and "approval_gate" in f.metadata]
+    assert claude.metadata["approval_gate"]["scope"] == "every-action"
+
+
+@pytest.mark.parametrize(
+    ("parts", "text"),
+    [
+        ((".CLAUDE", "settings.local.json"), '{"permissions": {"defaultMode": "bypassPermissions"}}'),
+        ((".claude", "SETTINGS.LOCAL.JSON"), '{"permissions": {"defaultMode": "bypassPermissions"}}'),
+        ((".Codex", "Config.TOML"), 'approval_policy = "never"\n'),
+    ],
+)
+def test_a_case_variant_settings_file_alone_establishes_its_client(tmp_path, index, parts, text):
+    # Regression: with no exactly spelled sibling, the variant matched no file-name signature,
+    # so its posture was read but no finding carried it and the scan read clean.
+    target = tmp_path.joinpath(*parts)
+    target.parent.mkdir(parents=True)
+    target.write_text(text)
+    findings, ctx = _run(index, tmp_path)
+    configs = [f for f in findings if f.kind == Kind.AGENT_CONFIG]
+    assert len(configs) == 1 and configs[0].metadata.get("posture"), [f.title for f in findings]
+    assert any(e.location.startswith("/".join(parts)) for e in configs[0].evidence)

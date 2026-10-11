@@ -16,6 +16,13 @@ def test_credential_keys_are_found_and_ordinary_keys_are_not() -> None:
     assert argv_credential_keys(conf) == ["token"]
 
 
+def test_a_credential_in_the_key_position_is_never_named() -> None:
+    # Plugin keys are not validated, so a token can be pasted as the key itself.
+    token = "ghp_" + SECRET + "1234"
+    assert argv_credential_keys({token: "1", "api_key": SECRET}) == ["<withheld key>", "api_key"]
+    assert token not in repr(argv_credential_keys({token: "1"}))
+
+
 def test_run_warns_for_a_secret_set_value(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_run_scan", lambda config, opts: None)
     result = CliRunner().invoke(

@@ -371,6 +371,21 @@ def test_uncorroborated_always_on_tag_is_not_initiation_evidence(metadata):
     assert interval(corroborated) == (1, 5, "unknown", "schedule")
 
 
+def test_merged_always_on_caller_never_reads_its_autonomous_capability_as_a_bypass():
+    # Regression: a fleet merge keeps the first observation's metadata (uncorroborated) and every
+    # observation's capabilities ('autonomous' from a corroborated one). The capability is the
+    # gateway's cadence evidence, so it must not become an approval bypass that lifted the floor
+    # to L5 in one report order and stayed at L1 in the other.
+    merged = finding(
+        Kind.GATEWAY_CALLER,
+        caps=("tool-use", "data-access", "autonomous"),
+        tags=("always-on",),
+        metadata={"activity": {"always_on": True, "always_on_corroborated": False}},
+    )
+    floor, _, oversight, _ = interval(merged)
+    assert oversight != "bypassed" and floor < 4
+
+
 @pytest.mark.parametrize(
     ("surface", "resource_type", "tags", "metadata", "initiation", "rule"),
     [
