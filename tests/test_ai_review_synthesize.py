@@ -427,6 +427,26 @@ class TestMainEndToEnd:
         assert decision["conclusion"] == "neutral"
         assert decision["inline_comments"] == 1
 
+    def test_stale_finding_keeps_the_in_diff_findings_in_the_review(self, tmp_path: Path) -> None:
+        # One stale path fails the gate, but the findings on files the diff does
+        # contain are still reported; only the stale one is left out of the body.
+        returncode, decision = self.run_gate(
+            tmp_path,
+            {
+                "appsec.json": [
+                    finding(severity="low", title="stale finding", path="other/file.py"),
+                    finding(severity="low", title="kept finding"),
+                    finding(severity="low", title="unlocated finding", path=None, line=None),
+                ]
+            },
+        )
+        assert returncode == 1
+        assert decision["reason"] == "stale_findings"
+        assert decision["findings"] == 2
+        body = (tmp_path / "out" / "review-body.md").read_text(encoding="utf-8")
+        assert "kept finding" in body and "unlocated finding" in body
+        assert "stale finding" not in body and "other/file.py" not in body
+
     def test_blocking_finding_fails_gate(self, tmp_path: Path) -> None:
         returncode, decision = self.run_gate(tmp_path, {"appsec.json": [finding()]})
         assert returncode == 1

@@ -1,7 +1,8 @@
 name: AI review
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # labeled and unlabeled: the blocking label takes effect without a new push.
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     # Only a pull request that carries evidence has anything to review. Without
     # this filter every other pull request failed closed on absent evidence, and
     # the first pull request to add the gate failed because its base ref had no
@@ -48,7 +49,10 @@ jobs:
   orchestrator:
     name: AI review publication
     needs: preflight
-    if: always()
+    # Publish after a failed or skipped preflight (the gate fails closed), but
+    # not after a newer push cancelled this run: that review would describe a
+    # superseded head and the next run re-evaluates it.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

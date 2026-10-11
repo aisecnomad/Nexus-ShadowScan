@@ -339,6 +339,9 @@ def test_workflow_security_boundary() -> None:
         "synchronize",
         "reopened",
         "ready_for_review",
+        # The blocking label takes effect without a new push.
+        "labeled",
+        "unlabeled",
     ]
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["preflight"]["permissions"] == {
@@ -346,7 +349,8 @@ def test_workflow_security_boundary() -> None:
         "pull-requests": "read",
     }
     publisher = workflow["jobs"]["orchestrator"]
-    assert publisher["if"] == "always()"
+    # Runs after a failed or skipped preflight, never after a cancelled run.
+    assert publisher["if"] == "${{ !cancelled() }}"
     assert publisher["needs"] == "preflight"
     publish_step = next(step for step in publisher["steps"] if "run" in step)
     assert publish_step["env"]["AI_REVIEW_PREFLIGHT_RESULT"] == "${{ needs.preflight.result }}"
