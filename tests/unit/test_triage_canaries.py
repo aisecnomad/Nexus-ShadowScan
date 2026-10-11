@@ -29,6 +29,23 @@ def test_a_parser_that_takes_the_first_verdict_is_caught(monkeypatch):
     assert all("a reply with two verdict objects was accepted" in r["problems"] for r in report["results"])
 
 
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_finding_text_in_a_prefilled_assistant_turn_is_caught(monkeypatch, provider):
+    original = triage_module.Triage._payload
+
+    def leaking(self, summary):
+        payload = original(self, summary)
+        payload["messages"].append({"role": "assistant", "content": f"Context: {summary['title']}"})
+        return payload
+
+    monkeypatch.setattr(triage_module.Triage, "_payload", leaking)
+    report = triage_canaries.offline(triage_canaries.load_cases(), provider)
+    assert report["failed"] == report["cases"]
+    assert all(
+        "finding text reached a turn other than the user turn" in r["problems"] for r in report["results"]
+    )
+
+
 def test_cli_offline_exits_zero_and_writes_a_private_report(tmp_path):
     out = tmp_path / "canaries.json"
     assert triage_canaries.main(["--output", str(out)]) == 0

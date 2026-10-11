@@ -101,8 +101,14 @@ def _request_problems(provider: str, request: dict[str, Any], case: dict[str, An
         return problems
     if not isinstance(summary, dict) or not isinstance(summary.get("title"), str):
         problems.append("the user turn does not carry the finding as a JSON object")
-    if any(text in str(system) for text in [case["title"], *case["evidence"]]):
-        problems.append("finding text reached the system prompt")
+    # Every other turn is the fixed system prompt (a message for openai, a field for anthropic):
+    # a prefilled assistant turn would be a new place for finding text to reach the model.
+    others = [m for m in messages if m["role"] != "user"]
+    if len(others) != (1 if provider == "openai" else 0):
+        problems.append("the request carries a turn that is neither the system prompt nor the user turn")
+    carriers = [str(system), *(json.dumps(m, sort_keys=True) for m in others)]
+    if any(text in carrier for carrier in carriers for text in [case["title"], *case["evidence"]]):
+        problems.append("finding text reached a turn other than the user turn")
     return problems
 
 
