@@ -24,6 +24,8 @@ _TEMPLATES = [
     'opts = {{"x": "{s}"}}',
     "const v = `{s}`;",
     'Configure(settings, "{s}", retries=3)',
+    # A token run between two literals must not pair their quotes and hide the second.
+    'k = "v1-"+deploymentPrefixName2024+"{s}"',
 ]
 
 

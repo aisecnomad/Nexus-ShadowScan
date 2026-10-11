@@ -28,8 +28,10 @@ _MIN_ENTROPY_SHARE = 0.85
 _MIN_SWITCH_RATE = 0.45
 _MIN_DIGITS = 1
 # A quoted run of token characters. Dots, colons and spaces are excluded so
-# module paths, URLs, host names and sentences never qualify.
-_QUOTED = re.compile(r"""(?P<q>["'`])(?P<body>[A-Za-z0-9+/_=-]{20,4096})(?P=q)""")  # 20 = _MIN_LENGTH
+# module paths, URLs, host names and sentences never qualify. The closing quote is
+# only looked at, not consumed: in '"v1-"+prefixName2024+"<secret>"' the run between
+# two literals is matched first, and a consumed quote hid the secret's opening quote.
+_QUOTED = re.compile(r"""(?P<q>["'`])(?P<body>[A-Za-z0-9+/_=-]{20,4096}+)(?=(?P=q))""")  # 20 = _MIN_LENGTH
 
 
 def _class(char: str) -> str:
@@ -57,7 +59,4 @@ def looks_random(value: str) -> bool:
 
 def withhold_random_literals(text: str) -> str:
     """Replace the body of every random-looking quoted literal in ``text`` with the redaction marker."""
-    return _QUOTED.sub(
-        lambda m: f"{m['q']}{REDACTED}{m['q']}" if looks_random(m["body"]) else m.group(0),
-        text,
-    )
+    return _QUOTED.sub(lambda m: m["q"] + REDACTED if looks_random(m["body"]) else m.group(0), text)
