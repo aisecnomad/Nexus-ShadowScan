@@ -257,7 +257,9 @@ summarizes each release for people who install and operate ShadowScan.
   version (`distribution-mismatch`), checked from metadata before import.
 - Redaction withholds the value in `Bearer token <value>`, keys ending in
   `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
-  literals passed to setter calls such as `setProperty("openai.key", ...)`,
+  literals passed to setter calls such as `setProperty("openai.key", ...)`
+  (any string literal when the name is a credential outright, such as
+  `openai.secret` or `AzureOpenAI:Secret`),
   and `value`, `key` and `credential` fields inside an `auth` mapping, at any
   depth of the mapping and inside lists under it.
   Every other member of an `auth`, `authentication` or `authn` mapping keeps

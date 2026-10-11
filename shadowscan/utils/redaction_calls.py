@@ -345,15 +345,20 @@ def _credential_call_values(
             positional += 1
     if sensitive or key_span is None or not values:
         return sensitive, values
-    # A setting path whose last word names a credential ('openai.key', 'Azure:Key')
-    # withholds only an opaque literal, as the same names do in settings files.
+    # A setting path is read as the same name is in settings files: one whose last
+    # word names a credential ('openai.key', 'Azure:Key') withholds an opaque literal,
+    # one that names a credential outright ('openai.secret', 'AzureOpenAI:Secret')
+    # withholds any string literal. A variable or expression is never a literal.
     key = _call_string_literal(text[key_span[0] : key_span[1]])
-    if key is None or _setting_level(key) != 1:
+    level = _setting_level(key) if key is not None else 0
+    if not level:
         return False, values
-    opaque = [
-        span for span in values if _setting_value_withheld(1, _call_string_literal(text[span[0] : span[1]]))
-    ]
-    return bool(opaque), opaque
+    withheld = []
+    for span in values:
+        literal = _call_string_literal(text[span[0] : span[1]])
+        if literal is not None and _setting_value_withheld(level, literal):
+            withheld.append(span)
+    return bool(withheld), withheld
 
 
 def _call_string_literal(argument: str) -> str | None:

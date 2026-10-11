@@ -19,6 +19,10 @@ SECRET = "Zq8" + "Lm2Xw9Rt4Yu7Io1Pa5Sd3Fg6Hj0Kl"
         f'TOKEN_VALUE="{SECRET}"',
         f'System.setProperty("openai.key", "{SECRET}")',
         f'config.Set("AzureOpenAI:Key", "{SECRET}")',
+        # A name that is a credential outright withholds any literal, as in settings files.
+        f'config.Set("AzureOpenAI:Secret", "{SECRET}")',
+        f'System.setProperty("openai.token", "{SECRET}")',
+        f'System.setProperty("openai.secret", "{SECRET}")',
     ],
 )
 def test_review_gap_values_are_withheld(text: str) -> None:
@@ -38,6 +42,13 @@ def test_review_gap_values_are_withheld(text: str) -> None:
 def test_ordinary_neighbours_keep_their_values(text: str) -> None:
     before = sanitize_text(text)
     assert "users" in before or "created_at" in before or "value" in before or "token" in before
+
+
+def test_setter_names_that_are_credentials_withhold_any_literal_but_no_variable() -> None:
+    assert sanitize_text('System.setProperty("openai.secret", "hunter2")') == (
+        f'System.setProperty("openai.secret", "{REDACTED}")'
+    )
+    assert sanitize_text('conf.set("openai.secret", secretValue)') == 'conf.set("openai.secret", secretValue)'
 
 
 def test_bearer_prose_is_unchanged_by_the_token_word_rule() -> None:
