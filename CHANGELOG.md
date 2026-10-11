@@ -8,8 +8,11 @@ summarizes each release for people who install and operate ShadowScan.
 ### Triage, plugin identity, redaction and cache integrity hardening
 
 - LLM triage refuses a reply that carries more than one verdict object (for
-  example one quoted from injected finding text) as `status: unparseable`, and
-  requests ask for `temperature: 0`.
+  example one quoted from injected finding text) as `status: unparseable`.
+  Requests send no sampling parameters, which current Claude models reject.
+  `options.llm_triage.structured_output: true` asks the provider to constrain
+  the reply to the verdict JSON schema (`output_config.format` or a strict
+  `response_format`); it is off by default because not every model supports it.
 - `--allow-plugin` and `options.allowed_plugins` accept `name=module:Class`.
   A pinned approval refuses a plugin whose entry point resolves elsewhere
   (`target-mismatch`); a bare name keeps the previous behavior. Duplicate

@@ -16,6 +16,7 @@ options:
     min_level: medium            # lowest heuristic risk level triaged
     timeout_seconds: 30
     budget_seconds: 300          # 1 to 3600, the whole triage run
+    # structured_output: true    # ask the provider to constrain replies to the verdict schema
 ```
 
 The key is read from the environment variable named by `api_key_env`
@@ -60,12 +61,21 @@ only as a JSON object with one of the four verdicts; anything else is
 recorded as `status: unparseable`, as is a reply longer than 16 KiB, which is
 refused unread (the response body is capped at 64 KiB). A reply that contains
 more than one verdict object, such as one quoted from injected finding text
-beside the model's own, is unparseable too, and requests ask for
-`temperature: 0`. Free text is truncated (rationale 500 characters, suggested
+beside the model's own, is unparseable too. Requests send no sampling
+parameters such as `temperature`, which current Claude models and OpenAI
+reasoning models reject. Free text is truncated (rationale 500 characters, suggested
 action 200) and sanitized with the rest of the finding when the report is
 written. These controls limit, but cannot prevent, a model being persuaded by
 finding text: never let a pipeline suppress or close findings because of
 `metadata.llm_triage`.
+
+`structured_output: true` also asks the provider to constrain the reply to the
+verdict schema: `output_config.format` for `anthropic`, a strict
+`response_format` JSON schema for `openai`. Enable it only for a model and
+endpoint that support it; otherwise every request fails and is recorded as
+`status: failed`. The reply is still checked the same way, since a schema
+constrains the form of the answer, not whether finding text persuaded the
+model.
 
 A failed request, including an unexpected error in the HTTP client, is
 recorded as `status: failed` on the finding and as a
