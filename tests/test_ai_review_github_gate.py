@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 import yaml
 
-from tools.ai_review import github_gate, synthesize
+from tools.ai_review import synthesize
 from tools.ai_review.github_gate import (
     GateError,
     GitHub,
@@ -452,14 +452,25 @@ def test_pagination_malformed_and_limit() -> None:
 def test_a_cancelled_publication_completes_its_check_as_a_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A newer run cancels this one mid-publication: the created check must not stay in progress.
+    # A newer run cancels this one mid-publication: the created check must not stay
+    # in progress. The cancellation arrives as a real SIGTERM, so the
+    # signal.signal registration in main() is what converts it into _Cancelled;
+    # SIGINT arrives as KeyboardInterrupt, handled alike. The backstop handler
+    # fails the test instead of killing the process if main() stops registering.
+    import signal
+
     api = FakeGitHub()
     monkeypatch.setattr("tools.ai_review.github_gate.GitHub", lambda: api)
     monkeypatch.setattr("sys.argv", ["github_gate", "publish"])
 
+    def backstop(signum: int, frame: Any) -> None:
+        raise AssertionError("main() did not register its SIGTERM handler")
+
+    previous = signal.signal(signal.SIGTERM, backstop)
+
     def interrupted(*args: Any, **kwargs: Any) -> int:
-        # What the SIGTERM handler raises; SIGINT arrives as KeyboardInterrupt, handled alike.
-        raise github_gate._Cancelled
+        os.kill(os.getpid(), signal.SIGTERM)
+        raise AssertionError("the SIGTERM handler did not interrupt the publication")
 
     monkeypatch.setattr("tools.ai_review.github_gate.prepare", interrupted)
     for name, value in {
@@ -469,7 +480,10 @@ def test_a_cancelled_publication_completes_its_check_as_a_failure(
         "AI_REVIEW_OUT_DIR": str(tmp_path / "out"),
     }.items():
         monkeypatch.setenv(name, value)
-    assert main() == 1
+    try:
+        assert main() == 1
+    finally:
+        signal.signal(signal.SIGTERM, previous)
     assert api.calls[0][1] is not None and api.calls[0][1]["status"] == "in_progress"
     final = api.calls[-1][1]
     assert final is not None and (final["conclusion"], final["output"]["summary"]) == ("failure", "cancelled")

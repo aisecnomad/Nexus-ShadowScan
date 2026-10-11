@@ -5,6 +5,31 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Post-merge review fixes (October 11)
+
+- A plain `Bearer`, `Basic` or `SSWS` credential containing `--` or `=` plus a
+  letter is again withheld whole. The October 11 integration applied the
+  token-word rule's glued-text guard to every scheme credential, so such a
+  token's tail after the glue was left in sanitized text; the guard now applies
+  only after `Bearer token`, where the glued name is a later pass's to
+  withhold, with a regression test over all three schemes.
+- `shadowscan run --set credentials_file=<value>` (and the other credential-file
+  keys) warns again when the value is an opaque credential rather than a file
+  location. Judging those keys by value had delegated to rules that recognize
+  only known token formats, so a bare hexadecimal or generic opaque token
+  pasted in place of the path drew no command-line warning.
+- A Workato recipe whose Workbot trigger line carries no trigger name records
+  no initiation instead of reading as event-triggered: the name is what
+  separates a command a person operates from an event trigger, and the
+  connector no longer guesses when the export omits it.
+- The AI review gate's published review now states when findings named files
+  outside the pull request's diff and were dropped (the gate already failed
+  `stale_findings`; the drop was silent in the rendered body). The cancelled-
+  publication test delivers a real `SIGTERM`, so the handler registration in
+  `main()` is pinned. The publishing runbook's rebuild recipe guards `TMPDIR`
+  (`${TMPDIR:-/tmp}`), so it runs on a stock Linux shell, and the low-code
+  connector guide states that Workato classifies by provider and trigger name.
+
 ### Integration review corrections (October 11)
 
 - `shadowscan run --set` no longer warns that a credential is on the command

@@ -35,6 +35,12 @@ def test_credential_file_paths_are_not_credentials_but_tokens_always_are() -> No
     assert argv_credential_keys(conf) == []
     # A credential given under one of those keys is still a credential on argv.
     assert argv_credential_keys({"token_file": JWT}) == ["token_file"]
+    # Judged by value: an opaque credential pasted where the file path belongs
+    # warns even when no known token format names it.
+    assert argv_credential_keys({"credentials_file": "f554a0579bed" + "6908c1b34a1c4ba12d112b0c19a5"}) == [
+        "credentials_file"
+    ]
+    assert argv_credential_keys({"credentials_file": SECRET}) == ["credentials_file"]
     # identity.jwt `tokens` holds credential material whatever its shape.
     assert argv_credential_keys({"tokens": "opaque"}) == ["tokens"]
 

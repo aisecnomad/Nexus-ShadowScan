@@ -1013,6 +1013,22 @@ def test_workato_trigger_provider_sets_the_initiation(
     assert interval(recipe)[3] == initiation
 
 
+def test_a_workbot_trigger_without_a_name_records_no_initiation(run_connector, tmp_path):
+    # The export omitted the trigger name: a Workbot trigger may be a command
+    # (a person operates it) or an event trigger, so the connector must not
+    # guess event-triggered from the provider alone.
+    recipe = _workato_recipe("workbot")
+    root = json.loads(recipe["code"])
+    del root["name"]
+    recipe["code"] = json.dumps(root)
+    source = _export(tmp_path, "workato.json", {"items": [recipe]})
+    [finding] = run_connector("lowcode.workato", input=source)[0]
+    assert finding.metadata["triggers"] == ["workbot"]
+    assert _initiation_tags(finding) == set()
+    assert "autonomous" not in finding.capabilities
+    assert interval(finding)[3] == "unknown"
+
+
 def test_workato_scheduler_in_an_action_step_does_not_override_the_trigger_line(run_connector, tmp_path):
     # The 'scheduler' blob heuristic backs up a recipe whose trigger line
     # classified nothing; a Workbot command (a person operates it, unlike a

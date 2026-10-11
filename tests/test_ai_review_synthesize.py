@@ -458,6 +458,8 @@ class TestMainEndToEnd:
         body = (tmp_path / "out" / "review-body.md").read_text(encoding="utf-8")
         assert "kept finding" in body and "unlocated finding" in body
         assert "stale finding" not in body and "other/file.py" not in body
+        # The drop is disclosed: the review says stale findings were left out.
+        assert "named files outside this pull request's diff" in body
 
     def test_blocking_finding_fails_gate(self, tmp_path: Path) -> None:
         returncode, decision = self.run_gate(tmp_path, {"appsec.json": [finding()]})
