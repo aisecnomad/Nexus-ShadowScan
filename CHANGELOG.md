@@ -406,7 +406,10 @@ summarizes each release for people who install and operate ShadowScan.
   after it. An opaque value in an auth field, or nested in one, is also
   removed from the record's other fields; a label, placement or URL there
   ('header', 'in', a Postman token request's `resource` record) is not, so it
-  cannot withhold unrelated fields or keys. A setter-call path whose name
+  cannot withhold unrelated fields or keys; nor is the value of an environment
+  entry inside the block, which the environment rule withholds (learned as a
+  credential, a value such as `1` had withheld every sibling field containing
+  it). A setter-call path whose name
   alone identifies a credential (`m.put("openai.token", ...)`, `"Azure:Secret"`,
   `"app.jwt"`) withholds any literal, as the same names do in settings files;
   paths whose last word names one (`"openai.key"`) keep withholding only an
