@@ -828,6 +828,12 @@ summarizes each release for people who install and operate ShadowScan.
   `mcp-insecure-transport` tag and the `mcp-plain-http` factor); neither
   marker holds a value. A record with a redacted env name, `docker run -e`
   value, or `cmd /c` or batch-file argument names no package.
+- Coding-agent settings files are recognized as a case-insensitive file
+  system resolves them, ignoring the trailing dots and spaces Windows drops:
+  macOS and Windows clients read `.CLAUDE/settings.local.json` or
+  `.claude/SETTINGS.LOCAL.JSON` as their settings file, which a scan had read
+  as no settings file at all, so a bypass there left a strict sibling
+  claiming an every-action gate on a complete scan.
 - A launcher under `/proc` or `/dev` (`/proc/self/cwd/npx`) counts as a
   relative path, and `PREFIX` and `DESTDIR`, under which npm reads its global
   npmrc and so its registry, leave a launch unidentified. A launcher path that

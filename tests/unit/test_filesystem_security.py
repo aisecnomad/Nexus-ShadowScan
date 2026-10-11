@@ -1413,3 +1413,22 @@ def test_unread_settings_path_outside_the_root_drives_no_lookup_outside_it(tmp_p
     gate = claude.metadata["approval_gate"]
     assert gate["scope"] == "some-actions"
     assert rel not in json.dumps(claude.to_dict())
+
+
+@pytest.mark.parametrize("variant", [(".CLAUDE", "settings.local.json"), (".claude", "SETTINGS.LOCAL.JSON")])
+def test_a_case_variant_settings_file_is_read_for_the_approval_gate(tmp_path, index, variant):
+    # macOS and Windows clients read a case variant as their settings file: a bypass there
+    # must not leave a strict sibling claiming a gate on every action.
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"defaultMode": "default"}})
+    )
+    directory, name = variant
+    (tmp_path / directory).mkdir(exist_ok=True)
+    (tmp_path / directory / name).write_text(
+        json.dumps({"permissions": {"defaultMode": "bypassPermissions"}})
+    )
+    findings, _ = _run(index, tmp_path)
+    [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG and "approval_gate" in f.metadata]
+    assert claude.metadata["approval_gate"]["scope"] == "some-actions"
+    assert "posture-permissions-bypassed" in claude.tags

@@ -27,6 +27,13 @@ def ids(rel: str, text: str) -> list[str]:
         ("AppData/Roaming/Block/goose/config/config.yaml", "goose"),
         (".openclaw/openclaw.json", "openclaw"),
         (".clawdbot/clawdbot.json", "openclaw"),
+        # Case variants and Windows trailing dots resolve to the same file for macOS and
+        # Windows clients, so they are settings files too.
+        (".CLAUDE/settings.local.json", "claude-code"),
+        (".claude/SETTINGS.LOCAL.JSON", "claude-code"),
+        ("proj\\.Claude.\\Settings.json", "claude-code"),
+        (".Codex/Config.TOML", "codex"),
+        ("AppData/Roaming/block/Goose/config/config.yaml", "goose"),
         (".claude/agents/x.md", None),
         ("config.yaml", None),
         ("", None),

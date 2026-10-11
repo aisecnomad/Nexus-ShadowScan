@@ -255,8 +255,14 @@ def approval_settings(rel: str, text: str) -> list[ApprovalSetting] | None:
 
 
 def posture_client(rel: str) -> str | None:
-    """The client whose settings file ``rel`` is, or None."""
-    parts = PurePosixPath(rel.replace("\\", "/")).parts
+    """The client whose settings file ``rel`` is, or None.
+
+    Names are compared as a case-insensitive file system resolves them (macOS and
+    Windows defaults, where a client reads '.CLAUDE/SETTINGS.LOCAL.JSON' as its
+    '.claude/settings.local.json'), ignoring the trailing dots and spaces Windows
+    drops, so a variant a client reads is never missed as no settings file at all.
+    """
+    parts = tuple(part.rstrip(" .").casefold() for part in PurePosixPath(rel.replace("\\", "/")).parts)
     name = parts[-1] if parts else ""
     parent = parts[-2] if len(parts) >= 2 else ""
     if parent == ".claude" and name in {"settings.json", "settings.local.json"}:
@@ -264,7 +270,7 @@ def posture_client(rel: str) -> str | None:
     if parent == ".codex" and name == "config.toml":
         return "codex"
     if name == "config.yaml" and (
-        tuple(parts[-3:-1]) == (".config", "goose") or tuple(parts[-4:-1]) == ("Block", "goose", "config")
+        tuple(parts[-3:-1]) == (".config", "goose") or tuple(parts[-4:-1]) == ("block", "goose", "config")
     ):
         return "goose"
     if (parent, name) in {(".openclaw", "openclaw.json"), (".clawdbot", "clawdbot.json")}:
