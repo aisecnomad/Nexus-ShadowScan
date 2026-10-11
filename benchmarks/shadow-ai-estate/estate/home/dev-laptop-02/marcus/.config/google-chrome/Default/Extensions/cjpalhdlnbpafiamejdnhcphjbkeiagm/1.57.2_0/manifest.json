@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "uBlock Origin",
+  "version": "1.57.2",
+  "description": "Finally, an efficient blocker. Easy on CPU and memory.",
+  "permissions": ["storage", "webRequest"]
+}

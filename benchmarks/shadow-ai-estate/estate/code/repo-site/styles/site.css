@@ -1,0 +1,24 @@
+:root {
+  --ink: #1d2733;
+  --paper: #ffffff;
+  --accent: #0b5fa5;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 44rem;
+  padding: 2rem 1rem;
+  font-family: "Source Sans 3", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  line-height: 1.6;
+}
+
+a {
+  color: var(--accent);
+}
+
+main h1 {
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 0.3rem;
+}

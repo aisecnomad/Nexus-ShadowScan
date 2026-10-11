@@ -29,6 +29,7 @@ CLIENT_SLUGS: dict[str, str] = {
     "github copilot": "copilot",
     "amazon q": "amazon-q",
     "amazonq": "amazon-q",
+    "amazon_q": "amazon-q",
     "kiro": "generic",
     "lm studio": "lm-studio",
     "lmstudio": "lm-studio",

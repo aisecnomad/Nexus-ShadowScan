@@ -102,7 +102,7 @@ _PRODUCT_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bgong\b"), "gong"),
     (re.compile(r"\bglean\b"), "glean"),
     (re.compile(r"\bmoveworks\b"), "moveworks"),
-    (re.compile(r"\bcoderabbit\b"), "coderabbit"),
+    (re.compile(r"\bcoderabbit"), "coderabbit"),
     (re.compile(r"\bcursor\b"), "cursor"),
     (re.compile(r"\bwindsurf\b"), "windsurf"),
     (re.compile(r"\bcline\b"), "cline"),

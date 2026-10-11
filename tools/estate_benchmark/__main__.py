@@ -28,6 +28,26 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _decoded_jwt_payloads(text: str) -> str:
+    """Base64url-decoded segments of JWT-shaped tokens found in `text`.
+
+    Anchors of token entities are claim values, which live inside the encoded
+    artifact; decoding keeps the grounded-anchor rule meaningful for them.
+    """
+    import base64
+    import re
+
+    decoded: list[str] = []
+    for match in re.finditer(r"[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*", text):
+        for segment in match.group(0).split(".")[:2]:
+            padded = segment + "=" * (-len(segment) % 4)
+            try:
+                decoded.append(base64.urlsafe_b64decode(padded).decode("utf-8", "ignore").lower())
+            except ValueError:
+                continue
+    return "\n".join(decoded)
+
+
 def cmd_validate(corpus_path: Path, estate: Path) -> int:
     corpus = load_corpus(corpus_path)
     problems: list[str] = []
@@ -39,17 +59,20 @@ def cmd_validate(corpus_path: Path, estate: Path) -> int:
                 problems.append(f"{entity.id}: missing artifact {artifact}")
                 continue
             if path.is_dir():
-                texts.extend(
-                    f.read_text(encoding="utf-8", errors="replace").lower() for f in _estate_files(path)
-                )
+                texts.extend(f.read_text(encoding="utf-8", errors="replace") for f in _estate_files(path))
             else:
-                texts.append(path.read_text(encoding="utf-8", errors="replace").lower())
-        joined = "\n".join(texts)
+                texts.append(path.read_text(encoding="utf-8", errors="replace"))
+        raw = "\n".join(texts)
+        # Base64url is case-sensitive: decode JWT payloads from the raw text,
+        # then lowercase everything for the anchor search.
+        joined = (raw + _decoded_jwt_payloads(raw)).lower()
         primary = entity.anchors[0]
         in_artifacts = primary in joined or primary in "/".join(entity.artifacts).lower()
         # A composite anchor (host:user:tool) is grounded when every part appears.
         if not in_artifacts and ":" in primary:
-            in_artifacts = all(part in joined for part in primary.split(":") if part)
+            # Parts under 4 characters are connector-synthesized abbreviations
+            # (e.g. "mcp" in a resource id), not artifact content.
+            in_artifacts = all(part in joined for part in primary.split(":") if len(part) >= 4)
         if joined and not in_artifacts:
             problems.append(f"{entity.id}: primary anchor {primary!r} not found in its artifacts")
     for path in _estate_files(estate):

@@ -16,6 +16,7 @@ evidence and for the bundled regression corpora that `make evaluate` runs.
 | Repo and home-view surfaces | Public GitHub repositories, read as a working tree and as `$HOME` | Two model labelers, adjudicated | [`tools/benchmark_realworld/`](../tools/benchmark_realworld/README.md) | `tools/benchmark_realworld/results*/` |
 | Sampled real-world repositories (326) | Random and purposive samples of GitHub and GitLab | Deterministic oracle plus model adjudication | [`tools/benchmark/realworld/`](../tools/benchmark/realworld/README.md) | `tools/benchmark/realworld/results*/` |
 | Shadow AI discovery, code surface (87) | 87 public repositories pinned by SHA | Session-labeled facts with file pointers | [`tools/discovery_benchmark/`](../tools/discovery_benchmark/README.md) | [`shadow-ai-discovery/`](shadow-ai-discovery/README.md) |
+| Shadow AI discovery, nine-surface estate (137) | Authored vendor-format artifacts for one fictional estate, frozen by SHA-256 | Authored with each entity, anchors and evidence pointers | [`tools/estate_benchmark/`](../tools/estate_benchmark/) (`python -m tools.estate_benchmark`) | [`shadow-ai-estate/`](shadow-ai-estate/README.md) |
 
 Only the code-surface discovery benchmark runs in automation: the weekly
 [`benchmark.yml`](../.github/workflows/benchmark.yml) workflow runs ShadowScan

@@ -1,0 +1,87 @@
+{
+  "name": "Quote triage agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "quote-intake",
+        "responseMode": "lastNode"
+      },
+      "id": "n1",
+      "name": "Quote webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "quote-intake"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.body.quote_text }}",
+        "options": {
+          "systemMessage": "You triage carrier spot quotes for Vantor Logistics. Extract lane, rate and validity, then label the quote accept, counter or reject against the rate card."
+        }
+      },
+      "id": "n2",
+      "name": "Triage agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "id": "n3",
+      "name": "OpenAI chat model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [200, 190],
+      "credentials": {
+        "openAiApi": {
+          "id": "12",
+          "name": "OpenAI quota key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "freight",
+        "table": "quote_triage",
+        "columns": "lane,rate,verdict"
+      },
+      "id": "n4",
+      "name": "Store verdict",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 0],
+      "credentials": {
+        "postgres": {
+          "id": "3",
+          "name": "freight warehouse"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Quote webhook": {
+      "main": [[{ "node": "Triage agent", "type": "main", "index": 0 }]]
+    },
+    "OpenAI chat model": {
+      "ai_languageModel": [[{ "node": "Triage agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Triage agent": {
+      "main": [[{ "node": "Store verdict", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Warsaw"
+  },
+  "tags": [{ "name": "freight-desk" }]
+}

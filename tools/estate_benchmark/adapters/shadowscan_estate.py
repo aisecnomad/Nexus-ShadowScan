@@ -119,8 +119,9 @@ _LOWCODE_PLATFORMS = (
 )
 
 _CLOUD_TYPES = (
-    ("bedrock-agent", "cloud-ai:bedrock-agent"),
+    # agentcore before bedrock-agent: "bedrock-agentcore" ARNs contain both tokens
     ("agentcore", "cloud-ai:agentcore"),
+    ("bedrock-agent", "cloud-ai:bedrock-agent"),
     ("cognitive-services", "cloud-ai:azure-openai"),
     ("foundry", "cloud-ai:ai-foundry-agent"),
     ("assistant", "cloud-ai:ai-foundry-agent"),
@@ -356,6 +357,10 @@ def _identity_facts(finding: dict[str, Any]) -> set[str]:
     if kind == "service-identity":
         return {f"service-identity:{_product(finding)}"}
     if kind == "token":
+        metadata = finding.get("metadata") or {}
+        identity = str(metadata.get("identity_type", "")) if isinstance(metadata, dict) else ""
+        if identity in {"service", "workload", "delegated-agent"}:
+            return {f"token:{identity}"}
         if "identity:delegated-agent" in tags or "agent-claims" in tags:
             return {"token:delegated-agent"}
         if "identity:workload" in tags:
@@ -370,8 +375,12 @@ def _gateway_facts(finding: dict[str, Any]) -> set[str]:
     if str(finding.get("kind", "")) != "gateway-caller":
         return set()
     tags = {str(t) for t in finding.get("tags") or []}
-    agentic = str(finding.get("title", "")).lower().startswith("agentic") or bool(
-        tags & {"agent-loop", "agent-runtime-api", "mcp-client"}
+    resource = str(finding.get("resource", ""))
+    agentic = (
+        str(finding.get("title", "")).lower().startswith("agentic")
+        or bool(tags & {"agent-loop", "agent-runtime-api", "mcp-client"})
+        # an OTel caller whose resource names a gen_ai agent is an agent caller
+        or (resource.startswith("service:") and "/agent:" in resource)
     )
     return {"gateway-caller:agentic" if agentic else "gateway-caller:llm"}
 
@@ -546,6 +555,40 @@ class ShadowScanEstateAdapter:
             if not isinstance(finding, dict):
                 continue
             surface = str(finding.get("surface", ""))
+            metadata = finding.get("metadata") or {}
+            servers = metadata.get("servers") if isinstance(metadata, dict) else None
+            if (
+                surface == "endpoint"
+                and str(finding.get("kind")) == "mcp-server"
+                and isinstance(servers, list)
+            ):
+                # One prediction per configured server, carrying its own identifiers,
+                # so multi-server configs attribute to each server entity.
+                shadow = finding.get("shadow")
+                base = _prediction_text(finding)
+                for server in servers:
+                    if not isinstance(server, dict):
+                        continue
+                    text = " ".join(
+                        str(part)
+                        for part in (
+                            base,
+                            server.get("name", ""),
+                            server.get("command", ""),
+                            " ".join(str(a) for a in server.get("args") or []),
+                            server.get("url", ""),
+                        )
+                        if part
+                    )
+                    result.predictions.append(
+                        Prediction(
+                            fact="mcp:server",
+                            text=text,
+                            surface="endpoint",
+                            shadow=shadow if isinstance(shadow, bool) else None,
+                        )
+                    )
+                continue
             if surface == "code":
                 facts = _code_facts(finding)
             else:

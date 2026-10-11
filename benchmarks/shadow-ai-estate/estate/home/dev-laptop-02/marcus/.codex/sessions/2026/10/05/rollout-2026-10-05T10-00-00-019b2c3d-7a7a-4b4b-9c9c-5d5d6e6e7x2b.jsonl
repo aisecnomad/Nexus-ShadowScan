@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-05T10:00:00.000Z","type":"session_meta","payload":{"id":"019b2c3d-7a7a-4b4b-9c9c-5d5d6e6e7x2b","cwd":"/home/marcus/eta-service","originator":"codex_cli_rs","cli_version":"0.42.0"}}
+{"timestamp":"2026-10-05T10:00:12.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"bash\",\"-lc\",\"go test ./...\"]}","call_id":"call_101"}}

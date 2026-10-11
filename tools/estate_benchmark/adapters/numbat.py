@@ -51,8 +51,12 @@ class NumbatAdapter:
         script = out_dir / "run.sh"
         script.write_text(
             "#!/bin/sh\n"
-            f'"{binary}" agents --format json > "{out_dir}/agents.json" || exit 1\n'
-            f'"{binary}" scan --emit all > "{out_dir}/scan.ndjson" 2> "{out_dir}/scan.err"\n',
+            # `agents` exits 1 when no agent artifacts exist under HOME; an empty
+            # inventory is a valid result, so only a missing/empty file fails.
+            f'"{binary}" agents --format json > "{out_dir}/agents.json"; status=$?\n'
+            f'[ -s "{out_dir}/agents.json" ] || exit "$status"\n'
+            f'"{binary}" scan --emit all > "{out_dir}/scan.ndjson" 2> "{out_dir}/scan.err"\n'
+            "exit 0\n",
             encoding="utf-8",
         )
         script.chmod(0o755)
