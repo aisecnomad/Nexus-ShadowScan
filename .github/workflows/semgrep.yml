@@ -22,6 +22,12 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # A newer pull-request push supersedes the older run; every main push and
+  # scheduled run finishes.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   semgrep:
     name: Scan

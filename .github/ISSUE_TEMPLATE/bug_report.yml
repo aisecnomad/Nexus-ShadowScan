@@ -11,9 +11,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: Full commit SHA
-      description: The full 40-character commit SHA you installed from (`git rev-parse HEAD` in a checkout). `shadowscan --version` prints the package version, which is the same for every commit between releases and cannot identify a revision.
-      placeholder: "0123456789abcdef0123456789abcdef01234567"
+      label: Release version and artifact identity, or full commit SHA
+      description: For a wheel from PyPI, the version (`shadowscan --version`) and the wheel's SHA-256 or attestation. For a source or Git install, the full 40-character commit SHA (`git rev-parse HEAD`); the version string alone is the same for every commit between releases and cannot identify a revision.
+      placeholder: "0.1.2, nexusshadowscan-0.1.2-py3-none-any.whl sha256:…  or  0123456789abcdef0123456789abcdef01234567"
     validations:
       required: true
 
@@ -25,10 +25,13 @@ body:
       options:
         - Code (filesystem / GitHub / GitLab)
         - Identity (Okta / Entra / Google Workspace / Auth0 / JWT)
-        - Gateway (logs)
+        - Gateway (logs / OpenTelemetry spans)
         - Low-code (Power Platform / Salesforce / ServiceNow / n8n / Make / Zapier / Workato)
         - SaaS (Slack / Teams / GitHub Apps / Atlassian / Notion / Zoom / generic)
-        - Cloud (AWS / GCP / Azure / OCI)
+        - Cloud (AWS / GCP / Azure / OCI / Kubernetes / OpenShift)
+        - Endpoint (developer workstations / host and runtime inventories)
+        - Network (logs)
+        - Runtime (running processes)
         - Core engine / CLI / reporters
         - Signatures
         - Other
@@ -90,7 +93,7 @@ body:
       label: Scan exit code
       options:
         - "0 (completed, passed)"
-        - "2 (completed and --fail-on triggered, or a CLI invocation error such as a missing option or unknown connector)"
+        - "1 (no scan result: invalid option, value, path or configuration, unknown connector, or a setup or output error)"
+        - "2 (completed; --fail-on, --fail-on-new or --fail-on-drift triggered)"
         - "3 (incomplete scan)"
-        - "1 (crash, or an error the CLI reported such as invalid configuration or an unwritable output path)"
         - Not applicable

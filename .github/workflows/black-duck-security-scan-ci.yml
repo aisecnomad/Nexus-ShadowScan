@@ -5,8 +5,8 @@ name: CI Black Duck security scan
 # pinned by full commit SHA. The job runs only when at least one of those
 # services is configured as a repository variable (BLACKDUCKSCA_URL,
 # COVERITY_URL, POLARIS_SERVER_URL or SRM_URL) with its secret; without one the
-# action has nothing to scan against and fails. Pull requests from forks
-# receive no secrets, so the job is limited to same-repository events. The
+# action has nothing to scan against and fails. Pull requests from forks and
+# from Dependabot receive no repository secrets, so the job skips them. The
 # action gets no GitHub token, so it neither comments on pull requests nor
 # uploads SARIF; either would need a write scope that
 # tests/test_repository_policy.py must allow for this job explicitly.
@@ -24,11 +24,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # A newer pull-request push supersedes the older run; every main push and
+  # scheduled run finishes.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     if: >-
       (vars.BLACKDUCKSCA_URL != '' || vars.COVERITY_URL != '' ||
        vars.POLARIS_SERVER_URL != '' || vars.SRM_URL != '') &&
+      github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest

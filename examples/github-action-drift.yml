@@ -24,7 +24,7 @@
 name: ShadowScan drift
 on:
   schedule:
-    - cron: "23 4 * * 1"
+    - cron: "23 4 * * 1"  # Monday 04:23 UTC
   workflow_dispatch:
 permissions:
   contents: read
