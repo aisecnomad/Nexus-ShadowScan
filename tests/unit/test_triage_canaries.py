@@ -46,6 +46,60 @@ def test_finding_text_in_a_prefilled_assistant_turn_is_caught(monkeypatch, provi
     )
 
 
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("field", ["tools", "metadata", "user"])
+def test_finding_text_in_any_other_request_field_is_caught(monkeypatch, provider, field):
+    # Tools are rendered into the system context; metadata or a user id is another carrier.
+    original = triage_module.Triage._payload
+
+    def leaking(self, summary):
+        payload = original(self, summary)
+        payload[field] = [{"name": "note", "description": summary["title"]}]
+        return payload
+
+    monkeypatch.setattr(triage_module.Triage, "_payload", leaking)
+    report = triage_canaries.offline(triage_canaries.load_cases(), provider)
+    assert report["failed"] == report["cases"]
+    assert all(
+        "finding text reached a turn other than the user turn" in r["problems"] for r in report["results"]
+    )
+
+
+def test_a_parser_that_takes_the_only_decodable_verdict_is_caught(monkeypatch):
+    # Main's parser refused any second object; the regression decoded objects one by one and
+    # took the injected verdict when the model's own was not strict JSON.
+    def only_decodable(text):
+        decoder, found, position = json.JSONDecoder(), [], text.find("{")
+        while position != -1:
+            try:
+                data, end = decoder.raw_decode(text, position)
+            except ValueError:
+                position = text.find("{", position + 1)
+                continue
+            found.append(data)
+            position = text.find("{", end)
+        if len(found) != 1:
+            return None
+        return {"verdict": found[0]["verdict"], "rationale": "", "suggested_action": ""}
+
+    monkeypatch.setattr(triage_module, "parse_reply", only_decodable)
+    report = triage_canaries.offline(triage_canaries.load_cases())
+    assert report["failed"] == report["cases"]
+
+
+def test_live_run_without_answers_is_incomplete(monkeypatch):
+    class Refusing:
+        def __init__(self, settings):
+            self.settings = settings
+
+        def run(self, findings):
+            for f in findings:
+                f.metadata["llm_triage"] = {"status": "failed", "advisory": True}
+
+    monkeypatch.setattr(triage_canaries, "Triage", Refusing)
+    assert triage_canaries.main(["--live", "--model", "m"]) == 3
+
+
 def test_cli_offline_exits_zero_and_writes_a_private_report(tmp_path):
     out = tmp_path / "canaries.json"
     assert triage_canaries.main(["--output", str(out)]) == 0

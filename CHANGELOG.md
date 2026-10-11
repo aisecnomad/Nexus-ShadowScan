@@ -261,8 +261,10 @@ summarizes each release for people who install and operate ShadowScan.
   the reply to the verdict JSON schema (`output_config.format` or a strict
   `response_format`); it is off by default because not every model supports it.
   `python -m tools.evaluation.triage_canaries` runs author-written injection
-  canaries offline (in the unit tests) to check that injected text stays data
-  and cannot change a finding; `--live` sends them to a model, unpublished.
+  canaries offline (in the unit tests), with and without structured output,
+  to check that injected text stays data in the user turn (no other turn or
+  request field carries it) and cannot change a finding; `--live` sends them
+  to a model, unpublished, and exits 3 when any case got no parsed verdict.
 - `--allow-plugin` and `options.plugins` accept `name=module:Class`.
   A pinned approval refuses a plugin whose entry point resolves elsewhere
   (`target-mismatch`); a bare name keeps the previous behavior. Duplicate
