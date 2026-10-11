@@ -48,7 +48,14 @@ from typing import Any, NamedTuple
 from shadowscan import __version__
 from shadowscan.autonomy import UNDERSTATED_TAG, merge_autonomy, merged_autonomy, valid_autonomy
 from shadowscan.comparison import _SCHEMA as _SCOPE_SCHEMA
-from shadowscan.comparison import _complete, _findings, _scope_digest, _started_at, _summary_matches_findings
+from shadowscan.comparison import (
+    _complete,
+    _findings,
+    _moment,
+    _scope_digest,
+    _started_at,
+    _summary_matches_findings,
+)
 from shadowscan.governance import DECLARED_GOVERNANCE_KEY, valid_declared_governance
 from shadowscan.merge import merge
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding, Risk, ScanResult, ScanStats, now_iso
@@ -296,7 +303,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     reasons: list[str] = []
     started: list[tuple[datetime, str]] = []
     undated = False
-    finished: list[str] = []
+    finished: list[tuple[datetime, str]] = []
     inventory_size = 0
     inventory_present = False
     for name, raw in reports:
@@ -358,8 +365,11 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
             undated = True
         else:
             started.append((moment, report["started_at"]))
-        if isinstance(report.get("finished_at"), str):
-            finished.append(report["finished_at"])
+        # Report times come from untrusted files: compare them as times, not as strings, and
+        # skip a value that is not an offset-aware ISO 8601 time.
+        end = _moment(report.get("finished_at"))
+        if end is not None:
+            finished.append((end, report["finished_at"]))
         inventory_size = max(inventory_size, _inventory_size(report))
         inventory_present = inventory_present or present
         sources.append(
@@ -424,7 +434,7 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     # evidence. One source without a valid start time leaves the fleet undated: dating it by the
     # merge would let an arbitrarily old baseline pass the limit.
     result.started_at = "" if undated else min(started, key=lambda item: item[0])[1]
-    result.finished_at = max(finished) if finished else None
+    result.finished_at = max(finished, key=lambda item: item[0])[1] if finished else None
     return result
 
 
