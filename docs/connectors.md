@@ -310,7 +310,9 @@ and limit names alone do not imply autonomy. See the [code connector guide](conn
 for supported options, primary SDK contracts and dynamic-configuration limits.
 Coding-agent settings that make a person approve actions (Claude Code, Codex,
 Goose) are recorded as `metadata.approval_gate` for the
-[autonomy tiers](concepts/autonomy.md).
+[autonomy tiers](concepts/autonomy.md). Settings files are recognized
+case-insensitively, as macOS and Windows clients read them, and a walk or
+listing cut short keeps every gate of that tree at `some-actions`.
 
 Agent filenames select structural discovery checks. Empty/invalid LangGraph,
 A2A, M365 and CrewAI manifests yield incomplete coverage instead of strong

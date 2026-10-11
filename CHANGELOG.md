@@ -866,16 +866,19 @@ summarizes each release for people who install and operate ShadowScan.
   value, or `cmd /c` or batch-file argument names no package.
 - A local walk cut short (`max_files`, `max_entries`, the enumeration
   deadline, a symbolic-link check at the deadline, or a directory that cannot
-  be listed) keeps every approval gate of the tree at `some-actions`, as a
-  truncated API listing already did; `code.github` and `code.gitlab` clone
-  mode delegate to this walk. A strict settings file read before the limit
-  had claimed an every-action gate while a bypass beside it went unread.
+  be listed) keeps every approval gate of that scanned root at
+  `some-actions`, as a truncated API listing already did; other roots of the
+  same scan keep their own gates. `code.github` and `code.gitlab` clone mode
+  delegate to this walk. A strict settings file read before the limit had
+  claimed an every-action gate while a bypass beside it went unread.
 - Coding-agent settings files are recognized as a case-insensitive file
   system resolves them, ignoring the trailing dots and spaces Windows drops:
   macOS and Windows clients read `.CLAUDE/settings.local.json` or
   `.claude/SETTINGS.LOCAL.JSON` as their settings file, which a scan had read
   as no settings file at all, so a bypass there left a strict sibling
-  claiming an every-action gate on a complete scan.
+  claiming an every-action gate on a complete scan, and a variant with no
+  exactly spelled sibling produced no finding. Such a variant now establishes
+  its client as the documented spelling would.
 - A launcher under `/proc` or `/dev` (`/proc/self/cwd/npx`) counts as a
   relative path, and `PREFIX` and `DESTDIR`, under which npm reads its global
   npmrc and so its registry, leave a launch unidentified. A launcher path that
@@ -1053,8 +1056,9 @@ summarizes each release for people who install and operate ShadowScan.
   replayed from an older export without its ARN takes its region's bindings
   out of scope. A runtime or gateway without its ARN also withdraws every
   record's `listing_complete`, so it is never read as `observed-not-registered`,
-  and a replay of such an export warns and is incomplete (exit 3) like the
-  live scan. Live gateway finding ids change: re-baseline them.
+  and the scan warns and is incomplete (exit 3), live or replayed alike (a
+  runtime whose listing names no ARN had withheld the claims silently on a
+  live scan). Live gateway finding ids change: re-baseline them.
 - A runtime, gateway or registry record that analysis rejects, that an export
   rejects or a replay drops, or whose finding `run` omits for failing
   sanitization now withdraws the registry claims it could undercut: every
