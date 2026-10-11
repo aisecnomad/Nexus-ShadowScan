@@ -17,6 +17,7 @@ import yaml
 
 from shadowscan.connectors.common import looks_like_placeholder
 from shadowscan.connectors.mcp_risk import _plaintext_remote, assess_transport, server_package
+from shadowscan.risk import _plaintext_scheme
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.redaction import REDACTED, sanitize
 from shadowscan.utils.safe_yaml import strict_bounded_safe_load
@@ -200,8 +201,25 @@ def _mark_withheld(record: dict[str, Any], raw: dict[str, Any]) -> None:
     package = server_package(record)
     if package is not None and package != server_package(raw):
         record["launch_unidentified"] = True
-    if any(_plaintext_remote(url) for url in raw["urls"]) and not assess_transport(record):
+    # risk.py scores every plaintext scheme, loopback included, so the flag that
+    # recovers a URL redaction hid must reach as far, or a loopback plaintext URL
+    # whose scheme was withheld would lose its mcp-plain-http factor. A redaction
+    # that hid only the remoteness keeps the flag it always set.
+    hidden_remote = any(_plaintext_remote(url) for url in raw["urls"]) and not assess_transport(record)
+    hidden_scheme = any(_plaintext_remote(url) or _plaintext_scheme(url) for url in raw["urls"]) and not any(
+        _plaintext_remote(url) or _plaintext_scheme(url) for url in _record_urls(record)
+    )
+    if hidden_remote or hidden_scheme:
         record["plaintext_transport"] = True
+
+
+def _record_urls(server: dict[str, Any]) -> list[str]:
+    """The sanitized record's projected endpoint URLs, as ``assess_transport`` reads them."""
+    raw_urls = server.get("urls")
+    urls = [u for u in raw_urls if isinstance(u, str)] if isinstance(raw_urls, list) else []
+    if not urls and isinstance(server.get("url"), str):
+        urls = [server["url"]]
+    return urls
 
 
 def _load_mcp_document(rel: str, text: str, errors: list[str], document: Any = None) -> dict[str, Any] | None:

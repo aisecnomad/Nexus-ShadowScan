@@ -28,12 +28,14 @@ def unassessed_count(result: ScanResult) -> int:
 
 
 def has_inventory(result: ScanResult) -> bool:
-    """Include empty supplied inventories and results made by older direct callers."""
-    return (
-        result.inventory_present
-        or result.inventory_size > 0
-        or any(f.shadow is not None for f in result.findings)
-    )
+    """Include empty supplied inventories and results made by older direct callers.
+
+    Only ``inventory_present`` says an inventory was supplied, as the merge, the
+    dashboard and the control evidence read it; a bare ``inventory_size`` from a
+    report written before the field existed does not. A reconciled verdict on
+    any finding still counts, for results built by older in-process callers.
+    """
+    return result.inventory_present or any(f.shadow is not None for f in result.findings)
 
 
 def visible_controls(value: str, keep: str = "") -> str:

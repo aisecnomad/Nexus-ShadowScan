@@ -931,6 +931,8 @@ def _n8n_workflow(*trigger_types: str) -> dict[str, Any]:
         # form or evaluation runner.
         ("n8n-nodes-base.manualTrigger", set(), "unknown"),
         ("@n8n/n8n-nodes-langchain.chatTrigger", set(), "unknown"),
+        # The chat trigger's original type, still present in older exports.
+        ("@n8n/n8n-nodes-langchain.manualChatTrigger", set(), "unknown"),
         ("n8n-nodes-base.formTrigger", set(), "unknown"),
         ("n8n-nodes-base.evaluationTrigger", set(), "unknown"),
         # A schedule is not also an event.
@@ -959,6 +961,19 @@ def test_n8n_schedule_beside_a_manual_test_trigger_is_scheduled(run_connector, t
     workflow = _n8n_workflow("n8n-nodes-base.manualTrigger", "n8n-nodes-base.scheduleTrigger")
     [finding] = run_connector("lowcode.n8n", input=_export(tmp_path, "n8n.json", {"data": [workflow]}))[0]
     assert _initiation_tags(finding) == {"scheduled"} and interval(finding)[3] == "schedule"
+
+
+def test_n8n_respond_to_webhook_is_a_reply_step_not_a_trigger(run_connector, tmp_path):
+    # A chat workflow replying through 'Respond to Webhook' is still one a person
+    # operates: the response node matches the trigger filter on 'webhook' but
+    # must not count as an event trigger.
+    workflow = _n8n_workflow("@n8n/n8n-nodes-langchain.chatTrigger")
+    workflow["nodes"].append({"name": "Reply", "type": "n8n-nodes-base.respondToWebhook", "parameters": {}})
+    [finding] = run_connector("lowcode.n8n", input=_export(tmp_path, "n8n.json", {"data": [workflow]}))[0]
+    assert finding.metadata["triggers"] == ["@n8n/n8n-nodes-langchain.chatTrigger"]
+    assert _initiation_tags(finding) == set()
+    assert "autonomous" not in finding.capabilities
+    assert interval(finding)[3] == "unknown"
 
 
 def _workato_recipe(provider: str, trigger: str = "new_event", **extra: Any) -> dict[str, Any]:
@@ -996,6 +1011,22 @@ def test_workato_trigger_provider_sets_the_initiation(
     assert _initiation_tags(recipe) == tags
     assert ("autonomous" in recipe.capabilities) is bool(tags)
     assert interval(recipe)[3] == initiation
+
+
+def test_workato_scheduler_in_an_action_step_does_not_override_the_trigger_line(run_connector, tmp_path):
+    # The 'scheduler' blob heuristic backs up a recipe whose trigger line
+    # classified nothing; a Workbot command whose action step mentions a
+    # scheduler must not become schedule evidence.
+    recipe = _workato_recipe("workbot", "bot_command")
+    root = json.loads(recipe["code"])
+    root["block"] = [{"number": 1, "keyword": "action", "provider": "scheduler_tools", "name": "defer"}]
+    recipe["code"] = json.dumps(root)
+    [finding] = run_connector(
+        "lowcode.workato", input=_export(tmp_path, "workato.json", {"items": [recipe]})
+    )[0]
+    assert finding.metadata["triggers"] == ["workbot:bot_command"]
+    assert _initiation_tags(finding) == set()
+    assert interval(finding)[3] == "unknown"
 
 
 def test_workato_recipe_without_a_trigger_line_records_no_initiation(run_connector, tmp_path):

@@ -355,7 +355,22 @@ class GitLabConnector(RemoteRepositoryConnector):
         # project can then claim every action.
         malformed = False
         tree_params = {"recursive": "true", "per_page": 100, "ref": snapshot}
-        for item in self.http.paginate_link(f"/projects/{pid}/repository/tree", params=tree_params):
+        # A listing cut short (a dropped 'next' link ends Link pagination silently) hides
+        # later entries the same way. GitLab states the offset-paginated collection's size
+        # in X-Total; compare what arrived against it where the server sent one.
+        expected_total = -1
+        listed = 0
+
+        def _tree_page(resp: Any) -> None:
+            nonlocal expected_total
+            if expected_total < 0:
+                total = str(resp.headers.get("X-Total") or "").strip()
+                expected_total = int(total) if total.isdigit() else -1
+
+        for item in self.http.paginate_link(
+            f"/projects/{pid}/repository/tree", params=tree_params, on_page=_tree_page
+        ):
+            listed += 1
             if not isinstance(item, dict) or not isinstance(item.get("path"), str):
                 self.ctx.warn("code.gitlab: malformed tree entry; source coverage partial", incomplete=True)
                 malformed = True
@@ -371,6 +386,12 @@ class GitLabConnector(RemoteRepositoryConnector):
                 continue
             if item.get("type") == "blob":
                 blobs[item["path"]] = item
+        truncated = 0 <= listed < expected_total
+        if truncated:
+            self.ctx.warn(
+                "code.gitlab: tree listing cut short; source coverage partial",
+                incomplete=True,
+            )
         paths = list(blobs)
         selected = select_api_paths(paths)
         if len(selected) < len(paths):
@@ -379,7 +400,7 @@ class GitLabConnector(RemoteRepositoryConnector):
                 incomplete=True,
             )
         dest, _ = self._write_api_snapshot(
-            proj, blobs, selected, tmp, tree_paths=tree_paths, tree_complete=not malformed
+            proj, blobs, selected, tmp, tree_paths=tree_paths, tree_complete=not (malformed or truncated)
         )
         return dest
 

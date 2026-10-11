@@ -103,6 +103,16 @@ def _clean(value: Any) -> str | None:
     return text or None
 
 
+def _one_line(text: str) -> bool:
+    """Whether ``text`` holds no line break of any kind.
+
+    A review body is Markdown, where CR, NEL and the Unicode separators break a
+    line as ``\\n`` does: a title that smuggles one could forge a line the
+    synthesizer promises is its own, such as the decision header.
+    """
+    return text.splitlines() == [text]
+
+
 def _path(value: Any) -> str | None:
     """A normalized repository-relative path, or None for anything else.
 
@@ -148,7 +158,7 @@ def parse_finding(data: Any) -> Finding | None:
         return None
     if category not in CATEGORIES:
         return None
-    if title is None or len(title) > MAX_TITLE or "\n" in title:
+    if title is None or len(title) > MAX_TITLE or not _one_line(title):
         return None
     if body is None or len(body) > MAX_BODY:
         return None
@@ -172,7 +182,7 @@ def parse_finding(data: Any) -> Finding | None:
     if owasp is not None and len(owasp) > 80:
         owasp = None
     fingerprint = _clean(data.get("fingerprint"))
-    if fingerprint is not None and (len(fingerprint) > 200 or "\n" in fingerprint):
+    if fingerprint is not None and (len(fingerprint) > 200 or not _one_line(fingerprint)):
         fingerprint = None
 
     return Finding(

@@ -434,6 +434,21 @@ def test_distribution_pin_refuses_another_release_before_import(monkeypatch, dis
     assert imported == [] and ENTRY not in registry._cache
 
 
+@pytest.mark.parametrize("order", ["pin-first", "name-first"])
+def test_a_name_approved_twice_is_refused_whatever_the_order(monkeypatch, order):
+    # Configuration validation refuses the duplicate; a list that bypasses it must not let the
+    # bare name drop the pin (dict order would otherwise decide which entry wins).
+    _, target = _publish_from(monkeypatch, _Dist("typosquat-hub", "0.1"))
+    pinned = f"{ENTRY}={target}@acme-hub-plugin==1.4.0"
+    approvals = [pinned, ENTRY] if order == "pin-first" else [ENTRY, pinned]
+    imported: list[str] = []
+    monkeypatch.setattr(registry, "_load", lambda path: imported.append(path))
+    with pytest.raises(PluginRegistryError) as info:
+        registry.get_connector_class(ENTRY, allowed_plugins=approvals)
+    assert info.value.diagnostic.rule == "conflicting-approval"
+    assert imported == [] and ENTRY not in registry._cache
+
+
 def test_absent_distribution_metadata_never_matches_a_pin_spelled_none(monkeypatch):
     # str(None) would read "None"; absent Name or Version is unreadable metadata, refused.
     _, target = _publish_from(monkeypatch, _Dist(None, None))

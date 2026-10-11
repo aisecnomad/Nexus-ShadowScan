@@ -114,17 +114,6 @@ def test_credential_fields_nested_in_an_auth_block_are_withheld() -> None:
     }
 
 
-@pytest.mark.parametrize("container", ["auth", "authentication", "authn"])
-@pytest.mark.parametrize("secret", [31415926535, 2.718, True])
-def test_non_string_credentials_in_an_auth_block_are_withheld(container: str, secret: object) -> None:
-    # The auth-block rule must add to the mapping rules, not replace them: a
-    # sensitive key holds a credential whatever the type of its value.
-    record = {container: {"type": "basic", "username": "svc", "password": secret, "client_secret": secret}}
-    assert sanitize(record) == {
-        container: {"type": "basic", "username": "svc", "password": REDACTED, "client_secret": REDACTED}
-    }
-
-
 def test_environment_block_inside_an_auth_block_keeps_the_environment_rule() -> None:
     # The auth descent must not pre-empt the environment rule: every variable's value is withheld.
     record = {
@@ -154,11 +143,23 @@ def test_an_auth_block_credential_is_also_removed_from_other_fields() -> None:
     }
 
 
-@pytest.mark.parametrize("shape", [list, tuple, set, lambda items: {"primary": items[0]}])
-def test_auth_block_credential_fields_are_withheld_whatever_their_shape(shape) -> None:
+@pytest.mark.parametrize(
+    ("shape", "withheld"),
+    [
+        (list, [REDACTED, REDACTED]),
+        (tuple, (REDACTED, REDACTED)),
+        (set, {REDACTED}),
+        (
+            lambda items: {"primary": items[0], "secondary": items[1]},
+            {"primary": REDACTED, "secondary": REDACTED},
+        ),
+    ],
+)
+def test_auth_block_credential_fields_are_withheld_whatever_their_shape(shape, withheld) -> None:
+    # The shape is kept; every scalar in it is withheld, a weak one ('hunter2pass') included.
     record = {"auth": {"type": "apikey", "key": shape([SECRET, "hunter2pass"])}, "note": f"rejected {SECRET}"}
     out = sanitize(record)
-    assert out["auth"] == {"type": "apikey", "key": REDACTED}
+    assert out["auth"] == {"type": "apikey", "key": withheld}
     assert SECRET not in repr(out) and "hunter2pass" not in repr(out["auth"])
 
 
@@ -178,7 +179,8 @@ def test_labels_nested_in_an_auth_value_container_never_wipe_other_fields() -> N
         "summary": "Adds a header",
     }
     out = sanitize(record)
-    assert out["auth"] == {"type": "apikey", "key": REDACTED}
+    # A label beside the credential ('name') is kept; the other scalars are withheld in place.
+    assert out["auth"] == {"type": "apikey", "key": {"name": "X-API-Key", "in": REDACTED}}
     assert {key: out[key] for key in ("headers", "x-header", "summary")} == {
         "headers": {"Accept": "application/json"},
         "x-header": "1",
@@ -206,3 +208,89 @@ def test_labels_nested_in_an_auth_value_container_never_wipe_other_fields() -> N
     out = sanitize(postman)
     assert out["request"] == postman["request"]
     assert SECRET not in repr(out)
+
+
+def test_an_environment_table_inside_an_auth_block_withholds_every_value() -> None:
+    # The environment rule comes first: following the auth block down must not loosen it.
+    record = {"auth": {"type": "basic", "env": {"USERNAME": "svc", "PASSWORD_FILE": "/run/secret"}}}
+    assert sanitize(record, env_values_are_secrets=False) == {
+        "auth": {"type": "basic", "env": {"USERNAME": REDACTED, "PASSWORD_FILE": REDACTED}}
+    }
+
+
+def test_a_list_of_credentials_under_an_auth_field_is_withheld() -> None:
+    record = {"auth": {"key": [SECRET, "second-" + SECRET], "value": ({"id": "k1", "value": SECRET}, SECRET)}}
+    assert sanitize(record) == {
+        "auth": {"key": [REDACTED, REDACTED], "value": ({"id": "k1", "value": REDACTED}, REDACTED)}
+    }
+
+
+def test_an_auth_credential_copied_into_a_sibling_field_is_withheld_too() -> None:
+    record = {"auth": {"basic": {"value": SECRET}}, "note": f"configured with {SECRET} last week"}
+    cleaned = sanitize(record)
+    assert cleaned["auth"] == {"basic": {"value": REDACTED}}
+    assert SECRET not in cleaned["note"] and REDACTED in cleaned["note"]
+
+
+@pytest.mark.parametrize("container", ["auth", "authentication", "authn"])
+@pytest.mark.parametrize("secret", [31415926535, 2.718, True])
+def test_non_string_credentials_in_an_auth_block_are_withheld(container: str, secret: object) -> None:
+    # The auth-block rule must add to the mapping rules, not replace them: a
+    # sensitive key holds a credential whatever the type of its value (#190).
+    record = {container: {"type": "basic", "username": "svc", "password": secret, "client_secret": secret}}
+    assert sanitize(record) == {
+        container: {"type": "basic", "username": "svc", "password": REDACTED, "client_secret": REDACTED}
+    }
+
+
+SECOND = "Xw7Qa2Zr9Lt4Mn1Vb5" + "Cd8Ef3Gh6Jk0PqSt"
+
+
+@pytest.mark.parametrize(
+    "glue",
+    [
+        f"--token {SECOND}",
+        f"--password={SECOND}",
+        f"=password: {SECOND}",
+    ],
+)
+def test_the_token_word_credential_keeps_a_glued_name_for_the_later_rules(glue: str) -> None:
+    # The token-word rule must not consume a glued option or setting name: the
+    # established passes read the text in order, and a name withheld with the
+    # credential before it hid the value after it from the rule that reads it.
+    cleaned = sanitize_text(f"Bearer token {SECRET}{glue}")
+    assert SECRET not in cleaned
+    assert SECOND not in cleaned
+
+
+def test_a_setting_path_glued_into_the_token_word_credential_keeps_its_value_withheld() -> None:
+    # 'v.password: w' glued after the token word reads as a setting, as it does
+    # without the rule: the word is the credential and the settings rule
+    # withholds the value. The run before '.password' is shown as the setting's
+    # name there, exactly as the same text is without a scheme in front.
+    cleaned = sanitize_text(f"Bearer token {SECRET}.password: {SECOND}")
+    assert SECOND not in cleaned
+
+
+def test_the_token_word_credential_is_withheld_whole_without_glue() -> None:
+    assert sanitize_text(f"Bearer token {SECRET}") == f"Bearer {REDACTED}"
+    # The name/value rule reads the 'Authorization:' line first and withholds
+    # the whole value; the token-word rule must leave no part of the secret.
+    assert SECRET not in sanitize_text(f"Authorization: Bearer token {SECRET}")
+
+
+@pytest.mark.parametrize("name", ["openai.token", "Azure:Secret", "app.jwt", "openai.secret"])
+def test_setter_calls_with_credential_named_paths_withhold_any_literal(name: str) -> None:
+    # A path whose name alone identifies a credential withholds any literal,
+    # as the same name does in a settings file; 'openai.key' (level 1) keeps
+    # withholding only an opaque literal, and an expression is not a leak.
+    assert SECRET not in sanitize_text(f'm.put("{name}", "{SECRET}")')
+    assert "hunter2" not in sanitize_text(f'm.put("{name}", "hunter2")')
+    assert sanitize_text(f'conf.set("{name}", value)') == f'conf.set("{name}", value)'
+
+
+def test_a_set_of_credentials_under_an_auth_field_is_withheld_with_its_copies() -> None:
+    record = {"auth": {"key": {SECRET}}, "note": f"configured with {SECRET} last week"}
+    cleaned = sanitize(record)
+    assert cleaned["auth"]["key"] == {REDACTED}
+    assert SECRET not in cleaned["note"] and REDACTED in cleaned["note"]

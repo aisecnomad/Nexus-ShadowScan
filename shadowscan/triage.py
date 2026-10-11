@@ -73,8 +73,11 @@ _KEYS = {
     "budget_seconds",
     "structured_output",
 }
-# A verdict reply is a few hundred characters (the reply is bounded to 400 tokens); anything
-# longer than this is refused unparsed, and the response body is capped too.
+# A verdict reply is a few hundred characters; anything longer than this is refused unparsed,
+# and the response body is capped too. The request's token bound is larger because current
+# models spend thinking or reasoning tokens before the reply and those count toward it: a cap
+# sized for the reply alone ends the response at the cap with no verdict.
+_MAX_OUTPUT_TOKENS = 4096
 _MAX_REPLY_OBJECTS = 64
 _MAX_REPLY_CHARS = 16 * 1024
 _MAX_RESPONSE_BYTES = 64 * 1024
@@ -399,7 +402,7 @@ class Triage:
         if self.settings.provider == "anthropic":
             payload: dict[str, Any] = {
                 "model": self.settings.model,
-                "max_tokens": 400,
+                "max_tokens": _MAX_OUTPUT_TOKENS,
                 "system": _SYSTEM,
                 "messages": [{"role": "user", "content": content}],
             }
@@ -410,7 +413,7 @@ class Triage:
             "model": self.settings.model,
             # max_tokens is deprecated in the chat completions API and rejected by the o-series
             # reasoning models; max_completion_tokens is the bound every current model accepts.
-            "max_completion_tokens": 400,
+            "max_completion_tokens": _MAX_OUTPUT_TOKENS,
             "messages": [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": content}],
         }
         if structured:

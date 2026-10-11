@@ -799,7 +799,7 @@ class EntraConnector(BaseConnector):
         for card_id, card in graph.card_manifests.items():
             self.ctx.examined()
             if card_id not in embedded_cards:
-                yield self._card_finding(card, graph)
+                yield self._card_finding(card, graph, coverage)
 
     def _index_records(self, records: Iterable[dict[str, Any]]) -> _GraphExport:
         graph = _GraphExport()
@@ -1818,7 +1818,7 @@ class EntraConnector(BaseConnector):
         f.kind = Kind.AGENT
         return f
 
-    def _card_finding(self, card: dict[str, Any], graph: _GraphExport) -> Finding:
+    def _card_finding(self, card: dict[str, Any], graph: _GraphExport, coverage: _Coverage) -> Finding:
         """A deprecated Entra agent registry card manifest that no exported instance embeds."""
         card_id = card["id"]
         conflicting = card_id in graph.conflicting_cards
@@ -1845,7 +1845,16 @@ class EntraConnector(BaseConnector):
             description = f"Deprecated Entra agent registry card '{name}'"
         f.add_evidence(registry_evidence(DEPRECATED_REGISTRY, description))
         f.add_tag("registry-record")
-        f.metadata[RECORD_KEY] = self._registry_record(DEPRECATED_REGISTRY, card_id, "deprecated", "a2a", [])
+        f.metadata[RECORD_KEY] = self._registry_record(
+            DEPRECATED_REGISTRY,
+            card_id,
+            "deprecated",
+            "a2a",
+            [],
+            # A foreign-tenant export's records stay unattributed here as at
+            # every other record site: the registry id is the tenant.
+            attributed=not coverage.foreign_tenant,
+        )
         finalize(f, self.index)
         f.kind = Kind.AGENT
         return f

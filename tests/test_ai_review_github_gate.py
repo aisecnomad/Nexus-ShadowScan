@@ -387,6 +387,10 @@ def test_workflow_security_boundary() -> None:
         "synchronize",
         "reopened",
         "ready_for_review",
+        # labeled/unlabeled run in the same unprivileged pull_request context;
+        # they let an 'ai-review: blocked' label take effect without a push.
+        "labeled",
+        "unlabeled",
     ]
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["preflight"]["permissions"] == {
