@@ -999,7 +999,10 @@ summarizes each release for people who install and operate ShadowScan.
   complete scan. Only the ARN and URL are kept from `GetGateway`. A failed
   call, or details without an ARN, makes the scan incomplete; a gateway
   replayed from an older export without its ARN takes its region's bindings
-  out of scope. Live gateway finding ids change: re-baseline them.
+  out of scope. A runtime or gateway without its ARN also withdraws every
+  record's `listing_complete`, so it is never read as `observed-not-registered`,
+  and a replay of such an export warns and is incomplete (exit 3) like the
+  live scan. Live gateway finding ids change: re-baseline them.
 - A runtime, gateway or registry record that analysis rejects, that an export
   rejects or a replay drops, or whose finding `run` omits for failing
   sanitization now withdraws the registry claims it could undercut: every
@@ -1009,9 +1012,11 @@ summarizes each release for people who install and operate ShadowScan.
   `observed-not-registered` or `registered-not-observed` as facts.
 - Analysis bounds the text of a replayed registry record to the collection
   limits (names, display names, status reasons and registry names to 300
-  characters, record versions to 64, provenance to the exported fields) and
-  rebuilds its descriptor summary with the collection limits and fields; an
-  edited export had carried unbounded text into titles and metadata.
+  characters, record versions to 64, provenance to the exported fields,
+  creation and update times to 64, and `createdByAutoDetection` to a
+  boolean) and rebuilds its descriptor summary with the collection limits and
+  fields; an edited export had carried unbounded text into titles and
+  metadata.
 - The registry responses and `tests/fixtures/cloud/aws_registry_records.jsonl`
   are synthetic, modeled on the installed SDK models; nothing was validated
   against a live account. The README demo export is unchanged.

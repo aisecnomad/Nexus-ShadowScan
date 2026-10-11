@@ -221,10 +221,11 @@ there `complete` says only that the discovery listing finished, never that an
 approved-only listing is complete. A registry record without these markers, as
 in exports written before they existed, replays as incomplete: regenerate such
 exports. A gateway in an export written before `GetGateway` was read has no
-ARN, so the bindings of its region replay `out-of-scope`. Analysis bounds the
+ARN, so the bindings of its region replay `out-of-scope`, no registry listing
+reads as complete, and the replay is incomplete. Analysis bounds the
 text of a replayed record to the lengths collection keeps (names, display
-names, status reasons and registry names to 300 characters, record versions to
-64) and rebuilds its descriptor summary with the collection limits and fields,
+names, status reasons and registry names to 300 characters, record versions and
+times to 64) and rebuilds its descriptor summary with the collection limits and fields,
 so an edited or hand-written export reports no more than a live scan would. The registry responses in the tests and in `aws_registry_records.jsonl`
 are synthetic, modeled on the installed SDK models; they were not validated
 against a live account.

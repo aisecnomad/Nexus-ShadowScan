@@ -376,8 +376,12 @@ def _resource_id(value: Any) -> str:
 
 
 def _optional_str(value: Any) -> str | None:
-    """Provider timestamps as text; absent or empty values stay unknown."""
-    return str(value) if value else None
+    """Provider timestamps as text, cut to 64 characters; absent or empty values stay unknown.
+
+    A live value is a datetime, so any value is read as text, but a replayed export is
+    untrusted and must not carry unbounded text into a finding's times or metadata.
+    """
+    return truncate(str(value), 64) if value else None
 
 
 def _bounded(value: Any, limit: int = 300) -> str | None:
@@ -1584,12 +1588,33 @@ class AwsConnector(BaseConnector):
             self.ctx.check_deadline()
             self._resolve_finding_account(f, expected_account)
         self._unbind_unreported_regions(pending)
+        self._withhold_claims_for_unresolved_resources(pending)
         self._void_registry_claims(pending)
         for f in pending:
             self.ctx.check_deadline()
             yield f
         if failure is not None:
             raise failure
+
+    def _withhold_claims_for_unresolved_resources(self, findings: list[Finding]) -> None:
+        """Withdraw registry claims when a runtime or gateway lacks the ARN a binding names.
+
+        Such a finding (a gateway whose GetGateway was denied or returned no ARN, or one
+        in an export written before GetGateway was read) can match no binding, so a
+        complete listing would read it as observed but not registered while its record
+        is out of scope. Every ``listing_complete`` is withdrawn instead. A live run has
+        already warned about the lookup; a replay warns here, so it is as incomplete.
+        """
+        unresolved = any(
+            f.resource_type in _BOUND_TYPES
+            and source_coverage(f.resource, f.account, {str(f.region)}) != "in-scope"
+            for f in findings
+        )
+        if not unresolved or not any(RECORD_KEY in f.metadata for f in findings):
+            return
+        self._registry_tainted = True
+        if self.offline:
+            self.ctx.warn("cloud.aws: AgentCore runtime or gateway without its ARN; registry claims withheld")
 
     def _watched(self, records: Iterable[dict[str, Any]]) -> Iterator[dict[str, Any]]:
         """``records``, noting a replay whose loader dropped input (it reports every drop)."""
@@ -2322,7 +2347,9 @@ class AwsConnector(BaseConnector):
                 "record_type": _bounded(vendor_type, 64),
                 "record_version": version,
                 "status_reason": _bounded(rec.get("statusReason")),
-                "created_by_auto_detection": rec.get("createdByAutoDetection"),
+                "created_by_auto_detection": (
+                    auto if isinstance(auto := rec.get("createdByAutoDetection"), bool) else None
+                ),
                 "created_by": _bounded(rec.get("createdBy")),
                 "name": names[0],
                 "display_name": names[1],
