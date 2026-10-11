@@ -146,6 +146,13 @@ summarizes each release for people who install and operate ShadowScan.
   every pre-`fleet-merge/v2` merge (per-source presence and connector runs
   unrecorded; shadow status kept as written when the merge recorded an
   inventory) instead of claiming such a report never records one.
+- A plugin distribution pin (`name=module:Class@distribution==version`) is
+  refused as `distribution-mismatch` when the installed distribution's metadata
+  lacks `Name` or `Version`; the missing header had compared as the string
+  "None", and whether the pin was refused depended on the interpreter's warning
+  filters. The triage injection canaries fail when finding text reaches any
+  turn other than the one user turn (a prefilled assistant turn passed every
+  case before), as the guide already said they do.
 - `tests/test_repository_policy.py` requires every workflow job `container:`
   and service image to be pinned by sha256 digest, with the reviewed tag named
   in a comment on the line above, as the Semgrep container is.
