@@ -803,9 +803,9 @@ such source's value of each key), a registered finding keeps the
 sources that matched it, and neither carries the other's. Scans made without
 an inventory never make a finding look unregistered: in a mixed fleet, a
 finding seen only on machines scanned without one stays `null` although the
-merged `inventory_present` is true. The terminal table, Markdown and HTML
-reports label it `unassessed` and count such findings in the summary. A scan
-configured with
+merged `inventory_present` is true. The terminal table, CSV, Markdown and HTML
+reports label it `unassessed` (the table, Markdown and HTML reports also count
+such findings in the summary). A scan configured with
 `options.trusted_registries` reconciles its findings even when none of its
 connectors produced registry records, so it reports every unmatched finding
 as unregistered, and in a merge that wins over another source's match. Give

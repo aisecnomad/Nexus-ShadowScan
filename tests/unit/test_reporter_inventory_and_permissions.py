@@ -146,3 +146,17 @@ def test_findings_without_any_inventory_are_not_labelled_unassessed(make_finding
     result = ScanResult(findings=[make_finding(shadow=None)], stats=_stats())
 
     assert "unassessed" not in render(result)
+
+
+def test_csv_labels_unassessed_findings_like_the_other_reports(make_finding):
+    # Regression: the CSV shadow cell stayed blank for a finding only inventory-less sources
+    # reported while the table, Markdown and HTML reports label it unassessed; beside assessed
+    # rows a blank cell reads as clean.
+    findings = [make_finding(shadow=None), make_finding(shadow=False, registry_match="crm-bot")]
+    assessed = ScanResult(findings=findings, stats=_stats(), inventory_size=1, inventory_present=True)
+    rows = list(csv.DictReader(io.StringIO(render_csv(assessed))))
+    assert [row["shadow"] for row in rows] == ["unassessed", "no"]
+
+    unassessed = ScanResult(findings=[make_finding(shadow=None)], stats=_stats())
+    rows = list(csv.DictReader(io.StringIO(render_csv(unassessed))))
+    assert [row["shadow"] for row in rows] == [""]
