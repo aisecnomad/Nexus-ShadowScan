@@ -1,7 +1,10 @@
 name: AI review
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # labeled/unlabeled: an 'ai-review: blocked' label must take effect on the
+    # next run, not wait for a push; the paths filter still scopes every event
+    # to evidence-carrying pull requests.
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
     # Only a pull request that carries evidence has anything to review. Without
     # this filter every other pull request failed closed on absent evidence, and
     # the first pull request to add the gate failed because its base ref had no

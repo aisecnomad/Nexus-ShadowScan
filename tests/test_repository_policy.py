@@ -2486,8 +2486,15 @@ def _workflow_images(path: Path) -> list[tuple[str, str, int]]:
                 images.append(service["image"])
     lines = path.read_text(encoding="utf-8").splitlines()
     found = []
+    # The Nth listed occurrence of an image reads its Nth line: two jobs can run
+    # the same image, and a search from the top would hand the first
+    # occurrence's comment to both.
+    taken: dict[str, int] = {}
     for image in images:
-        number = next(index for index, line in enumerate(lines, 1) if image in line)
+        matches = [index for index, line in enumerate(lines, 1) if image in line]
+        position = min(taken.get(image, 0), len(matches) - 1)
+        taken[image] = position + 1
+        number = matches[position]
         found.append((image, lines[number - 2] if number > 1 else "", number))
     return found
 

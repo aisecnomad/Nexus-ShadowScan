@@ -134,6 +134,14 @@ summarizes each release for people who install and operate ShadowScan.
   `check_secrets.PATTERNS` so the two lists cannot drift. A finding or diff
   path containing a line break (`\n`, `\r`, U+0085, U+2028, U+2029), which
   would read back as two paths from the one-per-line diff list, is rejected.
+  A title containing any of those breaks is rejected the same way, and a
+  fingerprint carrying one is dropped for the computed identity, so a finding
+  cannot forge a line of the review body such as the decision header. The
+  workflow also runs on `labeled`/`unlabeled` events of evidence-carrying pull
+  requests, so an `ai-review: blocked` label takes effect without a push, and
+  the label's description says what it does. The policy test for container
+  image tag comments reads the Nth occurrence of a duplicated image instead of
+  handing the first occurrence's comment to both.
 - AI review gate: review bodies were unbounded (nine maximum-size findings
   exceeded GitHub's 65,536-character limit and publication failed). The body
   is budgeted: full findings in severity order while they fit, then one line
