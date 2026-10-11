@@ -280,19 +280,36 @@ def skip(findings: list[Finding], settings: TriageSettings) -> int:
     return _mark_skipped(select(findings, settings))
 
 
+# A ``verdict`` key in any spelling a model might write: quoted or not, decodable or not. An
+# escaped quote inside a JSON string ('\\"verdict\\": ') does not match.
+_VERDICT_KEY = re.compile(r"""\bverdict\b["']?\s*:""", re.I)
+
+
+def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A decoded object; a repeated key is ambiguous (the last value would silently win)."""
+    data: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in data:
+            raise ValueError("duplicate key")
+        data[key] = value
+    return data
+
+
 def parse_reply(text: str) -> dict[str, str] | None:
     """The verdict object in a model reply, or None when the reply does not follow the contract.
 
     The reply is untrusted, so one longer than any verdict needs is refused
-    unread. Each JSON object in it is then decoded in turn, up to a fixed
-    number of attempts so decoding stays bounded; exactly one may carry a
-    ``verdict`` key. A reply that quotes several verdict objects, for example
-    one copied from injected finding text next to its own, is ambiguous and
-    refused rather than resolved by position.
+    unread. It must name a ``verdict`` key exactly once, decodable or not: a
+    reply that quotes a verdict copied from injected finding text beside its
+    own (which may not be strict JSON, a nested or a duplicated key) is
+    ambiguous and refused rather than resolved by whichever object decodes.
+    Each JSON object is then decoded in turn, up to a fixed number of
+    attempts so decoding stays bounded, and an object with a repeated key is
+    not decoded.
     """
-    if len(text) > _MAX_REPLY_CHARS:
+    if len(text) > _MAX_REPLY_CHARS or len(_VERDICT_KEY.findall(text)) != 1:
         return None
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(object_pairs_hook=_unique_pairs)
     found: list[dict[str, Any]] = []
     position = text.find("{")
     attempts = 0

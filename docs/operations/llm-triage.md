@@ -59,14 +59,18 @@ Finding text comes from scanned repositories and remote APIs and is
 untrusted. The model is told to treat it as data, and a reply is accepted
 only as a JSON object with one of the four verdicts; anything else is
 recorded as `status: unparseable`, as is a reply longer than 16 KiB, which is
-refused unread (the response body is capped at 64 KiB). A reply that contains
-more than one verdict object, such as one quoted from injected finding text
-beside the model's own, is unparseable too. Requests send no sampling
-parameters such as `temperature`, which current Claude models and OpenAI
-reasoning models reject, and bound the reply to 400 tokens (`max_tokens` for
-Anthropic, `max_completion_tokens` for OpenAI, whose `max_tokens` is deprecated
-and rejected by the o-series models; an OpenAI-compatible endpoint must accept
-it). Free text is truncated (rationale 500 characters, suggested
+refused unread (the response body is capped at 64 KiB). A reply must name a
+`verdict` key exactly once: one that names it again, such as a verdict quoted
+from injected finding text beside the model's own (whether or not either is
+strict JSON, nested or a repeated key), or a prose `verdict:` label, is
+unparseable too, and so is an object with a repeated key. Requests send no
+sampling parameters such as `temperature`, which current Claude models and
+OpenAI reasoning models reject, and bound the reply to 400 tokens (`max_tokens`
+for Anthropic, `max_completion_tokens` for OpenAI, whose `max_tokens` is
+deprecated and rejected by the o-series models; an OpenAI-compatible endpoint
+must accept it). An OpenAI reasoning model spends `max_completion_tokens` on
+its reasoning as well, so at 400 it usually returns an empty reply, recorded
+as `unparseable`: use a model that answers without a reasoning phase. Free text is truncated (rationale 500 characters, suggested
 action 200) and sanitized with the rest of the finding when the report is
 written. These controls limit, but cannot prevent, a model being persuaded by
 finding text: never let a pipeline suppress or close findings because of
