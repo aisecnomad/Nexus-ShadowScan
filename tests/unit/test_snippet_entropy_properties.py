@@ -89,3 +89,27 @@ def test_the_fallback_is_idempotent_and_applies_when_a_finding_is_sanitized():
     finding.sanitize()
     assert finding.evidence[0].snippet == f'Init("{REDACTED}")'
     assert withhold_random_literals(finding.evidence[0].snippet) == finding.evidence[0].snippet
+
+
+_SECRET = "Zq8" + "Lm2Xw9Rt4Yu7Io1Pa5Sd3Fg6Hj0Kl"  # synthetic, built at runtime
+
+
+@pytest.mark.parametrize("tail", ["\u2026", "", "\nnext = 1"])
+def test_a_literal_cut_before_its_closing_quote_is_still_withheld(tail: str) -> None:
+    # An excerpt trims long lines and appends an ellipsis, which can cut a literal before its
+    # closing quote; what remains still begins with the secret.
+    assert looks_random(_SECRET[:24])
+    snippet = f'client = Widget("{_SECRET[:24]}{tail}'
+    cleaned = withhold_random_literals(snippet)
+    assert _SECRET[:24] not in cleaned and REDACTED in cleaned and cleaned.endswith(tail)
+    assert withhold_random_literals('handler = "user_profile_service') == 'handler = "user_profile_service'
+
+
+def test_the_filesystem_excerpt_cannot_leave_a_truncated_literal() -> None:
+    from shadowscan.connectors.code.filesystem import _excerpt
+
+    line = "client = Widget(" + ", ".join(f"opt{i}=True" for i in range(11)) + f', "{_SECRET}")'
+    snippet = _excerpt([line], 1)
+    assert snippet.endswith("\u2026") and _SECRET not in snippet
+    cleaned = Evidence(signal="s", description="d", snippet=snippet).snippet
+    assert cleaned is not None and _SECRET[:20] not in cleaned and REDACTED in cleaned
