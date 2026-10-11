@@ -348,13 +348,17 @@ def test_an_already_merged_report_is_refused(tmp_path):
 
 
 def test_a_report_without_inventory_never_supplies_shadow_status():
-    # A report that says no inventory was supplied is believed, whatever its findings say.
+    # A report that says no inventory was supplied is believed, whatever its findings or its
+    # inventory size say: only inventory_present counts, as shadowscan merge reads it.
     report = _report(_finding("a", 50, shadow=True, registry_match=None), inventory=False)
+    report["inventory_size"] = 3
     evidence = control_evidence([("report.json", report)])
     assert evidence["evidence_scope"]["reports"][0]["inventory"] is False
+    assert evidence["evidence_scope"]["inventory"] == "not supplied"
     controls = _controls(evidence)
     for ref in SHADOW_REFS:
         assert controls[ref]["findings"] == 0 and controls[ref]["evidence"] == UNKNOWN_NO_INVENTORY
+    assert [finding.shadow for finding in merge_reports([("report.json", report)]).findings] == [None]
     # A report from before inventory_present existed that records registration is refused, as
     # shadowscan merge refuses it, rather than being read from its shadow values.
     del report["inventory_present"]

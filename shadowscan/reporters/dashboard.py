@@ -221,10 +221,12 @@ def _agent_table(agents: list[dict[str, Any]], table_id: str, caption: str) -> s
 def _legacy_fleet_note() -> str:
     return (
         "<p class='note warn'>This fleet report was merged by an earlier version (before"
-        " shadowscan.fleet-merge/v2), which counted an AI system that any source did not reconcile,"
-        " including one from a source without an inventory, as shadow, and recorded no inventory"
-        " reconciliation. Its AI systems therefore read as no inventory here; merge the source"
-        " reports again with this version to see their shadow status.</p>"
+        " shadowscan.fleet-merge/v2), which did not record which sources supplied an inventory or"
+        " which connectors each ran, so its connector coverage is unknown, and which could count an AI"
+        " system that a source without an inventory did not reconcile as shadow. When the report records"
+        " no inventory, its AI systems read as no inventory here; when it records one, each AI system's"
+        " shadow status is read as that version recorded it. To see their shadow status and coverage,"
+        " merge the source reports again with this version.</p>"
     )
 
 

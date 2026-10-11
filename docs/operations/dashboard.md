@@ -108,11 +108,14 @@ shadow, labelled "matched to different agents"
 (`registry_match_reason: ambiguous-resource-approval`).
 
 A fleet report merged by an earlier version (before
-`shadowscan.fleet-merge/v2`) recorded every AI system that some source did
-not reconcile as shadow, including one from a source without an inventory.
-Such a report never records `inventory_present: true`, so its AI systems
-read "no inventory", and the coverage and priority sections say why. Merge
-the source reports again with this version to see their shadow status.
+`shadowscan.fleet-merge/v2`) does not record which sources supplied an
+inventory or which connectors each ran, so its connector coverage is
+unknown, and such a merge could count an AI system that a source without an
+inventory did not reconcile as shadow. When the report records no inventory
+(`inventory_present: false`), its AI systems read "no inventory"; when it
+records one, each AI system's shadow status is read as that version recorded
+it. The coverage and priority sections say so. Merge the source reports
+again with this version to see their shadow status and coverage.
 
 ## Drift and history
 

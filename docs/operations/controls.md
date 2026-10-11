@@ -98,18 +98,20 @@ A merged finding counts as shadow when a report reconciled with an inventory
 says it is shadow, as registered when every report says it is registered, and
 as unknown otherwise. A report without an inventory knows nothing about
 registration, so it never makes a finding look shadow: a report's own
-`inventory_present` decides whether it had one, and its shadow values are
-ignored when it says it had none. A report written before `inventory_present`
-existed is refused (exit 1, "rescan before merging") when it records
-registration, as `shadowscan merge` refuses it, and counts as having no
-inventory when it records none.
+`inventory_present` decides whether it had one, and its shadow values and
+`inventory_size` are ignored when it says it had none. A report written
+before `inventory_present` existed is refused (exit 1, "rescan before
+merging") when it records registration, as `shadowscan merge` refuses it, and
+counts as having no inventory when it records none.
 
 Pass the source reports themselves. A report that `shadowscan merge` produced
-(it carries `collection_scope.fleet`) is refused (exit 1): the merge records a
-finding seen without an inventory as shadow and no longer says which source had
-an inventory. A finding that two reports register with different declared
-governance facts is refused too (exit 1), as `merge` refuses it, rather than
-keeping whichever report came first; make the inventories agree and rescan.
+(it carries `collection_scope.fleet`) is refused (exit 1): its findings are
+already merged, so it no longer says which source reported each finding with
+which shadow status, and a merge from before `shadowscan.fleet-merge/v2`
+recorded a finding seen without an inventory as shadow. A finding that two
+reports register with different declared governance facts is refused too
+(exit 1), as `merge` refuses it, rather than keeping whichever report came
+first; make the inventories agree and rescan.
 
 ## Declared facts
 

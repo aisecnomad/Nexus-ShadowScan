@@ -51,7 +51,6 @@ from shadowscan.fleet import (
 from shadowscan.mappings import describe, finding_references
 from shadowscan.models import Finding, Kind, RiskLevel, ScanResult
 from shadowscan.registries import RECONCILIATION_KEY, RECONCILIATION_STATUSES, RECORD_KEY, registry_record
-from shadowscan.reporters._publication import has_inventory
 from shadowscan.utils.files import require_no_symlinks
 from shadowscan.utils.redaction import sanitize, sanitize_text
 
@@ -181,7 +180,9 @@ def _single_source(result: ScanResult, name: str) -> dict[str, Any]:
         "findings": len(result.findings),
         "started_at": result.started_at or None,
         "finished_at": result.finished_at,
-        "inventory_present": has_inventory(result),
+        # As a merge records a source's: the report's own inventory_present, which report_result
+        # read, never its inventory size or shadow values.
+        "inventory_present": result.inventory_present,
         "connectors": [{"connector": st.connector, "status": connector_status(st)} for st in result.stats],
     }
 
