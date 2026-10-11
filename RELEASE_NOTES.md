@@ -34,13 +34,63 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
   deadline is now incomplete; raise `connector_timeout_seconds`. `cloud.aws`
   exports with registry records from earlier builds replay as incomplete.
 - `shadowscan merge` refuses (exit 1) a report with another finding identity
-  schema, a non-boolean `inventory_present`, or a reused finding id.
+  schema, a non-boolean `inventory_present`, or a reused finding id. It also
+  refuses a report written before `inventory_present` existed (the 0.1.x
+  releases) when that report records registration: rescan such hosts before
+  merging. Fleet reports now carry `collection_scope.fleet.schema`
+  `shadowscan.fleet-merge/v2` with per-source times, inventory presence and
+  connector status; consumers that pin `v1` must accept `v2`.
+- Live `cloud.aws` AgentCore gateway findings use the gateway ARN as their
+  resource, so their finding ids change: re-baseline AWS scans that include
+  gateways.
+- Low-code autonomy evidence is read more strictly: triggers a person operates
+  (n8n manual, chat and form triggers, Make on-demand scenarios, Workato
+  Workbot commands, Zapier Chrome extension or Interfaces steps) no longer add
+  the `autonomous` capability, a schedule is tagged `scheduled` only, and a
+  ServiceNow agent carries `tool-use` only when the export holds its tool
+  records. Make now reads `scheduling.type`, so a polling scenario gains the
+  `scheduled` tag. Risk levels of affected low-code findings move; rebaseline.
+- Keyed incremental cache entries are authenticated with an HMAC and miss once
+  after upgrading; unkeyed caches are unchanged.
 
 ### What changes in scan results
 
 - New commands: `shadowscan endpoint` scans a workstation profile's AI client
   configuration; `shadowscan merge` combines JSON reports from several machines
   into one fleet report; `shadowscan mcp-registry snapshot` writes a listing to pin.
+- `shadowscan dashboard REPORTS... -o page.html` writes a static, self-contained
+  fleet page (coverage first, then counts, autonomy floor against shadow status,
+  registry reconciliation, threat and control reference counts, drift against
+  `--baseline FILE`, history from `--history DIR`); `--inventory-json FILE`
+  writes the `shadowscan.inventory/v1` export for BI and SIEM tools without
+  credential findings or evidence. Exit 3 when an input is incomplete or the
+  baseline is not comparable (the files are still written), exit 1 on invalid
+  input; outputs are written 0600 and never through a symbolic link.
+- `shadowscan controls REPORTS... [-f markdown|csv|json] [--framework PREFIX]`
+  lists, for every NIST AI RMF, ISO/IEC 42001, EU AI Act and AIUC-1 entry, the
+  findings that reference it with their evidence scope. A control reads "not
+  observed" only when every input is complete, otherwise `unknown (...)` with
+  the reason; the output never says compliant, pass or fail and refuses an
+  already-merged report (pass the source reports). Schema version 2 Capability
+  Cards accept a validated `governance:` block (EU AI Act risk class, intended
+  purpose, oversight measures, AIUC-1 certificate, ISO/IEC 42001 scope), carried
+  as `metadata.declared_governance` on registered findings.
+- `--allow-plugin name=module:Class` (and `options.allowed_plugins`) pins a
+  plugin's entry point; a mismatch is refused as `target-mismatch`, duplicate
+  approvals are refused, and a bare name behaves as before. `shadowscan jwt` and
+  `run --set` warn when a credential is passed on the command line; the value is
+  never echoed.
+- Approval gates of coding-agent clients read `some-actions` in more cases where
+  part of the settings evidence was not read: an oversize settings file skipped
+  without a gap, and every project of a repository whose GitHub or GitLab tree
+  listing was truncated or partly malformed.
+- `identity.entra`: a pre-issued `access_token` whose `tid` is not the `tenant_id`
+  given as a tenant ID skips the connector before any request (exit 3) in every
+  configuration; give the tenant ID, not a domain, with a pre-issued token.
+- `cloud.gcp` record dumps now carry the gaps that made a live scan incomplete
+  (an unvalidated engine name, a failed project-number lookup), so a replay is as
+  incomplete as the live scan. The CSV report labels unassessed findings like the
+  other reports.
 - Fleet shadow status has three states: `true` when any source found the
   finding unregistered, `false` when a source matched it to its inventory,
   `null` when no source had an inventory. Findings no source assessed are
@@ -102,7 +152,21 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
 ### Security and safety
 
 - A triage reply steered by scanned content cannot change a finding's risk,
-  shadow status, kind or tags; a reply over 16 KiB is refused unread.
+  shadow status, kind or tags; a reply over 16 KiB is refused unread, a reply
+  that carries more than one verdict object is `unparseable`, and requests set
+  `temperature: 0`.
+- MCP launch identity is decided on the configured values, not the sanitized
+  record, so a redacted value cannot hide an env name, `cmd` argument or `docker
+  -e` value that makes the launch unidentified; every argument and every
+  endpoint of a direct remote is checked.
+- Settings paths from a GitHub or GitLab tree listing are confined to the
+  checkout before any download: traversal, absolute and `.git` paths abort the
+  repository and the filesystem connector refuses any unread settings path
+  outside the scanned root.
+- Redaction also withholds `Bearer token <value>`, keys ending in
+  `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
+  literals in setter calls such as `setProperty("openai.key", ...)`, and
+  `value`, `key` and `credential` fields inside an `auth` mapping.
 - Delegated Graph tokens have no configuration key; they are read from the
   environment, registered for redaction and never refreshed. Agent Card
   fetches use the shared HTTPS client, and URLs and key locations named inside
@@ -119,7 +183,20 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
   plugin trust and release evidence. `examples/k8s-network-policy.yaml` is a
   default-deny egress policy; `examples/github-action-drift.yml` and
   `examples/k8s-drift-cronjob.yaml` run weekly drift checks; `make mappings`
-  validates the threat and control catalogs.
+  validates the threat and control catalogs. The drift CronJob carries
+  `shadowscan-mode: live`, the label the egress policy grants egress to.
+- The optional Semgrep workflow runs `semgrep ci` in the `semgrep/semgrep` image
+  pinned by registry digest, the Checkmarx One and Black Duck workflows pin
+  tagged releases, every commit pin in the repository's and the example
+  workflows carries a release comment, and every job container image is pinned
+  by digest with its tag named above it; policy tests enforce both.
+- The advisory AI review gate (`tools/ai_review`, `.github/workflows/ai-review-gate.yml`)
+  runs only for pull requests that carry evidence under `.github/ai-review/`;
+  its best outcome is a `neutral` check, never `success`, it posts `COMMENT`
+  reviews only, and it must not be a required check. The governance documents record the 2026-10-10 ruleset
+  readback: `CI gate` is required, but both `main` rulesets still list four
+  `always` bypass actors, so the merge gate is not yet enforced against a
+  repository administrator.
 
 ### Known limitations
 

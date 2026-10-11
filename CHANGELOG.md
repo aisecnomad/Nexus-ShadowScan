@@ -5,6 +5,136 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Review corrections after the October 10 integration
+
+- The Semgrep workflow runs `semgrep ci` in the `semgrep/semgrep` image pinned
+  by registry digest (tag 1.180.0) instead of the deprecated
+  `returntocorp/semgrep-action`, whose commit pin still ran a mutable image tag
+  and which did not declare the `publishDeployment` input the workflow passed.
+  Dependabot pull requests are skipped like fork pull requests. The Checkmarx
+  One action is pinned to release 2.3.45 instead of an untagged 2022 commit,
+  Black Duck moves to v2.11.0, every cron has a UTC comment, and
+  `tests/test_repository_policy.py` requires a release comment after every
+  commit pin in the repository's and the example workflows.
+- The drift CronJob example carries `shadowscan-mode: live`: it collects live,
+  and the example NetworkPolicy grants egress to that label only, so the
+  earlier `drift` label left the pod with no egress.
+- `docs/concepts/risk.md` says governance factors weigh 0 and are omitted
+  from `risk.factors` under `risk_basis: danger`, as the code and its tests do;
+  `docs/operations/drift.md` says a fleet report keeps `shadow: null` for
+  findings no source assessed (not `true`); `docs/connectors.md` names
+  `agent-registry:BatchGetDiscoverableRegistryRecord`, the operation
+  `registry_arns` calls.
+- `cloud.gcp`: an invalid Discovery Engine engine name, or a project-number
+  lookup that failed or answered for another project, made the live scan
+  incomplete but left no trace in the `--dump-records` export, so a replay
+  reported a complete scan. The collector records the engine as an incomplete
+  `assistants` listing (`registry-coverage`, `complete: false`) and a failed
+  lookup as a `project-number` record with a null `project_number`; offline
+  analysis warns once for each and the replay is as incomplete as the live scan.
+  A domain-scoped project id (`example.com:my-project`) is kept whole in live
+  scope templates and partitions instead of being split at its colon. An Agent
+  Registry skill names only a publisher listed in its own project; any other
+  reference keeps the publisher id from the skill's record and no tier.
+- `cloud.azure` reads listing diagnostics through the public
+  `diagnostics_recorded()`, so an error recorded during the subscription
+  listing also leaves the live principal unattested.
+- Low-code triggers a person operates no longer count as autonomy evidence:
+  n8n `manualTrigger`, `chatTrigger`, `formTrigger` and `evaluationTrigger`
+  nodes, Make scenarios scheduled `on-demand`, Workato Workbot commands and
+  Zapier Chrome extension or Interfaces steps add neither the `autonomous`
+  capability nor an initiation tag, and a schedule trigger is tagged
+  `scheduled` only. Make reads `scheduling.type` and webhook modules instead of
+  the first module's name; Workato reads the provider of the recipe's trigger
+  line instead of its keyword, which is `trigger` on every recipe and had made
+  every recipe event-triggered. ServiceNow tags a scheduled use-case trigger
+  `scheduled`, records no initiation for a use case without a trigger, carries
+  `tool-use` only when the export holds the agent's `sn_aia_tool` records and
+  `saas-actions` only when one of them is not a retrieval tool, and needs the
+  `autonomous` flag or an `agent_type` of exactly `autonomous` for the
+  `autonomous` capability. Salesforce `RecordBeforeDelete` flows carry the
+  `autonomous` capability like the other record and platform-event triggers.
+  The gateway `always-on` tag is initiation evidence only when
+  `metadata.activity.always_on_corroborated` is true; the tag alone stays
+  informational. The README demo now shows 63 high and 54 medium findings.
+- `code.filesystem`: an oversize coding-agent settings file skipped with a
+  warning while the scan stayed complete (a fixture under a test path with
+  `include_tests` and `scan_secrets` off, or a name matched by
+  `oversize_skip_globs`) was never recorded as unread, so the readable settings
+  beside it could claim an `every-action` approval gate. Such a file now adds a
+  `settings-file = unreadable` entry and the project's gate reads
+  `some-actions`.
+- `code.github`, `code.gitlab`: a truncated GitHub tree listing, or a listing
+  with entries that name no path, warned that coverage was partial but left
+  every project's approval gate at `every-action`; every gate of such a
+  repository now reads `some-actions`. Settings paths from an API tree listing
+  that the snapshot did not write were handed to the filesystem scan
+  unvalidated, so a traversal or absolute path made the project lookup list
+  directories and probe `setup.py` outside the checkout and recorded the path
+  in the finding. Such paths are checked like fetched ones before any download:
+  traversal, absolute and `.git` paths abort the repository, backslash or
+  drive-like paths are left out, and the filesystem connector refuses any
+  unread settings path that is not confined to the scanned root, marking the
+  scan incomplete and the tree's gates partial.
+- `shadowscan merge` keeps only the match state of the sources whose
+  registration verdict it adopts: a shadow finding keeps the reason and
+  suggestions of the sources that found it unregistered, a registered finding
+  the assurance and `registry-identity-unverified` tag of the sources that
+  matched it, the first such source winning per key. When two source blocks
+  raised an autonomy bound equally above the merged classification,
+  `metadata.autonomy.basis` listed only the first report's rules; a widened
+  bound now keeps the basis rules of every block that set it, in rule order,
+  so the output no longer depends on argument order.
+- The CSV report labels a finding only inventory-less sources assessed
+  `unassessed` when the report has an inventory, as the table, Markdown and
+  HTML reports do, and leaves the cell blank when no inventory was involved.
+- `identity.entra`: a pre-issued `access_token` whose `tid` is not a
+  `tenant_id` given as a tenant ID now skips the connector before any request
+  (exit 3) in every configuration, not only with `include_agent_registry`. A
+  decodable token is bound to its own tenant when `tenant_id` is unset or a
+  domain name, which the coverage marker records; a domain `tenant_id` cannot
+  be compared and an agent collection then reads the records as another
+  tenant's, so give the tenant ID with a pre-issued token.
+- The AI review gate workflow runs only for pull requests whose changed files
+  include `.github/ai-review/**`: it failed closed on every ordinary pull
+  request for want of evidence, and on the pull request that introduced it
+  because its base ref had no `tools.ai_review` modules.
+- AI review gate (`tools/ai_review`): the findings directory from the pull
+  request head was enumerated with `glob()` before symlinked files were
+  rejected, so a committed directory symlink made the trusted job list an
+  arbitrary runner directory. Evidence directories are opened without following
+  any symlink component and listed through that descriptor with the artifact
+  limit applied while iterating; a symlinked directory or parent is malformed
+  evidence and fails closed before anything is listed. The redaction patterns
+  now cover the AWS secret access key family that `tools/check_secrets.py`
+  detects, and the sanitizer test compares its sample families against
+  `check_secrets.PATTERNS` so the two lists cannot drift. A finding or diff
+  path containing a line break (`\n`, `\r`, U+0085, U+2028, U+2029), which
+  would read back as two paths from the one-per-line diff list, is rejected.
+- AI review gate: review bodies were unbounded (nine maximum-size findings
+  exceeded GitHub's 65,536-character limit and publication failed). The body
+  is budgeted: full findings in severity order while they fit, then one line
+  per finding (severity, title, `path:line`) and a count of omitted bodies;
+  located findings show their path and line. One aggregate limit of 20
+  findings files is enforced before files are copied, so six-role evidence
+  that validates always synthesizes instead of failing with
+  `bypass_unavailable`. The diff digest is persisted before validation, so
+  evidence that fails validation posts the fail-closed `malformed_findings`
+  review instead of raising, and a late preflight-failure or blocked-label
+  override restates the `Decision` header so the review and the check run
+  agree. Every review is posted as `COMMENT`: a bot that never approves must
+  not leave a sticky `REQUEST_CHANGES`; the check run's `failure` conclusion
+  carries the verdict, and `decide()` returns `(conclusion, reason)`.
+- `shadowscan dashboard` and `shadowscan controls` read a report written
+  before `inventory_present` existed as `shadowscan merge` reads it: refused
+  with "rescan before merging" (exit 1) when it records registration (a shadow
+  verdict, a registry match or an inventory size), and as having no inventory
+  when it records none. The dashboard guide had said such a report counts as
+  having an inventory, and the controls module read its shadow values as one.
+- `tests/test_repository_policy.py` requires every workflow job `container:`
+  and service image to be pinned by sha256 digest, with the reviewed tag named
+  in a comment on the line above, as the Semgrep container is.
+
 ### AI-assisted review gate
 
 - Add a deterministic, fail-closed AI Review Gate with read-only preflight,
