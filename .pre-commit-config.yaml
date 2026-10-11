@@ -16,6 +16,9 @@ repos:
         exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/)
       # mkdocs.yml uses Material's `!!python/name:` tags, which the safe loader
       # rejects; `mkdocs build --strict` in CI validates that file instead.
+      # Signature packs are parsed by the signature-validate hook below (and by
+      # `python -m shadowscan.signatures.validate` in CI) with the stricter
+      # unique-key bounded loader, so they are not checked twice here.
       - id: check-yaml
         args: [--allow-multiple-documents]
         exclude: ^(shadowscan/signatures/data/|mkdocs\.yml$)
@@ -53,14 +56,20 @@ repos:
     hooks:
       - id: mypy
         files: ^(shadowscan|tools|benchmarks)/
-        # The hook runs in its own environment. click ships its own types; without
-        # it the decorated CLI is untyped and its `type: ignore` comments read as
-        # unused. Keep this pin equal to requirements.lock.
+        # The hook runs in its own environment. click, PyJWT, rich and urllib3
+        # ship their own types; without them those imports are Any, so a wrong
+        # call passes the hook but fails CI and `type: ignore` comments read as
+        # unused. Keep these pins equal to requirements.lock. The hook's default
+        # args add --ignore-missing-imports, which CI does not use: the pyproject
+        # override already names the packages that may be imported untyped.
         additional_dependencies:
           - click==8.5.0
+          - PyJWT==2.15.0
+          - rich==15.0.0
+          - urllib3==2.8.0
           - types-PyYAML==6.0.12.20260906
           - types-requests==2.33.0.20260906
-        args: [--ignore-missing-imports]
+        args: []
 
   - repo: local
     hooks:

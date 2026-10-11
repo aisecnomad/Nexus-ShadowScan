@@ -21,6 +21,14 @@ summarizes each release for people who install and operate ShadowScan.
   superseded head; and when a finding names a file outside the diff, the
   findings on files inside the diff stay in the review (the gate still fails
   `stale_findings`; before, every located finding was left out).
+- `make build` and CI's wheel build stamp the archive entries with the HEAD
+  commit time (`SOURCE_DATE_EPOCH`), as `release.yml` already did, so a rebuild
+  of a commit reproduces the released bytes; the publishing runbook gives the
+  rebuild-and-compare recipe. The pre-commit mypy hook type-checks against the
+  locked PyJWT, rich and urllib3 as well as click and no longer ignores missing
+  imports, so it agrees with CI. `requirements-ci-constraints.txt` names the
+  `colorama` pin the universal resolution adds on Windows, and the consistency
+  tests require every CI lock entry to come from a reviewed input.
 - The optional Black Duck and Checkmarx One workflows skip Dependabot pull
   requests, which receive no repository secrets, as the Semgrep workflow
   already did, and the three share CI's concurrency rule: a newer pull-request

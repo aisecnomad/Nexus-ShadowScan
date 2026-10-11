@@ -9,6 +9,9 @@ __pycache__/
 *.whl
 .venv/
 venv/
+# Scratch input the requirements-docs.lock refresh recipe writes at the root;
+# root-anchored so a fixture or source file of that name is never hidden.
+/requirements-docs.in
 .pytest_cache/
 .hypothesis/
 .ruff_cache/

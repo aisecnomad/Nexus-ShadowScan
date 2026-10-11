@@ -84,6 +84,11 @@ exclude = ["tests/fixtures", "examples", "archive"]
 # carries `# noqa: BLE001 - <reason>` (tests/test_repository_consistency.py
 # requires the reason). RUF100: a `noqa` that suppresses nothing is flagged.
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "BLE", "RUF100"]
+# Deliberate ignores, not debt. SIM102/SIM103/SIM105/SIM108 and C408 only
+# propose equivalent rewrites (collapsed guards, `return cond`,
+# contextlib.suppress, ternaries, dict literals); the longer forms stay.
+# UP042 is not behaviour-preserving: StrEnum changes what `str()` and
+# f-strings yield for the models.py enums, which serialise via `.value`.
 ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
 
 [tool.ruff.lint.per-file-ignores]
@@ -112,8 +117,12 @@ warn_unreachable = true
 disallow_untyped_defs = true
 check_untyped_defs = true
 # First-party imports and stubbed libraries (types-PyYAML, types-requests from
-# the dev extra) are checked; only the listed third-party packages, which ship
-# neither stubs nor a py.typed marker, may be imported untyped.
+# the dev extra) are checked. The override below covers regex, boto3/botocore
+# and oci, which ship neither stubs nor a py.typed marker, and the optional
+# cloud SDKs google-auth and azure-identity, which are typed and are checked
+# wherever they are installed (CI installs requirements.lock) but which
+# `make install-dev` leaves out, so `make typecheck` must pass without them
+# (tests/test_optional_sdk_typecheck.py).
 ignore_missing_imports = false
 
 [[tool.mypy.overrides]]

@@ -97,9 +97,9 @@ check: lint format-check typecheck signatures mappings secrets audit test covera
 # --- Build -----------------------------------------------------------------
 
 .PHONY: build
-build: ## Build distributable wheel
+build: ## Build distributable wheel, stamped with the HEAD commit time as release.yml does
 	python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
-	python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+	SOURCE_DATE_EPOCH="$$(git show -s --format=%ct HEAD)" python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
 
 .PHONY: wheel-validate
 wheel-validate: build ## Validate the wheel installs and works outside checkout
