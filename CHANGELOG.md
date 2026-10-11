@@ -56,7 +56,11 @@ summarizes each release for people who install and operate ShadowScan.
   `autonomous` capability like the other record and platform-event triggers.
   The gateway `always-on` tag is initiation evidence only when
   `metadata.activity.always_on_corroborated` is true; the tag alone stays
-  informational. The README demo now shows 63 high and 54 medium findings.
+  informational. It still explains a caller's `autonomous` capability as
+  cadence, never as an approval bypass, so a fleet merge (which keeps the
+  first observation's metadata and every observation's capabilities) gives
+  the same autonomy interval in either report order. The README demo now
+  shows 63 high and 54 medium findings.
 - `code.filesystem`: an oversize coding-agent settings file skipped with a
   warning while the scan stayed complete (a fixture under a test path with
   `include_tests` and `scan_secrets` off, or a name matched by
@@ -569,7 +573,9 @@ summarizes each release for people who install and operate ShadowScan.
   comparison incomplete, exit 3; the limit is at most 36500 days).
   `--fail-on-new` is unchanged.
 - A fleet report's `started_at` is now the earliest source start time
-  compared as instants, not as text. When any source lacks a valid
+  compared as instants, not as text (sources that start or finish at the
+  same instant break the tie on the text, so the fleet times never depend on
+  report order). When any source lacks a valid
   timezone-aware start time, the fleet's `started_at` is `null` instead of
   the merge time, so an age limit cannot pass an undated fleet baseline.
 - Add `read_policy_bytes` and `load_report_with_digest` so the pinned digest
