@@ -26,6 +26,9 @@ summarizes each release for people who install and operate ShadowScan.
   `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
   literals passed to setter calls such as `setProperty("openai.key", ...)`,
   and `value`, `key` and `credential` fields inside an `auth` mapping.
+  Every other member of an `auth`, `authentication` or `authn` mapping keeps
+  the mapping rules, so a numeric or boolean `password` or `client_secret`
+  there is withheld as before.
   Evidence snippets also get a last-resort pass that withholds a quoted
   literal that looks generated (20 or more token characters mixing upper
   case, lower case and digits, with frequent class switches and high entropy),
