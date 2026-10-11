@@ -131,6 +131,13 @@ summarizes each release for people who install and operate ShadowScan.
   verdict, a registry match or an inventory size), and as having no inventory
   when it records none. The dashboard guide had said such a report counts as
   having an inventory, and the controls module read its shadow values as one.
+- MCP configuration parsing (`code.filesystem`, `endpoint.inventory`): a server
+  whose `env` table is not an object or whose `args` list holds a non-string is
+  marked `launch_unidentified` (the field is still reported and dropped), so its
+  record names no package and matches no MCP Registry entry; before, the launch
+  that remained after the drop could identify the package. The redaction
+  linearity suite covers the `Bearer token <credential>`, credential-named
+  setter call and `*_value` patterns added in #187.
 - `tests/test_repository_policy.py` requires every workflow job `container:`
   and service image to be pinned by sha256 digest, with the reviewed tag named
   in a comment on the line above, as the Semgrep container is.
@@ -207,7 +214,7 @@ summarizes each release for people who install and operate ShadowScan.
 - LLM triage refuses a reply that carries more than one verdict object (for
   example one quoted from injected finding text) as `status: unparseable`, and
   requests ask for `temperature: 0`.
-- `--allow-plugin` and `options.allowed_plugins` accept `name=module:Class`.
+- `--allow-plugin` and `options.plugins` accept `name=module:Class`.
   A pinned approval refuses a plugin whose entry point resolves elsewhere
   (`target-mismatch`); a bare name keeps the previous behavior. Duplicate
   approvals for one name are refused.

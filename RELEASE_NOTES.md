@@ -75,7 +75,7 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
   Cards accept a validated `governance:` block (EU AI Act risk class, intended
   purpose, oversight measures, AIUC-1 certificate, ISO/IEC 42001 scope), carried
   as `metadata.declared_governance` on registered findings.
-- `--allow-plugin name=module:Class` (and `options.allowed_plugins`) pins a
+- `--allow-plugin name=module:Class` (and `options.plugins`) pins a
   plugin's entry point; a mismatch is refused as `target-mismatch`, duplicate
   approvals are refused, and a bare name behaves as before. `shadowscan jwt` and
   `run --set` warn when a credential is passed on the command line; the value is
