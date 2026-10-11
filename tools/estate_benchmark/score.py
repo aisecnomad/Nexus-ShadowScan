@@ -109,12 +109,24 @@ class Attribution:
 
 
 def attribute(corpus: EstateCorpus, predictions: list[dict[str, Any]]) -> Attribution:
+    """Attribute predictions to entities.
+
+    First by anchor (longest match wins). A prediction from a unit-bound run
+    (`code:<repo>`, `home:<device>`) whose text carries no anchor falls back
+    to the entity of that unit whose expected facts contain the predicted
+    fact (exactly, or by category for a `generic` value) — inventory tools
+    echo client names, not the corpus's anchors. Everything else is
+    unattributed and charged as a false positive.
+    """
     anchors: list[tuple[str, Entity]] = []
     for entity in corpus.entities:
         for anchor in entity.anchors:
             anchors.append((anchor, entity))
     anchors.sort(key=lambda item: -len(item[0]))
     tolerated = [(item.fact, item.anchor) for item in corpus.tolerated_global]
+    by_unit: dict[str, list[Entity]] = defaultdict(list)
+    for entity in corpus.entities:
+        by_unit[entity.unit].append(entity)
     result = Attribution(entity_predictions={e.id: [] for e in corpus.entities})
     for prediction in predictions:
         text = str(prediction.get("text", "")).lower()
@@ -126,6 +138,18 @@ def attribute(corpus: EstateCorpus, predictions: list[dict[str, Any]]) -> Attrib
             if anchor in text:
                 owner = entity
                 break
+        unit = str(prediction.get("unit", "estate"))
+        if owner is None and unit != "estate":
+            cat = taxonomy.category(fact) if ":" in fact else ""
+            generic = fact.endswith(f":{taxonomy.GENERIC}")
+            candidates = [
+                entity
+                for entity in by_unit.get(unit, [])
+                if fact in entity.expected_facts
+                or (generic and any(f.startswith(f"{cat}:") for f in entity.expected_facts))
+            ]
+            if len(candidates) == 1:
+                owner = candidates[0]
         if owner is None:
             result.unattributed.append(prediction)
         else:
@@ -144,7 +168,9 @@ def score_tool(
     runs: list[dict[str, Any]],
 ) -> dict[str, Any]:
     rows = [row for row in runs if row.get("tool") == tool_id]
-    predictions = [dict(p) for row in rows for p in row.get("predictions", [])]
+    predictions = [
+        {**dict(p), "unit": row.get("unit", "estate")} for row in rows for p in row.get("predictions", [])
+    ]
     attribution = attribute(corpus, predictions)
 
     value_in_scope = Counts()

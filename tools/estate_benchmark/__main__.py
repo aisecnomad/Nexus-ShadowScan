@@ -46,7 +46,11 @@ def cmd_validate(corpus_path: Path, estate: Path) -> int:
                 texts.append(path.read_text(encoding="utf-8", errors="replace").lower())
         joined = "\n".join(texts)
         primary = entity.anchors[0]
-        if joined and primary not in joined and primary not in "/".join(entity.artifacts).lower():
+        in_artifacts = primary in joined or primary in "/".join(entity.artifacts).lower()
+        # A composite anchor (host:user:tool) is grounded when every part appears.
+        if not in_artifacts and ":" in primary:
+            in_artifacts = all(part in joined for part in primary.split(":") if part)
+        if joined and not in_artifacts:
             problems.append(f"{entity.id}: primary anchor {primary!r} not found in its artifacts")
     for path in _estate_files(estate):
         if path.is_symlink():
