@@ -191,6 +191,18 @@ def test_a_plain_scheme_credential_with_a_glued_run_is_withheld_whole(scheme: st
     assert sanitize_text(f"{scheme} {SECRET}{glue}{SECOND}") == f"{scheme} {REDACTED}"
 
 
+@pytest.mark.parametrize("glued", ["=password: ", "--token "])
+def test_a_plain_scheme_credential_keeps_a_glued_credential_name_for_the_later_rules(
+    glued: str,
+) -> None:
+    # A glued run that names a credential stays in the text, as in the word
+    # form: the assignment or option rule that reads it withholds the value
+    # after it, so neither the token nor the glued secret is shown.
+    cleaned = sanitize_text(f"Bearer {SECRET}{glued}{SECOND}")
+    assert SECRET not in cleaned
+    assert SECOND not in cleaned
+
+
 def test_the_token_word_credential_is_withheld_whole_without_glue() -> None:
     assert sanitize_text(f"Bearer token {SECRET}") == f"Bearer {REDACTED}"
     # The name/value rule reads the 'Authorization:' line first and withholds
