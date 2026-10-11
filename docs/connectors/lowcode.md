@@ -62,8 +62,11 @@ schedule trigger adds the `scheduled` tag and a webhook, polled or chained
 trigger the `event-triggered` tag, each with the `autonomous` capability as
 initiation evidence (see [autonomy tiers](../concepts/autonomy.md)). A trigger
 a person operates adds neither: an n8n manual, chat, form or evaluation
-trigger, a Make scenario scheduled on demand, a Workato Workbot command, or a
-Zapier Chrome extension push or Interfaces form. n8n classifies its trigger
+trigger, a Workato Workbot command, menu, button, modal or shortcut, or a
+Zapier Chrome extension push or Interfaces form. A Make scenario scheduled on
+demand adds neither either: a person or a call (the API, another scenario, an
+AI agent or an MCP client) can start it. A Workbot event trigger reacts to
+workspace events, a bot's messages included, and is event-triggered. n8n classifies its trigger
 nodes by type, Make reads `scheduling.type` and webhook modules, Workato the
 provider of the recipe's trigger line, and Zapier the first step's app. A
 Zapier export record needs an `id`, `title`,

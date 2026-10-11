@@ -41,9 +41,13 @@ summarizes each release for people who install and operate ShadowScan.
   listing also leaves the live principal unattested.
 - Low-code triggers a person operates no longer count as autonomy evidence:
   n8n `manualTrigger`, `chatTrigger`, `formTrigger` and `evaluationTrigger`
-  nodes, Make scenarios scheduled `on-demand`, Workato Workbot commands and
+  nodes, Workato Workbot commands, menus, buttons, modals and shortcuts, and
   Zapier Chrome extension or Interfaces steps add neither the `autonomous`
-  capability nor an initiation tag, and a schedule trigger is tagged
+  capability nor an initiation tag. Neither does a Make scenario scheduled
+  `on-demand`, which a person or a call (the API, another scenario, an AI
+  agent or an MCP client) can start, so it records no initiation either way.
+  A Workbot event trigger reacts to workspace events, a bot's messages
+  included, and is `event-triggered`. A schedule trigger is tagged
   `scheduled` only. Make reads `scheduling.type` and webhook modules instead of
   the first module's name; Workato reads the provider of the recipe's trigger
   line instead of its keyword, which is `trigger` on every recipe and had made
