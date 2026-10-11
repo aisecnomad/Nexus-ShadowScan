@@ -73,7 +73,9 @@ summarizes each release for people who install and operate ShadowScan.
   directories and probe `setup.py` outside the checkout and recorded the path
   in the finding. Such paths are checked like fetched ones before any download:
   traversal, absolute and `.git` paths abort the repository, backslash or
-  drive-like paths are left out, and the filesystem connector refuses any
+  drive-like paths are never joined to the root but keep every gate of the
+  repository at `some-actions` (a client can still read such a settings
+  file), and the filesystem connector refuses any
   unread settings path that is not confined to the scanned root, marking the
   scan incomplete and the tree's gates partial.
 - `shadowscan merge` keeps only the match state of the sources whose
@@ -828,7 +830,9 @@ summarizes each release for people who install and operate ShadowScan.
   value, or `cmd /c` or batch-file argument names no package.
 - A launcher under `/proc` or `/dev` (`/proc/self/cwd/npx`) counts as a
   relative path, and `PREFIX` and `DESTDIR`, under which npm reads its global
-  npmrc and so its registry, leave a launch unidentified.
+  npmrc and so its registry, leave a launch unidentified. A launcher path that
+  starts with any two separators (`/\host\share\npx.cmd` included) is a UNC
+  path on another host and names no package.
 - A remote server with `remotes[]` beside its URL is matched by every
   endpoint it lists, which one registry name must list together; before, only
   the first URL was compared.

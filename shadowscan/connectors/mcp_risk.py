@@ -394,7 +394,8 @@ def _found_program(command: str) -> bool:
     name = command.strip()
     if "/" not in name and "\\" not in name:
         return bool(name)
-    if name.startswith(("//", "\\\\")):
+    # Windows reads any two leading separators as UNC ('/\\host\\share\\npx.cmd' too).
+    if len(name) >= 2 and name[0] in "/\\" and name[1] in "/\\":
         return False
     if name.startswith("/"):
         return posixpath.normpath(name).split("/")[1] not in _PROCESS_RELATIVE_ROOTS
