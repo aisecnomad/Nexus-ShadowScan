@@ -177,9 +177,12 @@ summarizes each release for people who install and operate ShadowScan.
 - One report is read as `merge` reads a source, so it shows what it would
   show among others: each applicable finding's autonomy interval is
   classified again (a report written before autonomy tiers shows its tiers
-  and priority quadrant), and a report without `inventory_present` counts as
-  having an inventory when its `inventory_size` is above zero or a finding
-  has a shadow status. A finding of an applicable kind without a valid
+  and priority quadrant), and a source's inventory presence is its report's
+  own `inventory_present`: a report that says it had none has its shadow
+  values cleared, whatever its `inventory_size`, and a report written before
+  `inventory_present` existed is refused (exit 1, "rescan before merging")
+  when it records registration, as `merge` refuses it. A finding of an
+  applicable kind without a valid
   interval reads "not classified" (unknown, counted and warned about in the
   priority section), not "not applicable".
 - Coverage has no column for scan-level `engine.*` records, stores a cell
@@ -209,9 +212,12 @@ summarizes each release for people who install and operate ShadowScan.
   inventory. The scope fingerprint is unchanged.
 - The dashboard reads shadow status as `shadowscan merge` records it
   (registration only from sources with `inventory_present: true`), labels a
-  finding that inventories matched to different agents, and reads a fleet
-  report merged before `shadowscan.fleet-merge/v2` as having no inventory,
-  with a note to merge its sources again.
+  finding that inventories matched to different agents, and notes that a
+  fleet report merged before `shadowscan.fleet-merge/v2` records neither
+  per-source inventory presence nor connector runs (coverage unknown), reads
+  its AI systems as no inventory when it records none and keeps their shadow
+  status as written when it records an inventory, with a note to merge its
+  sources again.
 - Add authored tests for each view, escaping of hostile report values,
   coverage, determinism, private outputs, a 20,000-finding linear-time
   render budget and a linear-time history budget.
@@ -432,8 +438,9 @@ summarizes each release for people who install and operate ShadowScan.
   and connector completeness, whether an inventory was supplied). Several
   reports are merged as `merge` merges them; a finding counts as shadow only
   when a report reconciled with an inventory says so, and a report's own
-  `inventory_present: false` is believed over its shadow values. A report
-  that `merge` produced is refused (exit 1): pass the source reports.
+  `inventory_present: false` is believed over its shadow values and over its
+  `inventory_size`. A report that `merge` produced is refused (exit 1): pass
+  the source reports.
 - A control no finding references reads `not observed` only when every report
   is complete; otherwise it reads `unknown (scan incomplete)`, and counts of
   referenced controls are marked as lower bounds. An incomplete input still
