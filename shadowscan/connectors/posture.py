@@ -278,6 +278,33 @@ def posture_client(rel: str) -> str | None:
     return None
 
 
+# Each client's settings path as the client documents it (the file-name signatures use it).
+_CANONICAL_TAILS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "claude-code": ((".claude", "settings.json"), (".claude", "settings.local.json")),
+    "codex": ((".codex", "config.toml"),),
+    "goose": ((".config", "goose", "config.yaml"), ("Block", "goose", "config", "config.yaml")),
+    "openclaw": ((".openclaw", "openclaw.json"), (".clawdbot", "clawdbot.json")),
+}
+
+
+def canonical_settings_path(rel: str) -> str | None:
+    """``rel`` with its settings components spelled as its client documents them, or None.
+
+    A case or trailing-dot variant that :func:`posture_client` recognizes matches no
+    file-name signature, which compare paths exactly; the canonical spelling does, so the
+    variant can establish its client as the documented name would.
+    """
+    client = posture_client(rel)
+    if client is None:
+        return None
+    parts = PurePosixPath(rel.replace("\\", "/")).parts
+    folded = tuple(part.rstrip(" .").casefold() for part in parts)
+    for tail in _CANONICAL_TAILS[client]:
+        if len(folded) >= len(tail) and folded[-len(tail) :] == tuple(t.casefold() for t in tail):
+            return "/".join((*parts[: -len(tail)], *tail))
+    return None
+
+
 def assess(rel: str, text: str) -> list[PostureIssue] | None:
     """Posture issues in one settings file; None when ``rel`` is not a known settings file."""
     client = posture_client(rel)

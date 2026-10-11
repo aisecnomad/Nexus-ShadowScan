@@ -181,6 +181,7 @@ from shadowscan.connectors.posture import (
     CLIENT_SIGNATURES,
     approval_scopes,
     approval_settings,
+    canonical_settings_path,
     posture_client,
     record_approval,
     record_posture,
@@ -3357,6 +3358,17 @@ class FilesystemConnector(BaseConnector):
                 continue
             m.extra["verified_agent"] = file.card_valid
             self._record(file.proj, m, file.rel, None)
+        client = posture_client(file.rel)
+        canonical = canonical_settings_path(file.rel)
+        if client is not None and canonical is not None and canonical != file.rel:
+            # A case or trailing-dot variant of a settings file ('.CLAUDE/settings.local.json'),
+            # which macOS and Windows clients read as their settings, matches no file-name
+            # signature: establish the client as the documented spelling would, located here.
+            sig_id = CLIENT_SIGNATURES[client]
+            if not any(m.signature_id == sig_id for m in file.file_matches):
+                for m in self.index.match_file(canonical):
+                    if m.signature_id == sig_id:
+                        self._record(file.proj, m, file.rel, None)
         issues = assess_posture(file.rel, file.text)
         if issues:
             for issue in issues:

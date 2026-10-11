@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from shadowscan.connectors.posture import POSTURE_DESCRIPTIONS, PostureIssue, assess, posture_client
+from shadowscan.connectors.posture import (
+    POSTURE_DESCRIPTIONS,
+    PostureIssue,
+    assess,
+    canonical_settings_path,
+    posture_client,
+)
 from shadowscan.models import Kind
 
 
@@ -207,3 +213,18 @@ def test_openclaw_state_files_under_every_name_are_one_agent_config(run_connecto
     [config] = findings
     assert config.kind == Kind.AGENT_CONFIG and config.frameworks == ["coding-agent.openclaw"]
     assert sorted({e.location for e in config.evidence}) == sorted(files)
+
+
+@pytest.mark.parametrize(
+    ("rel", "canonical"),
+    [
+        (".claude/settings.json", ".claude/settings.json"),
+        ("proj/.CLAUDE/SETTINGS.LOCAL.JSON", "proj/.claude/settings.local.json"),
+        ("Proj\\.Codex.\\Config.TOML", "Proj/.codex/config.toml"),
+        ("AppData/Roaming/block/GOOSE/config/config.yaml", "AppData/Roaming/Block/goose/config/config.yaml"),
+        ("x/.Clawdbot/ClawdBot.json", "x/.clawdbot/clawdbot.json"),
+        ("README.md", None),
+    ],
+)
+def test_canonical_settings_path_keeps_the_prefix_and_spells_the_client_tail(rel, canonical):
+    assert canonical_settings_path(rel) == canonical

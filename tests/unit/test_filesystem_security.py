@@ -1467,3 +1467,23 @@ def test_one_roots_truncation_never_weakens_another_roots_gate(tmp_path, index, 
     assert ctx.stats.incomplete
     [claude] = [f for f in findings if f.kind == Kind.AGENT_CONFIG and "approval_gate" in f.metadata]
     assert claude.metadata["approval_gate"]["scope"] == "every-action"
+
+
+@pytest.mark.parametrize(
+    ("parts", "text"),
+    [
+        ((".CLAUDE", "settings.local.json"), '{"permissions": {"defaultMode": "bypassPermissions"}}'),
+        ((".claude", "SETTINGS.LOCAL.JSON"), '{"permissions": {"defaultMode": "bypassPermissions"}}'),
+        ((".Codex", "Config.TOML"), 'approval_policy = "never"\n'),
+    ],
+)
+def test_a_case_variant_settings_file_alone_establishes_its_client(tmp_path, index, parts, text):
+    # Regression: with no exactly spelled sibling, the variant matched no file-name signature,
+    # so its posture was read but no finding carried it and the scan read clean.
+    target = tmp_path.joinpath(*parts)
+    target.parent.mkdir(parents=True)
+    target.write_text(text)
+    findings, ctx = _run(index, tmp_path)
+    configs = [f for f in findings if f.kind == Kind.AGENT_CONFIG]
+    assert len(configs) == 1 and configs[0].metadata.get("posture"), [f.title for f in findings]
+    assert any(e.location.startswith("/".join(parts)) for e in configs[0].evidence)
