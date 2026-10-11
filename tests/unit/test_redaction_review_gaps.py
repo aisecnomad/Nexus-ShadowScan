@@ -45,6 +45,23 @@ def test_bearer_prose_is_unchanged_by_the_token_word_rule() -> None:
     assert sanitize_text("a Bearer token is required") == f"a Bearer {REDACTED} is required"
 
 
+@pytest.mark.parametrize(
+    "text, value",
+    [
+        ("description: send a Bearer token\nOAUTH2_CLIENT_SECRET: hunter2pass\n", "hunter2pass"),
+        ("auth: Bearer token\npostgres_password_1: s3cr3tpw\n", "s3cr3tpw"),
+        ("Bearer token postgres_password_1: s3cr3tpw", "s3cr3tpw"),
+        ("Bearer token\tpostgres_password_1: s3cr3tpw", "s3cr3tpw"),
+    ],
+)
+def test_token_word_rule_never_takes_a_credential_name(text: str, value: str) -> None:
+    # Read as the credential, the name was withheld before the assignment rules saw it,
+    # and they then showed the value that follows it.
+    out = sanitize_text(text)
+    assert value not in out
+    assert "password_1" in out or "CLIENT_SECRET" in out
+
+
 def test_generic_credential_fields_of_an_auth_block_are_withheld() -> None:
     record = {"auth": {"type": "bearer", "value": SECRET, "header": "X-Api"}}
     assert sanitize(record) == {"auth": {"type": "bearer", "value": REDACTED, "header": "X-Api"}}
