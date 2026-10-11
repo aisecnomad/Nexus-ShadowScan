@@ -1,0 +1,95 @@
+[
+ {
+  "serviceName": "vantor-invoice-agent-d4k",
+  "resource": {
+   "attributes": [
+    {
+     "key": "service.name",
+     "value": {
+      "stringValue": "vantor-invoice-agent-d4k"
+     }
+    }
+   ]
+  },
+  "attributes": {
+   "gen_ai.system": "anthropic",
+   "gen_ai.request.model": "claude-sonnet-4-20250514",
+   "gen_ai.agent.name": "invoice-reconciler",
+   "gen_ai.operation.name": "invoke_agent"
+  }
+ },
+ {
+  "serviceName": "vantor-invoice-agent-d4k",
+  "resource": {
+   "attributes": [
+    {
+     "key": "service.name",
+     "value": {
+      "stringValue": "vantor-invoice-agent-d4k"
+     }
+    }
+   ]
+  },
+  "attributes": {
+   "gen_ai.system": "anthropic",
+   "gen_ai.request.model": "claude-sonnet-4-20250514",
+   "gen_ai.agent.name": "invoice-reconciler",
+   "gen_ai.operation.name": "invoke_agent"
+  }
+ },
+ {
+  "serviceName": "vantor-invoice-agent-d4k",
+  "resource": {
+   "attributes": [
+    {
+     "key": "service.name",
+     "value": {
+      "stringValue": "vantor-invoice-agent-d4k"
+     }
+    }
+   ]
+  },
+  "attributes": {
+   "gen_ai.system": "anthropic",
+   "gen_ai.request.model": "claude-sonnet-4-20250514",
+   "gen_ai.agent.name": "invoice-reconciler",
+   "gen_ai.operation.name": "invoke_agent"
+  }
+ },
+ {
+  "serviceName": "vantor-billing-cron-t6b",
+  "resource": {
+   "attributes": [
+    {
+     "key": "service.name",
+     "value": {
+      "stringValue": "vantor-billing-cron-t6b"
+     }
+    }
+   ]
+  },
+  "attributes": {
+   "http.request.method": "POST",
+   "http.route": "/billing/nightly",
+   "peer.service": "postgres"
+  }
+ },
+ {
+  "serviceName": "vantor-billing-cron-t6b",
+  "resource": {
+   "attributes": [
+    {
+     "key": "service.name",
+     "value": {
+      "stringValue": "vantor-billing-cron-t6b"
+     }
+    }
+   ]
+  },
+  "attributes": {
+   "http.request.method": "POST",
+   "http.route": "/billing/nightly",
+   "peer.service": "postgres"
+  }
+ }
+]

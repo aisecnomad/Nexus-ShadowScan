@@ -1,0 +1,19 @@
+[
+ {
+  "_kind": "ai-agent",
+  "id": "agt-tenderneg-5rq8w",
+  "name": "Tender negotiator",
+  "teamId": 12,
+  "model": "gpt-4o",
+  "systemPrompt": "You negotiate spot freight tenders for Vantor Logistics. Counter-offer within the approved rate band and escalate anything above it.",
+  "tools": [
+   {
+    "name": "send_email"
+   },
+   {
+    "name": "update_tender"
+   }
+  ],
+  "createdAt": "2025-08-04T10:00:00Z"
+ }
+]

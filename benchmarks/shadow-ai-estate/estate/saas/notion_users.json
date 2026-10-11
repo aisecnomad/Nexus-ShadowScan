@@ -1,0 +1,53 @@
+{
+ "results": [
+  {
+   "object": "user",
+   "id": "np-dana-vnt001",
+   "type": "person",
+   "name": "Dana Okafor",
+   "person": {
+    "email": "dana@vantor.example"
+   }
+  },
+  {
+   "object": "user",
+   "id": "np-marcus-vnt002",
+   "type": "person",
+   "name": "Marcus Hale",
+   "person": {
+    "email": "marcus@vantor.example"
+   }
+  },
+  {
+   "object": "user",
+   "id": "nb-claude-vq74ka",
+   "type": "bot",
+   "name": "Claude",
+   "bot": {
+    "owner": {
+     "type": "workspace",
+     "workspace": true
+    },
+    "workspace_name": "Vantor Logistics"
+   }
+  },
+  {
+   "object": "user",
+   "id": "nb-jirasync-vantor8x",
+   "type": "bot",
+   "name": "vantor-jira-sync",
+   "bot": {
+    "owner": {
+     "type": "user",
+     "user": {
+      "name": "Marcus Hale",
+      "person": {
+       "email": "marcus@vantor.example"
+      }
+     }
+    },
+    "workspace_name": "Vantor Logistics"
+   }
+  }
+ ]
+}

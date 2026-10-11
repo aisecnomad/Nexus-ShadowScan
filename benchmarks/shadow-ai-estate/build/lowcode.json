@@ -1,0 +1,354 @@
+[
+ {
+  "id": "lowcode.copilot-hr-helper",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:copilot-studio",
+    "evidence": [
+     "lowcode/power_platform.json#bot-hrhelper-v7q2k botcomponent GptComponentMetadata, authenticationmode=0"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "bot-hrhelper-v7q2k",
+   "vntr_hrhelper"
+  ],
+  "artifacts": [
+   "lowcode/power_platform.json"
+  ],
+  "unit": "estate",
+  "registered": true,
+  "difficulty": "easy",
+  "rationale": "Copilot Studio bot with generative answers (GptComponentMetadata component) published with no authentication; the one sanctioned/registered low-code agent, inventoried as power-platform:bot:bot-hrhelper-v7q2k."
+ },
+ {
+  "id": "lowcode.flow-claim-summaries",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:power-automate",
+    "evidence": [
+     "lowcode/power_platform.json#flow-claimsum-8kd3t connectionReferences shared_azureopenai, Recurrence trigger"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "flow-claimsum-8kd3t"
+  ],
+  "artifacts": [
+   "lowcode/power_platform.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Power Automate flow referencing the shared_azureopenai connector on a recurrence schedule: AI usage per Power Platform connector semantics."
+ },
+ {
+  "id": "lowcode.flow-nightly-pod-copy",
+  "surface": "lowcode",
+  "class": "control",
+  "expected": [],
+  "tolerated": [],
+  "anchors": [
+   "flow-nightlycopy-2mq9"
+  ],
+  "artifacts": [
+   "lowcode/power_platform.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Scheduled file-copy flow using only office365 and sharepointonline connectors: ordinary automation, no AI connector or signature."
+ },
+ {
+  "id": "lowcode.agentforce-carrier-bot",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:agentforce",
+    "evidence": [
+     "lowcode/salesforce.json#0Xx5carrierbt7vq2k BotDefinition with active BotVersion 3"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "0xx5carrierbt7vq2k",
+   "carrier_dispatch_agent"
+  ],
+  "artifacts": [
+   "lowcode/salesforce.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Salesforce BotDefinition with an active BotVersion describing an Agentforce service agent: an AI agent by Salesforce object semantics."
+ },
+ {
+  "id": "lowcode.agentforce-route-planner",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:agentforce",
+    "evidence": [
+     "lowcode/salesforce.json#0GP4routepln9wk2qa GenAiPlannerDefinition"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "0gp4routepln9wk2qa",
+   "route_exception_planner"
+  ],
+  "artifacts": [
+   "lowcode/salesforce.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "medium",
+  "rationale": "GenAiPlannerDefinition (Agentforce planner, Tooling API object): an AI agent definition by Salesforce semantics, collected less often than BotDefinition."
+ },
+ {
+  "id": "lowcode.snow-dock-dispatch-agent",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:now-assist",
+    "evidence": [
+     "lowcode/servicenow.json#dockagent7fq3wv sn_aia_agent agent_type=autonomous, script tool dock-tool-script-1"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "dockagent7fq3wv",
+   "dock dispatch agent"
+  ],
+  "artifacts": [
+   "lowcode/servicenow.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "ServiceNow AI Agent Studio sn_aia_agent (now-llm, autonomous) with a script tool: an AI agent by ServiceNow table semantics."
+ },
+ {
+  "id": "lowcode.snow-copilot-cleanup",
+  "surface": "lowcode",
+  "class": "nearmiss",
+  "expected": [],
+  "tolerated": [],
+  "anchors": [
+   "cplclean4nw2xf8",
+   "copilot license cleanup"
+  ],
+  "artifacts": [
+   "lowcode/servicenow.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "hard",
+  "rationale": "sys_hub_flow that merely deprovisions unused Microsoft 365 Copilot licenses with user-table steps; it invokes no Now Assist or generative action, but the AI product name in its title is known to over-flag name-matching tools."
+ },
+ {
+  "id": "lowcode.n8n-lead-qualifier",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:n8n",
+    "evidence": [
+     "lowcode/n8n_workflows.json#wf-leadqual-8rv2k @n8n/n8n-nodes-langchain.agent + lmChatOpenAi gpt-4o-mini, scheduleTrigger"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "wf-leadqual-8rv2k",
+   "carrier lead qualifier agent"
+  ],
+  "artifacts": [
+   "lowcode/n8n_workflows.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "n8n workflow built on the langchain AI Agent node with an OpenAI chat model and an HTTP tool, running on a schedule: an AI agent by n8n node semantics."
+ },
+ {
+  "id": "lowcode.n8n-dock-manifest-qa",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:n8n",
+    "evidence": [
+     "lowcode/n8n_workflows.json#wf-dockqa-x3v9t httpRequest POST https://vllm.vantor.example/v1/chat/completions model qwen2.5-72b-instruct"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "wf-dockqa-x3v9t",
+   "dock manifest qa"
+  ],
+  "artifacts": [
+   "lowcode/n8n_workflows.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "hard",
+  "rationale": "n8n workflow with no AI node type: its only LLM use is a plain httpRequest node POSTing chat completions to a self-hosted vLLM endpoint with a qwen2.5 model. Genuine AI usage per the request body, but it may exceed node-type and vendor-domain detection."
+ },
+ {
+  "id": "lowcode.n8n-backup-sheets",
+  "surface": "lowcode",
+  "class": "control",
+  "expected": [],
+  "tolerated": [],
+  "anchors": [
+   "wf-backupsheets-9kp2"
+  ],
+  "artifacts": [
+   "lowcode/n8n_workflows.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Cron-triggered Google Sheets/Drive backup workflow: ordinary automation with no AI nodes or parameters."
+ },
+ {
+  "id": "lowcode.make-tender-negotiator",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:make",
+    "evidence": [
+     "lowcode/make_scenarios.json#agt-tenderneg-5rq8w ai-agent record, model gpt-4o, systemPrompt, tools send_email/update_tender"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "agt-tenderneg-5rq8w",
+   "tender negotiator"
+  ],
+  "artifacts": [
+   "lowcode/make_scenarios.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Make AI Agent record (model, system prompt and tools): a first-class AI agent by Make's ai-agents API semantics."
+ },
+ {
+  "id": "lowcode.zap-pod-chatgpt",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:zapier",
+    "evidence": [
+     "lowcode/zapier_zaps.csv#POD to ChatGPT summary zv82q, step ChatGPT (OpenAI)"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "pod to chatgpt summary zv82q"
+  ],
+  "artifacts": [
+   "lowcode/zapier_zaps.csv"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Zap whose step list contains the ChatGPT (OpenAI) app between Gmail and Slack: AI usage by Zapier app semantics."
+ },
+ {
+  "id": "lowcode.zap-invoice-drive",
+  "surface": "lowcode",
+  "class": "control",
+  "expected": [],
+  "tolerated": [],
+  "anchors": [
+   "invoice pdf to drive mw83t"
+  ],
+  "artifacts": [
+   "lowcode/zapier_zaps.csv"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Gmail-to-Drive attachment filing zap: ordinary non-AI automation."
+ },
+ {
+  "id": "lowcode.zap-ai-newsletter",
+  "surface": "lowcode",
+  "class": "nearmiss",
+  "expected": [],
+  "tolerated": [],
+  "anchors": [
+   "daily ai newsletter forwarder kp74w"
+  ],
+  "artifacts": [
+   "lowcode/zapier_zaps.csv"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "medium",
+  "rationale": "Zap title contains the standalone word AI (it forwards a newsletter about AI) but its only steps are Gmail and Email by Zapier; keyword tools matching the title over-flag it, which is a false positive by Zapier step semantics."
+ },
+ {
+  "id": "lowcode.workato-claims-genai",
+  "surface": "lowcode",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "lowcode-agent:workato",
+    "evidence": [
+     "lowcode/workato_recipes.json#rcp-claimsgenai-w6r9t provider workato_genai in config and code block"
+    ]
+   }
+  ],
+  "tolerated": [],
+  "anchors": [
+   "rcp-claimsgenai-w6r9t",
+   "draft claim responses with genai"
+  ],
+  "artifacts": [
+   "lowcode/workato_recipes.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Workato recipe whose config and code use the workato_genai provider to draft claim responses: AI usage by Workato connector semantics."
+ },
+ {
+  "id": "lowcode.workato-gemini-exchange",
+  "surface": "lowcode",
+  "class": "nearmiss",
+  "expected": [],
+  "tolerated": [],
+  "anchors": [
+   "rcp-geminirecon-p3k8d",
+   "reconcile gemini exchange trades"
+  ],
+  "artifacts": [
+   "lowcode/workato_recipes.json"
+  ],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "hard",
+  "rationale": "Scheduled recipe pulling trades from api.gemini.com, the Gemini cryptocurrency exchange, over plain http and posting journals to NetSuite; no AI technology, but the Gemini name and domain are classic over-flag bait for AI-name matching."
+ }
+]

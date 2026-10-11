@@ -1,0 +1,193 @@
+[
+ {
+  "id": "gateway.litellm-freight-eta",
+  "surface": "gateway",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "gateway-caller:agentic",
+    "evidence": ["gateway/litellm_spend.jsonl#api_key_alias=freight-eta-agent-vq7 proxy_server_request.body.tools + finish_reason=tool_calls"]
+   }
+  ],
+  "tolerated": [],
+  "anchors": ["freight-eta-agent-vq7"],
+  "artifacts": ["gateway/litellm_spend.jsonl"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "LiteLLM proxy caller whose requests carry function-tool definitions and tool_calls finish reasons under a LangChain user agent: an agentic caller per LiteLLM spend-log semantics."
+ },
+ {
+  "id": "gateway.litellm-marketing-draftr",
+  "surface": "gateway",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "gateway-caller:llm",
+    "evidence": ["gateway/litellm_spend.jsonl#api_key_alias=marketing-draftr-nk2 plain chat, finish_reason=stop"]
+   }
+  ],
+  "tolerated": [],
+  "anchors": ["marketing-draftr-nk2"],
+  "artifacts": ["gateway/litellm_spend.jsonl"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "LiteLLM caller doing plain chat completions with end-user attribution (nika@vantor.example) and no tool use: real LLM usage, not an agent."
+ },
+ {
+  "id": "gateway.bedrock-fleet-ops",
+  "surface": "gateway",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "gateway-caller:agentic",
+    "evidence": ["gateway/bedrock_invocations.jsonl#identity.arn=arn:aws:sts::210987654321:assumed-role/vantor-fleet-ops-agent-x9r4/build-runner-3 Converse with toolConfig, stopReason=tool_use"]
+   }
+  ],
+  "tolerated": [],
+  "anchors": ["vantor-fleet-ops-agent-x9r4"],
+  "artifacts": ["gateway/bedrock_invocations.jsonl"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "medium",
+  "rationale": "Bedrock model-invocation-log caller from an assumed-role ARN issuing Converse requests with a toolConfig and tool_use stop reasons: an agent loop per Bedrock invocation-log semantics."
+ },
+ {
+  "id": "gateway.azure-dispatch",
+  "surface": "gateway",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "gateway-caller:agentic",
+    "evidence": ["gateway/azure_openai_diag.json#identity.claims.appid=app-vantor-dispatch-7h2q userAgent=agent-framework/1.4.0"]
+   }
+  ],
+  "tolerated": [],
+  "anchors": ["app-vantor-dispatch-7h2q", "oid-dispatch-7h2q"],
+  "artifacts": ["gateway/azure_openai_diag.json"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "medium",
+  "rationale": "Azure OpenAI diagnostics caller (appid claim) whose requests carry a Microsoft Agent Framework user agent against a chat deployment: an agent-framework workload per Azure diagnostic-log semantics."
+ },
+ {
+  "id": "gateway.egress-quote-crew",
+  "surface": "gateway",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "gateway-caller:agentic",
+    "evidence": ["gateway/egress_proxy.log#user-agent vantor-quote-crew-j9f/1.3 crewai/0.80.0 POST /v1/chat/completions host=api.openai.com"]
+   }
+  ],
+  "tolerated": [],
+  "anchors": ["vantor-quote-crew-j9f"],
+  "artifacts": ["gateway/egress_proxy.log"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Egress-proxy caller with a CrewAI framework user agent POSTing chat completions to api.openai.com: an agent-framework caller observed at the network edge."
+ },
+ {
+  "id": "gateway.otel-invoice-agent",
+  "surface": "gateway",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "gateway-caller:agentic",
+    "evidence": ["gateway/otel_spans.json#service.name=vantor-invoice-agent-d4k gen_ai.agent.name=invoice-reconciler gen_ai.operation.name=invoke_agent"]
+   }
+  ],
+  "tolerated": [],
+  "anchors": ["vantor-invoice-agent-d4k", "invoice-reconciler"],
+  "artifacts": ["gateway/otel_spans.json"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "medium",
+  "rationale": "OpenTelemetry GenAI spans naming gen_ai.agent.name and an invoke_agent operation for this service: an instrumented agent per OTel GenAI semantic conventions."
+ },
+ {
+  "id": "gateway.egress-yard-planner",
+  "surface": "gateway",
+  "class": "positive",
+  "expected": [
+   {
+    "fact": "gateway-caller:llm",
+    "evidence": ["gateway/egress_proxy.log#user-agent vantor-yard-planner-q6w/0.9 POST /generate host=tgi-yard.vantor.example"]
+   }
+  ],
+  "tolerated": [],
+  "anchors": ["vantor-yard-planner-q6w", "tgi-yard.vantor.example"],
+  "artifacts": ["gateway/egress_proxy.log"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "hard",
+  "rationale": "Caller POSTing to /generate on an internal self-hosted HuggingFace Text Generation Inference host (tgi-yard): genuine LLM inference, but the unlisted host and non-standard path sit outside known-host and inference-path lists, so it may exceed documented detection capabilities."
+ },
+ {
+  "id": "gateway.egress-wiki-sync",
+  "surface": "gateway",
+  "class": "control",
+  "expected": [],
+  "tolerated": [],
+  "anchors": ["vantorwikisync"],
+  "artifacts": ["gateway/egress_proxy.log"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Intranet wiki page fetches (GET /index.html and wiki pages on wiki.vantor.example): ordinary non-AI traffic with no model, LLM host or inference path."
+ },
+ {
+  "id": "gateway.egress-helpdesk-browser",
+  "surface": "gateway",
+  "class": "control",
+  "expected": [],
+  "tolerated": [],
+  "anchors": ["helpdesk-chat-w8s"],
+  "artifacts": ["gateway/egress_proxy.log"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "hard",
+  "rationale": "Chrome browser users of the intranet helpdesk live-chat widget (human-to-human chat, no model anywhere); its /api/chat path matches Ollama-style inference-path heuristics, a shape discovery tools are known to over-flag."
+ },
+ {
+  "id": "gateway.otel-billing-cron",
+  "surface": "gateway",
+  "class": "control",
+  "expected": [],
+  "tolerated": [],
+  "anchors": ["vantor-billing-cron-t6b"],
+  "artifacts": ["gateway/otel_spans.json"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "easy",
+  "rationale": "Ordinary HTTP spans for a nightly billing cron service with no GenAI attributes at all: plainly non-AI telemetry."
+ },
+ {
+  "id": "gateway.egress-run-audit",
+  "surface": "gateway",
+  "class": "nearmiss",
+  "expected": [],
+  "tolerated": [],
+  "anchors": ["vantor-run-audit-z3m"],
+  "artifacts": ["gateway/egress_proxy.log"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "medium",
+  "rationale": "An audit dashboard GETting /v1/threads/.../runs on api.openai.com: a read-only listing of hosted run metadata, not an invocation and not inference, yet the path and host make tools report an AI caller."
+ },
+ {
+  "id": "gateway.egress-treasury-ticker",
+  "surface": "gateway",
+  "class": "nearmiss",
+  "expected": [],
+  "tolerated": [],
+  "anchors": ["vantor-treasury-ticker-p5q"],
+  "artifacts": ["gateway/egress_proxy.log"],
+  "unit": "estate",
+  "registered": false,
+  "difficulty": "medium",
+  "rationale": "Market-data polling of api.gemini.com, the Gemini cryptocurrency exchange REST API (GET /v1/pubticker/btcusd): the Gemini name is AI-adjacent vocabulary with no AI technology, so flagging it is a false positive."
+ }
+]

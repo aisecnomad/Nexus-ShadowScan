@@ -1,0 +1,43 @@
+{
+ "records": [
+  {
+   "attributes": {
+    "type": "BotDefinition"
+   },
+   "Id": "0Xx5carrierbt7vq2k",
+   "DeveloperName": "Carrier_Dispatch_Agent",
+   "MasterLabel": "Carrier Dispatch Agent",
+   "Description": "Agentforce service agent that answers carrier dispatch questions and books spot capacity",
+   "CreatedDate": "2025-06-10T00:00:00.000+0000",
+   "LastModifiedDate": "2025-09-18T00:00:00.000+0000",
+   "CreatedBy": {
+    "Name": "Priya"
+   }
+  },
+  {
+   "attributes": {
+    "type": "BotVersion"
+   },
+   "Id": "0Xv5carrierv30001k",
+   "BotDefinitionId": "0Xx5carrierbt7vq2k",
+   "Status": "Active",
+   "VersionNumber": 3,
+   "LastModifiedDate": "2025-09-18T00:00:00.000+0000"
+  },
+  {
+   "attributes": {
+    "type": "GenAiPlannerDefinition"
+   },
+   "Id": "0GP4routepln9wk2qa",
+   "DeveloperName": "Route_Exception_Planner",
+   "MasterLabel": "Route Exception Planner",
+   "Description": "Plans recovery actions when a route misses its delivery window",
+   "CreatedDate": "2025-07-21T00:00:00.000+0000",
+   "LastModifiedDate": "2025-09-05T00:00:00.000+0000",
+   "CreatedBy": {
+    "Name": "Priya"
+   }
+  }
+ ],
+ "done": true
+}
