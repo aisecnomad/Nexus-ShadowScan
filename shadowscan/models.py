@@ -23,6 +23,7 @@ from shadowscan.utils.redaction import (
     policy_token,
     sanitize,
 )
+from shadowscan.utils.redaction_entropy import withhold_random_literals
 
 FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v2"
 LEGACY_FINDING_IDENTITY_SCHEMA = "shadowscan.finding-identity/v1"
@@ -222,6 +223,13 @@ class RiskLevel(str, Enum):
         return cls.INFO
 
 
+def _evidence_value(name: str, value: Any) -> Any:
+    """A sanitized evidence field, with random-looking literals also withheld from snippets."""
+    if name == "snippet" and isinstance(value, str):
+        return withhold_random_literals(value)
+    return value
+
+
 @dataclass(slots=True)
 class Evidence:
     """A single observation supporting a finding."""
@@ -260,7 +268,7 @@ class Evidence:
         # their normal pair-aware redaction.
         values = sanitize([(getattr(self, name),) for name in _EVIDENCE_FIELDS])
         for name, (value,) in zip(_EVIDENCE_FIELDS, values, strict=True):
-            setattr(self, name, value)
+            setattr(self, name, _evidence_value(name, value))
         object.__setattr__(self, "_clean_digest", _clean_state(self._digest_state(), bounded=True))
 
 
@@ -425,7 +433,7 @@ class Finding:
             raise SanitizationLimitError("finding identity includes a credential; finding omitted")
         for ev, clean in zip(self.evidence, evidence_values, strict=True):
             for name, (value,) in zip(_EVIDENCE_FIELDS, clean, strict=True):
-                setattr(ev, name, value)
+                setattr(ev, name, _evidence_value(name, value))
         for factor, ((identifier,), (description,)) in zip(self.risk.factors, risk_values, strict=True):
             factor.id = identifier
             factor.description = description

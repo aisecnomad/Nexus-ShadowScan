@@ -26,6 +26,11 @@ summarizes each release for people who install and operate ShadowScan.
   `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
   literals passed to setter calls such as `setProperty("openai.key", ...)`,
   and `value`, `key` and `credential` fields inside an `auth` mapping.
+  Evidence snippets also get a last-resort pass that withholds a quoted
+  literal that looks generated (20 or more token characters mixing upper
+  case, lower case and digits, with frequent class switches and high entropy),
+  whatever name or call surrounds it. Hex digests, UUIDs and ordinary
+  identifiers keep their text. A Hypothesis property test covers both sides.
 - `shadowscan jwt TOKEN...` and `shadowscan run --set` with a credential value
   print a warning that command-line arguments are visible in process listings
   and shell history. The value is never echoed and the scan still runs.
