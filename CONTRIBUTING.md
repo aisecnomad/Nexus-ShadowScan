@@ -254,7 +254,8 @@ contract. In brief:
 6. Describe each key in `config_keys` and run `make connector-reference`, which
    regenerates [docs/connectors/reference.md](docs/connectors/reference.md); a
    test fails when it is stale. Document required API scopes and the offline
-   export format in the connector guide under `docs/connectors/`.
+   export format in the connector guide under `docs/connectors/`, and add the
+   connector's summary row to [docs/connectors.md](docs/connectors.md).
 
 `BaseConnector.load_offline` already reads `input` exports. Declare an
 [engine hook](docs/architecture.md#engine-hooks) only when the engine must

@@ -69,7 +69,7 @@ ShadowScan ships **38 connectors** across the nine surfaces below.
 | **Runtime** | `runtime.processes` | Coding-agent CLIs, AI desktop apps, MCP servers, local model servers and agent dev servers seen running, from osquery, Defender or CrowdStrike process exports or `/proc`; command lines are never kept; linked to the endpoint findings for the same tool on the same device (`observed-running`) |
 
 Connectors support **live** API collection, **offline** JSON/CSV/log exports,
-or both; see the connector guide for the supported modes and provider scope.
+or both; see the [connector guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors.md) for the supported modes and provider scope.
 Offline analysis can run in CI, on an analyst's laptop, or against a SIEM export.
 The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`,
 `endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes`, `cloud.openshift`) analyze exports; they do
@@ -218,7 +218,10 @@ the sample exports under `tests/fixtures/` are not shipped in the wheel. Steps
 5 and 7 use your own logs, token, and an earlier JSON report
 (`--format json -o report.json`); step 6 writes the per-machine reports that
 `merge` and `dashboard` read. Sample gateway logs live under
-`tests/fixtures/gateway/` in a checkout.
+`tests/fixtures/gateway/` in a checkout. Scanning the ShadowScan checkout
+itself reports an incomplete scan (exit 3): its redaction test fixtures
+intentionally exceed the sanitizer's limits, and the scanner fails closed
+rather than skip them silently.
 
 ### Configuration
 
