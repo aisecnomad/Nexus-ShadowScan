@@ -1429,3 +1429,16 @@ def test_mapping_catalog_reference_is_current() -> None:
     assert REFERENCE.read_text(encoding="utf-8") == render(), (
         "docs/concepts/mappings-reference.md is stale; run `make mapping-reference`"
     )
+
+
+def test_docs_name_the_registry_operation_the_aws_connector_calls() -> None:
+    # registry_arns calls BatchGetDiscoverableRegistryRecord; a guide that names the
+    # unbatched action tells operators to grant a permission that is never used.
+    source = (ROOT / "shadowscan/connectors/cloud/aws.py").read_text(encoding="utf-8")
+    assert "batch_get_discoverable_registry_record" in source
+    stale = [
+        path.relative_to(ROOT).as_posix()
+        for path in _markdown_files()
+        if re.search(r"(?<!Batch)GetDiscoverableRegistryRecord", path.read_text(encoding="utf-8"))
+    ]
+    assert not stale, stale
