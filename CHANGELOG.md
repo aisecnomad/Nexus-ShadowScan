@@ -162,12 +162,18 @@ summarizes each release for people who install and operate ShadowScan.
 - Add a deterministic, fail-closed AI Review Gate with read-only preflight,
   base-commit-only synthesis, and narrowly scoped review/check publication.
   Missing or malformed specialist evidence blocks the gate. AI cannot approve
-  or merge; human/CODEOWNER review and branch protections remain required.
+  or merge; the human approval and status checks the rulesets require remain
+  the merge gate (the rulesets do not require code-owner review).
   This is not independent human review and does not authorize a release.
 - The gate's evidence is committed by the pull request's author, so it can
   block a change but never pass one: with no blocking finding the check
   concludes `neutral` (`advisory_only`), never `success`. Do not make it a
   required check; GitHub counts `neutral` as passing.
+- `python -m tools.governance_check`, and the ruleset preparation and release
+  checks built on it, refuse a ruleset whose required status checks include
+  `AI Review Gate`, `AI review publication` or `preflight`
+  (`advisory_check_required`). A test keeps that list equal to the checks the
+  workflow creates.
 
 ### Fleet dashboard and inventory export
 

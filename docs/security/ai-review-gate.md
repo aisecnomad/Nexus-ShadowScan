@@ -48,8 +48,10 @@ maintainer-controlled review process, not a privileged trigger workaround.
 
 Trust the reviewed base code and GitHub-hosted runner. Treat PR content, API
 responses, scanner adapters and all model outputs as untrusted. The PR workflow
-definition itself is editable by a PR author: CODEOWNERS review and required
-human review remain essential. This is not a tamper-proof external GitHub App.
+definition itself is editable by a PR author: the human approval the rulesets
+require remains essential. The rulesets do not require code-owner review, so
+CODEOWNERS routes review requests rather than enforcing them. This is not a
+tamper-proof external GitHub App.
 Branch protection's GitHub Actions source cannot distinguish a malicious
 workflow with the same check name.
 
@@ -163,11 +165,13 @@ review/check for the same SHA; each run posts at most one of each.
 
 ## Human gate and branch protection
 
-Do not add **AI Review Gate** or **AI review publication** to the required
-checks: GitHub treats a `neutral` conclusion as passing, and an author who
-controls the evidence and the workflow file controls that result. Merge
-protection stays with the existing CI/scanner checks and human/CODEOWNER
-approval in branch protection/rulesets. Keep
+Do not add **AI Review Gate**, **AI review publication** or **preflight** to
+the required checks: GitHub treats a `neutral` conclusion as passing, and an
+author who controls the evidence and the workflow file controls that result.
+`python -m tools.governance_check` and the ruleset tooling refuse a ruleset
+that requires any of them (`advisory_check_required`). Merge protection stays
+with the existing CI/scanner checks and the human approval the rulesets
+require. Keep
 stale-approval dismissal and prevent the author from self-approving. Do not
 enable a bypass label, lower approval counts or weaken rulesets for this gate.
 CODEOWNERS covers helpers and this guide explicitly, and future agents through
