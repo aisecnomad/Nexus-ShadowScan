@@ -154,7 +154,9 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
 - A triage reply steered by scanned content cannot change a finding's risk,
   shadow status, kind or tags; a reply over 16 KiB is refused unread, a reply
   that carries more than one verdict object is `unparseable`, and requests send
-  no sampling parameters (current Claude models reject `temperature`).
+  no sampling parameters (current Claude models reject `temperature`); OpenAI
+  requests use `max_completion_tokens`, which an OpenAI-compatible endpoint
+  must accept.
   `options.llm_triage.structured_output: true` constrains the reply to the
   verdict schema on providers that support it. Offline prompt-injection
   canaries (`python -m tools.evaluation.triage_canaries`) run in the unit tests.

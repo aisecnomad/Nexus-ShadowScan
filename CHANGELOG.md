@@ -227,7 +227,9 @@ summarizes each release for people who install and operate ShadowScan.
 
 - LLM triage refuses a reply that carries more than one verdict object (for
   example one quoted from injected finding text) as `status: unparseable`.
-  Requests send no sampling parameters, which current Claude models reject.
+  Requests send no sampling parameters, which current Claude models reject,
+  and OpenAI requests bound the reply with `max_completion_tokens` instead of
+  the deprecated `max_tokens`, which the o-series reasoning models reject.
   `options.llm_triage.structured_output: true` asks the provider to constrain
   the reply to the verdict JSON schema (`output_config.format` or a strict
   `response_format`); it is off by default because not every model supports it.

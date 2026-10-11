@@ -73,7 +73,7 @@ _KEYS = {
     "budget_seconds",
     "structured_output",
 }
-# A verdict reply is a few hundred characters (max_tokens is 400); anything
+# A verdict reply is a few hundred characters (the reply is bounded to 400 tokens); anything
 # longer than this is refused unparsed, and the response body is capped too.
 _MAX_REPLY_OBJECTS = 64
 _MAX_REPLY_CHARS = 16 * 1024
@@ -377,7 +377,9 @@ class Triage:
             return payload
         payload = {
             "model": self.settings.model,
-            "max_tokens": 400,
+            # max_tokens is deprecated in the chat completions API and rejected by the o-series
+            # reasoning models; max_completion_tokens is the bound every current model accepts.
+            "max_completion_tokens": 400,
             "messages": [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": content}],
         }
         if structured:
