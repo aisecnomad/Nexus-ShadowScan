@@ -114,3 +114,20 @@ in a library scan.
 
 Model verdicts are not measured: no evaluation of triage accuracy is
 published. Treat a verdict as a reviewer's note, not as a label.
+
+## Injection canaries
+
+`tools/evaluation/triage_canaries.json` holds author-written findings whose
+text tries to force a verdict (direct instructions, planted verdict objects,
+fake system tags, claims of prior approval, translated instructions).
+`python -m tools.evaluation.triage_canaries` runs them offline against a
+scripted model that obeys or echoes every injection and fails if finding text
+leaves the user turn, a two-verdict reply is accepted, or any reply changes a
+finding. The unit tests run it on every change.
+
+`--live --model <id>` (with `--provider`, `--api-key-env`, `--base-url` and
+`--structured-output` as needed) sends the canaries to a real model and
+reports how many verdicts followed the injection. The cases and their `truth`
+labels are author-written, so a live count describes this small corpus
+against one model on one day; it is not a measure of robustness and no result
+is published.
