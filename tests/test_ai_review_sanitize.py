@@ -39,6 +39,15 @@ def test_a_private_key_quoted_on_one_line_or_escaped_is_withheld_whole(quote: st
     assert body not in out and "END" not in out and out.endswith(" Rotate it.")
 
 
+@pytest.mark.parametrize("quote", ["{begin} {body}", "{begin}\\n{body}\\n"])
+def test_a_footerless_private_key_on_one_line_or_escaped_is_withheld(quote: str) -> None:
+    # A reviewer may quote a truncated key without its footer; the body must not be published.
+    begin = "-----BEGIN " + "PRIVATE KEY-----"
+    body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2
+    out = redact(quote.format(begin=begin, body=body) + " Rotate it.")
+    assert body not in out and out.endswith(" Rotate it.")
+
+
 def test_prose_after_a_quoted_key_header_is_kept() -> None:
     begin = "-----BEGIN " + "RSA PRIVATE KEY-----"
     finding = (

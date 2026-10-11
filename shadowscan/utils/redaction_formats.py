@@ -203,7 +203,8 @@ def _redact_authorization(text: str) -> str:
                 match.string, match.end("credential")
             ):
                 # 'Bearer token <name>: value': withhold the word as the credential and keep the
-                # name, so the assignment rules still withhold the value after it.
+                # name, so the assignment rules read it and withhold the value after it exactly
+                # as they would without the scheme in front.
                 return match.group("scheme") + " " + REDACTED + match.group("gap") + credential + glued
             return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n") + glued
         if kept_glued(match):

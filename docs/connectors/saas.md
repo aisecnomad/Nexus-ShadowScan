@@ -53,8 +53,9 @@ check that. Denied, invalid, or truncated pages make the scan incomplete.
 ## `saas.generic`
 Any CSV/JSON app inventory (Google Marketplace, HubSpot, CASB discovered-apps
 exports…). Map columns with `fields:`; findings are produced for AI matches
-and privileged/data scopes (`keep_all: true` to emit everything). Records without an app name are skipped and counted (fully blank rows are
-ignored), and an export where no record maps to a name makes the scan incomplete
-instead of looking empty.
+and privileged/data scopes (`keep_all: true` to emit everything). A record without an app name is
+skipped and makes the scan incomplete (fully blank rows are ignored); valid
+neighboring records are still reported. An export where no record maps to a
+name is reported with the accepted column names instead of looking empty.
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.
