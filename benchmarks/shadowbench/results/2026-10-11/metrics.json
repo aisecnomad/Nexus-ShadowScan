@@ -1,0 +1,3550 @@
+{
+ "corpus_sha256": "5997346ad000a0639709718b66743bb794d5f53faff3c2f38e78dbcc8ba36663",
+ "generator_digest": "9a825de5273a7fa8e42c26f2c224e19ee5e86e7f88cf5b7f2bb5e5b47519241e",
+ "manifest": {
+  "started": "2026-10-11T18:10:09+00:00",
+  "corpus": "benchmarks/shadowbench/corpus.json",
+  "corpus_sha256": "5997346ad000a0639709718b66743bb794d5f53faff3c2f38e78dbcc8ba36663",
+  "generator_digest": "9a825de5273a7fa8e42c26f2c224e19ee5e86e7f88cf5b7f2bb5e5b47519241e",
+  "platform": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+  "python": "3.13.16",
+  "workers": 3,
+  "cases": 346,
+  "skipped_adapters": {},
+  "finished": "2026-10-11T18:18:56+00:00"
+ },
+ "tool_runs": {
+  "agentdiscover": {
+   "tool": "agentdiscover",
+   "version": "2.9.5",
+   "seconds": 76.8,
+   "statuses": {
+    "unsupported": 280,
+    "ok": 66
+   }
+  },
+  "agentmesh-discovery": {
+   "tool": "agentmesh-discovery",
+   "version": "agentmesh-discovery 5.0.0",
+   "seconds": 15.2,
+   "statuses": {
+    "unsupported": 260,
+    "ok": 86
+   }
+  },
+  "ai-infra-guard": {
+   "tool": "ai-infra-guard",
+   "version": "v4.6.5",
+   "seconds": 16.1,
+   "statuses": {
+    "unsupported": 326,
+    "ok": 20
+   }
+  },
+  "cisco-mcp-scanner": {
+   "tool": "cisco-mcp-scanner",
+   "version": "cisco-ai-mcp-scanner 4.8.6",
+   "seconds": 71.8,
+   "statuses": {
+    "unsupported": 306,
+    "ok": 40
+   }
+  },
+  "fleet-ai-tools": {
+   "tool": "fleet-ai-tools",
+   "version": "fleet ai_tools (fleetdm/fleet main cf1217bafcd5cdce367165b1c604f94ed559e3d0, 2026-10-11; upstream karmine05/agentic-detector v0.3.0 7c942d0)",
+   "seconds": 3.8,
+   "statuses": {
+    "unsupported": 286,
+    "ok": 60
+   }
+  },
+  "numbat": {
+   "tool": "numbat",
+   "version": "dev+77ece3a76dce",
+   "seconds": 2.6,
+   "statuses": {
+    "unsupported": 306,
+    "ok": 40
+   }
+  },
+  "shadowscan": {
+   "tool": "shadowscan",
+   "version": "0.1.2+2d43f508fc95",
+   "seconds": 307.2,
+   "statuses": {
+    "ok": 326,
+    "unsupported": 20
+   }
+  },
+  "snyk-agent-scan": {
+   "tool": "snyk-agent-scan",
+   "version": "0.6.8",
+   "seconds": 16.8,
+   "statuses": {
+    "unsupported": 306,
+    "ok": 40
+   }
+  },
+  "vet": {
+   "tool": "vet",
+   "version": "v1.20.0",
+   "seconds": 16.1,
+   "statuses": {
+    "unsupported": 280,
+    "ok": 66
+   }
+  }
+ },
+ "surfaces": {
+  "code": {
+   "cases": 26,
+   "positives": 16,
+   "expected": 109,
+   "decoys": 0,
+   "modalities": [
+    "checkout"
+   ]
+  },
+  "identity": {
+   "cases": 40,
+   "positives": 24,
+   "expected": 96,
+   "decoys": 159,
+   "modalities": [
+    "entra-export",
+    "okta-export"
+   ]
+  },
+  "gateway": {
+   "cases": 40,
+   "positives": 40,
+   "expected": 124,
+   "decoys": 0,
+   "modalities": [
+    "bedrock-export",
+    "litellm-export"
+   ]
+  },
+  "lowcode": {
+   "cases": 40,
+   "positives": 24,
+   "expected": 78,
+   "decoys": 118,
+   "modalities": [
+    "n8n-export",
+    "powerplatform-export"
+   ]
+  },
+  "saas": {
+   "cases": 40,
+   "positives": 24,
+   "expected": 88,
+   "decoys": 110,
+   "modalities": [
+    "github-export",
+    "slack-export"
+   ]
+  },
+  "cloud": {
+   "cases": 40,
+   "positives": 24,
+   "expected": 77,
+   "decoys": 133,
+   "modalities": [
+    "aws-export",
+    "k8s-export"
+   ]
+  },
+  "endpoint": {
+   "cases": 40,
+   "positives": 24,
+   "expected": 24,
+   "decoys": 0,
+   "modalities": [
+    "home"
+   ]
+  },
+  "network": {
+   "cases": 40,
+   "positives": 24,
+   "expected": 44,
+   "decoys": 50,
+   "modalities": [
+    "active",
+    "passive"
+   ]
+  },
+  "runtime": {
+   "cases": 40,
+   "positives": 24,
+   "expected": 98,
+   "decoys": 165,
+   "modalities": [
+    "live",
+    "snapshot"
+   ]
+  }
+ },
+ "tools": {
+  "agentdiscover": {
+   "version": "2.9.5",
+   "surfaces_supported": [
+    "code",
+    "endpoint"
+   ],
+   "coverage": "2/9",
+   "in_scope": {
+    "cases": 66,
+    "scored": 66,
+    "errors": 0,
+    "incomplete": 0,
+    "expected": 133,
+    "decoys": 0,
+    "tp": 26,
+    "fp": 247,
+    "fn": 107,
+    "tn": 0,
+    "precision": 0.09523809523809523,
+    "precision_ci": [
+     0.06582300373546975,
+     0.13588615899958023
+    ],
+    "recall": 0.19548872180451127,
+    "recall_ci": [
+     0.13704384964641148,
+     0.2710302774332774
+    ],
+    "specificity": null,
+    "specificity_ci": [
+     null,
+     null
+    ],
+    "f1": 0.12807881773399016,
+    "f1_ci": [
+     0.0671462829736211,
+     0.23346303501945526
+    ],
+    "agent_expected": 83,
+    "agent_tp": 8,
+    "agent_recall": 0.0963855421686747,
+    "agent_false_alarms": 0,
+    "agent_false_alarm_universe": 50,
+    "agent_false_alarm_rate": 0.0,
+    "case": {
+     "positives": 40,
+     "negatives": 26,
+     "tp": 11,
+     "fn": 29,
+     "fp": 1,
+     "tn": 25,
+     "recall": 0.275,
+     "specificity": 0.9615384615384616,
+     "balanced_accuracy": 0.6182692307692308,
+     "mcc": 0.29966148992990166
+    },
+    "seconds_median": 1.3325,
+    "seconds_p90": 3.829,
+    "seconds_max": 29.751
+   },
+   "estate": {
+    "expected": 738,
+    "tp": 26,
+    "recall": 0.03523035230352303
+   },
+   "by_surface": {
+    "code": {
+     "cases": 26,
+     "scored": 26,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 109,
+     "decoys": 0,
+     "tp": 25,
+     "fp": 247,
+     "fn": 84,
+     "tn": 0,
+     "precision": 0.09191176470588236,
+     "precision_ci": [
+      0.06303129237194452,
+      0.13215857901162378
+     ],
+     "recall": 0.22935779816513763,
+     "recall_ci": [
+      0.1604554591240987,
+      0.31668706823310894
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.13123359580052493,
+     "f1_ci": [
+      0.07048458149779736,
+      0.25125628140703515
+     ],
+     "agent_expected": 65,
+     "agent_tp": 7,
+     "agent_recall": 0.1076923076923077,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 44,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 16,
+      "negatives": 10,
+      "tp": 10,
+      "fn": 6,
+      "fp": 1,
+      "tn": 9,
+      "recall": 0.625,
+      "specificity": 0.9,
+      "balanced_accuracy": 0.7625,
+      "mcc": 0.5169842621131975
+     },
+     "seconds_median": 1.373,
+     "seconds_p90": 6.959,
+     "seconds_max": 29.751,
+     "modalities": {
+      "checkout": {
+       "cases": 26,
+       "scored": 26,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 109,
+       "decoys": 0,
+       "tp": 25,
+       "fp": 247,
+       "fn": 84,
+       "tn": 0,
+       "precision": 0.09191176470588236,
+       "precision_ci": [
+        0.06303129237194452,
+        0.13215857901162378
+       ],
+       "recall": 0.22935779816513763,
+       "recall_ci": [
+        0.1604554591240987,
+        0.31668706823310894
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.13123359580052493,
+       "f1_ci": [
+        0.07048458149779736,
+        0.25125628140703515
+       ],
+       "agent_expected": 65,
+       "agent_tp": 7,
+       "agent_recall": 0.1076923076923077,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 44,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 16,
+        "negatives": 10,
+        "tp": 10,
+        "fn": 6,
+        "fp": 1,
+        "tn": 9,
+        "recall": 0.625,
+        "specificity": 0.9,
+        "balanced_accuracy": 0.7625,
+        "mcc": 0.5169842621131975
+       },
+       "seconds_median": 1.373,
+       "seconds_p90": 6.959,
+       "seconds_max": 29.751
+      }
+     }
+    },
+    "endpoint": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 24,
+     "decoys": 0,
+     "tp": 1,
+     "fp": 0,
+     "fn": 23,
+     "tn": 0,
+     "precision": 1.0,
+     "precision_ci": [
+      0.2065493117918027,
+      1.0
+     ],
+     "recall": 0.041666666666666664,
+     "recall_ci": [
+      0.007393456083597233,
+      0.20241806658845338
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.08,
+     "f1_ci": [
+      0.0,
+      0.25
+     ],
+     "agent_expected": 18,
+     "agent_tp": 1,
+     "agent_recall": 0.05555555555555555,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 6,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 1,
+      "fn": 23,
+      "fp": 0,
+      "tn": 16,
+      "recall": 0.041666666666666664,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.5208333333333334,
+      "mcc": 0.13074409009212268
+     },
+     "seconds_median": 1.3325,
+     "seconds_p90": 1.9,
+     "seconds_max": 6.054,
+     "modalities": {
+      "home": {
+       "cases": 40,
+       "scored": 40,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 24,
+       "decoys": 0,
+       "tp": 1,
+       "fp": 0,
+       "fn": 23,
+       "tn": 0,
+       "precision": 1.0,
+       "precision_ci": [
+        0.2065493117918027,
+        1.0
+       ],
+       "recall": 0.041666666666666664,
+       "recall_ci": [
+        0.007393456083597233,
+        0.20241806658845338
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.08,
+       "f1_ci": [
+        0.0,
+        0.25
+       ],
+       "agent_expected": 18,
+       "agent_tp": 1,
+       "agent_recall": 0.05555555555555555,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 6,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 24,
+        "negatives": 16,
+        "tp": 1,
+        "fn": 23,
+        "fp": 0,
+        "tn": 16,
+        "recall": 0.041666666666666664,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.5208333333333334,
+        "mcc": 0.13074409009212268
+       },
+       "seconds_median": 1.3325,
+       "seconds_p90": 1.9,
+       "seconds_max": 6.054
+      }
+     }
+    }
+   },
+   "vs_reference": {
+    "reference": "shadowscan",
+    "tool_only_correct": 0,
+    "reference_only_correct": 26,
+    "mcnemar_p": 2.9802322387695312e-08
+   }
+  },
+  "agentmesh-discovery": {
+   "version": "agentmesh-discovery 5.0.0",
+   "surfaces_supported": [
+    "code",
+    "endpoint",
+    "runtime"
+   ],
+   "coverage": "3/9",
+   "in_scope": {
+    "cases": 86,
+    "scored": 86,
+    "errors": 0,
+    "incomplete": 0,
+    "expected": 181,
+    "decoys": 81,
+    "tp": 15,
+    "fp": 3,
+    "fn": 166,
+    "tn": 81,
+    "precision": 0.8333333333333334,
+    "precision_ci": [
+     0.6077796169796655,
+     0.9416342323981449
+    ],
+    "recall": 0.08287292817679558,
+    "recall_ci": [
+     0.05086359374695256,
+     0.13222010990975125
+    ],
+    "specificity": 1.0,
+    "specificity_ci": [
+     0.9547219138856311,
+     1.0
+    ],
+    "f1": 0.1507537688442211,
+    "f1_ci": [
+     0.08256880733944955,
+     0.23391812865497075
+    ],
+    "agent_expected": 108,
+    "agent_tp": 15,
+    "agent_recall": 0.1388888888888889,
+    "agent_false_alarms": 0,
+    "agent_false_alarm_universe": 154,
+    "agent_false_alarm_rate": 0.0,
+    "case": {
+     "positives": 52,
+     "negatives": 34,
+     "tp": 14,
+     "fn": 38,
+     "fp": 2,
+     "tn": 32,
+     "recall": 0.2692307692307692,
+     "specificity": 0.9411764705882353,
+     "balanced_accuracy": 0.6052036199095022,
+     "mcc": 0.26435820735703763
+    },
+    "seconds_median": 0.261,
+    "seconds_p90": 0.305,
+    "seconds_max": 1.144
+   },
+   "estate": {
+    "expected": 738,
+    "tp": 15,
+    "recall": 0.02032520325203252
+   },
+   "by_surface": {
+    "code": {
+     "cases": 26,
+     "scored": 26,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 109,
+     "decoys": 0,
+     "tp": 5,
+     "fp": 1,
+     "fn": 104,
+     "tn": 0,
+     "precision": 0.8333333333333334,
+     "precision_ci": [
+      0.4364971749742326,
+      0.969946630588185
+     ],
+     "recall": 0.045871559633027525,
+     "recall_ci": [
+      0.019750448288354407,
+      0.10291243659916352
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.08695652173913043,
+     "f1_ci": [
+      0.0,
+      0.2
+     ],
+     "agent_expected": 65,
+     "agent_tp": 5,
+     "agent_recall": 0.07692307692307693,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 44,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 16,
+      "negatives": 10,
+      "tp": 4,
+      "fn": 12,
+      "fp": 0,
+      "tn": 10,
+      "recall": 0.25,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.625,
+      "mcc": 0.337099931231621
+     },
+     "seconds_median": 0.2825,
+     "seconds_p90": 0.333,
+     "seconds_max": 0.391,
+     "modalities": {
+      "checkout": {
+       "cases": 26,
+       "scored": 26,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 109,
+       "decoys": 0,
+       "tp": 5,
+       "fp": 1,
+       "fn": 104,
+       "tn": 0,
+       "precision": 0.8333333333333334,
+       "precision_ci": [
+        0.4364971749742326,
+        0.969946630588185
+       ],
+       "recall": 0.045871559633027525,
+       "recall_ci": [
+        0.019750448288354407,
+        0.10291243659916352
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.08695652173913043,
+       "f1_ci": [
+        0.0,
+        0.2
+       ],
+       "agent_expected": 65,
+       "agent_tp": 5,
+       "agent_recall": 0.07692307692307693,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 44,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 16,
+        "negatives": 10,
+        "tp": 4,
+        "fn": 12,
+        "fp": 0,
+        "tn": 10,
+        "recall": 0.25,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.625,
+        "mcc": 0.337099931231621
+       },
+       "seconds_median": 0.2825,
+       "seconds_p90": 0.333,
+       "seconds_max": 0.391
+      }
+     }
+    },
+    "endpoint": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 24,
+     "decoys": 0,
+     "tp": 4,
+     "fp": 2,
+     "fn": 20,
+     "tn": 0,
+     "precision": 0.6666666666666666,
+     "precision_ci": [
+      0.29999331299474324,
+      0.9032285897864654
+     ],
+     "recall": 0.16666666666666666,
+     "recall_ci": [
+      0.06678676282131818,
+      0.3585307082129004
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.26666666666666666,
+     "f1_ci": [
+      0.06666666666666667,
+      0.47058823529411764
+     ],
+     "agent_expected": 18,
+     "agent_tp": 4,
+     "agent_recall": 0.2222222222222222,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 6,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 4,
+      "fn": 20,
+      "fp": 2,
+      "tn": 14,
+      "recall": 0.16666666666666666,
+      "specificity": 0.875,
+      "balanced_accuracy": 0.5208333333333334,
+      "mcc": 0.05716619504750295
+     },
+     "seconds_median": 0.249,
+     "seconds_p90": 0.302,
+     "seconds_max": 1.144,
+     "modalities": {
+      "home": {
+       "cases": 40,
+       "scored": 40,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 24,
+       "decoys": 0,
+       "tp": 4,
+       "fp": 2,
+       "fn": 20,
+       "tn": 0,
+       "precision": 0.6666666666666666,
+       "precision_ci": [
+        0.29999331299474324,
+        0.9032285897864654
+       ],
+       "recall": 0.16666666666666666,
+       "recall_ci": [
+        0.06678676282131818,
+        0.3585307082129004
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.26666666666666666,
+       "f1_ci": [
+        0.06666666666666667,
+        0.47058823529411764
+       ],
+       "agent_expected": 18,
+       "agent_tp": 4,
+       "agent_recall": 0.2222222222222222,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 6,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 24,
+        "negatives": 16,
+        "tp": 4,
+        "fn": 20,
+        "fp": 2,
+        "tn": 14,
+        "recall": 0.16666666666666666,
+        "specificity": 0.875,
+        "balanced_accuracy": 0.5208333333333334,
+        "mcc": 0.05716619504750295
+       },
+       "seconds_median": 0.249,
+       "seconds_p90": 0.302,
+       "seconds_max": 1.144
+      }
+     }
+    },
+    "runtime": {
+     "cases": 20,
+     "scored": 20,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 48,
+     "decoys": 81,
+     "tp": 6,
+     "fp": 0,
+     "fn": 42,
+     "tn": 81,
+     "precision": 1.0,
+     "precision_ci": [
+      0.6096657083436265,
+      1.0
+     ],
+     "recall": 0.125,
+     "recall_ci": [
+      0.0585705140436488,
+      0.2470045840177115
+     ],
+     "specificity": 1.0,
+     "specificity_ci": [
+      0.9547219138856311,
+      1.0
+     ],
+     "f1": 0.2222222222222222,
+     "f1_ci": [
+      0.1111111111111111,
+      0.3225806451612903
+     ],
+     "agent_expected": 25,
+     "agent_tp": 6,
+     "agent_recall": 0.24,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 104,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 12,
+      "negatives": 8,
+      "tp": 6,
+      "fn": 6,
+      "fp": 0,
+      "tn": 8,
+      "recall": 0.5,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.75,
+      "mcc": 0.5345224838248488
+     },
+     "seconds_median": 0.257,
+     "seconds_p90": 0.273,
+     "seconds_max": 0.31,
+     "modalities": {
+      "live": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 48,
+       "decoys": 81,
+       "tp": 6,
+       "fp": 0,
+       "fn": 42,
+       "tn": 81,
+       "precision": 1.0,
+       "precision_ci": [
+        0.6096657083436265,
+        1.0
+       ],
+       "recall": 0.125,
+       "recall_ci": [
+        0.0585705140436488,
+        0.2470045840177115
+       ],
+       "specificity": 1.0,
+       "specificity_ci": [
+        0.9547219138856311,
+        1.0
+       ],
+       "f1": 0.2222222222222222,
+       "f1_ci": [
+        0.1111111111111111,
+        0.3225806451612903
+       ],
+       "agent_expected": 25,
+       "agent_tp": 6,
+       "agent_recall": 0.24,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 104,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 6,
+        "fn": 6,
+        "fp": 0,
+        "tn": 8,
+        "recall": 0.5,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.75,
+        "mcc": 0.5345224838248488
+       },
+       "seconds_median": 0.257,
+       "seconds_p90": 0.273,
+       "seconds_max": 0.31
+      }
+     }
+    }
+   },
+   "vs_reference": {
+    "reference": "shadowscan",
+    "tool_only_correct": 2,
+    "reference_only_correct": 36,
+    "mcnemar_p": 5.398760549724102e-09
+   }
+  },
+  "ai-infra-guard": {
+   "version": "v4.6.5",
+   "surfaces_supported": [
+    "network"
+   ],
+   "coverage": "1/9",
+   "in_scope": {
+    "cases": 20,
+    "scored": 20,
+    "errors": 0,
+    "incomplete": 0,
+    "expected": 32,
+    "decoys": 50,
+    "tp": 26,
+    "fp": 0,
+    "fn": 6,
+    "tn": 50,
+    "precision": 1.0,
+    "precision_ci": [
+     0.871271076371412,
+     1.0
+    ],
+    "recall": 0.8125,
+    "recall_ci": [
+     0.6469084465243861,
+     0.9111045536226888
+    ],
+    "specificity": 1.0,
+    "specificity_ci": [
+     0.9286523998213857,
+     0.9999999999999999
+    ],
+    "f1": 0.896551724137931,
+    "f1_ci": [
+     0.8363636363636363,
+     0.9577464788732394
+    ],
+    "agent_expected": 17,
+    "agent_tp": 11,
+    "agent_recall": 0.6470588235294118,
+    "agent_false_alarms": 11,
+    "agent_false_alarm_universe": 65,
+    "agent_false_alarm_rate": 0.16923076923076924,
+    "case": {
+     "positives": 12,
+     "negatives": 8,
+     "tp": 12,
+     "fn": 0,
+     "fp": 0,
+     "tn": 8,
+     "recall": 1.0,
+     "specificity": 1.0,
+     "balanced_accuracy": 1.0,
+     "mcc": 1.0
+    },
+    "seconds_median": 1.219,
+    "seconds_p90": 4.868,
+    "seconds_max": 5.021
+   },
+   "estate": {
+    "expected": 738,
+    "tp": 26,
+    "recall": 0.03523035230352303
+   },
+   "by_surface": {
+    "network": {
+     "cases": 20,
+     "scored": 20,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 32,
+     "decoys": 50,
+     "tp": 26,
+     "fp": 0,
+     "fn": 6,
+     "tn": 50,
+     "precision": 1.0,
+     "precision_ci": [
+      0.871271076371412,
+      1.0
+     ],
+     "recall": 0.8125,
+     "recall_ci": [
+      0.6469084465243861,
+      0.9111045536226888
+     ],
+     "specificity": 1.0,
+     "specificity_ci": [
+      0.9286523998213857,
+      0.9999999999999999
+     ],
+     "f1": 0.896551724137931,
+     "f1_ci": [
+      0.8363636363636363,
+      0.9577464788732394
+     ],
+     "agent_expected": 17,
+     "agent_tp": 11,
+     "agent_recall": 0.6470588235294118,
+     "agent_false_alarms": 11,
+     "agent_false_alarm_universe": 65,
+     "agent_false_alarm_rate": 0.16923076923076924,
+     "case": {
+      "positives": 12,
+      "negatives": 8,
+      "tp": 12,
+      "fn": 0,
+      "fp": 0,
+      "tn": 8,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "balanced_accuracy": 1.0,
+      "mcc": 1.0
+     },
+     "seconds_median": 1.219,
+     "seconds_p90": 4.868,
+     "seconds_max": 5.021,
+     "modalities": {
+      "active": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 32,
+       "decoys": 50,
+       "tp": 26,
+       "fp": 0,
+       "fn": 6,
+       "tn": 50,
+       "precision": 1.0,
+       "precision_ci": [
+        0.871271076371412,
+        1.0
+       ],
+       "recall": 0.8125,
+       "recall_ci": [
+        0.6469084465243861,
+        0.9111045536226888
+       ],
+       "specificity": 1.0,
+       "specificity_ci": [
+        0.9286523998213857,
+        0.9999999999999999
+       ],
+       "f1": 0.896551724137931,
+       "f1_ci": [
+        0.8363636363636363,
+        0.9577464788732394
+       ],
+       "agent_expected": 17,
+       "agent_tp": 11,
+       "agent_recall": 0.6470588235294118,
+       "agent_false_alarms": 11,
+       "agent_false_alarm_universe": 65,
+       "agent_false_alarm_rate": 0.16923076923076924,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 0,
+        "tn": 8,
+        "recall": 1.0,
+        "specificity": 1.0,
+        "balanced_accuracy": 1.0,
+        "mcc": 1.0
+       },
+       "seconds_median": 1.219,
+       "seconds_p90": 4.868,
+       "seconds_max": 5.021
+      }
+     }
+    }
+   },
+   "vs_reference": {
+    "reference": "shadowscan",
+    "tool_only_correct": 0,
+    "reference_only_correct": 0,
+    "mcnemar_p": 1.0
+   }
+  },
+  "cisco-mcp-scanner": {
+   "version": "cisco-ai-mcp-scanner 4.8.6",
+   "surfaces_supported": [
+    "endpoint"
+   ],
+   "coverage": "1/9",
+   "in_scope": {
+    "cases": 40,
+    "scored": 40,
+    "errors": 0,
+    "incomplete": 0,
+    "expected": 24,
+    "decoys": 0,
+    "tp": 1,
+    "fp": 0,
+    "fn": 23,
+    "tn": 0,
+    "precision": 1.0,
+    "precision_ci": [
+     0.2065493117918027,
+     1.0
+    ],
+    "recall": 0.041666666666666664,
+    "recall_ci": [
+     0.007393456083597233,
+     0.20241806658845338
+    ],
+    "specificity": null,
+    "specificity_ci": [
+     null,
+     null
+    ],
+    "f1": 0.08,
+    "f1_ci": [
+     0.0,
+     0.25
+    ],
+    "agent_expected": 18,
+    "agent_tp": 1,
+    "agent_recall": 0.05555555555555555,
+    "agent_false_alarms": 0,
+    "agent_false_alarm_universe": 6,
+    "agent_false_alarm_rate": 0.0,
+    "case": {
+     "positives": 24,
+     "negatives": 16,
+     "tp": 1,
+     "fn": 23,
+     "fp": 0,
+     "tn": 16,
+     "recall": 0.041666666666666664,
+     "specificity": 1.0,
+     "balanced_accuracy": 0.5208333333333334,
+     "mcc": 0.13074409009212268
+    },
+    "seconds_median": 4.136,
+    "seconds_p90": 4.997,
+    "seconds_max": 17.252
+   },
+   "estate": {
+    "expected": 738,
+    "tp": 1,
+    "recall": 0.0013550135501355014
+   },
+   "by_surface": {
+    "endpoint": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 24,
+     "decoys": 0,
+     "tp": 1,
+     "fp": 0,
+     "fn": 23,
+     "tn": 0,
+     "precision": 1.0,
+     "precision_ci": [
+      0.2065493117918027,
+      1.0
+     ],
+     "recall": 0.041666666666666664,
+     "recall_ci": [
+      0.007393456083597233,
+      0.20241806658845338
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.08,
+     "f1_ci": [
+      0.0,
+      0.25
+     ],
+     "agent_expected": 18,
+     "agent_tp": 1,
+     "agent_recall": 0.05555555555555555,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 6,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 1,
+      "fn": 23,
+      "fp": 0,
+      "tn": 16,
+      "recall": 0.041666666666666664,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.5208333333333334,
+      "mcc": 0.13074409009212268
+     },
+     "seconds_median": 4.136,
+     "seconds_p90": 4.997,
+     "seconds_max": 17.252,
+     "modalities": {
+      "home": {
+       "cases": 40,
+       "scored": 40,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 24,
+       "decoys": 0,
+       "tp": 1,
+       "fp": 0,
+       "fn": 23,
+       "tn": 0,
+       "precision": 1.0,
+       "precision_ci": [
+        0.2065493117918027,
+        1.0
+       ],
+       "recall": 0.041666666666666664,
+       "recall_ci": [
+        0.007393456083597233,
+        0.20241806658845338
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.08,
+       "f1_ci": [
+        0.0,
+        0.25
+       ],
+       "agent_expected": 18,
+       "agent_tp": 1,
+       "agent_recall": 0.05555555555555555,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 6,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 24,
+        "negatives": 16,
+        "tp": 1,
+        "fn": 23,
+        "fp": 0,
+        "tn": 16,
+        "recall": 0.041666666666666664,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.5208333333333334,
+        "mcc": 0.13074409009212268
+       },
+       "seconds_median": 4.136,
+       "seconds_p90": 4.997,
+       "seconds_max": 17.252
+      }
+     }
+    }
+   },
+   "vs_reference": {
+    "reference": "shadowscan",
+    "tool_only_correct": 0,
+    "reference_only_correct": 19,
+    "mcnemar_p": 3.814697265625e-06
+   }
+  },
+  "fleet-ai-tools": {
+   "version": "fleet ai_tools (fleetdm/fleet main cf1217bafcd5cdce367165b1c604f94ed559e3d0, 2026-10-11; upstream karmine05/agentic-detector v0.3.0 7c942d0)",
+   "surfaces_supported": [
+    "endpoint",
+    "runtime"
+   ],
+   "coverage": "2/9",
+   "in_scope": {
+    "cases": 60,
+    "scored": 60,
+    "errors": 0,
+    "incomplete": 0,
+    "expected": 72,
+    "decoys": 81,
+    "tp": 15,
+    "fp": 2,
+    "fn": 57,
+    "tn": 81,
+    "precision": 0.8823529411764706,
+    "precision_ci": [
+     0.6566364919396065,
+     0.9671202265340099
+    ],
+    "recall": 0.20833333333333334,
+    "recall_ci": [
+     0.13052054933129353,
+     0.31569263512581575
+    ],
+    "specificity": 1.0,
+    "specificity_ci": [
+     0.9547219138856311,
+     1.0
+    ],
+    "f1": 0.33707865168539325,
+    "f1_ci": [
+     0.19753086419753085,
+     0.4842105263157895
+    ],
+    "agent_expected": 43,
+    "agent_tp": 11,
+    "agent_recall": 0.2558139534883721,
+    "agent_false_alarms": 0,
+    "agent_false_alarm_universe": 110,
+    "agent_false_alarm_rate": 0.0,
+    "case": {
+     "positives": 36,
+     "negatives": 24,
+     "tp": 13,
+     "fn": 23,
+     "fp": 2,
+     "tn": 22,
+     "recall": 0.3611111111111111,
+     "specificity": 0.9166666666666666,
+     "balanced_accuracy": 0.6388888888888888,
+     "mcc": 0.31426968052735443
+    },
+    "seconds_median": 0.015,
+    "seconds_p90": 0.019,
+    "seconds_max": 0.362
+   },
+   "estate": {
+    "expected": 738,
+    "tp": 15,
+    "recall": 0.02032520325203252
+   },
+   "by_surface": {
+    "endpoint": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 24,
+     "decoys": 0,
+     "tp": 10,
+     "fp": 2,
+     "fn": 14,
+     "tn": 0,
+     "precision": 0.8333333333333334,
+     "precision_ci": [
+      0.5519691353881888,
+      0.9530348582430792
+     ],
+     "recall": 0.4166666666666667,
+     "recall_ci": [
+      0.24467602500194355,
+      0.6116533427566112
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.5555555555555556,
+     "f1_ci": [
+      0.34285714285714286,
+      0.7391304347826086
+     ],
+     "agent_expected": 18,
+     "agent_tp": 6,
+     "agent_recall": 0.3333333333333333,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 6,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 10,
+      "fn": 14,
+      "fp": 2,
+      "tn": 14,
+      "recall": 0.4166666666666667,
+      "specificity": 0.875,
+      "balanced_accuracy": 0.6458333333333334,
+      "mcc": 0.31180478223116176
+     },
+     "seconds_median": 0.014,
+     "seconds_p90": 0.019,
+     "seconds_max": 0.362,
+     "modalities": {
+      "home": {
+       "cases": 40,
+       "scored": 40,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 24,
+       "decoys": 0,
+       "tp": 10,
+       "fp": 2,
+       "fn": 14,
+       "tn": 0,
+       "precision": 0.8333333333333334,
+       "precision_ci": [
+        0.5519691353881888,
+        0.9530348582430792
+       ],
+       "recall": 0.4166666666666667,
+       "recall_ci": [
+        0.24467602500194355,
+        0.6116533427566112
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.5555555555555556,
+       "f1_ci": [
+        0.34285714285714286,
+        0.7391304347826086
+       ],
+       "agent_expected": 18,
+       "agent_tp": 6,
+       "agent_recall": 0.3333333333333333,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 6,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 24,
+        "negatives": 16,
+        "tp": 10,
+        "fn": 14,
+        "fp": 2,
+        "tn": 14,
+        "recall": 0.4166666666666667,
+        "specificity": 0.875,
+        "balanced_accuracy": 0.6458333333333334,
+        "mcc": 0.31180478223116176
+       },
+       "seconds_median": 0.014,
+       "seconds_p90": 0.019,
+       "seconds_max": 0.362
+      }
+     }
+    },
+    "runtime": {
+     "cases": 20,
+     "scored": 20,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 48,
+     "decoys": 81,
+     "tp": 5,
+     "fp": 0,
+     "fn": 43,
+     "tn": 81,
+     "precision": 1.0,
+     "precision_ci": [
+      0.5655175313406071,
+      1.0
+     ],
+     "recall": 0.10416666666666667,
+     "recall_ci": [
+      0.04532171875500551,
+      0.22167421808754145
+     ],
+     "specificity": 1.0,
+     "specificity_ci": [
+      0.9547219138856311,
+      1.0
+     ],
+     "f1": 0.18867924528301888,
+     "f1_ci": [
+      0.0,
+      0.3404255319148936
+     ],
+     "agent_expected": 25,
+     "agent_tp": 5,
+     "agent_recall": 0.2,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 104,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 12,
+      "negatives": 8,
+      "tp": 3,
+      "fn": 9,
+      "fp": 0,
+      "tn": 8,
+      "recall": 0.25,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.625,
+      "mcc": 0.3429971702850177
+     },
+     "seconds_median": 0.0155,
+     "seconds_p90": 0.019,
+     "seconds_max": 0.022,
+     "modalities": {
+      "live": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 48,
+       "decoys": 81,
+       "tp": 5,
+       "fp": 0,
+       "fn": 43,
+       "tn": 81,
+       "precision": 1.0,
+       "precision_ci": [
+        0.5655175313406071,
+        1.0
+       ],
+       "recall": 0.10416666666666667,
+       "recall_ci": [
+        0.04532171875500551,
+        0.22167421808754145
+       ],
+       "specificity": 1.0,
+       "specificity_ci": [
+        0.9547219138856311,
+        1.0
+       ],
+       "f1": 0.18867924528301888,
+       "f1_ci": [
+        0.0,
+        0.3404255319148936
+       ],
+       "agent_expected": 25,
+       "agent_tp": 5,
+       "agent_recall": 0.2,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 104,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 3,
+        "fn": 9,
+        "fp": 0,
+        "tn": 8,
+        "recall": 0.25,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.625,
+        "mcc": 0.3429971702850177
+       },
+       "seconds_median": 0.0155,
+       "seconds_p90": 0.019,
+       "seconds_max": 0.022
+      }
+     }
+    }
+   },
+   "vs_reference": {
+    "reference": "shadowscan",
+    "tool_only_correct": 6,
+    "reference_only_correct": 25,
+    "mcnemar_p": 0.0008779102936387062
+   }
+  },
+  "numbat": {
+   "version": "dev+77ece3a76dce",
+   "surfaces_supported": [
+    "endpoint"
+   ],
+   "coverage": "1/9",
+   "in_scope": {
+    "cases": 40,
+    "scored": 40,
+    "errors": 0,
+    "incomplete": 0,
+    "expected": 24,
+    "decoys": 0,
+    "tp": 3,
+    "fp": 0,
+    "fn": 21,
+    "tn": 0,
+    "precision": 1.0,
+    "precision_ci": [
+     0.43850296436068037,
+     1.0
+    ],
+    "recall": 0.125,
+    "recall_ci": [
+     0.04344334046194118,
+     0.3100388144515548
+    ],
+    "specificity": null,
+    "specificity_ci": [
+     null,
+     null
+    ],
+    "f1": 0.2222222222222222,
+    "f1_ci": [
+     0.0,
+     0.4375
+    ],
+    "agent_expected": 18,
+    "agent_tp": 3,
+    "agent_recall": 0.16666666666666666,
+    "agent_false_alarms": 0,
+    "agent_false_alarm_universe": 6,
+    "agent_false_alarm_rate": 0.0,
+    "case": {
+     "positives": 24,
+     "negatives": 16,
+     "tp": 3,
+     "fn": 21,
+     "fp": 0,
+     "tn": 16,
+     "recall": 0.125,
+     "specificity": 1.0,
+     "balanced_accuracy": 0.5625,
+     "mcc": 0.23249527748763857
+    },
+    "seconds_median": 0.008,
+    "seconds_p90": 0.012,
+    "seconds_max": 1.195
+   },
+   "estate": {
+    "expected": 738,
+    "tp": 3,
+    "recall": 0.0040650406504065045
+   },
+   "by_surface": {
+    "endpoint": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 24,
+     "decoys": 0,
+     "tp": 3,
+     "fp": 0,
+     "fn": 21,
+     "tn": 0,
+     "precision": 1.0,
+     "precision_ci": [
+      0.43850296436068037,
+      1.0
+     ],
+     "recall": 0.125,
+     "recall_ci": [
+      0.04344334046194118,
+      0.3100388144515548
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.2222222222222222,
+     "f1_ci": [
+      0.0,
+      0.4375
+     ],
+     "agent_expected": 18,
+     "agent_tp": 3,
+     "agent_recall": 0.16666666666666666,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 6,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 3,
+      "fn": 21,
+      "fp": 0,
+      "tn": 16,
+      "recall": 0.125,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.5625,
+      "mcc": 0.23249527748763857
+     },
+     "seconds_median": 0.008,
+     "seconds_p90": 0.012,
+     "seconds_max": 1.195,
+     "modalities": {
+      "home": {
+       "cases": 40,
+       "scored": 40,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 24,
+       "decoys": 0,
+       "tp": 3,
+       "fp": 0,
+       "fn": 21,
+       "tn": 0,
+       "precision": 1.0,
+       "precision_ci": [
+        0.43850296436068037,
+        1.0
+       ],
+       "recall": 0.125,
+       "recall_ci": [
+        0.04344334046194118,
+        0.3100388144515548
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.2222222222222222,
+       "f1_ci": [
+        0.0,
+        0.4375
+       ],
+       "agent_expected": 18,
+       "agent_tp": 3,
+       "agent_recall": 0.16666666666666666,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 6,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 24,
+        "negatives": 16,
+        "tp": 3,
+        "fn": 21,
+        "fp": 0,
+        "tn": 16,
+        "recall": 0.125,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.5625,
+        "mcc": 0.23249527748763857
+       },
+       "seconds_median": 0.008,
+       "seconds_p90": 0.012,
+       "seconds_max": 1.195
+      }
+     }
+    }
+   },
+   "vs_reference": {
+    "reference": "shadowscan",
+    "tool_only_correct": 0,
+    "reference_only_correct": 17,
+    "mcnemar_p": 1.52587890625e-05
+   }
+  },
+  "shadowscan": {
+   "version": "0.1.2+2d43f508fc95",
+   "surfaces_supported": [
+    "cloud",
+    "code",
+    "endpoint",
+    "gateway",
+    "identity",
+    "lowcode",
+    "network",
+    "runtime",
+    "saas"
+   ],
+   "coverage": "9/9",
+   "in_scope": {
+    "cases": 326,
+    "scored": 326,
+    "errors": 0,
+    "incomplete": 27,
+    "expected": 706,
+    "decoys": 685,
+    "tp": 622,
+    "fp": 176,
+    "fn": 84,
+    "tn": 512,
+    "precision": 0.7794486215538847,
+    "precision_ci": [
+     0.749380573911468,
+     0.8068391065004744
+    ],
+    "recall": 0.8810198300283286,
+    "recall_ci": [
+     0.8550511950009184,
+     0.9028645244442143
+    ],
+    "specificity": 0.7474452554744525,
+    "specificity_ci": [
+     0.7135903895484567,
+     0.7785402678462775
+    ],
+    "f1": 0.8271276595744681,
+    "f1_ci": [
+     0.7981790591805766,
+     0.8532167395377889
+    ],
+    "agent_expected": 356,
+    "agent_tp": 269,
+    "agent_recall": 0.7556179775280899,
+    "agent_false_alarms": 164,
+    "agent_false_alarm_universe": 1035,
+    "agent_false_alarm_rate": 0.15845410628019324,
+    "case": {
+     "positives": 212,
+     "negatives": 114,
+     "tp": 206,
+     "fn": 6,
+     "fp": 43,
+     "tn": 71,
+     "recall": 0.9716981132075472,
+     "specificity": 0.6228070175438597,
+     "balanced_accuracy": 0.7972525653757034,
+     "mcc": 0.6674687340692498
+    },
+    "seconds_median": 1.799,
+    "seconds_p90": 2.973,
+    "seconds_max": 62.302
+   },
+   "estate": {
+    "expected": 738,
+    "tp": 622,
+    "recall": 0.8428184281842819
+   },
+   "by_surface": {
+    "code": {
+     "cases": 26,
+     "scored": 26,
+     "errors": 0,
+     "incomplete": 7,
+     "expected": 109,
+     "decoys": 0,
+     "tp": 99,
+     "fp": 3,
+     "fn": 10,
+     "tn": 0,
+     "precision": 0.9705882352941176,
+     "precision_ci": [
+      0.9170694244087161,
+      0.98994755187528
+     ],
+     "recall": 0.908256880733945,
+     "recall_ci": [
+      0.8393146390001919,
+      0.9494025654948678
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.9383886255924171,
+     "f1_ci": [
+      0.9044585987261147,
+      0.9637305699481865
+     ],
+     "agent_expected": 65,
+     "agent_tp": 62,
+     "agent_recall": 0.9538461538461539,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 44,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 16,
+      "negatives": 10,
+      "tp": 16,
+      "fn": 0,
+      "fp": 0,
+      "tn": 10,
+      "recall": 1.0,
+      "specificity": 1.0,
+      "balanced_accuracy": 1.0,
+      "mcc": 1.0
+     },
+     "seconds_median": 2.782,
+     "seconds_p90": 16.655,
+     "seconds_max": 62.302,
+     "modalities": {
+      "checkout": {
+       "cases": 26,
+       "scored": 26,
+       "errors": 0,
+       "incomplete": 7,
+       "expected": 109,
+       "decoys": 0,
+       "tp": 99,
+       "fp": 3,
+       "fn": 10,
+       "tn": 0,
+       "precision": 0.9705882352941176,
+       "precision_ci": [
+        0.9170694244087161,
+        0.98994755187528
+       ],
+       "recall": 0.908256880733945,
+       "recall_ci": [
+        0.8393146390001919,
+        0.9494025654948678
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.9383886255924171,
+       "f1_ci": [
+        0.9044585987261147,
+        0.9637305699481865
+       ],
+       "agent_expected": 65,
+       "agent_tp": 62,
+       "agent_recall": 0.9538461538461539,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 44,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 16,
+        "negatives": 10,
+        "tp": 16,
+        "fn": 0,
+        "fp": 0,
+        "tn": 10,
+        "recall": 1.0,
+        "specificity": 1.0,
+        "balanced_accuracy": 1.0,
+        "mcc": 1.0
+       },
+       "seconds_median": 2.782,
+       "seconds_p90": 16.655,
+       "seconds_max": 62.302
+      }
+     }
+    },
+    "identity": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 96,
+     "decoys": 159,
+     "tp": 93,
+     "fp": 69,
+     "fn": 3,
+     "tn": 90,
+     "precision": 0.5740740740740741,
+     "precision_ci": [
+      0.4970807288887082,
+      0.6476357983409421
+     ],
+     "recall": 0.96875,
+     "recall_ci": [
+      0.9121132061243772,
+      0.9893159297119013
+     ],
+     "specificity": 0.5660377358490566,
+     "specificity_ci": [
+      0.48834123861816936,
+      0.6406185492900687
+     ],
+     "f1": 0.7209302325581395,
+     "f1_ci": [
+      0.6255924170616114,
+      0.7888198757763976
+     ],
+     "agent_expected": 51,
+     "agent_tp": 24,
+     "agent_recall": 0.47058823529411764,
+     "agent_false_alarms": 46,
+     "agent_false_alarm_universe": 204,
+     "agent_false_alarm_rate": 0.22549019607843138,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 24,
+      "fn": 0,
+      "fp": 16,
+      "tn": 0,
+      "recall": 1.0,
+      "specificity": 0.0,
+      "balanced_accuracy": 0.5,
+      "mcc": null
+     },
+     "seconds_median": 1.88,
+     "seconds_p90": 2.334,
+     "seconds_max": 3.353,
+     "modalities": {
+      "entra-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 46,
+       "decoys": 75,
+       "tp": 43,
+       "fp": 30,
+       "fn": 3,
+       "tn": 45,
+       "precision": 0.589041095890411,
+       "precision_ci": [
+        0.47449223154876596,
+        0.6946872737503499
+       ],
+       "recall": 0.9347826086956522,
+       "recall_ci": [
+        0.824972588030455,
+        0.9775721387454057
+       ],
+       "specificity": 0.6,
+       "specificity_ci": [
+        0.4868803870751028,
+        0.7033748442820953
+       ],
+       "f1": 0.7226890756302521,
+       "f1_ci": [
+        0.5806451612903226,
+        0.8235294117647058
+       ],
+       "agent_expected": 24,
+       "agent_tp": 13,
+       "agent_recall": 0.5416666666666666,
+       "agent_false_alarms": 22,
+       "agent_false_alarm_universe": 97,
+       "agent_false_alarm_rate": 0.2268041237113402,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 8,
+        "tn": 0,
+        "recall": 1.0,
+        "specificity": 0.0,
+        "balanced_accuracy": 0.5,
+        "mcc": null
+       },
+       "seconds_median": 1.8325,
+       "seconds_p90": 2.028,
+       "seconds_max": 2.05
+      },
+      "okta-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 50,
+       "decoys": 84,
+       "tp": 50,
+       "fp": 39,
+       "fn": 0,
+       "tn": 45,
+       "precision": 0.5617977528089888,
+       "precision_ci": [
+        0.45828207512081137,
+        0.6601994753906282
+       ],
+       "recall": 1.0,
+       "recall_ci": [
+        0.9286523998213857,
+        0.9999999999999999
+       ],
+       "specificity": 0.5357142857142857,
+       "specificity_ci": [
+        0.42984715856586697,
+        0.6384577179288193
+       ],
+       "f1": 0.7194244604316546,
+       "f1_ci": [
+        0.5925925925925926,
+        0.8137931034482758
+       ],
+       "agent_expected": 27,
+       "agent_tp": 11,
+       "agent_recall": 0.4074074074074074,
+       "agent_false_alarms": 24,
+       "agent_false_alarm_universe": 107,
+       "agent_false_alarm_rate": 0.22429906542056074,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 8,
+        "tn": 0,
+        "recall": 1.0,
+        "specificity": 0.0,
+        "balanced_accuracy": 0.5,
+        "mcc": null
+       },
+       "seconds_median": 1.9100000000000001,
+       "seconds_p90": 3.157,
+       "seconds_max": 3.353
+      }
+     }
+    },
+    "gateway": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 124,
+     "decoys": 0,
+     "tp": 124,
+     "fp": 0,
+     "fn": 0,
+     "tn": 0,
+     "precision": 1.0,
+     "precision_ci": [
+      0.9699513841995272,
+      0.9999999999999999
+     ],
+     "recall": 1.0,
+     "recall_ci": [
+      0.9699513841995272,
+      0.9999999999999999
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 1.0,
+     "f1_ci": [
+      1.0,
+      1.0
+     ],
+     "agent_expected": 24,
+     "agent_tp": 24,
+     "agent_recall": 1.0,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 100,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 40,
+      "negatives": 0,
+      "tp": 40,
+      "fn": 0,
+      "fp": 0,
+      "tn": 0,
+      "recall": 1.0,
+      "specificity": null,
+      "balanced_accuracy": null,
+      "mcc": null
+     },
+     "seconds_median": 2.7005,
+     "seconds_p90": 5.583,
+     "seconds_max": 6.607,
+     "modalities": {
+      "bedrock-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 59,
+       "decoys": 0,
+       "tp": 59,
+       "fp": 0,
+       "fn": 0,
+       "tn": 0,
+       "precision": 1.0,
+       "precision_ci": [
+        0.9388706285678009,
+        0.9999999999999999
+       ],
+       "recall": 1.0,
+       "recall_ci": [
+        0.9388706285678009,
+        0.9999999999999999
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 1.0,
+       "f1_ci": [
+        1.0,
+        1.0
+       ],
+       "agent_expected": 11,
+       "agent_tp": 11,
+       "agent_recall": 1.0,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 48,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 20,
+        "negatives": 0,
+        "tp": 20,
+        "fn": 0,
+        "fp": 0,
+        "tn": 0,
+        "recall": 1.0,
+        "specificity": null,
+        "balanced_accuracy": null,
+        "mcc": null
+       },
+       "seconds_median": 2.214,
+       "seconds_p90": 2.641,
+       "seconds_max": 3.096
+      },
+      "litellm-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 65,
+       "decoys": 0,
+       "tp": 65,
+       "fp": 0,
+       "fn": 0,
+       "tn": 0,
+       "precision": 1.0,
+       "precision_ci": [
+        0.944198467845955,
+        0.9999999999999998
+       ],
+       "recall": 1.0,
+       "recall_ci": [
+        0.944198467845955,
+        0.9999999999999998
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 1.0,
+       "f1_ci": [
+        1.0,
+        1.0
+       ],
+       "agent_expected": 13,
+       "agent_tp": 13,
+       "agent_recall": 1.0,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 52,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 20,
+        "negatives": 0,
+        "tp": 20,
+        "fn": 0,
+        "fp": 0,
+        "tn": 0,
+        "recall": 1.0,
+        "specificity": null,
+        "balanced_accuracy": null,
+        "mcc": null
+       },
+       "seconds_median": 4.4544999999999995,
+       "seconds_p90": 5.927,
+       "seconds_max": 6.607
+      }
+     }
+    },
+    "lowcode": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 78,
+     "decoys": 118,
+     "tp": 78,
+     "fp": 11,
+     "fn": 0,
+     "tn": 107,
+     "precision": 0.8764044943820225,
+     "precision_ci": [
+      0.7920955228875639,
+      0.9295648302275672
+     ],
+     "recall": 1.0,
+     "recall_ci": [
+      0.9530621895820832,
+      1.0
+     ],
+     "specificity": 0.9067796610169492,
+     "specificity_ci": [
+      0.8407607480602173,
+      0.9471483994617931
+     ],
+     "f1": 0.9341317365269461,
+     "f1_ci": [
+      0.8688524590163934,
+      0.978021978021978
+     ],
+     "agent_expected": 43,
+     "agent_tp": 43,
+     "agent_recall": 1.0,
+     "agent_false_alarms": 41,
+     "agent_false_alarm_universe": 153,
+     "agent_false_alarm_rate": 0.2679738562091503,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 24,
+      "fn": 0,
+      "fp": 4,
+      "tn": 12,
+      "recall": 1.0,
+      "specificity": 0.75,
+      "balanced_accuracy": 0.875,
+      "mcc": 0.8017837257372732
+     },
+     "seconds_median": 1.721,
+     "seconds_p90": 1.854,
+     "seconds_max": 1.96,
+     "modalities": {
+      "n8n-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 36,
+       "decoys": 72,
+       "tp": 36,
+       "fp": 0,
+       "fn": 0,
+       "tn": 72,
+       "precision": 1.0,
+       "precision_ci": [
+        0.9035813700311206,
+        1.0
+       ],
+       "recall": 1.0,
+       "recall_ci": [
+        0.9035813700311206,
+        1.0
+       ],
+       "specificity": 1.0,
+       "specificity_ci": [
+        0.9493488266449553,
+        0.9999999999999999
+       ],
+       "f1": 1.0,
+       "f1_ci": [
+        1.0,
+        1.0
+       ],
+       "agent_expected": 20,
+       "agent_tp": 20,
+       "agent_recall": 1.0,
+       "agent_false_alarms": 11,
+       "agent_false_alarm_universe": 88,
+       "agent_false_alarm_rate": 0.125,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 0,
+        "tn": 8,
+        "recall": 1.0,
+        "specificity": 1.0,
+        "balanced_accuracy": 1.0,
+        "mcc": 1.0
+       },
+       "seconds_median": 1.7295,
+       "seconds_p90": 1.82,
+       "seconds_max": 1.902
+      },
+      "powerplatform-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 42,
+       "decoys": 46,
+       "tp": 42,
+       "fp": 11,
+       "fn": 0,
+       "tn": 35,
+       "precision": 0.7924528301886793,
+       "precision_ci": [
+        0.6654225518770907,
+        0.879954020260834
+       ],
+       "recall": 1.0,
+       "recall_ci": [
+        0.9162012079230888,
+        1.0
+       ],
+       "specificity": 0.7608695652173914,
+       "specificity_ci": [
+        0.6206486132321092,
+        0.8608782228334073
+       ],
+       "f1": 0.8842105263157894,
+       "f1_ci": [
+        0.7575757575757576,
+        0.9577464788732394
+       ],
+       "agent_expected": 23,
+       "agent_tp": 23,
+       "agent_recall": 1.0,
+       "agent_false_alarms": 30,
+       "agent_false_alarm_universe": 65,
+       "agent_false_alarm_rate": 0.46153846153846156,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 4,
+        "tn": 4,
+        "recall": 1.0,
+        "specificity": 0.5,
+        "balanced_accuracy": 0.75,
+        "mcc": 0.6123724356957946
+       },
+       "seconds_median": 1.7165,
+       "seconds_p90": 1.854,
+       "seconds_max": 1.96
+      }
+     }
+    },
+    "saas": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 88,
+     "decoys": 110,
+     "tp": 77,
+     "fp": 74,
+     "fn": 11,
+     "tn": 36,
+     "precision": 0.5099337748344371,
+     "precision_ci": [
+      0.4309481512726081,
+      0.5884265047250461
+     ],
+     "recall": 0.875,
+     "recall_ci": [
+      0.7898824407346114,
+      0.9287472587925294
+     ],
+     "specificity": 0.32727272727272727,
+     "specificity_ci": [
+      0.24671132553263087,
+      0.4194911250207909
+     ],
+     "f1": 0.6443514644351465,
+     "f1_ci": [
+      0.5303867403314917,
+      0.7228915662650602
+     ],
+     "agent_expected": 50,
+     "agent_tp": 33,
+     "agent_recall": 0.66,
+     "agent_false_alarms": 35,
+     "agent_false_alarm_universe": 148,
+     "agent_false_alarm_rate": 0.23648648648648649,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 24,
+      "fn": 0,
+      "fp": 15,
+      "tn": 1,
+      "recall": 1.0,
+      "specificity": 0.0625,
+      "balanced_accuracy": 0.53125,
+      "mcc": 0.19611613513818402
+     },
+     "seconds_median": 1.8415,
+     "seconds_p90": 2.07,
+     "seconds_max": 2.142,
+     "modalities": {
+      "github-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 39,
+       "decoys": 57,
+       "tp": 28,
+       "fp": 21,
+       "fn": 11,
+       "tn": 36,
+       "precision": 0.5714285714285714,
+       "precision_ci": [
+        0.432704929846029,
+        0.6997668101134018
+       ],
+       "recall": 0.717948717948718,
+       "recall_ci": [
+        0.56224680389129,
+        0.8345650798287103
+       ],
+       "specificity": 0.631578947368421,
+       "specificity_ci": [
+        0.5017779812001526,
+        0.7447644304350709
+       ],
+       "f1": 0.6363636363636364,
+       "f1_ci": [
+        0.49230769230769234,
+        0.7289719626168224
+       ],
+       "agent_expected": 23,
+       "agent_tp": 23,
+       "agent_recall": 1.0,
+       "agent_false_alarms": 13,
+       "agent_false_alarm_universe": 73,
+       "agent_false_alarm_rate": 0.1780821917808219,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 7,
+        "tn": 1,
+        "recall": 1.0,
+        "specificity": 0.125,
+        "balanced_accuracy": 0.5625,
+        "mcc": 0.2809757434745082
+       },
+       "seconds_median": 1.7805,
+       "seconds_p90": 1.834,
+       "seconds_max": 1.857
+      },
+      "slack-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 49,
+       "decoys": 53,
+       "tp": 49,
+       "fp": 53,
+       "fn": 0,
+       "tn": 0,
+       "precision": 0.4803921568627451,
+       "precision_ci": [
+        0.38591889776471605,
+        0.576288728223451
+       ],
+       "recall": 1.0,
+       "recall_ci": [
+        0.9273021797160157,
+        1.0
+       ],
+       "specificity": 0.0,
+       "specificity_ci": [
+        0.0,
+        0.06758198957064511
+       ],
+       "f1": 0.6490066225165563,
+       "f1_ci": [
+        0.48854961832061067,
+        0.7558139534883721
+       ],
+       "agent_expected": 27,
+       "agent_tp": 10,
+       "agent_recall": 0.37037037037037035,
+       "agent_false_alarms": 22,
+       "agent_false_alarm_universe": 75,
+       "agent_false_alarm_rate": 0.29333333333333333,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 8,
+        "tn": 0,
+        "recall": 1.0,
+        "specificity": 0.0,
+        "balanced_accuracy": 0.5,
+        "mcc": null
+       },
+       "seconds_median": 1.9445000000000001,
+       "seconds_p90": 2.094,
+       "seconds_max": 2.142
+      }
+     }
+    },
+    "cloud": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 77,
+     "decoys": 133,
+     "tp": 58,
+     "fp": 2,
+     "fn": 19,
+     "tn": 131,
+     "precision": 0.9666666666666667,
+     "precision_ci": [
+      0.886362256341505,
+      0.9908106808265498
+     ],
+     "recall": 0.7532467532467533,
+     "recall_ci": [
+      0.6464664778213065,
+      0.8359592544662053
+     ],
+     "specificity": 0.9849624060150376,
+     "specificity_ci": [
+      0.9468303450047878,
+      0.9958664155720042
+     ],
+     "f1": 0.8467153284671532,
+     "f1_ci": [
+      0.7796610169491526,
+      0.9037037037037037
+     ],
+     "agent_expected": 44,
+     "agent_tp": 18,
+     "agent_recall": 0.4090909090909091,
+     "agent_false_alarms": 18,
+     "agent_false_alarm_universe": 166,
+     "agent_false_alarm_rate": 0.10843373493975904,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 23,
+      "fn": 1,
+      "fp": 1,
+      "tn": 15,
+      "recall": 0.9583333333333334,
+      "specificity": 0.9375,
+      "balanced_accuracy": 0.9479166666666667,
+      "mcc": 0.8958333333333334
+     },
+     "seconds_median": 1.717,
+     "seconds_p90": 1.912,
+     "seconds_max": 2.019,
+     "modalities": {
+      "aws-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 35,
+       "decoys": 65,
+       "tp": 28,
+       "fp": 2,
+       "fn": 7,
+       "tn": 63,
+       "precision": 0.9333333333333333,
+       "precision_ci": [
+        0.7867654148312584,
+        0.9815229763754831
+       ],
+       "recall": 0.8,
+       "recall_ci": [
+        0.6410838679545052,
+        0.8995755358072957
+       ],
+       "specificity": 0.9692307692307692,
+       "specificity_ci": [
+        0.8945729439078441,
+        0.9915210028398983
+       ],
+       "f1": 0.8615384615384616,
+       "f1_ci": [
+        0.7843137254901961,
+        0.9176470588235294
+       ],
+       "agent_expected": 18,
+       "agent_tp": 14,
+       "agent_recall": 0.7777777777777778,
+       "agent_false_alarms": 2,
+       "agent_false_alarm_universe": 82,
+       "agent_false_alarm_rate": 0.024390243902439025,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 11,
+        "fn": 1,
+        "fp": 1,
+        "tn": 7,
+        "recall": 0.9166666666666666,
+        "specificity": 0.875,
+        "balanced_accuracy": 0.8958333333333333,
+        "mcc": 0.7916666666666666
+       },
+       "seconds_median": 1.7525,
+       "seconds_p90": 1.984,
+       "seconds_max": 2.019
+      },
+      "k8s-export": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 42,
+       "decoys": 68,
+       "tp": 30,
+       "fp": 0,
+       "fn": 12,
+       "tn": 68,
+       "precision": 1.0,
+       "precision_ci": [
+        0.886486605238548,
+        1.0
+       ],
+       "recall": 0.7142857142857143,
+       "recall_ci": [
+        0.5643279060868935,
+        0.8283297544515731
+       ],
+       "specificity": 1.0,
+       "specificity_ci": [
+        0.9465286626814852,
+        1.0
+       ],
+       "f1": 0.8333333333333334,
+       "f1_ci": [
+        0.7297297297297297,
+        0.9302325581395349
+       ],
+       "agent_expected": 26,
+       "agent_tp": 4,
+       "agent_recall": 0.15384615384615385,
+       "agent_false_alarms": 16,
+       "agent_false_alarm_universe": 84,
+       "agent_false_alarm_rate": 0.19047619047619047,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 0,
+        "tn": 8,
+        "recall": 1.0,
+        "specificity": 1.0,
+        "balanced_accuracy": 1.0,
+        "mcc": 1.0
+       },
+       "seconds_median": 1.6865,
+       "seconds_p90": 1.773,
+       "seconds_max": 1.846
+      }
+     }
+    },
+    "endpoint": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 24,
+     "decoys": 0,
+     "tp": 20,
+     "fp": 0,
+     "fn": 4,
+     "tn": 0,
+     "precision": 1.0,
+     "precision_ci": [
+      0.8388748398148705,
+      1.0
+     ],
+     "recall": 0.8333333333333334,
+     "recall_ci": [
+      0.6414692917870997,
+      0.9332132371786819
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.9090909090909091,
+     "f1_ci": [
+      0.8,
+      0.9787234042553191
+     ],
+     "agent_expected": 18,
+     "agent_tp": 17,
+     "agent_recall": 0.9444444444444444,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 6,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 20,
+      "fn": 4,
+      "fp": 0,
+      "tn": 16,
+      "recall": 0.8333333333333334,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.9166666666666667,
+      "mcc": 0.816496580927726
+     },
+     "seconds_median": 1.7485,
+     "seconds_p90": 1.907,
+     "seconds_max": 2.076,
+     "modalities": {
+      "home": {
+       "cases": 40,
+       "scored": 40,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 24,
+       "decoys": 0,
+       "tp": 20,
+       "fp": 0,
+       "fn": 4,
+       "tn": 0,
+       "precision": 1.0,
+       "precision_ci": [
+        0.8388748398148705,
+        1.0
+       ],
+       "recall": 0.8333333333333334,
+       "recall_ci": [
+        0.6414692917870997,
+        0.9332132371786819
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.9090909090909091,
+       "f1_ci": [
+        0.8,
+        0.9787234042553191
+       ],
+       "agent_expected": 18,
+       "agent_tp": 17,
+       "agent_recall": 0.9444444444444444,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 6,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 24,
+        "negatives": 16,
+        "tp": 20,
+        "fn": 4,
+        "fp": 0,
+        "tn": 16,
+        "recall": 0.8333333333333334,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.9166666666666667,
+        "mcc": 0.816496580927726
+       },
+       "seconds_median": 1.7485,
+       "seconds_p90": 1.907,
+       "seconds_max": 2.076
+      }
+     }
+    },
+    "network": {
+     "cases": 20,
+     "scored": 20,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 12,
+     "decoys": 0,
+     "tp": 11,
+     "fp": 0,
+     "fn": 1,
+     "tn": 0,
+     "precision": 1.0,
+     "precision_ci": [
+      0.7411670300055737,
+      1.0
+     ],
+     "recall": 0.9166666666666666,
+     "recall_ci": [
+      0.6461200862787544,
+      0.9851349057603305
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.9565217391304348,
+     "f1_ci": [
+      0.8421052631578947,
+      1.0
+     ],
+     "agent_expected": 9,
+     "agent_tp": 8,
+     "agent_recall": 0.8888888888888888,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 3,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 12,
+      "negatives": 8,
+      "tp": 11,
+      "fn": 1,
+      "fp": 0,
+      "tn": 8,
+      "recall": 0.9166666666666666,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.9583333333333333,
+      "mcc": 0.90267093384844
+     },
+     "seconds_median": 1.7315,
+     "seconds_p90": 1.902,
+     "seconds_max": 2.109,
+     "modalities": {
+      "passive": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 12,
+       "decoys": 0,
+       "tp": 11,
+       "fp": 0,
+       "fn": 1,
+       "tn": 0,
+       "precision": 1.0,
+       "precision_ci": [
+        0.7411670300055737,
+        1.0
+       ],
+       "recall": 0.9166666666666666,
+       "recall_ci": [
+        0.6461200862787544,
+        0.9851349057603305
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.9565217391304348,
+       "f1_ci": [
+        0.8421052631578947,
+        1.0
+       ],
+       "agent_expected": 9,
+       "agent_tp": 8,
+       "agent_recall": 0.8888888888888888,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 3,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 11,
+        "fn": 1,
+        "fp": 0,
+        "tn": 8,
+        "recall": 0.9166666666666666,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.9583333333333333,
+        "mcc": 0.90267093384844
+       },
+       "seconds_median": 1.7315,
+       "seconds_p90": 1.902,
+       "seconds_max": 2.109
+      }
+     }
+    },
+    "runtime": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 20,
+     "expected": 98,
+     "decoys": 165,
+     "tp": 62,
+     "fp": 17,
+     "fn": 36,
+     "tn": 148,
+     "precision": 0.7848101265822784,
+     "precision_ci": [
+      0.6821283182768978,
+      0.8610779531684272
+     ],
+     "recall": 0.6326530612244898,
+     "recall_ci": [
+      0.5338875525629896,
+      0.7214112254160749
+     ],
+     "specificity": 0.896969696969697,
+     "specificity_ci": [
+      0.841202587734428,
+      0.9346732005226466
+     ],
+     "f1": 0.7005649717514124,
+     "f1_ci": [
+      0.6265060240963856,
+      0.7619047619047619
+     ],
+     "agent_expected": 52,
+     "agent_tp": 40,
+     "agent_recall": 0.7692307692307693,
+     "agent_false_alarms": 24,
+     "agent_false_alarm_universe": 211,
+     "agent_false_alarm_rate": 0.11374407582938388,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 24,
+      "fn": 0,
+      "fp": 7,
+      "tn": 9,
+      "recall": 1.0,
+      "specificity": 0.5625,
+      "balanced_accuracy": 0.78125,
+      "mcc": 0.6599120175960899
+     },
+     "seconds_median": 1.7614999999999998,
+     "seconds_p90": 1.887,
+     "seconds_max": 1.966,
+     "modalities": {
+      "live": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 20,
+       "expected": 48,
+       "decoys": 81,
+       "tp": 29,
+       "fp": 7,
+       "fn": 19,
+       "tn": 74,
+       "precision": 0.8055555555555556,
+       "precision_ci": [
+        0.649719568678599,
+        0.9024690463404192
+       ],
+       "recall": 0.6041666666666666,
+       "recall_ci": [
+        0.4631040838356026,
+        0.729791722258464
+       ],
+       "specificity": 0.9135802469135802,
+       "specificity_ci": [
+        0.8322008328652782,
+        0.9575074168919718
+       ],
+       "f1": 0.6904761904761905,
+       "f1_ci": [
+        0.6,
+        0.7628865979381443
+       ],
+       "agent_expected": 25,
+       "agent_tp": 20,
+       "agent_recall": 0.8,
+       "agent_false_alarms": 12,
+       "agent_false_alarm_universe": 104,
+       "agent_false_alarm_rate": 0.11538461538461539,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 2,
+        "tn": 6,
+        "recall": 1.0,
+        "specificity": 0.75,
+        "balanced_accuracy": 0.875,
+        "mcc": 0.8017837257372732
+       },
+       "seconds_median": 1.727,
+       "seconds_p90": 1.907,
+       "seconds_max": 1.966
+      },
+      "snapshot": {
+       "cases": 20,
+       "scored": 20,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 50,
+       "decoys": 84,
+       "tp": 33,
+       "fp": 10,
+       "fn": 17,
+       "tn": 74,
+       "precision": 0.7674418604651163,
+       "precision_ci": [
+        0.6225547957856388,
+        0.8684632158071641
+       ],
+       "recall": 0.66,
+       "recall_ci": [
+        0.5215382593969471,
+        0.7756305085458965
+       ],
+       "specificity": 0.8809523809523809,
+       "specificity_ci": [
+        0.7945508414478961,
+        0.9340345078287591
+       ],
+       "f1": 0.7096774193548387,
+       "f1_ci": [
+        0.5742574257425742,
+        0.8045977011494253
+       ],
+       "agent_expected": 27,
+       "agent_tp": 20,
+       "agent_recall": 0.7407407407407407,
+       "agent_false_alarms": 12,
+       "agent_false_alarm_universe": 107,
+       "agent_false_alarm_rate": 0.11214953271028037,
+       "case": {
+        "positives": 12,
+        "negatives": 8,
+        "tp": 12,
+        "fn": 0,
+        "fp": 5,
+        "tn": 3,
+        "recall": 1.0,
+        "specificity": 0.375,
+        "balanced_accuracy": 0.6875,
+        "mcc": 0.5144957554275266
+       },
+       "seconds_median": 1.797,
+       "seconds_p90": 1.885,
+       "seconds_max": 1.894
+      }
+     }
+    }
+   }
+  },
+  "snyk-agent-scan": {
+   "version": "0.6.8",
+   "surfaces_supported": [
+    "endpoint"
+   ],
+   "coverage": "1/9",
+   "in_scope": {
+    "cases": 40,
+    "scored": 40,
+    "errors": 0,
+    "incomplete": 0,
+    "expected": 24,
+    "decoys": 0,
+    "tp": 7,
+    "fp": 0,
+    "fn": 17,
+    "tn": 0,
+    "precision": 1.0,
+    "precision_ci": [
+     0.6456695613241317,
+     1.0
+    ],
+    "recall": 0.2916666666666667,
+    "recall_ci": [
+     0.14914648116318613,
+     0.4916769382332005
+    ],
+    "specificity": null,
+    "specificity_ci": [
+     null,
+     null
+    ],
+    "f1": 0.45161290322580644,
+    "f1_ci": [
+     0.21052631578947367,
+     0.6470588235294118
+    ],
+    "agent_expected": 18,
+    "agent_tp": 7,
+    "agent_recall": 0.3888888888888889,
+    "agent_false_alarms": 0,
+    "agent_false_alarm_universe": 6,
+    "agent_false_alarm_rate": 0.0,
+    "case": {
+     "positives": 24,
+     "negatives": 16,
+     "tp": 7,
+     "fn": 17,
+     "fp": 0,
+     "tn": 16,
+     "recall": 0.2916666666666667,
+     "specificity": 1.0,
+     "balanced_accuracy": 0.6458333333333334,
+     "mcc": 0.37605071654517747
+    },
+    "seconds_median": 0.9904999999999999,
+    "seconds_p90": 1.121,
+    "seconds_max": 2.878
+   },
+   "estate": {
+    "expected": 738,
+    "tp": 7,
+    "recall": 0.009485094850948509
+   },
+   "by_surface": {
+    "endpoint": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 24,
+     "decoys": 0,
+     "tp": 7,
+     "fp": 0,
+     "fn": 17,
+     "tn": 0,
+     "precision": 1.0,
+     "precision_ci": [
+      0.6456695613241317,
+      1.0
+     ],
+     "recall": 0.2916666666666667,
+     "recall_ci": [
+      0.14914648116318613,
+      0.4916769382332005
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.45161290322580644,
+     "f1_ci": [
+      0.21052631578947367,
+      0.6470588235294118
+     ],
+     "agent_expected": 18,
+     "agent_tp": 7,
+     "agent_recall": 0.3888888888888889,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 6,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 7,
+      "fn": 17,
+      "fp": 0,
+      "tn": 16,
+      "recall": 0.2916666666666667,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.6458333333333334,
+      "mcc": 0.37605071654517747
+     },
+     "seconds_median": 0.9904999999999999,
+     "seconds_p90": 1.121,
+     "seconds_max": 2.878,
+     "modalities": {
+      "home": {
+       "cases": 40,
+       "scored": 40,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 24,
+       "decoys": 0,
+       "tp": 7,
+       "fp": 0,
+       "fn": 17,
+       "tn": 0,
+       "precision": 1.0,
+       "precision_ci": [
+        0.6456695613241317,
+        1.0
+       ],
+       "recall": 0.2916666666666667,
+       "recall_ci": [
+        0.14914648116318613,
+        0.4916769382332005
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.45161290322580644,
+       "f1_ci": [
+        0.21052631578947367,
+        0.6470588235294118
+       ],
+       "agent_expected": 18,
+       "agent_tp": 7,
+       "agent_recall": 0.3888888888888889,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 6,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 24,
+        "negatives": 16,
+        "tp": 7,
+        "fn": 17,
+        "fp": 0,
+        "tn": 16,
+        "recall": 0.2916666666666667,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.6458333333333334,
+        "mcc": 0.37605071654517747
+       },
+       "seconds_median": 0.9904999999999999,
+       "seconds_p90": 1.121,
+       "seconds_max": 2.878
+      }
+     }
+    }
+   },
+   "vs_reference": {
+    "reference": "shadowscan",
+    "tool_only_correct": 0,
+    "reference_only_correct": 13,
+    "mcnemar_p": 0.000244140625
+   }
+  },
+  "vet": {
+   "version": "v1.20.0",
+   "surfaces_supported": [
+    "code",
+    "endpoint"
+   ],
+   "coverage": "2/9",
+   "in_scope": {
+    "cases": 66,
+    "scored": 66,
+    "errors": 0,
+    "incomplete": 0,
+    "expected": 133,
+    "decoys": 0,
+    "tp": 18,
+    "fp": 39,
+    "fn": 115,
+    "tn": 0,
+    "precision": 0.3157894736842105,
+    "precision_ci": [
+     0.2100428756842352,
+     0.4447977480264519
+    ],
+    "recall": 0.13533834586466165,
+    "recall_ci": [
+     0.08735264843185515,
+     0.2037978494290068
+    ],
+    "specificity": null,
+    "specificity_ci": [
+     null,
+     null
+    ],
+    "f1": 0.18947368421052632,
+    "f1_ci": [
+     0.11353711790393013,
+     0.27835051546391754
+    ],
+    "agent_expected": 83,
+    "agent_tp": 18,
+    "agent_recall": 0.21686746987951808,
+    "agent_false_alarms": 0,
+    "agent_false_alarm_universe": 50,
+    "agent_false_alarm_rate": 0.0,
+    "case": {
+     "positives": 40,
+     "negatives": 26,
+     "tp": 30,
+     "fn": 10,
+     "fp": 16,
+     "tn": 10,
+     "recall": 0.75,
+     "specificity": 0.38461538461538464,
+     "balanced_accuracy": 0.5673076923076923,
+     "mcc": 0.14312564351916787
+    },
+    "seconds_median": 0.1545,
+    "seconds_p90": 0.188,
+    "seconds_max": 8.447
+   },
+   "estate": {
+    "expected": 738,
+    "tp": 18,
+    "recall": 0.024390243902439025
+   },
+   "by_surface": {
+    "code": {
+     "cases": 26,
+     "scored": 26,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 109,
+     "decoys": 0,
+     "tp": 9,
+     "fp": 0,
+     "fn": 100,
+     "tn": 0,
+     "precision": 1.0,
+     "precision_ci": [
+      0.700854948272956,
+      1.0
+     ],
+     "recall": 0.08256880733944955,
+     "recall_ci": [
+      0.04404671032669736,
+      0.14951210305475854
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.15254237288135594,
+     "f1_ci": [
+      0.057692307692307696,
+      0.2647058823529412
+     ],
+     "agent_expected": 65,
+     "agent_tp": 9,
+     "agent_recall": 0.13846153846153847,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 44,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 16,
+      "negatives": 10,
+      "tp": 6,
+      "fn": 10,
+      "fp": 0,
+      "tn": 10,
+      "recall": 0.375,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.6875,
+      "mcc": 0.4330127018922193
+     },
+     "seconds_median": 0.1005,
+     "seconds_p90": 0.122,
+     "seconds_max": 0.134,
+     "modalities": {
+      "checkout": {
+       "cases": 26,
+       "scored": 26,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 109,
+       "decoys": 0,
+       "tp": 9,
+       "fp": 0,
+       "fn": 100,
+       "tn": 0,
+       "precision": 1.0,
+       "precision_ci": [
+        0.700854948272956,
+        1.0
+       ],
+       "recall": 0.08256880733944955,
+       "recall_ci": [
+        0.04404671032669736,
+        0.14951210305475854
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.15254237288135594,
+       "f1_ci": [
+        0.057692307692307696,
+        0.2647058823529412
+       ],
+       "agent_expected": 65,
+       "agent_tp": 9,
+       "agent_recall": 0.13846153846153847,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 44,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 16,
+        "negatives": 10,
+        "tp": 6,
+        "fn": 10,
+        "fp": 0,
+        "tn": 10,
+        "recall": 0.375,
+        "specificity": 1.0,
+        "balanced_accuracy": 0.6875,
+        "mcc": 0.4330127018922193
+       },
+       "seconds_median": 0.1005,
+       "seconds_p90": 0.122,
+       "seconds_max": 0.134
+      }
+     }
+    },
+    "endpoint": {
+     "cases": 40,
+     "scored": 40,
+     "errors": 0,
+     "incomplete": 0,
+     "expected": 24,
+     "decoys": 0,
+     "tp": 9,
+     "fp": 39,
+     "fn": 15,
+     "tn": 0,
+     "precision": 0.1875,
+     "precision_ci": [
+      0.10191390905651461,
+      0.31939867266128563
+     ],
+     "recall": 0.375,
+     "recall_ci": [
+      0.21159367459047676,
+      0.5729003770473553
+     ],
+     "specificity": null,
+     "specificity_ci": [
+      null,
+      null
+     ],
+     "f1": 0.25,
+     "f1_ci": [
+      0.12698412698412698,
+      0.3684210526315789
+     ],
+     "agent_expected": 18,
+     "agent_tp": 9,
+     "agent_recall": 0.5,
+     "agent_false_alarms": 0,
+     "agent_false_alarm_universe": 6,
+     "agent_false_alarm_rate": 0.0,
+     "case": {
+      "positives": 24,
+      "negatives": 16,
+      "tp": 24,
+      "fn": 0,
+      "fp": 16,
+      "tn": 0,
+      "recall": 1.0,
+      "specificity": 0.0,
+      "balanced_accuracy": 0.5,
+      "mcc": null
+     },
+     "seconds_median": 0.169,
+     "seconds_p90": 0.203,
+     "seconds_max": 8.447,
+     "modalities": {
+      "home": {
+       "cases": 40,
+       "scored": 40,
+       "errors": 0,
+       "incomplete": 0,
+       "expected": 24,
+       "decoys": 0,
+       "tp": 9,
+       "fp": 39,
+       "fn": 15,
+       "tn": 0,
+       "precision": 0.1875,
+       "precision_ci": [
+        0.10191390905651461,
+        0.31939867266128563
+       ],
+       "recall": 0.375,
+       "recall_ci": [
+        0.21159367459047676,
+        0.5729003770473553
+       ],
+       "specificity": null,
+       "specificity_ci": [
+        null,
+        null
+       ],
+       "f1": 0.25,
+       "f1_ci": [
+        0.12698412698412698,
+        0.3684210526315789
+       ],
+       "agent_expected": 18,
+       "agent_tp": 9,
+       "agent_recall": 0.5,
+       "agent_false_alarms": 0,
+       "agent_false_alarm_universe": 6,
+       "agent_false_alarm_rate": 0.0,
+       "case": {
+        "positives": 24,
+        "negatives": 16,
+        "tp": 24,
+        "fn": 0,
+        "fp": 16,
+        "tn": 0,
+        "recall": 1.0,
+        "specificity": 0.0,
+        "balanced_accuracy": 0.5,
+        "mcc": null
+       },
+       "seconds_median": 0.169,
+       "seconds_p90": 0.203,
+       "seconds_max": 8.447
+      }
+     }
+    }
+   },
+   "vs_reference": {
+    "reference": "shadowscan",
+    "tool_only_correct": 4,
+    "reference_only_correct": 26,
+    "mcnemar_p": 5.947612226009369e-05
+   }
+  }
+ },
+ "corpus_sha256_now": "5997346ad000a0639709718b66743bb794d5f53faff3c2f38e78dbcc8ba36663"
+}

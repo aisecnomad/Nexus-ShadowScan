@@ -128,6 +128,8 @@ ignore_missing_imports = false
 [[tool.mypy.overrides]]
 module = [
     "regex",
+    "reportlab",
+    "reportlab.*",
     "boto3",
     "boto3.*",
     "botocore",

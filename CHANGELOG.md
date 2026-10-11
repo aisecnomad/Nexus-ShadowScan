@@ -5,9 +5,9 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
-### Nine-surface discovery benchmark (October 11)
+### ShadowBench, the nine-surface discovery benchmark (October 11)
 
-- `benchmarks/nine-surface/` and `tools/nine_surface/`: a standardized,
+- `benchmarks/shadowbench/` and `tools/shadowbench/`: a standardized,
   tool-neutral benchmark across all nine discovery surfaces. A seeded
   generator writes platform-native inputs (Okta and Graph exports, LiteLLM
   and Bedrock invocation logs, Power Platform and n8n exports, Slack and
