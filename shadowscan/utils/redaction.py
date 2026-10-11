@@ -500,7 +500,7 @@ class _Sanitizer:
                 if established and (_sensitive_key(name) or environment and _sensitive_assignment_key(name)):
                     self.remember(child)
                 if established and auth and name.lower() in _AUTH_VALUE_KEYS:
-                    if isinstance(child, (list, tuple)):
+                    if isinstance(child, (list, tuple, set, frozenset)):
                         for member in child:
                             if not isinstance(member, _CONTAINERS):
                                 self.remember(member)
@@ -674,14 +674,17 @@ class _Sanitizer:
                 or (credential_field and not isinstance(child, _CONTAINERS))
             ):
                 result = _redact_value(child)
-            elif credential_field and isinstance(child, (list, tuple)):
-                # A list under a credential field lists credentials; a record in it is a scheme
-                # record whose own credential fields the auth rule withholds.
+            elif credential_field and isinstance(child, (list, tuple, set, frozenset)):
+                # A list or set under a credential field lists credentials; a record in it is a
+                # scheme record whose own credential fields the auth rule withholds.
                 members = [
                     self.clean(v, depth + 1, auth=True) if isinstance(v, _CONTAINERS) else _redact_value(v)
                     for v in child
                 ]
-                result = tuple(members) if isinstance(child, tuple) else members
+                if isinstance(child, (set, frozenset)):
+                    result = frozenset(members) if isinstance(child, frozenset) else set(members)
+                else:
+                    result = tuple(members) if isinstance(child, tuple) else members
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
                 # The environment rules come before the auth rule: an env table inside an auth
                 # block withholds every value, as it does anywhere else.
@@ -785,10 +788,10 @@ class _NestedSanitizer(_Sanitizer):
                     child,
                     depth + 1,
                     environment=environment or lower_name in _ENVIRONMENT_KEYS,
-                    # A list under an auth credential field lists credentials.
+                    # A list or set under an auth credential field lists credentials.
                     credential=key_sensitive
                     or member
-                    or (credential_field and isinstance(child, (list, tuple))),
+                    or (credential_field and isinstance(child, (list, tuple, set, frozenset))),
                     credential_group=child_group,
                     auth=auth or lower_name in _AUTH_CONTAINER_KEYS,
                 )

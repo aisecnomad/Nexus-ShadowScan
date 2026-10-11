@@ -705,6 +705,35 @@ def test_a_plaintext_url_another_servers_env_value_redacts_is_still_insecure(val
     assert "mcp-plain-http" in {factor.id for factor in assess(finding).factors}
 
 
+@pytest.mark.parametrize("value", ["127.0.0.1", "http"])
+def test_a_loopback_plaintext_url_redaction_hides_still_scores_plain_http(value):
+    # risk.py scores every plaintext scheme, loopback included; the marker for a
+    # URL redaction hid must reach as far, or the factor is lost exactly when
+    # the record no longer shows the scheme. A hidden host keeps the scheme in
+    # the record, which risk.py reads directly.
+    document = {
+        "mcpServers": {
+            "local": {"type": "http", "url": "http://127.0.0.1:8080/sse"},
+            "other": {"command": "node", "args": ["server.js"], "env": {"A": value}},
+        }
+    }
+    records = _parse_mcp_servers(".mcp.json", json.dumps(document), [])
+    local = next(record for record in records if record["name"] == "local")
+    assert local["url"] != "http://127.0.0.1:8080/sse" and assess_transport(local) is None
+    if value == "http":
+        assert local.get("plaintext_transport") is True
+    finding = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.MCP_SERVER,
+        title="MCP server",
+        resource="repo:x",
+        resource_type="mcp-config",
+        metadata={"servers": [local]},
+    )
+    assert "mcp-plain-http" in {factor.id for factor in assess(finding).factors}
+
+
 def test_a_url_redaction_leaves_plaintext_or_tls_as_it_was():
     document = {
         "mcpServers": {

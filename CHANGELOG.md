@@ -39,15 +39,24 @@ summarizes each release for people who install and operate ShadowScan.
 - `cloud.azure` reads listing diagnostics through the public
   `diagnostics_recorded()`, so an error recorded during the subscription
   listing also leaves the live principal unattested.
+- The `plaintext_transport` marker for an MCP URL that redaction hid now
+  reaches as far as the `mcp-plain-http` risk factor it recovers, which scores
+  every plaintext scheme, loopback included: a loopback `http://` URL whose
+  scheme redaction withheld keeps its factor.
 - Low-code triggers a person operates no longer count as autonomy evidence:
-  n8n `manualTrigger`, `chatTrigger`, `formTrigger` and `evaluationTrigger`
+  n8n `manualTrigger`, `chatTrigger` (and its original `manualChatTrigger`
+  type), `formTrigger` and `evaluationTrigger`
   nodes, Make scenarios scheduled `on-demand`, Workato Workbot commands and
   Zapier Chrome extension or Interfaces steps add neither the `autonomous`
   capability nor an initiation tag, and a schedule trigger is tagged
   `scheduled` only. Make reads `scheduling.type` and webhook modules instead of
   the first module's name; Workato reads the provider of the recipe's trigger
   line instead of its keyword, which is `trigger` on every recipe and had made
-  every recipe event-triggered. ServiceNow tags a scheduled use-case trigger
+  every recipe event-triggered; the `scheduler` body heuristic now backs up
+  only a recipe whose trigger line classified nothing, so a scheduler named in
+  an action step no longer turns a Workbot command into schedule evidence.
+  n8n's `Respond to Webhook` reply step is no longer read as an event trigger
+  of the chat or form workflow it answers. ServiceNow tags a scheduled use-case trigger
   `scheduled`, records no initiation for a use case without a trigger, carries
   `tool-use` only when the export holds the agent's `sn_aia_tool` records and
   `saas-actions` only when one of them is not a retrieval tool, and needs the
@@ -72,15 +81,23 @@ summarizes each release for people who install and operate ShadowScan.
   unvalidated, so a traversal or absolute path made the project lookup list
   directories and probe `setup.py` outside the checkout and recorded the path
   in the finding. Such paths are checked like fetched ones before any download:
-  traversal, absolute and `.git` paths abort the repository, backslash or
-  drive-like paths are left out, and the filesystem connector refuses any
-  unread settings path that is not confined to the scanned root, marking the
-  scan incomplete and the tree's gates partial.
+  traversal, absolute and `.git` paths abort the repository, and the
+  filesystem connector refuses any unread settings path that is not confined
+  to the scanned root, marking the scan incomplete and the tree's gates
+  partial. A settings file at a backslash or drive-like path cannot be
+  materialised here but is still one the agent on the scanned workstation
+  reads, so it now marks the listing incomplete (gates read `some-actions`)
+  instead of being left out. A GitLab tree listing that ends with fewer
+  entries than the server's `X-Total` promised is read as cut short: coverage
+  is partial and no gate of the project claims every action, as for a
+  truncated GitHub listing.
 - `shadowscan merge` keeps only the match state of the sources whose
   registration verdict it adopts: a shadow finding keeps the reason and
   suggestions of the sources that found it unregistered, a registered finding
   the assurance and `registry-identity-unverified` tag of the sources that
-  matched it, the first such source winning per key. When two source blocks
+  matched it, the first such source winning per key. Clearing removes every
+  occurrence of the tag, so a report that duplicates it cannot carry a
+  non-adopted registration's flag through the merge. When two source blocks
   raised an autonomy bound equally above the merged classification,
   `metadata.autonomy.basis` listed only the first report's rules; a widened
   bound now keeps the basis rules of every block that set it, in rule order,
@@ -88,13 +105,19 @@ summarizes each release for people who install and operate ShadowScan.
 - The CSV report labels a finding only inventory-less sources assessed
   `unassessed` when the report has an inventory, as the table, Markdown and
   HTML reports do, and leaves the cell blank when no inventory was involved.
+  The reporters read inventory presence from `inventory_present` (or a
+  reconciled verdict on any finding), as the merge, the dashboard and the
+  control evidence do; a bare `inventory_size` from a report written before
+  the field existed no longer labels its findings `unassessed`.
 - `identity.entra`: a pre-issued `access_token` whose `tid` is not a
   `tenant_id` given as a tenant ID now skips the connector before any request
   (exit 3) in every configuration, not only with `include_agent_registry`. A
   decodable token is bound to its own tenant when `tenant_id` is unset or a
   domain name, which the coverage marker records; a domain `tenant_id` cannot
   be compared and an agent collection then reads the records as another
-  tenant's, so give the tenant ID with a pre-issued token.
+  tenant's, so give the tenant ID with a pre-issued token. A standalone
+  deprecated card manifest in a foreign-tenant export leaves its registry
+  record unattributed to `tenant_id`, as every other record site does.
 - The AI review gate workflow runs only for pull requests whose changed files
   include `.github/ai-review/**`: it failed closed on every ordinary pull
   request for want of evidence, and on the pull request that introduced it
@@ -277,7 +300,14 @@ summarizes each release for people who install and operate ShadowScan.
   `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
   literals passed to setter calls such as `setProperty("openai.key", ...)`,
   and `value`, `key` and `credential` fields inside an `auth` mapping, at any
-  depth of the mapping and inside lists under it.
+  depth of the mapping and inside lists and sets under it.
+  The token-word credential stops before a glued `--option` or `=name`, and a
+  `.name:` or `.name=` setting path glued into it reads as a setting instead,
+  so the name stays whole for the rule that withholds the value after it. A
+  setter-call path whose name alone identifies a credential
+  (`m.put("openai.token", ...)`, `"Azure:Secret"`, `"app.jwt"`) withholds any
+  literal, as the same names do in settings files; paths whose last word
+  names one (`"openai.key"`) keep withholding only an opaque literal.
   Evidence snippets also get a last-resort pass that withholds a quoted
   literal that looks generated (20 or more token characters mixing upper
   case, lower case and digits, with frequent class switches and high entropy),

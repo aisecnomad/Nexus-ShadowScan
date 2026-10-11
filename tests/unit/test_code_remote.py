@@ -434,6 +434,40 @@ def test_gitlab_blob_download_failure_keeps_neighbours(tmp_path, index, failure,
     assert connector.ctx.stats.warnings == [warning]
 
 
+def _gitlab_paginated_tree(connector, entries, total):
+    def paginate(path, params=None, on_page=None, **_):
+        if on_page is not None:
+            on_page(Mock(headers={"X-Total": total}))
+        yield from entries
+
+    connector.http.paginate_link = Mock(side_effect=paginate)
+
+
+def test_gitlab_tree_listing_cut_short_is_partial_coverage(tmp_path, index):
+    # Link pagination ends silently when a 'next' link is dropped; the server's
+    # X-Total says how many entries the collection holds. Fewer than that and
+    # the listing is incomplete: a settings file on a lost page could loosen a
+    # gate, so no gate of the project may claim every action.
+    good = b"from crewai import Agent\n"
+    entries = [
+        {"path": "agent.py", "type": "blob", "id": _sha(good)},
+        {"path": "other.py", "type": "blob", "id": _sha(good)},
+    ]
+    connector = _gitlab_api(index, [], good)
+    _gitlab_paginated_tree(connector, entries, "3")
+    rec = _record()
+    connector._fetch_via_api(rec, str(tmp_path))
+    assert "code.gitlab: tree listing cut short; source coverage partial" in connector.ctx.stats.warnings
+    assert rec["_tree_incomplete"] is True
+
+    complete = _gitlab_api(index, [], good)
+    _gitlab_paginated_tree(complete, entries, "2")
+    rec2 = _record()
+    complete._fetch_via_api(rec2, str(tmp_path / "complete"))
+    assert "code.gitlab: tree listing cut short; source coverage partial" not in complete.ctx.stats.warnings
+    assert rec2["_tree_incomplete"] is False
+
+
 def test_gitlab_unusual_tree_path_costs_only_that_file(tmp_path, index):
     good = b"from crewai import Agent\n"
     connector = _gitlab_api(
@@ -481,9 +515,11 @@ def test_api_snapshot_refuses_an_unread_settings_path_that_leaves_the_checkout(
 
 
 @pytest.mark.parametrize("cls", PROVIDERS)
-def test_api_snapshot_leaves_an_unusual_unread_settings_path_out(tmp_path, index, monkeypatch, cls):
+def test_api_snapshot_counts_an_unusual_unread_settings_path_as_incomplete(tmp_path, index, monkeypatch, cls):
     # A backslash or drive-like prefix cannot be materialised and, joined to a root on Windows,
-    # could leave it; the fetch loop and the sampling warning already disclose such a path.
+    # could leave it; on the scanned workstation it is still a directory whose settings a coding
+    # agent honors. Unreadable here, it makes the listing incomplete, so no approval gate of the
+    # repository claims every action on the strength of the files this scan could read.
     connector = _connector(index, cls)
     gated = json.dumps({"permissions": {"defaultMode": "default"}}).encode()
     monkeypatch.setattr(connector, "_download_blob", lambda repo, blob_id: gated)
@@ -496,9 +532,10 @@ def test_api_snapshot_leaves_an_unusual_unread_settings_path_out(tmp_path, index
         str(tmp_path),
         tree_paths=[*blobs, "C:/.claude/settings.json", "..\\.claude\\settings.local.json"],
     )
-    assert written == 1 and repo["_unread_settings"] == [] and repo["_tree_incomplete"] is False
+    assert written == 1 and repo["_unread_settings"] == [] and repo["_tree_incomplete"] is True
+    assert any("settings file at an unusual path left unread" in w for w in connector.ctx.stats.warnings)
     [claude] = [f for f in connector._scan_local(repo, dest) if "approval_gate" in f.metadata]
-    assert claude.metadata["approval_gate"]["scope"] == "every-action"
+    assert claude.metadata["approval_gate"]["scope"] == "some-actions"
 
 
 def test_gitlab_project_level_reports_variables_tokens_and_bots_without_values(index):

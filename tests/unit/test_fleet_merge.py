@@ -338,7 +338,9 @@ def test_merge_keeps_only_the_match_state_of_the_adopted_registration(tmp_path: 
     flagged = json.loads(registered.read_text())
     # A match on an operator-asserted caller name, as the registry flags it for gateway findings.
     flagged["findings"][0]["metadata"]["registry_match_assurance"] = "operator-asserted"
-    flagged["findings"][0]["tags"].append(UNVERIFIED_IDENTITY_TAG)
+    # Twice: a report is untrusted, and clearing must remove every occurrence or
+    # the non-adopted registration's flag survives on the merged finding.
+    flagged["findings"][0]["tags"].extend([UNVERIFIED_IDENTITY_TAG, UNVERIFIED_IDENTITY_TAG])
     hinted = json.loads(unregistered.read_text())
     hinted["findings"][0]["metadata"].update(
         registry_match_reason="name-only-review-required", registry_suggestions=["fs-mcp"]

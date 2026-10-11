@@ -1551,8 +1551,9 @@ def test_replay_of_another_tenants_export_never_approves(index, tmp_path):
     # packages or the objects they name.
     marker = {**COMPLETE_MARKER, "tenantId": "tenant-a"}
     package = _package(appId="app-tenant")
+    orphan_card = {"_kind": "agentCardManifest", "id": "card-foreign-0001", "displayName": "Foreign card"}
     source = tmp_path / "entra.json"
-    source.write_text(json.dumps([marker, *_TENANT_APP, package]), encoding="utf-8")
+    source.write_text(json.dumps([marker, *_TENANT_APP, package, orphan_card]), encoding="utf-8")
     result = _scan(index, source, allow_auto_approved=True, allow_registered_only=True)
     assert not result.complete
     [stats] = [s for s in result.stats if s.connector == "identity.entra"]
@@ -1560,6 +1561,9 @@ def test_replay_of_another_tenants_export_never_approves(index, tmp_path):
     by = _by_resource(result.findings)
     record = registry_record(by["entra:copilot-package:P_1"])
     assert record is not None and record.registry_id == "" and not record.identified
+    # The standalone card manifest's record is as unattributed as the package's.
+    card_record = registry_record(by["entra:agent-registry-card:card-foreign-0001"])
+    assert card_record is not None and card_record.registry_id == ""
     assert by["entra:copilot-package:P_1"].registry_match is None
     assert by["entra:app:app-tenant"].shadow is True and by["entra:app:app-tenant"].registry_match is None
     # Its bindings are not attributed to tenant_id either, so they register none of its objects.

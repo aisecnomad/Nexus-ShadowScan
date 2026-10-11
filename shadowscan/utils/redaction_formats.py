@@ -127,14 +127,45 @@ _ADDED_PEM = re.compile(
 # 'bearer =>', '=~' or '==' they are an operator's, and read as the credential
 # they hid the operator from the assignment rules, which then showed the value.
 _AUTH_CREDENTIAL = r"(?!=++(?![A-Za-z0-9+/_.-]))[A-Za-z0-9+/_.=-]+"
+# One character of the credential after the scheme's 'token' word. It stops before
+# glued text a later pass reads, so withholding this credential keeps the name that
+# withholds the value after it ('token v--token w'): a '--option' name, and a
+# '=name' assignment (base64 padding is never followed by a letter).
+_AUTH_WORD_GUARD = r"(?!--)(?!=[A-Za-z])"
+_AUTH_WORD_CHAR = r"(?:" + _AUTH_WORD_GUARD + r"[A-Za-z0-9+/_.=-])"
+_AUTH_WORD_NON_DIGIT = r"(?:" + _AUTH_WORD_GUARD + r"[A-Za-z+/_.=-])"
+# A '.name:' or '.name=' setting path glued into the run instead fails the token-word
+# reading outright: stopped at the dot, the marker would glue to the name and hide it
+# from the settings rule, where the word read as the credential (as before this rule)
+# keeps 'v.password: w' whole for it. A JWT never ends a segment at ':' or '=' except
+# its final padding, and _redact_jwts has already withheld it in any case.
+_AUTH_WORD_NO_SETTING_GLUE = r"(?!" + _AUTH_WORD_CHAR + r"*\.[A-Za-z0-9_-]++[:=])"
 # 'Bearer token <credential>' names the scheme and then the word: the word is read
 # as part of the scheme only when an opaque credential (16 or more characters with
-# a digit) follows it, so prose such as 'a Bearer token is required' is unchanged.
-_AUTH_WORD = r"(?:token\s+(?=[A-Za-z0-9+/_.=-]{16})(?=[A-Za-z+/_.=-]*[0-9]))?"
-_AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUTH_CREDENTIAL)
+# a digit) follows it, so prose such as 'a Bearer token is required' is unchanged
+# (the plain alternative then reads the word itself as the credential, as before).
+_AUTH_WORD_CREDENTIAL = (
+    r"token\s+(?="
+    + _AUTH_WORD_CHAR
+    + r"{16})(?="
+    + _AUTH_WORD_NON_DIGIT
+    + r"*+[0-9])"
+    + _AUTH_WORD_NO_SETTING_GLUE
+    + _AUTH_WORD_CHAR
+    + r"++"
+)
+_AUTH = re.compile(
+    r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+(?:" + _AUTH_WORD_CREDENTIAL + r"|" + _AUTH_CREDENTIAL + r")"
+)
 # A scheme after an escaped line break or a percent escape ('...header:\nBearer v') is read as well.
 _ESCAPED_AUTH = re.compile(
-    r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUTH_CREDENTIAL
+    r"(?i)(?P<glue>"
+    + _ESCAPE
+    + r")(?P<scheme>Bearer|Basic|SSWS)\s+(?:"
+    + _AUTH_WORD_CREDENTIAL
+    + r"|"
+    + _AUTH_CREDENTIAL
+    + r")"
 )
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")

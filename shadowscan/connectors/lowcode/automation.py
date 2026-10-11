@@ -56,7 +56,9 @@ _EVENT_NAMES = re.compile(r"webhook|trigger|event|poll", re.I)
 # n8n trigger nodes a person operates: the workflow's "Execute workflow" button, chat window, form
 # and evaluation runner. Every other trigger node reacts to something outside the workflow: a
 # webhook, a polled service, another workflow or an MCP client.
-_N8N_HUMAN_TRIGGERS = re.compile(r"\.(manualTrigger|chatTrigger|formTrigger|evaluationTrigger)$", re.I)
+_N8N_HUMAN_TRIGGERS = re.compile(
+    r"\.(manualTrigger|chatTrigger|manualChatTrigger|formTrigger|evaluationTrigger)$", re.I
+)
 _N8N_SCHEDULE_TRIGGERS = re.compile(r"\.(scheduleTrigger|cron|interval)$", re.I)
 # Make ``scheduling.type``: an on-demand scenario waits for the Run once button or an API call,
 # an instant trigger runs immediately on its webhook, and every other type is a schedule.
@@ -274,7 +276,14 @@ class N8nConnector(_AutomationBase):
                 re.I,
             )
         ]
-        triggers = [t for t in types if re.search(r"trigger|cron|schedule|interval|webhook", t, re.I)]
+        # 'Respond to Webhook' is the reply step of a chat or form workflow, not a
+        # trigger: counting it would read a person-operated workflow as event-run.
+        triggers = [
+            t
+            for t in types
+            if re.search(r"trigger|cron|schedule|interval|webhook", t, re.I)
+            and not re.search(r"\.respondToWebhook$", t, re.I)
+        ]
         models = [
             str(
                 get_path(
@@ -792,7 +801,10 @@ class WorkatoConnector(_AutomationBase):
             active=r.get("running"),
             created=r.get("created_at"),
             updated=r.get("updated_at") or r.get("last_run_at"),
-            triggers=triggers + (["schedule"] if "scheduler" in blob.lower() else []),
+            # The blob heuristic backs up a recipe whose trigger line classified
+            # nothing; it must not override a classified line ('scheduler' in an
+            # action step would turn a Workbot command into schedule evidence).
+            triggers=triggers or (["schedule"] if "scheduler" in blob.lower() else []),
             ai_steps=ai_steps,
             kind=Kind.AGENT if any("agent" in p.lower() for p in providers) else Kind.WORKFLOW,
             resource_type="recipe",

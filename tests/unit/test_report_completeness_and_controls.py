@@ -71,6 +71,18 @@ def test_complete_csv_has_no_status_row(make_finding):
     assert [row["kind"] for row in rows] == ["agent"]
 
 
+def test_csv_reads_inventory_presence_like_the_merge_and_dashboard(make_finding):
+    # A report written before inventory_present existed can carry a bare
+    # inventory_size; the merge, dashboard and control evidence read only
+    # inventory_present, so a finding here is uninventoried, not unassessed.
+    legacy = ScanResult(findings=[make_finding()], stats=[_stats()], inventory_size=3)
+    assert [row["shadow"] for row in _rows(render_csv(legacy))] == [""]
+    supplied = ScanResult(
+        findings=[make_finding()], stats=[_stats()], inventory_size=3, inventory_present=True
+    )
+    assert [row["shadow"] for row in _rows(render_csv(supplied))] == ["unassessed"]
+
+
 def test_incomplete_status_row_never_echoes_diagnostics():
     secret = "sk-proj-" + "c" * 40
     result = ScanResult(stats=[_stats(incomplete=True, errors=[f"failed with token {secret}"])])

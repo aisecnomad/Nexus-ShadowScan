@@ -346,13 +346,18 @@ def _credential_call_values(
     if sensitive or key_span is None or not values:
         return sensitive, values
     # A setting path whose last word names a credential ('openai.key', 'Azure:Key')
-    # withholds only an opaque literal, as the same names do in settings files.
+    # withholds only an opaque literal; one whose name alone identifies a credential
+    # ('openai.token', 'Azure:Secret', 'app.jwt') withholds any literal, as the same
+    # names do in settings files. A non-literal value is an expression, not a leak.
     key = _call_string_literal(text[key_span[0] : key_span[1]])
-    if key is None or _setting_level(key) != 1:
+    level = 0 if key is None else _setting_level(key)
+    if not level:
         return False, values
-    opaque = [
-        span for span in values if _setting_value_withheld(1, _call_string_literal(text[span[0] : span[1]]))
-    ]
+    opaque = []
+    for span in values:
+        literal = _call_string_literal(text[span[0] : span[1]])
+        if literal is not None and _setting_value_withheld(level, literal):
+            opaque.append(span)
     return bool(opaque), opaque
 
 
