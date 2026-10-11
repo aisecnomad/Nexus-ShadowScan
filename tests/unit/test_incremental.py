@@ -340,6 +340,35 @@ def test_keyed_cache_rejects_an_entry_rewritten_without_the_key(tmp_path, index)
     assert IncrementalCache(cfg, index, identity_key=b"j" * 32).load(cfg.connectors[0], snapshot) is None
 
 
+def test_keyed_cache_mac_binds_the_slot_and_fingerprint(tmp_path, index):
+    # Every clean scan stores the same payload. A MAC over the payload alone would
+    # let a writer without the key move a clean entry's authenticated payload into a
+    # slot whose input has findings, and the next scan would replay it as clean.
+    cfg = config(tmp_path)
+    cache = IncrementalCache(cfg, index, identity_key=b"k" * 32)
+    spec = cfg.connectors[0]
+    stats = ScanStats(connector=spec.id, started_at="", finished_at="")
+    clean = Snapshot("a" * 64, "f" * 64)
+    dirty = Snapshot("b" * 64, "e" * 64)
+    cache.save(clean, [], stats)
+    cache.save(
+        dirty, [Finding(Surface.CODE, "code.filesystem", Kind.AGENT, "Agent", "repo:1", "repository")], stats
+    )
+    assert cache.load(spec, dirty) is not None
+    clean_data = json.loads((tmp_path / "state" / f"{clean.slot}.json").read_text())
+    dirty_path = tmp_path / "state" / f"{dirty.slot}.json"
+    dirty_data = json.loads(dirty_path.read_text())
+    dirty_data["payload"] = clean_data["payload"]
+    dirty_data["payload_hmac_sha256"] = clean_data["payload_hmac_sha256"]
+    dirty_path.write_text(json.dumps(dirty_data))
+    os.chmod(dirty_path, 0o600)
+    assert cache.load(spec, dirty) is None
+    # A whole entry copied into another slot is refused as well.
+    dirty_path.write_text(json.dumps(clean_data | {"fingerprint": dirty.fingerprint}))
+    os.chmod(dirty_path, 0o600)
+    assert cache.load(spec, dirty) is None
+
+
 def test_concurrent_cache_writers_publish_only_complete_matching_entries(tmp_path, index):
     cfg = config(tmp_path)
     cache = IncrementalCache(cfg, index)

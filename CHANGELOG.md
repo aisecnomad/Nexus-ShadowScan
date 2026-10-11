@@ -268,8 +268,11 @@ summarizes each release for people who install and operate ShadowScan.
   and shell history. The value is never echoed and the scan still runs.
 - With a stable identity key, incremental cache entries carry
   `payload_hmac_sha256` under a key derived from it, and entries without a
-  valid MAC are rescanned. Existing keyed entries miss once. Unkeyed caches
-  keep the SHA-256 checksum, which detects damage, not tampering.
+  valid MAC are rescanned. The MAC covers the entry's slot, input fingerprint
+  and cache format as well as its payload, so a clean entry's payload and MAC
+  cannot be moved into another slot to replay an empty result. Existing keyed
+  entries miss once. Unkeyed caches keep the SHA-256 checksum, which detects
+  damage, not tampering.
 - Incremental Git fingerprinting reads `git` output through the bounded
   metadata reader, so repository-controlled refs cannot exhaust memory.
 - The HTTP destination policy judges a well-known NAT64 address
