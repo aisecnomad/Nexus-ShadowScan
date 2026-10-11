@@ -124,18 +124,25 @@ _ADDED_PEM = re.compile(
     r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----|\Z)",
     re.DOTALL,
 )
-# One character of the credential after an authorization scheme. It stops before
-# glued text a later pass reads, so withholding the credential keeps the name that
-# withholds the value after it ('v--token w', 'v=password: w'): a '--option' name,
-# and a '=name' assignment (base64 padding is never followed by a letter).
+# One character of the credential after 'Bearer token <...>' (the word form). It
+# stops before glued text a later pass reads, so withholding the credential keeps
+# the name that withholds the value after it ('v--token w', 'v=password: w'): a
+# '--option' name, and a '=name' assignment (base64 padding is never followed by
+# a letter).
 _AUTH_CHAR_GUARD = r"(?!--)(?!=[A-Za-z])"
 _AUTH_CHAR = r"(?:" + _AUTH_CHAR_GUARD + r"[A-Za-z0-9+/_.=-])"
 _AUTH_NON_DIGIT = r"(?:" + _AUTH_CHAR_GUARD + r"[A-Za-z+/_.=-])"
 # The credential after an authorization scheme. It is never '=' signs alone: after
 # 'bearer =>', '=~' or '==' they are an operator's, and read as the credential
 # they hid the operator from the assignment rules, which then showed the value.
-# The possessive quantifier keeps the scan linear in the text.
-_AUTH_CREDENTIAL = r"(?P<credential>(?!=++(?![A-Za-z0-9+/_.-]))" + _AUTH_CHAR + r"++)"
+# The glued-text guard applies only in the word form, where the following name is
+# a later pass's to withhold; a plain 'Bearer <credential>' consumes the whole
+# opaque run, so a token containing '--' or '=x' is withheld whole instead of
+# leaking its tail. The possessive quantifiers keep the scan linear in the text.
+_AUTH_CREDENTIAL = (
+    r"(?P<credential>(?!=++(?![A-Za-z0-9+/_.-]))"
+    r"(?(word)" + _AUTH_CHAR + r"++|[A-Za-z0-9+/_.=-]++))"
+)
 # 'Bearer token <credential>' names the scheme and then the word: the word is read
 # as part of the scheme only when an opaque credential (16 or more characters with
 # a digit) follows it, so prose such as 'a Bearer token is required' is unchanged.

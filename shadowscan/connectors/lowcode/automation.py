@@ -765,8 +765,13 @@ class WorkatoConnector(_AutomationBase):
         if _WORKATO_SCHEDULE_PROVIDERS.search(trigger):
             return SCHEDULE
         provider, _, name = trigger.partition(":")
-        if _WORKATO_HUMAN_PROVIDERS.search(provider) and _WORKBOT_HUMAN_TRIGGERS.search(name):
-            return HUMAN
+        if _WORKATO_HUMAN_PROVIDERS.search(provider):
+            if not name:
+                # The export omitted the trigger name: a Workbot trigger may be a
+                # command or an event, so record no initiation rather than guess.
+                return None
+            if _WORKBOT_HUMAN_TRIGGERS.search(name):
+                return HUMAN
         return EVENT
 
     def _recipe_finding(self, r: dict[str, Any]) -> Finding | None:

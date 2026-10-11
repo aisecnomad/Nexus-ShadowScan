@@ -84,7 +84,7 @@ from shadowscan.registries import (
 from shadowscan.risk import RiskPolicy
 from shadowscan.triage import TriageConfigError, TriageSettings
 from shadowscan.utils.files import read_policy_text, require_no_symlinks
-from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
+from shadowscan.utils.redaction import REDACTED, _opaque_literal, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
@@ -353,8 +353,10 @@ def argv_credential_keys(config: dict[str, Any]) -> list[str]:
     so the caller warns and points to environment references or files. A
     credential-file location is withheld from representations but exposes no
     credential on the command line (passing one there is the documented
-    practice), so those keys are judged by their value alone; ``tokens`` holds
-    credential material whatever its shape and always counts.
+    practice), so those keys are judged by their value alone: a location never
+    reads as an opaque literal, so a credential pasted where the file path
+    belongs still draws the warning; ``tokens`` holds credential material
+    whatever its shape and always counts.
     """
     shown = _sanitized_config(config)
     if shown is None:
@@ -363,7 +365,12 @@ def argv_credential_keys(config: dict[str, Any]) -> list[str]:
         exposed = [
             key
             for key in config
-            if key != "input" and (key in _CREDENTIAL_VALUE_KEYS or shown.get(key) != config[key])
+            if key != "input"
+            and (
+                key in _CREDENTIAL_VALUE_KEYS
+                or shown.get(key) != config[key]
+                or (key in _CREDENTIAL_FILE_KEYS and _opaque_literal(config[key]))
+            )
         ]
     # A key is named only when it is plainly an identifier: a credential pasted into
     # the key position ('--set ghp_...=1' for a plugin, whose keys are not checked)

@@ -182,6 +182,15 @@ def test_a_setting_path_glued_into_the_token_word_credential_keeps_its_value_wit
     assert SECOND not in cleaned
 
 
+@pytest.mark.parametrize("scheme", ["Bearer", "Basic", "SSWS"])
+@pytest.mark.parametrize("glue", ["--", "=x"])
+def test_a_plain_scheme_credential_with_a_glued_run_is_withheld_whole(scheme: str, glue: str) -> None:
+    # Without the token word there is no following name for a later pass to
+    # read: the whole opaque run is the credential, so a token containing '--'
+    # or '=x' leaves no tail in the output.
+    assert sanitize_text(f"{scheme} {SECRET}{glue}{SECOND}") == f"{scheme} {REDACTED}"
+
+
 def test_the_token_word_credential_is_withheld_whole_without_glue() -> None:
     assert sanitize_text(f"Bearer token {SECRET}") == f"Bearer {REDACTED}"
     # The name/value rule reads the 'Authorization:' line first and withholds
