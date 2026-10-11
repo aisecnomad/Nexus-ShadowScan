@@ -660,6 +660,26 @@ def test_a_parsed_launch_keeps_its_identity_when_only_server_arguments_are_hidde
     assert "launch_unidentified" not in records[0]
 
 
+@pytest.mark.parametrize(
+    "server",
+    [
+        # An env table that cannot be read is dropped with an error, but it may set NODE_OPTIONS.
+        {"command": "npx", "args": _PKG, "env": ["NODE_OPTIONS=--require ./evil.js"]},
+        {"command": "npx", "args": _PKG, "environment": "NODE_OPTIONS=--require ./evil.js"},
+        # An argument list that cannot be read is dropped too, and a command line with spaces is
+        # then read as the whole launch although the configured arguments were never checked.
+        {"command": "npx -y pkg@1.0.0", "args": [1]},
+        {"command": "npx -y pkg@1.0.0", "args": "--registry=https://evil.example"},
+    ],
+)
+def test_a_parsed_launch_with_an_unreadable_env_or_argument_list_names_no_package(server):
+    errors: list[str] = []
+    records = _parse_mcp_servers(".mcp.json", json.dumps({"mcpServers": {"x": server}}), errors)
+    assert errors and len(records) == 1
+    assert records[0]["launch_unidentified"] is True
+    assert server_package(records[0]) is None
+
+
 @pytest.mark.parametrize("value", ["mcp.plain.example", "http", "8080"])
 def test_a_plaintext_url_another_servers_env_value_redacts_is_still_insecure(value):
     document = {

@@ -280,7 +280,9 @@ def _mcp_server_record(
 
     The projection comes with the configured launch and endpoints (command, every argument,
     env names, launch context and URLs) as they were before sanitizing and truncation, which
-    :func:`_mark_withheld` compares and the caller never reports.
+    :func:`_mark_withheld` compares and the caller never reports. A command whose ``env`` table
+    or ``args`` list cannot be read is marked ``launch_unidentified``: the dropped field may be
+    what changes its launch.
 
     Only a registry manifest's record has ``packages``: each package it declares (registry
     type, identifier, version and registry base URL), which MCP registry matching compares.
@@ -295,7 +297,11 @@ def _mcp_server_record(
         # could hide the credentials or endpoint the other one configures.
         errors.append("MCP server entry contains ambiguous field aliases")
         return None
-    env = _mcp_mapping(_mcp_alias(cfg, ("env", "environment"), {}), "env", errors)
+    env_table = _mcp_alias(cfg, ("env", "environment"), {})
+    env = _mcp_mapping(env_table, "env", errors)
+    # An env table or argument list that cannot be read is reported and dropped; the launch it
+    # configures (a NODE_OPTIONS entry, an option before the package) is then not knowable.
+    launch_unreadable = env_table is not None and not isinstance(env_table, dict)
     headers = _mcp_mapping(cfg.get("headers", {}), "headers", errors)
     urls = _mcp_urls(cfg, errors)
     url = urls[0] if urls else None
@@ -312,6 +318,7 @@ def _mcp_server_record(
     if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
         errors.append("MCP args must be an array of strings")
         args = []
+        launch_unreadable = True
     inline_locations = _inline_secret_locations(env, headers)
     transport = _mcp_alias(cfg, ("type", "transport"), "stdio" if command else ("http" if url else "unknown"))
     if not isinstance(transport, str):
@@ -366,6 +373,8 @@ def _mcp_server_record(
     safe["disabled"] = _mcp_disabled(cfg, errors)
     if manifest:
         safe["packages"] = _manifest_packages(cfg.get("packages"), errors)
+    if command and launch_unreadable:
+        safe["launch_unidentified"] = True
     raw = {
         "command": command,
         "args": args,

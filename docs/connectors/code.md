@@ -790,7 +790,11 @@ when its launch names no registry package or could fetch or run something else:
   launch on the configured values and, when the record would otherwise name a
   different package, marks it `launch_unidentified: true` (no value kept). A
   record with a redacted env name, `docker run -e` value, or `cmd /c` or batch
-  file argument names no package either.
+  file argument names no package either;
+- a command whose `env` table or `args` list cannot be read (an array where an
+  object is expected, an argument that is not a string): the field is reported
+  and dropped, and the record is marked `launch_unidentified: true`, since the
+  dropped entry may be what changes the launch.
 
 So does a URL that is templated, carries user information (redacted when the
 configuration is parsed, and able to name another host to the client:
