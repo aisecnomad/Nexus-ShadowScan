@@ -126,3 +126,28 @@ def test_environment_block_inside_an_auth_block_keeps_the_environment_rule() -> 
             "environment": [{"name": "REGION", "value": REDACTED}],
         }
     }
+
+
+def test_an_auth_block_credential_is_also_removed_from_other_fields() -> None:
+    record = {
+        "auth": {"type": "bearer", "value": SECRET},
+        "error": f"401 Unauthorized for credential {SECRET}",
+    }
+    assert sanitize(record) == {
+        "auth": {"type": "bearer", "value": REDACTED},
+        "error": f"401 Unauthorized for credential {REDACTED}",
+    }
+
+
+@pytest.mark.parametrize("shape", [list, tuple, set, lambda items: {"primary": items[0]}])
+def test_auth_block_credential_fields_are_withheld_whatever_their_shape(shape) -> None:
+    record = {"auth": {"type": "apikey", "key": shape([SECRET, "hunter2pass"])}, "note": f"rejected {SECRET}"}
+    out = sanitize(record)
+    assert out["auth"] == {"type": "apikey", "key": REDACTED}
+    assert SECRET not in repr(out) and "hunter2pass" not in repr(out["auth"])
+
+
+def test_short_auth_labels_are_not_removed_from_other_fields() -> None:
+    # Only an opaque scalar is remembered: a label such as 'header' must not wipe every field.
+    record = {"auth": {"type": "apikey", "key": "header", "value": SECRET}, "name": "Get header names"}
+    assert sanitize(record)["name"] == "Get header names"

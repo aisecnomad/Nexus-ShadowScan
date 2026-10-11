@@ -659,7 +659,9 @@ class _Sanitizer:
             if (
                 _sensitive_key(name)
                 or (name.lower() == "value" and _record_has_secret_value(item, extended=self.extended))
-                or (auth and name.lower() in _AUTH_VALUE_KEYS and not isinstance(child, _CONTAINERS))
+                # Under an auth block a generic 'value', 'key' or 'credential' field is
+                # credential material whatever its shape, as a sensitive key's value is.
+                or (auth and name.lower() in _AUTH_VALUE_KEYS)
             ):
                 result = _redact_value(child)
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
@@ -710,7 +712,7 @@ class _NestedSanitizer(_Sanitizer):
         )
         # An aliased object can occur both outside and inside a credential
         # container. Revisit it under the stricter parent, but still bound cycles.
-        self.containers: set[tuple[int, bool, bool, bool]] = set()
+        self.containers: set[tuple[int, bool, bool, bool, bool]] = set()
 
     def discover(
         self,
@@ -720,6 +722,7 @@ class _NestedSanitizer(_Sanitizer):
         environment: bool = False,
         credential: bool = False,
         credential_group: bool = False,
+        auth: bool = False,
     ) -> None:
         """Remember the leaves of the credential containers in ``item``.
 
@@ -727,9 +730,15 @@ class _NestedSanitizer(_Sanitizer):
         value of a sensitive key, of a record named for a secret by the
         established or the added rules, or a member of such a container.
         ``credential_group`` marks a container named for credentials.
+        ``auth`` marks an item under an auth block, whose generic ``value``,
+        ``key`` and ``credential`` fields ``clean`` withholds whatever their
+        shape. Their nested leaves are remembered like any credential
+        container's; a scalar one only when it looks like an opaque key, since
+        such fields also hold labels ('key', 'in', 'header') that must not
+        withhold every field they occur in.
         """
         item = _plain(item)
-        identity = (id(item), environment, credential, credential_group)
+        identity = (id(item), environment, credential, credential_group, auth)
         if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.containers):
             return
         if isinstance(item, _CONTAINERS):
@@ -753,14 +762,19 @@ class _NestedSanitizer(_Sanitizer):
                 member = (named_secret and lower_name == "value") or (
                     credential and _credential_member(lower_name, child, group=child_group)
                 )
-                if member:
+                auth_value = auth and lower_name in _AUTH_VALUE_KEYS
+                if member or (auth_value and _opaque_literal(child)):
                     self.remember(child)
+                child_auth = (auth or lower_name in _AUTH_CONTAINER_KEYS) and isinstance(
+                    child, (Mapping, list, tuple)
+                )
                 self.discover(
                     child,
                     depth + 1,
                     environment=environment or lower_name in _ENVIRONMENT_KEYS,
-                    credential=key_sensitive or member,
+                    credential=key_sensitive or member or (auth_value and isinstance(child, _CONTAINERS)),
                     credential_group=child_group,
+                    auth=child_auth,
                 )
         elif isinstance(item, (list, tuple, set, frozenset)):
             for child in item:
@@ -772,6 +786,7 @@ class _NestedSanitizer(_Sanitizer):
                     environment=environment,
                     credential=credential,
                     credential_group=credential_group,
+                    auth=auth,
                 )
 
     def order(self) -> None:

@@ -261,7 +261,10 @@ summarizes each release for people who install and operate ShadowScan.
   (any string literal when the name is a credential outright, such as
   `openai.secret` or `AzureOpenAI:Secret`),
   and `value`, `key` and `credential` fields inside an `auth` mapping, at any
-  depth of the mapping and inside lists under it.
+  depth of the mapping and inside lists under it, whatever their shape (a
+  list, set or record there is withheld whole). An opaque value in such a
+  field is also removed from the record's other fields; a short label there
+  ('header', 'in') is not, so it cannot withhold unrelated fields.
   Every other member of an `auth`, `authentication` or `authn` mapping keeps
   the mapping rules, so a numeric or boolean `password` or `client_secret`
   there is withheld as on 0.1.2, and the environment rule, so an `env` block
