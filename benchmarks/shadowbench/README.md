@@ -167,8 +167,11 @@ results are directly comparable with the code-surface benchmark's.
 
 Committed under [`results/2026-10-11/`](results/2026-10-11/): the scrubbed
 `runs.json` (per-unit statuses, commands and predictions), `metrics.json`,
-the rendered [`REPORT.md`](results/2026-10-11/REPORT.md) and the scrubbed
-`tools.json`. Headline (entity detection on declared surfaces / in-scope
+the rendered [`REPORT.md`](results/2026-10-11/REPORT.md), the scrubbed
+`tools.json`, an editorial gradebook
+([`GRADES.md`](results/2026-10-11/GRADES.md) — the authoring session's
+judgment, with the same conflict of interest as the labels) and a rendered
+PDF of the report and grades. Headline (entity detection on declared surfaces / in-scope
 value F1 / estate-wide value recall):
 
 | Tool | Detected | In-scope value F1 | Estate-wide recall |
