@@ -254,6 +254,10 @@ summarizes each release for people who install and operate ShadowScan.
   literals passed to setter calls such as `setProperty("openai.key", ...)`,
   and `value`, `key` and `credential` fields inside an `auth` mapping, at any
   depth of the mapping and inside lists under it.
+  Every other member of an `auth`, `authentication` or `authn` mapping keeps
+  the mapping rules, so a numeric or boolean `password` or `client_secret`
+  there is withheld as on 0.1.2, and the environment rule, so an `env` block
+  inside one has every value withheld.
   Evidence snippets also get a last-resort pass that withholds a quoted
   literal that looks generated (20 or more token characters mixing upper
   case, lower case and digits, with frequent class switches and high entropy),

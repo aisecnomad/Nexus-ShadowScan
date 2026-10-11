@@ -662,14 +662,16 @@ class _Sanitizer:
                 or (auth and name.lower() in _AUTH_VALUE_KEYS and not isinstance(child, _CONTAINERS))
             ):
                 result = _redact_value(child)
-            elif (auth or name.lower() in _AUTH_CONTAINER_KEYS) and isinstance(child, (Mapping, list, tuple)):
-                # An auth block's credential fields can sit in a nested scheme record
-                # ('auth.basic.value') or in a list of them; the rule follows the block down.
-                result = self.clean(child, depth + 1, auth=True)
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
                 result = {self.text(str(k)): _redact_value(v) for k, v in child.items()}
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, list):
                 result = [self.clean_environment_entry(entry, depth) for entry in child]
+            elif (auth or name.lower() in _AUTH_CONTAINER_KEYS) and isinstance(child, (Mapping, list, tuple)):
+                # An auth block's credential fields can sit in a nested scheme record
+                # ('auth.basic.value') or in a list of them; the rule follows the block down.
+                # Every member keeps the mapping rules above and the environment rules
+                # before this one: a sensitive key holds a credential whatever its type.
+                result = self.clean(child, depth + 1, auth=True)
             else:
                 result = self.clean(child, depth + 1)
             mapping_out[self.text(name)] = result

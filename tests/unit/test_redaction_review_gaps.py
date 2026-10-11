@@ -69,3 +69,32 @@ def test_credential_fields_nested_in_an_auth_block_are_withheld() -> None:
         },
         "settings": {"value": "plain"},
     }
+
+
+@pytest.mark.parametrize("container", ["auth", "authentication", "authn"])
+@pytest.mark.parametrize("secret", [31415926535, 2.718, True])
+def test_non_string_credentials_in_an_auth_block_are_withheld(container: str, secret: object) -> None:
+    # The auth-block rule must add to the mapping rules, not replace them: a
+    # sensitive key holds a credential whatever the type of its value.
+    record = {container: {"type": "basic", "username": "svc", "password": secret, "client_secret": secret}}
+    assert sanitize(record) == {
+        container: {"type": "basic", "username": "svc", "password": REDACTED, "client_secret": REDACTED}
+    }
+
+
+def test_environment_block_inside_an_auth_block_keeps_the_environment_rule() -> None:
+    # The auth descent must not pre-empt the environment rule: every variable's value is withheld.
+    record = {
+        "auth": {
+            "type": "exec",
+            "env": {"API_HOST": "api.example.com"},
+            "environment": [{"name": "REGION", "value": "eu-west-1"}],
+        }
+    }
+    assert sanitize(record) == {
+        "auth": {
+            "type": "exec",
+            "env": {"API_HOST": REDACTED},
+            "environment": [{"name": "REGION", "value": REDACTED}],
+        }
+    }
