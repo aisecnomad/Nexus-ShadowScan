@@ -17,6 +17,7 @@ from shadowscan.utils.redaction_rules import (
     _REFERENCE,
     _VALUE_SEMICOLON,
     REDACTED,
+    _credential_name,
     _kept_value,
     _redact_value,
     _sensitive_assignment_key,
@@ -124,25 +125,22 @@ _ADDED_PEM = re.compile(
     r"(?:-----END (?:[A-Z ]{0,30})PRIVATE KEY BLOCK-----|\Z)",
     re.DOTALL,
 )
-# One character of the credential after 'Bearer token <...>' (the word form). It
-# stops before glued text a later pass reads, so withholding the credential keeps
-# the name that withholds the value after it ('v--token w', 'v=password: w'): a
-# '--option' name, and a '=name' assignment (base64 padding is never followed by
-# a letter).
+# One character of the credential after an authorization scheme. It stops before
+# glued text ('v--token w', 'v=password: w'): a '--option' name, and a '=name'
+# assignment (base64 padding is never followed by a letter). _redact_authorization
+# then keeps the glued run only when it names a credential a later pass reads and
+# withholds it with the credential otherwise, so neither a glued password
+# assignment's value nor the tail of a token containing '--' or '=x' is shown.
 _AUTH_CHAR_GUARD = r"(?!--)(?!=[A-Za-z])"
 _AUTH_CHAR = r"(?:" + _AUTH_CHAR_GUARD + r"[A-Za-z0-9+/_.=-])"
 _AUTH_NON_DIGIT = r"(?:" + _AUTH_CHAR_GUARD + r"[A-Za-z+/_.=-])"
 # The credential after an authorization scheme. It is never '=' signs alone: after
 # 'bearer =>', '=~' or '==' they are an operator's, and read as the credential
 # they hid the operator from the assignment rules, which then showed the value.
-# The glued-text guard applies only in the word form, where the following name is
-# a later pass's to withhold; a plain 'Bearer <credential>' consumes the whole
-# opaque run, so a token containing '--' or '=x' is withheld whole instead of
-# leaking its tail. The possessive quantifiers keep the scan linear in the text.
-_AUTH_CREDENTIAL = (
-    r"(?P<credential>(?!=++(?![A-Za-z0-9+/_.-]))"
-    r"(?(word)" + _AUTH_CHAR + r"++|[A-Za-z0-9+/_.=-]++))"
-)
+# The possessive quantifier keeps the scan linear in the text.
+_AUTH_CREDENTIAL = r"(?P<credential>(?!=++(?![A-Za-z0-9+/_.-]))" + _AUTH_CHAR + r"++)"
+# The glued run a guard stop left after the credential.
+_AUTH_GLUED = r"(?P<glued>(?:--|=(?=[A-Za-z]))[A-Za-z0-9+/_.=-]*+)?"
 # 'Bearer token <credential>' names the scheme and then the word: the word is read
 # as part of the scheme only when an opaque credential (16 or more characters with
 # a digit) follows it, so prose such as 'a Bearer token is required' is unchanged.
@@ -150,10 +148,15 @@ _AUTH_CREDENTIAL = (
 # ('Bearer token postgres_password_1: v', or such a name on the next line): withheld
 # here, it hid the name from the assignment rules, which then showed the value.
 _AUTH_WORD = r"(?:(?P<word>token)(?P<gap>\s+)(?=" + _AUTH_CHAR + r"{16})(?=" + _AUTH_NON_DIGIT + r"*+[0-9]))?"
-_AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUTH_CREDENTIAL)
+_AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUTH_CREDENTIAL + _AUTH_GLUED)
 # A scheme after an escaped line break or a percent escape ('...header:\nBearer v') is read as well.
 _ESCAPED_AUTH = re.compile(
-    r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUTH_CREDENTIAL
+    r"(?i)(?P<glue>"
+    + _ESCAPE
+    + r")(?P<scheme>Bearer|Basic|SSWS)\s+"
+    + _AUTH_WORD
+    + _AUTH_CREDENTIAL
+    + _AUTH_GLUED
 )
 _ASSIGNED = re.compile(r"[ \t]*[:=]")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
@@ -174,16 +177,40 @@ def _redact_authorization(text: str) -> str:
     The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
     """
 
+    def kept_glued(match: re.Match[str]) -> bool:
+        """A glued run a later pass withholds the value after: keep it in the text."""
+        glued = match.group("glued")
+        if not glued:
+            return False
+        if glued.startswith("--"):
+            name = glued.lstrip("-")
+            return bool(
+                name and not name.lower().startswith(("no-", "no_")) and _credential_name(name, numbered=True)
+            )
+        name = glued[1:]
+        return bool(
+            (_sensitive_assignment_key(name) or _setting_level(name))
+            and _ASSIGNED.match(match.string, match.end())
+        )
+
     def withheld(match: re.Match[str]) -> str:
         credential = match.group("credential")
-        if (
-            match.group("word")
-            and (_sensitive_assignment_key(credential) or _setting_level(credential))
-            and _ASSIGNED.match(match.string, match.end())
-        ):
-            # 'Bearer token <name>: value': withhold the word as the credential and keep the
-            # name, so the assignment rules still withhold the value after it.
-            return match.group("scheme") + " " + REDACTED + match.group("gap") + credential
+        glued = match.group("glued") or ""
+        if match.group("word"):
+            # The word form always leaves the glued run in the text: the rules
+            # that read it ('--token v', '=password: v') withhold the value.
+            if (_sensitive_assignment_key(credential) or _setting_level(credential)) and _ASSIGNED.match(
+                match.string, match.end("credential")
+            ):
+                # 'Bearer token <name>: value': withhold the word as the credential and keep the
+                # name, so the assignment rules still withhold the value after it.
+                return match.group("scheme") + " " + REDACTED + match.group("gap") + credential + glued
+            return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n") + glued
+        if kept_glued(match):
+            # 'Bearer <credential>=password: value' or '<credential>--token value':
+            # the glued name stays, so the rule that reads it withholds the value.
+            return match.group("scheme") + " " + REDACTED + glued
+        # A glued run that names no credential is the token's own tail: withheld whole.
         return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n")
 
     text = _AUTH.sub(withheld, text)
