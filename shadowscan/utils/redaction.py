@@ -702,6 +702,8 @@ class _Sanitizer:
             elif (auth or name.lower() in _AUTH_CONTAINER_KEYS) and isinstance(child, (Mapping, list, tuple)):
                 # An auth block's credential fields can sit in a nested scheme record
                 # ('auth.basic.value') or in a list of them; the rule follows the block down.
+                # Every member keeps the mapping rules above and the environment rules
+                # before this one: a sensitive key holds a credential whatever its type.
                 result = self.clean(child, depth + 1, auth=True)
             else:
                 result = self.clean(child, depth + 1)

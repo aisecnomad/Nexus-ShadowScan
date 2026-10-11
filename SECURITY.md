@@ -4,6 +4,12 @@ ShadowScan handles audit credentials and security findings. Protect configuratio
 environment variables, record dumps, incremental state and reports as sensitive
 data. Redaction reduces accidental disclosure; it does not make reports public.
 
+**Reporting a vulnerability:** open a
+[private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new);
+[Reporting](#reporting) says what to include and
+[Supported versions](#supported-versions) which versions receive fixes. Never
+put credentials, tenant exports or exploit details in a public issue.
+
 ## Trust boundary
 
 The operator workstation or CI runner, scanner configuration and installed Python

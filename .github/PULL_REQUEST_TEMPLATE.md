@@ -18,6 +18,8 @@
 - [ ] `make lint` and `make format-check` pass
 - [ ] `make typecheck` passes
 - [ ] `pytest -q --cov=shadowscan --cov-fail-under=80` passes
+- [ ] `make coverage-gate` passes after that coverage run (per-connector floor)
+- [ ] `make evaluate` passes (all bundled corpora; explain any intended corpus change)
 - [ ] `make audit` (`pip-audit`) reports no known vulnerabilities
 - [ ] `python -m shadowscan.signatures.validate` passes
 - [ ] `python -m shadowscan.mappings.validate` passes
@@ -29,7 +31,7 @@
 
 ### Required for connector changes
 
-- [ ] Per-connector coverage ≥ 75% (`make coverage-gate` after the coverage test run)
+- [ ] Per-connector coverage ≥ 75% for the changed connector (`make coverage-gate` output)
 - [ ] Offline fixtures added (no live credentials in tests)
 - [ ] Connector handles API failures and marks coverage incomplete (exit 3)
 - [ ] New connector registered in `shadowscan/connectors/__init__.py`
@@ -39,7 +41,7 @@
 ### Required for signature changes
 
 - [ ] `python -m shadowscan.signatures.validate` passes
-- [ ] Evaluation corpus updated and `make evaluate` passes (all bundled corpora)
+- [ ] Evaluation corpus updated for the new or changed signature
 - [ ] No false positives introduced on existing negative corpus entries
 
 ### Required for mapping changes

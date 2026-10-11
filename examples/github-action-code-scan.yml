@@ -20,9 +20,14 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "0 6 * * 1"
+    - cron: "0 6 * * 1"  # Monday 06:00 UTC
 permissions:
   contents: read
+concurrency:
+  # A newer pull-request push supersedes the older scan; every main push and
+  # scheduled scan finishes and uploads its SARIF.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   shadowscan:
     runs-on: ubuntu-latest

@@ -5,6 +5,35 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Integration review corrections (October 11)
+
+- `shadowscan run --set` no longer warns that a credential is on the command
+  line when the value is a credential file's location (`credentials_file`,
+  `service_account_file`, `token_file`), the documented way to pass one. A
+  credential-looking value under those keys, and `tokens`, still warn, and the
+  locations stay withheld from configuration representations.
+- An incremental cache entry whose `warnings` list holds anything but text is
+  a cache miss and the input is rescanned. Before, an unkeyed entry with such
+  a list loaded and the objects reached the report's warnings.
+- AI review gate: when a finding names a file outside the diff, the findings
+  on files inside the diff stay in the review (the gate still fails
+  `stale_findings`; before, every located finding was left out).
+- The optional Black Duck and Checkmarx One workflows skip Dependabot pull
+  requests, which receive no repository secrets, as the Semgrep workflow
+  already did. A dispatched discovery benchmark runs in its own concurrency
+  group and no longer cancels the weekly run.
+- Bug report form: the exit-code options follow the CLI (1 is an invocation or
+  configuration error, 2 a completed scan that reached `--fail-on`), the
+  surface list names all nine surfaces, and the version field accepts a
+  release version with its artifact identity as well as a commit SHA. The pull
+  request template lists `make coverage-gate` and `make evaluate` among the
+  gates for every change. The README quick-start note names step 7 for the
+  report it reads, its development block uses the hash-locked `make install`
+  and `make check`, and its project-status recommendation links the deployment
+  install section. SECURITY.md opens with the private reporting route. The
+  consumer example workflows carry UTC cron comments and the code-scan example
+  a concurrency group.
+
 ### Review corrections after the October 10 integration
 
 - The Semgrep workflow runs `semgrep ci` in the `semgrep/semgrep` image pinned

@@ -350,13 +350,21 @@ def argv_credential_keys(config: dict[str, Any]) -> list[str]:
     """Keys of a command-line connector configuration whose values look like credentials.
 
     Command-line arguments are visible in process listings and shell history,
-    so the caller warns and points to environment references or files.
+    so the caller warns and points to environment references or files. A
+    credential-file location is withheld from representations but exposes no
+    credential on the command line (passing one there is the documented
+    practice), so those keys are judged by their value alone; ``tokens`` holds
+    credential material whatever its shape and always counts.
     """
-    shown = _redacted_config(config)
-    if isinstance(shown, dict):
-        exposed = [key for key in config if shown.get(key) != config[key] and key != "input"]
+    shown = _sanitized_config(config)
+    if shown is None:
+        exposed = [key for key in config if key != "input"]
     else:
-        exposed = list(config)
+        exposed = [
+            key
+            for key in config
+            if key != "input" and (key in _CREDENTIAL_VALUE_KEYS or shown.get(key) != config[key])
+        ]
     # A key is named only when it is plainly an identifier: a credential pasted into
     # the key position ('--set ghp_...=1' for a plugin, whose keys are not checked)
     # must not be echoed by the warning about credentials on the command line.
@@ -394,16 +402,26 @@ class ConnectorSpec:
 # Locations of credential files are withheld from representations too, as are
 # keys whose values are credentials whatever their shape: identity.jwt `tokens`
 # can hold opaque or malformed tokens that no value pattern recognizes.
-_WITHHELD_KEYS = frozenset({"service_account_file", "credentials_file", "token_file", "tokens"})
+_CREDENTIAL_FILE_KEYS = frozenset({"service_account_file", "credentials_file", "token_file"})
+_CREDENTIAL_VALUE_KEYS = frozenset({"tokens"})
+_WITHHELD_KEYS = _CREDENTIAL_FILE_KEYS | _CREDENTIAL_VALUE_KEYS
+
+
+def _sanitized_config(config: dict[str, Any]) -> dict[str, Any] | None:
+    """The configuration under the report redaction rules alone, or None when they failed."""
+    try:
+        shown = sanitize(dict(config), redact_short_secrets=True)
+    except Exception:  # noqa: BLE001 - a representation must not fail or fall back to raw values
+        return None
+    return shown if isinstance(shown, dict) else None
 
 
 def _redacted_config(config: Any) -> Any:
     """A connector configuration for display: the report redaction rules plus credential-file locations."""
     if not isinstance(config, dict):
         return REDACTED
-    try:
-        shown = sanitize(dict(config), redact_short_secrets=True)
-    except Exception:  # noqa: BLE001 - a representation must not fail or fall back to raw values
+    shown = _sanitized_config(config)
+    if shown is None:
         return dict.fromkeys(config, REDACTED)
     return {key: REDACTED if key in _WITHHELD_KEYS else value for key, value in shown.items()}
 

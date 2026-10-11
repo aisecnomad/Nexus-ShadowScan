@@ -28,14 +28,18 @@ result is not a review.
 
 ## Architecture and trust boundary
 
-1. A `pull_request` workflow (opened, synchronize, reopened, ready_for_review;
-   paths `.github/ai-review/**`) checks out trusted base code and a separate
-   sparse head evidence checkout.
+1. A `pull_request` workflow (opened, synchronize, reopened, ready_for_review,
+   labeled, unlabeled; paths `.github/ai-review/**`) checks out trusted base
+   code and a separate sparse head evidence checkout. A label change re-runs
+   it, so the blocking label takes effect without a new push.
 2. Read-only preflight fetches complete diff and labels through the GitHub API,
    validates evidence, classifies risk, and executes deterministic synthesis.
 3. The orchestrator runs even after preflight fails. It independently repeats
    validation and synthesis, then posts one consolidated GitHub Review and a
-   check run named **AI Review Gate** against the head commit.
+   check run named **AI Review Gate** against the head commit. A run that a
+   newer push cancelled before it publishes posts nothing; the run for the
+   new head re-evaluates the evidence (see [Fail-closed behavior and output](#fail-closed-behavior-and-output)
+   for a run cancelled while it publishes).
 
 No PR Python code, dependencies, actions or hooks are executed. No
 `pull_request_target`, contents write, id-token, release or deployment authority

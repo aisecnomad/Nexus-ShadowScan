@@ -6,8 +6,9 @@ name: Checkmarx Scan
 # when the repository variable CX_BASE_URI names the tenant's base URI (for
 # example https://ast.checkmarx.net) and the CX_CLIENT_ID, CX_CLIENT_SECRET and
 # CX_TENANT secrets exist; until then it is skipped rather than failing every
-# run. Pull requests from forks receive no secrets and a read-only token, so
-# they are skipped too. Results are uploaded to code scanning as SARIF.
+# run. Pull requests from forks and from Dependabot receive no repository
+# secrets and a read-only token, so they are skipped too. Results are uploaded
+# to code scanning as SARIF.
 on:
   pull_request:
     types: [opened, reopened, synchronize]
@@ -26,6 +27,7 @@ jobs:
   build:
     if: >-
       vars.CX_BASE_URI != '' &&
+      github.actor != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30

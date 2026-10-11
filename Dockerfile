@@ -18,7 +18,8 @@
 # Base image: Chainguard's Wolfi base (glibc, rolling security fixes), pinned in
 # both stages to the multi-arch image index digest of chainguard/wolfi-base:latest
 # (the Docker-Content-Digest of the tag's OCI index, which covers the
-# linux/amd64 manifest), resolved from Docker Hub on 2026-10-02. Python 3.12,
+# linux/amd64 manifest), resolved from Docker Hub; the commit that last changed
+# the FROM lines records when. Python 3.12,
 # Git and every native library they load are Wolfi packages, so the CI image
 # scan inventories the interpreter as well; a Python built outside the package
 # manager, as in the official python images, is invisible to it. util-linux,
@@ -37,7 +38,7 @@
 # To refresh by hand, run
 #   docker buildx imagetools inspect chainguard/wolfi-base:latest
 # and copy the top-level image index Digest into both FROM lines after
-# reviewing its source and updating the resolution date above.
+# reviewing its source.
 # Anonymous Docker Hub pulls are rate limited. CI pulls this digest through the
 # mirror.gcr.io pull-through cache; a digest pull is content-verified, so any
 # builder can do the same (docs/production.md).
