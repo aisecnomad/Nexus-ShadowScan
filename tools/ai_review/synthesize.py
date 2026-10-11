@@ -451,9 +451,10 @@ def main() -> int:
 
     unique, duplicates = dedupe(raw, scanner_fingerprints)
     if reason == "stale_findings":
-        # Stale findings are reported, never posted inline against a file the
-        # diff does not contain.
-        unique = [f for f in unique if f.path is None]
+        # A finding that names a file the diff does not contain is counted and
+        # named in the reason, never rendered against that file; the findings
+        # on files the diff does contain stay in the review.
+        unique = [f for f in unique if f.path is None or f.path in diff_files]
     body, comments = render(
         unique,
         conclusion=conclusion,
