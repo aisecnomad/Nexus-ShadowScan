@@ -63,10 +63,12 @@ refused unread (the response body is capped at 64 KiB). A reply that contains
 more than one verdict object, such as one quoted from injected finding text
 beside the model's own, is unparseable too. Requests send no sampling
 parameters such as `temperature`, which current Claude models and OpenAI
-reasoning models reject, and bound the reply to 400 tokens (`max_tokens` for
-Anthropic, `max_completion_tokens` for OpenAI, whose `max_tokens` is deprecated
-and rejected by the o-series models; an OpenAI-compatible endpoint must accept
-it). Free text is truncated (rationale 500 characters, suggested
+reasoning models reject, and bound the response to 4,096 tokens (`max_tokens`
+for Anthropic, `max_completion_tokens` for OpenAI, whose `max_tokens` is
+deprecated and rejected by the o-series models; an OpenAI-compatible endpoint
+must accept it). The bound covers the thinking or reasoning tokens current
+models spend before the verdict, which count toward it; the verdict text itself
+is refused over 16 KiB. Free text is truncated (rationale 500 characters, suggested
 action 200) and sanitized with the rest of the finding when the report is
 written. These controls limit, but cannot prevent, a model being persuaded by
 finding text: never let a pipeline suppress or close findings because of

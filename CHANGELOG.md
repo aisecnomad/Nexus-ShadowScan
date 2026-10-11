@@ -153,6 +153,10 @@ summarizes each release for people who install and operate ShadowScan.
   filters. The triage injection canaries fail when finding text reaches any
   turn other than the one user turn (a prefilled assistant turn passed every
   case before), as the guide already said they do.
+- The last-resort redaction of random-looking literals in evidence snippets
+  also withholds a literal that an excerpt cut before its closing quote (the
+  160-character line trim appends an ellipsis), so the secret's prefix no longer
+  reaches the report.
 - `tests/test_repository_policy.py` requires every workflow job `container:`
   and service image to be pinned by sha256 digest, with the reviewed tag named
   in a comment on the line above, as the Semgrep container is.
@@ -236,7 +240,10 @@ summarizes each release for people who install and operate ShadowScan.
   example one quoted from injected finding text) as `status: unparseable`.
   Requests send no sampling parameters, which current Claude models reject,
   and OpenAI requests bound the reply with `max_completion_tokens` instead of
-  the deprecated `max_tokens`, which the o-series reasoning models reject.
+  the deprecated `max_tokens`, which the o-series reasoning models reject. The
+  bound is 4,096 tokens on both providers: thinking and reasoning tokens count
+  toward it, and the earlier 400 ended responses before any verdict on models
+  that think; the verdict text is still refused over 16 KiB.
   `options.llm_triage.structured_output: true` asks the provider to constrain
   the reply to the verdict JSON schema (`output_config.format` or a strict
   `response_format`); it is off by default because not every model supports it.
