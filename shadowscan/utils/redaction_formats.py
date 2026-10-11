@@ -20,6 +20,7 @@ from shadowscan.utils.redaction_rules import (
     _kept_value,
     _redact_value,
     _sensitive_assignment_key,
+    _setting_level,
 )
 
 # A token inside a longer identifier ('risk-assessment-2024') is not one, so a
@@ -126,23 +127,20 @@ _ADDED_PEM = re.compile(
 # The credential after an authorization scheme. It is never '=' signs alone: after
 # 'bearer =>', '=~' or '==' they are an operator's, and read as the credential
 # they hid the operator from the assignment rules, which then showed the value.
-_AUTH_CREDENTIAL = r"(?!=++(?![A-Za-z0-9+/_.-]))[A-Za-z0-9+/_.=-]+"
+_AUTH_CREDENTIAL = r"(?P<credential>(?!=++(?![A-Za-z0-9+/_.-]))[A-Za-z0-9+/_.=-]+)"
 # 'Bearer token <credential>' names the scheme and then the word: the word is read
 # as part of the scheme only when an opaque credential (16 or more characters with
-# a digit) follows it on the same line, so prose such as 'a Bearer token is
-# required' is unchanged. A name followed by an assignment ('Bearer token
-# postgres_password_1: v', or such a name on the next line) is never read as the
-# credential: withheld here, it hid the name from the assignment rules, which then
-# showed the value.
-_AUTH_WORD = (
-    r"(?:token[ \t]+(?=[A-Za-z0-9+/_.=-]{16})(?=[A-Za-z+/_.=-]*[0-9])"
-    r"(?![A-Za-z0-9+/_.=-]++[ \t]*+[:=]))?"
-)
+# a digit) follows it, so prose such as 'a Bearer token is required' is unchanged.
+# _redact_authorization then keeps a credential name followed by an assignment
+# ('Bearer token postgres_password_1: v', or such a name on the next line): withheld
+# here, it hid the name from the assignment rules, which then showed the value.
+_AUTH_WORD = r"(?:(?P<word>token)(?P<gap>\s+)(?=[A-Za-z0-9+/_.=-]{16})(?=[A-Za-z+/_.=-]*[0-9]))?"
 _AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUTH_CREDENTIAL)
 # A scheme after an escaped line break or a percent escape ('...header:\nBearer v') is read as well.
 _ESCAPED_AUTH = re.compile(
     r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUTH_CREDENTIAL
 )
+_ASSIGNED = re.compile(r"[ \t]*[:=]")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
 _QUERY_TEXT = re.compile(r"\?[^\s<>\"']+")
@@ -162,6 +160,15 @@ def _redact_authorization(text: str) -> str:
     """
 
     def withheld(match: re.Match[str]) -> str:
+        credential = match.group("credential")
+        if (
+            match.group("word")
+            and (_sensitive_assignment_key(credential) or _setting_level(credential))
+            and _ASSIGNED.match(match.string, match.end())
+        ):
+            # 'Bearer token <name>: value': withhold the word as the credential and keep the
+            # name, so the assignment rules still withhold the value after it.
+            return match.group("scheme") + " " + REDACTED + match.group("gap") + credential
         return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n")
 
     text = _AUTH.sub(withheld, text)

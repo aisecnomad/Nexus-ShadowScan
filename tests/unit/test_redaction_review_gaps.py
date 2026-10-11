@@ -73,6 +73,21 @@ def test_token_word_rule_never_takes_a_credential_name(text: str, value: str) ->
     assert "password_1" in out or "CLIENT_SECRET" in out
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"invalid Bearer token {SECRET}: expired",
+        f"rejected Bearer token {SECRET}:401",
+        f"Bearer token {SECRET} : rejected",
+        f"Bearer token\n{SECRET}",
+    ],
+)
+def test_token_word_rule_still_withholds_an_opaque_credential_before_a_colon(text: str) -> None:
+    # Only a credential name is kept before an assignment; an opaque credential never is.
+    out = sanitize_text(text)
+    assert SECRET not in out and REDACTED in out
+
+
 def test_generic_credential_fields_of_an_auth_block_are_withheld() -> None:
     record = {"auth": {"type": "bearer", "value": SECRET, "header": "X-Api"}}
     assert sanitize(record) == {"auth": {"type": "bearer", "value": REDACTED, "header": "X-Api"}}
@@ -151,3 +166,43 @@ def test_short_auth_labels_are_not_removed_from_other_fields() -> None:
     # Only an opaque scalar is remembered: a label such as 'header' must not wipe every field.
     record = {"auth": {"type": "apikey", "key": "header", "value": SECRET}, "name": "Get header names"}
     assert sanitize(record)["name"] == "Get header names"
+
+
+def test_labels_nested_in_an_auth_value_container_never_wipe_other_fields() -> None:
+    # Regression: every leaf of a record- or list-shaped auth field was remembered, so a label
+    # such as 'header' or a URL withheld unrelated fields and collapsed mapping keys.
+    record = {
+        "auth": {"type": "apikey", "key": {"name": "X-API-Key", "in": "header"}},
+        "headers": {"Accept": "application/json"},
+        "x-header": "1",
+        "summary": "Adds a header",
+    }
+    out = sanitize(record)
+    assert out["auth"] == {"type": "apikey", "key": REDACTED}
+    assert {key: out[key] for key in ("headers", "x-header", "summary")} == {
+        "headers": {"Accept": "application/json"},
+        "x-header": "1",
+        "summary": "Adds a header",
+    }
+    postman = {
+        "auth": {
+            "type": "oauth2",
+            "oauth2": [
+                {
+                    "key": "tokenRequestParams",
+                    "value": [
+                        {"key": "resource", "value": "https://graph.microsoft.com", "send_as": "request_body"}
+                    ],
+                },
+                {"key": "accessToken", "value": SECRET},
+            ],
+        },
+        "request": {
+            "url": {"raw": "https://graph.microsoft.com/v1.0/users"},
+            "description": "Reads the resource",
+        },
+        "note": f"token {SECRET} expired",
+    }
+    out = sanitize(postman)
+    assert out["request"] == postman["request"]
+    assert SECRET not in repr(out)

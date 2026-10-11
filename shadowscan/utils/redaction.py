@@ -712,7 +712,7 @@ class _NestedSanitizer(_Sanitizer):
         )
         # An aliased object can occur both outside and inside a credential
         # container. Revisit it under the stricter parent, but still bound cycles.
-        self.containers: set[tuple[int, bool, bool, bool, bool]] = set()
+        self.containers: set[tuple[int, bool, bool, bool, bool, bool]] = set()
 
     def discover(
         self,
@@ -723,6 +723,7 @@ class _NestedSanitizer(_Sanitizer):
         credential: bool = False,
         credential_group: bool = False,
         auth: bool = False,
+        opaque_only: bool = False,
     ) -> None:
         """Remember the leaves of the credential containers in ``item``.
 
@@ -732,13 +733,13 @@ class _NestedSanitizer(_Sanitizer):
         ``credential_group`` marks a container named for credentials.
         ``auth`` marks an item under an auth block, whose generic ``value``,
         ``key`` and ``credential`` fields ``clean`` withholds whatever their
-        shape. Their nested leaves are remembered like any credential
-        container's; a scalar one only when it looks like an opaque key, since
-        such fields also hold labels ('key', 'in', 'header') that must not
-        withhold every field they occur in.
+        shape. Such a field, and every leaf nested in it (``opaque_only``), is
+        remembered only when it looks like an opaque key: the same fields hold
+        labels, placements and URLs ('header', 'in', a Postman token request's
+        'resource' record) that must not withhold every field or key they occur in.
         """
         item = _plain(item)
-        identity = (id(item), environment, credential, credential_group, auth)
+        identity = (id(item), environment, credential, credential_group, auth, opaque_only)
         if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.containers):
             return
         if isinstance(item, _CONTAINERS):
@@ -763,7 +764,7 @@ class _NestedSanitizer(_Sanitizer):
                     credential and _credential_member(lower_name, child, group=child_group)
                 )
                 auth_value = auth and lower_name in _AUTH_VALUE_KEYS
-                if member or (auth_value and _opaque_literal(child)):
+                if member or ((auth_value or opaque_only) and _opaque_literal(child)):
                     self.remember(child)
                 child_auth = (auth or lower_name in _AUTH_CONTAINER_KEYS) and isinstance(
                     child, (Mapping, list, tuple)
@@ -772,13 +773,14 @@ class _NestedSanitizer(_Sanitizer):
                     child,
                     depth + 1,
                     environment=environment or lower_name in _ENVIRONMENT_KEYS,
-                    credential=key_sensitive or member or (auth_value and isinstance(child, _CONTAINERS)),
+                    credential=key_sensitive or member,
                     credential_group=child_group,
                     auth=child_auth,
+                    opaque_only=opaque_only or (auth_value and isinstance(child, _CONTAINERS)),
                 )
         elif isinstance(item, (list, tuple, set, frozenset)):
             for child in item:
-                if credential:
+                if credential or (opaque_only and _opaque_literal(child)):
                     self.remember(child)
                 self.discover(
                     child,
@@ -787,6 +789,7 @@ class _NestedSanitizer(_Sanitizer):
                     credential=credential,
                     credential_group=credential_group,
                     auth=auth,
+                    opaque_only=opaque_only,
                 )
 
     def order(self) -> None:
