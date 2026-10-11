@@ -396,6 +396,14 @@ def get_connector_class(name: str, *, allowed_plugins: Sequence[str] | None = No
             )
         path = registry[name]
         pin = approvals[name]
+        if pin is _CONFLICTING:
+            # Configuration validation refuses a name approved twice; a list that reaches this
+            # point another way must not let a later bare name drop an earlier pin.
+            raise _refuse(
+                name,
+                "conflicting-approval",
+                f"plugin {_display(name)} is approved more than once; keep one entry for it",
+            )
         pinned = pin[0] if pin is not None else None
         if pinned is not None and path != pinned:
             # The approval names the import target it was reviewed with; any other
@@ -417,19 +425,30 @@ def get_connector_class(name: str, *, allowed_plugins: Sequence[str] | None = No
 
 
 _Pin = tuple[str, str | None, str | None]
+# A name approved by more than one entry: neither entry is trusted, whatever their order.
+_CONFLICTING: _Pin = ("", None, None)
 
 
 def _plugin_approvals(entries: Sequence[str]) -> dict[str, _Pin | None]:
-    """Approvals as name -> (target, distribution, version), or None when only the name is approved."""
+    """Approvals as name -> (target, distribution, version), or None when only the name is approved.
+
+    A name that several entries approve maps to :data:`_CONFLICTING`, which
+    :func:`get_connector_class` refuses: the entries could pin different targets, and the
+    last one must not win.
+    """
     approvals: dict[str, _Pin | None] = {}
     for entry in entries:
         name, pinned, rest = entry.partition("=")
+        key = name.strip()
+        if key in approvals:
+            approvals[key] = _CONFLICTING
+            continue
         if not pinned:
-            approvals[name.strip()] = None
+            approvals[key] = None
             continue
         target, _, release = rest.strip().partition("@")
         distribution, _, version = release.partition("==")
-        approvals[name.strip()] = (target, distribution or None, version or None)
+        approvals[key] = (target, distribution or None, version or None)
     return approvals
 
 

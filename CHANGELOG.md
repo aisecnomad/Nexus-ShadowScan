@@ -150,7 +150,11 @@ summarizes each release for people who install and operate ShadowScan.
   refused as `distribution-mismatch` when the installed distribution's metadata
   lacks `Name` or `Version`; the missing header had compared as the string
   "None", and whether the pin was refused depended on the interpreter's warning
-  filters. The triage injection canaries fail when finding text reaches any
+  filters. A connector name that an approval list names twice is refused as
+  `conflicting-approval` by the registry itself (configuration validation
+  already refused it): a later bare name had replaced an earlier pin, so the
+  order of the entries decided whether a typosquatting distribution loaded.
+  The triage injection canaries fail when finding text reaches any
   turn other than the one user turn (a prefilled assistant turn passed every
   case before), as the guide already said they do.
 - The last-resort redaction of random-looking literals in evidence snippets
