@@ -49,3 +49,23 @@ def test_generic_credential_fields_of_an_auth_block_are_withheld() -> None:
     record = {"auth": {"type": "bearer", "value": SECRET, "header": "X-Api"}}
     assert sanitize(record) == {"auth": {"type": "bearer", "value": REDACTED, "header": "X-Api"}}
     assert sanitize({"auth": {"enabled": True}}) == {"auth": {"enabled": True}}
+
+
+def test_credential_fields_nested_in_an_auth_block_are_withheld() -> None:
+    # A scheme record or a list of them under the block carries the same generic fields.
+    record = {
+        "authentication": {
+            "basic": {"username": "svc", "value": SECRET},
+            "schemes": [{"type": "api-key", "key": SECRET, "header": "X-Api"}, {"type": "none"}],
+            "oauth": {"token_url": "https://login.example.com/oauth2/token", "credential": SECRET},
+        },
+        "settings": {"value": "plain"},
+    }
+    assert sanitize(record) == {
+        "authentication": {
+            "basic": {"username": "svc", "value": REDACTED},
+            "schemes": [{"type": "api-key", "key": REDACTED, "header": "X-Api"}, {"type": "none"}],
+            "oauth": {"token_url": "https://login.example.com/oauth2/token", "credential": REDACTED},
+        },
+        "settings": {"value": "plain"},
+    }

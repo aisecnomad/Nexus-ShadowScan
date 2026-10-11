@@ -600,7 +600,9 @@ class _Sanitizer:
             raise SanitizationLimitError("credential replacement size limit exceeded")
         return REDACTED.join(part.replace(secret, REDACTED) for part in parts)
 
-    def clean(self, item: Any, depth: int = 0) -> Any:
+    def clean(self, item: Any, depth: int = 0, *, auth: bool = False) -> Any:
+        """``auth``: the item lies under an ``auth`` container, where a generic ``value``,
+        ``key`` or ``credential`` field is a credential at any depth and inside lists."""
         self.cleaning_steps += 1
         if self.cleaning_steps > _MAX_SANITIZATION_NODES:
             raise SanitizationLimitError("sanitization work limit exceeded")
@@ -611,15 +613,15 @@ class _Sanitizer:
                 return REDACTED
             self.cleaning.add(id(item))
         try:
-            return self.clean_value(item, depth)
+            return self.clean_value(item, depth, auth=auth)
         finally:
             if isinstance(item, _CONTAINERS):
                 self.cleaning.discard(id(item))
 
-    def clean_value(self, item: Any, depth: int) -> Any:
+    def clean_value(self, item: Any, depth: int, *, auth: bool = False) -> Any:
         item = _plain(item)
         if isinstance(item, Mapping):
-            return self.clean_mapping(item, depth)
+            return self.clean_mapping(item, depth, auth=auth)
         if isinstance(item, (list, tuple)):
             sequence_out: list[Any] = []
             redact_next = opaque_next = False
@@ -628,7 +630,7 @@ class _Sanitizer:
                     sequence_out.append(_redact_value(child))
                     redact_next = opaque_next = False
                 else:
-                    sequence_out.append(self.clean(child, depth + 1))
+                    sequence_out.append(self.clean(child, depth + 1, auth=auth))
                     opaque_next = False
                     if isinstance(child, str) and child.startswith("-") and "=" not in child:
                         redact_next = _sensitive_flag(child.lstrip("-"))
@@ -649,24 +651,21 @@ class _Sanitizer:
             return self.text(item)
         return item
 
-    def clean_mapping(self, item: Mapping, depth: int) -> dict[str, Any]:
+    def clean_mapping(self, item: Mapping, depth: int, *, auth: bool = False) -> dict[str, Any]:
         mapping_out: dict[str, Any] = {}
         for key, child in item.items():
             name = str(key)
             result: Any
-            if _sensitive_key(name) or (
-                name.lower() == "value" and _record_has_secret_value(item, extended=self.extended)
+            if (
+                _sensitive_key(name)
+                or (name.lower() == "value" and _record_has_secret_value(item, extended=self.extended))
+                or (auth and name.lower() in _AUTH_VALUE_KEYS and not isinstance(child, _CONTAINERS))
             ):
                 result = _redact_value(child)
-            elif name.lower() in _AUTH_CONTAINER_KEYS and isinstance(child, Mapping):
-                result = {
-                    self.text(str(k)): (
-                        _redact_value(v)
-                        if str(k).lower() in _AUTH_VALUE_KEYS and not isinstance(v, _CONTAINERS)
-                        else self.clean(v, depth + 2)
-                    )
-                    for k, v in child.items()
-                }
+            elif (auth or name.lower() in _AUTH_CONTAINER_KEYS) and isinstance(child, (Mapping, list, tuple)):
+                # An auth block's credential fields can sit in a nested scheme record
+                # ('auth.basic.value') or in a list of them; the rule follows the block down.
+                result = self.clean(child, depth + 1, auth=True)
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
                 result = {self.text(str(k)): _redact_value(v) for k, v in child.items()}
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, list):

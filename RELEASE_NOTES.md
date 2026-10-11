@@ -166,7 +166,8 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
 - Redaction also withholds `Bearer token <value>`, keys ending in
   `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
   literals in setter calls such as `setProperty("openai.key", ...)`, and
-  `value`, `key` and `credential` fields inside an `auth` mapping.
+  `value`, `key` and `credential` fields inside an `auth` mapping, at any depth
+  of the mapping and inside lists under it.
 - Delegated Graph tokens have no configuration key; they are read from the
   environment, registered for redaction and never refreshed. Agent Card
   fetches use the shared HTTPS client, and URLs and key locations named inside

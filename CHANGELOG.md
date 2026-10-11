@@ -221,7 +221,8 @@ summarizes each release for people who install and operate ShadowScan.
 - Redaction withholds the value in `Bearer token <value>`, keys ending in
   `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
   literals passed to setter calls such as `setProperty("openai.key", ...)`,
-  and `value`, `key` and `credential` fields inside an `auth` mapping.
+  and `value`, `key` and `credential` fields inside an `auth` mapping, at any
+  depth of the mapping and inside lists under it.
 - `shadowscan jwt TOKEN...` and `shadowscan run --set` with a credential value
   print a warning that command-line arguments are visible in process listings
   and shell history. The value is never echoed and the scan still runs.
