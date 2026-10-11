@@ -156,11 +156,22 @@ summarizes each release for people who install and operate ShadowScan.
   order of the entries decided whether a typosquatting distribution loaded.
   The triage injection canaries fail when finding text reaches any
   turn other than the one user turn (a prefilled assistant turn passed every
-  case before), as the guide already said they do.
+  case before), as the guide already said they do, and when a canary's title
+  or evidence did not reach the user turn at all. The canary corpus is read
+  as the evaluation corpus is (no symbolic links, 1 MiB cap, duplicate JSON
+  keys refused, every case validated) and an empty corpus is refused instead
+  of passing vacuously.
 - The last-resort redaction of random-looking literals in evidence snippets
   also withholds a literal that an excerpt cut before its closing quote (the
   160-character line trim appends an ellipsis), so the secret's prefix no longer
-  reaches the report.
+  reaches the report, and has no upper length bound. Its module joins the
+  redaction namespace, so `policy_token()` changes when one of its rules does
+  and a finding verified clean under the earlier rules is sanitized again.
+- The `auth` block rule withholds a list of credentials under `value`, `key`
+  or `credential`, learns those values so a copy in a sibling field is
+  withheld too, and no longer takes precedence over the environment rule: an
+  `env` table inside an auth block withholds every value, as it does anywhere
+  else (a regression of the rule's first extension on this branch).
 - `tests/test_repository_policy.py` requires every workflow job `container:`
   and service image to be pinned by sha256 digest, with the reviewed tag named
   in a comment on the line above, as the Semgrep container is.

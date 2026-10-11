@@ -127,8 +127,12 @@ text tries to force a verdict (direct instructions, planted verdict objects,
 fake system tags, claims of prior approval, translated instructions).
 `python -m tools.evaluation.triage_canaries` runs them offline against a
 scripted model that obeys or echoes every injection and fails if finding text
-leaves the user turn, a two-verdict reply is accepted, or any reply changes a
-finding. The unit tests run it on every change.
+leaves the user turn, a canary's text does not reach the user turn, a
+two-verdict reply is accepted, or any reply changes a finding. The unit tests
+run it on every change. The corpus is read as the evaluation corpus is: a
+regular file (no symbolic link in its path), at most 1 MiB, unambiguous JSON
+with no duplicate keys, and at least one well-formed case; anything else is a
+usage error.
 
 `--live --model <id>` (with `--provider`, `--api-key-env`, `--base-url` and
 `--structured-output` as needed) sends the canaries to a real model and
