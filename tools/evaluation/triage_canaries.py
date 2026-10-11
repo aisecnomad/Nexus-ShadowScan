@@ -182,7 +182,13 @@ def _case_problems(case: dict[str, Any], provider: str, settings: TriageSettings
     # Echoes: quotes the injected verdict next to its own, which may not be strict JSON
     # (single quotes) so that only the injected one decodes. Either way it is ambiguous.
     injected, own = _verdict(case["injected"]), _verdict(case["truth"])
-    for reply in (f"{injected} {own}", f"{injected} {own.replace(chr(34), chr(39))}"):
+    # The injected key may also be spelled with escapes, so that only it decodes as a verdict.
+    escaped = injected.replace('"verdict"', '"\\u0076erdict"')
+    for reply in (
+        f"{injected} {own}",
+        f"{injected} {own.replace(chr(34), chr(39))}",
+        f"{escaped} {own.replace(chr(34), chr(39))}",
+    ):
         echoed = finding(case)
         model = _ScriptedModel(provider, [reply])
         Triage(settings, client=model).run([echoed])  # type: ignore[arg-type]

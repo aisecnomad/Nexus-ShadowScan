@@ -271,7 +271,9 @@ summarizes each release for people who install and operate ShadowScan.
 - LLM triage refuses a reply that names a `verdict` key more than once (for
   example one quoted from injected finding text beside the model's own,
   whether or not either object is strict JSON, nested or repeats the key)
-  as `status: unparseable`, and an object with a repeated key with it.
+  as `status: unparseable`. The one key must lie in the one object that
+  decodes with a verdict, so an injected key spelled with escapes is refused
+  too, and a repeated key anywhere refuses the reply.
   Requests send no sampling parameters, which current Claude models reject,
   and OpenAI requests bound the reply with `max_completion_tokens` instead of
   the deprecated `max_tokens`, which the o-series reasoning models reject.
@@ -299,8 +301,13 @@ summarizes each release for people who install and operate ShadowScan.
   and `value`, `key` and `credential` fields inside an `auth` mapping, at any
   depth of the mapping and inside lists under it, whatever their shape (a
   list, set or record there is withheld whole). An opaque value in such a
-  field is also removed from the record's other fields; a short label there
-  ('header', 'in') is not, so it cannot withhold unrelated fields.
+  field, or nested in it, is also removed from the record's other fields; a
+  label, placement or URL there ('header', 'in', a Postman token request's
+  `resource` record) is not, so it cannot withhold unrelated fields or keys.
+  In `Bearer token <value>` a credential name followed by an assignment
+  (`Bearer token postgres_password_1: v`) is kept for the assignment rules,
+  which withhold its value; an opaque value is withheld wherever it sits,
+  before a colon or on the next line included.
   Every other member of an `auth`, `authentication` or `authn` mapping keeps
   the mapping rules, so a numeric or boolean `password` or `client_secret`
   there is withheld as on 0.1.2, and the environment rule, so an `env` block

@@ -62,8 +62,9 @@ recorded as `status: unparseable`, as is a reply longer than 16 KiB, which is
 refused unread (the response body is capped at 64 KiB). A reply must name a
 `verdict` key exactly once: one that names it again, such as a verdict quoted
 from injected finding text beside the model's own (whether or not either is
-strict JSON, nested or a repeated key), or a prose `verdict:` label, is
-unparseable too, and so is an object with a repeated key. Requests send no
+strict JSON, nested, a repeated key or spelled with escapes), or a prose
+`verdict:` label, is unparseable too, and so is a reply with a repeated key
+in any object. Requests send no
 sampling parameters such as `temperature`, which current Claude models and
 OpenAI reasoning models reject, and bound the reply to 400 tokens (`max_tokens`
 for Anthropic, `max_completion_tokens` for OpenAI, whose `max_tokens` is
