@@ -295,8 +295,9 @@ and a schedule trigger recorded by another give floor L5
 then widens the interval so it admits at least what every source's block
 admits: the highest floor and the highest ceiling, oversight `bypassed` over
 `unknown` over `gated`, and initiation `schedule` over `event` over `unknown`
-over `human`. A widened bound keeps the basis rules of the source block that
-set it. Approval-bypass evidence that only a later source recorded therefore
+over `human`. A widened bound keeps the basis rules of every source block that
+set it, so the merged block does not depend on the order of the sources.
+Approval-bypass evidence that only a later source recorded therefore
 raises the merged interval, and an approval gate that only one source recorded
 cannot lower it below another source's block. A declared level applies only
 while the merged finding is registered (sources with an inventory matched it

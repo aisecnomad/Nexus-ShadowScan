@@ -10,7 +10,7 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from shadowscan.autonomy import SCHEMA, UNDERSTATED_TAG, classify, merge_autonomy, valid_autonomy
+from shadowscan.autonomy import SCHEMA, UNDERSTATED_TAG, classify, level_title, merge_autonomy, valid_autonomy
 from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
@@ -439,6 +439,41 @@ def test_fleet_merge_never_admits_less_than_a_source_block(tmp_path, index):
         ]
     assert [item for item in autonomy["basis"] if item["bound"] == "initiation"] == [
         {"bound": "initiation", "rule": "no-initiation-evidence", "value": "unknown"}
+    ]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_fleet_merge_basis_of_tied_source_blocks_is_order_independent(reverse):
+    # Regression: two blocks that raised a bound equally above the merged classification kept
+    # only the first one's rules, so `shadowscan merge a b` and `shadowscan merge b a` differed.
+    merged = Finding(
+        surface=Surface.CODE,
+        connector="code.filesystem",
+        kind=Kind.AGENT,
+        title="Agent",
+        resource="repository",
+        resource_type="project",
+    )
+    base = classify(merged)
+    assert base is not None and base["floor"] == 0
+    rest = [item for item in base["basis"] if item["bound"] != "floor"]
+
+    def block(*rules: tuple[str, int]) -> dict[str, Any]:
+        floor = [{"bound": "floor", "rule": rule, "value": value} for rule, value in rules]
+        return {**base, "floor": 3, "floor_label": level_title(3), "basis": [*floor, *rest]}
+
+    tools = block(("ai-system", 0), ("tool-access", 1), ("agentic-execution", 3))
+    effects = block(("ai-system", 0), ("side-effect-tools", 2), ("agentic-execution", 3))
+    assert valid_autonomy(tools) and valid_autonomy(effects)
+    merge_autonomy(merged, [effects, tools] if reverse else [tools, effects])
+    autonomy = merged.metadata["autonomy"]
+    assert valid_autonomy(autonomy) and autonomy["floor"] == 3
+    # Every block that set the bound contributes its rules, in rule order.
+    assert [item["rule"] for item in autonomy["basis"] if item["bound"] == "floor"] == [
+        "ai-system",
+        "tool-access",
+        "side-effect-tools",
+        "agentic-execution",
     ]
 
 

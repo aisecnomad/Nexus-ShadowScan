@@ -405,8 +405,9 @@ def merge_autonomy(finding: Finding, sources: Sequence[Any]) -> None:
     reports (approval bypassed in one and a schedule trigger in another reach L5). It is then
     widened so it admits at least what any source's block admits: the highest floor and
     ceiling, oversight ``bypassed`` over ``unknown`` over ``gated`` and initiation ``schedule``
-    over ``event`` over ``unknown`` over ``human``. A widened bound keeps the basis of the block
-    that set it. While the merged finding is registered, the lowest level any block declares
+    over ``event`` over ``unknown`` over ``human``. A widened bound keeps the basis of every block
+    that set it, so the merged block does not depend on the order of the reports. While the
+    merged finding is registered, the lowest level any block declares
     for the agent it is registered to is kept, whatever the order of the reports, and compared
     with the merged interval as :func:`apply_autonomy` compares it.
     """
@@ -440,11 +441,19 @@ def merged_autonomy(finding: Finding, sources: Sequence[Any]) -> tuple[dict[str,
         return None, False
     basis = {bound: [item for item in autonomy["basis"] if item["bound"] == bound] for bound in BOUNDS}
     for bound in BOUNDS:
-        # max() keeps the first of equal blocks, so the classified interval wins ties.
-        widest = max([autonomy, *blocks], key=lambda block: _rank(bound, block[bound]))
-        if _rank(bound, widest[bound]) > _rank(bound, autonomy[bound]):
-            autonomy[bound] = widest[bound]
-            basis[bound] = [item for item in widest["basis"] if item["bound"] == bound]
+        classified = _rank(bound, autonomy[bound])
+        widest = max((_rank(bound, block[bound]) for block in blocks), default=classified)
+        if widest > classified:
+            # Every block that set the bound contributes its rules, ordered by rule and value, so
+            # the merged basis does not depend on which report came first.
+            setters = [block for block in blocks if _rank(bound, block[bound]) == widest]
+            autonomy[bound] = setters[0][bound]
+            basis[bound] = _ordered(
+                sorted(
+                    (item for block in setters for item in block["basis"] if item["bound"] == bound),
+                    key=lambda item: (_RULE_ORDER[item["rule"]], item["value"]),
+                )
+            )
     # Every interval here has floor <= ceiling, so the highest floor never exceeds the highest
     # ceiling.
     autonomy["floor_label"] = level_title(autonomy["floor"])
