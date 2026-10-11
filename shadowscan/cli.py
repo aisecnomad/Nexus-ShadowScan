@@ -367,8 +367,8 @@ security_options = [
     click.option(
         "--allow-plugin",
         multiple=True,
-        help="allow one reviewed third-party connector: NAME, or NAME=module:Class to pin its target"
-        " (repeatable)",
+        help="allow one reviewed third-party connector: NAME, or NAME=module:Class to pin its target,"
+        " optionally with @distribution==version (repeatable)",
     ),
     click.option(
         "--allow-signature-override/--deny-signature-override",

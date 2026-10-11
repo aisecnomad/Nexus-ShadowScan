@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -394,7 +395,8 @@ def get_connector_class(name: str, *, allowed_plugins: Sequence[str] | None = No
                 f"third-party connector '{name}' is not approved; add its exact name to options.plugins"
             )
         path = registry[name]
-        pinned = approvals[name]
+        pin = approvals[name]
+        pinned = pin[0] if pin is not None else None
         if pinned is not None and path != pinned:
             # The approval names the import target it was reviewed with; any other
             # distribution now claiming the name is refused before it is imported.
@@ -404,6 +406,8 @@ def get_connector_class(name: str, *, allowed_plugins: Sequence[str] | None = No
                 f"plugin {_display(name)} resolves to {_display(path)}, not its approved target "
                 f"{_display(pinned)}",
             )
+        if pin is not None and pin[1] is not None:
+            _check_distribution(name, path, pin[1], pin[2] or "")
     if name in _cache and _cache_targets.get(name) == path:
         return _cache[name]
     cls = _load(path) if name in _BUILTIN else _load_plugin(name, path)
@@ -412,13 +416,55 @@ def get_connector_class(name: str, *, allowed_plugins: Sequence[str] | None = No
     return cls
 
 
-def _plugin_approvals(entries: Sequence[str]) -> dict[str, str | None]:
-    """``name`` or ``name=module:Class`` approvals as name -> pinned target (None when unpinned)."""
-    approvals: dict[str, str | None] = {}
+_Pin = tuple[str, str | None, str | None]
+
+
+def _plugin_approvals(entries: Sequence[str]) -> dict[str, _Pin | None]:
+    """Approvals as name -> (target, distribution, version), or None when only the name is approved."""
+    approvals: dict[str, _Pin | None] = {}
     for entry in entries:
-        name, pinned, target = entry.partition("=")
-        approvals[name.strip()] = target.strip() if pinned else None
+        name, pinned, rest = entry.partition("=")
+        if not pinned:
+            approvals[name.strip()] = None
+            continue
+        target, _, release = rest.strip().partition("@")
+        distribution, _, version = release.partition("==")
+        approvals[name.strip()] = (target, distribution or None, version or None)
     return approvals
+
+
+def _normalized_distribution(name: str) -> str:
+    # PEP 503 normalization: "Acme_Plugin" and "acme-plugin" name one project.
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _check_distribution(name: str, path: str, distribution: str, version: str) -> None:
+    """Refuse a plugin whose entry point is not provided by the pinned distribution and version.
+
+    Only installed metadata is read; nothing is imported. The metadata is as
+    trustworthy as the environment it was installed into, so this binds a
+    reviewed release, not file contents: keep plugins in a hash-locked install.
+    """
+    found: set[tuple[str, str]] = set()
+    try:
+        for ep in entry_points(group="shadowscan.connectors"):
+            if ep.name != name or ep.value != path:
+                continue
+            dist = ep.dist
+            if dist is None:
+                continue
+            found.add((_normalized_distribution(str(dist.metadata["Name"])), str(dist.version)))
+    except Exception as exc:
+        raise _refuse(
+            name, "distribution-mismatch", f"plugin {_display(name)} distribution metadata is unreadable"
+        ) from exc
+    if found != {(_normalized_distribution(distribution), version)}:
+        raise _refuse(
+            name,
+            "distribution-mismatch",
+            f"plugin {_display(name)} is not provided by its approved distribution "
+            f"{_display(distribution)}=={_display(version)}",
+        )
 
 
 def connectors_for_surface(surface: Surface | str) -> list[str]:

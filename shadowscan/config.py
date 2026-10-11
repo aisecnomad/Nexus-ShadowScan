@@ -698,7 +698,9 @@ def _boolean_option(value: Any, name: str) -> bool:
     return value
 
 
-_PLUGIN_TARGET_RX = re.compile(r"[A-Za-z_][\w.]*:[A-Za-z_][\w.]*")
+_PLUGIN_TARGET_RX = re.compile(
+    r"[A-Za-z_][\w.]*:[A-Za-z_][\w.]*(?:@[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?==[A-Za-z0-9][A-Za-z0-9.+!_-]*)?"
+)
 
 
 def validate_plugins(value: Any) -> list[str]:
@@ -706,7 +708,9 @@ def validate_plugins(value: Any) -> list[str]:
 
     An entry is a connector name, or ``name=module:Class`` to also pin the
     entry point's import target: a pinned plugin whose installed entry point
-    names another target is refused instead of imported.
+    names another target is refused instead of imported. Appending
+    ``@distribution==version`` also pins the installed distribution that
+    provides the entry point, read from its metadata before import.
     """
     if not isinstance(value, list) or any(not isinstance(name, str) or not name.strip() for name in value):
         raise ConfigValidationError("options.plugins must be a list of nonempty connector names")
@@ -717,7 +721,8 @@ def validate_plugins(value: Any) -> list[str]:
         name, target = name.strip(), target.strip()
         if not name or (pinned and not _PLUGIN_TARGET_RX.fullmatch(target)):
             raise ConfigValidationError(
-                "options.plugins entries must be a connector name or name=module:Class"
+                "options.plugins entries must be a connector name or "
+                "name=module:Class, optionally followed by @distribution==version"
             )
         if name in names:
             raise ConfigValidationError("options.plugins approves a connector name more than once")

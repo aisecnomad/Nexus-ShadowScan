@@ -13,7 +13,9 @@ summarizes each release for people who install and operate ShadowScan.
 - `--allow-plugin` and `options.allowed_plugins` accept `name=module:Class`.
   A pinned approval refuses a plugin whose entry point resolves elsewhere
   (`target-mismatch`); a bare name keeps the previous behavior. Duplicate
-  approvals for one name are refused.
+  approvals for one name are refused. `name=module:Class@distribution==version`
+  also requires the entry point to come from that installed distribution and
+  version (`distribution-mismatch`), checked from metadata before import.
 - Redaction withholds the value in `Bearer token <value>`, keys ending in
   `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
   literals passed to setter calls such as `setProperty("openai.key", ...)`,
