@@ -659,14 +659,14 @@ class _Sanitizer:
             ):
                 result = _redact_value(child)
             elif name.lower() in _AUTH_CONTAINER_KEYS and isinstance(child, Mapping):
-                result = {
-                    self.text(str(k)): (
-                        _redact_value(v)
-                        if str(k).lower() in _AUTH_VALUE_KEYS and not isinstance(v, _CONTAINERS)
-                        else self.clean(v, depth + 2)
-                    )
-                    for k, v in child.items()
-                }
+                # Withhold the block's own value keys, and give every other member the
+                # mapping rules too: a sensitive key holds a credential whatever its type.
+                result = {}
+                for k, v in child.items():
+                    if str(k).lower() in _AUTH_VALUE_KEYS and not isinstance(v, _CONTAINERS):
+                        result[self.text(str(k))] = _redact_value(v)
+                    else:
+                        result.update(self.clean_mapping({k: v}, depth + 1))
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
                 result = {self.text(str(k)): _redact_value(v) for k, v in child.items()}
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, list):

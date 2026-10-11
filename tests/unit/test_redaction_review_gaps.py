@@ -49,3 +49,14 @@ def test_generic_credential_fields_of_an_auth_block_are_withheld() -> None:
     record = {"auth": {"type": "bearer", "value": SECRET, "header": "X-Api"}}
     assert sanitize(record) == {"auth": {"type": "bearer", "value": REDACTED, "header": "X-Api"}}
     assert sanitize({"auth": {"enabled": True}}) == {"auth": {"enabled": True}}
+
+
+@pytest.mark.parametrize("container", ["auth", "authentication", "authn"])
+@pytest.mark.parametrize("secret", [31415926535, 2.718, True])
+def test_non_string_credentials_in_an_auth_block_are_withheld(container: str, secret: object) -> None:
+    # The auth-block rule must add to the mapping rules, not replace them: a
+    # sensitive key holds a credential whatever the type of its value.
+    record = {container: {"type": "basic", "username": "svc", "password": secret, "client_secret": secret}}
+    assert sanitize(record) == {
+        container: {"type": "basic", "username": "svc", "password": REDACTED, "client_secret": REDACTED}
+    }
