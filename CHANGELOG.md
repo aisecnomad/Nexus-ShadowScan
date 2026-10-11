@@ -5,6 +5,27 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Nine-surface discovery benchmark (October 11)
+
+- `benchmarks/nine-surface/` and `tools/nine_surface/`: a standardized,
+  tool-neutral benchmark across all nine discovery surfaces. A seeded
+  generator writes platform-native inputs (Okta and Graph exports, LiteLLM
+  and Bedrock invocation logs, Power Platform and n8n exports, Slack and
+  GitHub App admin exports, AWS CLI outputs and Kubernetes workload lists,
+  developer home directories, Zeek logs, osquery process tables) with
+  entity-level ground truth, tolerated keys and decoys; active-network cases
+  serve mock products on loopback and live-runtime cases spawn inert
+  processes, so active scanners and process scanners run offline. Code cases
+  reuse 26 pinned repositories of the code-surface corpus. The runner
+  executes every adapter in fresh network and PID namespaces and keeps the
+  verbatim output; the scorer reports entity and case-level precision,
+  recall, F1, specificity, agent-tier recall and false alarms, estate recall
+  and paired McNemar tests with intervals. Adapters cover ShadowScan, Snyk
+  Agent Scan, Cisco MCP Scanner, Microsoft's `agent-discovery`,
+  AgentDiscover, Numbat, SafeDep vet, AI-Infra-Guard and Fleet's `ai_tools`
+  table. The corpus, rubrics and results are author-written and not
+  independent review; the README states the limits.
+
 ### Integration review corrections (October 11)
 
 - `shadowscan run --set` no longer warns that a credential is on the command

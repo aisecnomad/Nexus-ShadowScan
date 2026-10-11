@@ -45,6 +45,21 @@ complete in the baseline and is now incomplete (exit 3) fails the run.
 Incomplete runs are scored on the facts they found and marked `(incomplete)`
 in REPORT.md, never as clean negatives.
 
+## Nine-surface benchmark against other tools
+
+`benchmarks/nine-surface/` extends the comparison to every discovery surface:
+identity, gateway, low-code, SaaS, cloud, endpoint, network and runtime inputs
+are generated from written rubrics in the platforms' native shapes, with
+entity-level truth, tolerated keys and decoys, and the code surface reuses 26
+pinned repositories of the code-surface corpus. Active-network cases serve mock
+products on loopback and live-runtime cases spawn inert processes inside the
+tool's namespaces, so scanners that only work live can be measured offline.
+The harness is `tools/nine_surface/` (`python -m tools.nine_surface`). Its
+corpus is synthetic and author-written on eight surfaces, so it is a behaviour
+check on known inputs, not field precision or recall; see its README for the
+rubrics, the bias controls and the limits, and its newest `REPORT.md` for the
+measured numbers.
+
 ## Run the reproducible corpora
 
 From the reviewed checkout, with the package dependencies installed:
