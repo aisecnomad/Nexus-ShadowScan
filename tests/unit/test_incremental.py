@@ -319,6 +319,24 @@ def test_cache_entry_with_an_invalid_evidence_weight_is_a_miss(tmp_path, index, 
     assert all(0 <= item.weight <= 1 for finding in result.findings for item in finding.evidence)
 
 
+@pytest.mark.parametrize("warnings", [[{"a": 1}], [3], [None], [["x"]], ["text", 7]])
+def test_cache_entry_with_non_text_warnings_is_a_miss(tmp_path, index, monkeypatch, warnings):
+    # The payload digest is recomputed, so only the warnings make the entry unusable: a
+    # warning that is not text must not reach ScanStats.warnings and the report.
+    cfg = config(tmp_path)
+    calls = count_runs(monkeypatch)
+    Engine(cfg, index).run()
+    entry = next((tmp_path / "state").glob("*.json"))
+    data = json.loads(entry.read_text())
+    data["payload"]["warnings"] = warnings
+    data["payload_sha256"] = hashlib.sha256(_json(data["payload"])).hexdigest()
+    entry.write_text(json.dumps(data))
+    result = Engine(cfg, index).run()
+    assert result.findings and result.complete and not result.stats[0].cached
+    assert len(calls) == 2
+    assert all(isinstance(warning, str) for warning in result.stats[0].warnings)
+
+
 def test_keyed_cache_rejects_an_entry_rewritten_without_the_key(tmp_path, index):
     # An unkeyed checksum can be recomputed by anyone who can write the state
     # directory; with an identity key the entry must carry a keyed MAC.

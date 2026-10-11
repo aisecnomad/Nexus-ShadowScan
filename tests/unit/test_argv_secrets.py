@@ -23,6 +23,31 @@ def test_a_credential_in_the_key_position_is_never_named() -> None:
     assert token not in repr(argv_credential_keys({token: "1"}))
 
 
+def test_credential_file_paths_are_not_credentials_but_tokens_always_are() -> None:
+    # Passing a credential file's location on the command line is the documented
+    # practice; the location is withheld from representations, not a secret.
+    conf = {
+        "credentials_file": "/etc/shadowscan/sa.json",
+        "service_account_file": "~/.config/gcloud/sa.json",
+        "token_file": "/run/secrets/token",
+        "project": "demo",
+    }
+    assert argv_credential_keys(conf) == []
+    # A credential given under one of those keys is still a credential on argv.
+    assert argv_credential_keys({"token_file": JWT}) == ["token_file"]
+    # identity.jwt `tokens` holds credential material whatever its shape.
+    assert argv_credential_keys({"tokens": "opaque"}) == ["tokens"]
+
+
+def test_run_does_not_warn_for_a_credential_file_path(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "_run_scan", lambda config, opts: None)
+    result = CliRunner().invoke(
+        cli.main, ["run", "cloud.gcp", "--set", "credentials_file=/etc/shadowscan/sa.json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "command line" not in result.output
+
+
 def test_run_warns_for_a_secret_set_value(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_run_scan", lambda config, opts: None)
     result = CliRunner().invoke(

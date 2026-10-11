@@ -897,7 +897,11 @@ class IncrementalCache:
             payload = data["payload"]
             if not hmac.compare_digest(self._payload_digest(payload, snapshot), data[self._digest_field()]):
                 return None
-            if not isinstance(payload["findings"], list) or not isinstance(payload["warnings"], list):
+            if (
+                not isinstance(payload["findings"], list)
+                or not isinstance(payload["warnings"], list)
+                or not all(isinstance(warning, str) for warning in payload["warnings"])
+            ):
                 return None
             findings = []
             for record in payload["findings"]:
