@@ -44,8 +44,9 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
   resource, so their finding ids change: re-baseline AWS scans that include
   gateways.
 - Low-code autonomy evidence is read more strictly: triggers a person operates
-  (n8n manual, chat and form triggers, Make on-demand scenarios, Workato
-  Workbot commands, Zapier Chrome extension or Interfaces steps) no longer add
+  (n8n manual, chat and form triggers, Workato Workbot commands, Zapier
+  Chrome extension or Interfaces steps), and Make on-demand scenarios, which a
+  person or a call can start, no longer add
   the `autonomous` capability, a schedule is tagged `scheduled` only, and a
   ServiceNow agent carries `tool-use` only when the export holds its tool
   records. Make now reads `scheduling.type`, so a polling scenario gains the
@@ -79,7 +80,8 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
   plugin's entry point; a mismatch is refused as `target-mismatch`, duplicate
   approvals are refused, and a bare name behaves as before. `shadowscan jwt` and
   `run --set` warn when a credential is passed on the command line; the value is
-  never echoed.
+  never echoed. The warning goes to stderr, so a wrapper that parses `2>&1` as
+  a report must read stdout or `-o FILE` alone.
 - Approval gates of coding-agent clients read `some-actions` in more cases where
   part of the settings evidence was not read: an oversize settings file skipped
   without a gap, and every project of a repository whose GitHub or GitLab tree

@@ -137,6 +137,24 @@ package.
    Compare the wheel's SHA-256 with `SHA256SUMS` in the retained
    `release-candidate-<SHA>` artifact. On PyPI, the file's provenance should
    name this repository, `release.yml` and the `pypi` environment.
+
+   To confirm the bytes from source rather than from the attestation, rebuild
+   the wheel the way `release.yml` does and compare digests. Every archive
+   entry is stamped with the commit time (`SOURCE_DATE_EPOCH`), so a rebuild
+   of the tagged commit with the same hash-locked build backend yields the
+   same file; `make build` applies the same stamp to a local build.
+
+   ```bash
+   git -c advice.detachedHead=false checkout --detach v0.1.2
+   python -m venv "$TMPDIR/rebuild" && "$TMPDIR/rebuild/bin/python" -m pip install \
+     --require-hashes --only-binary=:all: -r requirements-build.lock
+   SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" "$TMPDIR/rebuild/bin/python" -m pip wheel . \
+     --no-deps --no-build-isolation --wheel-dir "$TMPDIR/rebuild/dist"
+   sha256sum "$TMPDIR/rebuild/dist/"nexusshadowscan-*.whl wheels/nexusshadowscan-*.whl
+   ```
+
+   A differing digest means the published wheel was not built from that
+   commit with that backend; treat it as a release incident.
 7. **Optionally, create the GitHub release by hand** from the tag, using the
    version's `RELEASE_NOTES.md` section. The workflow never creates one.
 8. **Open the next candidate.** Bump the version (for example to `0.1.3`) and

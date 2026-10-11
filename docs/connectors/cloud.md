@@ -156,15 +156,14 @@ or approve its records.
 
 A record's `listing_complete` is true only when its registry's record listing
 finished in this scan without a denial, a failed or truncated page, a skipped
-malformed record or the `max_registry_records` cap, and every record of the
-scan reached the report. A runtime, gateway or registry record that analysis
-rejects, that an export rejects or a replay drops (an unreadable line, a byte
-budget that cuts the input), or whose finding is omitted for failing
-sanitization may be the one a claim depends on: every record's
-`listing_complete` is then false and every in-scope binding `unknown`, so
-nothing reads `observed-not-registered` or `registered-not-observed`, and the
-scan is incomplete (default 1000 records per
-region and registry namespace). Reaching the cap, a denied or throttled call,
+malformed record or the `max_registry_records` cap (default 1000 records per
+region and registry namespace), and every record of the scan reached the
+report. A runtime, gateway or registry record that analysis rejects, that an
+export rejects or a replay drops (an unreadable line, a byte budget that cuts
+the input), or whose finding is omitted for failing sanitization may be the
+one a claim depends on: every record's `listing_complete` is then false and
+every in-scope binding `unknown`, so nothing reads `observed-not-registered`
+or `registered-not-observed`, and the scan is incomplete. Reaching the cap, a denied or throttled call,
 an unsupported region, an SDK without the service and a malformed response all
 mark the scan incomplete (exit 3); records already read are kept. A record
 whose details (`GetRegistryRecord`) failed is still reported from its listing
@@ -221,10 +220,13 @@ there `complete` says only that the discovery listing finished, never that an
 approved-only listing is complete. A registry record without these markers, as
 in exports written before they existed, replays as incomplete: regenerate such
 exports. A gateway in an export written before `GetGateway` was read has no
-ARN, so the bindings of its region replay `out-of-scope`. Analysis bounds the
+ARN, so the bindings of its region replay `out-of-scope`, no registry listing
+reads as complete, and the replay is incomplete; a live runtime or gateway
+without its ARN does the same, so a live scan and the replay of its export
+agree. Analysis bounds the
 text of a replayed record to the lengths collection keeps (names, display
-names, status reasons and registry names to 300 characters, record versions to
-64) and rebuilds its descriptor summary with the collection limits and fields,
+names, status reasons and registry names to 300 characters, record versions and
+times to 64) and rebuilds its descriptor summary with the collection limits and fields,
 so an edited or hand-written export reports no more than a live scan would. The registry responses in the tests and in `aws_registry_records.jsonl`
 are synthetic, modeled on the installed SDK models; they were not validated
 against a live account.

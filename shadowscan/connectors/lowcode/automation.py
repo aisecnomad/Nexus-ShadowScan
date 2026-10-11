@@ -60,15 +60,18 @@ _N8N_HUMAN_TRIGGERS = re.compile(
     r"\.(manualTrigger|chatTrigger|manualChatTrigger|formTrigger|evaluationTrigger)$", re.I
 )
 _N8N_SCHEDULE_TRIGGERS = re.compile(r"\.(scheduleTrigger|cron|interval)$", re.I)
-# Make ``scheduling.type``: an on-demand scenario waits for the Run once button or an API call,
-# an instant trigger runs immediately on its webhook, and every other type is a schedule.
+# Make ``scheduling.type``: an on-demand scenario waits for the Run once button or a call (the
+# API, another scenario, an AI agent or an MCP client), so it records no initiation either way; an
+# instant trigger runs immediately on its webhook, and every other type is a schedule.
 _MAKE_SCHEDULE_TYPES = frozenset({"indefinitely", "interval", "once", "daily", "weekly", "monthly", "yearly"})
 _MAKE_WEBHOOK_MODULES = re.compile(r"hook", re.I)
-# Workato trigger providers: Scheduler by Workato (``clock``) and the Workbot commands a person
-# issues in Slack or Teams. Every other trigger line reacts to its app, a webhook, an API call or
-# another recipe.
+# Workato trigger providers: Scheduler by Workato (``clock``) and Workbot, whose commands, menus,
+# buttons, modals and shortcuts a person operates in Slack or Teams. A Workbot event trigger
+# reacts to the workspace's events, a bot's messages included, like every other trigger line,
+# which reacts to its app, a webhook, an API call or another recipe.
 _WORKATO_SCHEDULE_PROVIDERS = re.compile(r"^(?:clock|scheduler)\b|schedul", re.I)
 _WORKATO_HUMAN_PROVIDERS = re.compile(r"workbot", re.I)
+_WORKBOT_HUMAN_TRIGGERS = re.compile(r"command|menu|modal|button|action|shortcut", re.I)
 # Zapier apps a person operates: the Chrome extension's push, an Interfaces form and a chatbot.
 _ZAPIER_HUMAN_APPS = re.compile(r"zapier (?:chrome extension|interfaces|chatbots)|\bmanual\b", re.I)
 
@@ -505,13 +508,15 @@ class MakeConnector(_AutomationBase):
     def _scenario_initiations(scheduling: Any, triggers: list[str]) -> set[str]:
         """What starts a scenario: its ``scheduling.type`` when the export has it, and its webhooks.
 
-        A module name alone says little: the first module of an on-demand scenario runs only when a
-        person presses Run once, and a polling (``watch``) module runs on the scenario's schedule.
+        A module name alone says little: the first module of an on-demand scenario runs only when
+        the scenario is run (a person's Run once, or a call from the API, another scenario, an AI
+        agent or an MCP client, so no initiation is recorded either way; a webhook's queue waits
+        for that run too), and a polling (``watch``) module runs on the scenario's schedule.
         """
         kind = scheduling.get("type") if isinstance(scheduling, dict) else None
         kind = kind.strip().lower() if isinstance(kind, str) else ""
         if kind == "on-demand":
-            return {HUMAN}
+            return set()
         found: set[str] = set()
         if kind == "immediately":
             found.add(EVENT)
@@ -759,7 +764,8 @@ class WorkatoConnector(_AutomationBase):
             return None
         if _WORKATO_SCHEDULE_PROVIDERS.search(trigger):
             return SCHEDULE
-        if _WORKATO_HUMAN_PROVIDERS.search(trigger):
+        provider, _, name = trigger.partition(":")
+        if _WORKATO_HUMAN_PROVIDERS.search(provider) and _WORKBOT_HUMAN_TRIGGERS.search(name):
             return HUMAN
         return EVENT
 

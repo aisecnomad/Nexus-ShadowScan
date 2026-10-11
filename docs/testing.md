@@ -9,7 +9,8 @@ this page is the practical companion.
 
 ShadowScan supports CPython 3.11, 3.12 and 3.13 on Linux and macOS. On Windows
 use WSL: the confined file reader needs `O_NOFOLLOW` and `dir_fd`, and the
-Makefile assumes `/tmp` and a `.venv/bin` layout.
+Makefile needs `/bin/bash`, `mktemp` under `$TMPDIR` (default `/tmp`) and the
+POSIX `venv/bin` layout.
 
 ```bash
 python -m venv .venv

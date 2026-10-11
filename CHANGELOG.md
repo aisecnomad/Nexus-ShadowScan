@@ -5,6 +5,48 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Integration review corrections (October 11)
+
+- `shadowscan run --set` no longer warns that a credential is on the command
+  line when the value is a credential file's location (`credentials_file`,
+  `service_account_file`, `token_file`), the documented way to pass one. A
+  credential-looking value under those keys, and `tokens`, still warn, and the
+  locations stay withheld from configuration representations.
+- An incremental cache entry whose `warnings` list holds anything but text is
+  a cache miss and the input is rescanned. Before, an unkeyed entry with such
+  a list loaded and the objects reached the report's warnings.
+- AI review gate: the workflow also runs when a label is added or removed, so
+  `ai-review: blocked` takes effect without a new push; a run that a newer
+  push cancelled publishes nothing instead of a fail-closed review against the
+  superseded head; and when a finding names a file outside the diff, the
+  findings on files inside the diff stay in the review (the gate still fails
+  `stale_findings`; before, every located finding was left out).
+- `make build` and CI's wheel build stamp the archive entries with the HEAD
+  commit time (`SOURCE_DATE_EPOCH`), as `release.yml` already did, so a rebuild
+  of a commit reproduces the released bytes; the publishing runbook gives the
+  rebuild-and-compare recipe. The pre-commit mypy hook type-checks against the
+  locked PyJWT, rich and urllib3 as well as click and no longer ignores missing
+  imports, so it agrees with CI. `requirements-ci-constraints.txt` names the
+  `colorama` pin the universal resolution adds on Windows, and the consistency
+  tests require every CI lock entry to come from a reviewed input.
+- The optional Black Duck and Checkmarx One workflows skip Dependabot pull
+  requests, which receive no repository secrets, as the Semgrep workflow
+  already did, and the three share CI's concurrency rule: a newer pull-request
+  push supersedes the older run while main and scheduled runs finish. A
+  dispatched discovery benchmark runs in its own group and no longer cancels
+  the weekly run.
+- Bug report form: the exit-code options follow the CLI (1 is an invocation or
+  configuration error, 2 a completed scan that reached `--fail-on`), the
+  surface list names all nine surfaces, and the version field accepts a
+  release version with its artifact identity as well as a commit SHA. The pull
+  request template lists `make coverage-gate` and `make evaluate` among the
+  gates for every change. The README quick-start note names step 7 for the
+  report it reads, its development block uses the hash-locked `make install`
+  and `make check`, and its project-status recommendation links the deployment
+  install section. SECURITY.md opens with the private reporting route. The
+  consumer example workflows carry UTC cron comments and the code-scan example
+  a concurrency group.
+
 ### Review corrections after the October 10 integration
 
 - The Semgrep workflow runs `semgrep ci` in the `semgrep/semgrep` image pinned
@@ -15,7 +57,17 @@ summarizes each release for people who install and operate ShadowScan.
   One action is pinned to release 2.3.45 instead of an untagged 2022 commit,
   Black Duck moves to v2.11.0, every cron has a UTC comment, and
   `tests/test_repository_policy.py` requires a release comment after every
-  commit pin in the repository's and the example workflows.
+  commit pin in the repository's and the example workflows (quoted pins
+  included, with every pin in the parsed workflow counted) and reads the
+  tag comment of every use of a container or service image.
+- The Checkmarx step passes an empty `github_token` and `pr_number`: the
+  action's defaults sent the job's `security-events: write` token to the
+  Checkmarx tenant for a pull-request decoration the job cannot perform. A
+  policy test keeps them empty. The Semgrep, Checkmarx and Black Duck
+  workflows cancel a superseded pull-request run, as CI and CodeQL do, so a
+  quick series of pushes no longer ships the source to each vendor once per
+  push. The Black Duck action still downloads the vendor's current Bridge
+  CLI; pin it with `bridgecli_download_version` once a release is reviewed.
 - The drift CronJob example carries `shadowscan-mode: live`: it collects live,
   and the example NetworkPolicy grants egress to that label only, so the
   earlier `drift` label left the pod with no egress.
@@ -45,10 +97,14 @@ summarizes each release for people who install and operate ShadowScan.
   scheme redaction withheld keeps its factor.
 - Low-code triggers a person operates no longer count as autonomy evidence:
   n8n `manualTrigger`, `chatTrigger` (and its original `manualChatTrigger`
-  type), `formTrigger` and `evaluationTrigger`
-  nodes, Make scenarios scheduled `on-demand`, Workato Workbot commands and
+  type), `formTrigger` and `evaluationTrigger` nodes, Workato Workbot
+  commands, menus, buttons, modals and shortcuts, and
   Zapier Chrome extension or Interfaces steps add neither the `autonomous`
-  capability nor an initiation tag, and a schedule trigger is tagged
+  capability nor an initiation tag. Neither does a Make scenario scheduled
+  `on-demand`, which a person or a call (the API, another scenario, an AI
+  agent or an MCP client) can start, so it records no initiation either way.
+  A Workbot event trigger reacts to workspace events, a bot's messages
+  included, and is `event-triggered`. A schedule trigger is tagged
   `scheduled` only. Make reads `scheduling.type` and webhook modules instead of
   the first module's name; Workato reads the provider of the recipe's trigger
   line instead of its keyword, which is `trigger` on every recipe and had made
@@ -65,7 +121,11 @@ summarizes each release for people who install and operate ShadowScan.
   `autonomous` capability like the other record and platform-event triggers.
   The gateway `always-on` tag is initiation evidence only when
   `metadata.activity.always_on_corroborated` is true; the tag alone stays
-  informational. The README demo now shows 63 high and 54 medium findings.
+  informational. It still explains a caller's `autonomous` capability as
+  cadence, never as an approval bypass, so a fleet merge (which keeps the
+  first observation's metadata and every observation's capabilities) gives
+  the same autonomy interval in either report order. The README demo now
+  shows 63 high and 54 medium findings.
 - `code.filesystem`: an oversize coding-agent settings file skipped with a
   warning while the scan stayed complete (a fixture under a test path with
   `include_tests` and `scan_secrets` off, or a name matched by
@@ -86,11 +146,11 @@ summarizes each release for people who install and operate ShadowScan.
   to the scanned root, marking the scan incomplete and the tree's gates
   partial. A settings file at a backslash or drive-like path cannot be
   materialised here but is still one the agent on the scanned workstation
-  reads, so it now marks the listing incomplete (gates read `some-actions`)
-  instead of being left out. A GitLab tree listing that ends with fewer
-  entries than the server's `X-Total` promised is read as cut short: coverage
-  is partial and no gate of the project claims every action, as for a
-  truncated GitHub listing.
+  reads, so it marks the listing incomplete with a warning (gates read
+  `some-actions`) instead of being left out. A GitLab tree listing that ends
+  with fewer entries than the server's `X-Total` promised is read as cut
+  short: coverage is partial and no gate of the project claims every action,
+  as for a truncated GitHub listing.
 - `shadowscan merge` keeps only the match state of the sources whose
   registration verdict it adopts: a shadow finding keeps the reason and
   suggestions of the sources that found it unregistered, a registered finding
@@ -199,8 +259,9 @@ summarizes each release for people who install and operate ShadowScan.
   redaction namespace, so `policy_token()` changes when one of its rules does
   and a finding verified clean under the earlier rules is sanitized again.
 - The `auth` block rule withholds a list of credentials under `value`, `key`
-  or `credential`, learns those values so a copy in a sibling field is
-  withheld too, and no longer takes precedence over the environment rule: an
+  or `credential`, learns the opaque values there so a copy in a sibling
+  field is withheld too (a label such as `header` is not learned), and no
+  longer takes precedence over the environment rule: an
   `env` table inside an auth block withholds every value, as it does anywhere
   else (a regression of the rule's first extension on this branch). Every
   other member of the block keeps the mapping rules, so a numeric or boolean
@@ -214,12 +275,32 @@ summarizes each release for people who install and operate ShadowScan.
 - Add a deterministic, fail-closed AI Review Gate with read-only preflight,
   base-commit-only synthesis, and narrowly scoped review/check publication.
   Missing or malformed specialist evidence blocks the gate. AI cannot approve
-  or merge; human/CODEOWNER review and branch protections remain required.
+  or merge; the human approval and status checks the rulesets require remain
+  the merge gate (the rulesets do not require code-owner review).
   This is not independent human review and does not authorize a release.
 - The gate's evidence is committed by the pull request's author, so it can
   block a change but never pass one: with no blocking finding the check
   concludes `neutral` (`advisory_only`), never `success`. Do not make it a
   required check; GitHub counts `neutral` as passing.
+- `python -m tools.governance_check`, and the ruleset preparation and release
+  checks built on it, refuse a ruleset whose required status checks include
+  `AI Review Gate`, `AI review publication` or `preflight`
+  (`advisory_check_required`); ruleset preparation refuses it on every ruleset
+  of `main`, `Protect main` included, and a test reads every committed and
+  observed ruleset. A test keeps that list equal to the checks the workflow
+  creates, and another pins the workflow's `.github/ai-review/**` paths filter.
+- Gate hardening from review: evidence JSON nested too deeply for the decoder
+  (a `RecursionError`) is `malformed_findings` with a failure review instead of
+  a crash that left the check in progress; a quoted private key is withheld
+  as a whole block, not only its header line, however the quote breaks its
+  lines, while prose after a quoted header is kept; the publication job runs
+  on `!cancelled()` instead of `always()`, so a run superseded on the same
+  head before it publishes posts no contradictory review, and one cancelled
+  while it publishes completes its check as a failure (`cancelled`) instead
+  of leaving it in progress; the evidence paths no longer make every gated
+  diff high risk, while a rename out of another path into them still counts
+  (and is bound by the digest); and the `ai-review: blocked` label no longer
+  claims the gate requests changes.
 
 ### Fleet dashboard and inventory export
 
@@ -284,8 +365,12 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Triage, plugin identity, redaction and cache integrity hardening
 
-- LLM triage refuses a reply that carries more than one verdict object (for
-  example one quoted from injected finding text) as `status: unparseable`.
+- LLM triage refuses a reply that names a `verdict` key more than once (for
+  example one quoted from injected finding text beside the model's own,
+  whether or not either object is strict JSON, nested or repeats the key)
+  as `status: unparseable`. The one key must lie in the one object that
+  decodes with a verdict, so an injected key spelled with escapes is refused
+  too, and a repeated key anywhere refuses the reply.
   Requests send no sampling parameters, which current Claude models reject,
   and OpenAI requests bound the reply with `max_completion_tokens` instead of
   the deprecated `max_tokens`, which the o-series reasoning models reject. The
@@ -296,8 +381,10 @@ summarizes each release for people who install and operate ShadowScan.
   the reply to the verdict JSON schema (`output_config.format` or a strict
   `response_format`); it is off by default because not every model supports it.
   `python -m tools.evaluation.triage_canaries` runs author-written injection
-  canaries offline (in the unit tests) to check that injected text stays data
-  and cannot change a finding; `--live` sends them to a model, unpublished.
+  canaries offline (in the unit tests), with and without structured output,
+  to check that injected text stays data in the user turn (no other turn or
+  request field carries it) and cannot change a finding; `--live` sends them
+  to a model, unpublished, and exits 3 when any case got no parsed verdict.
 - `--allow-plugin` and `options.plugins` accept `name=module:Class`.
   A pinned approval refuses a plugin whose entry point resolves elsewhere
   (`target-mismatch`); a bare name keeps the previous behavior. Duplicate
@@ -306,16 +393,31 @@ summarizes each release for people who install and operate ShadowScan.
   version (`distribution-mismatch`), checked from metadata before import.
 - Redaction withholds the value in `Bearer token <value>`, keys ending in
   `secretvalue`, `tokenvalue`, `passwordvalue` or `apikeyvalue`, opaque
-  literals passed to setter calls such as `setProperty("openai.key", ...)`,
+  literals passed to setter calls such as `setProperty("openai.key", ...)`
+  (any string literal when the name is a credential outright, such as
+  `openai.secret` or `AzureOpenAI:Secret`),
   and `value`, `key` and `credential` fields inside an `auth` mapping, at any
-  depth of the mapping and inside lists and sets under it.
-  The token-word credential stops before a glued `--option` or `=name`, and a
-  `.name:` or `.name=` setting path glued into it reads as a setting instead,
-  so the name stays whole for the rule that withholds the value after it. A
-  setter-call path whose name alone identifies a credential
-  (`m.put("openai.token", ...)`, `"Azure:Secret"`, `"app.jwt"`) withholds any
-  literal, as the same names do in settings files; paths whose last word
-  names one (`"openai.key"`) keep withholding only an opaque literal.
+  depth of the mapping and inside lists under it, whatever their shape (a
+  list, set or record there is withheld whole). In `Bearer token <value>` an
+  opaque value is withheld wherever it sits, before a colon or on the next
+  line included, while a credential name followed by an assignment
+  (`Bearer token postgres_password_1: v`) is kept for the assignment rules,
+  which withhold its value; the credential stops before a glued `--option` or
+  `=name`, so that name too stays whole for the rule that withholds the value
+  after it. An opaque value in an auth field, or nested in one, is also
+  removed from the record's other fields; a label, placement or URL there
+  ('header', 'in', a Postman token request's `resource` record) is not, so it
+  cannot withhold unrelated fields or keys; nor is the value of an environment
+  entry inside the block, which the environment rule withholds (learned as a
+  credential, a value such as `1` had withheld every sibling field containing
+  it). A setter-call path whose name
+  alone identifies a credential (`m.put("openai.token", ...)`, `"Azure:Secret"`,
+  `"app.jwt"`) withholds any literal, as the same names do in settings files;
+  paths whose last word names one (`"openai.key"`) keep withholding only an
+  opaque literal. Every other member of an `auth`, `authentication` or
+  `authn` mapping keeps the mapping rules, so a numeric or boolean `password`
+  or `client_secret` there is withheld as on 0.1.2, and the environment rule,
+  so an `env` block inside one has every value withheld.
   Evidence snippets also get a last-resort pass that withholds a quoted
   literal that looks generated (20 or more token characters mixing upper
   case, lower case and digits, with frequent class switches and high entropy),
@@ -323,11 +425,18 @@ summarizes each release for people who install and operate ShadowScan.
   identifiers keep their text. A Hypothesis property test covers both sides.
 - `shadowscan jwt TOKEN...` and `shadowscan run --set` with a credential value
   print a warning that command-line arguments are visible in process listings
-  and shell history. The value is never echoed and the scan still runs.
+  and shell history. The value is never echoed, a `--set` key that is not a
+  plain identifier (a token pasted into the key position) is shown as
+  `<withheld key>`, and the scan still runs. The warning goes to stderr: a
+  wrapper that parses `2>&1` as a report breaks and must read stdout or
+  `-o FILE` alone.
 - With a stable identity key, incremental cache entries carry
   `payload_hmac_sha256` under a key derived from it, and entries without a
-  valid MAC are rescanned. Existing keyed entries miss once. Unkeyed caches
-  keep the SHA-256 checksum, which detects damage, not tampering.
+  valid MAC are rescanned. The MAC covers the entry's slot, input fingerprint
+  and cache format as well as its payload, so a clean entry's payload and MAC
+  cannot be moved into another slot to replay an empty result. Existing keyed
+  entries miss once. Unkeyed caches keep the SHA-256 checksum, which detects
+  damage, not tampering.
 - Incremental Git fingerprinting reads `git` output through the bounded
   metadata reader, so repository-controlled refs cannot exhaust memory.
 - The HTTP destination policy judges a well-known NAT64 address
@@ -609,7 +718,9 @@ summarizes each release for people who install and operate ShadowScan.
   comparison incomplete, exit 3; the limit is at most 36500 days).
   `--fail-on-new` is unchanged.
 - A fleet report's `started_at` is now the earliest source start time
-  compared as instants, not as text. When any source lacks a valid
+  compared as instants, not as text (sources that start or finish at the
+  same instant break the tie on the text, so the fleet times never depend on
+  report order). When any source lacks a valid
   timezone-aware start time, the fleet's `started_at` is `null` instead of
   the merge time, so an age limit cannot pass an undated fleet baseline.
 - Add `read_policy_bytes` and `load_report_with_digest` so the pinned digest
@@ -868,9 +979,26 @@ summarizes each release for people who install and operate ShadowScan.
   `mcp-insecure-transport` tag and the `mcp-plain-http` factor); neither
   marker holds a value. A record with a redacted env name, `docker run -e`
   value, or `cmd /c` or batch-file argument names no package.
+- A local walk cut short (`max_files`, `max_entries`, the enumeration
+  deadline, a symbolic-link check at the deadline, or a directory that cannot
+  be listed) keeps every approval gate of that scanned root at
+  `some-actions`, as a truncated API listing already did; other roots of the
+  same scan keep their own gates. `code.github` and `code.gitlab` clone mode
+  delegate to this walk. A strict settings file read before the limit had
+  claimed an every-action gate while a bypass beside it went unread.
+- Coding-agent settings files are recognized as a case-insensitive file
+  system resolves them, ignoring the trailing dots and spaces Windows drops:
+  macOS and Windows clients read `.CLAUDE/settings.local.json` or
+  `.claude/SETTINGS.LOCAL.JSON` as their settings file, which a scan had read
+  as no settings file at all, so a bypass there left a strict sibling
+  claiming an every-action gate on a complete scan, and a variant with no
+  exactly spelled sibling produced no finding. Such a variant now establishes
+  its client as the documented spelling would.
 - A launcher under `/proc` or `/dev` (`/proc/self/cwd/npx`) counts as a
   relative path, and `PREFIX` and `DESTDIR`, under which npm reads its global
-  npmrc and so its registry, leave a launch unidentified.
+  npmrc and so its registry, leave a launch unidentified. A launcher path that
+  starts with any two separators (`/\host\share\npx.cmd` included) is a UNC
+  path on another host and names no package.
 - A remote server with `remotes[]` beside its URL is matched by every
   endpoint it lists, which one registry name must list together; before, only
   the first URL was compared.
@@ -1041,7 +1169,11 @@ summarizes each release for people who install and operate ShadowScan.
   complete scan. Only the ARN and URL are kept from `GetGateway`. A failed
   call, or details without an ARN, makes the scan incomplete; a gateway
   replayed from an older export without its ARN takes its region's bindings
-  out of scope. Live gateway finding ids change: re-baseline them.
+  out of scope. A runtime or gateway without its ARN also withdraws every
+  record's `listing_complete`, so it is never read as `observed-not-registered`,
+  and the scan warns and is incomplete (exit 3), live or replayed alike (a
+  runtime whose listing names no ARN had withheld the claims silently on a
+  live scan). Live gateway finding ids change: re-baseline them.
 - A runtime, gateway or registry record that analysis rejects, that an export
   rejects or a replay drops, or whose finding `run` omits for failing
   sanitization now withdraws the registry claims it could undercut: every
@@ -1051,9 +1183,11 @@ summarizes each release for people who install and operate ShadowScan.
   `observed-not-registered` or `registered-not-observed` as facts.
 - Analysis bounds the text of a replayed registry record to the collection
   limits (names, display names, status reasons and registry names to 300
-  characters, record versions to 64, provenance to the exported fields) and
-  rebuilds its descriptor summary with the collection limits and fields; an
-  edited export had carried unbounded text into titles and metadata.
+  characters, record versions to 64, provenance to the exported fields,
+  creation and update times to 64, and `createdByAutoDetection` to a
+  boolean) and rebuilds its descriptor summary with the collection limits and
+  fields; an edited export had carried unbounded text into titles and
+  metadata.
 - The registry responses and `tests/fixtures/cloud/aws_registry_records.jsonl`
   are synthetic, modeled on the installed SDK models; nothing was validated
   against a live account. The README demo export is unchanged.

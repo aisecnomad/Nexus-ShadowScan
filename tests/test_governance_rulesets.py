@@ -14,7 +14,7 @@ import pytest
 
 from tools.governance import rulesets
 from tools.governance.rulesets import REPOSITORY, RULESETS, observe_readback, prepare_payload, verify_readback
-from tools.governance_check import GITHUB_ACTIONS_APP_ID, check_ruleset
+from tools.governance_check import GITHUB_ACTIONS_APP_ID, check_ruleset, requires_advisory_check
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -411,3 +411,25 @@ def test_oversized_observation_input_has_no_inspected_snapshot_digest(tmp_path: 
     assert report["input_identity"]["snapshot_text_sha256"] is None
     assert report["input_identity"]["expected_policy_text_sha256"] is not None
     assert "byte limit" in report["error"]
+
+
+@pytest.mark.parametrize("path", sorted((ROOT / ".github/rulesets").rglob("*.json")), ids=lambda p: p.name)
+def test_no_committed_or_observed_ruleset_requires_an_advisory_ai_review_check(path: Path) -> None:
+    rules = json.loads(path.read_text())["rules"]
+    for rule in rules:
+        if rule["type"] == "required_status_checks":
+            assert not requires_advisory_check(rule["parameters"]["required_status_checks"])
+
+
+@pytest.mark.parametrize("ruleset_id", RULESETS)
+def test_plan_refuses_an_advisory_ai_review_check_on_every_ruleset(ruleset_id: int) -> None:
+    source = _snapshot(ruleset_id)
+    checks = [{"context": "AI Review Gate", "integration_id": GITHUB_ACTIONS_APP_ID}]
+    if ruleset_id == 23913372:
+        _rule(source, "required_status_checks")["parameters"]["required_status_checks"] += checks
+    else:
+        source["rules"].append(
+            {"type": "required_status_checks", "parameters": {"required_status_checks": checks}}
+        )
+    with pytest.raises(ValueError, match="advisory"):
+        prepare_payload(source, ruleset_id=ruleset_id)

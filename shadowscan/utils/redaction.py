@@ -482,7 +482,8 @@ class _Sanitizer:
 
     def discover(self, item: Any, depth: int = 0, *, environment: bool = False, auth: bool = False) -> None:
         """``auth``: the item lies under an auth container, whose generic credential fields
-        ``clean`` withholds; their values are learned so a copy in a sibling field goes too."""
+        ``clean`` withholds whatever their shape; an opaque value there is learned so a copy
+        in a sibling field goes too (the nested pass learns the leaves of a record or list)."""
         item = _plain(item)
         identity = (id(item), environment, auth)
         if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.discovered):
@@ -500,11 +501,13 @@ class _Sanitizer:
                 if established and (_sensitive_key(name) or environment and _sensitive_assignment_key(name)):
                     self.remember(child)
                 if established and auth and name.lower() in _AUTH_VALUE_KEYS:
+                    # Only an opaque value: the same fields hold labels and placements
+                    # ('header', 'in') that must not withhold every field they occur in.
                     if isinstance(child, (list, tuple, set, frozenset)):
                         for member in child:
-                            if not isinstance(member, _CONTAINERS):
+                            if _opaque_literal(member):
                                 self.remember(member)
-                    elif not isinstance(child, _CONTAINERS):
+                    elif _opaque_literal(child):
                         self.remember(child)
                 child_auth = auth or name.lower() in _AUTH_CONTAINER_KEYS
                 child_environment = environment or name.lower() in _ENVIRONMENT_KEYS
@@ -667,33 +670,23 @@ class _Sanitizer:
         for key, child in item.items():
             name = str(key)
             result: Any
-            credential_field = auth and name.lower() in _AUTH_VALUE_KEYS
             if (
                 _sensitive_key(name)
                 or (name.lower() == "value" and _record_has_secret_value(item, extended=self.extended))
-                or (credential_field and not isinstance(child, _CONTAINERS))
+                # Under an auth block a generic 'value', 'key' or 'credential' field is
+                # credential material whatever its shape, as a sensitive key's value is.
+                or (auth and name.lower() in _AUTH_VALUE_KEYS)
             ):
                 result = _redact_value(child)
-            elif credential_field and isinstance(child, (list, tuple, set, frozenset)):
-                # A list or set under a credential field lists credentials; a record in it is a
-                # scheme record whose own credential fields the auth rule withholds.
-                members = [
-                    self.clean(v, depth + 1, auth=True) if isinstance(v, _CONTAINERS) else _redact_value(v)
-                    for v in child
-                ]
-                if isinstance(child, (set, frozenset)):
-                    result = frozenset(members) if isinstance(child, frozenset) else set(members)
-                else:
-                    result = tuple(members) if isinstance(child, tuple) else members
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
-                # The environment rules come before the auth rule: an env table inside an auth
-                # block withholds every value, as it does anywhere else.
                 result = {self.text(str(k)): _redact_value(v) for k, v in child.items()}
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, list):
                 result = [self.clean_environment_entry(entry, depth) for entry in child]
             elif (auth or name.lower() in _AUTH_CONTAINER_KEYS) and isinstance(child, (Mapping, list, tuple)):
                 # An auth block's credential fields can sit in a nested scheme record
                 # ('auth.basic.value') or in a list of them; the rule follows the block down.
+                # Every member keeps the mapping rules above and the environment rules
+                # before this one: a sensitive key holds a credential whatever its type.
                 result = self.clean(child, depth + 1, auth=True)
             else:
                 result = self.clean(child, depth + 1)
@@ -733,7 +726,7 @@ class _NestedSanitizer(_Sanitizer):
         )
         # An aliased object can occur both outside and inside a credential
         # container. Revisit it under the stricter parent, but still bound cycles.
-        self.containers: set[tuple[int, bool, bool, bool, bool]] = set()
+        self.containers: set[tuple[int, bool, bool, bool, bool, bool]] = set()
 
     def discover(
         self,
@@ -744,18 +737,23 @@ class _NestedSanitizer(_Sanitizer):
         credential: bool = False,
         credential_group: bool = False,
         auth: bool = False,
+        opaque_only: bool = False,
     ) -> None:
         """Remember the leaves of the credential containers in ``item``.
 
         ``credential`` marks a container that ``clean`` withholds whole: the
         value of a sensitive key, of a record named for a secret by the
         established or the added rules, or a member of such a container.
-        ``credential_group`` marks a container named for credentials. ``auth``
-        marks the inside of an auth container, whose generic ``value``, ``key``
-        and ``credential`` fields ``clean`` withholds.
+        ``credential_group`` marks a container named for credentials.
+        ``auth`` marks an item under an auth block, whose generic ``value``,
+        ``key`` and ``credential`` fields ``clean`` withholds whatever their
+        shape. Such a field, and every leaf nested in it (``opaque_only``), is
+        remembered only when it looks like an opaque key: the same fields hold
+        labels, placements and URLs ('header', 'in', a Postman token request's
+        'resource' record) that must not withhold every field or key they occur in.
         """
         item = _plain(item)
-        identity = (id(item), environment, credential, credential_group, auth)
+        identity = (id(item), environment, credential, credential_group, auth, opaque_only)
         if depth > 64 or (isinstance(item, _CONTAINERS) and identity in self.containers):
             return
         if isinstance(item, _CONTAINERS):
@@ -776,28 +774,27 @@ class _NestedSanitizer(_Sanitizer):
                 )
                 # A record's value under any casing ('VALUE'), which clean
                 # withholds, and the members of a credential container.
-                credential_field = auth and lower_name in _AUTH_VALUE_KEYS
-                member = (
-                    (named_secret and lower_name == "value")
-                    or (credential and _credential_member(lower_name, child, group=child_group))
-                    or (credential_field and not isinstance(child, _CONTAINERS))
+                member = (named_secret and lower_name == "value") or (
+                    credential and _credential_member(lower_name, child, group=child_group)
                 )
-                if member:
+                auth_value = auth and lower_name in _AUTH_VALUE_KEYS
+                if member or ((auth_value or opaque_only) and _opaque_literal(child)):
                     self.remember(child)
+                child_auth = (auth or lower_name in _AUTH_CONTAINER_KEYS) and isinstance(
+                    child, (Mapping, list, tuple)
+                )
                 self.discover(
                     child,
                     depth + 1,
                     environment=environment or lower_name in _ENVIRONMENT_KEYS,
-                    # A list or set under an auth credential field lists credentials.
-                    credential=key_sensitive
-                    or member
-                    or (credential_field and isinstance(child, (list, tuple, set, frozenset))),
+                    credential=key_sensitive or member,
                     credential_group=child_group,
-                    auth=auth or lower_name in _AUTH_CONTAINER_KEYS,
+                    auth=child_auth,
+                    opaque_only=opaque_only or (auth_value and isinstance(child, _CONTAINERS)),
                 )
         elif isinstance(item, (list, tuple, set, frozenset)):
             for child in item:
-                if credential:
+                if credential or (opaque_only and _opaque_literal(child)):
                     self.remember(child)
                 self.discover(
                     child,
@@ -806,6 +803,7 @@ class _NestedSanitizer(_Sanitizer):
                     credential=credential,
                     credential_group=credential_group,
                     auth=auth,
+                    opaque_only=opaque_only,
                 )
 
     def order(self) -> None:

@@ -183,6 +183,10 @@ jobs:
           # Re-assert the hash-locked backend so the wheel generator matches
           # pyproject.toml [build-system] after the combined locked install.
           python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
+          # Stamp the archive entries with the commit time, as release.yml does,
+          # so a rebuild of the same commit reproduces the same bytes.
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
           python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
       - name: Validate installed wheel outside the checkout
         run: |

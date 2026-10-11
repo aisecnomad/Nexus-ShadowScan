@@ -20,8 +20,10 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A dispatched subset run gets its own group, so it neither cancels nor
+  # waits for the weekly run whose artifacts are the comparison record.
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: false
 jobs:
   shadowscan:
     runs-on: ubuntu-latest

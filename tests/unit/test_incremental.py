@@ -319,6 +319,24 @@ def test_cache_entry_with_an_invalid_evidence_weight_is_a_miss(tmp_path, index, 
     assert all(0 <= item.weight <= 1 for finding in result.findings for item in finding.evidence)
 
 
+@pytest.mark.parametrize("warnings", [[{"a": 1}], [3], [None], [["x"]], ["text", 7]])
+def test_cache_entry_with_non_text_warnings_is_a_miss(tmp_path, index, monkeypatch, warnings):
+    # The payload digest is recomputed, so only the warnings make the entry unusable: a
+    # warning that is not text must not reach ScanStats.warnings and the report.
+    cfg = config(tmp_path)
+    calls = count_runs(monkeypatch)
+    Engine(cfg, index).run()
+    entry = next((tmp_path / "state").glob("*.json"))
+    data = json.loads(entry.read_text())
+    data["payload"]["warnings"] = warnings
+    data["payload_sha256"] = hashlib.sha256(_json(data["payload"])).hexdigest()
+    entry.write_text(json.dumps(data))
+    result = Engine(cfg, index).run()
+    assert result.findings and result.complete and not result.stats[0].cached
+    assert len(calls) == 2
+    assert all(isinstance(warning, str) for warning in result.stats[0].warnings)
+
+
 def test_keyed_cache_rejects_an_entry_rewritten_without_the_key(tmp_path, index):
     # An unkeyed checksum can be recomputed by anyone who can write the state
     # directory; with an identity key the entry must carry a keyed MAC.
@@ -338,6 +356,35 @@ def test_keyed_cache_rejects_an_entry_rewritten_without_the_key(tmp_path, index)
     entry.write_text(json.dumps(data))
     assert cache.load(cfg.connectors[0], snapshot) is None
     assert IncrementalCache(cfg, index, identity_key=b"j" * 32).load(cfg.connectors[0], snapshot) is None
+
+
+def test_keyed_cache_mac_binds_the_slot_and_fingerprint(tmp_path, index):
+    # Every clean scan stores the same payload. A MAC over the payload alone would
+    # let a writer without the key move a clean entry's authenticated payload into a
+    # slot whose input has findings, and the next scan would replay it as clean.
+    cfg = config(tmp_path)
+    cache = IncrementalCache(cfg, index, identity_key=b"k" * 32)
+    spec = cfg.connectors[0]
+    stats = ScanStats(connector=spec.id, started_at="", finished_at="")
+    clean = Snapshot("a" * 64, "f" * 64)
+    dirty = Snapshot("b" * 64, "e" * 64)
+    cache.save(clean, [], stats)
+    cache.save(
+        dirty, [Finding(Surface.CODE, "code.filesystem", Kind.AGENT, "Agent", "repo:1", "repository")], stats
+    )
+    assert cache.load(spec, dirty) is not None
+    clean_data = json.loads((tmp_path / "state" / f"{clean.slot}.json").read_text())
+    dirty_path = tmp_path / "state" / f"{dirty.slot}.json"
+    dirty_data = json.loads(dirty_path.read_text())
+    dirty_data["payload"] = clean_data["payload"]
+    dirty_data["payload_hmac_sha256"] = clean_data["payload_hmac_sha256"]
+    dirty_path.write_text(json.dumps(dirty_data))
+    os.chmod(dirty_path, 0o600)
+    assert cache.load(spec, dirty) is None
+    # A whole entry copied into another slot is refused as well.
+    dirty_path.write_text(json.dumps(clean_data | {"fingerprint": dirty.fingerprint}))
+    os.chmod(dirty_path, 0o600)
+    assert cache.load(spec, dirty) is None
 
 
 def test_concurrent_cache_writers_publish_only_complete_matching_entries(tmp_path, index):

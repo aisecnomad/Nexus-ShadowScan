@@ -658,10 +658,25 @@ def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
     for package in ("types-PyYAML", "types-requests"):
         pin = f"{package}=={constraints[package]}"
         assert pin in config_text, f"pre-commit additional dependency is not pinned: {package}"
-    runtime = dict(re.findall(r"^([A-Za-z0-9_.-]+)==(\S+)", _read(ROOT / "requirements.lock"), re.MULTILINE))
-    assert f"click=={runtime['click']}" in config_text, (
-        "pre-commit mypy must type-check against the locked click version"
+    runtime = {
+        name.lower(): version
+        for name, version in re.findall(
+            r"^([A-Za-z0-9_.-]+)==(\S+)", _read(ROOT / "requirements.lock"), re.MULTILINE
+        )
+    }
+    # The typed runtime libraries the checked packages import: without them the
+    # hook sees Any where CI sees the real types.
+    for package in ("click", "PyJWT", "rich", "urllib3"):
+        assert f"{package}=={runtime[package.lower()]}" in config_text, (
+            f"pre-commit mypy must type-check against the locked {package} version"
+        )
+    hook = next(
+        hook
+        for repo in yaml.safe_load(config_text)["repos"]
+        for hook in repo["hooks"]
+        if hook["id"] == "mypy" and "additional_dependencies" in hook
     )
+    assert hook["args"] == [], "the mypy hook must not ignore missing imports; CI does not"
 
 
 def test_docs_toolchain_is_hash_locked_everywhere_it_is_installed() -> None:
@@ -764,6 +779,16 @@ def test_ci_toolchain_is_exactly_pinned_and_hash_locked_everywhere() -> None:
         )
     }
     assert constraints.items() <= locked.items(), "CI lock drifted from its reviewed direct constraints"
+    # The universal resolution may only emit versions that come from a reviewed input:
+    # this file, the runtime lock or the build lock (see the constraints header).
+    reviewed = set(constraints)
+    for other in ("requirements.lock", "requirements-build.lock"):
+        reviewed |= {
+            name.lower().replace("_", "-").replace(".", "-")
+            for name, _ in re.findall(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)", _read(ROOT / other), re.MULTILINE)
+        }
+    unreviewed = sorted(set(locked) - reviewed)
+    assert not unreviewed, f"requirements-ci.lock pins packages that no reviewed input names: {unreviewed}"
     for requirement in (
         _pyproject()["project"]["dependencies"] + _pyproject()["project"]["optional-dependencies"]["dev"]
     ):
@@ -1429,3 +1454,16 @@ def test_mapping_catalog_reference_is_current() -> None:
     assert REFERENCE.read_text(encoding="utf-8") == render(), (
         "docs/concepts/mappings-reference.md is stale; run `make mapping-reference`"
     )
+
+
+def test_docs_name_the_registry_operation_the_aws_connector_calls() -> None:
+    # registry_arns calls BatchGetDiscoverableRegistryRecord; a guide that names the
+    # unbatched action tells operators to grant a permission that is never used.
+    source = (ROOT / "shadowscan/connectors/cloud/aws.py").read_text(encoding="utf-8")
+    assert "batch_get_discoverable_registry_record" in source
+    stale = [
+        path.relative_to(ROOT).as_posix()
+        for path in _markdown_files()
+        if re.search(r"(?<!Batch)GetDiscoverableRegistryRecord", path.read_text(encoding="utf-8"))
+    ]
+    assert not stale, stale

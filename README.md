@@ -215,8 +215,9 @@ shadowscan controls today.json --format csv -o controls.csv      # findings per 
 
 Steps 1 and 2 need a repository checkout: `agent-card.yaml`, `examples/` and
 the sample exports under `tests/fixtures/` are not shipped in the wheel. Steps
-5 and 6 use your own logs, token, and an earlier JSON report
-(`--format json -o report.json`); sample gateway logs live under
+5 and 7 use your own logs, token, and an earlier JSON report
+(`--format json -o report.json`); step 6 writes the per-machine reports that
+`merge` and `dashboard` read. Sample gateway logs live under
 `tests/fixtures/gateway/` in a checkout.
 
 ### Configuration
@@ -453,20 +454,17 @@ turns shadow findings into card skeletons for review. See
 ## Development
 
 ```bash
-pip install -e ".[cloud,dev]"
-python -m shadowscan.signatures.validate
-python -m shadowscan.mappings.validate
-ruff check shadowscan tests tools benchmarks
-ruff format --check shadowscan tests tools benchmarks
-mypy shadowscan tools benchmarks
-pip-audit --progress-spinner off
-pytest -q --cov=shadowscan --cov-fail-under=80
+python -m venv .venv && source .venv/bin/activate
+make install          # hash-locked runtime, cloud, dev and docs toolchain
+make check            # lint, format, types, signatures, mappings, secrets, audit, coverage, connector floor, evaluation
 shadowscan scan -c examples/shadowscan.offline.yaml
 ```
 
-Install the `cloud` extra for the same connector coverage as CI. Tests that
-require missing optional SDKs can be skipped, so a core-only run does not validate all
-connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#getting-started).
+`make install` installs the hash-locked set CI uses, cloud SDKs included; a
+core-only environment skips the tests that need them and does not validate
+every connector. `make check` runs the local copy of every CI gate; `make help`
+lists the individual targets. See
+[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#getting-started).
 
 
 ### Evidence and assurance limits
@@ -511,7 +509,9 @@ connectors. See [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/bl
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](https://github.com/aisecnomad/Project-Nexus/tree/main/archive/reviews) are AI-assisted, not third-party reviews.
 * **Recommendation.** Review the revision yourself or have it reviewed, then
-  pin that full commit SHA as shown below. Review state cannot be established
+  pin that full commit SHA as shown in
+  [Deployment install](#deployment-install-reviewed-revision-hash-locked).
+  Review state cannot be established
   from a checkout; verify it with the commands in
   [merge gate and review status](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#merge-gate-and-review-status).
 

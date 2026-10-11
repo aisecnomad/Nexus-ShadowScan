@@ -41,10 +41,10 @@ Use Python 3.11, 3.12, or 3.13 and Git on a POSIX system. Linux and macOS are
 CI-validated development and test targets; Linux x86_64 is the only validated
 deployment target for the production runtime lock. On Windows use WSL,
 because the scanner's confined file reader needs `O_NOFOLLOW`/`dir_fd` and the
-Makefile assumes `/tmp` and a `.venv/bin` layout. Linux and macOS CI install the
-hash-locked runtime, cloud and development toolchain. Fork the repository on
-GitHub if you need a branch you can push; clone your fork in that case. In a
-local checkout:
+Makefile needs `/bin/bash`, `mktemp` under `$TMPDIR` (default `/tmp`) and the
+POSIX `venv/bin` layout. Linux and macOS CI install the hash-locked runtime,
+cloud and development toolchain. Fork the repository on GitHub if you need a
+branch you can push; clone your fork in that case. In a local checkout:
 
 ```bash
 git clone https://github.com/aisecnomad/Project-Nexus.git

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import signal
 import sys
 import urllib.request
 from pathlib import Path
@@ -56,7 +57,7 @@ class GitHub:
                 data = response.read(MAX_RESPONSE + 1)
             if len(data) > MAX_RESPONSE:
                 raise GateError("API response limit exceeded")
-            return json.loads(data)
+            return synthesize.load_json(data)
         except (OSError, ValueError):
             raise GateError("GitHub API unavailable or malformed") from None
 
@@ -95,12 +96,19 @@ def snapshot(api: GitHub, number: int, head: str) -> tuple[list[Any], list[str]]
 
 
 def high_risk(paths: list[str]) -> bool:
+    """Whether the reviewed change touches a high-risk path.
+
+    The evidence under ``.github/ai-review/`` is in every gated diff (the workflow runs only
+    then), so it is left out, as ``diff_digest`` leaves it out: it would make every diff high risk.
+    Pass a rename's previous name as well, so moving a file into that directory still counts.
+    """
     return any(
         path.startswith((".github/", "tools/", "shadowscan/", "tests/"))
         or path.startswith("requirements")
         or path in {"Dockerfile", "pyproject.toml", "Makefile", "CODEOWNERS", "AGENTS.md"}
         or not path.endswith((".md", ".png", ".svg", ".jpg"))
         for path in paths
+        if not path.startswith(".github/ai-review/")
     )
 
 
@@ -112,7 +120,14 @@ def diff_digest(files: list[Any]) -> str:
                 sorted(
                     (file["filename"], file["sha"], file["status"], file.get("previous_filename", ""))
                     for file in files
-                    if not file["filename"].startswith(".github/ai-review/")
+                    # Evidence only: a rename out of another path into the evidence directory
+                    # removes that file, so the digest binds it.
+                    if not (
+                        file["filename"].startswith(".github/ai-review/")
+                        and str(file.get("previous_filename") or ".github/ai-review/").startswith(
+                            ".github/ai-review/"
+                        )
+                    )
                 ),
             ],
             separators=(",", ":"),
@@ -127,7 +142,7 @@ def validate_evidence(root: Path, digest: str) -> dict[str, list[Path]]:
     synthesizer, so the aggregate is held to the synthesizer's own limit here,
     before anything is copied: evidence that validates always synthesizes.
     """
-    manifest = json.loads(synthesize.read_input(root / "manifest.json"))
+    manifest = synthesize.load_json(synthesize.read_input(root / "manifest.json"))
     roles = set(AGENTS) - {"orchestrator"}
     if manifest != {"schema_version": "1", "diff_digest": digest, "agents": sorted(roles)}:
         raise GateError("evidence manifest malformed or stale")
@@ -145,7 +160,7 @@ def validate_evidence(root: Path, digest: str) -> dict[str, list[Path]]:
         if invalid or not findings or any(finding.agent != role for finding in findings):
             raise GateError("specialist evidence malformed or unavailable")
         for file in files:
-            data = json.loads(synthesize.read_input(file))
+            data = synthesize.load_json(synthesize.read_input(file))
             for entry in data if isinstance(data, list) else [data]:
                 if (
                     isinstance(entry.get("fingerprint"), str)
@@ -180,7 +195,9 @@ def prepare(api: GitHub, number: int, head: str, root: Path, out: Path) -> int:
         AI_REVIEW_DIFF_FILES=str(out / "diff.txt"),
         AI_REVIEW_SCANNER_FINGERPRINTS=str(root / "scanner-fingerprints.json"),
         AI_REVIEW_LABELS=",".join(labels),
-        AI_REVIEW_HIGH_RISK=str(high_risk(paths)).lower(),
+        AI_REVIEW_HIGH_RISK=str(
+            high_risk([*paths, *(str(f["previous_filename"]) for f in files if f.get("previous_filename"))])
+        ).lower(),
     )
     try:
         validated = validate_evidence(root, digest)
@@ -188,7 +205,7 @@ def prepare(api: GitHub, number: int, head: str, root: Path, out: Path) -> int:
         target.mkdir()
         for role, role_files in sorted(validated.items()):
             for index, file in enumerate(role_files):
-                data = json.loads(synthesize.read_input(file))
+                data = synthesize.load_json(synthesize.read_input(file))
                 entries = data if isinstance(data, list) else [data]
                 for entry in entries:
                     entry["body"] = "\n\n".join(
@@ -232,7 +249,7 @@ def publish(
             + "\n\nEvidence unavailable. Gate failed closed.\n\nNot independent human review."
         )
     else:
-        decision = json.loads(synthesize.read_input(out / "decision.json"))
+        decision = synthesize.load_json(synthesize.read_input(out / "decision.json"))
         body = synthesize.read_input(out / "review-body.md")
     if (
         os.environ.get("AI_REVIEW_PREFLIGHT_RESULT", "success") != "success"
@@ -295,6 +312,14 @@ def publish(
     return 0 if decision["conclusion"] == ADVISORY else 1
 
 
+class _Cancelled(Exception):
+    """The runner cancelled the job (SIGTERM after the SIGINT a cancellation sends)."""
+
+
+def _cancelled(signum: int, frame: Any) -> None:
+    raise _Cancelled
+
+
 def main() -> int:
     try:
         api = GitHub()
@@ -308,6 +333,9 @@ def main() -> int:
         if mode == "preflight":
             return prepare(api, number, head, root, out)
         if mode == "publish":
+            # A cancelled run (a newer one for the same pull request) interrupts this job: the
+            # check it created is then completed as a failure, never left in progress.
+            signal.signal(signal.SIGTERM, _cancelled)
             # The second stage independently executes the trusted synthesizer.
             check = api.request(
                 "check-runs",
@@ -324,6 +352,16 @@ def main() -> int:
                 except (GateError, synthesize.GateInputError, OSError, ValueError, KeyError, TypeError):
                     failed = True
                 return publish(api, number, head, out, failed, check)
+            except (KeyboardInterrupt, _Cancelled):
+                api.request(
+                    f"check-runs/{check['id']}",
+                    {
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "output": {"title": "AI Review Gate", "summary": "cancelled"},
+                    },
+                )
+                return 1
             except (GateError, synthesize.GateInputError, OSError, ValueError, KeyError, TypeError):
                 api.request(
                     f"check-runs/{check['id']}",

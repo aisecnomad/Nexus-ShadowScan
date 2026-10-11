@@ -28,7 +28,17 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<![\w])hf_[A-Za-z0-9]{34,}(?![A-Za-z0-9_])"),
     re.compile(r"(?<![\w])[rs]k_live_[0-9A-Za-z]{20,}(?![A-Za-z0-9_])"),
     re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
-    re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"),
+    # The whole block. With a footer within 8 KiB, everything up to it, however the body is
+    # quoted (real or escaped line breaks, one line, a '> ' prefix). Without one, the header,
+    # PEM encryption headers directly after it, at most one blank line, then lines that each
+    # carry 16 or more base64 characters, so prose after a quoted header line is kept. Only a
+    # header can start a match, and the footer search is bounded.
+    re.compile(
+        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+        r"(?:[\s\S]{0,8192}?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+        r"|(?:\r?\n[ \t]*(?:Proc-Type|DEK-Info):[^\r\n]*)*"
+        r"(?:(?:\r?\n[ \t]*)?(?:\r?\n[ \t]*[A-Za-z0-9+/=]{16,})+)?)"
+    ),
     re.compile(r"(?i:\b(?:Account|SharedAccess)Key)\s*=\s*[A-Za-z0-9+/]{40,}={0,2}"),
     re.compile(
         r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://"

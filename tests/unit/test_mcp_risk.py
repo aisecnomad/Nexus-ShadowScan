@@ -429,6 +429,10 @@ def test_server_package_ignores_a_remote_only_server():
         ("/usr/../proc/self/cwd/npx", ["-y", "pkg@1.0.0"]),
         ("/dev/fd/3", ["-y", "pkg@1.0.0"]),
         ("cmd", ["/c", "/proc/self/cwd/npx", "-y", "pkg@1.0.0"]),
+        # Any two leading separators are a UNC path to Windows, mixed ones included.
+        ("/\\attacker.example\\share\\npx.cmd", ["-y", "pkg@1.0.0"]),
+        ("\\/attacker.example/share/npx.cmd", ["-y", "pkg@1.0.0"]),
+        ("cmd", ["/c", "/\\attacker.example\\share\\npx.cmd", "-y", "pkg@1.0.0"]),
     ],
 )
 def test_server_package_is_none_for_a_launcher_run_from_a_relative_path(command, args):

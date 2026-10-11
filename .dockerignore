@@ -1,6 +1,7 @@
 # Keep credentials, exports, tests and unrelated files out of the build context.
-# Everything is excluded first; only packaging inputs, the dependency locks and
-# the package source and data that pyproject.toml ships are re-included.
+# Everything is excluded first; only packaging inputs, the runtime and build
+# locks and the package source and data that pyproject.toml ships are
+# re-included.
 #
 # Never re-include a directory here ("!shadowscan/" or "!shadowscan/**/"): the
 # docker and BuildKit matcher treats a matching parent directory as a match for
@@ -9,7 +10,8 @@
 # file regardless of these rules.
 **
 !pyproject.toml
-!requirements*.lock
+!requirements.lock
+!requirements-build.lock
 !README.md
 !LICENSE
 !NOTICE

@@ -2431,7 +2431,9 @@ def test_kubernetes_drift_cronjob_never_overlaps_and_mounts_inputs_read_only() -
 # Consumer workflows under examples/ are copied into other repositories, so
 # their pins follow the same rules as this repository's workflows.
 EXAMPLE_WORKFLOWS = sorted((ROOT / "examples").glob("github-action-*.yml"))
-_PINNED_USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(?P<action>[\w.-]+/[\w./-]+@[0-9a-f]{40})(?P<rest>.*)$")
+_PINNED_USES = re.compile(
+    r"^\s*(?:-\s+)?uses:\s*(?P<quote>[\"']?)(?P<action>[\w.-]+/[\w./-]+@[0-9a-f]{40})(?P=quote)(?P<rest>.*)$"
+)
 # The reviewed release the commit was taken from: `# v7.0.1`, `# 2.3.45`.
 _VERSION_COMMENT = re.compile(r"^\s+#\s*v?\d+(?:\.\d+)*\s*$")
 
@@ -2440,11 +2442,23 @@ _VERSION_COMMENT = re.compile(r"^\s+#\s*v?\d+(?:\.\d+)*\s*$")
 def test_pinned_actions_carry_a_version_comment(path: Path) -> None:
     """A bare commit pin cannot be reviewed against a release; the comment names it."""
     missing = []
+    matched = 0
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         match = _PINNED_USES.match(line)
+        matched += match is not None
         if match and not _VERSION_COMMENT.match(match.group("rest")):
             missing.append(f"{path.name}:{number}: {match.group('action')}")
     assert not missing, "name the reviewed release after each pin, as `# vX.Y.Z`: " + ", ".join(missing)
+    # Every pin the parsed workflow holds must have been read above: a spelling the line
+    # pattern misses (flow style, an unusual quote) would otherwise skip the comment check.
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    pins = [
+        uses
+        for job in (document.get("jobs") or {}).values()
+        for uses in [job.get("uses"), *(step.get("uses") for step in job.get("steps") or [])]
+        if isinstance(uses, str) and re.search(r"@[0-9a-f]{40}$", uses)
+    ]
+    assert matched == len(pins), f"{path.name}: write each pinned `uses:` on its own line"
 
 
 @pytest.mark.parametrize(
@@ -2455,6 +2469,9 @@ def test_pinned_actions_carry_a_version_comment(path: Path) -> None:
         ("      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", False),
         ("      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # latest", False),
         ("      - uses: ./.github/workflows/dco.yml", False),
+        # A quoted pin is still a pin and still needs its release comment.
+        ('      - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"', False),
+        ("      - uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' # v7.0.1", True),
     ],
 )
 def test_version_comment_check_recognises_pins(line: str, ok: bool) -> None:
@@ -2546,3 +2563,51 @@ def test_workflow_image_check_sees_every_image_form(tmp_path: Path) -> None:
         for image, comment, _ in images
     ]
     assert verdicts == [False, True, True, False]
+
+
+def test_pull_request_jobs_that_need_repository_secrets_skip_dependabot() -> None:
+    # Dependabot pull requests receive no repository secrets, so a vendor scan there
+    # fails on missing credentials instead of being skipped, as a fork's is. Regression:
+    # an integration dropped the condition from two workflows the changelog lists.
+    checked = []
+    for path in WORKFLOWS:
+        workflow = _load(path)
+        if "pull_request" not in _trigger_names(workflow):
+            continue
+        for name, job in workflow["jobs"].items():
+            secrets = set(re.findall(r"\$\{\{\s*secrets\.(\w+)", yaml.safe_dump(job))) - {"GITHUB_TOKEN"}
+            if secrets:
+                checked.append(f"{path.name}:{name}")
+                assert "github.actor != 'dependabot[bot]'" in _if_clauses(job), f"{path.name}:{name}"
+    assert len(checked) >= 3, checked
+
+
+def test_checkmarx_never_receives_the_job_token() -> None:
+    # The action defaults github_token to the job's security-events token and hands it to the
+    # vendor CLI for pull-request decoration, which the job cannot perform anyway.
+    workflow = yaml.safe_load((ROOT / ".github/workflows/checkmarx-one.yml").read_text(encoding="utf-8"))
+    [step] = [
+        step
+        for job in workflow["jobs"].values()
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("checkmarx/ast-github-action@")
+    ]
+    assert step["with"]["github_token"] == "" and step["with"]["pr_number"] == ""
+
+
+def test_workflow_image_check_reads_every_use_of_one_digest(tmp_path: Path) -> None:
+    digest = "postgres@sha256:" + "a" * 64
+    workflow = tmp_path / "twice.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  a:\n"
+        "    services:\n"
+        "      db:\n"
+        "        # postgres:16.4\n"
+        f"        image: {digest}\n"
+        "  b:\n"
+        "    services:\n"
+        "      db:\n"
+        f"        image: {digest}\n"
+    )
+    assert [comment.strip() for _, comment, _ in _workflow_images(workflow)] == ["# postgres:16.4", "db:"]

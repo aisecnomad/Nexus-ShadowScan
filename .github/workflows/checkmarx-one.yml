@@ -6,8 +6,9 @@ name: Checkmarx Scan
 # when the repository variable CX_BASE_URI names the tenant's base URI (for
 # example https://ast.checkmarx.net) and the CX_CLIENT_ID, CX_CLIENT_SECRET and
 # CX_TENANT secrets exist; until then it is skipped rather than failing every
-# run. Pull requests from forks receive no secrets and a read-only token, so
-# they are skipped too. Results are uploaded to code scanning as SARIF.
+# run. Pull requests from forks and from Dependabot receive no repository
+# secrets and a read-only token, so they are skipped too. Results are uploaded
+# to code scanning as SARIF.
 on:
   pull_request:
     types: [opened, reopened, synchronize]
@@ -16,10 +17,17 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request supersedes its scan, which would otherwise
+# ship the source to the tenant again and upload SARIF for a stale merge commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     if: >-
       vars.CX_BASE_URI != '' &&
+      github.actor != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -39,6 +47,12 @@ jobs:
           cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
           cx_tenant: ${{ secrets.CX_TENANT }}
           additional_params: --report-format sarif --output-path .
+          # The action defaults to the job's token and the pull request number and
+          # hands both to the Checkmarx CLI for pull-request decoration, which the
+          # job cannot do (it has no pull-requests scope). Empty values keep the
+          # security-events token on GitHub and skip the decoration.
+          github_token: ""
+          pr_number: ""
       - name: Upload SARIF file
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:

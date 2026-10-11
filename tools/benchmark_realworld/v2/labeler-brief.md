@@ -63,4 +63,3 @@ Evidence rules:
   reported in a sensitivity analysis.
 - Every label cites at least one repository path. Evidence never copies a
   secret value. Record paths and symbol names only.
-

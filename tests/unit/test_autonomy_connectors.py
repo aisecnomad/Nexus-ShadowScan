@@ -976,8 +976,8 @@ def test_n8n_respond_to_webhook_is_a_reply_step_not_a_trigger(run_connector, tmp
     assert interval(finding)[3] == "unknown"
 
 
-def _workato_recipe(provider: str, **extra: Any) -> dict[str, Any]:
-    root = {"number": 0, "keyword": "trigger", "provider": provider, "name": "new_event", "block": []}
+def _workato_recipe(provider: str, trigger: str = "new_event", **extra: Any) -> dict[str, Any]:
+    root = {"number": 0, "keyword": "trigger", "provider": provider, "name": trigger, "block": []}
     return {
         "id": 7,
         "name": "Classify tickets with GenAI",
@@ -989,20 +989,25 @@ def _workato_recipe(provider: str, **extra: Any) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize(
-    ("provider", "tags", "initiation"),
+    ("provider", "trigger", "tags", "initiation"),
     [
         # Regression: the trigger line's keyword is "trigger" on every recipe, so every recipe, a
         # scheduled one and a Workbot command included, was tagged event-triggered.
-        ("clock", {"scheduled"}, "schedule"),
-        ("workbot", set(), "unknown"),
-        ("zendesk", {"event-triggered"}, "event"),
-        ("webhooks", {"event-triggered"}, "event"),
+        ("clock", "new_event", {"scheduled"}, "schedule"),
+        ("workbot", "bot_command", set(), "unknown"),
+        ("workbot", "new_dynamic_menu_event", set(), "unknown"),
+        # A Workbot event trigger reacts to workspace events, a bot's messages included.
+        ("workbot", "new_event", {"event-triggered"}, "event"),
+        ("zendesk", "new_event", {"event-triggered"}, "event"),
+        ("webhooks", "new_event", {"event-triggered"}, "event"),
     ],
 )
-def test_workato_trigger_provider_sets_the_initiation(run_connector, tmp_path, provider, tags, initiation):
-    source = _export(tmp_path, "workato.json", {"items": [_workato_recipe(provider)]})
+def test_workato_trigger_provider_sets_the_initiation(
+    run_connector, tmp_path, provider, trigger, tags, initiation
+):
+    source = _export(tmp_path, "workato.json", {"items": [_workato_recipe(provider, trigger)]})
     [recipe] = run_connector("lowcode.workato", input=source)[0]
-    assert recipe.metadata["triggers"] == [f"{provider}:new_event"]
+    assert recipe.metadata["triggers"] == [f"{provider}:{trigger}"]
     assert _initiation_tags(recipe) == tags
     assert ("autonomous" in recipe.capabilities) is bool(tags)
     assert interval(recipe)[3] == initiation
@@ -1010,16 +1015,17 @@ def test_workato_trigger_provider_sets_the_initiation(run_connector, tmp_path, p
 
 def test_workato_scheduler_in_an_action_step_does_not_override_the_trigger_line(run_connector, tmp_path):
     # The 'scheduler' blob heuristic backs up a recipe whose trigger line
-    # classified nothing; a Workbot command whose action step mentions a
-    # scheduler must not become schedule evidence.
-    recipe = _workato_recipe("workbot")
+    # classified nothing; a Workbot command (a person operates it, unlike a
+    # Workbot event trigger) whose action step mentions a scheduler must not
+    # become schedule evidence.
+    recipe = _workato_recipe("workbot", trigger="new_command")
     root = json.loads(recipe["code"])
     root["block"] = [{"number": 1, "keyword": "action", "provider": "scheduler_tools", "name": "defer"}]
     recipe["code"] = json.dumps(root)
     [finding] = run_connector(
         "lowcode.workato", input=_export(tmp_path, "workato.json", {"items": [recipe]})
     )[0]
-    assert finding.metadata["triggers"] == ["workbot:new_event"]
+    assert finding.metadata["triggers"] == ["workbot:new_command"]
     assert _initiation_tags(finding) == set()
     assert interval(finding)[3] == "unknown"
 

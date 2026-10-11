@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 
 import pytest
+import yaml
 
-from tools.governance_check import GITHUB_ACTIONS_APP_ID, check_ruleset, main
+from tools.governance_check import ADVISORY_CHECKS, GITHUB_ACTIONS_APP_ID, check_ruleset, main
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -114,6 +116,25 @@ def test_malformed_and_duplicate_rules_fail_without_reflecting_values(policy):
 def test_codeql_rule_must_block_alerts_instead_of_merely_existing(policy, tools):
     parameters(policy, "code_scanning")["code_scanning_tools"] = tools
     assert "codeql_alert_gate_required" in check_ruleset(policy)
+
+
+@pytest.mark.parametrize("context", [*sorted(ADVISORY_CHECKS), "ai review gate"])
+def test_requiring_an_advisory_ai_review_check_fails(policy, context):
+    # The AI review gate reads author-committed evidence and concludes `neutral`, which
+    # GitHub counts as passing, so a ruleset that requires it gains a forgeable check.
+    checks = parameters(policy, "required_status_checks")["required_status_checks"]
+    checks.append({"context": context, "integration_id": GITHUB_ACTIONS_APP_ID})
+    assert "advisory_check_required" in check_ruleset(policy)
+
+
+def test_advisory_checks_name_every_check_the_ai_review_workflow_creates():
+    # A renamed job or check run must not slip past the rule above.
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ai-review-gate.yml").read_text())
+    job_checks = {job.get("name", job_id) for job_id, job in workflow["jobs"].items()}
+    gate = (ROOT / "tools/ai_review/github_gate.py").read_text()
+    created = set(re.findall(r'"name": "([^"]+)"', gate))
+    assert created == {"AI Review Gate"}
+    assert job_checks | created == ADVISORY_CHECKS
 
 
 def test_cli_checks_snapshot_and_rejects_ambiguous_json(policy, tmp_path, capsys):

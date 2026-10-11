@@ -11,8 +11,8 @@ import json
 import sys
 from pathlib import Path
 
-# shadai is installed only in Open Shadow AI's environment. The pre-commit mypy
-# hook runs with --ignore-missing-imports, where these ignores are unused.
+# shadai is installed only in Open Shadow AI's environment: neither CI nor the
+# pre-commit mypy hook has it, and where it is installed the ignores are unused.
 from shadai.engine.catalog_loader import (  # type: ignore[import-not-found, unused-ignore]
     build_catalog_index,
     load_catalog_from_yaml,

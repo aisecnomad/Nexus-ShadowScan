@@ -8,7 +8,7 @@
 # Type
 - name: "ai-review: blocked"
   color: "b60205"
-  description: Maintainer block; the gate fails the next run on an evidence-carrying PR.
+  description: Maintainer block; the gate's next run on an evidence-carrying PR fails (review stays a comment).
 
 - name: "ai-review: high-risk"
   color: "d93f0b"

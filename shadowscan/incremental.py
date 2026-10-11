@@ -895,9 +895,13 @@ class IncrementalCache:
             if data["format"] != _FORMAT or data["fingerprint"] != snapshot.fingerprint:
                 return None
             payload = data["payload"]
-            if not hmac.compare_digest(self._payload_digest(payload), data[self._digest_field()]):
+            if not hmac.compare_digest(self._payload_digest(payload, snapshot), data[self._digest_field()]):
                 return None
-            if not isinstance(payload["findings"], list) or not isinstance(payload["warnings"], list):
+            if (
+                not isinstance(payload["findings"], list)
+                or not isinstance(payload["warnings"], list)
+                or not all(isinstance(warning, str) for warning in payload["warnings"])
+            ):
                 return None
             findings = []
             for record in payload["findings"]:
@@ -928,10 +932,20 @@ class IncrementalCache:
     def _digest_field(self) -> str:
         return "payload_sha256" if self._integrity_key is None else "payload_hmac_sha256"
 
-    def _payload_digest(self, payload: Any) -> str:
+    def _payload_digest(self, payload: Any, snapshot: Snapshot) -> str:
         if self._integrity_key is None:
             return hashlib.sha256(_json(payload)).hexdigest()
-        return hmac.new(self._integrity_key, _json(payload), "sha256").hexdigest()
+        # The MAC binds the entry's format, slot and input fingerprint as well as its
+        # payload. Every clean scan stores the same payload, so a MAC over the payload
+        # alone would let a writer without the key splice a clean entry's payload and
+        # MAC into any other slot and replay an empty result for changed input.
+        bound = {
+            "format": _FORMAT,
+            "slot": snapshot.slot,
+            "fingerprint": snapshot.fingerprint,
+            "payload": payload,
+        }
+        return hmac.new(self._integrity_key, _json(bound), "sha256").hexdigest()
 
     def save(
         self,
@@ -983,7 +997,7 @@ class IncrementalCache:
                     "format": _FORMAT,
                     "fingerprint": snapshot.fingerprint,
                     "payload": payload,
-                    self._digest_field(): self._payload_digest(payload),
+                    self._digest_field(): self._payload_digest(payload, snapshot),
                 }
             )
             if len(data) > min(_MAX_CACHE_BYTES, _MAX_CACHE_TOTAL_BYTES):

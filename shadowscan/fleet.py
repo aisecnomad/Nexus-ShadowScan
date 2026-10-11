@@ -433,8 +433,10 @@ def merge_reports(reports: list[tuple[str, dict[str, Any]]]) -> ScanResult:
     # The fleet started when its oldest source did, so a baseline age limit measures its oldest
     # evidence. One source without a valid start time leaves the fleet undated: dating it by the
     # merge would let an arbitrarily old baseline pass the limit.
-    result.started_at = "" if undated else min(started, key=lambda item: item[0])[1]
-    result.finished_at = max(finished, key=lambda item: item[0])[1] if finished else None
+    # Ties on the instant ('...09:00:00Z' and '...18:00:00+09:00') break on the text, so the
+    # fleet times never depend on the order of the reports.
+    result.started_at = "" if undated else min(started)[1]
+    result.finished_at = max(finished)[1] if finished else None
     return result
 
 
