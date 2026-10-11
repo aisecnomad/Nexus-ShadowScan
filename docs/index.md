@@ -4,7 +4,8 @@
 against your approved inventory.**
 
 ShadowScan collects observations across code repositories, identity providers,
-LLM gateway logs, low-code platforms, SaaS applications and cloud accounts. It
+LLM gateway logs, low-code platforms, SaaS applications, cloud accounts,
+endpoints, network logs and running processes. It
 normalizes those observations into findings with evidence, risk factors and
 inventory matches so analysts can investigate ownership and capabilities.
 

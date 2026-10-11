@@ -15,8 +15,8 @@ that would alias or fail to materialize on a supported host are rejected before
 scanning. Sample creation never overwrites an existing path; an unexpected host
 alias stops evaluation instead of changing the labeled input.
 
-The eight bundled corpora (synthetic, public, realistic, review, field review,
-attribution, current SDK idioms and independent) are regression checks on known
+The nine bundled corpora (synthetic, public, realistic, review, field review,
+attribution, current SDK idioms, benchmark follow-up and independent) are regression checks on known
 inputs. The synthetic, realistic, review, attribution, current SDK idioms and
 public sets were written or selected by the maintainers; the independent corpus
 was labeled separately, as described below. None of them is a random or
@@ -593,7 +593,7 @@ restricted release record. Changing labels, exclusions, scanner signatures or
 sampling after seeing results requires a new blinded holdout and reviewed policy.
 
 The standalone command requires declared human labels, rejects known-gap waivers
-and exact source reuse from the eight bundled evaluated corpora. It cannot find
+and exact source reuse from the nine bundled evaluated corpora. It cannot find
 undisclosed private prior evaluations or near duplicates. For a production
 rollout, run [`tools.acceptance.verify`](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) with
 declared `prior_corpora` and the separately reviewed tenant canary evidence.
