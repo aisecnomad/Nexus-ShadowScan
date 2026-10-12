@@ -249,7 +249,10 @@ def isolation_problems(scratch: Path, env: ToolEnv) -> list[str]:
 
 
 def stage_command(spec_path: Path, out_path: Path) -> list[str]:
-    """The stage's command line: no network, its own PID and mount namespaces, gone when unshare dies."""
+    """The stage's command line: no network, its own PID and mount namespaces, gone when unshare dies.
+
+    ``-P`` keeps the working directory off ``sys.path``; the stage is found through ``PYTHONPATH``.
+    """
     return [
         "unshare",
         "--net",
@@ -262,6 +265,7 @@ def stage_command(spec_path: Path, out_path: Path) -> list[str]:
         "--mount-proc",
         "--",
         sys.executable,
+        "-P",
         "-m",
         f"{__package__}.stage",
         str(spec_path),
@@ -305,7 +309,7 @@ def _stage(spec: dict[str, Any], control: Path, repo: Path, timeout: float) -> d
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
-        cwd=str(repo),
+        cwd="/",  # never a directory the stage then hides; its children would inherit it
         start_new_session=True,
     )
     try:

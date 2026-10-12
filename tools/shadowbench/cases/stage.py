@@ -6,23 +6,25 @@ The runner starts this module as root under ``unshare --net --pid --fork
 --kill-child --mount --mount-proc`` so the tool sees no network, no host
 processes and a private mount table. Before anything from the case runs, the
 stage checks that it is the init of that fresh PID namespace and not in the
-runner's mount namespace, sets ``no_new_privs``, brings loopback up and mounts
+runner's mount namespace, sets ``no_new_privs``, brings loopback up, mounts
 an empty tmpfs over ``/root`` and ``/home`` so the operator's homes and
-credentials are out of sight. It then serves the case's mock services, spawns
-the case's inert processes under their declared names and command lines, runs
-the adapter's invocations in order, and writes their results and the pid each
-process got.
+credentials are out of sight, and leaves the directory it was started in for
+``/``, so no process it starts inherits a working directory under a hidden
+path. It then serves the case's mock services, spawns the case's inert
+processes under their declared names and command lines, runs the adapter's
+invocations in order, and writes their results and the pid each process got.
 
 Tools run as the unprivileged identity the spec names (the runner passes
 uid/gid 65534 with no supplementary groups) with exactly the environment
 their invocation declares and nothing inherited. Inert processes run as the
-same identity with a fixed minimal environment, so a process scanner sees
-them as it would see its own user's processes (``/proc/<pid>/exe``,
-``environ``, ``cwd``). Only the stage itself, the mock services and the
-namespace setup keep root. No tool process outlives its
-invocation: after each invocation, and on a timeout, everything in the
-namespace except the stage and the inert processes is killed, including
-descendants that left the tool's process group with ``setsid``.
+same identity with a fixed minimal environment and the work directory as
+their working directory, so a process scanner sees them as it would see its
+own user's processes (``/proc/<pid>/exe``, ``environ``, ``cwd``) and reaches
+nothing through them that it could not reach itself. Only the stage itself,
+the mock services and the namespace setup keep root. No tool process
+outlives its invocation: after each invocation, and on a timeout, everything
+in the namespace except the stage and the inert processes is killed,
+including descendants that left the tool's process group with ``setsid``.
 
 This is not a filesystem sandbox: a tool can still read whatever is
 world-readable outside ``/root`` and ``/home``.
@@ -139,9 +141,17 @@ def _loopback_up() -> None:
 
 
 def _spawn(
-    processes: list[dict[str, Any]], fakeproc: Path, bindir: Path, run_as: tuple[int, int] | None = None
+    processes: list[dict[str, Any]],
+    fakeproc: Path,
+    bindir: Path,
+    run_as: tuple[int, int] | None = None,
+    cwd: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Start one inert process per record so ``/proc`` shows its name and command line."""
+    """Start one inert process per record so ``/proc`` shows its name and command line.
+
+    Each gets ``cwd`` (``/`` when none is given), never the stage's own working directory: a
+    tool running as the same uid can follow ``/proc/<pid>/cwd`` of these processes.
+    """
     bindir.mkdir(parents=True, exist_ok=True)
     bindir.chmod(0o755)
     out: list[dict[str, Any]] = []
@@ -158,6 +168,7 @@ def _spawn(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            cwd=str(cwd or "/"),
             env=dict(INERT_ENV),
             user=run_as[0] if run_as else None,
             group=run_as[1] if run_as else None,
@@ -266,13 +277,15 @@ def main(argv: list[str]) -> int:
         _no_new_privs()
         _loopback_up()
         _hide(HIDDEN)
+        # The stage may have been started inside a now-hidden directory; children inherit the cwd.
+        os.chdir("/")
         work = Path(spec["work"])
         if not work.is_dir():
             raise RuntimeError(f"work directory {work} is not visible inside the stage")
         if spec.get("services"):
             services.start()
         if spec.get("processes"):
-            children = _spawn(spec["processes"], Path(spec["fakeproc"]), work / "procbin", run_as)
+            children = _spawn(spec["processes"], Path(spec["fakeproc"]), work / "procbin", run_as, work)
             result["processes"] = children
         spare = {int(child["pid"]) for child in children}
         for inv in spec["invocations"]:

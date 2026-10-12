@@ -278,6 +278,18 @@ def test_stage_runs_in_its_own_process_group_and_dies_with_unshare(
     assert call["start_new_session"] is True
 
 
+def test_stage_starts_outside_the_repository_without_its_cwd_on_sys_path(
+    tmp_path: Path, fake_popen: type[FakePopen]
+) -> None:
+    # Children of the stage inherit its cwd; a repository under /home would stay reachable that way.
+    runner._stage({"work": str(tmp_path), "invocations": []}, tmp_path, ROOT, 30)
+    (call,) = fake_popen.calls
+    assert call["cwd"] == "/"
+    python = call["args"].index(runner.sys.executable)
+    assert call["args"][python + 1 : python + 4] == ["-P", "-m", "tools.shadowbench.cases.stage"]
+    assert call["env"]["PYTHONPATH"] == str(ROOT)
+
+
 def test_stage_timeout_kills_the_whole_process_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_popen: type[FakePopen]
 ) -> None:
@@ -673,6 +685,29 @@ def test_inert_processes_get_a_fixed_minimal_environment(
     assert SENTINEL not in raw.decode()
 
 
+@pytest.mark.skipif(_coreutils_sleep() is None, reason="needs a standalone sleep binary")
+def test_inert_processes_never_inherit_the_stage_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sleep = _coreutils_sleep()
+    assert sleep is not None
+    launched_in = tmp_path / "launched-in"
+    launched_in.mkdir()
+    monkeypatch.chdir(launched_in)
+    work = tmp_path / "work"
+    work.mkdir()
+    records = [{"index": 0, "name": "inert", "argv": ["inert", "60"]}]
+    children = stage._spawn(records, Path(sleep), tmp_path / "bin")
+    children += stage._spawn(records, Path(sleep), tmp_path / "bin", cwd=work)
+    try:
+        cwds = [os.readlink(f"/proc/{child['pid']}/cwd") for child in children]
+    finally:
+        for child in children:
+            os.kill(child["pid"], signal.SIGKILL)
+            os.waitpid(child["pid"], 0)
+    assert cwds == ["/", str(work)]
+
+
 class _AnyToolEnv(ToolEnv):
     """Every tool is configured, under a path outside any home."""
 
@@ -840,19 +875,59 @@ def test_stage_inert_processes_are_visible_to_the_tool_under_their_names(scratch
     work, control = _dirs(scratch)
     sleep = _coreutils_sleep()
     assert sleep is not None
-    script = (
-        'for d in /proc/[0-9]*; do if [ "$(cat $d/comm 2>/dev/null)" = inert-agent ]; then'
-        ' echo "${d#/proc/} $(stat -c %u $d) $(readlink $d/exe)"; tr "\\0" " " < $d/cmdline; echo; fi; done'
-    )
-    processes = [{"index": 7, "name": "inert-agent", "argv": ["inert-agent", "600"], "username": "op"}]
-    spec = _spec(work, [_inv(work, script)], processes=processes, fakeproc=sleep)
-    staged = runner._stage(spec, control, ROOT, 60)
+    staged = runner._stage(_inert_spec(work, sleep), control, ROOT, 60)
     assert staged["error"] is None, staged
     (proc,) = staged["processes"]
-    pid, uid, exe = staged["runs"][0]["stdout"].splitlines()[0].split()
+    pid, uid, exe, cwd = staged["runs"][0]["stdout"].splitlines()[0].split()
     assert (int(pid), int(uid)) == (proc["pid"], 65534)
     assert exe == str(work / "procbin" / "inert-agent")
+    assert cwd == str(work)
     assert staged["runs"][0]["stdout"].splitlines()[1].strip() == "inert-agent 600"
+
+
+INERT_PROBE = (
+    'for d in /proc/[0-9]*; do if [ "$(cat $d/comm 2>/dev/null)" = inert-agent ]; then'
+    ' echo "${d#/proc/} $(stat -c %u $d) $(readlink $d/exe) $(readlink $d/cwd)";'
+    ' tr "\\0" " " < $d/cmdline; echo; ls -A $d/cwd/; fi; done'
+)
+"""What a process scanner running as the tool sees of the inert ``inert-agent`` process."""
+
+
+def _inert_spec(work: Path, fakeproc: str, extra: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    processes = [{"index": 7, "name": "inert-agent", "argv": ["inert-agent", "600"], "username": "op"}]
+    invocations = [_inv(work, INERT_PROBE), *(extra or [])]
+    return _spec(work, invocations, processes=processes, fakeproc=fakeproc)
+
+
+@needs_namespaces
+@pytest.mark.skipif(_coreutils_sleep() is None, reason="needs a standalone sleep binary")
+@pytest.mark.skipif(not os.path.isdir("/root"), reason="needs /root to start the stage inside it")
+def test_stage_started_inside_a_hidden_directory_exposes_it_through_no_process(scratch: Path) -> None:
+    # A harness checkout under /home or /root is where the runner used to start the stage.
+    work, control = _dirs(scratch)
+    sleep = _coreutils_sleep()
+    assert sleep is not None
+    hidden = Path(tempfile.mkdtemp(prefix="shadowbench-hidden-", dir="/root"))
+    try:
+        hidden.chmod(0o755)
+        (hidden / "operator-marker").write_text("x", encoding="utf-8")
+        spec_path, out_path = control / "stage_spec.json", control / "stage_out.json"
+        full = {
+            **_inert_spec(work, sleep),
+            "run_as": [65534, 65534],
+            "host_mnt_ns": os.readlink("/proc/self/ns/mnt"),
+        }
+        spec_path.write_text(json.dumps(full), encoding="utf-8")
+        env = {"PATH": TOOL_PATH, "PYTHONPATH": str(ROOT), "LANG": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1"}
+        cmd = runner.stage_command(spec_path, out_path)
+        subprocess.run(cmd, cwd=hidden, env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
+        staged = json.loads(out_path.read_text(encoding="utf-8"))
+    finally:
+        shutil.rmtree(hidden, ignore_errors=True)
+    assert staged["error"] is None, staged
+    out = staged["runs"][0]["stdout"]
+    assert out.splitlines()[0].split()[3] == str(work)
+    assert "operator-marker" not in out
 
 
 @needs_namespaces
