@@ -1,18 +1,25 @@
 """Score stored runs against the corpus: entity-level and case-level metrics per tool and surface.
 
 ``python -m tools.shadowbench.cases score --corpus corpus.json --results results/ --out metrics.json``
-(``--force`` scores results recorded against a different corpus file)
+(``--force`` scores results the manifest does not vouch for, and records each override)
 
 Inputs. Every tool is scored on every case of the corpus. The results
 manifest must name the SHA-256 of the corpus file being scored: case ids are
 positional, so results recorded against another corpus (another seed, an
-edited rubric) would be scored against the wrong truth. A mismatch, or a
-manifest without the digest, is refused unless ``--force`` is given, and a
-forced score records the mismatch. A row with a status other than ``ok``,
-``error`` or ``unsupported``, a second row for the same case, a row for a case
-the corpus does not have, or a row whose surface or modality disagrees with
-its case is refused. A case with no row counts as an ``error`` and is also
-reported as missing.
+edited rubric) would be scored against the wrong truth. Each ``<tool>.jsonl``
+must belong to a tool the manifest records as run (the runner never clears its
+output directory, and ``--only`` rewrites the manifest with the tools it ran,
+so files left from another run must not be scored), and the row statuses in
+the file must add up to the counts the manifest recorded for that tool (a
+truncated, swapped or missing file does not). Each of these is refused unless
+``--force`` is given, and a forced score records every override. A row with a
+status other than ``ok``, ``error`` or ``unsupported``, a second row for the
+same case, a row for a case the corpus does not have, a row whose tool is not
+the file's, a row whose surface, modality, family, label or difficulty
+disagrees with its case, and an ``unsupported`` row on a (surface, modality)
+where the same tool has ``ok`` or ``error`` rows (the runner decides support
+per surface and modality) are refused, ``--force`` or not. A case with no row
+counts as an ``error`` and is also reported as missing.
 
 Matching. A reported key equal to a tolerated key is neither credited nor
 penalized. Otherwise it matches an expected or decoy key when they are equal,
@@ -34,19 +41,27 @@ Rules. An ``error`` row (crash, timeout, unreadable output, missing row) is
 never a correct outcome: every expected entity counts as missed, its decoys
 count against specificity (they are not true negatives, and are not reported
 false positives either), a positive case counts as missed and a negative case
-as a false alarm. An ``unsupported`` row is excluded from in-scope metrics and
-counted as missed in estate recall. An incomplete run (a tool that says it did
-not read everything) is scored on what it reported and counted separately.
+as a false alarm. An incomplete run (an ``ok`` row the tool flagged as not
+having read everything, such as ShadowScan exit 3) keeps the true and false
+positives it reported but never earns a true negative: its unhit decoys stay
+in the specificity denominator without counting as true negatives, and a
+negative case it scanned incompletely counts as a false alarm, as an error
+does. A positive case it found still counts as found. Incomplete rows are also
+counted separately. An ``unsupported`` row is excluded from in-scope metrics
+and counted as missed in estate recall.
 
 Case level. A positive case is found when the tool reports at least one
 expected entity; a negative case is a false alarm when the tool reports at
-least one false positive. Case recall, specificity, balanced accuracy, MCC and
-the paired McNemar test all use these outcomes.
+least one false positive, and is correct only on a complete ``ok`` run. Case
+recall, specificity, balanced accuracy, MCC and the paired McNemar test all use
+these outcomes.
 
 Agent tier. Among expected ``agent`` entities, agent recall is the share found
 by a report labeled ``agent``. The agent false-alarm rate is the share of
 expected ``llm`` entities and decoys that a report labeled ``agent`` hit, on
-``ok`` rows only (an error reports nothing, so it must not lower the rate).
+``ok`` rows only. An error reports nothing and an incomplete run did not look
+at everything, so neither may lower the rate: an error row is left out, and an
+incomplete row adds only the entities it did call agents to the universe.
 """
 
 from __future__ import annotations
@@ -57,6 +72,7 @@ import math
 import random
 import statistics
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any, get_args
 
@@ -66,6 +82,9 @@ from tools.shadowbench.cases.corpus import Case, Corpus, corpus_digest, load_cor
 
 STATUSES: frozenset[str] = frozenset(get_args(Status))
 """The row statuses the runner writes; any other status is refused, never skipped."""
+
+ROW_FIELDS: tuple[str, ...] = ("surface", "modality", "family", "label", "difficulty")
+"""Case fields the runner copies into every row; a row that disagrees was recorded on another case."""
 
 
 class ResultsError(ValueError):
@@ -116,6 +135,8 @@ class CaseScore:
             row = {"status": "error", "entities": [], "incomplete": False, "seconds": 0.0}
         self.status = str(row["status"])
         self.incomplete = bool(row.get("incomplete"))
+        # only a complete ok run can vouch for what it did not report
+        self.complete = self.status == "ok" and not self.incomplete
         self.seconds = float(row.get("seconds") or 0.0)
         expected = {e.key: e for e in case.expected}
         tolerated = set(case.tolerated)
@@ -168,17 +189,26 @@ class CaseScore:
 
     @property
     def tn(self) -> int:
-        return len(self.case.decoys) - len(self.decoy_hits) if self.status == "ok" else 0
+        """Decoys left alone; an error or an incomplete run earns none."""
+        return len(self.case.decoys) - len(self.decoy_hits) if self.complete else 0
+
+    @property
+    def agent_false_alarm_universe(self) -> int:
+        """Entities this row could have wrongly called agents; an incomplete run adds only those it did."""
+        if not self.complete:
+            return len(self.agent_false_alarms) if self.status == "ok" else 0
+        return sum(1 for e in self.case.expected if e.label == "llm") + len(self.case.decoys)
 
     @property
     def correct(self) -> bool:
         """Case-level outcome: a positive case needs a true positive, a negative one no false positive.
 
-        An ``error`` (or missing) row is never correct, whatever the case label.
+        An ``error`` (or missing) row is never correct, whatever the case label, and an incomplete
+        run is never a correct negative.
         """
         if self.status != "ok":
             return False
-        return bool(self.tp) if self.case.positive else self.fp == 0
+        return bool(self.tp) if self.case.positive else self.fp == 0 and not self.incomplete
 
 
 def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict[str, Any]:
@@ -191,11 +221,11 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
     decoys = sum(len(s.case.decoys) for s in scored)
     exp_agents = sum(1 for s in scored for e in s.case.expected if e.label == "agent")
     tp_agent = sum(len(s.tp_agent) for s in ok)
-    fa_universe = sum(sum(1 for e in s.case.expected if e.label == "llm") + len(s.case.decoys) for s in ok)
+    fa_universe = sum(s.agent_false_alarm_universe for s in ok)
     fa = sum(len(s.agent_false_alarms) for s in ok)
     precision = wilson(tp, tp + fp)
     recall = wilson(tp, tp + fn)
-    # the decoys of an error row are in the denominator but never true negatives
+    # the decoys of an error or incomplete row are in the denominator but never true negatives
     specificity = wilson(tn, decoys)
     f1 = 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) else None
     # bootstrap F1 over cases
@@ -210,7 +240,7 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
             if 2 * btp + bfp + bfn:
                 boots.append(2 * btp / (2 * btp + bfp + bfn))
         boots.sort()
-    # case level: an error is a missed positive or a false alarm on a negative
+    # case level: an error is a missed positive, an error or incomplete negative a false alarm
     pos = [s for s in scored if s.case.positive]
     neg = [s for s in scored if not s.case.positive]
     ctp = sum(1 for s in pos if s.correct)
@@ -271,21 +301,24 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
     }
 
 
-def _check_row(row: Any, where: str, cases: dict[str, Case]) -> dict[str, Any]:
+def _check_row(row: Any, where: str, cases: dict[str, Case], tool: str) -> dict[str, Any]:
     if not isinstance(row, dict):
         raise ResultsError(f"{where}: a row must be a JSON object")
     cid = row.get("case")
     if not isinstance(cid, str) or cid not in cases:
         raise ResultsError(f"{where}: case {cid!r} is not in the corpus")
+    if row.get("tool") != tool:
+        raise ResultsError(f"{where}: {cid}: row tool {row.get('tool')!r} is not the file's tool {tool!r}")
     status = row.get("status")
     if status not in STATUSES:
         raise ResultsError(f"{where}: {cid}: unknown status {status!r} (expected one of {sorted(STATUSES)})")
     case = cases[cid]
-    for field in ("surface", "modality"):
+    # case ids are positional (runtime-live-003), so these fields are what ties a row to its case
+    for field in ROW_FIELDS:
         truth = getattr(case, field)
-        if field in row and row[field] != truth:
+        if row.get(field) != truth:
             raise ResultsError(
-                f"{where}: {cid}: row {field} {row[field]!r} disagrees with the corpus ({truth!r})"
+                f"{where}: {cid}: row {field} {row.get(field)!r} disagrees with the corpus ({truth!r})"
             )
     if not isinstance(row.get("incomplete", False), bool):
         raise ResultsError(f"{where}: {cid}: incomplete must be true or false")
@@ -317,11 +350,51 @@ def load_rows(results: Path, corpus: Corpus) -> dict[str, dict[str, dict[str, An
                     data = json.loads(line)
                 except json.JSONDecodeError as exc:
                     raise ResultsError(f"{where}: unreadable row: {exc}") from exc
-                row = _check_row(data, where, cases)
+                row = _check_row(data, where, cases, tool)
                 if row["case"] in rows[tool]:
                     raise ResultsError(f"{where}: second row for case {row['case']}")
                 rows[tool][row["case"]] = row
+        # the runner decides support per (surface, modality); a mix means an edited or corrupt file
+        support: dict[tuple[str, str], set[bool]] = {}
+        for row in rows[tool].values():
+            support.setdefault((row["surface"], row["modality"]), set()).add(row["status"] == "unsupported")
+        for (surface, modality), kinds in sorted(support.items()):
+            if len(kinds) > 1:
+                raise ResultsError(
+                    f"{path.name}: {surface}/{modality} has unsupported rows alongside ok or error rows"
+                )
     return rows
+
+
+def _provenance(
+    rows: dict[str, dict[str, dict[str, Any]]], tool_runs: dict[str, Any]
+) -> tuple[set[str], list[str]]:
+    """The tools the manifest says ran, and every way the results files disagree with the manifest."""
+    problems: list[str] = []
+    ran: set[str] = set()
+    for name, run in tool_runs.items():
+        if not isinstance(run, dict):
+            raise ResultsError(f"manifest: tools.{name} must be a JSON object")
+        if not run.get("skipped"):
+            ran.add(name)
+    for tool in sorted(set(rows) | ran):
+        run = tool_runs.get(tool)
+        if run is None:
+            problems.append(f"{tool}.jsonl: the manifest does not list {tool}, so no run vouches for it")
+            continue
+        if run.get("skipped"):
+            problems.append(f"{tool}.jsonl: the manifest records {tool} as not run ({run['skipped']})")
+            continue
+        recorded = run.get("statuses")
+        found = dict(Counter(str(r["status"]) for r in rows.get(tool, {}).values()))
+        if not isinstance(recorded, dict):
+            problems.append(f"{tool}: the manifest records no row statuses to check {tool}.jsonl against")
+        elif {k: v for k, v in recorded.items() if v} != found:
+            problems.append(
+                f"{tool}.jsonl: row statuses {dict(sorted(found.items()))} differ from the "
+                f"{dict(sorted(recorded.items()))} the manifest recorded"
+            )
+    return ran, problems
 
 
 def score(
@@ -334,15 +407,24 @@ def score(
 ) -> dict[str, Any]:
     """Metrics for every tool under ``results``; ``corpus_sha256`` is the digest of the corpus file scored."""
     manifest_path = results / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    except json.JSONDecodeError as exc:
+        raise ResultsError(f"{manifest_path}: unreadable manifest: {exc}") from exc
     if not isinstance(manifest, dict):
         raise ResultsError(f"{manifest_path}: the manifest must be a JSON object")
+    forced: list[str] = []
+
+    def refuse_unless_forced(problem: str) -> None:
+        if not force:
+            raise ResultsError(f"{problem} (--force overrides)")
+        forced.append(problem)
+
     recorded = manifest.get("corpus_sha256")
-    if recorded != corpus_sha256 and not force:
-        raise ResultsError(
+    if recorded != corpus_sha256:
+        refuse_unless_forced(
             f"{results}: results were recorded against corpus {recorded or '(not recorded)'}, "
-            f"not this corpus ({corpus_sha256}); case ids are positional, so refusing to score "
-            "(--force overrides)"
+            f"not this corpus ({corpus_sha256}); case ids are positional, so refusing to score"
         )
     for case in corpus.cases:
         if case.surface == "code":
@@ -353,11 +435,14 @@ def score(
     tool_runs = manifest.get("tools", {})
     if not isinstance(tool_runs, dict):
         raise ResultsError(f"{manifest_path}: tools must be a JSON object")
-    ran = {name for name, run in tool_runs.items() if isinstance(run, dict) and not run.get("skipped")}
+    ran, problems = _provenance(rows, tool_runs)
+    for problem in problems:
+        refuse_unless_forced(problem)
     out: dict[str, Any] = {
         "corpus_sha256": recorded,
         "corpus_sha256_now": corpus_sha256,
         "corpus_mismatch_forced": recorded != corpus_sha256,
+        "forced": forced,
         "generator_digest": corpus.generator_digest,
         "manifest": {k: v for k, v in manifest.items() if k != "tools"},
         "tool_runs": tool_runs,
@@ -374,7 +459,7 @@ def score(
             "modalities": sorted({c.modality for c in cs}),
         }
     all_scores: dict[str, dict[str, CaseScore]] = {}
-    # a tool the manifest says ran but whose rows are gone scores as all missing, never as absent
+    # a forced score of a tool the manifest says ran but whose rows are gone scores as all missing
     for tool in sorted(set(rows) | ran):
         by_case = rows.get(tool, {})
         scores = {c.case_id: CaseScore(c, by_case.get(c.case_id)) for c in corpus.cases}
@@ -440,7 +525,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--force",
         action="store_true",
-        help="score results whose manifest names a different corpus digest (recorded in the metrics)",
+        help="score results the manifest does not vouch for: another corpus digest, a results file for "
+        "a tool it does not record as run, or row statuses that differ from its counts (recorded in the "
+        "metrics)",
     )
     args = ap.parse_args(argv)
     corpus = load_corpus(args.corpus)
@@ -452,10 +539,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"refusing to score: {exc}", file=sys.stderr)
         return 2
     args.out.write_text(json.dumps(metrics, indent=1), encoding="utf-8")
-    if metrics["corpus_mismatch_forced"]:
-        print(
-            "warning: scored with --force against a corpus the results were not recorded on", file=sys.stderr
-        )
+    for problem in metrics["forced"]:
+        print(f"warning: scored with --force despite: {problem}", file=sys.stderr)
     for tool, t in metrics["tools"].items():
         i = t["in_scope"]
         if i["missing"]:

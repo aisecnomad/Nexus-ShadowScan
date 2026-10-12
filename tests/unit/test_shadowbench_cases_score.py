@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -41,9 +42,11 @@ def _case(
     )
 
 
-def _row(case: Case, status: str = "ok", keys: Iterable[str] = (), label: str = "agent") -> dict[str, Any]:
+def _row(
+    case: Case, status: str = "ok", keys: Iterable[str] = (), label: str = "agent", incomplete: bool = False
+) -> dict[str, Any]:
+    """A runner row; ``_write`` stamps the tool of the file it goes to unless the row names one."""
     return {
-        "tool": "t",
         "case": case.case_id,
         "surface": case.surface,
         "modality": case.modality,
@@ -54,8 +57,13 @@ def _row(case: Case, status: str = "ok", keys: Iterable[str] = (), label: str = 
         "entities": [{"kind": "x", "key": k, "label": label} for k in keys],
         "note": "",
         "seconds": 0.5,
-        "incomplete": False,
+        "incomplete": incomplete,
     }
+
+
+def _ran(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """The manifest entry the runner writes for a tool that produced ``rows``."""
+    return {"version": "1", "statuses": dict(Counter(str(r["status"]) for r in rows))}
 
 
 def _write(
@@ -71,10 +79,10 @@ def _write(
     results.mkdir()
     for tool, tool_rows in rows.items():
         (results / f"{tool}.jsonl").write_text(
-            "".join(json.dumps(r) + "\n" for r in tool_rows), encoding="utf-8"
+            "".join(json.dumps({"tool": tool, **r}) + "\n" for r in tool_rows), encoding="utf-8"
         )
     manifest: dict[str, Any] = {
-        "tools": manifest_tools if manifest_tools is not None else {t: {"version": "1"} for t in rows}
+        "tools": manifest_tools if manifest_tools is not None else {t: _ran(r) for t, r in rows.items()}
     }
     if corpus_sha256 is not None:
         manifest["corpus_sha256"] = digest if corpus_sha256 == "match" else corpus_sha256
@@ -94,7 +102,7 @@ def _score(tmp_path: Path, corpus_path: Path, results: Path, *extra: str) -> dic
 
 
 def _refused(tmp_path: Path, corpus_path: Path, results: Path, capsys: pytest.CaptureFixture[str]) -> str:
-    assert score.main(_args(tmp_path, corpus_path, results)) != 0
+    assert score.main(_args(tmp_path, corpus_path, results)) == 2
     assert not (tmp_path / "metrics.json").exists()
     return capsys.readouterr().err
 
@@ -130,11 +138,44 @@ def test_error_on_a_positive_case_is_a_miss(tmp_path: Path) -> None:
     assert (i["tp"], i["fn"]) == (0, 1)
 
 
+def test_an_incomplete_scan_never_earns_a_true_negative(tmp_path: Path) -> None:
+    """An incomplete scan that reported nothing used to count as a clean negative, its decoys as TNs."""
+    pos = _case("p1", expected=[("app:1", "agent"), ("app:2", "llm")], decoys=["app:d0"])
+    clean = _case("n1", decoys=["app:d1"])
+    partial = _case("n2", decoys=["app:d2", "app:d3"])
+    corpus_path, results = _write(
+        tmp_path,
+        [pos, clean, partial],
+        {
+            "t": [
+                # app:2 is plain AI reported as an agent: an agent false alarm the scan did make
+                _row(pos, keys=["app:1", "app:2"], incomplete=True),
+                _row(clean),
+                _row(partial, incomplete=True),
+            ]
+        },
+    )
+    metrics = _score(tmp_path, corpus_path, results)
+    i = metrics["tools"]["t"]["in_scope"]
+    assert i["incomplete"] == 2
+    # what the incomplete scans reported still counts
+    assert (i["tp"], i["fp"], i["fn"]) == (2, 0, 0)
+    assert (i["case"]["tp"], i["case"]["fn"]) == (1, 0)
+    # the incomplete negative is a false alarm, not a correct negative
+    assert (i["case"]["tn"], i["case"]["fp"], i["case"]["specificity"]) == (1, 1, 0.5)
+    assert i["case"]["balanced_accuracy"] == 0.75
+    # only the complete scan's decoy is a true negative; the others stay in the denominator
+    assert (i["tn"], i["decoys"], i["specificity"]) == (1, 4, 0.25)
+    # incomplete scans add only the false alarms they made to the agent false-alarm universe
+    assert (i["agent_false_alarms"], i["agent_false_alarm_universe"]) == (1, 2)
+    assert "never earns a true negative" in report.render(metrics, corpus_path)
+
+
 # --- every case is scored; malformed results are refused (S2) -------------------------------------
 
 
 def test_missing_rows_count_as_errors_not_as_absent_cases(tmp_path: Path) -> None:
-    """A results file truncated to its first rows used to raise estate recall to the share it kept."""
+    """A run of only some cases (runner ``--cases``) used to raise estate recall to the share it ran."""
     cases = [_case(f"p{i}", expected=[(f"app:{i}", "agent")]) for i in range(4)]
     corpus_path, results = _write(
         tmp_path, cases, {"t": [_row(c, keys=[f"app:{n}"]) for n, c in enumerate(cases[:2])]}
@@ -147,21 +188,79 @@ def test_missing_rows_count_as_errors_not_as_absent_cases(tmp_path: Path) -> Non
     assert "| 2 (2 missing) |" in report.render(metrics, corpus_path)
 
 
-def test_a_tool_the_manifest_ran_without_a_results_file_scores_as_all_missing(tmp_path: Path) -> None:
+def test_a_results_file_truncated_after_the_run_is_refused_unless_forced(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The manifest counted four rows; a file cut to two no longer matches the run that wrote it."""
+    cases = [_case(f"p{i}", expected=[(f"app:{i}", "agent")]) for i in range(4)]
+    full = [_row(c, keys=[f"app:{n}"]) for n, c in enumerate(cases)]
+    corpus_path, results = _write(tmp_path, cases, {"t": full[:2]}, manifest_tools={"t": _ran(full)})
+    assert "row statuses {'ok': 2} differ from the {'ok': 4}" in _refused(
+        tmp_path, corpus_path, results, capsys
+    )
+    metrics = _score(tmp_path, corpus_path, results, "--force")
+    t = metrics["tools"]["t"]
+    assert (t["in_scope"]["missing"], t["estate"]["recall"]) == (2, 0.5)
+    assert len(metrics["forced"]) == 1
+
+
+def test_a_tool_the_manifest_ran_without_a_results_file_is_refused_unless_forced(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     case = _case("p1", expected=[("app:1", "agent")])
+    rows = [_row(case, keys=["app:1"])]
     corpus_path, results = _write(
         tmp_path,
         [case],
-        {"t": [_row(case, keys=["app:1"])]},
-        manifest_tools={
-            "t": {"version": "1"},
-            "gone": {"version": "2"},
-            "skipped": {"skipped": "not installed"},
-        },
+        {"t": rows},
+        manifest_tools={"t": _ran(rows), "gone": _ran(rows), "skipped": {"skipped": "not installed"}},
     )
-    tools = _score(tmp_path, corpus_path, results)["tools"]
+    assert "gone.jsonl: row statuses {} differ" in _refused(tmp_path, corpus_path, results, capsys)
+    tools = _score(tmp_path, corpus_path, results, "--force")["tools"]
     assert sorted(tools) == ["gone", "t"]
     assert (tools["gone"]["in_scope"]["missing"], tools["gone"]["estate"]["recall"]) == (1, 0.0)
+
+
+def test_a_results_file_for_a_tool_the_manifest_skipped_is_refused_unless_forced(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A file left behind by an earlier run (the runner never clears ``--out``) used to be scored."""
+    case = _case("p1", expected=[("app:1", "agent")])
+    rows = [_row(case, keys=["app:1"])]
+    corpus_path, results = _write(
+        tmp_path,
+        [case],
+        {"shadowscan": rows, "rival": rows},
+        manifest_tools={"shadowscan": _ran(rows), "rival": {"skipped": "binary not found"}},
+    )
+    assert "records rival as not run (binary not found)" in _refused(tmp_path, corpus_path, results, capsys)
+    metrics = _score(tmp_path, corpus_path, results, "--force")
+    assert metrics["forced"] == ["rival.jsonl: the manifest records rival as not run (binary not found)"]
+    text = report.render(metrics, corpus_path)
+    assert "scored with `--force` over these refusals" in text
+    assert "- `rival`: binary not found (a results file for it was scored with `--force`)" in text
+
+
+def test_a_results_file_for_a_tool_the_manifest_does_not_list_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--only`` rewrites the manifest with the tools it ran; other files in ``--out`` are not this run's."""
+    case = _case("p1", expected=[("app:1", "agent")])
+    rows = [_row(case, keys=["app:1"])]
+    corpus_path, results = _write(
+        tmp_path, [case], {"shadowscan": rows, "rival": rows}, manifest_tools={"shadowscan": _ran(rows)}
+    )
+    assert "the manifest does not list rival" in _refused(tmp_path, corpus_path, results, capsys)
+
+
+def test_a_manifest_without_row_statuses_for_a_tool_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    case = _case("p1", expected=[("app:1", "agent")])
+    corpus_path, results = _write(
+        tmp_path, [case], {"t": [_row(case, keys=["app:1"])]}, manifest_tools={"t": {"version": "1"}}
+    )
+    assert "records no row statuses" in _refused(tmp_path, corpus_path, results, capsys)
 
 
 @pytest.mark.parametrize(
@@ -171,18 +270,53 @@ def test_a_tool_the_manifest_ran_without_a_results_file_scores_as_all_missing(tm
         (lambda rows: [*rows, rows[0]], "second row for case"),
         (lambda rows: [*rows, {**rows[0], "case": "elsewhere"}], "'elsewhere' is not in the corpus"),
         (lambda rows: [{**rows[0], "surface": "gateway"}, *rows[1:]], "row surface 'gateway' disagrees"),
+        (lambda rows: [rows[0], {**rows[1], "label": "agent"}], "row label 'agent' disagrees"),
+        (lambda rows: [{**rows[0], "family": "old-family"}, *rows[1:]], "row family 'old-family' disagrees"),
+        (lambda rows: [{**rows[0], "difficulty": "hard"}, *rows[1:]], "row difficulty 'hard' disagrees"),
+        (
+            lambda rows: [{k: v for k, v in rows[0].items() if k != "family"}, *rows[1:]],
+            "row family None disagrees",
+        ),
+        (lambda rows: [{**rows[0], "tool": "rival"}, *rows[1:]], "row tool 'rival' is not the file's"),
     ],
-    ids=["unknown-status", "duplicate-row", "unknown-case", "surface-mismatch"],
+    ids=[
+        "unknown-status",
+        "duplicate-row",
+        "unknown-case",
+        "surface-mismatch",
+        "label-mismatch",
+        "family-mismatch",
+        "difficulty-mismatch",
+        "family-absent",
+        "tool-mismatch",
+    ],
 )
 def test_rows_that_cannot_be_scored_are_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], mutate: Any, reason: str
 ) -> None:
-    """Unknown statuses dropped whole surfaces, duplicates overwrote each other, unknown ids vanished."""
+    """Unknown statuses dropped whole surfaces, duplicates overwrote each other, unknown ids vanished.
+
+    Case ids are positional, so a row from another seed's corpus carries a matching surface and
+    modality; its family, label or difficulty is what gives it away.
+    """
     cases = [_case("p1", expected=[("app:1", "agent")]), _case("n1", decoys=["app:d1"])]
     corpus_path, results = _write(
         tmp_path, cases, {"t": mutate([_row(cases[0], keys=["app:1"]), _row(cases[1])])}
     )
     assert reason in _refused(tmp_path, corpus_path, results, capsys)
+
+
+def test_an_unsupported_row_among_scored_rows_of_one_modality_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One positive marked unsupported used to vanish from in-scope recall with zero errors."""
+    p1, p2 = _case("p1", expected=[("app:1", "agent")]), _case("p2", expected=[("app:2", "agent")])
+    neg = _case("n1", decoys=["app:d1"])
+    corpus_path, results = _write(
+        tmp_path, [p1, p2, neg], {"t": [_row(p1, keys=["app:1"]), _row(p2, "unsupported"), _row(neg)]}
+    )
+    err = _refused(tmp_path, corpus_path, results, capsys)
+    assert "identity/okta-export has unsupported rows alongside ok or error rows" in err
 
 
 def test_results_from_another_corpus_are_refused_unless_forced(

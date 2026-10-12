@@ -68,12 +68,16 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         "results describe how each tool behaves on these inputs, not field precision or recall."
     )
     lines.append("")
-    if metrics.get("corpus_mismatch_forced"):
+    # every forced override is listed, the corpus digest mismatch among them
+    forced = metrics.get("forced") or []
+    if forced:
         lines.append(
-            f"**Warning:** these results were recorded against corpus `{metrics.get('corpus_sha256')}` and "
-            f"scored with `--force` against `{metrics.get('corpus_sha256_now')}`. Case ids are positional, "
-            "so the numbers below may compare tools with the wrong truth."
+            "**Warning:** scored with `--force` over these refusals; case ids are positional, so the numbers "
+            "below may compare tools with the wrong truth or score results no run of this corpus produced:"
         )
+        lines.append("")
+        for problem in forced:
+            lines.append(f"- {problem}")
         lines.append("")
     skipped = {
         k: v.get("skipped")
@@ -84,7 +88,8 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         lines.append("Tools configured but not run:")
         lines.append("")
         for name, reason in sorted(skipped.items()):
-            lines.append(f"- `{name}`: {reason}")
+            scored = " (a results file for it was scored with `--force`)" if name in metrics["tools"] else ""
+            lines.append(f"- `{name}`: {reason}{scored}")
         lines.append("")
     lines += ["## Headline", ""]
     lines.append(
@@ -114,7 +119,10 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         "expected entity, and a negative case is a false alarm when it reports any false positive. An "
         "error, or a case with no result row (counted as missing), is never a correct outcome: its "
         "expected entities are missed, its decoys are not true negatives, and the case counts as missed "
-        "or as a false alarm."
+        "or as a false alarm. A scan the tool marked incomplete keeps what it reported but never earns a "
+        "true negative: its unflagged decoys are not true negatives, a negative case it scanned "
+        "incompletely counts as a false alarm, and only the entities it called agents enter the agent "
+        "false-alarm denominator."
     )
     lines.append("")
     lines += ["## By surface", ""]
