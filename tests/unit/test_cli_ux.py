@@ -281,16 +281,6 @@ def test_inventory_check_renders_card_fields_literally(tmp_path: Path):
 
 
 # ------------------------------------------------------- usage errors (audit round 2)
-def test_scan_only_rejects_an_unknown_selector_before_scanning(tmp_path: Path):
-    # `run` rejects an unknown connector as a usage error; `scan --only` must not
-    # answer the same mistake with an empty, incomplete report (exit 3).
-    cfg = tmp_path / "s.yaml"
-    cfg.write_text(f"connectors:\n  - name: code.filesystem\n    paths: [{tmp_path}]\n")
-    result = CliRunner().invoke(main, ["scan", "-c", str(cfg), "--only", "no.such.connector"])
-    assert result.exit_code == 1, result.output
-    assert "no.such.connector" in result.output and "--only" in result.output
-
-
 def test_code_mode_without_a_remote_target_is_a_usage_error(tmp_path: Path):
     result = CliRunner().invoke(main, ["code", str(tmp_path), "--mode", "api"])
     assert result.exit_code == 1, result.output

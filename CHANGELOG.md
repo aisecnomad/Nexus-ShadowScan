@@ -34,10 +34,7 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Command-line and documentation corrections (October 11)
 
-- `shadowscan scan --only` rejects an unknown or disabled connector selector as
-  a usage error (exit 1) before scanning, as `run` rejects an unknown
-  connector; before, the same mistake produced an empty, incomplete report
-  (exit 3). `signatures list --category`, `signatures test --ecosystem` and
+- `signatures list --category`, `signatures test --ecosystem` and
   `inventory stubs --kinds` reject values they do not know instead of silently
   matching nothing; `code --mode` without a remote target is a usage error;
   `-v`/`-q` typed after the command say where they go; `merge -o` refuses a
