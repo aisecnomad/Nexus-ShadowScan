@@ -1,15 +1,17 @@
-"""Unit tests for the ShadowBench cases corpus: generation and verification."""
+"""Unit tests for the ShadowBench cases corpus: generation, verification and case validation."""
 
 from __future__ import annotations
 
+import copy
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tools.shadowbench.cases import generate, verify
-from tools.shadowbench.cases.corpus import Corpus, load_corpus
+from tools.shadowbench.cases.corpus import Case, Corpus, load_corpus
 
 ROOT = Path(__file__).resolve().parents[2]
 CORPUS = ROOT / "benchmarks" / "shadowbench" / "cases" / "corpus.json"
@@ -20,6 +22,11 @@ CODE_CORPUS = ROOT / "benchmarks" / "shadow-ai-discovery" / "corpus.json"
 def stored() -> dict[str, Any]:
     data: dict[str, Any] = json.loads(CORPUS.read_text(encoding="utf-8"))
     return data
+
+
+def _case(stored: dict[str, Any], case_id: str) -> dict[str, Any]:
+    case: dict[str, Any] = copy.deepcopy(next(c for c in stored["cases"] if c["id"] == case_id))
+    return case
 
 
 def _small_corpus(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
@@ -61,6 +68,12 @@ def test_digest_mismatch_without_regenerate_fails_with_a_hint(capsys: pytest.Cap
     assert corpus.generator_digest != generate.generator_digest()
     assert verify.main(["--corpus", str(CORPUS)]) == 1
     assert "rerun with --regenerate" in capsys.readouterr().out
+
+
+def test_every_committed_case_validates(stored: dict[str, Any]) -> None:
+    corpus = load_corpus(CORPUS)
+    assert len(corpus.cases) == len(stored["cases"]) == 346
+    assert sum(1 for c in corpus.cases if c.checkout) == 26
 
 
 # --- generation and the corpus header -------------------------------------------------------------
@@ -169,3 +182,135 @@ def test_build_rejects_a_negative_per_surface() -> None:
 def test_corpus_header_round_trips_per_surface() -> None:
     assert "per_surface" not in Corpus([], 1, "d", "now").to_json()
     assert Corpus([], 1, "d", "now", per_surface=7).to_json()["per_surface"] == 7
+
+
+# --- case validation ------------------------------------------------------------------------------
+
+Mutation = Callable[[dict[str, Any]], None]
+
+
+def _set(path: tuple[Any, ...], value: object) -> Mutation:
+    def apply(case: dict[str, Any]) -> None:
+        target: Any = case
+        for part in path[:-1]:
+            target = target[part]
+        target[path[-1]] = value
+
+    return apply
+
+
+def _rename_file(new: str) -> Mutation:
+    def apply(case: dict[str, Any]) -> None:
+        old = next(iter(case["files"]))
+        case["files"][new] = case["files"].pop(old)
+
+    return apply
+
+
+def _duplicate_port(case: dict[str, Any]) -> None:
+    case["services"][1]["port"] = case["services"][0]["port"]
+
+
+def _duplicate_index(case: dict[str, Any]) -> None:
+    case["processes"][1]["index"] = case["processes"][0]["index"]
+
+
+def _drop(key: str) -> Mutation:
+    def apply(case: dict[str, Any]) -> None:
+        del case[key]
+
+    return apply
+
+
+def _add_files(case: dict[str, Any]) -> None:
+    case["files"] = {"repo/README.md": "planted\n"}
+
+
+def _borrow(source: str, key: str) -> Callable[[dict[str, Any], dict[str, Any]], None]:
+    def apply(case: dict[str, Any], stored: dict[str, Any]) -> None:
+        case[key] = _case(stored, source)[key]
+
+    return apply
+
+
+ACTIVE, CODE, LIVE, HOME = "network-active-001", "code-checkout-001", "runtime-live-001", "endpoint-home-001"
+
+REJECTED: list[tuple[str, str, Mutation]] = [
+    # services: loopback only, a real port, a named product, one service per port
+    ("service-any-address", ACTIVE, _set(("services", 0, "ip"), "0.0.0.0")),
+    ("service-remote-address", ACTIVE, _set(("services", 0, "ip"), "10.0.0.5")),
+    ("service-no-address", ACTIVE, _set(("services", 0, "ip"), None)),
+    ("service-port-zero", ACTIVE, _set(("services", 0, "port"), 0)),
+    ("service-port-too-high", ACTIVE, _set(("services", 0, "port"), 65536)),
+    ("service-port-string", ACTIVE, _set(("services", 0, "port"), "8080")),
+    ("service-port-bool", ACTIVE, _set(("services", 0, "port"), True)),
+    ("service-port-duplicate", ACTIVE, _duplicate_port),
+    ("service-empty-product", ACTIVE, _set(("services", 0, "product"), "")),
+    ("service-product-not-string", ACTIVE, _set(("services", 0, "product"), 7)),
+    ("service-not-object", ACTIVE, _set(("services", 0), "127.0.0.1:8080")),
+    ("services-not-array", ACTIVE, _set(("services",), {"ip": "127.0.0.1", "port": 80, "product": "x"})),
+    ("active-without-services", ACTIVE, _drop("services")),
+    # checkout: a safe directory name under --checkouts, a full commit, code cases only, no files
+    ("checkout-id-traversal", CODE, _set(("checkout", "id"), "../../etc")),
+    ("checkout-id-dot", CODE, _set(("checkout", "id"), ".")),
+    ("checkout-id-dotdot", CODE, _set(("checkout", "id"), "..")),
+    ("checkout-id-slash", CODE, _set(("checkout", "id"), "owner/repo")),
+    ("checkout-id-absolute", CODE, _set(("checkout", "id"), "/srv/repo")),
+    ("checkout-id-empty", CODE, _set(("checkout", "id"), "")),
+    ("checkout-id-newline", CODE, _set(("checkout", "id"), "repo\n")),
+    ("checkout-id-not-string", CODE, _set(("checkout", "id"), 7)),
+    ("checkout-commit-short", CODE, _set(("checkout", "commit"), "f7529348")),
+    ("checkout-not-object", CODE, _set(("checkout",), "../../etc")),
+    ("code-without-checkout", CODE, _drop("checkout")),
+    ("checkout-and-files", CODE, _add_files),
+    # files: canonical relative POSIX paths only
+    ("path-absolute", HOME, _rename_file("/etc/passwd")),
+    ("path-parent", HOME, _rename_file("../outside")),
+    ("path-inner-parent", HOME, _rename_file("home/../../outside")),
+    ("path-dot-prefix", HOME, _rename_file("./home/.bashrc")),
+    ("path-inner-dot", HOME, _rename_file("home/./x")),
+    ("path-double-slash", HOME, _rename_file("home//x")),
+    ("path-trailing-slash", HOME, _rename_file("home/x/")),
+    ("path-dot", HOME, _rename_file(".")),
+    ("path-empty", HOME, _rename_file("")),
+    ("path-backslash", HOME, _rename_file("home\\..\\x")),
+    ("path-nul", HOME, _rename_file("home/x\0")),
+    ("files-not-object", HOME, _set(("files",), ["home/.bashrc"])),
+    # processes: a unique index, a plain executable name, a non-empty argv, a user; live only
+    ("process-name-dotdot", LIVE, _set(("processes", 0, "name"), "..")),
+    ("process-name-slash", LIVE, _set(("processes", 0, "name"), "bin/node")),
+    ("process-name-empty", LIVE, _set(("processes", 0, "name"), "")),
+    ("process-argv-empty", LIVE, _set(("processes", 0, "argv"), [])),
+    ("process-argv-string", LIVE, _set(("processes", 0, "argv"), "node index.js")),
+    ("process-argv-nul", LIVE, _set(("processes", 0, "argv"), ["node\0x"])),
+    ("process-index-duplicate", LIVE, _duplicate_index),
+    ("process-index-bool", LIVE, _set(("processes", 0, "index"), False)),
+    ("process-no-username", LIVE, _set(("processes", 0, "username"), "")),
+    ("live-without-processes", LIVE, _drop("processes")),
+]
+
+
+@pytest.mark.parametrize(("case_id", "mutate"), [r[1:] for r in REJECTED], ids=[r[0] for r in REJECTED])
+def test_malformed_case_inputs_are_rejected(stored: dict[str, Any], case_id: str, mutate: Mutation) -> None:
+    case = _case(stored, case_id)
+    Case.from_json(copy.deepcopy(case))  # the unmodified case is valid
+    mutate(case)
+    with pytest.raises(ValueError):
+        Case.from_json(case)
+
+
+BORROWED: list[tuple[str, str, Callable[[dict[str, Any], dict[str, Any]], None]]] = [
+    ("services-on-passive", "network-passive-001", _borrow(ACTIVE, "services")),
+    ("processes-on-snapshot", "runtime-snapshot-001", _borrow(LIVE, "processes")),
+    ("checkout-on-endpoint", HOME, _borrow(CODE, "checkout")),
+]
+
+
+@pytest.mark.parametrize(("case_id", "mutate"), [r[1:] for r in BORROWED], ids=[r[0] for r in BORROWED])
+def test_inputs_of_another_modality_are_rejected(
+    stored: dict[str, Any], case_id: str, mutate: Callable[[dict[str, Any], dict[str, Any]], None]
+) -> None:
+    case = _case(stored, case_id)
+    mutate(case, stored)
+    with pytest.raises(ValueError):
+        Case.from_json(case)
