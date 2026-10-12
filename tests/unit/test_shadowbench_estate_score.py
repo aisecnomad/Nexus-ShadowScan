@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.shadowbench.estate import report, score, taxonomy
+from tools.shadowbench.estate.__main__ import main
 from tools.shadowbench.estate.corpus import EstateCorpus, corpus_from_dict, load_corpus
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -382,3 +383,18 @@ def test_committed_run_keeps_vet_client_rows_with_their_clients() -> None:
     assert result["entity_level"]["positives"] == len(
         [e for e in corpus.by_class("positive") if e.surface in {"code", "endpoint"}]
     )
+
+
+def test_committed_metrics_and_report_match_a_rescore(tmp_path: Path) -> None:
+    """The published metrics.json and REPORT.md are what the current scorer makes of runs.json."""
+    corpus = str(TRACK / "corpus.json")
+    metrics = tmp_path / "metrics.json"
+    rendered = tmp_path / "REPORT.md"
+    assert (
+        main(["score", "--corpus", corpus, "--runs", str(RESULTS / "runs.json"), "--out", str(metrics)]) == 0
+    )
+    assert json.loads(metrics.read_text(encoding="utf-8")) == json.loads(
+        (RESULTS / "metrics.json").read_text(encoding="utf-8")
+    )
+    assert main(["report", "--corpus", corpus, "--metrics", str(metrics), "--out", str(rendered)]) == 0
+    assert rendered.read_text(encoding="utf-8") == (RESULTS / "REPORT.md").read_text(encoding="utf-8")

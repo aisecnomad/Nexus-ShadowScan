@@ -12,19 +12,51 @@ Tools skipped in this run:
 
 ## Headline
 
-| Tool | Surfaces declared | Positives detected | Entity TP/FP/TN/FN | Entity P / R / F1 | In-scope value P / R / F1 | Estate-wide value recall | Seconds median / max | Incomplete units |
-|---|---|---|---|---|---|---|---|---|
-| ShadowScan (Project Nexus) (0.1.2) | cloud, code, endpoint, gateway, identity, lowcode, network, runtime, saas | 83/87 | 83/8/42/4 | 91% / 95% / 93% | 92% / 95% / 93% | 95% | 4.06 / 4.06 | 0 |
-| Snyk Agent Scan (mcp-scan) (0.6.8) | endpoint | 9/87 | 9/0/50/78 | 100% / 10% / 19% | 100% / 47% / 64% | 9% | 0.93 / 1.38 | 0 |
-| AgentDiscover (2.9.5) | code | 5/87 | 5/0/50/82 | 100% / 6% / 11% | 100% / 35% / 52% | 8% | 2.94 / 3.27 | 0 |
-| AI-Infra-Guard (4.6.5) | runtime | 2/87 | 2/0/50/85 | 100% / 2% / 4% | 100% / 33% / 50% | 2% | 1.97 / 1.97 | 0 |
-| SafeDep vet (ai discover) (1.20.0) | code, endpoint | 11/87 | 11/0/50/76 | 100% / 13% / 22% | 86% / 29% / 43% | 12% | 0.17 / 0.22 | 0 |
-| Numbat (0.2.0) | endpoint | 4/87 | 4/0/50/83 | 100% / 5% / 9% | 100% / 21% / 35% | 4% | 0.22 / 0.23 | 0 |
-| Agentic Radar (0.14.1) | code | 2/87 | 2/0/50/85 | 100% / 2% / 4% | 100% / 9% / 16% | 2% | 6.0 / 6.86 | 0 |
-| AgentSight (local sessions) (1.0.34) | endpoint | 1/87 | 1/0/50/86 | 100% / 1% / 2% | 100% / 5% / 10% | 1% | 0.03 / 0.08 | 0 |
-| Cisco MCP Scanner (4.8.6) | endpoint | 0/87 | 0/0/50/87 | n/a / 0% / n/a | n/a / 0% / n/a | 0% | 8.35 / 12.35 | 0 |
+| Tool | Surfaces declared | Runs | Positives detected (in scope) | Entity TP/FP/TN/FN (in scope) | Entity P / R / F1 (in scope) | In-scope value P / R / F1 | Positives detected (estate-wide) | Estate-wide value recall | Seconds median / max |
+|---|---|---|---|---|---|---|---|---|---|
+| ShadowScan (Project Nexus) (0.1.2) | cloud, code, endpoint, gateway, identity, lowcode, network, runtime, saas | 1 ok | 83/87 | 83/8/42/4 | 91% / 95% / 93% | 92% / 95% / 93% | 83/87 | 95% | 4.06 / 4.06 |
+| Snyk Agent Scan (mcp-scan) (0.6.8) | endpoint | 3 ok | 9/19 | 9/0/6/10 | 100% / 47% / 64% | 100% / 47% / 64% | 9/87 | 9% | 0.93 / 1.38 |
+| AgentDiscover (2.9.5) | code | 10 ok | 5/6 | 5/0/4/1 | 100% / 83% / 91% | 100% / 35% / 52% | 5/87 | 8% | 2.94 / 3.27 |
+| AI-Infra-Guard (4.6.5) | runtime | 1 ok | 2/6 | 2/0/4/4 | 100% / 33% / 50% | 100% / 33% / 50% | 2/87 | 2% | 1.97 / 1.97 |
+| SafeDep vet (ai discover) (1.20.0) | code, endpoint | 13 ok | 11/25 | 11/0/10/14 | 100% / 44% / 61% | 100% / 29% / 44% | 11/87 | 12% | 0.17 / 0.22 |
+| Numbat (0.2.0) | endpoint | 3 ok | 4/19 | 4/0/6/15 | 100% / 21% / 35% | 100% / 21% / 35% | 4/87 | 4% | 0.22 / 0.23 |
+| Agentic Radar (0.14.1) | code | 10 ok | 2/6 | 2/0/4/4 | 100% / 33% / 50% | 100% / 9% / 16% | 2/87 | 2% | 6.0 / 6.86 |
+| AgentSight (local sessions) (1.0.34) | endpoint | 3 ok | 1/19 | 1/0/6/18 | 100% / 5% / 10% | 100% / 5% / 10% | 1/87 | 1% | 0.03 / 0.08 |
+| Cisco MCP Scanner (4.8.6) | endpoint | 3 ok | 0/19 | 0/0/6/19 | n/a / 0% / n/a | n/a / 0% / n/a | 0/87 | 0% | 8.35 / 12.35 |
 
-In-scope metrics count only the surfaces a tool declares; the estate-wide recall charges every tool for every expected fact on all nine surfaces. Entity TP/FP/TN/FN count positives detected, negatives flagged, negatives left clean and positives missed, on the tool's declared surfaces.
+In-scope metrics count only the entities and expected facts on the surfaces a tool declares: entity TP/FP/TN/FN are positives detected, negatives flagged, negatives left clean and positives missed among those entities. The estate-wide columns charge every tool for every positive and every expected fact on all nine surfaces. A tool marked incomplete had at least one run that did not complete; see Run status.
+
+## Run status
+
+| Tool | Units run | Statuses | Incomplete or missing units | Commands | Non-zero exits the adapter accepts | Unscored in-scope entities |
+|---|---|---|---|---|---|---|
+| ShadowScan (Project Nexus) | 1 | 1 ok | none | 1 | 0 | 0 |
+| Snyk Agent Scan (mcp-scan) | 3 | 3 ok | none | 3 | 0 | 0 |
+| AgentDiscover | 10 | 10 ok | none | 30 | 0 | 0 |
+| AI-Infra-Guard | 1 | 1 ok | none | 1 | 0 | 0 |
+| SafeDep vet (ai discover) | 13 | 13 ok | none | 13 | 0 | 0 |
+| Numbat | 3 | 3 ok | none | 3 | 0 | 0 |
+| Agentic Radar | 10 | 10 ok | none | 50 | 48 | 0 |
+| AgentSight (local sessions) | 3 | 3 ok | none | 3 | 0 | 0 |
+| Cisco MCP Scanner | 3 | 3 ok | none | 3 | 0 | 0 |
+
+A run is incomplete when its status is not ok, the adapter reported it incomplete, it recorded an error, or a command timed out or exited with a code the adapter does not declare as success; a code or home unit with no run is missing. Every entity an incomplete or missing run reaches is unscored: its positives count as missed and its negatives earn no true negative, so a failed run never reads as a clean result. Non-zero exits an adapter declares as success are counted here but not treated as failures; check the run's stderr captures before relying on a tool whose commands mostly exit non-zero.
+
+## Attribution
+
+| Tool | Predictions | Tolerated | Attributed | Ambiguous | Unattributed | Outside declared surfaces |
+|---|---|---|---|---|---|---|
+| ShadowScan (Project Nexus) | 124 | 0 | 124 | 0 | 0 | 0 |
+| Snyk Agent Scan (mcp-scan) | 18 | 1 | 17 | 0 | 0 | 0 |
+| AgentDiscover | 8 | 0 | 8 | 0 | 0 | 0 |
+| AI-Infra-Guard | 2 | 0 | 2 | 0 | 0 | 0 |
+| SafeDep vet (ai discover) | 39 | 1 | 38 | 0 | 0 | 0 |
+| Numbat | 4 | 0 | 4 | 0 | 0 | 0 |
+| Agentic Radar | 2 | 0 | 2 | 0 | 0 | 0 |
+| AgentSight (local sessions) | 1 | 0 | 1 | 0 | 0 | 0 |
+| Cisco MCP Scanner | 0 | 0 | 0 | 0 | 0 | 0 |
+
+A prediction is attributed only to an entity on its own surface that its run can reach (for a per-repository or per-home run, the entities with artifacts in that repository or home tree). Among entities whose anchor appears in the prediction, one that expects the predicted fact wins, then one whose expected or tolerated facts share its category. A prediction still matching several entities goes to the longest anchor, then the first entity id in sort order, and is counted as ambiguous. Tolerated counts predictions dropped by a corpus-level tolerated pair. Unattributed predictions are false positives. Predictions outside the declared surfaces count in the estate-wide numbers only.
 
 ## Value-level F1 by surface
 
@@ -34,7 +66,7 @@ In-scope metrics count only the surfaces a tool declares; the estate-wide recall
 | Snyk Agent Scan (mcp-scan) | out of scope (0/0/23) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | 64% (9/0/10) | out of scope (0/0/6) | out of scope (0/0/6) |
 | AgentDiscover | 52% (8/0/15) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | out of scope (0/0/19) | out of scope (0/0/6) | out of scope (0/0/6) |
 | AI-Infra-Guard | out of scope (0/0/23) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | out of scope (0/0/19) | out of scope (0/0/6) | 50% (2/0/4) |
-| SafeDep vet (ai discover) | 23% (3/0/20) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | 60% (9/2/10) | out of scope (0/0/6) | out of scope (0/0/6) |
+| SafeDep vet (ai discover) | 23% (3/0/20) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | 64% (9/0/10) | out of scope (0/0/6) | out of scope (0/0/6) |
 | Numbat | out of scope (0/0/23) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | 35% (4/0/15) | out of scope (0/0/6) | out of scope (0/0/6) |
 | Agentic Radar | 16% (2/0/21) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | out of scope (0/0/19) | out of scope (0/0/6) | out of scope (0/0/6) |
 | AgentSight (local sessions) | out of scope (0/0/23) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | 10% (1/0/18) | out of scope (0/0/6) | out of scope (0/0/6) |
@@ -96,6 +128,8 @@ Cells read F1 (true positives / false positives / false negatives).
 | runtime.ollama-list-control | runtime | control | clean | out of scope | out of scope | clean | out of scope | out of scope | out of scope | out of scope | out of scope |
 | runtime.claudette-backup-nearmiss | runtime | nearmiss | clean | out of scope | out of scope | clean | out of scope | out of scope | out of scope | out of scope | out of scope |
 | runtime.train-model-nearmiss | runtime | nearmiss | clean | out of scope | out of scope | clean | out of scope | out of scope | out of scope | out of scope | out of scope |
+
+An unscored negative was reached by an incomplete or missing run and is not a true negative.
 
 ## Registry reconciliation (shadow layer)
 
