@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.shadowbench.estate import taxonomy
+from tools.shadowbench.estate import score, taxonomy
 from tools.shadowbench.estate.corpus import EstateCorpus
 
 
@@ -58,31 +58,88 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
     lines.append("## Headline")
     lines.append("")
     lines.append(
-        "| Tool | Surfaces declared | Positives detected | Entity TP/FP/TN/FN | "
-        "Entity P / R / F1 | In-scope value P / R / F1 | Estate-wide value recall | "
-        "Seconds median / max | Incomplete units |"
+        "| Tool | Surfaces declared | Runs | Positives detected (in scope) | "
+        "Entity TP/FP/TN/FN (in scope) | Entity P / R / F1 (in scope) | In-scope value P / R / F1 | "
+        "Positives detected (estate-wide) | Estate-wide value recall | Seconds median / max |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
     for _tool_id, data in _sorted_tools(metrics):
         entity = data["entity_level"]
+        estate = data["estate_wide"]
         seconds = data["seconds"]
         lines.append(
             f"| {data['name']} ({data['version']}) "
             f"| {', '.join(data['surfaces'])} "
+            f"| {_runs_cell(data)} "
             f"| {entity['positives_detected']}/{entity['positives']} "
             f"| {entity['tp']}/{entity['fp']}/{entity['tn']}/{entity['fn']} "
             f"| {_prf(entity)} "
             f"| {_prf(data['value_level']['in_scope'])} "
+            f"| {estate['positives_detected']}/{estate['positives']} "
             f"| {_pct(data['value_level']['all'].get('recall'))} "
-            f"| {seconds['median']} / {seconds['max']} "
-            f"| {len(data['incomplete_units'])} |"
+            f"| {seconds['median']} / {seconds['max']} |"
         )
     lines.append("")
     lines.append(
-        "In-scope metrics count only the surfaces a tool declares; the estate-wide recall "
-        "charges every tool for every expected fact on all nine surfaces. Entity TP/FP/TN/FN "
-        "count positives detected, negatives flagged, negatives left clean and positives "
-        "missed, on the tool's declared surfaces."
+        "In-scope metrics count only the entities and expected facts on the surfaces a tool "
+        "declares: entity TP/FP/TN/FN are positives detected, negatives flagged, negatives left "
+        "clean and positives missed among those entities. The estate-wide columns charge every "
+        "tool for every positive and every expected fact on all nine surfaces. A tool marked "
+        "incomplete had at least one run that did not complete; see Run status."
+    )
+    lines.append("")
+
+    tools = _sorted_tools(metrics)
+    lines.append("## Run status")
+    lines.append("")
+    lines.append(
+        "| Tool | Units run | Statuses | Incomplete or missing units | Commands | "
+        "Non-zero exits the adapter accepts | Unscored in-scope entities |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
+    for _tool_id, data in tools:
+        statuses = ", ".join(f"{count} {status}" for status, count in data["runs"].items()) or "none"
+        gaps = ", ".join(f"{gap['unit']} ({gap['reason']})" for gap in data["incomplete_units"]) or "none"
+        lines.append(
+            f"| {data['name']} | {data['units']} | {statuses} | {gaps} "
+            f"| {data['commands']['total']} | {data['commands']['nonzero_exit_accepted']} "
+            f"| {len(_unscored_in_scope(data))} |"
+        )
+    lines.append("")
+    lines.append(
+        "A run is incomplete when its status is not ok, the adapter reported it incomplete, it "
+        "recorded an error, or a command timed out or exited with a code the adapter does not "
+        "declare as success; a code or home unit with no run is missing. Every entity an "
+        "incomplete or missing run reaches is unscored: its positives count as missed and its "
+        "negatives earn no true negative, so a failed run never reads as a clean result. Non-zero "
+        "exits an adapter declares as success are counted here but not treated as failures; check "
+        "the run's stderr captures before relying on a tool whose commands mostly exit non-zero."
+    )
+    lines.append("")
+
+    lines.append("## Attribution")
+    lines.append("")
+    lines.append(
+        "| Tool | Predictions | Tolerated | Attributed | Ambiguous | Unattributed | "
+        "Outside declared surfaces |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
+    for _tool_id, data in tools:
+        counts = data["predictions"]
+        lines.append(
+            f"| {data['name']} | {counts['total']} | {counts['tolerated']} | {counts['attributed']} "
+            f"| {counts['ambiguous']} | {counts['unattributed']} | {counts['out_of_scope']} |"
+        )
+    lines.append("")
+    lines.append(
+        "A prediction is attributed only to an entity on its own surface that its run can reach "
+        "(for a per-repository or per-home run, the entities with artifacts in that repository or "
+        "home tree). Among entities whose anchor appears in the prediction, one that expects the "
+        "predicted fact wins, then one whose expected or tolerated facts share its category. A "
+        "prediction still matching several entities goes to the longest anchor, then the first "
+        "entity id in sort order, and is counted as ambiguous. Tolerated counts predictions dropped "
+        "by a corpus-level tolerated pair. Unattributed predictions are false positives. "
+        "Predictions outside the declared surfaces count in the estate-wide numbers only."
     )
     lines.append("")
 
@@ -109,7 +166,6 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
 
     lines.append("## Control and near-miss entities")
     lines.append("")
-    tools = _sorted_tools(metrics)
     lines.append("| Entity | Surface | Class | " + " | ".join(d["name"] for _, d in tools) + " |")
     lines.append("|---" * (len(tools) + 3) + "|")
     for entity in corpus.entities:
@@ -120,9 +176,15 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
             row = data["per_entity"].get(entity.id, {})
             if entity.surface not in data["surfaces"]:
                 cells.append("out of scope")
+            elif row.get("flagged"):
+                cells.append("flagged")
             else:
-                cells.append("flagged" if row.get("flagged") else "clean")
+                cells.append("unscored" if row.get("unscored", True) else "clean")
         lines.append(f"| {entity.id} | {entity.surface} | {entity.klass} | " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append(
+        "An unscored negative was reached by an incomplete or missing run and is not a true negative."
+    )
     lines.append("")
 
     lines.append("## Registry reconciliation (shadow layer)")
@@ -155,6 +217,25 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
         ]
         lines.append(f"Missed in-scope positives: {', '.join(missed) if missed else 'none'}")
         lines.append("")
+        unscored = _unscored_in_scope(data)
+        if unscored:
+            lines.append(
+                "Unscored in-scope entities (reached by an incomplete or missing run; positives count "
+                f"as missed, negatives earn no true negative): {', '.join(unscored)}"
+            )
+            lines.append("")
+        ambiguous = data.get("ambiguous", [])
+        if ambiguous:
+            lines.append("Ambiguous attributions (several entities matched equally; owner chosen by rule):")
+            lines.append("")
+            for item in ambiguous[:15]:
+                lines.append(
+                    f"- `{item['fact']}` → {item['entity']} (candidates: {', '.join(item['candidates'])}) "
+                    f"— {item['text']}"
+                )
+            if len(ambiguous) > 15:
+                lines.append(f"- … and {len(ambiguous) - 15} more")
+            lines.append("")
         extras = data.get("unattributed", [])
         if extras:
             lines.append("Predictions attributed to no entity (charged as false positives):")
@@ -165,3 +246,21 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
                 lines.append(f"- … and {len(extras) - 15} more")
             lines.append("")
     return "\n".join(lines) + "\n"
+
+
+def _unscored_in_scope(data: dict[str, Any]) -> list[str]:
+    return [
+        entity_id
+        for entity_id, row in data["per_entity"].items()
+        if row.get("unscored", True) and row["surface"] in data["surfaces"]
+    ]
+
+
+def _runs_cell(data: dict[str, Any]) -> str:
+    """Per-tool run status counts, marked when any run is incomplete or missing."""
+    parts = [f"{count} {status}" for status, count in data["runs"].items()]
+    missing = sum(1 for gap in data["incomplete_units"] if gap["reason"] == score.MISSING_RUN)
+    if missing:
+        parts.append(f"{missing} missing")
+    text = ", ".join(parts) or "none"
+    return text if data["complete"] else f"**incomplete** ({text})"
