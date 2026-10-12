@@ -529,8 +529,8 @@ def test_version_probe_runs_scrubbed_and_bounded(
     assert probes, f"{tool}: version() ran nothing"
     for call in probes:
         argv, probe_env = call["argv"], call.get("env")
-        if argv[0].endswith("unshare"):
-            assert argv[1:3] == ["--net", "--"]
+        if argv[0].endswith("unshare"):  # a root probe: see the privilege-drop tests below
+            assert argv[1:3] == ["--net", "--mount"] and "--no-new-privs" in " ".join(argv)
         assert probe_env is not None, f"{tool}: {argv} inherited the caller's environment"
         assert set(probe_env) <= PROBE_ENV_KEYS, sorted(set(probe_env) - PROBE_ENV_KEYS)
         assert not set(SECRETS.values()) & set(probe_env.values())
@@ -542,14 +542,77 @@ def test_version_probe_runs_scrubbed_and_bounded(
         assert call.get("stdin") is subprocess.DEVNULL
 
 
-def test_probe_isolates_the_network_only_as_root(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_root_probe_drops_to_the_stage_identity_with_the_homes_hidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe the runner started as root ran the third-party binary as root, with /root and /home readable."""
     from tools.shadowbench.cases.adapters import _probe
+    from tools.shadowbench.cases.runner import TOOL_GID, TOOL_UID
 
-    monkeypatch.setattr(_probe.shutil, "which", lambda name, path=None: "/usr/bin/unshare")
+    assert (_probe.PROBE_UID, _probe.PROBE_GID) == (TOOL_UID, TOOL_GID)
+    monkeypatch.setattr(_probe.shutil, "which", lambda name, path=None: f"/usr/bin/{name}")
     monkeypatch.setattr(_probe.os, "geteuid", lambda: 0)
-    assert _probe.isolation() == ["/usr/bin/unshare", "--net", "--"]
+    prefix = _probe.isolation()
+    assert prefix is not None
+    unshare_argv, (shell, flag, script, name) = prefix[:-4], prefix[-4:]
+    assert unshare_argv == [
+        "/usr/bin/unshare", "--net", "--mount", "--propagation", "private", "--fork", "--kill-child", "--"
+    ]  # fmt: skip
+    assert (shell, flag, name) == ("/usr/bin/sh", "-c", "probe")
+    assert "/usr/bin/mount -t tmpfs -o mode=0755 tmpfs /root" in script
+    assert "/usr/bin/mount -t tmpfs -o mode=0755 tmpfs /home" in script
+    assert script.endswith(
+        f'exec /usr/bin/setpriv --reuid={TOOL_UID} --regid={TOOL_GID} --clear-groups --no-new-privs -- "$@"'
+    )
     monkeypatch.setattr(_probe.os, "geteuid", lambda: 1000)
     assert _probe.isolation() == []
+
+
+@pytest.mark.parametrize("missing", ["unshare", "setpriv", "mount", "sh"])
+def test_a_root_probe_that_cannot_drop_privileges_never_runs(
+    missing: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools.shadowbench.cases.adapters import _probe
+
+    def which(name: str, path: str | None = None) -> str | None:
+        return None if name == missing else f"/usr/bin/{name}"
+
+    def run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("a third-party binary ran as root")
+
+    monkeypatch.setattr(_probe.shutil, "which", which)
+    monkeypatch.setattr(_probe.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(subprocess, "run", run)
+    assert _probe.isolation() is None
+    assert _probe.run_probe(["/opt/tools/bin/scanner", "--version"]) is None
+    assert _probe.cli_version("/opt/tools/bin/scanner") == "unknown"
+
+
+def _probe_can_drop() -> bool:
+    if not hasattr(os, "geteuid") or os.geteuid() != 0 or not os.path.isdir("/tmp"):
+        return False
+    from tools.shadowbench.cases.adapters import _probe
+
+    prefix = _probe.isolation()
+    if not prefix:
+        return False
+    try:
+        done = subprocess.run([*prefix, "true"], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+@pytest.mark.skipif(not _probe_can_drop(), reason="needs root with unshare, setpriv and mount namespaces")
+def test_a_root_probe_really_runs_unprivileged_and_sees_no_home() -> None:
+    from tools.shadowbench.cases.adapters import _probe
+
+    proc = _probe.run_probe(["sh", "-c", "id -u; id -g; ls -A /root | wc -l; ls -A /home | wc -l; pwd"])
+    assert proc is not None and proc.returncode == 0, proc
+    uid, gid, root_entries, home_entries, cwd = proc.stdout.split()
+    assert (uid, gid) == (str(_probe.PROBE_UID), str(_probe.PROBE_GID))
+    assert (root_entries, home_entries) == ("0", "0")
+    assert cwd.startswith(_probe.PROBE_TMP + "/shadowbench-probe-")
 
 
 def test_failed_probe_is_unknown_and_never_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

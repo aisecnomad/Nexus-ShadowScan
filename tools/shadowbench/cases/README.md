@@ -92,9 +92,13 @@ adapter's `version()` once, after the tool's cases, outside the stage and as
 the runner's user. An adapter that runs the tool's binary for it does so only
 through `adapters/_probe.py`: the probe gets a fixed `PATH`, a throwaway
 `HOME` that is also its working directory, no other inherited environment, an
-empty stdin, a timeout and, when run as root with `unshare` available, an
-empty network namespace. A probe that cannot start or times out records
-`unknown`. Otherwise the adapter reads the version from what the probe
+empty stdin and a timeout. A probe started as root (the runner always is)
+never runs the binary as root: it gets an empty network namespace and a
+private mount namespace with `/root` and `/home` hidden, and drops to uid/gid
+65534 with no supplementary groups and `no_new_privs`, the identity the stage
+gives the tool, with its home under `/tmp`. Without `unshare`, `setpriv`,
+`mount` and `sh` a root probe does not run. A probe that cannot start, cannot
+drop privileges or times out records `unknown`. Otherwise the adapter reads the version from what the probe
 printed, whatever its exit code; only the installed-package lookup (Snyk,
 Cisco, `agent-discovery`) requires exit 0. Fleet records the printed text as
 it is, ShadowScan its last word plus the checkout's commit, and Numbat the

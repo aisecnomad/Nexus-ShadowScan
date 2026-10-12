@@ -12,5 +12,6 @@ Rules every adapter follows:
   so a hit that maps to no fact is dropped (and counted in the note), never
   emitted under another key such as ``artifact:<path>``.
 * ``version()`` runs a tool's binary only through ``_probe.run_probe``: a
-  scrubbed environment, a throwaway home and a timeout.
+  scrubbed environment, a throwaway home and a timeout, and as root a drop to
+  the stage's unprivileged identity with ``/root`` and ``/home`` hidden.
 """

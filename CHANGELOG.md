@@ -52,7 +52,8 @@ summarizes each release for people who install and operate ShadowScan.
   timeout kills the whole namespace; scratch directories must be private;
   mock services bind loopback only, on unprivileged ports; adapters fail
   closed on empty or malformed output, run version probes with a scrubbed
-  environment and a timeout, and fetch pinned repositories without hooks,
+  environment and a timeout (as root, dropped to uid 65534 with `/root` and
+  `/home` hidden, or not at all), and fetch pinned repositories without hooks,
   submodules or non-HTTPS remotes. `install_tools.sh` states that installs
   are version-pinned, not hash-locked. The run manifest records the harness
   commit and a dirty flag and each tool's `tools.json` version, and a

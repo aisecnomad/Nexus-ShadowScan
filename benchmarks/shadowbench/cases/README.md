@@ -459,6 +459,10 @@ track:
   where it used to stop with a traceback. The 2026-10-11 manifest predates
   the harness fields, so its report names no harness commit and re-renders
   unchanged.
+* Version probes the runner starts as root now drop to uid/gid 65534 with
+  `/root` and `/home` hidden, as the tools themselves do in the stage, and do
+  not run when that drop is impossible. In the 2026-10-11 run each tool's
+  version probe ran as root on the host, outside the stage.
 
 ### The 2026-10-11 run, in brief
 
