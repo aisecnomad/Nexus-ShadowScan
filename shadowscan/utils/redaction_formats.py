@@ -12,15 +12,16 @@ from __future__ import annotations
 import re
 from urllib.parse import unquote
 
+from shadowscan.utils.redaction_commands import _CLI_GLUED_OPTION, _cli_option_mode
 from shadowscan.utils.redaction_rules import (
     _KEY_NORMALISE,
     _REFERENCE,
     _VALUE_SEMICOLON,
     REDACTED,
-    _credential_name,
     _kept_value,
     _redact_value,
     _sensitive_assignment_key,
+    _sensitive_flag,
     _setting_level,
 )
 
@@ -128,9 +129,10 @@ _ADDED_PEM = re.compile(
 # One character of the credential after an authorization scheme. It stops before
 # glued text ('v--token w', 'v=password: w'): a '--option' name, and a '=name'
 # assignment (base64 padding is never followed by a letter). _redact_authorization
-# then keeps the glued run only when it names a credential a later pass reads and
-# withholds it with the credential otherwise, so neither a glued password
-# assignment's value nor the tail of a token containing '--' or '=x' is shown.
+# then keeps the glued run when anything in it may name a credential for a later
+# pass (see _glued_run_read_later) and withholds it with the credential otherwise,
+# so neither a glued password's value nor the tail of a token containing '--' or
+# '=x' is shown, with or without the 'token' word.
 _AUTH_CHAR_GUARD = r"(?!--)(?!=[A-Za-z])"
 _AUTH_CHAR = r"(?:" + _AUTH_CHAR_GUARD + r"[A-Za-z0-9+/_.=-])"
 _AUTH_NON_DIGIT = r"(?:" + _AUTH_CHAR_GUARD + r"[A-Za-z+/_.=-])"
@@ -139,8 +141,18 @@ _AUTH_NON_DIGIT = r"(?:" + _AUTH_CHAR_GUARD + r"[A-Za-z+/_.=-])"
 # they hid the operator from the assignment rules, which then showed the value.
 # The possessive quantifier keeps the scan linear in the text.
 _AUTH_CREDENTIAL = r"(?P<credential>(?!=++(?![A-Za-z0-9+/_.-]))" + _AUTH_CHAR + r"++)"
-# The glued run a guard stop left after the credential.
-_AUTH_GLUED = r"(?P<glued>(?:--|=(?=[A-Za-z]))[A-Za-z0-9+/_.=-]*+)?"
+# The glued run a guard stop left after the credential. Two runs are left out
+# of the match, so the scan and the later passes read them as before: a run a
+# colon follows, which the colon joins to the text after it as a URL scheme, a
+# user or a setting path ('v--x.https://h/p', 'v=x.OpenAI:Key=w'), and a run
+# that ends in a scheme a blank follows ('v--SSWS w'), whose credential the
+# scan then withholds.
+_AUTH_NEXT_SCHEME = "".join(r"(?!(?<=[-+/.=]" + scheme + r")\s)" for scheme in ("Bearer", "Basic", "SSWS"))
+_AUTH_GLUED = r"(?P<glued>(?:--|=(?=[A-Za-z]))[A-Za-z0-9+/_.=-]*+(?!:)" + _AUTH_NEXT_SCHEME + r")?"
+# Where a glued run splits into the names a later pass may read: an assignment's
+# '=', and a '+' or '/', which can start a key ('v=x/api-key: w').
+_GLUED_NAME_SEPARATOR = re.compile(r"[=+/]")
+_GLUED_WORD_SEPARATOR = re.compile(r"[-_.]")
 # 'Bearer token <credential>' names the scheme and then the word: the word is read
 # as part of the scheme only when an opaque credential (16 or more characters with
 # a digit) follows it, so prose such as 'a Bearer token is required' is unchanged.
@@ -171,48 +183,60 @@ def _redact_secret_tokens(text: str) -> str:
     return _DIGIT_TOKEN.sub(lambda match: match.group("glue") + REDACTED, text)
 
 
+def _glued_run_read_later(glued: str) -> bool:
+    """Whether a later pass may read a name in ``glued``, the run after a scheme credential.
+
+    The run is kept for those passes, which withhold the value after the name.
+    Any name in it counts, not only the first: '=x--password v', '--x=password: v'
+    and '--x/api-key: v' each hold a name a later pass reads. A name counts when
+    an option rule reads it ('--auth', '--pat', '--cookie'), or when the run, a
+    piece of it between '=', '+', '/' or '--', or such a piece's last word names
+    a credential for the assignment, setting or argument rules. An option after
+    '+' or '=' ('--x+--key') is one the option rules count in their word, so
+    that run is kept as well.
+    """
+    if not glued:
+        return False
+    if "+-" in glued or "=-" in glued:
+        return True
+    # Each distinct option and name is judged once, so a long run of repeated
+    # pieces stays cheap.
+    options = {match.group() for match in _CLI_GLUED_OPTION.finditer(glued)}
+    if any(_cli_option_mode(option) for option in options):
+        return True
+    names: set[str] = set()
+    for piece in (glued, *_GLUED_NAME_SEPARATOR.split(glued)):
+        for part in (piece, *piece.split("--")):
+            name = part.strip("-.=")
+            names.update((name, _GLUED_WORD_SEPARATOR.split(name)[-1]))
+    names.discard("")
+    return any(_sensitive_flag(name) or _setting_level(name) for name in names)
+
+
 def _redact_authorization(text: str) -> str:
     """Withhold the credential after an authorization scheme, keeping the scheme.
 
     The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
     """
 
-    def kept_glued(match: re.Match[str]) -> bool:
-        """A glued run a later pass withholds the value after: keep it in the text."""
-        glued = match.group("glued")
-        if not glued:
-            return False
-        if glued.startswith("--"):
-            name = glued.lstrip("-")
-            return bool(
-                name and not name.lower().startswith(("no-", "no_")) and _credential_name(name, numbered=True)
-            )
-        name = glued[1:]
-        return bool(
-            (_sensitive_assignment_key(name) or _setting_level(name))
-            and _ASSIGNED.match(match.string, match.end())
-        )
-
     def withheld(match: re.Match[str]) -> str:
         credential = match.group("credential")
         glued = match.group("glued") or ""
-        if match.group("word"):
-            # The word form always leaves the glued run in the text: the rules
-            # that read it ('--token v', '=password: v') withhold the value.
-            if (_sensitive_assignment_key(credential) or _setting_level(credential)) and _ASSIGNED.match(
-                match.string, match.end("credential")
-            ):
-                # 'Bearer token <name>: value': withhold the word as the credential and keep the
-                # name, so the assignment rules read it and withhold the value after it exactly
-                # as they would without the scheme in front.
-                return match.group("scheme") + " " + REDACTED + match.group("gap") + credential + glued
-            return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n") + glued
-        if kept_glued(match):
-            # 'Bearer <credential>=password: value' or '<credential>--token value':
-            # the glued name stays, so the rule that reads it withholds the value.
-            return match.group("scheme") + " " + REDACTED + glued
-        # A glued run that names no credential is the token's own tail: withheld whole.
-        return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n")
+        if (
+            match.group("word")
+            and (_sensitive_assignment_key(credential) or _setting_level(credential))
+            and _ASSIGNED.match(match.string, match.end("credential"))
+        ):
+            # 'Bearer token <name>: value': withhold the word as the credential and keep the
+            # name, so the assignment rules read it and withhold the value after it exactly
+            # as they would without the scheme in front.
+            return match.group("scheme") + " " + REDACTED + match.group("gap") + credential + glued
+        # A glued run a later pass reads ('<credential>=password: value',
+        # '<credential>=x--auth value') stays, so that pass withholds the value
+        # after it. Any other glued run is the token's own tail: withheld whole,
+        # with or without the 'token' word.
+        kept = glued if _glued_run_read_later(glued) else ""
+        return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n") + kept
 
     text = _AUTH.sub(withheld, text)
     return _ESCAPED_AUTH.sub(lambda match: match.group("glue") + withheld(match), text)

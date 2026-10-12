@@ -98,14 +98,19 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Post-merge review fixes (October 11)
 
-- A plain `Bearer`, `Basic` or `SSWS` credential containing `--` or `=` plus a
-  letter is again withheld whole. The October 11 integration applied the
+- A plain `Bearer`, `Basic` or `SSWS` credential containing `--` or `=` plus
+  a letter is again withheld whole, and one after the `token` word, whose
+  tail was shown, now is too. The October 11 integration applied the
   token-word rule's glued-text guard to every scheme credential, so such a
-  token's tail after the glue was left in sanitized text. The run a guard stop
-  leaves is now kept only when it names a credential a later rule reads
-  (`=password: v`, `--token v`, whose values those rules withhold) and is
-  withheld with the credential otherwise, with regression tests over all three
-  schemes for both shapes.
+  token's tail after the glue was left in sanitized text. The run a guard
+  stop leaves is now kept when any name in it may be one a later rule reads
+  (`=password: v`, `=x--password v`, `--auth v`, whose values those rules
+  withhold) and is withheld with the credential otherwise; a run that a
+  colon follows (a URL scheme, a user, a setting path) or that ends in
+  another scheme is left as it was for the later rules. A comparison with
+  the October 11 rules over crafted and generated inputs found no value
+  they withhold that is now shown, and the regression tests over all three
+  schemes are drawn from its cases.
 - `shadowscan run --set credentials_file=<value>` (and the other credential-file
   keys) warns again when the value is an opaque credential rather than a file
   location. Judging those keys by value had delegated to rules that recognize
