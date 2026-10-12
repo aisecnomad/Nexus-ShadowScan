@@ -31,14 +31,16 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     # The whole block. With a footer within 8 KiB, everything up to it, however the body is
     # quoted (real or escaped line breaks, one line, a '> ' prefix). Without one, the header,
     # PEM encryption headers directly after it, at most one blank line, then runs of 16 or more
-    # base64 characters separated by real or escaped line breaks or spaces (a footerless key
-    # quoted on one line), so prose after a quoted header line is kept. Only a
-    # header can start a match, and the footer search is bounded.
+    # base64 characters separated by spaces (a footerless key quoted on one line) or by line
+    # breaks: real or escaped ('\n', '\r\n'), each followed by any Markdown blockquote markers
+    # ('> '), so prose after a quoted header line is kept. Only a header can start a match,
+    # and the footer search is bounded.
     re.compile(
         r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
         r"(?:[\s\S]{0,8192}?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
-        r"|(?:\r?\n[ \t]*(?:Proc-Type|DEK-Info):[^\r\n]*)*"
-        r"(?:(?:(?:\r?\n|\\n)[ \t]*)?(?:(?:(?:\r?\n|\\n)[ \t]*|[ \t]+)[A-Za-z0-9+/=]{16,})+)?)"
+        r"|(?:\r?\n(?:[ \t]*>)*[ \t]*(?:Proc-Type|DEK-Info):[^\r\n]*)*"
+        r"(?:(?:(?:\r?\n|(?:\\r)?\\n)(?:[ \t]*>)*[ \t]*)?"
+        r"(?:(?:(?:\r?\n|(?:\\r)?\\n)(?:[ \t]*>)*[ \t]*|[ \t]+)[A-Za-z0-9+/=]{16,})+)?)"
     ),
     re.compile(r"(?i:\b(?:Account|SharedAccess)Key)\s*=\s*[A-Za-z0-9+/]{40,}={0,2}"),
     re.compile(

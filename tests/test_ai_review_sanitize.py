@@ -39,13 +39,27 @@ def test_a_private_key_quoted_on_one_line_or_escaped_is_withheld_whole(quote: st
     assert body not in out and "END" not in out and out.endswith(" Rotate it.")
 
 
-@pytest.mark.parametrize("quote", ["{begin} {body}", "{begin}\\n{body}\\n"])
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "{begin} {body}",
+        "{begin}\\n{body}\\n",
+        # Escaped CRLF, as a JSON string of a Windows file quotes it.
+        "{begin}\\r\\n{body}\\r\\n{line}\\r\\n",
+        # A Markdown blockquote, the usual way a review finding quotes a file.
+        "> {begin}\n> {body}\n> {line}\n",
+        "> {begin}\r\n> {body}\r\n> {line}\r\n",
+        "> > {begin}\n> > {body}\n> > {line}\n",
+        "> {begin}\n>\n> {body}\n> {line}\n",
+        "> {begin}\n> Proc-Type: 4,ENCRYPTED\n> DEK-Info: AES-128-CBC,00FF\n>\n> {body}\n> {line}\n",
+    ],
+)
 def test_a_footerless_private_key_on_one_line_or_escaped_is_withheld(quote: str) -> None:
     # A reviewer may quote a truncated key without its footer; the body must not be published.
     begin = "-----BEGIN " + "PRIVATE KEY-----"
-    body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2
-    out = redact(quote.format(begin=begin, body=body) + " Rotate it.")
-    assert body not in out and out.endswith(" Rotate it.")
+    body, line = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2, "Qq1Zz9" * 5
+    out = redact(quote.format(begin=begin, body=body, line=line) + " Rotate it.")
+    assert body not in out and line not in out and out.endswith(" Rotate it.")
 
 
 def test_prose_after_a_quoted_key_header_is_kept() -> None:
@@ -57,6 +71,10 @@ def test_prose_after_a_quoted_key_header_is_kept() -> None:
         "Scenario: the file begins with\n[redacted]\n\nRecommendation: Rotate the key.\n\nAssumptions: None."
     )
     assert redact(f"```\n{begin}\n```") == "```\n[redacted]\n```"
+    # Quoted as a Markdown blockquote, the prose after the header is kept too.
+    assert redact(f"> {begin}\n>\n> Recommendation: Rotate the key.") == (
+        "> [redacted]\n>\n> Recommendation: Rotate the key."
+    )
 
 
 def test_every_check_secrets_family_is_redacted() -> None:
