@@ -36,12 +36,19 @@ __all__ = [
 
 @dataclass(frozen=True)
 class Command:
-    """One subprocess invocation; cwd is the per-run output directory."""
+    """One subprocess invocation; cwd is the per-run output directory.
+
+    `stdout_name` stores the command's stdout under that plain file name in
+    the output directory instead of `<index>.stdout.txt`, so a tool that
+    prints its report needs no shell wrapper. A report cut at the capture
+    limit fails the command rather than reading as a short, complete one.
+    """
 
     argv: tuple[str, ...]
     ok_exit_codes: frozenset[int] = frozenset({0})
     env: dict[str, str] = field(default_factory=dict)
     timeout: int | None = None
+    stdout_name: str | None = None
 
 
 @dataclass(frozen=True)

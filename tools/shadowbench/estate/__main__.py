@@ -216,17 +216,31 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     adapters = _adapters()
     only = set(args.only.split(",")) if args.only else None
-    runner_mod.run_matrix(
-        corpus,
-        adapters,  # type: ignore[arg-type]
-        cfg,
-        args.estate.resolve(),
-        args.out,
-        policy,
-        workers=args.workers,
-        only=only,
-    )
+    try:
+        manifest = runner_mod.run_matrix(
+            corpus,
+            adapters,  # type: ignore[arg-type]
+            cfg,
+            args.estate.resolve(),
+            args.out,
+            policy,
+            freeze=args.freeze,
+            corpus_path=args.corpus,
+            workers=args.workers,
+            only=only,
+        )
+    except runner_mod.FreezeDrift as exc:
+        for name in exc.drift:
+            print(f"DRIFT {name}")
+        print("refusing to run: the estate does not match its freeze manifest", file=sys.stderr)
+        return 1
     print(f"wrote {args.out / 'runs.json'}")
+    drift_after = manifest["freeze"]["drift_after"]
+    if drift_after:
+        for name in drift_after:
+            print(f"DRIFT {name}")
+        print("the estate changed during the run; runs.json records the drift", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -282,6 +296,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="run every adapter against its estate units")
     p_run.add_argument("--corpus", type=Path, default=default_corpus)
     p_run.add_argument("--estate", type=Path, default=default_estate)
+    p_run.add_argument("--freeze", type=Path, default=default_freeze)
     p_run.add_argument("--tools", type=Path, required=True)
     p_run.add_argument("--out", type=Path, required=True)
     p_run.add_argument("--workers", type=int, default=4)
