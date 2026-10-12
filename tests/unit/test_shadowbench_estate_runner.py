@@ -1,12 +1,14 @@
-"""Regression tests for the ShadowBench estate runner, freeze and validation."""
+"""Regression tests for the ShadowBench estate runner, freeze, validation and live-sim host."""
 
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import pwd
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -20,7 +22,7 @@ import pytest
 from tools.discovery_benchmark.runner import RunPolicy
 from tools.shadowbench.estate import __main__ as estate_cli
 from tools.shadowbench.estate import corpus as estate_corpus
-from tools.shadowbench.estate import runner
+from tools.shadowbench.estate import runner, simhost
 from tools.shadowbench.estate.__main__ import cmd_freeze, cmd_validate, cmd_verify_freeze, main
 from tools.shadowbench.estate.adapters import (
     Command,
@@ -547,3 +549,56 @@ def test_harness_revision_names_the_checkout_commit() -> None:
     ).stdout.strip()
     revision = runner.harness_revision()
     assert revision["commit"] == head and isinstance(revision["dirty"], bool)
+
+
+# --- simhost --------------------------------------------------------------------------------------
+
+
+def test_simhost_names_a_busy_port_and_never_runs_the_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real Ollama on 11434 made the mock host die with a bare OSError traceback."""
+    marker = tmp_path / "ran"
+    services = tmp_path / "services.json"
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        services.write_text(json.dumps({"services": [{"kind": "ollama", "port": port}]}), encoding="utf-8")
+        code = simhost.main(
+            ["--services", str(services), "--", sys.executable, "-c", f"open({str(marker)!r}, 'w')"]
+        )
+    assert code == simhost.EXIT_SETUP and not marker.exists()
+    err = capsys.readouterr().err
+    assert f"127.0.0.1:{port} is already in use" in err and "--port-offset" in err
+
+
+def test_simhost_port_offset_moves_every_service(tmp_path: Path) -> None:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    services = tmp_path / "services.json"
+    services.write_text(json.dumps({"services": [{"kind": "ollama", "port": free - 7}]}), encoding="utf-8")
+    out = tmp_path / "version.json"
+    fetch = (
+        "import http.client\n"
+        f"conn = http.client.HTTPConnection('127.0.0.1', {free}, timeout=10)\n"
+        "conn.request('GET', '/api/version')\n"
+        f"open({str(out)!r}, 'wb').write(conn.getresponse().read())\n"
+    )
+    code = simhost.main(
+        ["--services", str(services), "--port-offset", "7", "--", sys.executable, "-c", fetch]
+    )
+    assert code == 0 and json.loads(out.read_text()) == {"version": "0.3.9"}
+    # Nothing is left listening once the command has finished.
+    with pytest.raises(OSError):
+        http.client.HTTPConnection("127.0.0.1", free, timeout=2).request("GET", "/")
+
+
+def test_simhost_rejects_duplicate_ports(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    services = tmp_path / "services.json"
+    twins = [{"kind": "ollama", "port": 40000}, {"kind": "vllm", "port": 40000}]
+    services.write_text(json.dumps({"services": twins}), encoding="utf-8")
+    code = simhost.main(["--services", str(services), "--", sys.executable, "-c", "pass"])
+    assert code == simhost.EXIT_SETUP
+    assert "both use port 40000" in capsys.readouterr().err
