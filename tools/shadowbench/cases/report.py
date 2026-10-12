@@ -29,6 +29,17 @@ def secs(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1f}"
 
 
+def errors(entry: dict[str, Any]) -> str:
+    missing = entry.get("missing") or 0
+    return f"{entry['errors']} ({missing} missing)" if missing else str(entry["errors"])
+
+
+def p_value(entry: dict[str, Any]) -> str:
+    """The McNemar p, or n/a when the tools share no case (no test was possible)."""
+    p = entry.get("mcnemar_p")
+    return "n/a" if p is None or entry.get("shared") == 0 else f"{p:.3f}"
+
+
 def _tool_order(metrics: dict[str, Any]) -> list[str]:
     def key(name: str) -> tuple[float, str]:
         est = metrics["tools"][name]["estate"]["recall"]
@@ -57,6 +68,13 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         "results describe how each tool behaves on these inputs, not field precision or recall."
     )
     lines.append("")
+    if metrics.get("corpus_mismatch_forced"):
+        lines.append(
+            f"**Warning:** these results were recorded against corpus `{metrics.get('corpus_sha256')}` and "
+            f"scored with `--force` against `{metrics.get('corpus_sha256_now')}`. Case ids are positional, "
+            "so the numbers below may compare tools with the wrong truth."
+        )
+        lines.append("")
     skipped = {
         k: v.get("skipped")
         for k, v in metrics.get("tool_runs", {}).items()
@@ -83,7 +101,7 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
             f"{pct(i['precision'])} / {pct(i['recall'])} / {pct(i['f1'])}{ci(i.get('f1_ci'))} | "
             f"{pct(i['specificity'])} | {pct(i['agent_recall'])} ({i['agent_tp']}/{i['agent_expected']}) | "
             f"{pct(i['agent_false_alarm_rate'])} ({i['agent_false_alarms']}/{i['agent_false_alarm_universe']}) | "  # noqa: E501
-            f"{pct(i['case']['balanced_accuracy'])} | {i['errors']} | {i['incomplete']} | "
+            f"{pct(i['case']['balanced_accuracy'])} | {errors(i)} | {i['incomplete']} | "
             f"{secs(i['seconds_median'])} / {secs(i['seconds_p90'])} |"
         )
     lines.append("")
@@ -92,7 +110,11 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         "cover. In-scope metrics count only the surfaces and modalities a tool ran on. Specificity is measured on "  # noqa: E501
         "decoy entities (records labeled none). Agent recall is the share of expected agents a tool reported as "  # noqa: E501
         "agents; agent false alarms are plain-AI entities and decoys it called agents. F1 intervals are 2,000-sample "  # noqa: E501
-        "case bootstraps."
+        "case bootstraps. At case level a positive case is found when the tool reports at least one "
+        "expected entity, and a negative case is a false alarm when it reports any false positive. An "
+        "error, or a case with no result row (counted as missing), is never a correct outcome: its "
+        "expected entities are missed, its decoys are not true negatives, and the case counts as missed "
+        "or as a false alarm."
     )
     lines.append("")
     lines += ["## By surface", ""]
@@ -121,12 +143,25 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
                 f"| {name} | {', '.join(s['modalities'])} | {pct(s['precision'])} / {pct(s['recall'])} / "
                 f"{pct(s['f1'])}{ci(s.get('f1_ci'))} | {s['tp']} / {s['fp']} / {s['fn']} / {s['tn']} | "
                 f"{pct(s['specificity'])} | {pct(s['agent_recall'])} | {pct(s['agent_false_alarm_rate'])} | "
-                f"{pct(c['recall'])} / {pct(c['specificity'])} | {s['errors']} | {s['incomplete']} | "
+                f"{pct(c['recall'])} / {pct(c['specificity'])} | {errors(s)} | {s['incomplete']} | "
                 f"{secs(s['seconds_median'])} |"
             )
         if not any_row:
             lines.append("| (no tool ran on this surface) | | | | | | | | | | |")
         lines.append("")
+        if surface == "code" and any_row:
+            counts = [
+                f"{name} {metrics['tools'][name]['by_surface'][surface].get('out_of_taxonomy', 0)}"
+                for name in _tool_order(metrics)
+                if metrics["tools"][name]["by_surface"].get(surface)
+            ]
+            lines.append(
+                "Reported keys outside the code fact taxonomy (for example file paths an adapter could not "
+                "map to a fact) are neither true nor false positives, for every tool: "
+                + ", ".join(counts)
+                + "."
+            )
+            lines.append("")
         # modality breakdown
         mods = sorted(
             {
@@ -152,16 +187,20 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
             lines.append("")
     lines += ["## Paired comparison", ""]
     lines.append(
-        "Exact McNemar test on case-level correctness against the reference tool, over cases both tools ran."
+        "Exact McNemar test on case-level correctness against the reference tool, over cases both tools ran "
+        "(n/a when they share none)."
     )
     lines.append("")
-    lines.append("| Tool | Reference | Tool right, reference wrong | Reference right, tool wrong | p |")
-    lines.append("|---|---|---|---|---|")
+    lines.append(
+        "| Tool | Reference | Shared cases | Tool right, reference wrong | Reference right, tool wrong | p |"
+    )
+    lines.append("|---|---|---|---|---|---|")
     for name in _tool_order(metrics):
         v = metrics["tools"][name].get("vs_reference")
         if v:
             lines.append(
-                f"| {name} | {v['reference']} | {v['tool_only_correct']} | {v['reference_only_correct']} | {v['mcnemar_p']:.3f} |"  # noqa: E501
+                f"| {name} | {v['reference']} | {v.get('shared', '')} | {v['tool_only_correct']} | "
+                f"{v['reference_only_correct']} | {p_value(v)} |"
             )
     lines.append("")
     return "\n".join(lines) + "\n"
