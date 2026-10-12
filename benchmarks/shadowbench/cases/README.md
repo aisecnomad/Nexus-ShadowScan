@@ -12,9 +12,9 @@ developer endpoints, the network, and running processes. Every case carries
 entity-level ground truth with a label and the evidence behind it, plus the
 decoys a tool must leave alone, so the benchmark measures true positives, false
 positives, false negatives and true negatives per entity, per surface, per
-tool, and reports precision, recall, F1, specificity, balanced accuracy, MCC,
-agent-tier recall and false-alarm rate, estate-wide recall, and paired
-comparisons with confidence intervals.
+tool. It reports precision, recall, F1, specificity, balanced accuracy, MCC,
+agent-tier recall and false-alarm rate and estate-wide recall, with confidence
+intervals, and exact McNemar tests between paired tools.
 
 The harness is `tools/shadowbench/cases/` ([its README](../../../tools/shadowbench/cases/README.md)
 has the commands). This directory holds the corpus, the committed results and
@@ -43,8 +43,8 @@ host's process table, or a repository checkout. Each case lists:
 * **expected entities**, each with a key, a label (`agent` or `llm`) and the
   evidence that justifies it;
 * **tolerated keys**: supporting records a tool may report without penalty
-  (a client's parent directory, an agent's execution role, a pending install
-  request);
+  or credit (a client's parent directory, an agent's execution role, a pending
+  install request);
 * **decoys**: records labeled `none` whose keys form the true-negative
   universe (service accounts without AI, monitoring *agents*, Minecraft
   *Bedrock* servers, apps named *copilot*, classic chatbots, plain workloads).
@@ -67,7 +67,7 @@ home directory, the client address or `ip:port`, the pid, and for code the
 
 | Surface | Modality | What the tool is pointed at | Cases | Expected entities | Decoys |
 |---|---|---|---|---|---|
-| code | checkout | 26 public repositories pinned by commit (16 positive, 4 control, 6 near-miss) | 26 | 109 facts | 0 (controls and near-misses: anything reported is a false positive) |
+| code | checkout | 26 public repositories pinned by commit (16 positive, 4 control, 6 near-miss) | 26 | 109 facts | 0 (controls and near-misses: any reported taxonomy fact that is not tolerated is a false positive) |
 | identity | okta-export | `GET /api/v1/apps` plus each app's grants and tokens | 20 | | |
 | identity | entra-export | Graph `servicePrincipals`, `applications`, `oauth2PermissionGrants`, `appRoleAssignments` | 20 | 96 | 159 |
 | gateway | litellm-export | LiteLLM `/spend/logs` rows | 20 | | |
@@ -78,7 +78,7 @@ home directory, the client address or `ip:port`, the pid, and for code the
 | saas | github-export | `GET /orgs/{org}/installations` | 20 | 88 | 110 |
 | cloud | aws-export | AWS CLI JSON: STS, Bedrock Agents, AgentCore, Lambda, SageMaker, IAM | 20 | | |
 | cloud | k8s-export | `kubectl get deploy,sts,ds -A -o json` | 20 | 77 | 133 |
-| endpoint | home | a developer home directory, given to the tool as `HOME` | 40 | 24 | 0 (negative homes: anything reported is a false positive) |
+| endpoint | home | a developer home directory, given to the tool as `HOME` | 40 | 24 | 0 (negative homes: any reported key that is not tolerated is a false positive) |
 | network | passive | Zeek `conn`, `ssl`, `dns`, `http` logs of one workstation's window | 20 | | |
 | network | active | loopback services served inside the tool's network namespace | 20 | 44 | 50 |
 | runtime | snapshot | osquery process rows and osqueryd result-log lines | 20 | | |
@@ -88,16 +88,17 @@ home directory, the client address or `ip:port`, the pid, and for code the
 of each pair carries the surface's totals.
 
 Two modalities make tools that only work live measurable offline. **Active
-network** cases start mock services on loopback inside the tool's network
-namespace (`tools/shadowbench/cases/mockserv.py`), each answering the routes a
-fingerprinting scanner probes the way the real product does: Ollama's
-`/api/tags`, vLLM's `/v1/models`, Open WebUI's `/api/config`, an MCP server's
-`initialize`, an OpenClaw gateway's `/health`, and decoys such as a Grafana
-login page, a Jenkins banner, a Datadog Agent Manager page and a Minecraft
-*Bedrock* panel. **Live runtime** cases spawn an inert static binary under each
-recorded process name with the recorded command line, inside the tool's PID
-namespace, so a tool that reads `/proc` sees exactly the processes a snapshot
-describes. Reported pids are translated back to the corpus's process keys.
+network** cases start mock services inside the tool's network namespace
+(`tools/shadowbench/cases/mockserv.py`), always bound to `127.0.0.1`, each
+answering the routes a fingerprinting scanner probes the way the real product
+does: Ollama's `/api/tags`, vLLM's `/v1/models`, Open WebUI's `/api/config`, an
+MCP server's `initialize`, an OpenClaw gateway's `/health`, and decoys such as
+a Grafana login page, a Jenkins banner, a Datadog Agent Manager page and a
+Minecraft *Bedrock* panel. **Live runtime** cases spawn an inert static binary
+under each recorded process name with the recorded command line, inside the
+tool's PID namespace and as the tool's own unprivileged user, so a tool that
+reads `/proc` sees exactly the processes a snapshot describes. Reported pids
+are translated back to the corpus's process keys.
 
 ### Platform-native inputs and conversions
 
@@ -112,73 +113,139 @@ tests nothing for ShadowScan. Everything else is read unchanged.
 
 ## Metrics
 
-Per tool, per surface and per modality:
+Per tool, per surface and per modality, over the cases the tool ran
+(`tools/shadowbench/cases/score.py`; its module docstring is the exact rule):
 
-* **Entity level.** A reported key matches an expected or decoy key when it is
-  equal or, for home-directory artifacts, when one path is a parent directory
-  of the other. TP, FP, FN, TN; precision, recall and specificity with Wilson
-  95% intervals; F1 with a 2,000-sample case bootstrap interval. A reported key
-  that matches nothing expected or tolerated is a false positive; one that hits
-  a decoy also counts against specificity.
+* **Matching.** A reported key equal to a tolerated key is neither credited
+  nor penalized. Otherwise it matches an expected or decoy key when the two
+  are equal or, for `artifact:` keys (home-directory paths), when the
+  reported path lies inside the expected or decoy directory (a tool that
+  cites a file in Claude Code's `.claude` directory has found it). Matching is one-way: a
+  reported ancestor directory of an expected file never matches. The
+  directories a tool may name instead are tolerated keys, which earn no
+  credit. Reported keys are de-duplicated.
+* **Entity level.** A matched expected key is a true positive and an unmatched
+  one a false negative. A reported key that matches nothing expected or
+  tolerated is a false positive; one that hits a decoy also counts against
+  specificity. A decoy left alone is a true negative only on a complete `ok`
+  run. Precision, recall and specificity carry Wilson 95% intervals; F1 a
+  2,000-sample case bootstrap interval.
+* **Code surface.** Truth there is `<category>:<value>` facts from
+  `tools.discovery_benchmark.taxonomy`. A reported code key that is not such a
+  fact (for example a file path an adapter could not map) is out of taxonomy:
+  neither a true nor a false positive. The rule is the same for every tool,
+  and the count is reported per tool.
 * **Agent tier.** Recall on expected `agent` entities counting only reports
   labeled `agent`; the false-alarm rate on expected `llm` entities and decoys
   that a tool labeled `agent`. A tool that cannot tell agents from plain AI
-  use reports `ai` and earns no agent-tier credit.
-* **Case level.** Detected (any true or false positive) against the case
-  label: recall, specificity, balanced accuracy, MCC.
-* **Estate recall.** Expected entities found over all expected entities in
-  the corpus, charging a tool for the surfaces it does not cover; **coverage**
-  is the number of surfaces it ran on.
-* **Errors and incompleteness.** A crash, timeout or unreadable output is an
-  `error`: every expected entity counts as missed and no decoy is credited; it
-  is never a clean negative. A run the tool itself marks incomplete is scored
-  on what it reported and counted separately.
+  use reports `ai` and earns no agent-tier credit. An error row is left out of
+  the false-alarm universe, and an incomplete run adds only the entities it
+  did call agents.
+* **Case level.** A positive case is found only when the tool reports at least
+  one expected entity (a true positive); a false positive alone does not find
+  it. A negative case is a false alarm when the tool reports any false
+  positive, and is correct only on a complete `ok` run. Case recall,
+  specificity, balanced accuracy, MCC and the McNemar test use these outcomes.
+* **Errors, missing rows and incomplete runs.** A crash, timeout or unreadable
+  output is an `error` row, and a case with no row counts as an error and is
+  also reported as missing. An error is never a correct outcome: every expected
+  entity is missed, the decoys stay in the specificity denominator without
+  being true negatives, a positive case is missed and a negative case is a
+  false alarm. A run the tool itself marks incomplete (ShadowScan's exit 3, for
+  example, or an exit outside the adapter's accepted codes that still reported
+  entities) keeps the true and false positives it reported but never earns a
+  true negative: its unflagged decoys are not true negatives and a negative
+  case it scanned incompletely is a false alarm. A positive case it found
+  still counts as found. Incomplete runs are also counted separately.
+* **Estate recall.** True positives over all 738 expected entities in the
+  corpus, charging a tool for every surface and modality it does not run
+  (those rows are `unsupported` and left out of in-scope metrics).
+  **Coverage** is the number of surfaces on which the tool ran at least one
+  case, so a tool that runs one modality of a surface covers it.
 * **Paired comparison.** Exact McNemar test on case-level correctness against
-  the reference tool over the cases both ran.
-* **Timing.** Median, p90 and maximum seconds per case (indicative only; runs
-  are parallel).
+  the reference tool (ShadowScan unless `score --reference` names another) over
+  the cases both ran.
+* **Timing.** Median, p90 and maximum seconds per `ok` case (indicative only;
+  runs are parallel).
+
+The scorer also checks what it is given. The run manifest must name the
+SHA-256 of the corpus file being scored, because case ids are positional;
+every `<tool>.jsonl` must belong to a tool the manifest records as run; and
+the row statuses in each file must add up to the counts the manifest recorded.
+Each of these is refused unless `score --force` is given, and a forced score
+lists every override in `metrics.json` and at the top of the report. Malformed
+rows are refused even with `--force`: an unknown status, a second row for a
+case, a case the corpus does not have, a row whose tool, surface, modality,
+family, label or difficulty disagrees with its file or case, and an
+`unsupported` row beside `ok` or `error` rows on the same surface and modality.
 
 ## How the corpus is built, and how to check it
 
-`python -m tools.shadowbench.cases generate --seed 20261011 --per-surface 40` writes
-`corpus.json`. Each export-style case draws entity families by quota (45%
-agent, 15% plain AI, 40% decoy, at least one decoy per export), redraws
-collisions, and renders the platform's files. Endpoint and passive-network
-cases reuse the 20 endpoint and 17 network families the earlier head-to-head
-benchmark pre-registered in `tools/benchmark/`, adding the artifact or client
-key each family plants. Code cases come from the pinned
+`python -m tools.shadowbench.cases generate --seed 20261011 --per-surface 40 --output corpus.json`
+writes the corpus. Each export-style case draws entity families by quota (45%
+agent, 15% plain AI, 40% decoy, with at least one decoy slot per export except
+on the gateway surface, which has no decoys), redraws collisions, and renders
+the platform's files. Endpoint and passive-network cases reuse the 25 endpoint
+and 17 network families the earlier head-to-head benchmark pre-registered in
+`tools/benchmark/`, adding the artifact or client key each family plants. Code cases come from the pinned
 [code-surface corpus](../../shadow-ai-discovery/corpus.json), whose facts and
 tolerated facts are carried over; `provider:*` facts are `llm`, all others
-`agent`.
+`agent`. Without that file the generator refuses to run rather than write a
+corpus with no code surface.
 
-The corpus records its seed and a SHA-256 over the generator sources (including
-the code corpus). `python -m tools.shadowbench.cases verify --corpus corpus.json
---regenerate` rebuilds it and compares byte for byte, so anyone can confirm
-that the committed inputs are exactly what the committed code produces, and
-can generate a fresh corpus at another seed to test for overfitting to this
-one. Every result file names the corpus hash, the generator digest, the
-platform and each tool's version or commit.
+The corpus header records the seed and a SHA-256 over the generator sources,
+each named by its repository-relative path: the generator, its families, the
+`tools/benchmark` families it reuses and, in the current code, the code-surface
+corpus. Corpora written now also record the `--per-surface` count. The
+committed corpus predates that field; `verify` infers 40 from its largest
+generated surface. Its recorded digest was computed before the harness moved
+to `tools/shadowbench/cases/` and before the digest covered the code corpus,
+so it no longer matches the current sources.
+
+`python -m tools.shadowbench.cases verify --corpus corpus.json` loads and
+validates the corpus and compares the recorded digest with the current one. It
+exits 0 when they match and 1 otherwise, with a hint to rerun with
+`--regenerate`. With `--regenerate` it rebuilds the cases from the current
+sources at the recorded seed and per-surface count and compares the parsed
+case lists; the header, the `created` stamp and the formatting are not
+compared. Identical cases exit 0 even when the digests differ, and verify says
+that the sources changed but build the same cases; any difference exits 1 and
+names the first differing case. The committed corpus passes only with
+`--regenerate`. Anyone can use it to confirm that the committed cases are what
+the current generator builds, and can generate a fresh corpus at another seed
+to test for overfitting to this one. The run manifest names the corpus hash,
+the generator digest, the platform and each tool's version or commit.
 
 ### Bias controls
 
-* The rubrics, families, generator, adapters and scoring rules were written
-  and committed before the scored run. The adapters were calibrated on probe
-  inputs and a 4-case-per-surface smoke corpus, never on the scored corpus.
-  Calibration changes are recorded in each adapter's docstring.
+* By the author's account, the rubrics, families, generator, adapters and
+  scoring rules were written before the scored run, and the adapters were
+  calibrated on probe inputs and a 4-case-per-surface smoke corpus, never on
+  the scored corpus. The git history cannot confirm this: the harness, the
+  rubrics, the corpus and results were first committed together, in one
+  commit. Calibration changes are recorded in each adapter's docstring.
 * Decoys are drawn from the confusions real tools make: service identities
   without AI, infrastructure *agents*, *Bedrock* game servers, *MCP* (Minecraft
   Coder Pack, Microsoft Cloud Partner), *copilot* seat reports, *Gemini*
   exchange clients, embedding batches that look like agent loops, classic
   chatbots, flows and workflows whose names mention AI.
-* Every tool runs with no network, no inherited credentials, a case-local
-  `HOME`, and (except live-runtime and active-network cases) no view of host
-  processes. No tool is given an allowlist, an inventory or a known-agent
-  list.
+* Every tool runs as uid and gid 65534 with `no_new_privs`, in fresh network,
+  PID and mount namespaces: no network beyond loopback (where active-network
+  cases serve their mocks), no view of host processes (live-runtime cases show
+  only the case's inert processes), `/root` and `/home` hidden under empty
+  tmpfs mounts, and an environment built from scratch with a case-local `HOME`
+  and no inherited credentials. This is not a sandbox: a tool can still read
+  world-readable files elsewhere on the host. The
+  [harness README](../../../tools/shadowbench/cases/README.md) gives the
+  details. No tool is given an allowlist, an inventory or a known-agent list.
 * Tools are scored only on surfaces and modalities they declare; estate recall
   shows the cost of the surfaces they do not cover without penalizing their
   in-scope precision.
-* Tool output is kept verbatim (`raw/`) beside the normalized entities, so the
-  mapping can be audited and re-applied.
+* The runner keeps each tool's raw output (exit codes, the tail of stdout and
+  stderr, and the adapter's parse) under `raw/` in its own output directory,
+  beside the normalized rows, so the mapping can be audited and re-applied on
+  that machine. Raw output is not committed; the committed results hold the
+  normalized rows only.
 * A tool's own notion of a finding is used: no confidence threshold is imposed
   on top of what the tool reports at its defaults.
 
@@ -203,56 +270,129 @@ platform and each tool's version or commit.
   version endpoints and product names, not full applications. A fingerprint
   that depends on behaviour the mocks do not reproduce will miss; a
   fingerprint that fires on generic JSON error bodies will false-positive
-  exactly as it would on the real product.
+  exactly as it would on the real product. The mocks' answer to unknown paths
+  was not fixed blind. The decoy mocks answer with HTML pages, as the real
+  products do. An earlier version of this README reported AI-Infra-Guard's
+  clean decoy result as holding "after they answered unknown paths with HTML",
+  which indicates that this behaviour was settled with that tool's response to
+  JSON error bodies in view.
 * **The gateway surface has no decoys.** Every caller in an LLM gateway log
   uses a model, so the gateway test is agent tier only.
 * **Small per-surface samples.** Twenty cases per modality give wide
   intervals; the report prints them. Regenerate at a larger `--per-surface`
   for narrower ones.
 
+### Integration changes
+
+This track was pull request #193. When it was integrated beside the estate
+track:
+
+* The corpus, the results and the harness moved into the `cases/`
+  subdirectories of `benchmarks/shadowbench/` and `tools/shadowbench/`. The
+  corpus file, `manifest.json` and every `<tool>.jsonl` of the 2026-10-11 run
+  kept their exact content; the manifest still names the corpus at its old
+  path, `benchmarks/shadowbench/corpus.json`.
+* The vendor letter grades (`grades.json`), the PDF report and the code that
+  produced them were removed.
+* The scorer was fixed and the run re-scored from the unchanged rows, so only
+  `metrics.json` and `REPORT.md` changed. Matching is now one-way (a reported
+  parent directory no longer earns credit), a positive case needs a true
+  positive, an error, a missing row or an incomplete scan
+  never earns a true negative, code keys outside the fact taxonomy are counted
+  apart instead of as false positives, and results must be vouched for by the
+  run manifest. Against the earlier `metrics.json`, ShadowScan's estate recall
+  went from 622 to 619 of 738, its in-scope F1 from 83% to 82% and its decoy
+  specificity from 75% to 64%; AgentDiscover's code F1 went from 13% to 37%.
+* `verify --regenerate` had inferred a per-surface count of 38 for the
+  committed corpus, rebuilt a smaller corpus and reported a difference,
+  although the code still builds the committed cases. It now infers 40 and
+  compares the parsed case lists.
+* The runner, the stage and the adapters were hardened for future runs: tools
+  now run unprivileged with operator homes hidden, and adapters fail closed on
+  partial or malformed output. The committed rows were recorded before these
+  changes.
+
 ### The 2026-10-11 run, in brief
 
-Nine tools ran on all 346 cases with no crashes or timeouts
-([`results/2026-10-11/REPORT.md`](results/2026-10-11/REPORT.md)). Read these
-with the caveats above: the rubrics are the author's, and ShadowScan is the
-only tool whose maintainer also wrote the corpus.
+Each tool ran only on the cases of the surfaces and modalities it declares
+([`results/2026-10-11/REPORT.md`](results/2026-10-11/REPORT.md)):
 
-* ShadowScan was the only tool to run on every surface (estate recall 84%,
-  in-scope entity F1 83%). Its weak points are exactly where the rubric and
-  its design disagree: it inventories service identities with admin scopes
-  and non-AI workspace bots as findings, so identity specificity was 57% and
-  SaaS specificity 33%; it reports classic topic-only Copilot Studio bots as
-  agents; it labelled a `gemini` crypto-exchange CLI as Gemini CLI; it missed
-  Entra Agent ID objects, Langflow and OpenClaw images on Kubernetes, and
-  scripts whose only evidence is a `--model` flag. Twenty live-runtime scans
-  and seven code scans were self-declared incomplete (a container PID
-  namespace; oversized files), as its fail-closed rule requires.
-* AI-Infra-Guard identified 26 of 32 AI services on loopback with no false
-  positives on the decoys after they answered unknown paths with HTML as the
-  real products do; it labels vLLM, TGI and LiteLLM as *AI-Agent-Config*
-  because their JSON 404 bodies satisfy that fingerprint, and it missed
-  Flowise.
-* On developer homes, Fleet's table found the most artifacts of the
-  endpoint-only tools (10 of 24), Snyk Agent Scan 7 with no false positives,
-  Numbat 3 (it keys on configuration directories and misses VS Code and
-  OpenClaw), Cisco MCP Scanner 1 (its Linux path table covers Cursor,
-  Windsurf and VS Code only). SafeDep vet reported plain VS Code as a coding
-  agent on every home that had a `.vscode` directory (39 false positives).
-* On running processes, Microsoft's `agent-discovery` and Fleet's table found
-  MCP servers and framework runs (6 and 5 of 48 expected) and nothing else;
-  neither recognises coding-agent CLIs or model servers from their command
-  lines.
-* On code, ShadowScan reached fact-level F1 94% on the 26 pinned repositories;
-  AgentDiscover 13% (247 false-positive facts), vet 15% and `agent-discovery`
-  9%, each limited to configuration files.
+| Tool | Cases run | Surfaces and modalities |
+|---|---|---|
+| ShadowScan | 326 | all nine surfaces; on network, passive only (the 20 active cases were not run) |
+| `agent-discovery` (Microsoft) | 86 | code, endpoint, runtime (live) |
+| AgentDiscover | 66 | code, endpoint |
+| SafeDep vet | 66 | code, endpoint |
+| Fleet `ai_tools` table | 60 | endpoint, runtime (live) |
+| Snyk Agent Scan | 40 | endpoint |
+| Cisco MCP Scanner | 40 | endpoint |
+| Numbat | 40 | endpoint |
+| AI-Infra-Guard | 20 | network (active) |
+
+No run crashed or timed out, and no row is missing. The numbers below are from
+the fixed scorer. Read them with the caveats above: the rubrics are the
+author's, and ShadowScan is the only tool whose maintainer also wrote the
+corpus, the scorer and every other tool's adapter. They describe behaviour on
+these inputs, not field accuracy, and they are not a verdict on any vendor's
+product.
+
+* **ShadowScan.** Estate recall 84% (619 of 738); in-scope entity precision,
+  recall and F1 78%, 88% and 82% (F1 interval 80–85%); specificity on decoys
+  64%. Specificity by surface: cloud 98%, low-code 91%, identity 57%, runtime
+  45%, SaaS 33%; its other surfaces have no decoys in the cases it ran. Its
+  weak points are where the rubric and its design disagree. It reports non-AI
+  service identities (sync, backup, SCIM and audit apps, managed identities)
+  and the *MCP Partner Center* name decoy (69 identity false positives), every
+  non-AI Slack app (53 of 53 Slack decoys), and classic topic-only Copilot
+  Studio bots (11 Power Platform false positives). All 17 of its runtime false
+  positives are a `gemini` crypto-exchange CLI taken for Gemini CLI. It missed
+  three Entra Agent ID objects, Langflow and OpenClaw images on Kubernetes,
+  Bedrock knowledge bases, and 17 processes whose only evidence is a `--model`
+  flag. It marked 27 of its own scans incomplete: all 20 live-runtime cases
+  and 7 code checkouts. Incomplete scans earn no true negatives, so its
+  live-runtime specificity is 0% (none of 81 decoys credited, 7 flagged),
+  against 88% on runtime snapshots.
+* **Endpoint** (24 expected artifacts in 40 homes). ShadowScan found 17 with no
+  false positive, Fleet's table 9 (2 false positives), SafeDep vet 8 (39),
+  Snyk Agent Scan 7 (0), `agent-discovery` 4 (2), and AgentDiscover, Cisco MCP
+  Scanner and Numbat 1 each with none. Numbat named the client directory in
+  three homes, but only OpenClaw's state directory is an expected key there;
+  `.codex` and `.config/goose` are tolerated and earn no credit. Cisco's Linux
+  path table covers Cursor, Windsurf and VS Code only. vet reported the
+  `.vscode` directory as a coding agent in all 40 homes, 39 of them false
+  positives; its endpoint case recall is 33% and its case specificity 0%.
+* **Active network** (32 AI services, 50 decoys). AI-Infra-Guard found 26 and
+  flagged no decoy (specificity 100%; see the mock-service limit above). It
+  missed Flowise (5 services) and one Open WebUI. Its *AI-Agent-Config*
+  fingerprint, which the adapter maps to `agent`, fired on every vLLM, TGI and
+  LiteLLM service, giving 11 agent false alarms out of 65.
+* **Live runtime** (48 expected processes in 20 cases). `agent-discovery`
+  found 6 (three MCP servers and three agent-framework runs) and Fleet's table
+  5 (MCP servers only), both with no false positive. Neither recognised a
+  coding-agent CLI, an AI editor or a model server from its command line.
+* **Code** (109 expected facts in 26 repositories). Fact-level F1: ShadowScan
+  94% (99 true positives, 3 false positives), AgentDiscover 37% (25, 1), vet
+  15% (9, 0), `agent-discovery` 9% (5, 0). AgentDiscover's adapter passed on
+  246 file-path keys and `agent-discovery`'s one; they are outside the fact
+  taxonomy and are counted apart, not as false positives. The earlier brief's
+  247 AgentDiscover false positives were these 246 keys and the one fact
+  above.
+* **Paired comparison** with ShadowScan on shared cases (cases only ShadowScan
+  got right, against cases only the other tool got right): AgentDiscover 22
+  against 1 (66 cases), vet 35 against 1 (66), `agent-discovery` 34 against 9
+  (86), Cisco MCP Scanner and Numbat 16 against 0 (40 each), all p < 0.001;
+  Snyk Agent Scan 10 against 0 (40), p = 0.002; Fleet's table 22 against 11
+  (60), p = 0.080, not significant at 0.05. AI-Infra-Guard shares no case with
+  ShadowScan, so it has no test. These tests measure agreement with the
+  author's rubric on the author's corpus.
 
 ## Tools
 
 | Tool | Version benchmarked | Surfaces it ran on | How it is run |
 |---|---|---|---|
-| ShadowScan (Project Nexus) | this checkout | all nine | one offline connector per modality (see the adapter docstring); `endpoint.inventory` on the home, `runtime.processes` on `/proc` for live cases |
+| ShadowScan (Project Nexus) | the checkout named in `tools.json` (0.1.2 at `2d43f508fc95` in the 2026-10-11 run) | all nine; network passive only | one offline connector per modality (see the adapter docstring); `endpoint.inventory` on the home, `runtime.processes` on `/proc` for live cases |
 | Snyk Agent Scan | 0.6.8 | endpoint | `snyk-agent-scan inspect --json` with `HOME` set to the case, consent prompts declined (no server started, nothing uploaded) |
-| Cisco MCP Scanner | 4.8.6 | endpoint | `mcp-scanner known-configs --analyzers yara`; servers it enumerates from a config count, servers that cannot start offline do not |
+| Cisco MCP Scanner | 4.8.6 | endpoint | `mcp-scanner known-configs --analyzers yara`; every server its debug log names from a config under the home counts, whether or not it could start offline |
 | Microsoft Agent Governance Toolkit, `agent-discovery` | 5.0.0 | code, endpoint, runtime (live) | `scan -s config` on the repository or home; `scan -s process` in the PID namespace; its own process is ignored |
 | AgentDiscover Scanner | 2.9.5 | code, endpoint | `scan-all --skip-layers 2,3,4,5 --format json` |
 | Numbat (Perplexity) | 77ece3a (2026-10-09) | endpoint | `numbat agents --format json` with `HOME` set to the case; its unit is the client's configuration directory |
@@ -263,12 +403,21 @@ only tool whose maintainer also wrote the corpus.
 
 Each adapter's docstring records the version, the exact command and the
 output-to-entity mapping. `install_tools.sh` in the harness directory
-reproduces the installations.
+reproduces the installations at the pinned versions and commits. Installs are
+version-pinned, not hash-locked: transitive dependencies resolve at install
+time, so a later install can differ below the pinned tools.
 
 ## Results
 
-Committed runs live under `results/<date>/` with `manifest.json` (corpus hash,
-generator digest, platform, tool versions), one `<tool>.jsonl` of normalized
-rows, `metrics.json` and `REPORT.md`. Raw tool output is not committed. The
-newest `REPORT.md` holds the measured numbers; read them with the caveats
-above.
+Committed runs live under `results/<date>/` with `manifest.json` (corpus path
+and hash, generator digest, platform, and per tool its version and row-status
+counts), one `<tool>.jsonl` of normalized rows, `metrics.json` and
+`REPORT.md`. The runner's raw output stays on the machine that ran it and is
+not committed. The newest `REPORT.md` holds the measured numbers; read them
+with the caveats above. Scoring needs no third-party tool, so anyone can check
+the committed metrics from the committed rows:
+
+```bash
+python -m tools.shadowbench.cases score --corpus benchmarks/shadowbench/cases/corpus.json \
+    --results benchmarks/shadowbench/cases/results/2026-10-11 --out /tmp/metrics.json
+```
