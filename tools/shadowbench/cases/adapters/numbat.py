@@ -18,10 +18,10 @@ covers at-rest transcripts under the agent's session roots and numbat-owned
 hook configuration. numbat prints agent display names only, never a path.
 
 Fail closed: empty stdout (an empty home prints ``[]``) or output that is not a
-JSON array is an error. A row whose ``at_rest_scan_incomplete`` is set means
-numbat did not finish reading that agent's at-rest data: the result is still
-normalized but flagged incomplete (``raw["incomplete"]``), and the note names
-those agents.
+JSON array of objects is an error. A row whose ``at_rest_scan_incomplete`` is
+set means numbat did not finish reading that agent's at-rest data: the result
+is still normalized but flagged incomplete (``raw["incomplete"]``), and the
+note names those agents.
 
 Mapping: every ``present`` row becomes ``artifact:<config dir>`` labelled
 ``agent``, where the config dir is the home-relative directory numbat's
@@ -149,6 +149,8 @@ class NumbatAdapter:
             return AdapterResult(status="error", note=f"numbat agents output is not JSON: {exc}")
         if not isinstance(data, list):
             return AdapterResult(status="error", note="numbat agents output is not a JSON array")
+        if not all(isinstance(row, dict) for row in data):
+            return AdapterResult(status="error", note="numbat agents output has a row that is not an object")
         home = case.home or work
         entities: dict[str, Entity] = {}
         unmapped: list[str] = []

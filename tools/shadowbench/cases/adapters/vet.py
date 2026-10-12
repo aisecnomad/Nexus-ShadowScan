@@ -50,9 +50,18 @@ findings the same way. The ``generic`` fallbacks above are the ones the
 code-surface benchmark's own vet adapter (``tools.discovery_benchmark``) emits.
 
 Fail closed: ``null`` or ``[]`` in the report is an empty result; a missing,
-empty or unparseable report after exit 0 is an error. ``version()`` runs
-``vet version`` through ``_probe`` (scrubbed environment, throwaway home,
-timeout, telemetry off).
+empty or unparseable report after exit 0, or an entry that is not an inventory
+item (an object with a ``Kind`` or ``ConfigPath``, so not ``{}``), is an error.
+vet writes the report for an empty inventory too: the vet v1.17.5 calibration
+in ``tools/benchmark_realworld/PROTOCOL.md`` recorded ``null``, and the
+``tools/benchmark/realworld`` run of vet at 948d9bafaf80, whose adapter also
+fails on a missing discovery report, finished 316 of 326 repositories with
+only timeouts as errors. v1.20.0 was not re-checked offline (the 2026-10-11 raw
+output is not committed); a run that shows it omitting the file means this
+rule needs revisiting, not that the gap is an empty inventory.
+
+``version()`` runs ``vet version`` through ``_probe`` (scrubbed environment,
+throwaway home, timeout, telemetry off).
 """
 
 from __future__ import annotations
@@ -154,7 +163,7 @@ class VetAdapter:
 
 def _load_items(report: Path) -> tuple[list[dict[str, Any]], str]:
     if not report.exists():
-        # vet writes "null" or "[]" when it finds nothing: no report at all is a failed run.
+        # vet writes "null" when it finds nothing (see the module docstring): no report is a failed run.
         return [], f"vet exited 0 but wrote no {report.name}"
     try:
         text = report.read_text(encoding="utf-8", errors="replace")
@@ -172,7 +181,16 @@ def _load_items(report: Path) -> tuple[list[dict[str, Any]], str]:
         data = [data]
     if not isinstance(data, list):
         return [], f"{report.name} is not a JSON array"
-    return [item for item in data if isinstance(item, dict)], ""
+    if not all(_is_item(item) for item in data):
+        return [], f"{report.name} has an entry that is not an inventory item (no Kind or ConfigPath)"
+    return data, ""
+
+
+def _is_item(item: Any) -> bool:
+    """An inventory item names its kind or the file it came from; ``{}`` or a bare value is malformed."""
+    return isinstance(item, dict) and any(
+        key in item for key in ("Kind", "kind", "ConfigPath", "config_path")
+    )
 
 
 def _kind(item: dict[str, Any]) -> int:

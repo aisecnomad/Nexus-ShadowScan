@@ -61,6 +61,9 @@ Detection rules:
 * runtime/live: each process hit becomes ``process:<tags.pid>``, label
   ``agent``; the tool's own ``agent-discovery scan`` process is dropped.
 
+Fail closed: stdout without the inventory array, or an array entry that is not
+an object, is an error, never an empty inventory.
+
 ``version()`` asks the venv interpreter for the distribution version and runs
 ``agent-discovery --version``, both through ``_probe`` (scrubbed environment,
 throwaway home, timeout), unless ``tools.json`` pins a version.
@@ -172,7 +175,9 @@ class AgentMeshDiscovery:
         agents = _json_array(run.stdout)
         if run.code != 0 or agents is None:
             return AdapterResult("error", note=f"exit {run.code}: {tail(run.stderr or run.stdout)}", raw=raw)
-        records = [a for a in agents if isinstance(a, dict)]
+        if not all(isinstance(a, dict) for a in agents):
+            return AdapterResult("error", note="inventory array has an entry that is not an object", raw=raw)
+        records: list[dict[str, Any]] = agents
         if case.surface == "runtime":
             return self._processes(records, raw)
         if case.surface == "endpoint":

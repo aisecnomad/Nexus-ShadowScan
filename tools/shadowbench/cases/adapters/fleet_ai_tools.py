@@ -58,9 +58,9 @@ wrapper drops the row for its own pid, which the ``mcp_server`` marker would
 otherwise match through a ``--types mcp_server`` argument.
 
 Fail closed: the wrapper always prints a JSON array (``[]`` when the table has
-no rows), so empty stdout or output that is not a JSON array is an error.
-``version()`` runs ``fleet-ai-tools -version`` through ``_probe`` (scrubbed
-environment, throwaway home, timeout).
+no rows), so empty stdout or output that is not a JSON array of objects is an
+error. ``version()`` runs ``fleet-ai-tools -version`` through ``_probe``
+(scrubbed environment, throwaway home, timeout).
 """
 
 from __future__ import annotations
@@ -142,7 +142,9 @@ class FleetAIToolsAdapter:
             return AdapterResult(status="error", note=f"fleet-ai-tools output is not JSON: {exc}")
         if not isinstance(data, list):
             return AdapterResult(status="error", note="fleet-ai-tools output is not a JSON array")
-        rows = [row for row in data if isinstance(row, dict)]
+        if not all(isinstance(row, dict) for row in data):
+            return AdapterResult(status="error", note="fleet-ai-tools output has a row that is not an object")
+        rows: list[dict[str, Any]] = data
         if case.surface == "runtime":
             entities = _process_entities(rows)
         else:

@@ -37,6 +37,9 @@ file it was read from. Paths outside the home (system-managed configs, project
 is not a known client location and is not reported; ``.claude/agents/*.md``
 subagents and ``.claude/settings.json`` are not reported by this version.
 
+Fail closed: stdout without the JSON object, or a client entry in it that is
+not an object, is an error, never an empty inventory.
+
 ``version()`` asks the venv interpreter for the distribution version through
 ``_probe`` (scrubbed environment, throwaway home, timeout) unless
 ``tools.json`` pins a version.
@@ -145,11 +148,11 @@ class SnykAgentScan:
         doc = _json_object(run.stdout)
         if run.code != 0 or doc is None:
             return AdapterResult("error", note=f"exit {run.code}: {tail(run.stderr or run.stdout)}", raw=raw)
+        if not all(isinstance(block, dict) for block in doc.values()):
+            return AdapterResult("error", note="a client entry in the report is not an object", raw=raw)
         found: dict[str, Entity] = {}
         servers = skills = dropped = 0
         for block in doc.values():
-            if not isinstance(block, dict):
-                continue
             client = str(block.get("client") or "")
             for server in block.get("servers") or []:
                 if not isinstance(server, dict):

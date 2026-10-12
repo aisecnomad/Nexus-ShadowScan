@@ -36,10 +36,14 @@ target that answers neither scheme prints nothing. A target with no bracketed
 fingerprint is reachable but unidentified and is not reported as an entity.
 
 Fail closed: every staged service is an HTTP server that answers, so a working
-scan prints at least one result line. Output (stdout, then the ``-o`` file)
-with no result line is an error, never a clean negative. ``version()`` reads
-the banner of ``ai-infra-guard --help`` run through ``_probe`` (scrubbed
-environment, throwaway home, timeout).
+scan prints one result line per staged ``ip:port``. The adapter reads the
+result lines of the ``-o`` file and of stdout together (the stage keeps only
+the tail of a long stdout, and the file holds every result line), and a run
+with no result line, or with none for some staged target (it timed out or
+never answered), is an error that names the missing targets: an unanswered
+decoy is never credited as a clean negative. ``version()`` reads the banner
+of ``ai-infra-guard --help`` run through ``_probe`` (scrubbed environment,
+throwaway home, timeout).
 
 Mapping: each identified URL maps to ``service:<ip>:<port>`` (host and port
 from the URL, 80/443 when absent) with the label of its strongest fingerprint
@@ -316,13 +320,7 @@ class AIInfraGuardAdapter:
 
     def invocations(self, case: MaterializedCase, env: ToolEnv, work: Path) -> list[Invocation]:
         fps, vul = self._data_dirs(env)
-        targets: list[str] = []
-        for service in case.services:
-            ip = str(service.get("ip") or "127.0.0.1")
-            port = service.get("port")
-            if port is None:
-                continue
-            targets.extend(("-t", f"{ip}:{port}"))
+        targets = [part for target in staged_targets(case) for part in ("-t", target)]
         argv = (
             env.binary(TOOL) or TOOL,
             "scan",
@@ -352,15 +350,26 @@ class AIInfraGuardAdapter:
             return AdapterResult(
                 status="error", note=f"ai-infra-guard scan exit {run.code}: {tail(_ANSI.sub('', run.stderr))}"
             )
-        results = parse_results(run.stdout)
         output = work / OUTPUT
-        if not results and output.is_file():
-            results = parse_results(output.read_text(encoding="utf-8", errors="replace"))
+        written = ""
+        if output.is_file():
+            try:
+                written = output.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                return AdapterResult(status="error", note=f"cannot read {OUTPUT}: {exc}")
+        # The -o file holds every result line; stdout may have lost its head to the stage's tail limit.
+        results = parse_results(written + "\n" + run.stdout)
         if not results:
             # Every staged service answers HTTP, so a working scan prints a line per target.
             note = f"no result line in the scan output: {tail(_ANSI.sub('', run.stderr or run.stdout))}"
             return AdapterResult(status="error", note=note)
-        services = {f"{s.get('ip')}:{s.get('port')}" for s in case.services}
+        services = set(staged_targets(case))
+        missing = sorted(services - {f"{r['host']}:{r['port']}" for r in results})
+        if missing:
+            # A target without a line was not scanned: scoring the run would credit an unanswered decoy.
+            note = f"no result line for staged target(s) {', '.join(missing)}: the scan is partial"
+            raw = {"results": results[:400], "missing": missing}
+            return AdapterResult(status="error", note=note, raw=raw)
         entities: dict[str, Entity] = {}
         for result in results:
             label: str | None = None
@@ -391,8 +400,18 @@ class AIInfraGuardAdapter:
         return AdapterResult(status="ok", entities=list(entities.values()), raw={"results": results[:400]})
 
 
+def staged_targets(case: MaterializedCase) -> list[str]:
+    """The ``ip:port`` of every staged service, as the scan is given them with ``-t``."""
+    targets: list[str] = []
+    for service in case.services:
+        port = service.get("port")
+        if port is not None:
+            targets.append(f"{service.get('ip') or '127.0.0.1'}:{port}")
+    return targets
+
+
 def parse_results(text: str) -> list[dict[str, Any]]:
-    """Parse the per-target result lines out of the scan's stdout or ``-o`` file."""
+    """Parse the per-target result lines out of the scan's stdout and ``-o`` file, de-duplicated."""
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for raw_line in _ANSI.sub("", text).splitlines():
@@ -406,7 +425,7 @@ def parse_results(text: str) -> list[dict[str, Any]]:
         parts = urlsplit(url)
         host = parts.hostname or ""
         port = parts.port or (443 if parts.scheme == "https" else 80)
-        line_key = f"{url}|{status}|{rest}"
+        line_key = f"{url}|{status}|{' '.join(rest.split())}"
         if line_key in seen:
             continue
         seen.add(line_key)

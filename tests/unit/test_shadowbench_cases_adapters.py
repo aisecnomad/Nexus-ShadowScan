@@ -207,6 +207,100 @@ def test_ai_infra_guard_falls_back_to_the_output_file(tmp_path: Path) -> None:
     assert [e.key for e in result.entities] == ["service:127.0.0.1:18434"]
 
 
+AIG_DECOY = {"ip": "127.0.0.1", "port": 18080, "product": "jenkins"}
+AIG_DECOY_LINE = "http://127.0.0.1:18080 [\x1b[32m200\x1b[0m]  [Jenkins]\n"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "missing"),
+    [
+        (AIG_BANNER + AIG_DECOY_LINE, "127.0.0.1:18434"),
+        (AIG_BANNER + AIG_LINE, "127.0.0.1:18080"),
+    ],
+    ids=["positive-unanswered", "decoy-unanswered"],
+)
+def test_ai_infra_guard_target_without_a_result_line_is_an_error(
+    tmp_path: Path, stdout: str, missing: str
+) -> None:
+    """A staged service the scan printed nothing for was scored as a clean negative."""
+    services = [*SERVICES, AIG_DECOY]
+    result, _, _ = _normalize(tmp_path, "ai-infra-guard", "network", "active", stdout, services=services)
+    assert result.status == "error", result.note
+    assert result.entities == []
+    assert missing in result.note
+    assert result.raw["missing"] == [missing]
+
+
+def test_ai_infra_guard_every_target_answered_is_ok(tmp_path: Path) -> None:
+    services = [{"port": 18434, "product": "ollama"}, AIG_DECOY]  # ip defaults to loopback, as staged
+    stdout = AIG_BANNER + AIG_DECOY_LINE + AIG_LINE
+    result, _, _ = _normalize(tmp_path, "ai-infra-guard", "network", "active", stdout, services=services)
+    assert result.status == "ok", result.note
+    assert [e.key for e in result.entities] == ["service:127.0.0.1:18434"]  # the decoy is unidentified
+
+
+def test_ai_infra_guard_reads_the_output_file_with_a_truncated_stdout(tmp_path: Path) -> None:
+    """stdout won over the -o file, so a stdout cut to its tail lost the head result lines."""
+    case = _case(tmp_path, "network", "active", services=[*SERVICES, AIG_DECOY])
+    work = _work(tmp_path)
+    (work / "aig.txt").write_text(AIG_LINE + AIG_DECOY_LINE, encoding="utf-8")
+    tail_only = AIG_DECOY_LINE + "Application Summary\n"  # the stage keeps only stdout's tail
+    result = ADAPTERS["ai-infra-guard"].normalize(case, work, [RunResult(0, tail_only, "", 1.0)])
+    assert result.status == "ok", result.note
+    assert [e.key for e in result.entities] == ["service:127.0.0.1:18434"]
+    assert len(result.raw["results"]) == 2  # the decoy line in both sources counts once
+
+
+# Output that parses to the expected outer type but holds no inventory rows.
+MALFORMED_INVENTORIES: list[tuple[str, str, str, str]] = [
+    ("numbat", "endpoint", "home", "[1, 2]"),
+    ("numbat", "endpoint", "home", '[{"agent": "Codex", "present": true}, "x"]'),
+    ("fleet-ai-tools", "endpoint", "home", '["x"]'),
+    ("fleet-ai-tools", "runtime", "live", "[null]"),
+    ("vet", "endpoint", "home", "{}"),
+    ("vet", "endpoint", "home", "[{}]"),
+    ("vet", "code", "checkout", "[1]"),
+    ("agentmesh-discovery", "endpoint", "home", "Found 1 agents\n[1]\n"),
+    ("snyk-agent-scan", "endpoint", "home", '{"/home/u/.cursor": 1}'),
+]
+
+
+@pytest.mark.parametrize(
+    ("tool", "surface", "modality", "output"),
+    MALFORMED_INVENTORIES,
+    ids=[f"{tool}-{modality}-{i}" for i, (tool, _, modality, _) in enumerate(MALFORMED_INVENTORIES)],
+)
+def test_inventory_entry_that_is_not_an_object_is_an_error(
+    tmp_path: Path, tool: str, surface: str, modality: str, output: str
+) -> None:
+    """Non-object rows were dropped silently, scoring malformed output as a clean, complete scan."""
+    case = _case(tmp_path, surface, modality)
+    work = _work(tmp_path)
+    if tool == "vet":
+        (work / "vet.json").write_text(output, encoding="utf-8")
+    result = ADAPTERS[tool].normalize(case, work, [RunResult(0, output, "", 1.0)])
+    assert result.status == "error", result.note
+    assert result.entities == []
+    assert not result.raw.get("incomplete")
+
+
+def test_vet_single_item_object_report_is_still_read(tmp_path: Path) -> None:
+    case = _case(tmp_path, "endpoint", "home")
+    work = _work(tmp_path)
+    assert case.home is not None
+    item = {"Kind": 1, "App": "cursor", "ConfigPath": str(case.home / ".cursor" / "mcp.json")}
+    (work / "vet.json").write_text(json.dumps(item), encoding="utf-8")
+    result = ADAPTERS["vet"].normalize(case, work, [RunResult(0, "", "", 1.0)])
+    assert result.status == "ok", result.note
+    assert [e.key for e in result.entities] == ["artifact:.cursor/mcp.json"]
+
+
+def test_snyk_agent_scan_home_without_clients_is_a_clean_result(tmp_path: Path) -> None:
+    result, _, _ = _normalize(tmp_path, "snyk-agent-scan", "endpoint", "home", "{}\n")
+    assert result.status == "ok", result.note
+    assert result.entities == []
+
+
 def test_shadowscan_report_without_findings_is_an_error(tmp_path: Path) -> None:
     case = _case(tmp_path, "identity", "okta-export")
     work = _work(tmp_path)
