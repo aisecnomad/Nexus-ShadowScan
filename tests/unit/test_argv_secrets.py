@@ -60,6 +60,9 @@ def test_credential_file_paths_are_not_credentials_but_tokens_always_are() -> No
         f"gws-admin-{HEX[4:16]}.json",
         f"/run/secrets/{HEX}{HEX}",
         f"/Users/alice/keys/{HEX}",
+        # Directory names in capitalized words, as some home directories are named.
+        f"/Users/JohnDoe/keys/{HEX}",
+        f"/home/JaneRoe/{HEX}",
         f"~/keys/{HEX}",
         f"./{HEX}",
         f".config/gcloud/{HEX}",
@@ -84,6 +87,8 @@ def test_a_credential_file_with_a_random_name_is_still_a_location(key: str, loca
         "/K7MDENG/" + SECRET,
         "/6/tDCy4F+Oo+PZ/" + SECRET[:24],
         f"secrets/{SECRET}",
+        # Mixed case that is not capitalized words is not a plain directory name.
+        "/xK9mQ/Lp2Wz/" + SECRET[:20],
         # Dotted tokens end in a segment far longer than a file extension.
         "MTIzNDU2Nzg5MDEyMzQ1Njc4.Cl2FMQ." + SECRET[:27],
     ],

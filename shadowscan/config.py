@@ -423,13 +423,15 @@ _WITHHELD_KEYS = _CREDENTIAL_FILE_KEYS | _CREDENTIAL_VALUE_KEYS
 # tokens (JWTs, Discord bot tokens) end in a segment far longer than an extension.
 _CREDENTIAL_FILE_NAME = re.compile(r"[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,5}")
 # The start of a path: a first directory beginning with '~' or '.' ('~/',
-# '../', '.config/'), a drive ('C:\'), or a root and two plain directory names,
-# lowercase after their first character ('/run/secrets/', '/Users/alice/').
-# Base64 credentials hold '/' but never '~', '.' or ':', and rarely two such
-# names after a leading '/', so any other relative or rooted value may be a
-# credential and is not path shape.
+# '../', '.config/'), a drive ('C:\'), or a root and two plain directory names.
+# A plain name is lowercase after its first character ('/run/secrets/',
+# '/Users/alice/') or two or more capitalized words of at least three letters
+# ('/Users/JohnDoe/'). Base64 credentials hold '/' but never '~', '.' or ':',
+# and rarely two such names after a leading '/', so any other relative or
+# rooted value may be a credential and is not path shape.
 _CREDENTIAL_FILE_ANCHOR = re.compile(
-    r"(?:[~.][^/\\]*|[A-Za-z]:)[/\\]|(?:[/\\]+[A-Za-z0-9_][a-z0-9_.-]*){2}[/\\]"
+    r"(?:[~.][^/\\]*|[A-Za-z]:)[/\\]"
+    r"|(?:[/\\]+(?:[A-Za-z0-9_][a-z0-9_.-]*|(?:[A-Z][a-z]{2,}){2,})){2}[/\\]"
 )
 
 
