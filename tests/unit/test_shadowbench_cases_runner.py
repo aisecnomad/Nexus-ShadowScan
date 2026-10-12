@@ -17,6 +17,7 @@ import pytest
 from tools.shadowbench.cases import runner
 from tools.shadowbench.cases.contract import (
     AdapterResult,
+    Entity,
     Invocation,
     MaterializedCase,
     RunResult,
@@ -100,6 +101,55 @@ class FakeAdapter:
 
     def normalize(self, case: MaterializedCase, work: Path, runs: list[RunResult]) -> AdapterResult:
         return self._normalize(work, runs) if self._normalize else self.result
+
+
+def _run(code: int = 0, stdout: str = "", stderr: str = "") -> dict[str, Any]:
+    return {"code": code, "stdout": stdout, "stderr": stderr, "seconds": 0.1, "timed_out": False}
+
+
+def _fake_stage(runs: list[dict[str, Any]], seen: dict[str, Any]) -> Callable[..., dict[str, Any]]:
+    """Stand in for the stage: record what it was given and return ``runs``."""
+
+    def fake(spec: dict[str, Any], *args: Any) -> dict[str, Any]:
+        seen.update(spec=spec)
+        return {"runs": runs, "processes": [], "error": None}
+
+    return fake
+
+
+def _run_one(adapter: FakeAdapter, tmp_path: Path, case: Case | None = None) -> dict[str, Any]:
+    case = case or _case(files={"okta/apps.json": "[]"})
+    return runner.run_one(adapter, case, ToolEnv(tmp_path), tmp_path, ROOT, tmp_path / "fakeproc", None)
+
+
+# --- a failed exit that still reports entities is incomplete --------------------------------------
+
+
+def test_run_one_flags_entities_from_a_failed_exit_as_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "_stage", _fake_stage([_run(code=1, stderr="crashed half way")], {}))
+    adapter = FakeAdapter(AdapterResult("ok", [Entity("app", "app:0oa1", "agent")]))
+    row = _run_one(adapter, tmp_path)
+    assert row["status"] == "ok"
+    assert row["entities"] == [{"kind": "app", "key": "app:0oa1", "label": "agent"}]
+    assert row["incomplete"] is True
+    assert "exit 1" in row["note"]
+
+
+def test_run_one_keeps_a_clean_run_complete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner, "_stage", _fake_stage([_run()], {}))
+    row = _run_one(FakeAdapter(AdapterResult("ok", [Entity("app", "app:0oa1", "agent")])), tmp_path)
+    assert (row["status"], row["incomplete"], row["note"]) == ("ok", False, "")
+
+
+def test_run_one_still_errors_a_failed_exit_without_entities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "_stage", _fake_stage([_run(code=2, stderr="no such file")], {}))
+    row = _run_one(FakeAdapter(AdapterResult("ok")), tmp_path)
+    assert row["status"] == "error"
+    assert row["note"].startswith("exit 2")
 
 
 # --- mock services only ever listen on loopback ---------------------------------------------------

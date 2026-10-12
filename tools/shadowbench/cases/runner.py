@@ -11,8 +11,10 @@ the output into entities. One JSONL row per (tool, case) goes to
 ``<out>/<tool>.jsonl``; verbatim tool output goes to ``<out>/raw/<tool>/``.
 
 A crash, timeout or unreadable output is recorded as ``error`` and never as a
-clean negative. ``runtime/live`` rows carry the pid map so reported pids are
-translated to the corpus's ``proc:<index>`` keys before scoring.
+clean negative. A run that exits outside the adapter's accepted codes but still
+reports entities keeps them and is flagged ``incomplete``. ``runtime/live``
+rows carry the pid map so reported pids are translated to the corpus's
+``proc:<index>`` keys before scoring.
 
 Case and checkout ids from the corpus name directories, so they must match
 ``[A-Za-z0-9._-]+``. A code case may not also carry files, and no input file
@@ -171,6 +173,10 @@ def _stage(spec: dict[str, Any], work: Path, repo: Path, timeout: float) -> dict
     return result
 
 
+def _with_note(note: str, extra: str) -> str:
+    return (note + "; " if note else "") + extra
+
+
 def run_one(
     adapter: Adapter,
     case: Case,
@@ -220,6 +226,7 @@ def run_one(
             for r in staged.get("runs", [])
         ]
         pid_map = {int(p["pid"]): int(p["index"]) for p in staged.get("processes", [])}
+        bad_exit: int | None = None
         if staged.get("error") or len(runs) != len(invocations):
             result = AdapterResult(
                 "error", note=f"stage: {staged.get('error') or 'missing invocation results'}"
@@ -237,6 +244,9 @@ def run_one(
                     note=f"exit {bad[0].code}: {(bad[0].stderr or bad[0].stdout)[-300:].strip()}",
                     raw=result.raw,
                 )
+            elif result.status == "ok":
+                # What a failed run printed is kept, but it may have stopped before reading everything.
+                bad_exit = bad[0].code
         else:
             result = adapter.normalize(mat, work, runs)
         if case.modality == "live":
@@ -253,12 +263,12 @@ def run_one(
                     translated.append(e)
             result.entities = translated
             if harness:
-                result.note = (
-                    result.note + "; " if result.note else ""
-                ) + f"{harness} harness/self process reports ignored"
+                result.note = _with_note(result.note, f"{harness} harness/self process reports ignored")
+        if bad_exit is not None:
+            result.note = _with_note(result.note, f"exit {bad_exit} is outside the accepted codes")
         row.update(result.to_json())
         row["seconds"] = round(sum(r.seconds for r in runs), 3)
-        row["incomplete"] = bool(result.raw.get("incomplete"))
+        row["incomplete"] = bool(result.raw.get("incomplete")) or bad_exit is not None
         row["raw"] = {"runs": [asdict(r) for r in runs], "adapter": result.raw}
     except Exception as exc:  # noqa: BLE001 - an adapter bug is an error row, never a crash of the whole run
         row.update(
