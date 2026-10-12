@@ -67,8 +67,11 @@ summarizes each release for people who install and operate ShadowScan.
   harness commit and freeze digest; freeze and validate reject symlinks;
   validate reports anchor collisions (`--strict` fails on them); wrapper
   scripts quote every corpus-derived value and propagate exit codes; the
-  Cisco and Snyk wrappers refuse common MCP server launchers; AI-Infra-Guard
-  predictions no longer carry text taken from the answer key.
+  Cisco and Snyk wrappers refuse common MCP server launchers; `run` resolves
+  its paths before any command starts. AI-Infra-Guard predictions no longer
+  carry text taken from the answer key: the adapter records which loopback
+  target each came from, and the scorer attributes it through
+  `services.json` as a harness attribution the report counts and discloses.
 - Re-scored runs (raw rows unchanged): on the cases track ShadowScan's
   estate recall is 619 of 738 (was 622) and in-scope F1 82% (was 83%), and
   AgentDiscover's code precision is 96% (was 9%); on the estate track

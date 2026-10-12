@@ -66,5 +66,9 @@ track's README and the changelog give the details.
   when any frozen file is untracked.
 - The estate's fictional organization was renamed from *Vantor* (since 2025
   the name of a real company) to *Adatum*. The replacement has the same
-  length, so re-scoring gives identical results.
+  length, so re-scoring the renamed run gave identical results.
 - The vendor letter grades and the PDFs were removed.
+- Defects the review found in both scorers, runners and adapters were
+  fixed, and both committed runs were re-scored with the fixed scorers. The
+  rows the tools produced are unchanged; each track's README describes what
+  moved.

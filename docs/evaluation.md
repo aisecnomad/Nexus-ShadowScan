@@ -61,7 +61,9 @@ tool tells registered agents from shadow ones. Both tracks are synthetic and
 author-written, apart from the cases track's code repositories, and the same
 maintainer wrote ShadowScan, the harnesses, the labels and every other tool's
 adapter. They check behaviour on known inputs; they do not measure field
-precision or recall and are not a verdict on any vendor's product. See
+precision or recall and are not a verdict on any vendor's product. Both
+scorers fail closed: a run that errored, timed out, was incomplete or is
+missing never earns a true negative. See
 [`benchmarks/shadowbench/README.md`](https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/shadowbench/README.md)
 for how the tracks differ, and each track's README and newest `REPORT.md` for
 the method, the limits and the measured numbers.
