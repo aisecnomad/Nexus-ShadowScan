@@ -87,6 +87,18 @@ The corpus deliberately includes, in both directions:
    corpus files; `python -m tools.shadowbench.estate verify-freeze` checks
    drift. The published run was produced after the freeze.
 
+**Erratum (integration, 2026-10-12).** The repository's `.vscode/` ignore
+rule kept one frozen file out of #194's commits:
+`artifacts/home/dev-laptop-02/marcus/.vscode/extensions/github.copilot-1.388.0/package.json`,
+the only artifact of `endpoint.copilot-ext-dl02`. Its original bytes were
+lost with the authoring session, so a minimal extension manifest replaces
+it and `FREEZE.json` records the replacement's digest. The entity's
+evidence is the extension's directory name, which is unchanged; a tool that
+reads the manifest itself may behave differently on a re-run than in the
+2026-10-11 run. `.gitignore` now re-includes `.vscode/` under `artifacts/`,
+and `tests/unit/test_shadowbench_estate.py` fails if any frozen file is not
+tracked.
+
 ## Execution and isolation
 
 Runs use the code-surface benchmark's scrubbed environment: a rebuilt

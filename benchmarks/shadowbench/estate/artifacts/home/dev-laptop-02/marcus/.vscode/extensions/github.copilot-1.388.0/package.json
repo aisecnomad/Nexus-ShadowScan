@@ -1,0 +1,11 @@
+{
+  "name": "copilot",
+  "displayName": "GitHub Copilot",
+  "description": "Your AI pair programmer",
+  "version": "1.388.0",
+  "publisher": "GitHub",
+  "engines": {
+    "vscode": "^1.98.0"
+  },
+  "categories": ["AI", "Chat", "Programming Languages", "Machine Learning"]
+}

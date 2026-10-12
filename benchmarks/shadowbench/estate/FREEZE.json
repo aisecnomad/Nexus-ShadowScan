@@ -108,7 +108,7 @@
   "artifacts/home/dev-laptop-02/marcus/.config/google-chrome/Default/Extensions/khbfcmaodnlebpjmdgcphnejadgbkpdf/1.0.12_0/manifest.json": "e01926f37f6a2c6f8ebde55367e092d6e2f5fcf177313fb76dea82e6df732cc3",
   "artifacts/home/dev-laptop-02/marcus/.continue/config.yaml": "3aac9c210811484b5f2b074e995c4e6d492c8f47247b9f13a1d5cf696c74baeb",
   "artifacts/home/dev-laptop-02/marcus/.gemini/settings.json": "66c9a5452723165b121426be3925f5224a9e9e5151ab8b295b12f5ea37e29b90",
-  "artifacts/home/dev-laptop-02/marcus/.vscode/extensions/github.copilot-1.388.0/package.json": "c30b8eec1d5b5f594dee28b3ad0285a389c8f6560458d5b7c580bbd8b311d495",
+  "artifacts/home/dev-laptop-02/marcus/.vscode/extensions/github.copilot-1.388.0/package.json": "370a499d40fd55944869dcdd8cad94f2272206326614e54022767214d0316c8f",
   "artifacts/home/win-laptop-03/priya/.aws/amazonq/mcp.json": "e51689525b6bd1539f40b352c41d5126c31361fa1ed32875768bd5384fee7918",
   "artifacts/home/win-laptop-03/priya/.lmstudio/models/vantor/tinyllama-dispatch-vq3w/tinyllama-dispatch-vq3w.q4_k_m.gguf": "2688b1bc974cca7b74b730a4e62f6a7f7abfe6bf20be78537d14aae42ac2ae6b",
   "artifacts/home/win-laptop-03/priya/AppData/Roaming/Claude/claude_desktop_config.json": "e51689525b6bd1539f40b352c41d5126c31361fa1ed32875768bd5384fee7918",
