@@ -53,7 +53,9 @@ summarizes each release for people who install and operate ShadowScan.
   closed on empty or malformed output, run version probes with a scrubbed
   environment and a timeout, and fetch pinned repositories without hooks,
   submodules or non-HTTPS remotes. `install_tools.sh` states that installs
-  are version-pinned, not hash-locked.
+  are version-pinned, not hash-locked. The run manifest records the harness
+  commit and a dirty flag and each tool's `tools.json` version, and a
+  failed static build of the inert process binary refuses the run (exit 2).
 - Estate scoring: in-scope entity metrics count only the entities on a
   tool's declared surfaces, with estate-wide detection a separate column;
   a unit whose run failed, timed out, was incomplete, exited with a code
@@ -61,10 +63,16 @@ summarizes each release for people who install and operate ShadowScan.
   negatives; attribution is restricted to the prediction's surface and
   unit and prefers the entity that expects the fact, and the report lists
   every multi-candidate attribution; a surplus generic fact no longer adds
-  a true positive.
+  a true positive. The live-sim run reaches only the hosts `services.json`
+  mirrors, so AI-Infra-Guard earns no true negative for runtime entities it
+  was never shown; `score` exits 2 without `services.json` unless
+  `--allow-missing-services` is given, and a malformed scan target makes its
+  run incomplete.
 - Estate runner and adapters: each unit runs on a private copy of the
   estate, a drifted freeze refuses the run, and `runs.json` records the
-  harness commit and freeze digest; freeze and validate reject symlinks;
+  harness commit and freeze digest; Snyk Agent Scan, Numbat and vet
+  reports of the wrong shape are adapter errors, not empty inventories;
+  freeze and validate reject symlinks;
   validate reports anchor collisions (`--strict` fails on them); wrapper
   scripts quote every corpus-derived value and propagate exit codes; the
   Cisco and Snyk wrappers refuse common MCP server launchers; `run` resolves
