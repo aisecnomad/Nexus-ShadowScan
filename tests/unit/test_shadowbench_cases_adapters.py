@@ -20,6 +20,7 @@ from tools.shadowbench.cases.contract import AdapterResult, MaterializedCase, Ru
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALL = ROOT / "tools" / "shadowbench" / "cases" / "install_tools.sh"
+MANIFEST = ROOT / "benchmarks" / "shadowbench" / "cases" / "results" / "2026-10-11" / "manifest.json"
 ADAPTERS, PROBLEMS = load_adapters()
 
 
@@ -431,7 +432,7 @@ def test_failed_probe_is_unknown_and_never_retried(tmp_path: Path, monkeypatch: 
     assert len(calls) == 1
 
 
-# --- install_tools.sh: the layout it writes satisfies every adapter --------------------------------
+# --- install_tools.sh: versions recorded as the results manifest records them ----------------------
 
 
 def _heredoc(script: str, tag: str, values: dict[str, str]) -> str:
@@ -451,6 +452,20 @@ def _script_values(script: str, root: Path) -> dict[str, str]:
     return values
 
 
+def test_install_script_records_the_manifest_versions(tmp_path: Path) -> None:
+    script = INSTALL.read_text(encoding="utf-8")
+    values = _script_values(script, tmp_path)
+    tools = json.loads(_heredoc(script, "EOF_JSON", values))["tools"]
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))["tools"]
+    for name, recorded in manifest.items():
+        if name == "shadowscan":
+            continue  # runs from this checkout; the operator adds its entry
+        assert tools[name]["version"] == recorded["version"], name
+    wrapper = _heredoc(script, "EOF_MAIN", values)
+    printed = re.search(r'fmt\.Println\("([^"]*)"\)', wrapper)
+    assert printed and printed.group(1) == manifest["fleet-ai-tools"]["version"]
+
+
 def test_install_script_layout_satisfies_every_adapter(tmp_path: Path) -> None:
     """The cisco adapter looked up ``mcp-scanner`` while tools.json names it ``cisco-mcp-scanner``."""
     script = INSTALL.read_text(encoding="utf-8")
@@ -466,3 +481,13 @@ def test_install_script_layout_satisfies_every_adapter(tmp_path: Path) -> None:
         if name == "shadowscan":
             continue
         assert adapter.unavailable_reason(env) is None, name
+
+
+def test_install_script_fails_closed() -> None:
+    script = INSTALL.read_text(encoding="utf-8")
+    assert "set -euo pipefail" in script
+    assert "shopt -s inherit_errexit" in script
+    assert "|| true" not in script
+    assert ">/dev/null 2>&1" not in script
+    assert "-mod=mod" not in script
+    assert "version-pinned, not hash-locked" in script
