@@ -62,6 +62,21 @@ connectors; do not commit live tenant exports.
 
 Run `make help` for a quick reference of all development commands.
 
+## Find your way around
+
+| Path | What lives there |
+|---|---|
+| [`shadowscan/`](shadowscan/) | The installed package: CLI (`cli.py`), scan engine, finding model, risk and autonomy scoring, inventory reconciliation, reporters |
+| [`shadowscan/connectors/`](shadowscan/connectors/) | One subpackage per discovery surface (`code`, `identity`, `gateway`, `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime`); each connector implements `collect()` and `analyze()` |
+| [`shadowscan/signatures/data/`](shadowscan/signatures/data/), [`shadowscan/mappings/data/`](shadowscan/mappings/data/) | YAML signature packs and the threat and control mapping catalogs |
+| [`tests/unit/`](tests/unit/), [`tests/fixtures/`](tests/fixtures/) | Unit tests and the offline, sanitized fixtures connectors are tested against; repository policy and consistency tests sit directly under [`tests/`](tests/) |
+| [`docs/`](docs/) | The documentation site (`mkdocs.yml` is its navigation); connector guides are under [`docs/connectors/`](docs/connectors/) |
+| [`examples/`](examples/) | The offline demo configuration, CI and Kubernetes examples, sample inventories |
+| [`tools/`](tools/README.md) | Repository tooling that never ships: quality gates, evaluation corpora, benchmarks, release and governance checks |
+| [`benchmarks/`](benchmarks/README.md) | Benchmark corpora and committed results, with what each one can and cannot show |
+| [`archive/reviews/`](archive/reviews/README.md) | Retained AI-assisted review records; not independent review |
+| [`.github/`](.github/) | Workflows, issue forms, the pull request template, labels and the committed `main` ruleset |
+
 ## Run one test
 
 After the development setup above, run one offline test from the repository root:

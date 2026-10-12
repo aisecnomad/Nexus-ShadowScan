@@ -464,7 +464,10 @@ shadowscan scan -c examples/shadowscan.offline.yaml
 core-only environment skips the tests that need them and does not validate
 every connector. `make check` runs the local copy of every CI gate; `make help`
 lists the individual targets. See
-[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#getting-started).
+[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#getting-started)
+to get started and its
+[repository map](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#find-your-way-around)
+for where the code, tests, docs, tooling and benchmarks live.
 
 
 ### Evidence and assurance limits
