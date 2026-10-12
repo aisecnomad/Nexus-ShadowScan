@@ -53,8 +53,11 @@ Labels: `agent` is an autonomous or tool-using AI agent or an agent
 integration (a configured MCP server, Copilot Studio agent, Bedrock agent,
 coding-agent CLI, agent framework process); `llm` is AI use without agent
 evidence (a chat SaaS app, a model server, a single-completion caller, a GPT
-step in a flow); `none` is no AI. Exact rubrics per surface are the module
-docstrings under `tools/shadowbench/families/`.
+step in a flow); `none` is no AI. The exact rubrics for the export surfaces,
+active network and runtime are the module docstrings under
+`tools/shadowbench/families/`; endpoint and passive-network labels come from
+the pre-registered families in `tools/benchmark/` (`endpoint_cases.py`,
+`network_cases.py`).
 
 Entity keys are tool-neutral identifiers from the platform's own data: the
 Okta app id or Entra `appId`, the gateway key alias or principal ARN, the
@@ -144,7 +147,7 @@ Per tool, per surface and per modality:
 `corpus.json`. Each export-style case draws entity families by quota (45%
 agent, 15% plain AI, 40% decoy, at least one decoy per export), redraws
 collisions, and renders the platform's files. Endpoint and passive-network
-cases reuse the 20 endpoint and 17 network families the earlier head-to-head
+cases reuse the 25 endpoint and 17 network families the earlier head-to-head
 benchmark pre-registered in `tools/benchmark/`, adding the artifact or client
 key each family plants. Code cases come from the pinned
 [code-surface corpus](../shadow-ai-discovery/corpus.json), whose facts and
