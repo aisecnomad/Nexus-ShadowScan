@@ -38,7 +38,7 @@ from tools.shadowbench.cases.contract import (
     supports,
 )
 from tools.shadowbench.cases.corpus import Case, load_corpus
-from tools.shadowbench.cases.mockserv import Services
+from tools.shadowbench.cases.mockserv import Services, checked_service
 
 ROOT = Path(__file__).resolve().parents[2]
 CORPUS = ROOT / "benchmarks" / "shadowbench" / "cases" / "corpus.json"
@@ -353,6 +353,18 @@ def test_services_refuse_anything_but_a_known_product_on_loopback(spec: dict[str
         assert services.servers == []
     finally:
         services.stop()
+
+
+@pytest.mark.parametrize("port", [1, 80, 443, 1023])
+def test_services_refuse_privileged_ports(port: int) -> None:
+    with pytest.raises(ValueError, match="invalid port"):
+        checked_service({"ip": "127.0.0.1", "port": port, "product": "ollama"})
+
+
+def test_services_accept_every_committed_service() -> None:
+    specs = [s for case in load_corpus(CORPUS).cases for s in case.services]
+    assert specs
+    assert min(checked_service(s)[1] for s in specs) >= 1024
 
 
 def test_services_validate_every_spec_before_binding_any() -> None:

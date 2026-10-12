@@ -465,7 +465,8 @@ def checked_service(spec: dict[str, Any]) -> tuple[str, int, str]:
         raise ValueError(f"unknown mock service product {product!r}")
     if ip != LOOPBACK:
         raise ValueError(f"mock service {product} must listen on {LOOPBACK}, not {ip!r}")
-    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+    # The generator draws ports from 1234 up; nothing in a case may claim a privileged one.
+    if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535:
         raise ValueError(f"mock service {product} has an invalid port {port!r}")
     return ip, port, product
 
