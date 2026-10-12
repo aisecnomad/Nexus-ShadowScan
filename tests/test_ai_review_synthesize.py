@@ -460,6 +460,10 @@ class TestMainEndToEnd:
         assert "stale finding" not in body and "other/file.py" not in body
         # The drop is disclosed: the review says stale findings were left out.
         assert "named files outside this pull request's diff" in body
+        # The notice precedes the kept findings, so it points down to them.
+        notice = body.index("named files outside this pull request's diff")
+        assert notice < body.index("kept finding") and notice < body.index("unlocated finding")
+        assert "listed below" in body[notice:] and "listed above" not in body
 
     def test_blocking_finding_fails_gate(self, tmp_path: Path) -> None:
         returncode, decision = self.run_gate(tmp_path, {"appsec.json": [finding()]})
