@@ -9,8 +9,13 @@ cannot launch are absent from scan_results. The scanner itself runs from
 its configured virtualenv binary and needs none of those launchers. That
 behavior is part of what the benchmark measures, and the run also passes the
 Claude config files explicitly because the Linux known-configs list omits
-them. Every scanner step runs; the script exits with the first non-zero
-status, so a crash never reads as an empty inventory.
+them.
+
+Every scanner step runs; the script exits with the first non-zero status, so
+a crash never reads as an empty inventory. Each `--format raw` output must be
+an object whose `scan_results` is a list (`{"server_url": ...,
+"scan_results": [...], ...}`); a missing, empty or unparseable output, or one
+without that list, is an adapter error.
 """
 
 from __future__ import annotations
@@ -111,9 +116,10 @@ class CiscoMcpScannerAdapter:
             if not isinstance(data, dict):
                 problems.append(f"{path.name} is not an object")
                 continue
-            rows = data.get("scan_results") or []
+            rows = data.get("scan_results")
             if not isinstance(rows, list):
-                problems.append(f"{path.name} scan_results is not a list")
+                # A missing or null list is an error report, not zero servers.
+                problems.append(f"{path.name} scan_results is missing or not a list")
                 continue
             result.raw_count += len(rows)
             seen: set[str] = set()

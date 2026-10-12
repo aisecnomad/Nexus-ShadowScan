@@ -5,7 +5,8 @@ stores under $HOME. The eBPF capture mode is environment-blocked here:
 fentry/fexit program loads return EPERM on this kernel, which the run
 records as the reason the runtime surface stays out of scope. Both reports
 run; the script exits with the first non-zero status, and a missing, empty or
-unparseable report is an adapter error, never an empty session list.
+unparseable report, or one that holds JSON but no session record, is an
+adapter error, never an empty session list.
 """
 
 from __future__ import annotations
@@ -88,7 +89,12 @@ class AgentSightAdapter:
 
     @staticmethod
     def _records(path: Path) -> tuple[list[dict[str, object]], str | None]:
-        """The report's records, or an error when the report is missing, empty or not JSON."""
+        """The report's session records, or an error when the report is not a session report.
+
+        An empty list is an empty report. A missing, empty or non-JSON file is
+        an error, and so is an object or non-empty list without one record
+        that names its agent (`comm`): `{"error": ...}` is not zero sessions.
+        """
         if not path.exists() or not path.stat().st_size:
             return [], f"{path.name} missing or empty"
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -100,10 +106,13 @@ class AgentSightAdapter:
         except ValueError as exc:
             return [], f"{path.name} unparseable: {exc}"
         if isinstance(data, dict):
-            return [data], None
-        if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict)], None
-        return [], f"{path.name} is not an object or a list"
+            data = [data]
+        if not isinstance(data, list):
+            return [], f"{path.name} is not an object or a list"
+        records = [item for item in data if isinstance(item, dict)]
+        if data and not any(record.get("comm") for record in records):
+            return [], f"{path.name} holds no session record with a 'comm' field"
+        return records, None
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:
         records: list[dict[str, object]] = []

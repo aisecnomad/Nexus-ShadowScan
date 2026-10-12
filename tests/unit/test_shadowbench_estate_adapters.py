@@ -216,8 +216,22 @@ def test_agentsight_script_exits_with_the_first_failed_report(tmp_path: Path) ->
         ("No sessions found\n", "[]", "prompts.json holds no JSON"),
         ("[]", '{"comm": "claude"', "audit.json unparseable"),
         ("[]", "42", "audit.json holds no JSON"),
+        ('{"error": "Traceback: boom"}', "[]", "prompts.json holds no session record"),
+        ("{}", "[]", "prompts.json holds no session record"),
+        ("[]", '[{"pid": 7}]', "audit.json holds no session record"),
+        ("[]", '[1, "two"]', "audit.json holds no session record"),
     ],
-    ids=["missing", "empty", "text-only", "truncated", "scalar"],
+    ids=[
+        "missing",
+        "empty",
+        "text-only",
+        "truncated",
+        "scalar",
+        "error-object",
+        "empty-object",
+        "records-without-comm",
+        "non-records",
+    ],
 )
 def test_agentsight_unusable_report_is_an_error(
     tmp_path: Path, prompts: str | None, audit: str | None, fragment: str
@@ -244,16 +258,48 @@ def test_agentsight_valid_reports_normalize_without_error(tmp_path: Path) -> Non
     assert [p.fact for p in normalized.predictions] == ["ai-client:claude-code"]
 
 
+def test_agentsight_report_with_one_session_record_is_accepted(tmp_path: Path) -> None:
+    (tmp_path / "prompts.json").write_text('{"comm": "codex", "conversation_id": "c2"}', encoding="utf-8")
+    (tmp_path / "audit.json").write_text('[{"comm": "gemini"}, {"pid": 9}]', encoding="utf-8")
+
+    normalized = AgentSightAdapter().normalize("home:laptop", tmp_path)
+
+    assert normalized.error is None
+    assert normalized.raw_count == 3
+    assert [p.fact for p in normalized.predictions] == ["ai-client:codex", "ai-client:gemini-cli"]
+
+
 @pytest.mark.parametrize(
     ("files", "fragment"),
     [
         ({"known.json": EMPTY_SCAN, "config0.json": "Traceback (most recent"}, "config0.json"),
         ({"config0.json": EMPTY_SCAN}, "known.json missing"),
         ({"known.json": "", "config0.json": EMPTY_SCAN}, "known.json empty"),
-        ({"known.json": '{"scan_results": {"a": 1}}'}, "known.json scan_results is not a list"),
+        ({"known.json": '{"scan_results": {"a": 1}}'}, "known.json scan_results is missing or not a list"),
         ({"known.json": "[]"}, "known.json is not an object"),
+        # An object without a scan_results list is an error report, not zero servers.
+        ({"known.json": "{}"}, "known.json scan_results is missing"),
+        ({"known.json": '{"error": "Traceback: boom"}'}, "known.json scan_results is missing"),
+        ({"known.json": '{"scan_results": null}'}, "known.json scan_results is missing"),
+        ({"known.json": '{"scan_results": false}'}, "known.json scan_results is missing"),
+        ({"known.json": '{"scan_results": 0}'}, "known.json scan_results is missing"),
+        ({"known.json": '{"scan_results": ""}'}, "known.json scan_results is missing"),
+        ({"known.json": EMPTY_SCAN, "config0.json": '{"scan_results": null}'}, "config0.json scan_results"),
     ],
-    ids=["one-step-crashed", "known-missing", "known-empty", "rows-not-list", "not-object"],
+    ids=[
+        "one-step-crashed",
+        "known-missing",
+        "known-empty",
+        "rows-not-list",
+        "not-object",
+        "rows-key-missing",
+        "error-object",
+        "rows-null",
+        "rows-false",
+        "rows-zero",
+        "rows-empty-string",
+        "config-rows-null",
+    ],
 )
 def test_cisco_unusable_output_is_an_error(tmp_path: Path, files: dict[str, str], fragment: str) -> None:
     for name, text in files.items():
@@ -268,7 +314,7 @@ def test_cisco_unusable_output_is_an_error(tmp_path: Path, files: dict[str, str]
 def test_cisco_valid_output_normalizes_without_error(tmp_path: Path) -> None:
     rows = [{"server_source": "~/.claude.json:github", "tool_name": "search"}]
     (tmp_path / "known.json").write_text(json.dumps({"scan_results": rows}), encoding="utf-8")
-    (tmp_path / "config0.json").write_text('{"scan_results": null}', encoding="utf-8")
+    (tmp_path / "config0.json").write_text(EMPTY_SCAN, encoding="utf-8")
 
     normalized = CiscoMcpScannerAdapter().normalize("home:laptop", tmp_path)
 
