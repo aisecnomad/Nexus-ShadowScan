@@ -140,10 +140,14 @@ def test_freeze_manifest_must_be_well_formed(tmp_path: Path) -> None:
 # --- validate ---------------------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("anchor", ["ghost-anchor-q7", "ab:cd"])
 def test_validate_checks_the_anchor_of_an_entity_whose_artifacts_are_empty(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], anchor: str
 ) -> None:
-    """An entity whose artifacts were all empty skipped the anchor check entirely."""
+    """An entity whose artifacts were all empty skipped the anchor check entirely.
+
+    A composite anchor whose parts are all short was grounded by `all([])`.
+    """
     entities = _entities()
     entities.append(
         {
@@ -151,7 +155,7 @@ def test_validate_checks_the_anchor_of_an_entity_whose_artifacts_are_empty(
             "surface": "saas",
             "class": "control",
             "difficulty": "easy",
-            "anchors": ["ghost-anchor-q7"],
+            "anchors": [anchor],
             "artifacts": ["saas/apps.json"],
         }
     )
@@ -159,7 +163,7 @@ def test_validate_checks_the_anchor_of_an_entity_whose_artifacts_are_empty(
     (artifacts / "saas").mkdir()
     (artifacts / "saas" / "apps.json").write_text("", encoding="utf-8")
     assert cmd_validate(corpus, artifacts) == 1
-    assert "PROBLEM saas.empty: primary anchor 'ghost-anchor-q7' not found" in capsys.readouterr().out
+    assert f"PROBLEM saas.empty: primary anchor {anchor!r} not found" in capsys.readouterr().out
 
 
 def test_validate_warns_on_anchor_collisions_and_strict_fails(
