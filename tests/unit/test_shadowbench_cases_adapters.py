@@ -603,9 +603,11 @@ class _FakeGit:
     def __init__(self, head: str) -> None:
         self.head = head
         self.calls: list[list[str]] = []
+        self.envs: list[dict[str, str] | None] = []
 
     def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         self.calls.append(list(argv))
+        self.envs.append(kwargs.get("env"))
         stdout = self.head + "\n" if "rev-parse" in argv else ""
         return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
 
@@ -698,3 +700,73 @@ def test_fetch_pinned_against_a_real_repository(tmp_path: Path, monkeypatch: pyt
     assert _git("rev-parse", "--abbrev-ref", "HEAD", cwd=dest) == "HEAD"  # detached
     assert fetch_code.fetch_pinned(url, pinned, "main", dest) == pinned  # an existing checkout is kept
     assert os.path.isdir(dest / ".git")
+
+
+# Variables git exports to a hook or a `git bisect run` script, plus config and TLS overrides.
+GIT_REDIRECTS = {
+    "GIT_DIR": "/operator/.git",
+    "GIT_WORK_TREE": "/operator",
+    "GIT_INDEX_FILE": "/operator/.git/index",
+    "GIT_OBJECT_DIRECTORY": "/operator/.git/objects",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES": "/operator/.git/objects",
+    "GIT_COMMON_DIR": "/operator/.git",
+    "GIT_CONFIG_PARAMETERS": "'protocol.allow'='always'",
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "core.hooksPath",
+    "GIT_CONFIG_VALUE_0": "/operator/hooks",
+    "GIT_SSL_NO_VERIFY": "1",
+}
+GIT_ENV_ALLOWED = {"GIT_SSL_CAINFO", "GIT_TERMINAL_PROMPT", "GIT_CEILING_DIRECTORIES"}
+
+
+def test_fetch_runs_git_without_the_callers_git_variables(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every git call inherited GIT_DIR and the rest, so it could act on the operator's repository."""
+    for key, value in GIT_REDIRECTS.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("GIT_SSL_CAINFO", "/etc/ssl/proxy-ca.pem")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    code, fake = _fetch_main(tmp_path, monkeypatch, "https://github.com/demo/repo.git", SHA)
+    assert code == 0
+    checkout = (tmp_path / "dest" / "demo__repo").resolve()
+    assert fake.calls and len(fake.envs) == len(fake.calls)
+    for argv, env in zip(fake.calls, fake.envs, strict=True):
+        assert env is not None, argv
+        assert {key for key in env if key.startswith("GIT_")} <= GIT_ENV_ALLOWED, argv
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        assert env["GIT_CEILING_DIRECTORIES"] == str(checkout.parent)
+        assert env["GIT_SSL_CAINFO"] == "/etc/ssl/proxy-ca.pem"  # an operator's proxy CA still applies
+        assert env["HTTPS_PROXY"] == "http://proxy.invalid:3128"
+        assert ("-c", "http.sslVerify=true") in set(zip(argv, argv[1:], strict=False))
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_fetch_leaves_the_repository_in_git_dir_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With GIT_DIR set, init/fetch/checkout moved the operator's HEAD and the pin check still passed."""
+    operator = tmp_path / "operator"
+    operator.mkdir()
+    _git("init", "-q", "-b", "main", cwd=operator)
+    _git("commit", "-q", "--allow-empty", "-m", "operator", cwd=operator)
+    operator_head = _git("rev-parse", "HEAD", cwd=operator)
+    src = tmp_path / "src"
+    src.mkdir()
+    _git("init", "-q", "-b", "main", cwd=src)
+    (src / "README").write_text("pinned\n", encoding="utf-8")
+    _git("add", "README", cwd=src)
+    _git("commit", "-q", "-m", "pinned", cwd=src)
+    pinned = _git("rev-parse", "HEAD", cwd=src)
+    monkeypatch.setattr(fetch_code, "https_remote", lambda remote: remote)
+    monkeypatch.setattr(fetch_code, "GIT_CONFIG", (*fetch_code.GIT_CONFIG, "protocol.file.allow=always"))
+    dest = tmp_path / "dest" / "repo"
+    with monkeypatch.context() as hook:
+        hook.setenv("GIT_DIR", str(operator / ".git"))
+        hook.setenv("GIT_INDEX_FILE", str(operator / ".git" / "index"))
+        assert fetch_code.fetch_pinned(f"file://{src}", pinned, "main", dest) == pinned
+    assert _git("rev-parse", "HEAD", cwd=operator) == operator_head
+    assert _git("remote", cwd=operator) == ""
+    assert Path(_git("rev-parse", "--absolute-git-dir", cwd=dest)).resolve() == (dest / ".git").resolve()
+    assert _git("rev-parse", "HEAD", cwd=dest) == pinned
+    assert (dest / "README").read_text(encoding="utf-8") == "pinned\n"

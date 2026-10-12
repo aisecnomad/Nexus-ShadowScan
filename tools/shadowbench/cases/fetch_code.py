@@ -13,7 +13,14 @@ are untrusted input, so every call is hardened:
 * the pinned commit is fetched by SHA (depth 1), falling back to the default branch only
   when its tip is that commit, and ``rev-parse HEAD`` must equal the pinned SHA;
 * ``DEST/<repo id>`` must not be a symbolic link: an existing link is refused, never
-  followed, and a stale checkout is replaced only when it is a real directory.
+  followed, and a stale checkout is replaced only when it is a real directory;
+* git gets the caller's environment without its ``GIT_*`` variables (only the TLS trust
+  anchors ``GIT_SSL_CAINFO`` and ``GIT_SSL_CAPATH`` pass), so a ``GIT_DIR``,
+  ``GIT_WORK_TREE``, ``GIT_INDEX_FILE`` or object directory set by a git hook or
+  ``git bisect run`` cannot turn the fetch onto the operator's repository, and neither
+  ``GIT_CONFIG_*`` nor ``GIT_SSL_NO_VERIFY`` can undo the settings above; repository
+  discovery stops at ``DEST/<repo id>`` (``GIT_CEILING_DIRECTORIES``) and TLS
+  verification is on (``http.sslVerify=true``).
 """
 
 from __future__ import annotations
@@ -36,8 +43,11 @@ GIT_CONFIG: tuple[str, ...] = (
     "fetch.recurseSubmodules=false",
     "protocol.allow=never",
     "protocol.https.allow=always",
+    "http.sslVerify=true",
     "advice.detachedHead=false",
 )
+# The only GIT_* variables git inherits: CA settings an operator needs behind a TLS-inspecting proxy.
+GIT_ENV_KEEP = frozenset({"GIT_SSL_CAINFO", "GIT_SSL_CAPATH"})
 FETCH_TIMEOUT = 900
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*\Z")
@@ -47,12 +57,21 @@ class FetchError(RuntimeError):
     """A repository could not be fetched safely at its pinned commit."""
 
 
+def git_env(checkout: Path) -> dict[str, str]:
+    """The environment of every git call in ``checkout`` (see the module docstring)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in GIT_ENV_KEEP}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    # Without a .git of its own, the checkout must never resolve to a repository above it.
+    env["GIT_CEILING_DIRECTORIES"] = str(checkout.resolve().parent)
+    return env
+
+
 def _git(args: list[str], cwd: Path, timeout: int = 60) -> subprocess.CompletedProcess[str]:
     config = [part for item in GIT_CONFIG for part in ("-c", item)]
     return subprocess.run(
         ["git", *config, *args],
         cwd=cwd,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        env=git_env(cwd),
         capture_output=True,
         text=True,
         timeout=timeout,
