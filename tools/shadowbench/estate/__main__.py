@@ -248,6 +248,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_score(args: argparse.Namespace) -> int:
     corpus = load_corpus(args.corpus)
+    services_path = args.estate / "services" / "services.json"
+    services = score_mod.load_services(services_path)
+    if not services:
+        print(
+            f"note: no services in {services_path}; every scan target scores as unattributed", file=sys.stderr
+        )
     manifest = json.loads(args.runs.read_text(encoding="utf-8"))
     specs = {
         adapter.spec.id: {  # type: ignore[attr-defined]
@@ -256,7 +262,7 @@ def cmd_score(args: argparse.Namespace) -> int:
         }
         for adapter in _adapters()
     }
-    metrics = score_mod.score_all(corpus, manifest, specs)
+    metrics = score_mod.score_all(corpus, manifest, specs, services)
     args.out.write_text(json.dumps(metrics, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {args.out}")
     return 0
@@ -309,6 +315,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_score = sub.add_parser("score", help="score runs.json against the corpus")
     p_score.add_argument("--corpus", type=Path, default=default_corpus)
+    p_score.add_argument(
+        "--estate",
+        type=Path,
+        default=default_estate,
+        help="estate whose services/services.json maps a scanned loopback service to its host",
+    )
     p_score.add_argument("--runs", type=Path, required=True)
     p_score.add_argument("--out", type=Path, required=True)
 

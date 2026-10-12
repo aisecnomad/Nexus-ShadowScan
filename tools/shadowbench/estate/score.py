@@ -28,6 +28,19 @@ Attribution (`attribute`) gives each prediction at most one owning entity:
    corpus's anchors. Estate-wide entities take no fallback. With no such
    candidate, or several, the prediction stays unattributed.
 
+Scan targets replace steps 3 and 4. A tool that scans loopback mock services
+standing in for estate hosts (AI-Infra-Guard against `simhost.py`) cannot
+name the host it scanned, only the port. Its adapter records each
+prediction's scan target in the run's `detail["scan_targets"]`, one entry
+per prediction in order: the services.json `id` of the service on the port
+the tool reported. Such a prediction is never attributed by its text. It
+goes to the one candidate whose primary anchor equals that service's
+`anchor`, and counts as *harness-attributed*: the harness, not the tool,
+mapped the port to the host. A target that names no service in the estate's
+services.json, or a service whose anchor is no candidate's primary anchor,
+leaves the prediction unattributed (a false positive) and is counted. Rows
+without the detail key are scored as before.
+
 An attributed prediction takes its entity's surface, so it is in scope
 exactly when the tool declares that surface; an unattributed prediction is
 in scope when its own placement touches a declared surface (or cannot be
@@ -35,11 +48,12 @@ placed at all). Predictions outside the declared surfaces count in the
 estate-wide numbers only and are reported as out of scope, never dropped.
 
 Completeness: a run row is incomplete when its status is not `ok`, the
-adapter flagged it incomplete, it recorded an error, it ran no command, any
-of its commands timed out or exited with a code the adapter did not declare
-as success (the runner records that as the command's `ok`), or every one of
-its commands exited non-zero and it produced no output: the adapter
-accepted those exits, but "nothing found" cannot then be told from a
+adapter flagged it incomplete, it recorded an error, its recorded scan
+targets are malformed (then none of its predictions is attributed), it ran
+no command, any of its commands timed out or exited with a code the adapter
+did not declare as success (the runner records that as the command's `ok`),
+or every one of its commands exited non-zero and it produced no output: the
+adapter accepted those exits, but "nothing found" cannot then be told from a
 failure. A code or home unit that labels an entity on the tool's declared
 surfaces is missing when the tool has no row for it and no whole-estate
 row, and a tool with no rows at all is missing everywhere. Every entity an
@@ -75,18 +89,31 @@ scorer credits one):
 
 from __future__ import annotations
 
+import json
+import re
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from statistics import median
 from typing import Any
 
 from tools.shadowbench.estate import taxonomy
-from tools.shadowbench.estate.corpus import Entity, EstateCorpus
+from tools.shadowbench.estate.corpus import CorpusError, Entity, EstateCorpus, open_regular
 
 _ROUND = 4
 _UNIT_KINDS = ("code", "home")
 MISSING_RUN = "no run recorded"
 NO_OUTPUT = "every command exited non-zero and the run produced no output"
+MALFORMED_TARGETS = "malformed scan targets"
+
+#: Run `detail` key where an adapter records each prediction's scan target, in prediction order.
+SCAN_TARGETS = "scan_targets"
+#: The prediction field the scorer reads a scan target from; only the run's record sets it.
+SCAN_TARGET = "scan_target"
+#: Service ids in services.json. A URL, or the marker below, can never be one.
+_SERVICE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_NO_TARGET = f"<{MALFORMED_TARGETS}>"
 
 # Rules that pick the owner of a prediction whose anchors match several entities.
 RULE_FACT = "expects the fact"
@@ -160,6 +187,79 @@ def match_values(predicted: set[str], expected: frozenset[str]) -> Counts:
     return counts
 
 
+def load_services(path: Path) -> dict[str, str]:
+    """Anchor by service id from the estate's services.json; empty when there is no such file.
+
+    The harness maps a scan target to an estate host only through this file,
+    so a malformed one stops scoring (CorpusError) rather than leaving every
+    target unattributed without saying why.
+    """
+    try:
+        with open_regular(path) as handle:
+            payload = json.loads(handle.read().decode("utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise CorpusError(f"{path}: {exc}") from None
+    services = payload.get("services") if isinstance(payload, dict) else None
+    if not isinstance(services, list):
+        raise CorpusError(f"{path}: 'services' must be a list")
+    anchors: dict[str, str] = {}
+    for service in services:
+        if not isinstance(service, dict):
+            raise CorpusError(f"{path}: every service must be an object")
+        service_id, anchor = service.get("id"), service.get("anchor")
+        if not isinstance(service_id, str) or not _SERVICE_ID.fullmatch(service_id):
+            raise CorpusError(f"{path}: service id {service_id!r} is not a plain name")
+        if not isinstance(anchor, str) or not anchor:
+            raise CorpusError(f"{path}: service {service_id} needs an anchor")
+        if service_id in anchors:
+            raise CorpusError(f"{path}: duplicate service id {service_id}")
+        anchors[service_id] = anchor.lower()
+    return anchors
+
+
+def _recorded_targets(row: dict[str, Any]) -> tuple[list[str | None] | None, bool]:
+    """The row's scan targets, one per prediction, and whether the record is malformed.
+
+    (None, False) when the row records none: the scorer then reads its
+    predictions as it always has.
+    """
+    detail = row.get("detail")
+    if not isinstance(detail, dict) or SCAN_TARGETS not in detail:
+        return None, False
+    targets = detail[SCAN_TARGETS]
+    predictions = row.get("predictions")
+    if (
+        not isinstance(targets, list)
+        or not isinstance(predictions, list)
+        or len(targets) != len(predictions)
+        or not all(target is None or (isinstance(target, str) and target) for target in targets)
+    ):
+        return None, True
+    return targets, False
+
+
+def row_predictions(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """A run row's predictions as the scorer reads them.
+
+    Each carries the row's unit and, when the row records scan targets, its
+    own `scan_target`. A prediction in a row whose record is malformed gets a
+    target that names no service, so its text cannot attribute it.
+    """
+    targets, malformed = _recorded_targets(row)
+    predictions: list[dict[str, Any]] = []
+    for index, raw in enumerate(row.get("predictions", [])):
+        prediction = {**dict(raw), "unit": row.get("unit", "estate")}
+        prediction.pop(SCAN_TARGET, None)
+        if malformed:
+            prediction[SCAN_TARGET] = _NO_TARGET
+        elif targets is not None and targets[index] is not None:
+            prediction[SCAN_TARGET] = targets[index]
+        predictions.append(prediction)
+    return predictions
+
+
 def unit_bound(unit: str) -> bool:
     """True for a run over one code repository or one home tree."""
     kind, sep, name = unit.partition(":")
@@ -209,6 +309,9 @@ class Attribution:
     #: Predictions whose anchors matched several candidates, with the rule that chose.
     multi_match: list[dict[str, Any]] = field(default_factory=list)
     tolerated: int = 0
+    #: Predictions carrying a scan target: those it attributed, and those it left unattributed.
+    harness_attributed: int = 0
+    unknown_scan_target: int = 0
 
     @property
     def ambiguous(self) -> list[dict[str, Any]]:
@@ -234,8 +337,25 @@ def choose_owner(matched: list[tuple[Entity, int]], fact: str) -> tuple[Entity, 
     return top[0], RULE_ANCHOR if len(top) == 1 else RULE_ID
 
 
-def attribute(corpus: EstateCorpus, predictions: list[dict[str, Any]]) -> Attribution:
-    """Attribute predictions to entities; the module docstring has the rules."""
+def harness_owner(reachable: list[Entity], services: Mapping[str, str], target: str) -> Entity | None:
+    """The one candidate whose primary anchor is the anchor of the scanned service, else None."""
+    anchor = services.get(target)
+    if anchor is None:
+        return None
+    owners = [entity for entity in reachable if entity.anchors[0] == anchor]
+    return owners[0] if len(owners) == 1 else None
+
+
+def attribute(
+    corpus: EstateCorpus,
+    predictions: list[dict[str, Any]],
+    services: Mapping[str, str] | None = None,
+) -> Attribution:
+    """Attribute predictions to entities; the module docstring has the rules.
+
+    `services` maps a services.json id to its anchor (`load_services`); a
+    prediction's `scan_target` is resolved through it.
+    """
     tolerated = [(item.fact, item.anchor) for item in corpus.tolerated_global]
     result = Attribution(entity_predictions={e.id: [] for e in corpus.entities})
     for prediction in predictions:
@@ -247,6 +367,17 @@ def attribute(corpus: EstateCorpus, predictions: list[dict[str, Any]]) -> Attrib
         surfaces = placement(prediction)
         unit = str(prediction.get("unit", "estate"))
         reachable = [e for e in corpus.entities if e.surface in surfaces and reaches(unit, e)]
+        target = prediction.get(SCAN_TARGET)
+        if target is not None:
+            # The harness says which host the scanned port stands in for; the text is not read.
+            harness = harness_owner(reachable, services or {}, str(target))
+            if harness is None:
+                result.unknown_scan_target += 1
+                result.unattributed.append(prediction)
+            else:
+                result.harness_attributed += 1
+                result.entity_predictions[harness.id].append(prediction)
+            continue
         matched: list[tuple[Entity, int]] = []
         for entity in reachable:
             lengths = [len(anchor) for anchor in entity.anchors if anchor in text]
@@ -287,6 +418,8 @@ def incomplete_reason(row: dict[str, Any]) -> str | None:
         return "adapter reported the run incomplete"
     if row.get("error"):
         return "error recorded"
+    if _recorded_targets(row)[1]:
+        return MALFORMED_TARGETS
     commands = row.get("commands")
     if not isinstance(commands, list):
         return "no command records"
@@ -361,12 +494,11 @@ def score_tool(
     tool_id: str,
     surfaces: frozenset[str],
     runs: list[dict[str, Any]],
+    services: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     rows = [row for row in runs if row.get("tool") == tool_id]
-    predictions = [
-        {**dict(p), "unit": row.get("unit", "estate")} for row in rows for p in row.get("predictions", [])
-    ]
-    attribution = attribute(corpus, predictions)
+    predictions = [prediction for row in rows for prediction in row_predictions(row)]
+    attribution = attribute(corpus, predictions, services)
     completeness = _completeness(corpus, surfaces, rows)
 
     value_in_scope = Counts()
@@ -450,6 +582,19 @@ def score_tool(
     for row in rows:
         statuses[str(row.get("status", "missing"))] += 1
     seconds = sorted(float(row.get("seconds", 0.0)) for row in rows)
+    prediction_counts: dict[str, int] = {
+        "total": len(predictions),
+        "tolerated": attribution.tolerated,
+        "attributed": sum(len(items) for items in attribution.entity_predictions.values()),
+        "multi_match": len(attribution.multi_match),
+        "ambiguous": len(attribution.ambiguous),
+        "unattributed": len(attribution.unattributed),
+        "out_of_scope": out_of_scope,
+    }
+    # Only runs that record scan targets carry these counts, so older metrics read unchanged.
+    if any(_recorded_targets(row) != (None, False) for row in rows):
+        prediction_counts["harness_attributed"] = attribution.harness_attributed
+        prediction_counts["unknown_scan_target"] = attribution.unknown_scan_target
 
     return {
         "runs": dict(sorted(statuses.items())),
@@ -492,29 +637,27 @@ def score_tool(
             "scored": shadow_expected,
             "correct": shadow_correct,
         },
-        "predictions": {
-            "total": len(predictions),
-            "tolerated": attribution.tolerated,
-            "attributed": sum(len(items) for items in attribution.entity_predictions.values()),
-            "multi_match": len(attribution.multi_match),
-            "ambiguous": len(attribution.ambiguous),
-            "unattributed": len(attribution.unattributed),
-            "out_of_scope": out_of_scope,
-        },
+        "predictions": prediction_counts,
         "multi_match": attribution.multi_match[:50],
-        "unattributed": [
-            {"fact": p.get("fact"), "text": str(p.get("text", ""))[:160]}
-            for p in attribution.unattributed[:50]
-        ],
+        "unattributed": [_unattributed_item(p) for p in attribution.unattributed[:50]],
         "per_entity": entity_rows,
     }
+
+
+def _unattributed_item(prediction: dict[str, Any]) -> dict[str, Any]:
+    item = {"fact": prediction.get("fact"), "text": str(prediction.get("text", ""))[:160]}
+    if prediction.get(SCAN_TARGET) is not None:
+        item[SCAN_TARGET] = str(prediction[SCAN_TARGET])[:160]
+    return item
 
 
 def score_all(
     corpus: EstateCorpus,
     manifest: dict[str, Any],
     specs: dict[str, dict[str, Any]],
+    services: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
+    """Score every tool in `specs` that the run did not skip; `services` is for `attribute`."""
     runs = list(manifest.get("results", []))
     expected_by_surface: dict[str, int] = defaultdict(int)
     for entity in corpus.by_class("positive"):
@@ -528,7 +671,7 @@ def score_all(
             "name": spec.get("name", tool_id),
             "version": manifest.get("tool_versions", {}).get(tool_id, "unknown"),
             "surfaces": sorted(surfaces),
-            **score_tool(corpus, tool_id, surfaces, runs),
+            **score_tool(corpus, tool_id, surfaces, runs, services),
         }
     return {
         "corpus": {

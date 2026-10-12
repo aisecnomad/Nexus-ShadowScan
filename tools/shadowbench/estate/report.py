@@ -155,6 +155,10 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
         "count in the estate-wide numbers only."
     )
     lines.append("")
+    harness = _harness_sentence(tools)
+    if harness:
+        lines.append(harness)
+        lines.append("")
 
     lines.append("## Value-level F1 by surface")
     lines.append("")
@@ -268,11 +272,36 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
             lines.append("Predictions attributed to no entity (charged as false positives):")
             lines.append("")
             for item in extras[:15]:
-                lines.append(f"- `{item['fact']}` — {item['text']}")
+                target = item.get(score.SCAN_TARGET)
+                note = f" (scan target `{target}` maps to no estate host)" if target is not None else ""
+                lines.append(f"- `{item['fact']}` — {item['text']}{note}")
             if len(extras) > 15:
                 lines.append(f"- … and {len(extras) - 15} more")
             lines.append("")
     return "\n".join(lines) + "\n"
+
+
+def _harness_sentence(tools: list[tuple[str, dict[str, Any]]]) -> str:
+    """The harness-attribution counts, or "" when no tool's runs record scan targets."""
+    parts: list[str] = []
+    for _tool_id, data in tools:
+        counts = data["predictions"]
+        if "harness_attributed" not in counts:
+            continue
+        part = f"{data['name']} {counts['harness_attributed']}"
+        if counts.get("unknown_scan_target"):
+            part += (
+                f" (plus {counts['unknown_scan_target']} whose scan target maps to no estate host, "
+                "counted as false positives)"
+            )
+        parts.append(part)
+    if not parts:
+        return ""
+    return (
+        f"Harness-attributed predictions: {'; '.join(parts)}. For these the harness mapped a scanned "
+        "loopback port to the estate host it stands in for (`artifacts/services/services.json`); the "
+        "tool itself named only the loopback port it scanned."
+    )
 
 
 def _unscored_in_scope(data: dict[str, Any]) -> list[str]:
