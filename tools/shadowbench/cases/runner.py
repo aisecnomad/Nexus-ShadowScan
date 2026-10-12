@@ -13,15 +13,21 @@ the output into entities. One JSONL row per (tool, case) goes to
 A crash, timeout or unreadable output is recorded as ``error`` and never as a
 clean negative. ``runtime/live`` rows carry the pid map so reported pids are
 translated to the corpus's ``proc:<index>`` keys before scoring.
+
+Case and checkout ids from the corpus name directories, so they must match
+``[A-Za-z0-9._-]+``. A code case may not also carry files, and no input file
+is written through a symlink.
 """
 
 from __future__ import annotations
 
 import argparse
+import errno
 import gzip
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -48,14 +54,57 @@ from tools.shadowbench.cases.stage import build_fakeproc
 
 STAGE_TIMEOUT_GRACE = 120
 
+_SAFE_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def safe_name(value: str, what: str) -> str:
+    """Return a corpus-supplied identifier that is safe as a single path component."""
+    if not _SAFE_NAME.fullmatch(value) or value in (".", ".."):
+        raise ValueError(f"unsafe {what} {value!r}: expected [A-Za-z0-9._-]+")
+    return value
+
+
+def _write_input(inputs: Path, rel: str, content: str) -> None:
+    """Write ``inputs/<rel>`` without following a symlink at any step of the path."""
+    parts = rel.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError(f"unsafe input path {rel!r}")
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(inputs, dir_flags)
+    try:
+        for part in parts[:-1]:
+            try:
+                os.mkdir(part, 0o755, dir_fd=fd)
+            except FileExistsError:
+                pass
+            child = os.open(part, dir_flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        leaf = os.open(parts[-1], os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644, dir_fd=fd)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise ValueError(f"refusing to write input {rel!r} through a symlink or a file") from exc
+        raise
+    finally:
+        os.close(fd)
+    with os.fdopen(leaf, "w", encoding="utf-8") as fh:
+        fh.write(content)
+
 
 def materialize(case: Case, root: Path, checkouts: Path | None = None) -> MaterializedCase:
     inputs = root / "inputs"
     inputs.mkdir(parents=True, exist_ok=True)
     if case.checkout:
+        if case.files:
+            # A copied repository may hold symlinks; nothing from the corpus is written into it.
+            raise ValueError(f"case {case.case_id} carries files beside its checkout")
         if checkouts is None:
             raise RuntimeError("code cases need --checkouts (fetched with tools.discovery_benchmark fetch)")
-        src = checkouts / str(case.checkout["id"])
+        name = safe_name(str(case.checkout["id"]), "checkout id")
+        base = checkouts.resolve()
+        src = (base / name).resolve()
+        if src == base or not src.is_relative_to(base):
+            raise ValueError(f"checkout {name} resolves to {src}, outside {base}")
         head = subprocess.run(
             ["git", "-C", str(src), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
         )
@@ -63,9 +112,7 @@ def materialize(case: Case, root: Path, checkouts: Path | None = None) -> Materi
             raise RuntimeError(f"checkout {src} is not at {case.checkout['commit']}")
         shutil.copytree(src, inputs / "repo", symlinks=True)
     for rel, content in case.files.items():
-        path = inputs / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        _write_input(inputs, rel, content)
     home = inputs / "home" if case.surface == "endpoint" else None
     if home is not None:
         home.mkdir(exist_ok=True)
@@ -133,7 +180,8 @@ def run_one(
     fakeproc: Path,
     checkouts: Path | None,
 ) -> dict[str, Any]:
-    work = Path(tempfile.mkdtemp(prefix=f"{adapter.name}-{case.case_id}-", dir=scratch))
+    prefix = f"{adapter.name}-{safe_name(case.case_id, 'case id')}-"
+    work = Path(tempfile.mkdtemp(prefix=prefix, dir=scratch))
     row: dict[str, Any] = {
         "tool": adapter.name,
         "case": case.case_id,
@@ -239,6 +287,8 @@ def run_tool(
     fakeproc: Path,
     checkouts: Path | None,
 ) -> dict[str, Any]:
+    for case in cases:
+        safe_name(case.case_id, "case id")
     rows_path = out / f"{adapter.name}.jsonl"
     raw_dir = out / "raw" / adapter.name
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -286,6 +336,21 @@ def run_tool(
     }
 
 
+def unsafe_ids(cases: list[Case]) -> list[str]:
+    """Case and checkout ids that cannot name a directory safely."""
+    problems: list[str] = []
+    for case in cases:
+        names = [("case id", case.case_id)]
+        if case.checkout:
+            names.append(("checkout id", str(case.checkout.get("id"))))
+        for what, value in names:
+            try:
+                safe_name(value, what)
+            except ValueError as exc:
+                problems.append(f"{case.case_id!r}: {exc}")
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corpus", type=Path, required=True)
@@ -306,6 +371,10 @@ def main(argv: list[str] | None = None) -> int:
         print("the runner needs root for unshare --net --pid --mount-proc", file=sys.stderr)
         return 2
     corpus: Corpus = load_corpus(args.corpus)
+    bad_ids = unsafe_ids(corpus.cases)
+    if bad_ids:
+        print("\n".join(bad_ids), file=sys.stderr)
+        return 2
     env = ToolEnv.load(args.tools)
     repo = Path(__file__).resolve().parents[3]
     adapters, problems = load_adapters()
