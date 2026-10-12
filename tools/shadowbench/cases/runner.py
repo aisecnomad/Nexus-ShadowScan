@@ -40,6 +40,12 @@ Before any tool runs, the runner refuses to start, with exit 2 and a message,
 when it is not root, ``unshare`` is missing, a case or checkout id is unsafe,
 the scratch directory or a configured path fails the checks above, or ``gcc``
 cannot build the static inert binary that live-runtime cases spawn.
+
+``manifest.json`` records the corpus path and SHA-256, the generator digest,
+the platform, the harness commit (``harness_commit``, the checkout's ``HEAD``,
+null when git cannot name it) and whether ``tools/`` differs from that commit
+(``harness_dirty``, null when unknown), and per tool its version and row-status
+counts.
 """
 
 from __future__ import annotations
@@ -82,8 +88,11 @@ STAGE_TIMEOUT_GRACE = 120
 KILL_GRACE = 10.0
 TOOL_UID = TOOL_GID = 65534
 """The identity tools and inert processes run as (``nobody``/``nogroup`` on most systems)."""
+REPO = Path(__file__).resolve().parents[3]
+"""The checkout the harness runs from: the stage's ``PYTHONPATH`` and the commit the manifest records."""
 
 _SAFE_NAME = re.compile(r"[A-Za-z0-9._-]+")
+_COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
 def safe_name(value: str, what: str) -> str:
@@ -538,6 +547,42 @@ def unsafe_ids(cases: list[Case]) -> list[str]:
     return problems
 
 
+def _git(repo: Path, *args: str) -> str | None:
+    """``git -C repo args`` without the caller's ``GIT_*`` variables; None when it fails or cannot run."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        proc = subprocess.run(
+            ["git", "--no-optional-locks", "-C", str(repo), *args],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def harness_revision(repo: Path = REPO) -> dict[str, Any]:
+    """The commit the harness runs from and whether ``tools/`` differs from it; nulls when unknown.
+
+    Untracked files under ``tools/`` count as a difference: the registry imports every module in
+    ``adapters/``, so an adapter that was never committed still runs. ``--no-optional-locks`` keeps
+    git, run as root, from rewriting the operator's index.
+    """
+    unknown: dict[str, Any] = {"commit": None, "dirty": None}
+    top = _git(repo, "rev-parse", "--show-toplevel")
+    if not top or Path(top).resolve() != repo.resolve():
+        return unknown
+    head = _git(repo, "rev-parse", "--verify", "HEAD")
+    if not head or not _COMMIT.fullmatch(head):
+        return unknown
+    status = _git(repo, "status", "--porcelain", "--untracked-files=normal", "--", "tools")
+    return {"commit": head, "dirty": None if status is None else bool(status)}
+
+
 def fakeproc_problem(exc: Exception) -> str:
     """Why ``build_fakeproc`` could not build the inert binary, in one line for the operator."""
     if isinstance(exc, FileNotFoundError) and exc.filename == "gcc":
@@ -584,7 +629,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(bad_ids), file=sys.stderr)
         return 2
     env = ToolEnv.load(args.tools)
-    repo = Path(__file__).resolve().parents[3]
+    repo = REPO
     adapters, problems = load_adapters()
     for name, problem in problems.items():
         print(f"adapter module {name} skipped: {problem}", file=sys.stderr)
@@ -608,8 +653,11 @@ def main(argv: list[str] | None = None) -> int:
         print(fakeproc_problem(exc), file=sys.stderr)
         return 2
     args.out.mkdir(parents=True, exist_ok=True)
+    revision = harness_revision(repo)
     manifest: dict[str, Any] = {
         "started": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "harness_commit": revision["commit"],
+        "harness_dirty": revision["dirty"],
         "corpus": str(args.corpus),
         "corpus_sha256": corpus_digest(args.corpus),
         "generator_digest": corpus.generator_digest,

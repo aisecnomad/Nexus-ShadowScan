@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
 from tools.shadowbench.cases.contract import SURFACES
 from tools.shadowbench.cases.corpus import load_corpus
+
+_COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
 def pct(value: float | None) -> str:
@@ -40,6 +43,29 @@ def p_value(entry: dict[str, Any]) -> str:
     return "n/a" if p is None or entry.get("shared") == 0 else f"{p:.3f}"
 
 
+def harness(manifest: dict[str, Any]) -> str:
+    """The harness revision the run recorded, as a sentence to append; nothing when none was recorded.
+
+    Manifests written before the runner recorded it, the committed 2026-10-11 run's among them,
+    have no ``harness_commit`` key, and their reports stay as they were rendered.
+    """
+    if "harness_commit" not in manifest:
+        return ""
+    commit = manifest["harness_commit"]
+    if commit is None:
+        return " The runner could not name the harness commit it ran from."
+    if not isinstance(commit, str) or not _COMMIT.fullmatch(commit):
+        return " The manifest's harness commit is not a commit id, so the code the run came from is unknown."
+    dirty = manifest.get("harness_dirty")
+    if dirty is False:
+        state = "with no uncommitted changes under `tools/`"
+    elif dirty is True:
+        state = "with uncommitted or untracked files under `tools/`, which that commit does not describe"
+    else:
+        state = "with an unknown working-tree state"
+    return f" The runner, stage and adapters ran from harness commit `{commit}` {state}."
+
+
 def _tool_order(metrics: dict[str, Any]) -> list[str]:
     def key(name: str) -> tuple[float, str]:
         est = metrics["tools"][name]["estate"]["recall"]
@@ -60,6 +86,7 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         f"entities and {n_decoys} decoys (SHA-256 `{metrics.get('corpus_sha256')}`, generator "
         f"`{metrics.get('generator_digest')}`). Run started {m.get('started')} and finished {m.get('finished')} on "  # noqa: E501
         f"{m.get('platform')} with {m.get('workers')} parallel workers; timings include contention."
+        + harness(m)
     )
     lines.append("")
     lines.append(
