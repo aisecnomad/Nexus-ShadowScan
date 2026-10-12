@@ -7,14 +7,18 @@ replaced where a probe or ``git`` would run, and ``install_tools.sh`` is read as
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from tools.discovery_benchmark import taxonomy
+from tools.shadowbench.cases import fetch_code
 from tools.shadowbench.cases.adapters.registry import load_adapters
 from tools.shadowbench.cases.contract import AdapterResult, MaterializedCase, RunResult, ToolEnv
 
@@ -22,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 INSTALL = ROOT / "tools" / "shadowbench" / "cases" / "install_tools.sh"
 MANIFEST = ROOT / "benchmarks" / "shadowbench" / "cases" / "results" / "2026-10-11" / "manifest.json"
 ADAPTERS, PROBLEMS = load_adapters()
+SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _case(tmp_path: Path, surface: str, modality: str, **extra: Any) -> MaterializedCase:
@@ -491,3 +496,111 @@ def test_install_script_fails_closed() -> None:
     assert ">/dev/null 2>&1" not in script
     assert "-mod=mod" not in script
     assert "version-pinned, not hash-locked" in script
+
+
+# --- fetch_code.py: hardened git, pinned HEAD, no symlinks -----------------------------------------
+
+FAKE_PASSWORD = "not-a-real-password"
+
+
+class _FakeGit:
+    """Stands in for ``subprocess.run``: records git calls and reports ``head`` for ``rev-parse``."""
+
+    def __init__(self, head: str) -> None:
+        self.head = head
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        self.calls.append(list(argv))
+        stdout = self.head + "\n" if "rev-parse" in argv else ""
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+
+def _fetch_main(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str, head: str) -> tuple[int, _FakeGit]:
+    repo = SimpleNamespace(id="demo__repo", url=url, commit=SHA, default_branch="main")
+    monkeypatch.setattr(fetch_code, "load_corpus", lambda path: SimpleNamespace(get=lambda rid: repo))
+    monkeypatch.setattr(fetch_code, "CODE_REPOS", ("demo__repo",))
+    fake = _FakeGit(head)
+    monkeypatch.setattr(subprocess, "run", fake)
+    return fetch_code.main([str(tmp_path / "dest")]), fake
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://github.com/demo/repo.git",
+        "ssh://git@github.com/demo/repo.git",
+        "git@github.com:demo/repo.git",
+        "file:///srv/demo/repo.git",
+        # A fake password, joined at run time so the source holds no credential-shaped URL.
+        "http://user:" + FAKE_PASSWORD + "@github.com/demo/repo.git",
+        "https://user:" + FAKE_PASSWORD + "@github.com/demo/repo.git",
+    ],
+)
+def test_fetch_refuses_non_https_remotes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], url: str
+) -> None:
+    code, fake = _fetch_main(tmp_path, monkeypatch, url, SHA)
+    assert code == 1
+    assert fake.calls == []
+    assert not (tmp_path / "dest" / "demo__repo").exists()
+    assert FAKE_PASSWORD not in capsys.readouterr().out  # a credential in the URL is never printed
+
+
+def test_fetch_disables_hooks_and_submodules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code, fake = _fetch_main(tmp_path, monkeypatch, "https://github.com/demo/repo.git", SHA)
+    assert code == 0
+    assert fake.calls
+    for argv in fake.calls:
+        assert argv[0] == "git"
+        pairs = set(zip(argv, argv[1:], strict=False))
+        for setting in ("core.hooksPath=/dev/null", "submodule.recurse=false", "protocol.allow=never"):
+            assert ("-c", setting) in pairs, (setting, argv)
+    for verb in ("fetch", "checkout"):
+        called = [argv for argv in fake.calls if verb in argv]
+        assert called and all("--no-recurse-submodules" in argv for argv in called), verb
+
+
+def test_fetch_rejects_a_head_other_than_the_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    code, _ = _fetch_main(tmp_path, monkeypatch, "https://github.com/demo/repo.git", "f" * 40)
+    assert code == 1
+
+
+def test_fetch_never_follows_a_symlinked_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "dest").mkdir()
+    link = tmp_path / "dest" / "demo__repo"
+    link.symlink_to(elsewhere, target_is_directory=True)
+    code, fake = _fetch_main(tmp_path, monkeypatch, "https://github.com/demo/repo.git", SHA)
+    assert code == 1
+    assert fake.calls == []
+    assert link.is_symlink() and list(elsewhere.iterdir()) == []
+
+
+def _git(*args: str, cwd: Path) -> str:
+    settings = ("user.name=bench", "user.email=bench@example.invalid", "commit.gpgsign=false")
+    config = [part for setting in settings for part in ("-c", setting)]
+    done = subprocess.run(["git", *config, *args], cwd=cwd, capture_output=True, text=True, check=True)
+    return done.stdout.strip()
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_fetch_pinned_against_a_real_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hardened command lines run as written; only the transport rule is relaxed to reach a local repo."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git("init", "-q", "-b", "main", cwd=src)
+    _git("commit", "-q", "--allow-empty", "-m", "pinned", cwd=src)
+    pinned = _git("rev-parse", "HEAD", cwd=src)
+    url = f"file://{src}"
+    monkeypatch.setattr(fetch_code, "https_remote", lambda remote: remote)
+    with pytest.raises(fetch_code.FetchError):  # protocol.allow=never also blocks file://
+        fetch_code.fetch_pinned(url, pinned, "main", tmp_path / "blocked")
+    monkeypatch.setattr(fetch_code, "GIT_CONFIG", (*fetch_code.GIT_CONFIG, "protocol.file.allow=always"))
+    dest = tmp_path / "dest" / "repo"
+    assert fetch_code.fetch_pinned(url, pinned, "main", dest) == pinned
+    assert _git("rev-parse", "HEAD", cwd=dest) == pinned
+    assert _git("rev-parse", "--abbrev-ref", "HEAD", cwd=dest) == "HEAD"  # detached
+    assert fetch_code.fetch_pinned(url, pinned, "main", dest) == pinned  # an existing checkout is kept
+    assert os.path.isdir(dest / ".git")
