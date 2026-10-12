@@ -465,22 +465,101 @@ def test_runner_rejects_unsafe_case_ids(tmp_path: Path, bad: str) -> None:
 
 def test_isolation_problems_refuse_hidden_paths() -> None:
     config = {"tools": {"shadowscan": {"bin": "/opt/nsb/venv/bin/python", "repo": "/home/op/Project-Nexus"}}}
-    problems = runner.isolation_problems(Path("/root/shadowbench-scratch"), config)
+    problems = runner.isolation_problems(Path("/root/shadowbench-scratch"), ToolEnv(Path("/opt/nsb"), config))
     assert any("scratch directory /root/shadowbench-scratch" in p for p in problems)
     assert any("tools.shadowscan.repo = /home/op/Project-Nexus" in p for p in problems)
     assert not any("tools.shadowscan.bin" in p for p in problems)
 
 
-def test_isolation_problems_refuse_a_scratch_dir_the_tool_cannot_reach() -> None:
+def _private_scratch() -> Path:
+    """A 0711 scratch directory under a 0711 parent that uid 65534 can reach (unless /tmp is closed)."""
     top = Path(tempfile.mkdtemp(prefix="shadowbench-test-"))
+    top.chmod(0o711)
+    (top / "scratch").mkdir(mode=0o711)
+    (top / "scratch").chmod(0o711)
+    return top
+
+
+def test_isolation_problems_refuse_a_scratch_dir_the_tool_cannot_reach() -> None:
+    top = _private_scratch()
     try:
         top.chmod(0o700)
-        (top / "scratch").mkdir()
-        assert any("cannot traverse" in p for p in runner.isolation_problems(top / "scratch", {}))
+        env = ToolEnv(Path("/opt/nsb/tools"))
+        assert any("cannot traverse" in p for p in runner.isolation_problems(top / "scratch", env))
         top.chmod(0o711)
-        assert runner.isolation_problems(top / "scratch", {"tool_root": "/opt/nsb/tools"}) == []
+        assert runner.isolation_problems(top / "scratch", env) == []
     finally:
         shutil.rmtree(top, ignore_errors=True)
+
+
+def test_isolation_problems_check_the_tool_root_tools_json_implies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Adapters build data paths from env.tool_root, which defaults to the directory of tools.json.
+    monkeypatch.setattr(runner, "HIDDEN", (str(tmp_path / "home"),))
+    tools_json = tmp_path / "home" / "op" / "nsb" / "tools.json"
+    tools_json.parent.mkdir(parents=True)
+    tools_json.write_text(json.dumps({"tools": {"ai-infra-guard": {"bin": "/opt/nsb/bin/aig"}}}))
+    env = ToolEnv.load(tools_json)
+    assert env.tool_root == tools_json.parent
+    top = _private_scratch()
+    try:
+        problems = runner.isolation_problems(top / "scratch", env)
+    finally:
+        shutil.rmtree(top, ignore_errors=True)
+    assert problems == [
+        f"tool_root = {tools_json.parent} lies under {tmp_path / 'home'}, which the stage hides from tools"
+    ]
+
+
+def test_isolation_problems_check_an_implied_tool_root_under_root() -> None:
+    env = ToolEnv(Path("/root/nsb"), {"tools": {"ai-infra-guard": {"bin": "/opt/nsb/bin/ai-infra-guard"}}})
+    top = _private_scratch()
+    try:
+        problems = runner.isolation_problems(top / "scratch", env)
+    finally:
+        shutil.rmtree(top, ignore_errors=True)
+    assert problems == ["tool_root = /root/nsb lies under /root, which the stage hides from tools"]
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o750, 0o733, 0o1777])
+def test_isolation_problems_refuse_a_scratch_dir_others_can_list_or_write(mode: int) -> None:
+    top = _private_scratch()
+    try:
+        (top / "scratch").chmod(mode)
+        problems = runner.isolation_problems(top / "scratch", ToolEnv(Path("/opt/nsb")))
+    finally:
+        shutil.rmtree(top, ignore_errors=True)
+    assert any("another run's work tree" in p for p in problems), problems
+
+
+def test_isolation_problems_refuse_a_scratch_dir_the_runner_does_not_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    top = _private_scratch()
+    try:
+        owner = os.stat(top / "scratch").st_uid
+        monkeypatch.setattr(os, "geteuid", lambda: owner + 1)
+        problems = runner.isolation_problems(top / "scratch", ToolEnv(Path("/opt/nsb")))
+    finally:
+        monkeypatch.undo()
+        shutil.rmtree(top, ignore_errors=True)
+    assert any(f"owned by uid {owner}" in p for p in problems), problems
+
+
+def test_prepare_scratch_creates_a_private_dir_and_leaves_an_existing_one_alone(tmp_path: Path) -> None:
+    made = runner.prepare_scratch(tmp_path / "new" / "scratch")
+    assert stat.S_IMODE(made.stat().st_mode) == 0o711
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    existing.chmod(0o755)
+    assert runner.prepare_scratch(existing) == existing.resolve()
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o755  # refused later, never chmodded behind the back
+    default = runner.prepare_scratch(None)
+    try:
+        assert stat.S_IMODE(default.stat().st_mode) == 0o711
+    finally:
+        default.rmdir()
 
 
 def test_drop_unsafe_entries_removes_escaping_links_and_special_files(tmp_path: Path) -> None:

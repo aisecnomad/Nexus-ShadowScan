@@ -14,8 +14,12 @@ Each run gets ``<scratch>/<tool>-<case>-XXXX/`` (mode 0711) holding ``work/``,
 the tool's tree, which belongs to uid/gid 65534 for the run, and ``control/``
 (root only), where the stage spec and the stage's result stay out of the
 tool's reach. Tools run as 65534 with ``/root`` and ``/home`` hidden (see
-``stage.py``), so the scratch directory and every path in ``tools.json`` must
-lie outside those and be reachable by that uid; the runner refuses to start
+``stage.py``), so the scratch directory, ``tool_root`` (by default the
+directory holding ``tools.json``) and every path in ``tools.json`` must lie
+outside those and be reachable by that uid. Every run's ``work/`` belongs to
+the same uid, so the scratch directory must also belong to the runner and give
+group and other nothing but search (0711, as the runner creates it), or a tool
+could list it and reach a concurrent run's tree. The runner refuses to start
 otherwise. Before the adapter reads the tool's output as root, any symlink the
 tool left that leads out of ``work/`` and any FIFO, socket or device node in it
 is removed.
@@ -185,7 +189,24 @@ def _drop_unsafe_entries(work: Path) -> int:
     return removed
 
 
-def isolation_problems(scratch: Path, tool_config: dict[str, Any]) -> list[str]:
+def prepare_scratch(scratch: Path | None) -> Path:
+    """The scratch directory, made 0711 when the runner creates it; an existing one is left as it is.
+
+    Every run's ``work/`` belongs to the same uid 65534, so the scratch directory must not let a
+    tool list it and find another run's tree; ``isolation_problems`` refuses one that does.
+    """
+    if scratch is None:
+        path = Path(tempfile.mkdtemp(prefix="shadowbench-"))
+        path.chmod(0o711)
+        return path
+    path = scratch.resolve()  # the stage runs from /, not from here
+    if not path.exists():
+        path.mkdir(parents=True)
+        path.chmod(0o711)
+    return path
+
+
+def isolation_problems(scratch: Path, env: ToolEnv) -> list[str]:
     """Why tools running as uid 65534 with ``/root`` and ``/home`` hidden could not run from here."""
     hidden = [Path(p).resolve() for p in HIDDEN]
 
@@ -202,10 +223,17 @@ def isolation_problems(scratch: Path, tool_config: dict[str, Any]) -> list[str]:
             if not os.stat(part).st_mode & stat.S_IXOTH:
                 problems.append(f"uid {TOOL_UID} cannot traverse {part} to reach scratch directory {scratch}")
                 break
-    paths: list[tuple[str, str]] = []
-    if isinstance(tool_config.get("tool_root"), str):
-        paths.append(("tool_root", tool_config["tool_root"]))
-    tools = tool_config.get("tools")
+        info = os.stat(scratch)
+        if info.st_uid != os.geteuid():
+            problems.append(f"scratch directory {scratch} is owned by uid {info.st_uid}, not the runner's")
+        if info.st_mode & 0o066:
+            problems.append(
+                f"scratch directory {scratch} is mode {stat.S_IMODE(info.st_mode):04o}; a tool could list"
+                " it and reach another run's work tree (chmod 0711)"
+            )
+    # Adapters derive data paths from tool_root, which defaults to the directory holding tools.json.
+    paths: list[tuple[str, str]] = [("tool_root", str(env.tool_root))]
+    tools = env.config.get("tools")
     tools = tools if isinstance(tools, dict) else {}
     for name, cfg in sorted(tools.items()):
         if not isinstance(cfg, dict):
@@ -543,13 +571,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cases:
         ids = {s for s in args.cases.split(",") if s}
         cases = [c for c in cases if c.case_id in ids]
-    if args.scratch is None:
-        scratch = Path(tempfile.mkdtemp(prefix="shadowbench-"))
-        scratch.chmod(0o711)
-    else:
-        scratch = args.scratch.resolve()  # the stage runs from the repository, not from here
-        scratch.mkdir(parents=True, exist_ok=True)
-    isolation = isolation_problems(scratch, env.config)
+    scratch = prepare_scratch(args.scratch)
+    isolation = isolation_problems(scratch, env)
     if isolation:
         print("\n".join(isolation), file=sys.stderr)
         return 2
