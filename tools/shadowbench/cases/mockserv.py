@@ -3,7 +3,9 @@
 Each product answers the routes a fingerprinting scanner probes, modelled on
 the real software's responses (banners, version endpoints, product names), so
 an active scanner can be scored on what it identifies. Nothing here contacts
-the outside; the runner starts these inside the tool's network namespace.
+the outside; the runner starts these inside the tool's network namespace, and
+a service is only ever bound to ``127.0.0.1`` on a valid port, whatever the
+case says, so a mistaken or altered corpus cannot expose one beyond loopback.
 """
 
 from __future__ import annotations
@@ -453,6 +455,21 @@ SERVER_HEADERS = {
 }
 
 
+LOOPBACK = "127.0.0.1"
+
+
+def checked_service(spec: dict[str, Any]) -> tuple[str, int, str]:
+    """``(ip, port, product)`` of a service spec; only a known product on loopback is ever served."""
+    product, ip, port = spec.get("product"), spec.get("ip"), spec.get("port")
+    if not isinstance(product, str) or product not in PRODUCTS:
+        raise ValueError(f"unknown mock service product {product!r}")
+    if ip != LOOPBACK:
+        raise ValueError(f"mock service {product} must listen on {LOOPBACK}, not {ip!r}")
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        raise ValueError(f"mock service {product} has an invalid port {port!r}")
+    return ip, port, product
+
+
 class Services:
     """Start and stop the mock services of one case."""
 
@@ -462,26 +479,25 @@ class Services:
         self.threads: list[threading.Thread] = []
 
     def start(self, timeout: float = 10.0) -> None:
-        for spec in self.specs:
-            product = str(spec["product"])
+        # Validate every spec before binding anything, so a bad one never leaves a partial set listening.
+        checked = [checked_service(spec) for spec in self.specs]
+        for ip, port, product in checked:
             handler = _handler(PRODUCTS[product], SERVER_HEADERS.get(product, "Werkzeug/3.0.3 Python/3.12"))
-            server = ThreadingHTTPServer((str(spec["ip"]), int(spec["port"])), handler)
+            server = ThreadingHTTPServer((ip, port), handler)
             server.daemon_threads = True
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
             thread.start()
             self.servers.append(server)
             self.threads.append(thread)
         deadline = time.monotonic() + timeout
-        for spec in self.specs:
+        for ip, port, product in checked:
             while True:
                 try:
-                    with socket.create_connection((str(spec["ip"]), int(spec["port"])), timeout=0.5):
+                    with socket.create_connection((ip, port), timeout=0.5):
                         break
                 except OSError:
                     if time.monotonic() > deadline:
-                        raise RuntimeError(
-                            f"service {spec['product']} on {spec['port']} did not come up"
-                        ) from None
+                        raise RuntimeError(f"service {product} on {port} did not come up") from None
                     time.sleep(0.05)
 
     def stop(self) -> None:
