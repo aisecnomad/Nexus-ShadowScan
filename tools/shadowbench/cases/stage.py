@@ -21,10 +21,13 @@ same identity with a fixed minimal environment and the work directory as
 their working directory, so a process scanner sees them as it would see its
 own user's processes (``/proc/<pid>/exe``, ``environ``, ``cwd``) and reaches
 nothing through them that it could not reach itself. Only the stage itself,
-the mock services and the namespace setup keep root. No tool process
-outlives its invocation: after each invocation, and on a timeout, everything
-in the namespace except the stage and the inert processes is killed,
-including descendants that left the tool's process group with ``setsid``.
+the mock services and the namespace setup keep root. After each invocation,
+and on a timeout, every process in the namespace is stopped with one
+``kill(-1, SIGSTOP)``, which the kernel also delivers to a child forked
+meanwhile, then everything but the stage and the inert processes is killed
+and reaped, including descendants that left the tool's process group with
+``setsid``, and the inert processes are continued. A process still alive
+after that is an error for the case, never a silent leftover.
 
 This is not a filesystem sandbox: a tool can still read whatever is
 world-readable outside ``/root`` and ``/home``.
@@ -62,6 +65,8 @@ INERT_ENV: dict[str, str] = {"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"}
 """The whole environment of an inert process; nothing is inherited from the stage."""
 KILL_GRACE = 3.0
 """Seconds to collect a killed invocation's output before its pipes are closed."""
+SWEEP_GRACE = 5.0
+"""Seconds a killed stray may take to exit before the stage reports the case as an error."""
 
 _MS_NOSUID, _MS_NODEV, _MS_NOEXEC = 0x2, 0x4, 0x8
 _PR_SET_NO_NEW_PRIVS = 38
@@ -179,17 +184,70 @@ def _spawn(
     return out
 
 
-def _kill_strays(keep: set[int]) -> None:
-    """Kill every process in this PID namespace but the stage and ``keep``; a no-op outside one."""
-    if os.getpid() != 1:
-        return
+def _signal(pid: int, sig: int) -> None:
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def _strays(keep: set[int]) -> tuple[list[int], list[int]]:
+    """Pids other than the stage and ``keep``: those still running, and the exited ones to reap.
+
+    Only a zombie whose parent is the stage is listed for reaping, since only the stage can.
+    """
+    live: list[int] = []
+    zombies: list[int] = []
     for entry in os.listdir("/proc"):
         if not entry.isdigit() or int(entry) == 1 or int(entry) in keep:
             continue
         try:
-            os.kill(int(entry), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+            raw = Path(f"/proc/{entry}/stat").read_bytes()
+            threads = len(os.listdir(f"/proc/{entry}/task"))
+        except OSError:
+            continue  # exited and reaped while listing
+        # State and parent pid follow the command name, which is parenthesized and may hold ") ".
+        state, ppid = raw[raw.rindex(b")") + 2 :].split()[:2]
+        if state not in (b"Z", b"X") or threads > 1:
+            live.append(int(entry))
+        elif int(ppid) == os.getpid():
+            zombies.append(int(entry))
+    return live, zombies
+
+
+def _kill_strays(keep: set[int], unreaped: frozenset[int] = frozenset()) -> None:
+    """Kill every process in this PID namespace but the stage and ``keep``; a no-op outside one.
+
+    ``kill(-1, SIGSTOP)`` from the namespace's init stops every other process in it at once, and
+    the kernel delivers it to a child forked while it is sent, so nothing can start a process the
+    sweep below does not list. The strays are killed and reaped, so the next invocation does not
+    see them either, except ``unreaped``, which a ``Popen`` still waits for. ``keep`` is then
+    continued. A stray that is still running after ``SWEEP_GRACE`` raises, which the stage records
+    as an error.
+    """
+    if os.getpid() != 1:
+        return
+    _signal(-1, signal.SIGSTOP)
+    try:
+        deadline = time.monotonic() + SWEEP_GRACE
+        while True:
+            live, zombies = _strays(keep)
+            for pid in zombies:
+                if pid not in unreaped:
+                    try:
+                        os.waitpid(pid, os.WNOHANG)
+                    except ChildProcessError:
+                        pass
+            if not live:
+                break
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"processes {live[:10]} are still running after SIGKILL")
+            for pid in live:
+                _signal(pid, signal.SIGKILL)
+            time.sleep(0.01)
+    finally:
+        for pid in keep:
+            _signal(pid, signal.SIGCONT)
 
 
 def _drain(proc: subprocess.Popen[bytes]) -> tuple[bytes, bytes]:
@@ -252,7 +310,7 @@ def _run(
             pass
         # A descendant that called setsid() left the group and may still hold the pipes.
         if sweep is not None:
-            _kill_strays(sweep)
+            _kill_strays(sweep, frozenset({proc.pid}))  # _drain reaps the tool itself
         out, err = _drain(proc)
     if sweep is not None:
         _kill_strays(sweep)

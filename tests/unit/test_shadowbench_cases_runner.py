@@ -708,6 +708,23 @@ def test_inert_processes_never_inherit_the_stage_working_directory(
     assert cwds == ["/", str(work)]
 
 
+def test_strays_tell_running_processes_from_zombies_to_reap() -> None:
+    child = subprocess.Popen(["sleep", "60"])
+    try:
+        assert child.pid in stage._strays(set())[0]
+        assert child.pid not in stage._strays({child.pid})[0]
+        os.kill(child.pid, signal.SIGKILL)
+        deadline = time.monotonic() + 10
+        while child.pid in stage._strays(set())[0]:
+            assert time.monotonic() < deadline, "a killed child still counts as running"
+            time.sleep(0.01)
+        assert child.pid in stage._strays(set())[1], "an unreaped child of ours is a zombie to reap"
+        assert child.pid not in stage._strays({child.pid})[1]
+    finally:
+        child.kill()
+        child.wait()
+
+
 class _AnyToolEnv(ToolEnv):
     """Every tool is configured, under a path outside any home."""
 
@@ -928,6 +945,24 @@ def test_stage_started_inside_a_hidden_directory_exposes_it_through_no_process(s
     out = staged["runs"][0]["stdout"]
     assert out.splitlines()[0].split()[3] == str(work)
     assert "operator-marker" not in out
+
+
+@needs_namespaces
+@pytest.mark.skipif(_coreutils_sleep() is None, reason="needs a standalone sleep binary")
+def test_stage_sweep_kills_detached_leftovers_and_continues_inert_processes(scratch: Path) -> None:
+    work, control = _dirs(scratch)
+    sleep = _coreutils_sleep()
+    assert sleep is not None
+    leave = "for i in 1 2 3 4 5; do setsid sleep 600 </dev/null >/dev/null 2>&1 & done; echo left"
+    after = (
+        'for d in /proc/[0-9]*; do c=$(cat $d/comm 2>/dev/null); s=$(cut -d" " -f3 $d/stat 2>/dev/null);'
+        ' case "$c" in sleep|inert-agent) echo "$c $s";; esac; done'
+    )
+    spec = _inert_spec(work, sleep, [_inv(work, leave), _inv(work, after)])
+    staged = runner._stage(spec, control, ROOT, 60)
+    assert staged["error"] is None, staged
+    assert staged["runs"][1]["stdout"].strip() == "left"
+    assert staged["runs"][2]["stdout"].split() == ["inert-agent", "S"]
 
 
 @needs_namespaces
