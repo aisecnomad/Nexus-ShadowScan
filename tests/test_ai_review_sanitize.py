@@ -52,6 +52,10 @@ def test_a_private_key_quoted_on_one_line_or_escaped_is_withheld_whole(quote: st
         "> > {begin}\n> > {body}\n> > {line}\n",
         "> {begin}\n>\n> {body}\n> {line}\n",
         "> {begin}\n> Proc-Type: 4,ENCRYPTED\n> DEK-Info: AES-128-CBC,00FF\n>\n> {body}\n> {line}\n",
+        # Encryption headers after escaped line breaks, as a JSON string quotes them.
+        "{begin}\\nProc-Type: 4,ENCRYPTED\\nDEK-Info: AES-128-CBC,00FF\\n\\n{body}\\n{line}\\n",
+        "{begin}\\r\\nProc-Type: 4,ENCRYPTED\\r\\nDEK-Info: AES-128-CBC,00FF\\r\\n\\r\\n{body}\\r\\n{line}\\r\\n",
+        "{begin}\\n> Proc-Type: 4,ENCRYPTED\\n> DEK-Info: AES-128-CBC,00FF\\n>\\n> {body}\\n> {line}\\n",
     ],
 )
 def test_a_footerless_private_key_on_one_line_or_escaped_is_withheld(quote: str) -> None:
@@ -60,6 +64,42 @@ def test_a_footerless_private_key_on_one_line_or_escaped_is_withheld(quote: str)
     body, line = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2, "Qq1Zz9" * 5
     out = redact(quote.format(begin=begin, body=body, line=line) + " Rotate it.")
     assert body not in out and line not in out and out.endswith(" Rotate it.")
+
+
+@pytest.mark.parametrize("scheme", ["postgresql+psycopg2", "postgresql+asyncpg", "mysql+mysqlconnector"])
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "> {begin}\n> {url}\nRotate it.",
+        "> > {begin}\n> > {url}\nRotate it.",
+        "> {begin}\n>\n> {url}\nRotate it.",
+        '"{begin}\\r\\n{url}"',
+        '"{begin}\\n{url}"',
+        "{begin} {url}",
+        "{begin}\n{url}",
+        "{begin}\n{body}\n{url}",
+    ],
+)
+def test_a_url_password_after_a_footerless_key_header_is_withheld(quote: str, scheme: str) -> None:
+    # A footerless key's base64 run takes in a long URL scheme on the next line and
+    # stops at ':'. The URL rule must still see the whole URL and withhold its password.
+    begin, password = "-----BEGIN " + "PRIVATE KEY-----", "Synthetic-" + "Passw0rd"
+    url = f"{scheme}://admin:{password}@db.internal/prod"
+    body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2
+    out = redact(quote.format(begin=begin, url=url, body=body))
+    assert password not in out and body not in out and "BEGIN" not in out
+
+
+def test_a_credential_inside_a_key_body_hides_neither() -> None:
+    # Each rule sees the original text, and the text as the earlier rules left it:
+    # an Azure key inside a footerless key body leaves the lines after it withheld,
+    # and a key run that swallows one Azure key label leaves the next key withheld.
+    begin = "-----BEGIN " + "PRIVATE KEY-----"
+    body, first, second = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2, "U3ludGhldGljS2V5" * 3, "QWxhZGRp" * 6
+    out = redact(f"{begin}\n\nAccountKey={first}\\n{body}\\n")
+    assert first not in out and body not in out
+    out = redact(f"{begin}\tAAAA{body}==/SharedAccessKey = {first}/AccountKey={second}=\nRotate them.")
+    assert body not in out and first not in out and second not in out and out.endswith("\nRotate them.")
 
 
 def test_prose_after_a_quoted_key_header_is_kept() -> None:

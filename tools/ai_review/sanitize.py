@@ -33,12 +33,14 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     # PEM encryption headers directly after it, at most one blank line, then runs of 16 or more
     # base64 characters separated by spaces (a footerless key quoted on one line) or by line
     # breaks: real or escaped ('\n', '\r\n'), each followed by any Markdown blockquote markers
-    # ('> '), so prose after a quoted header line is kept. Only a header can start a match,
-    # and the footer search is bounded.
+    # ('> '), so prose after a quoted header line is kept. An encryption header that follows an
+    # escaped break ends at the next escaped break. Only a header can start a match, and the
+    # footer search is bounded.
     re.compile(
         r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
         r"(?:[\s\S]{0,8192}?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
-        r"|(?:\r?\n(?:[ \t]*>)*[ \t]*(?:Proc-Type|DEK-Info):[^\r\n]*)*"
+        r"|(?:\r?\n(?:[ \t]*>)*[ \t]*(?:Proc-Type|DEK-Info):[^\r\n]*"
+        r"|(?:\\r)?\\n(?:[ \t]*>)*[ \t]*(?:Proc-Type|DEK-Info):(?:[^\r\n\\]|\\(?!(?:r\\)?n))*)*"
         r"(?:(?:(?:\r?\n|(?:\\r)?\\n)(?:[ \t]*>)*[ \t]*)?"
         r"(?:(?:(?:\r?\n|(?:\\r)?\\n)(?:[ \t]*>)*[ \t]*|[ \t]+)[A-Za-z0-9+/=]{16,})+)?)"
     ),
@@ -57,7 +59,34 @@ _WORKFLOW_COMMAND = re.compile(r"^::", re.MULTILINE)
 
 
 def redact(text: str) -> str:
-    """``text`` with credential-shaped strings replaced and command lines defused."""
+    """``text`` with credential-shaped strings replaced and command lines defused.
+
+    Each pattern is matched twice, and every span either match covers is
+    withheld, overlapping or adjacent spans as one. It is matched on the
+    original text, so a wide earlier match cannot hide a narrower one: a
+    footerless key's base64 run takes in the scheme of a URL on the next line
+    ('postgresql+psycopg2://') and stops at ':', after which the URL rule would
+    miss the password. It is also matched in turn, on the text with the earlier
+    matches masked, as the patterns always ran: an Azure key's value run takes
+    in the label of a key glued after it, and the Azure rule finds that second
+    key only once a key match has masked the first label. A mask keeps the
+    length, so every span indexes the original text.
+    """
+    spans: list[tuple[int, int]] = []
+
+    def withhold(match: re.Match[str]) -> str:
+        spans.append(match.span())
+        return "\0" * len(match[0])
+
+    masked = text
     for pattern in _PATTERNS:
-        text = pattern.sub(_REDACTED, text)
-    return _WORKFLOW_COMMAND.sub("\\:\\:", text)
+        spans.extend(match.span() for match in pattern.finditer(text))
+        masked = pattern.sub(withhold, masked)
+    pieces: list[str] = []
+    end = 0
+    for start, stop in sorted(spans):
+        if not pieces or start > end:
+            pieces += (text[end:start], _REDACTED)
+        end = max(end, stop)
+    pieces.append(text[end:])
+    return _WORKFLOW_COMMAND.sub("\\:\\:", "".join(pieces))
