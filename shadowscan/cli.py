@@ -661,16 +661,6 @@ def scan(config_path: str, only: tuple[str, ...], opts: ScanOptions) -> None:
         cfg.incremental = opts.incremental
     if opts.state_dir is not None:
         cfg.state_dir = opts.state_dir
-    # A mistyped selector is a usage error, as an unknown connector is for `run`:
-    # the engine's own check would report an empty, incomplete scan instead.
-    selectable = {value for spec in cfg.connectors if spec.enabled for value in (spec.id, spec.name)}
-    unknown = [selector for selector in only if selector not in selectable]
-    if unknown:
-        raise click.BadParameter(
-            f"unknown or disabled connector selector(s): {', '.join(unknown)}; "
-            f"use a connector name or label from {config_path}",
-            param_hint="--only",
-        )
     _run_scan(cfg, opts, only=list(only) or None)
 
 
