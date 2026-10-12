@@ -5,6 +5,42 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Documentation aligned with the code (October 12)
+
+Documentation only; no scanner behaviour changes.
+
+- `docs/architecture.md` describes the scan pipeline in the order
+  `Engine.run()` executes it: runtime and lifecycle correlation, MCP registry
+  provenance, vendor registry reconciliation, the sanitization budget and
+  opt-in LLM triage were missing. It gains execution and isolation controls,
+  the post-scan report commands, and a package layout that covers every
+  module (`comparison`, `incremental`, `plugin_process`, `triage`,
+  `mcp_registry`, `endpoint`, the shared connector helpers, per-surface
+  packages and the code scanner's helper modules). The CLI list includes
+  `controls`. The plugin identity rules name all nine reserved namespaces;
+  `endpoint`, `network` and `runtime` were missing. The connector example
+  imports `HttpClient`.
+- README: a "How it works" overview, a documentation map, `--diff-base` in
+  the quick start, `--job-deadline-seconds` beside the host job timeout
+  advice, process plugin execution and pinned approvals under "Extending", and
+  signatures that were recognized but not listed (Agency Swarm, Devin,
+  Embedchain, Instructor, Koog, Microsoft.Extensions.AI, MLflow AI Gateway,
+  Rivet, Browserbase, Transformers Agents, Voyage AI). `make check` is
+  described as the local quality gates; CI also validates packaging and
+  containers.
+- `docs/index.md` names all nine surfaces and the autonomy, mapping, fleet,
+  dashboard, control evidence and LLM triage features; the quick start adds
+  workstation scanning, fleet merge, the dashboard, `controls` and the
+  CycloneDX AI-BOM; the configuration guide documents `workdir`; the code
+  connector guide documents `--triage`, which always exits 3.
+- API reference pages for `comparison`, `incremental`, `triage`, `governance`,
+  `mappings`, `mcp_registry`, `fleet`, `dashboard`, `controls`,
+  `connectors.offline` and `connectors.common`.
+- ADR-005 records its status: still proposed, with `FilesystemConnector` at
+  about 3,860 lines and 118 methods.
+- `ROADMAP.md` separates the live endpoint collection that exists from what
+  remains, and the `shadowscan` package docstring lists all nine surfaces.
+
 ### Integration review corrections (October 11)
 
 - `shadowscan run --set` no longer warns that a credential is on the command

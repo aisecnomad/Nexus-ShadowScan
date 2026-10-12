@@ -71,3 +71,25 @@ Rules for the migration:
 - Four pull requests of pure code movement, each needing the output-equality
   check.
 - Test changes in the same pull requests as the moves.
+
+## Status (2026-10-12)
+
+Still proposed; none of the four moves has been made. `FilesystemConnector`
+has grown to about 3,860 lines and 118 methods, so the split is larger than
+the context above describes. The line ranges above are those of 2026-10-01
+and are kept as recorded.
+
+New code has gone into bounded helper modules beside the class rather than
+into the proposed collaborators:
+
+- `code/walk.py` (added 2026-10-06) holds the walk budget, project-root
+  markers and the non-recursive, link-free directory walk. The tree walker
+  that the decision proposes, with the coverage accounting it would own, is
+  still in the class.
+- Narrow, single-construct analyses live in their own modules, for example
+  `tool_attribution.py` and `instruction_content.py`, added after this ADR,
+  beside earlier ones such as `source_ranges.py` and `provider_loops.py`
+  (see [code scanner internals](../architecture.md#code-scanner-internals)).
+
+`code/file_scan.py` and `code/project_findings.py` do not exist yet, and
+`code/ownership.py` still holds only CODEOWNERS matching.

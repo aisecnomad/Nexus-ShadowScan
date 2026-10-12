@@ -35,6 +35,14 @@ full. If the revision cannot be resolved, the diff fails or times out, or a
 changed path is not valid UTF-8, collection falls back to a full scan with a
 warning.
 
+Optional `triage` (`shadowscan code PATH --triage`) is a fast first pass over a
+large estate. It reads dependency manifests, MCP and coding-agent
+configuration, flow exports and IaC, and skips source analysis, credential
+detection and content sweeps. Each scanned root records a warning that its
+findings are a subset of a full scan, so a triage scan always exits 3 and can
+never stand in for a complete inventory. Follow it with a full scan of the
+roots it surfaces.
+
 Scans a directory tree. Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
 package, …); by default each root yields one
