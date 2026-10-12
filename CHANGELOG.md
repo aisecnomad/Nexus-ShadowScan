@@ -8,11 +8,14 @@ summarizes each release for people who install and operate ShadowScan.
 ### ShadowBench, the nine-surface discovery benchmark (October 12)
 
 - `benchmarks/shadowbench/` and `tools/shadowbench/`: two benchmark tracks
-  that measure shadow AI agent discovery across all nine surfaces, carried
-  from #193 and #194 side by side (`python -m tools.shadowbench
-  {cases|estate} <command>`). The *cases* track generates platform-native
-  inputs at a recorded seed (346 cases: 738 expected entities, 735 decoys,
-  26 pinned public repositories on the code surface), with loopback mock
+  that measure shadow AI agent discovery across all nine surfaces, from #193
+  and #194 (`python -m tools.shadowbench {cases|estate} <command>`). #195
+  landed them as `synthetic` and `estate`; the track it called `synthetic`
+  is `cases` here, since both tracks are synthetic, and this entry describes
+  both tracks after the review fixes below. The *cases* track generates
+  platform-native inputs from written rubrics (346 cases: 738 expected
+  entities, 735 decoys, 26 pinned public repositories on the code surface),
+  with loopback mock
   services and inert live processes for tools that only work live. The
   *estate* track is one authored fictional organization, Adatum Logistics,
   whose 139 frozen files span the nine surfaces with 137 labeled entities
@@ -108,6 +111,51 @@ summarizes each release for people who install and operate ShadowScan.
   `AGENTS.md` lists benchmark corpora and artifacts as untrusted;
   `tools/README.md` indexes the repository tooling, and the README links
   the benchmarks with their limits.
+
+### Documentation aligned with the code (October 12)
+
+Documentation only; no scanner behaviour changes.
+
+- `docs/architecture.md` describes the scan pipeline in the order
+  `Engine.run()` executes it: runtime and lifecycle correlation, MCP registry
+  provenance, vendor registry reconciliation, the sanitization budget and
+  opt-in LLM triage were missing. It gains execution and isolation controls,
+  the post-scan report commands, and a package layout that covers every
+  module (`comparison`, `incremental`, `plugin_process`, `triage`,
+  `mcp_registry`, `endpoint`, the shared connector helpers, per-surface
+  packages and the code scanner's helper modules). The CLI list includes
+  `controls`. The plugin identity rules name all nine reserved namespaces;
+  `endpoint`, `network` and `runtime` were missing. The connector example
+  imports `HttpClient`.
+- README: a "How it works" overview, a documentation map, `--diff-base` in
+  the quick start, `--job-deadline-seconds` beside the host job timeout
+  advice, process plugin execution and pinned approvals under "Extending", and
+  signatures that were recognized but not listed (Agency Swarm, Devin,
+  Embedchain, Instructor, Koog, Microsoft.Extensions.AI, MLflow AI Gateway,
+  Rivet, Browserbase, Transformers Agents, Voyage AI). `make check` is
+  described as the local quality gates; CI also validates packaging and
+  containers.
+- `docs/index.md` names all nine surfaces and the autonomy, mapping, fleet,
+  dashboard, control evidence and LLM triage features; the quick start adds
+  workstation scanning, fleet merge, the dashboard, `controls` and the
+  CycloneDX AI-BOM; the configuration guide documents `workdir`; the code
+  connector guide documents `--triage`, which always exits 3.
+- API reference pages for `comparison`, `incremental`, `triage`, `governance`,
+  `mappings`, `mcp_registry`, `fleet`, `dashboard`, `controls`,
+  `connectors.offline` and `connectors.common`.
+- ADR-005 records its status: still proposed, with `FilesystemConnector` at
+  about 3,860 lines and 118 methods.
+- A check of the rewritten architecture page against the code corrected it
+  before release: analysis runs inside each collection job, not after
+  collection; setup refusals exit 1 with no report rather than 3; an engine
+  hook's exception marks the connector incomplete before construction;
+  `gateway.otel` also uses the run identity key and `endpoint.inventory` also
+  reports its scanned home directories; three policy tables outside the
+  engine name built-in connectors; and the incremental, correlation,
+  dashboard, job-deadline and registry-type statements say what the code
+  does.
+- `ROADMAP.md` separates the live endpoint collection that exists from what
+  remains, and the `shadowscan` package docstring lists all nine surfaces.
 
 ### Post-merge review fixes (October 11)
 

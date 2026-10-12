@@ -66,7 +66,7 @@ Run `make help` for a quick reference of all development commands.
 
 | Path | What lives there |
 |---|---|
-| [`shadowscan/`](shadowscan/) | The scanner package: CLI (`cli.py`), engine, finding model, risk and autonomy scoring, inventory reconciliation, reporters and redaction. [docs/architecture.md](docs/architecture.md#modules) tabulates module responsibilities. |
+| [`shadowscan/`](shadowscan/) | The scanner package: CLI (`cli.py`), engine, finding model, risk and autonomy scoring, inventory reconciliation, reporters and redaction. [docs/architecture.md](docs/architecture.md#package-layout) describes each module's responsibility. |
 | [`shadowscan/connectors/`](shadowscan/connectors/) | One subpackage per discovery surface (`code`, `identity`, `gateway`, `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime`); each connector implements `collect()` and `analyze()`. |
 | [`shadowscan/signatures/data/`](shadowscan/signatures/data/), [`shadowscan/mappings/data/`](shadowscan/mappings/data/) | YAML signature packs and the threat and control mapping catalogs. |
 | [`tests/`](tests/) | The pytest suite. Unit tests sit in [`tests/unit/`](tests/unit/), named after the module they exercise; offline, sanitized fixtures sit under [`tests/fixtures/`](tests/fixtures/); `tests/test_repository_policy.py` and `tests/test_repository_consistency.py` are the `make policy` gates. |

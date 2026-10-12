@@ -30,8 +30,12 @@ a contract. Items move only when they keep the fail-closed trust model.
 
 ## Next
 
-- Add opt-in live Kubernetes and endpoint collection, confined host/config and
-  model-artifact discovery, and MCP HTTP inventory probes.
+- Add opt-in live collection where only offline exports are read today: the
+  Kubernetes and OpenShift APIs, host inventories, confined model-artifact
+  inspection, and MCP HTTP inventory probes. Local workstation discovery
+  (`shadowscan endpoint`, `endpoint.inventory` without `input`), `/proc`
+  process reading (`runtime.processes`) and opt-in A2A Agent Card fetches
+  (`endpoint.mcp`) already exist.
 - Additional connectors on the existing surfaces, driven by
   [connector requests](https://github.com/aisecnomad/Project-Nexus/issues?q=label%3Aconnector-request).
 - Field validation of the endpoint, network and runtime connectors on real

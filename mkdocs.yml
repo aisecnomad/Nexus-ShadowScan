@@ -155,10 +155,23 @@ nav:
           - Autonomy: api/autonomy.md
           - Merge: api/merge.md
           - Correlation: api/correlation.md
+          - Incremental cache: api/incremental.md
+          - Comparison: api/comparison.md
+          - LLM triage: api/triage.md
+      - Assessment:
           - Inventory registry: api/registry.md
           - Vendor registries: api/registries.md
+          - MCP registry: api/mcp_registry.md
+          - Declared governance: api/governance.md
+          - Threat and control mappings: api/mappings.md
+      - Reports and fleet:
+          - Fleet merge: api/fleet.md
+          - Dashboard: api/dashboard.md
+          - Control evidence: api/controls.md
       - Connectors:
           - Base: api/base.md
+          - Offline input: api/offline.md
+          - Connector helpers: api/common.md
       - Utilities:
           - HTTP client: api/http.md
           - Redaction: api/redaction.md

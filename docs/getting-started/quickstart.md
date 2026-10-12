@@ -89,14 +89,36 @@ shadowscan gateway litellm-spend.jsonl bedrock-invocations/ egress-proxy.log
 printf '%s\n' "$TOKEN" | shadowscan jwt --jwks-url https://acme.okta.com/oauth2/default/v1/keys
 ```
 
-## 6. Register what you found
+## 6. Scan developer workstations and combine them
+
+`shadowscan endpoint` reads only the well-known AI client locations under a
+profile (MCP client configuration, coding-agent settings, user-level skills,
+rules and instruction files), never the whole home directory:
+
+```bash
+shadowscan endpoint --list                                     # which known locations exist here
+shadowscan endpoint --format json -o laptop-$(hostname).json   # one report per machine
+shadowscan merge laptop-*.json --format json -o fleet.json     # one fleet report; incomplete (3) if any source is
+shadowscan dashboard fleet.json -o dashboard.html --inventory-json inventory.json
+```
+
+The dashboard is a static, self-contained page that shows coverage per source
+before any count; see [fleet dashboard](../operations/dashboard.md).
+
+## 7. Register, compare and report
 
 ```bash
 shadowscan inventory stubs report.json -o inventory/pending/
 shadowscan diff last-week.json today.json                 # informational: exit 0 unless the comparison is incomplete (3)
 shadowscan diff last-week.json today.json --fail-on-new   # exit 2 on new findings or a higher risk level
 shadowscan diff last-week.json today.json --fail-on-drift inventory,capability,autonomy,governance   # exit 2 on adverse drift
+shadowscan controls today.json --format csv -o controls.csv   # findings per NIST AI RMF, ISO/IEC 42001, EU AI Act and AIUC-1 control
+shadowscan scan -c shadowscan-code.yaml --format cyclonedx -o ai-bom.json   # CycloneDX 1.6 AI bill of materials
 ```
+
+`controls` reports evidence references, not compliance determinations; see
+[control evidence report](../operations/controls.md) and
+[AI-BOM](../operations/ai-bom.md).
 
 `diff` can complete for local repository scans, offline exports and complete
 live `cloud.aws`, `cloud.azure`, `cloud.gcp` and `identity.entra` scans whose

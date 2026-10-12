@@ -36,6 +36,12 @@ connectors:
   # ... see docs/connectors.md for all connector keys
 ```
 
+`workdir` is the parent directory for the private temporary checkouts that
+`code.github` and `code.gitlab` write for each live repository, in clone or API
+mode, and remove after scanning it. It defaults to the system temporary
+directory and, like other relative paths, resolves beside the configuration
+file. Place it on a volume with room for the largest repository you scan.
+
 `llm_triage` is off unless `enabled: true`; it sends a redacted summary of
 the highest-risk findings to a model you name and stores an advisory verdict.
 See [LLM triage](../operations/llm-triage.md) for its keys and what is sent.
