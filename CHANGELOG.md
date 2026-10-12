@@ -36,8 +36,9 @@ summarizes each release for people who install and operate ShadowScan.
   live-sim host by its real path.
 - Cases scoring fails closed: an error, a missing row or a run the tool marks
   incomplete never earns a true negative; a results file the run manifest
-  does not vouch for, a corpus digest mismatch, an unknown status, a
-  duplicate or an unknown case is refused unless `--force` is given. A
+  does not vouch for, or a corpus digest mismatch, is refused unless
+  `--force` is given, and an unknown status, a duplicate row or an unknown
+  case is always refused. A
   reported directory no longer earns credit for the files under it, a
   positive case counts as found only with a true positive, code keys
   outside the fact taxonomy are neither credited nor charged (246 of
@@ -61,9 +62,10 @@ summarizes each release for people who install and operate ShadowScan.
   a unit whose run failed, timed out, was incomplete, exited with a code
   its adapter does not accept, or was never reached earns no true
   negatives; attribution is restricted to the prediction's surface and
-  unit and prefers the entity that expects the fact, and the report lists
-  every multi-candidate attribution; a surplus generic fact no longer adds
-  a true positive. The live-sim run reaches only the hosts `services.json`
+  unit and prefers the entity that expects the fact; the report counts
+  every multi-candidate attribution and lists up to 15 per tool
+  (`metrics.json` keeps up to 50); a surplus generic fact no longer adds a
+  true positive. The live-sim run reaches only the hosts `services.json`
   mirrors, so AI-Infra-Guard earns no true negative for runtime entities it
   was never shown; `score` exits 2 without `services.json` unless
   `--allow-missing-services` is given, and a malformed scan target makes its

@@ -219,9 +219,10 @@ the sample exports under `tests/fixtures/` are not shipped in the wheel. Steps
 (`--format json -o report.json`); step 6 writes the per-machine reports that
 `merge` and `dashboard` read. Sample gateway logs live under
 `tests/fixtures/gateway/` in a checkout. Scanning the ShadowScan checkout
-itself reports an incomplete scan (exit 3): its redaction test fixtures
-intentionally exceed the sanitizer's limits, and the scanner fails closed
-rather than skip them silently.
+itself reports an incomplete scan (exit 3): some redaction rules and tests
+intentionally exceed the sanitizer's limits, and some committed benchmark
+corpora and results exceed the default `max_file_size`. The scanner fails
+closed rather than skip them silently.
 
 ### Configuration
 
