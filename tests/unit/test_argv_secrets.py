@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from click.testing import CliRunner
 
 from shadowscan import cli
@@ -9,6 +10,8 @@ from shadowscan.config import argv_credential_keys
 
 SECRET = "Zq8Lm2Xw9Rt4Yu7Io1Pa5Sd3Fg6Hj0Kl"
 JWT = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0."
+# The random part of a synthetic downloaded key or mounted secret file name.
+HEX = "1a2b3c4d" + "5e6f7a8b9c0d1e2f"
 
 
 def test_credential_keys_are_found_and_ordinary_keys_are_not() -> None:
@@ -45,11 +48,49 @@ def test_credential_file_paths_are_not_credentials_but_tokens_always_are() -> No
     assert argv_credential_keys({"tokens": "opaque"}) == ["tokens"]
 
 
-def test_run_does_not_warn_for_a_credential_file_path(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "location",
+    [
+        f"acme-prod-123456-{HEX[:12]}.json",
+        f"gws-admin-{HEX[4:16]}.json",
+        f"/run/secrets/{HEX}{HEX}",
+        f"/Users/alice/keys/{HEX}",
+        f"~/keys/{HEX}",
+        f"./{HEX}",
+        f".config/gcloud/{HEX}",
+        f"C:\\keys\\{HEX}",
+    ],
+)
+@pytest.mark.parametrize("key", ["credentials_file", "service_account_file", "token_file"])
+def test_a_credential_file_with_a_random_name_is_still_a_location(key: str, location: str) -> None:
+    # The random part reads as an opaque literal; the file-name or path shape
+    # around it marks the value as a location, which the command line may carry.
+    assert argv_credential_keys({key: location}) == []
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        HEX + HEX,
+        SECRET,
+        # Base64 credentials hold '/': an unanchored relative path or a root and a
+        # single name may be one.
+        "wJalrXUtnFEMI/K7MDENG/" + SECRET[:18],
+        "/K7MDENG/" + SECRET,
+        "/6/tDCy4F+Oo+PZ/" + SECRET[:24],
+        f"secrets/{SECRET}",
+        # Dotted tokens end in a segment far longer than a file extension.
+        "MTIzNDU2Nzg5MDEyMzQ1Njc4.Cl2FMQ." + SECRET[:27],
+    ],
+)
+def test_an_opaque_credential_without_path_shape_still_warns(credential: str) -> None:
+    assert argv_credential_keys({"credentials_file": credential}) == ["credentials_file"]
+
+
+@pytest.mark.parametrize("location", ["/etc/shadowscan/sa.json", f"acme-prod-123456-{HEX[:12]}.json"])
+def test_run_does_not_warn_for_a_credential_file_path(monkeypatch, location: str) -> None:
     monkeypatch.setattr(cli, "_run_scan", lambda config, opts: None)
-    result = CliRunner().invoke(
-        cli.main, ["run", "cloud.gcp", "--set", "credentials_file=/etc/shadowscan/sa.json"]
-    )
+    result = CliRunner().invoke(cli.main, ["run", "cloud.gcp", "--set", f"credentials_file={location}"])
     assert result.exit_code == 0, result.output
     assert "command line" not in result.output
 

@@ -85,6 +85,7 @@ from shadowscan.risk import RiskPolicy
 from shadowscan.triage import TriageConfigError, TriageSettings
 from shadowscan.utils.files import read_policy_text, require_no_symlinks
 from shadowscan.utils.redaction import REDACTED, _opaque_literal, sanitize, sanitize_text
+from shadowscan.utils.redaction_rules import _opaque
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 from shadowscan.utils.safe_yaml import BoundedSafeLoader
 
@@ -353,10 +354,11 @@ def argv_credential_keys(config: dict[str, Any]) -> list[str]:
     so the caller warns and points to environment references or files. A
     credential-file location is withheld from representations but exposes no
     credential on the command line (passing one there is the documented
-    practice), so those keys are judged by their value alone: a location never
-    reads as an opaque literal, so a credential pasted where the file path
-    belongs still draws the warning; ``tokens`` holds credential material
-    whatever its shape and always counts.
+    practice), so those keys are judged by their value alone: a value with the
+    shape of a location (``_credential_file_location``) is one even when its
+    file name is random, and an opaque literal without that shape is a
+    credential pasted where the file path belongs and draws the warning;
+    ``tokens`` holds credential material whatever its shape and always counts.
     """
     shown = _sanitized_config(config)
     if shown is None:
@@ -369,7 +371,11 @@ def argv_credential_keys(config: dict[str, Any]) -> list[str]:
             and (
                 key in _CREDENTIAL_VALUE_KEYS
                 or shown.get(key) != config[key]
-                or (key in _CREDENTIAL_FILE_KEYS and _opaque_literal(config[key]))
+                or (
+                    key in _CREDENTIAL_FILE_KEYS
+                    and _opaque_literal(config[key])
+                    and not _credential_file_location(config[key])
+                )
             )
         ]
     # A key is named only when it is plainly an identifier: a credential pasted into
@@ -412,6 +418,34 @@ class ConnectorSpec:
 _CREDENTIAL_FILE_KEYS = frozenset({"service_account_file", "credentials_file", "token_file"})
 _CREDENTIAL_VALUE_KEYS = frozenset({"tokens"})
 _WITHHELD_KEYS = _CREDENTIAL_FILE_KEYS | _CREDENTIAL_VALUE_KEYS
+# A bare file name with an extension: a downloaded service-account key is named
+# '<project-id>-<12 hex>.json'. No base64 alphabet holds '.', and the dotted
+# tokens (JWTs, Discord bot tokens) end in a segment far longer than an extension.
+_CREDENTIAL_FILE_NAME = re.compile(r"[\w.-]+\.[A-Za-z][A-Za-z0-9]{0,5}")
+# The start of a path: a first directory beginning with '~' or '.' ('~/',
+# '../', '.config/'), a drive ('C:\'), or a root and two plain directory names,
+# lowercase after their first character ('/run/secrets/', '/Users/alice/').
+# Base64 credentials hold '/' but never '~', '.' or ':', and rarely two such
+# names after a leading '/', so any other relative or rooted value may be a
+# credential and is not path shape.
+_CREDENTIAL_FILE_ANCHOR = re.compile(
+    r"(?:[~.][^/\\]*|[A-Za-z]:)[/\\]|(?:[/\\]+[A-Za-z0-9_][a-z0-9_.-]*){2}[/\\]"
+)
+
+
+def _credential_file_location(value: Any) -> bool:
+    """Whether a credential-file value has the shape of a location rather than of a key.
+
+    Mounted secrets and downloaded keys carry random names
+    ('/run/secrets/<32 hex>', 'acme-prod-123456-1a2b3c4d5e6f.json') that read as
+    opaque literals; the path or file-name shape around them marks a location.
+    """
+    if not isinstance(value, str):
+        return False
+    directory, separator, name = value.replace("\\", "/").rpartition("/")
+    if not separator:
+        return _CREDENTIAL_FILE_NAME.fullmatch(value) is not None
+    return bool(name) and _CREDENTIAL_FILE_ANCHOR.match(value) is not None and not _opaque(directory)
 
 
 def _sanitized_config(config: dict[str, Any]) -> dict[str, Any] | None:
