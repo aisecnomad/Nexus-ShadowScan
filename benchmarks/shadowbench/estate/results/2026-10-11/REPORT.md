@@ -17,7 +17,7 @@ Tools skipped in this run:
 | ShadowScan (Project Nexus) (0.1.2) | cloud, code, endpoint, gateway, identity, lowcode, network, runtime, saas | 1 ok | 83/87 | 83/8/42/4 | 91% / 95% / 93% | 92% / 95% / 93% | 83/87 | 95% | 4.06 / 4.06 |
 | Snyk Agent Scan (mcp-scan) (0.6.8) | endpoint | 3 ok | 9/19 | 9/0/5/10 | 100% / 47% / 64% | 100% / 47% / 64% | 9/87 | 9% | 0.93 / 1.38 |
 | AgentDiscover (2.9.5) | code | 10 ok | 5/6 | 5/0/4/1 | 100% / 83% / 91% | 100% / 35% / 52% | 5/87 | 8% | 2.94 / 3.27 |
-| AI-Infra-Guard (4.6.5) | runtime | 1 ok | 2/6 | 2/0/4/4 | 100% / 33% / 50% | 100% / 33% / 50% | 2/87 | 2% | 1.97 / 1.97 |
+| AI-Infra-Guard (4.6.5) | runtime | 1 ok | 2/6 | 2/0/0/4 | 100% / 33% / 50% | 100% / 33% / 50% | 2/87 | 2% | 1.97 / 1.97 |
 | SafeDep vet (ai discover) (1.20.0) | code, endpoint | 13 ok | 11/25 | 11/0/9/14 | 100% / 44% / 61% | 100% / 29% / 44% | 11/87 | 12% | 0.17 / 0.22 |
 | Numbat (0.2.0) | endpoint | 3 ok | 4/19 | 4/0/5/15 | 100% / 21% / 35% | 100% / 21% / 35% | 4/87 | 4% | 0.22 / 0.23 |
 | Agentic Radar (0.14.1) | code | **incomplete** (10 ok) | 2/6 | 2/0/0/4 | 100% / 33% / 50% | 100% / 9% / 16% | 2/87 | 2% | 6.0 / 6.86 |
@@ -33,14 +33,14 @@ In-scope metrics count only the entities and expected facts on the surfaces a to
 | ShadowScan (Project Nexus) | 1 | 1 ok | none | 1 | 0 | 0 | 0 |
 | Snyk Agent Scan (mcp-scan) | 3 | 3 ok | none | 3 | 0 | 0 | 4 |
 | AgentDiscover | 10 | 10 ok | none | 30 | 0 | 0 | 0 |
-| AI-Infra-Guard | 1 | 1 ok | none | 1 | 0 | 0 | 0 |
+| AI-Infra-Guard | 1 | 1 ok | none | 1 | 0 | 0 | 8 |
 | SafeDep vet (ai discover) | 13 | 13 ok | none | 13 | 0 | 0 | 4 |
 | Numbat | 3 | 3 ok | none | 3 | 0 | 0 | 4 |
 | Agentic Radar | 10 | 10 ok | every command exited non-zero and the run produced no output: code:repo-canbus-fw, code:repo-freight-crew, code:repo-infra, code:repo-ops-scripts, code:repo-site, code:repo-support-bot-ts, code:repo-ua-parser, code:repo-wms-core | 50 | 48 | 8 | 0 |
 | AgentSight (local sessions) | 3 | 3 ok | none | 3 | 0 | 0 | 4 |
 | Cisco MCP Scanner | 3 | 3 ok | none | 3 | 0 | 0 | 4 |
 
-A run is incomplete when its status is not ok, the adapter reported it incomplete, it recorded an error, it ran no command, a command timed out or exited with a code the adapter does not declare as success, or every one of its commands exited non-zero and it produced no output. A code or home unit that labels an entity on the tool's declared surfaces is missing when the tool has no run for it and no whole-estate run. Every entity an incomplete or missing run reaches is unscored: its positives count as missed and its negatives earn no true negative, so a failed run never reads as a clean result. An entity that no complete run reaches, such as an estate export outside every home tree a per-home tool scans, is not reached: its positives count as missed and its negatives earn no true negative either. Other non-zero exits an adapter declares as success are counted here but not treated as failures. runs.json records exit codes but no stderr, so whether such an exit meant "nothing found" or a failure cannot be checked from the published results; that is why a run whose commands all exited non-zero without output counts as incomplete.
+A run is incomplete when its status is not ok, the adapter reported it incomplete, it recorded an error, its scan-target record is malformed, it ran no command, a command timed out or exited with a code the adapter does not declare as success, or every one of its commands exited non-zero and it produced no output. A code or home unit that labels an entity on the tool's declared surfaces is missing when the tool has no run for it and no whole-estate run. Every entity an incomplete or missing run reaches is unscored: its positives count as missed and its negatives earn no true negative, so a failed run never reads as a clean result. An entity that no complete run reaches, such as an estate export outside every home tree a per-home tool scans or a runtime entity no live-sim mock service stands in for, is not reached: its positives count as missed and its negatives earn no true negative either. Other non-zero exits an adapter declares as success are counted here but not treated as failures. runs.json records exit codes but no stderr, so whether such an exit meant "nothing found" or a failure cannot be checked from the published results; that is why a run whose commands all exited non-zero without output counts as incomplete.
 
 ## Attribution
 
@@ -56,7 +56,7 @@ A run is incomplete when its status is not ok, the adapter reported it incomplet
 | AgentSight (local sessions) | 1 | 0 | 1 | 0 | 0 | 0 | 0 |
 | Cisco MCP Scanner | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
-A prediction is attributed only to an entity on its own surface that its run can reach (for a per-repository or per-home run, the entities with artifacts in that repository or home tree). When the anchors of several positives appear in a prediction, one that expects the predicted fact wins, then one whose expected or tolerated facts share its category. When a control or near-miss is among them, that preference does not apply, so a flag on a negative is never handed to a positive. What is still tied goes to the longest anchor, then the first entity id in sort order. Every prediction matching several entities is listed under its tool below with the rule that chose its owner; it is ambiguous when the anchor length or the id chose. A per-repository or per-home prediction that names no anchor goes to the one entity of that repository or home that expects its fact, if there is exactly one. Tolerated counts predictions dropped by a corpus-level tolerated pair. Unattributed predictions are false positives. Predictions outside the declared surfaces count in the estate-wide numbers only.
+A prediction is attributed only to an entity on its own surface that its run can reach (for a per-repository or per-home run, the entities with artifacts in that repository or home tree; for the live-sim run, the entities its mock services stand in for). When the anchors of several such entities appear in a prediction and all of them are positives, one that expects the predicted fact wins, then one whose expected or tolerated facts share its category; what is still tied goes to the longest anchor, then the first entity id in sort order. When a control or near-miss is among them, that preference does not apply and the anchor length, then the entity id, decide among all of them, so a flag on a negative can still go to a positive with a longer anchor or an earlier id. Every prediction matching several entities is listed under its tool below with the rule that chose its owner; it is ambiguous when the anchor length or the id chose, which is always so when a negative is among the candidates. A per-repository or per-home prediction that names no anchor goes to the one entity of that repository or home that expects its fact, if there is exactly one. Tolerated counts predictions dropped by a corpus-level tolerated pair. Unattributed predictions are false positives. Predictions outside the declared surfaces count in the estate-wide numbers only.
 
 ## Value-level F1 by surface
 
@@ -124,10 +124,10 @@ Cells read F1 (true positives / false positives / false negatives).
 | network.slack-generic-dns | network | control | clean | out of scope | out of scope | out of scope | out of scope | out of scope | out of scope | out of scope | out of scope |
 | network.gemini-crypto-exchange | network | nearmiss | clean | out of scope | out of scope | out of scope | out of scope | out of scope | out of scope | out of scope | out of scope |
 | network.claude-monet-exhibit | network | nearmiss | clean | out of scope | out of scope | out of scope | out of scope | out of scope | out of scope | out of scope | out of scope |
-| runtime.nginx-control | runtime | control | clean | out of scope | out of scope | clean | out of scope | out of scope | out of scope | out of scope | out of scope |
-| runtime.ollama-list-control | runtime | control | clean | out of scope | out of scope | clean | out of scope | out of scope | out of scope | out of scope | out of scope |
-| runtime.claudette-backup-nearmiss | runtime | nearmiss | clean | out of scope | out of scope | clean | out of scope | out of scope | out of scope | out of scope | out of scope |
-| runtime.train-model-nearmiss | runtime | nearmiss | clean | out of scope | out of scope | clean | out of scope | out of scope | out of scope | out of scope | out of scope |
+| runtime.nginx-control | runtime | control | clean | out of scope | out of scope | not reached | out of scope | out of scope | out of scope | out of scope | out of scope |
+| runtime.ollama-list-control | runtime | control | clean | out of scope | out of scope | not reached | out of scope | out of scope | out of scope | out of scope | out of scope |
+| runtime.claudette-backup-nearmiss | runtime | nearmiss | clean | out of scope | out of scope | not reached | out of scope | out of scope | out of scope | out of scope | out of scope |
+| runtime.train-model-nearmiss | runtime | nearmiss | clean | out of scope | out of scope | not reached | out of scope | out of scope | out of scope | out of scope | out of scope |
 
 An unscored negative was reached by an incomplete or missing run, and no complete run of the tool reached a negative marked not reached; neither is a true negative.
 
@@ -195,6 +195,8 @@ Missed in-scope positives: code.repo-infra
 ### AI-Infra-Guard
 
 Missed in-scope positives: runtime.claude-code-dana, runtime.mcp-server-github-dana, runtime.aider-marcus, runtime.ollama-serve-priya
+
+In-scope entities no complete run reached (positives count as missed, negatives earn no true negative): runtime.claude-code-dana, runtime.mcp-server-github-dana, runtime.aider-marcus, runtime.ollama-serve-priya, runtime.nginx-control, runtime.ollama-list-control, runtime.claudette-backup-nearmiss, runtime.train-model-nearmiss
 
 ### SafeDep vet (ai discover)
 

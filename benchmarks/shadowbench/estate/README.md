@@ -496,7 +496,7 @@ below.
 | ShadowScan (Project Nexus) 0.1.2 | all nine | 1 (ok) | 83/87 | 8 / 42 / 50 | 92% / 95% / 93% | 83/87 | 95% |
 | Snyk Agent Scan (mcp-scan) 0.6.8 | endpoint | 3 (ok) | 9/19 | 0 / 5 / 6 | 100% / 47% / 64% | 9/87 | 9% |
 | AgentDiscover 2.9.5 | code | 10 (ok) | 5/6 | 0 / 4 / 4 | 100% / 35% / 52% | 5/87 | 8% |
-| AI-Infra-Guard 4.6.5 | runtime | 1 (ok) [a] | 2/6 [a] | 0 / 4 / 4 [a] | 100% / 33% / 50% | 2/87 | 2% |
+| AI-Infra-Guard 4.6.5 | runtime | 1 (ok) [a] | 2/6 [a] | 0 / 0 / 4 [a] | 100% / 33% / 50% | 2/87 | 2% |
 | SafeDep vet (ai discover) 1.20.0 | code, endpoint | 13 (ok) | 11/25 | 0 / 9 / 10 | 100% / 29% / 44% | 11/87 | 12% |
 | Numbat 0.2.0 | endpoint | 3 (ok) | 4/19 | 0 / 5 / 6 | 100% / 21% / 35% | 4/87 | 4% |
 | Agentic Radar 0.14.1 | code | 10 (ok), 8 incomplete [c] | 2/6 | 0 / 0 / 4 | 100% / 9% / 16% | 2/87 | 2% |
@@ -509,6 +509,9 @@ five scans exited 1 and reported nothing. The per-home tools (Snyk Agent
 Scan, Numbat, AgentSight, Cisco, and vet on the endpoint surface) did not
 reach the four endpoint-export entities, so each could detect at most 16 of
 the 19 endpoint positives and earn at most five true negatives of six.
+AI-Infra-Guard's live-sim stands in for two of the six runtime positives
+and none of the four runtime negatives, so it could detect at most two and
+earn no true negative.
 An in-scope value precision of 100% means no in-scope false positive,
 attributed or not, among few predictions; it is not a precision estimate.
 No prediction in the run was unattributed or ambiguous: all 41 predictions
@@ -545,9 +548,13 @@ detected five of the six code positives, at 35% value recall.
   [Attribution](#attribution). With those targets the same two predictions
   score 2/6, as harness attribution of a scanned loopback port to the host
   it stands in for, not as the tool naming the host. The live-sim stands in
-  for two of the six runtime positives. Its four true negatives are the
-  runtime controls and near-misses, which the live-sim does not stage: a
-  `sim` run counts as reaching every entity, so the scorer credits them.
+  for two of the six runtime positives and for none of the four runtime
+  controls and near-misses. The scorer counts a `sim` run as reaching only
+  the entities a `services.json` service stands in for, so the other four
+  runtime positives count as missed and the four negatives as not reached,
+  with no true negative. An earlier re-score during integration counted a
+  `sim` run as reaching every entity and so credited AI-Infra-Guard with
+  four true negatives for processes the scanner was never shown.
 - **[b] Cisco MCP Scanner and AgentSight "ok" came from wrappers that
   always exited 0.** Their wrapper scripts at the time ended with `exit 0`
   whatever the scanner did. AgentSight's normalizer read a missing or
