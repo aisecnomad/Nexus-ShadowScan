@@ -1,5 +1,6 @@
-"""Regression tests for estate scan-target attribution and the AI-Infra-Guard port offset
-(tools/shadowbench/estate/score.py, report.py, __main__.py and adapters/ai_infra_guard.py).
+"""Regression tests for estate scan-target attribution, the AI-Infra-Guard port offset and
+relative `run` paths (tools/shadowbench/estate/score.py, report.py, __main__.py and
+adapters/ai_infra_guard.py).
 
 The 2026-10-11 AI-Infra-Guard adapter appended each mock service's answer-key anchor
 to its prediction text, so its attribution came from the harness. Without the append,
@@ -20,9 +21,10 @@ from typing import Any
 import pytest
 
 from tools.discovery_benchmark.runner import RunPolicy
+from tools.shadowbench.estate import __main__ as estate_cli
 from tools.shadowbench.estate import report, score
-from tools.shadowbench.estate.__main__ import main
-from tools.shadowbench.estate.adapters import ToolConfig
+from tools.shadowbench.estate.__main__ import cmd_freeze, main
+from tools.shadowbench.estate.adapters import Command, Normalized, ToolConfig, ToolSpec
 from tools.shadowbench.estate.adapters.ai_infra_guard import AiInfraGuardAdapter
 from tools.shadowbench.estate.corpus import CorpusError, EstateCorpus, corpus_from_dict, load_corpus
 from tools.shadowbench.estate.runner import run_unit
@@ -453,3 +455,75 @@ def test_scan_targets_round_trip_through_the_runner_into_the_score(tmp_path: Pat
     assert result["complete"] is True
     assert result["entity_level"]["positives_detected"] == 2
     assert result["predictions"]["harness_attributed"] == 2
+
+
+# --- `run` with relative paths --------------------------------------------------------------------
+
+
+class _PathEcho:
+    """Writes its report to an output path it puts in argv, as argv-based adapters do."""
+
+    spec = ToolSpec(
+        id="path_echo",
+        name="Path echo",
+        vendor="tests",
+        surfaces=frozenset({"code"}),
+        categories=frozenset({"provider"}),
+    )
+
+    def __init__(self) -> None:
+        self.out_dirs: list[Path] = []
+
+    def unavailable_reason(self, cfg: ToolConfig) -> str | None:
+        return None
+
+    def version(self, cfg: ToolConfig) -> str:
+        return "1"
+
+    def units(self, cfg: ToolConfig, estate: Path, corpus: EstateCorpus) -> list[str]:
+        return ["code:repo-a"]
+
+    def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
+        self.out_dirs.append(out_dir)
+        code = "import sys; open(sys.argv[1], 'w').write('ok')"
+        return [Command((sys.executable, "-c", code, str(out_dir / "report.txt")))]
+
+    def normalize(self, unit: str, out_dir: Path) -> Normalized:
+        if not (out_dir / "report.txt").is_file():
+            return Normalized(error="report.txt missing")
+        return Normalized(raw_count=1)
+
+
+def test_run_resolves_relative_out_estate_and_tools_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relative --out put the adapter's argv paths under the command's own cwd."""
+    track = tmp_path / "track"
+    repo = track / "artifacts" / "code" / "repo-a"
+    repo.mkdir(parents=True)
+    (repo / "app.py").write_text("import openai  # repo-a-marker\n", encoding="utf-8")
+    entity = {
+        "id": "code.repo-a",
+        "surface": "code",
+        "class": "positive",
+        "difficulty": "easy",
+        "expected": [{"fact": "provider:openai", "evidence": ["code/repo-a/app.py"]}],
+        "anchors": ["repo-a-marker"],
+        "artifacts": ["code/repo-a"],
+        "unit": "code:repo-a",
+    }
+    (track / "corpus.json").write_text(json.dumps({"schema": 1, "metadata": {}, "entities": [entity]}))
+    assert cmd_freeze(track / "corpus.json", track / "artifacts", track / "FREEZE.json") == 0
+    (tmp_path / "tools.json").write_text('{"tools": {}}', encoding="utf-8")
+    adapter = _PathEcho()
+    monkeypatch.setattr(estate_cli, "_adapters", lambda: [adapter])
+    monkeypatch.chdir(tmp_path)
+
+    paths = ["--corpus", "track/corpus.json", "--estate", "track/artifacts", "--freeze", "track/FREEZE.json"]
+    assert main(["run", *paths, "--tools", "tools.json", "--out", "out", "--workers", "1"]) == 0
+
+    [out_dir] = adapter.out_dirs
+    assert out_dir.is_absolute() and out_dir == (tmp_path / "out").resolve() / "path_echo" / "code__repo-a"
+    [row] = json.loads((tmp_path / "out" / "runs.json").read_text(encoding="utf-8"))["results"]
+    assert row["status"] == "ok" and not row["incomplete"], row
+    assert (out_dir / "report.txt").read_text(encoding="utf-8") == "ok"

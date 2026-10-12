@@ -207,6 +207,11 @@ def _adapters() -> list[object]:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    # The runner starts each command with its unit's output directory as cwd, and
+    # argv-based adapters put output paths in argv, so every path is made absolute first.
+    args.out = args.out.resolve()
+    args.estate = args.estate.resolve()
+    args.tools = args.tools.resolve()
     corpus = load_corpus(args.corpus)
     cfg = ToolConfig.load(args.tools)
     extra_path = tuple(p for p in cfg.setting("extra_path").split(":") if p)
@@ -223,7 +228,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             corpus,
             adapters,  # type: ignore[arg-type]
             cfg,
-            args.estate.resolve(),
+            args.estate,
             args.out,
             policy,
             freeze=args.freeze,
