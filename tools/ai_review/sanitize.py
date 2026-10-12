@@ -100,13 +100,14 @@ def redact(text: str) -> str:
     password holds an Azure key matches once that key is replaced. They run
     in turn with the current key rule and with each earlier one (see
     ``_EARLIER_KEY_RULES``), whose narrower match left a URL's scheme for the
-    URL rule, and twice each, as a posted review body is redacted twice. Each
+    URL rule, and each set again until it matches nothing more, as repeated
+    redaction would (a URL in a URL in a password matches only then). Each
     character of the text matched in turn maps back to the original span it
     stands for, so every span indexes the original text.
     """
     spans = [match.span() for pattern in _PATTERNS for match in pattern.finditer(text)]
     for rules in _TURN_RULES:
-        spans += _spans_in_turn(text, rules + rules)
+        spans += _spans_in_turn(text, rules)
     pieces: list[str] = []
     end = 0
     for start, stop in sorted(spans):
@@ -117,11 +118,33 @@ def redact(text: str) -> str:
     return _WORKFLOW_COMMAND.sub("\\:\\:", "".join(pieces))
 
 
+# Sweeps of a rule set in turn before redact() gives up and withholds the whole text.
+_MAX_SWEEPS = 32
+
+
 def _spans_in_turn(text: str, rules: tuple[re.Pattern[str], ...]) -> list[tuple[int, int]]:
-    """The spans of ``text`` that ``rules`` match in turn, each match replaced before the next rule."""
+    """The spans of ``text`` that ``rules`` match in turn, each match replaced before the next rule.
+
+    The rules sweep the text again until a sweep matches nothing. Every match
+    replaces text no marker holds, so the sweeps end; a text still matching
+    after ``_MAX_SWEEPS`` sweeps is withheld whole.
+    """
     spans: list[tuple[int, int]] = []
     current = text
     origin = [(index, index + 1) for index in range(len(text))]
+    for _ in range(_MAX_SWEEPS):
+        current, origin, found = _sweep(current, origin, rules)
+        if not found:
+            return spans
+        spans += found
+    return [(0, len(text))]
+
+
+def _sweep(
+    current: str, origin: list[tuple[int, int]], rules: tuple[re.Pattern[str], ...]
+) -> tuple[str, list[tuple[int, int]], list[tuple[int, int]]]:
+    """One sweep of ``rules`` in turn: the text after it, its origin map, and the original spans matched."""
+    spans: list[tuple[int, int]] = []
     for pattern in rules:
         pieces: list[str] = []
         mapped: list[tuple[int, int]] = []
@@ -141,4 +164,4 @@ def _spans_in_turn(text: str, rules: tuple[re.Pattern[str], ...]) -> list[tuple[
             pieces.append(current[end:])
             mapped += origin[end:]
             current, origin = "".join(pieces), mapped
-    return spans
+    return current, origin, spans

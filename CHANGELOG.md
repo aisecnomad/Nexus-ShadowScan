@@ -171,7 +171,9 @@ Documentation only; no scanner behaviour changes.
   after the values nested in credential fields are removed from the other
   fields too, and a text that changes is read once more. In the other the
   scheme pass withholds the run with its credential, as the October 12
-  rules did. Each line shows only what both readings show: where one line
+  rules did. Each reading is read again, as a later sanitization would read
+  it, until it stays the same, since evidence is sanitized more than once.
+  Each line then shows only what both readings show: where one line
   shows nothing the other does not, that one is kept, and otherwise the
   whole line is withheld. Where the October 12 rules joined the credential's
   line to the scheme's (a name kept after a credential on the line after
@@ -214,13 +216,13 @@ Documentation only; no scanner behaviour changes.
   published. Every rule now also matches the original text, so a key body
   can no longer hide a URL password or account key that follows it. The
   rules still also run in turn, each earlier match replaced by the marker,
-  with the current key rule and with each earlier one, twice each, as a
-  posted review body is redacted twice: a long token between a key's header
-  and its footer still brings the footer within the key rule's 8 KiB search,
-  and a URL whose password holds an Azure key or another URL is still
-  withheld after a quoted key header, whose wider run would take the URL's
-  scheme. A long blank run after a key header is scanned in linear time;
-  it was quadratic.
+  with the current key rule and with each earlier one, each set again until
+  it matches nothing more, as repeated redaction would: a long token between
+  a key's header and its footer still brings the footer within the key
+  rule's 8 KiB search, and a URL whose password holds an Azure key or other
+  URLs, however deep, is withheld on the first pass after a quoted key
+  header, whose wider run would take the URL's scheme. A long blank run
+  after a key header is scanned in linear time; it was quadratic.
 - Documentation: least-privilege rows for the five live low-code connectors;
   `cloud.azure` and `cloud.gcp` need no SDK extra with a pre-issued token and
   `cloud.kubernetes` and `cloud.openshift` are offline only (the sentence said

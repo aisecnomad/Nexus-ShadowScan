@@ -196,17 +196,52 @@ def sanitize_text(text: str) -> str:
     A text with such a run is read twice: so, and as the established rules
     read it, withholding the run with its credential in the scheme pass (see
     ``_SchemeReading``); neither reading withholds all that the other does.
-    Each line then shows only what both readings show (see ``_merge_readings``).
+    Each reading is read again as the next sanitizations would read it, until
+    it stays the same (see ``_settled``), since evidence is sanitized more
+    than once; each line then shows only what both settled readings show (see
+    ``_merge_readings``).
     """
     text = _checked_text(text)
     reading = _SchemeReading(established=False)
     shown = _in_reading(reading, lambda: _without_glued_runs(_redact_extended(_sanitize_established(text))))
     if not reading.glued:
         return shown
-    established = _in_reading(
-        _SchemeReading(established=True), lambda: _redact_extended(_sanitize_established(text))
+    plain = _settled(
+        shown,
+        lambda again: _in_reading(
+            _SchemeReading(established=False),
+            lambda: _without_glued_runs(_redact_extended(_established_passes(again))),
+        ),
     )
-    return _merge_readings(shown, established)
+    established = _in_reading(
+        _SchemeReading(established=True),
+        lambda: _settled(
+            _redact_extended(_sanitize_established(text)),
+            lambda again: _redact_extended(_established_passes(again)),
+        ),
+    )
+    return _merge_readings(plain, established)
+
+
+# How often a reading of a text with a glued run is read again (see _settled).
+_GLUED_READINGS_AGAIN = 4
+
+
+def _settled(first: _T, again: Callable[[_T], _T]) -> _T:
+    """``first``, read ``again`` until a reading changes nothing, at most ``_GLUED_READINGS_AGAIN`` times.
+
+    A later sanitization can withhold more of a reading than the reading
+    itself did ('--a=:v' once the run before it is withheld), and evidence is
+    sanitized more than once on its way to a report. Each reading only adds
+    markers, so the last one withholds whatever any earlier one did.
+    """
+    current = first
+    for _ in range(_GLUED_READINGS_AGAIN):
+        following = again(current)
+        if following == current:
+            break
+        current = following
+    return current
 
 
 def _in_reading(reading: _SchemeReading, read: Callable[[], _T]) -> _T:
@@ -982,8 +1017,9 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     known 'x y'), and the third pass no longer found the rest.
 
     As ``sanitize_text`` does, a value whose texts hold such a run is read
-    twice, so and as the established rules read it, and each text of the copy
-    shows only what both readings show (see ``_merge_copies``).
+    twice, so and as the established rules read it, each reading again until
+    it settles, and each text of the copy shows only what both readings show
+    (see ``_merge_copies``).
     """
     _check_sanitization_structure(value)
     reading = _SchemeReading(established=False)
@@ -993,11 +1029,23 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     )
     if not reading.glued:
         return shown
+    plain = _settled(
+        shown,
+        lambda again: _in_reading(
+            _SchemeReading(established=False),
+            lambda: _without_scheme_tails(
+                _sanitize_reading(again, redact_short_secrets, env_values_are_secrets)
+            ),
+        ),
+    )
     established = _in_reading(
         _SchemeReading(established=True),
-        lambda: _sanitize_reading(value, redact_short_secrets, env_values_are_secrets),
+        lambda: _settled(
+            _sanitize_reading(value, redact_short_secrets, env_values_are_secrets),
+            lambda again: _sanitize_reading(again, redact_short_secrets, env_values_are_secrets),
+        ),
     )
-    return _merge_copies(shown, established)
+    return _merge_copies(plain, established)
 
 
 def _sanitize_reading(value: Any, redact_short_secrets: bool, env_values_are_secrets: bool) -> Any:

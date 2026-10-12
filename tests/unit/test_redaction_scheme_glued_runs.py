@@ -346,6 +346,18 @@ def test_a_record_value_the_established_reading_withholds_stays_withheld(
     assert all(VALUE not in str(field) for field in cleaned.values())
 
 
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_a_value_a_later_sanitization_withholds_is_withheld_at_once(scheme: str) -> None:
+    # Evidence is sanitized more than once. After the 'token' word, the
+    # established reading kept '--a=:v' on the credential's line and withheld v
+    # on the next sanitization; the other reading withheld the run, so no
+    # sanitization withheld v.
+    text = f"{scheme} token\n{SECRET[:16]}--a=:{VALUE}"
+    cleaned = sanitize_text(text)
+    assert VALUE not in cleaned and VALUE not in sanitize({"note": text})["note"]
+    assert sanitize_text(cleaned) == cleaned
+
+
 def _tokens(text: str) -> Counter[str]:
     counts = Counter(re.findall(r"[A-Za-z0-9]+", text))
     del counts["REDACTED"]

@@ -197,6 +197,24 @@ def test_a_quoted_key_header_leaves_a_url_password_to_the_url_rule(
     assert not any(secret in out for secret in secrets)
 
 
+@pytest.mark.parametrize("layout", ["\n>", "\n> ", " ", "\\n", "\\r\\n"])
+@pytest.mark.parametrize("depth", [2, 3])
+def test_a_url_nested_in_a_url_password_after_a_key_header_is_withheld_on_the_first_pass(
+    layout: str, depth: int
+) -> None:
+    # Matched in turn, the outer URL matches only once every URL inside its
+    # password is replaced, one per sweep; the gate's later passes did that
+    # while the key rule's wider run had already taken the outer scheme. The
+    # rules now sweep until they match nothing more.
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    secret = "IkRveITF" + "o1CPdwbf"
+    inner = "u" + ":" + "rfnUCi@h@;"
+    for _ in range(depth):
+        inner = "s://u" + ":" + inner
+    text = header + layout + "postgresql+psycopg2://u" + ":" + inner + secret + "@h"
+    assert secret not in redact(text)
+
+
 def test_a_long_blank_run_after_a_key_header_is_scanned_in_linear_time() -> None:
     # The blank runs before a footerless key's base64 lines could be split
     # between two quantifiers, which made the scan quadratic in the run's length.
