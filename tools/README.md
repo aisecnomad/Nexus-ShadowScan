@@ -3,8 +3,8 @@
 Everything under `tools/` is development and assurance tooling for this
 repository. None of it ships in the `nexusshadowscan` wheel, and none of it
 publishes a package, a release or a tag. Run each entry point from the
-repository root with the development install (`make install`), so
-`python -m tools.<name>` resolves.
+repository root with the development install (`make install`), so the
+`python -m` entry points below resolve.
 
 ## Quality gates
 
