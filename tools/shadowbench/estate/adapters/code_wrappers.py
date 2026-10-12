@@ -4,7 +4,12 @@ Each wrapper runs one authored repository per unit through the exact
 commands and normalization of the corresponding `tools.discovery_benchmark`
 adapter, then lifts the resulting code-taxonomy facts into estate
 predictions. Behavior on the code surface is therefore identical to the
-code-surface benchmark's.
+code-surface benchmark's: the same argv, exit codes and environment, and a
+command the inner adapter runs in the repository (`cwd="repo"`, as vet's
+does) still starts there. The estate runner starts every command in the run
+directory, so such a command is prefixed with a fixed `/bin/sh` trampoline
+that changes into the repository and execs the unchanged argv; the paths
+are passed as arguments, never interpolated into shell text.
 """
 
 from __future__ import annotations
@@ -44,8 +49,20 @@ class _CodeAdapter(Protocol):
     def normalize(self, out_dir: Path) -> Normalized | CodeNormalized: ...  # pragma: no cover
 
 
-def _convert_commands(commands: list[CodeCommand]) -> list[Command]:
-    return [Command(argv=c.argv, ok_exit_codes=c.ok_exit_codes, env=dict(c.env)) for c in commands]
+#: Change into the directory in $1, then exec the remaining arguments unchanged.
+_IN_DIR = 'cd -- "$1" && shift && exec "$@"'
+
+
+def _convert_commands(commands: list[CodeCommand], repo_dir: Path) -> list[Command]:
+    converted: list[Command] = []
+    for command in commands:
+        argv = command.argv
+        # Mirrors tools.discovery_benchmark.runner: "repo" runs in the checkout,
+        # anything else in the run directory (the estate runner's default).
+        if command.cwd == "repo":
+            argv = ("/bin/sh", "-c", _IN_DIR, "sh", str(repo_dir.absolute()), *argv)
+        converted.append(Command(argv=argv, ok_exit_codes=command.ok_exit_codes, env=dict(command.env)))
+    return converted
 
 
 def _lift(normalized: CodeNormalized, unit: str) -> Normalized:
@@ -82,7 +99,8 @@ class _WrappedCodeAdapter:
         return code_units(estate)
 
     def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
-        return _convert_commands(self.inner.commands(cfg, unit_path(unit, estate), out_dir))
+        repo_dir = unit_path(unit, estate)
+        return _convert_commands(self.inner.commands(cfg, repo_dir, out_dir), repo_dir)
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:
         normalized = self.inner.normalize(out_dir)
