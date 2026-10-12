@@ -45,7 +45,8 @@ cannot build the static inert binary that live-runtime cases spawn.
 the platform, the harness commit (``harness_commit``, the checkout's ``HEAD``,
 null when git cannot name it) and whether ``tools/`` differs from that commit
 (``harness_dirty``, null when unknown), and per tool its version and row-status
-counts.
+counts. A tool's version is the ``version`` string its ``tools.json`` entry
+gives, recorded as given, or else what its adapter's ``version()`` probes.
 """
 
 from __future__ import annotations
@@ -472,6 +473,16 @@ def run_one(
     return row
 
 
+def tool_version(adapter: Adapter, env: ToolEnv) -> str:
+    """The version the manifest records: the tool's ``version`` in ``tools.json``, else the adapter's probe.
+
+    A configured version is recorded as given, for every tool alike; ``install_tools.sh`` writes the
+    pinned one for each tool it installs, so a rerun records what the committed manifest does.
+    """
+    configured = env.tool(adapter.name).get("version")
+    return configured if isinstance(configured, str) and configured else adapter.version(env)
+
+
 def run_tool(
     adapter: Adapter,
     cases: list[Case],
@@ -526,7 +537,7 @@ def run_tool(
         statuses[str(row["status"])] = statuses.get(str(row["status"]), 0) + 1
     return {
         "tool": adapter.name,
-        "version": adapter.version(env),
+        "version": tool_version(adapter, env),
         "seconds": round(time.time() - started, 1),
         "statuses": statuses,
     }

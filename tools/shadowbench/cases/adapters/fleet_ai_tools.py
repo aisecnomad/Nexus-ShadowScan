@@ -63,7 +63,8 @@ otherwise match through a ``--types mcp_server`` argument.
 Fail closed: the wrapper always prints a JSON array (``[]`` when the table has
 no rows), so empty stdout or output that is not a JSON array of objects is an
 error. ``version()`` runs ``fleet-ai-tools -version`` through ``_probe``
-(scrubbed environment, throwaway home, timeout).
+(scrubbed environment, throwaway home, timeout); the runner records it only
+when ``tools.json`` gives this tool no ``version``.
 """
 
 from __future__ import annotations

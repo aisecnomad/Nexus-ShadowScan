@@ -158,8 +158,13 @@ EOF_MAIN
 # runs with the default -mod=readonly against exactly that go.mod and go.sum.
 (cd "$mod" && go mod tidy && CGO_ENABLED=0 go build -trimpath -o "$root/bin/fleet-ai-tools" ./cmd/fleet-ai-tools)
 
-# Version strings in the form the committed results manifest records
-# (benchmarks/shadowbench/cases/results/2026-10-11/manifest.json).
+# Each entry's "version" is the version or commit pinned above, in the
+# form the committed results manifest records
+# (benchmarks/shadowbench/cases/results/2026-10-11/manifest.json). The
+# runner records an entry's "version" in the run manifest as given, for
+# every tool alike, instead of running the adapter's version probe
+# (tool_version in runner.py). It is not checked against the binary:
+# remove it from an entry to record what the installed tool reports.
 cat > "$root/tools.json" <<EOF_JSON
 {
  "tool_root": "$root",

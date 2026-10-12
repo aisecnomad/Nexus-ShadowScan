@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -12,12 +13,14 @@ from typing import Any
 import pytest
 
 from tools.shadowbench.cases import fetch_code, report, runner
+from tools.shadowbench.cases.adapters.registry import load_adapters
 from tools.shadowbench.cases.contract import ToolEnv
 from tools.shadowbench.cases.corpus import Corpus, dump_corpus
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES = ROOT / "benchmarks" / "shadowbench" / "cases"
 RUN = CASES / "results" / "2026-10-11"
+INSTALL = ROOT / "tools" / "shadowbench" / "cases" / "install_tools.sh"
 
 # --- fetch_code: the documented command runs ------------------------------------------------------
 
@@ -210,3 +213,72 @@ def test_report_of_the_committed_run_names_no_harness_commit() -> None:
     text = report.render(committed, CASES / "corpus.json")
     assert text == (RUN / "REPORT.md").read_text(encoding="utf-8")
     assert "harness commit" not in text
+
+
+# --- tool versions: a version in tools.json is recorded for every tool alike ----------------------
+
+
+class _Probed:
+    """An adapter whose probe the test counts."""
+
+    name = "probed"
+    display = "Probed"
+    surfaces: dict[str, frozenset[str]] = {}
+
+    def __init__(self) -> None:
+        self.probes = 0
+
+    def version(self, env: ToolEnv) -> str:
+        self.probes += 1
+        return "probed 1.0"
+
+
+@pytest.mark.parametrize(
+    ("entry", "recorded", "probes"),
+    [
+        ({"version": "pinned 2.0"}, "pinned 2.0", 0),
+        ({}, "probed 1.0", 1),
+        ({"version": ""}, "probed 1.0", 1),
+        ({"version": 2}, "probed 1.0", 1),
+    ],
+)
+def test_run_tool_records_the_configured_version_else_the_probe(
+    tmp_path: Path, entry: dict[str, Any], recorded: str, probes: int
+) -> None:
+    adapter = _Probed()
+    env = ToolEnv(tmp_path, {"tools": {"probed": {"bin": "/opt/probed", **entry}}})
+    out = tmp_path / "out"
+    summary = runner.run_tool(adapter, [], env, out, 1, tmp_path, ROOT, tmp_path / "fakeproc", None)  # type: ignore[arg-type]
+    assert summary["version"] == recorded
+    assert adapter.probes == probes
+
+
+def _installed_tools_json(root: Path) -> dict[str, Any]:
+    """The tools.json ``install_tools.sh`` writes under ``root``, read from the script, never run."""
+    script = INSTALL.read_text(encoding="utf-8")
+    values = {"root": str(root)}
+    for name, value in re.findall(r'^(\w+)="?([^"\n]*)"?$', script, flags=re.M):
+        values.setdefault(name, re.sub(r"\$(\w+)", lambda m: values.get(m.group(1), m.group(0)), value))
+    body = re.search(r"<<EOF_JSON\n(.*?)\nEOF_JSON\n", script, flags=re.S)
+    assert body
+    data: dict[str, Any] = json.loads(re.sub(r"\$\{?(\w+)\}?", lambda m: values[m.group(1)], body.group(1)))
+    return data
+
+
+def test_installed_versions_reach_the_manifest_without_a_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """install_tools.sh wrote versions the numbat, vet, ai-infra-guard and fleet-ai-tools adapters ignored."""
+
+    def no_probe(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"a configured version ran {args[0] if args else kwargs.get('args')}")
+
+    monkeypatch.setattr(subprocess, "run", no_probe)
+    env = ToolEnv(tmp_path, _installed_tools_json(tmp_path))
+    adapters, problems = load_adapters()
+    assert not problems
+    recorded = json.loads((RUN / "manifest.json").read_text(encoding="utf-8"))["tools"]
+    for name, run in recorded.items():
+        if name == "shadowscan":
+            continue  # runs from the operator's checkout; install_tools.sh writes no entry for it
+        assert runner.tool_version(adapters[name], env) == run["version"], name
