@@ -41,8 +41,8 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
         r"(?:[\s\S]{0,8192}?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
         r"|(?:\r?\n(?:[ \t]*>)*[ \t]*(?:Proc-Type|DEK-Info):[^\r\n]*"
         r"|(?:\\r)?\\n(?:[ \t]*>)*[ \t]*(?:Proc-Type|DEK-Info):(?:[^\r\n\\]|\\(?!(?:r\\)?n))*)*"
-        r"(?:(?:(?:\r?\n|(?:\\r)?\\n)(?:[ \t]*>)*[ \t]*)?"
-        r"(?:(?:(?:\r?\n|(?:\\r)?\\n)(?:[ \t]*>)*[ \t]*|[ \t]+)[A-Za-z0-9+/=]{16,})+)?)"
+        r"(?:(?:(?:\r?\n|(?:\\r)?\\n)(?:[ \t]*+>)*+[ \t]*+)?"
+        r"(?:(?:(?:\r?\n|(?:\\r)?\\n)(?:[ \t]*+>)*+[ \t]*+|[ \t]++)[A-Za-z0-9+/=]{16,})+)?)"
     ),
     re.compile(r"(?i:\b(?:Account|SharedAccess)Key)\s*=\s*[A-Za-z0-9+/]{40,}={0,2}"),
     re.compile(
@@ -53,6 +53,31 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
 
 _REDACTED = "[redacted]"
 
+# The private key rule as the gate ran it before it read footerless keys quoted on one
+# line, in blockquotes or after escaped CRLF breaks (see ``redact``): each run of 16 or
+# more base64 characters on a line of its own, and then after real or escaped line breaks
+# or spaces. Its blank runs are possessive, which keeps the scan linear.
+_EARLIER_KEY_RULES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+        r"(?:[\s\S]{0,8192}?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+        r"|(?:\r?\n[ \t]*(?:Proc-Type|DEK-Info):[^\r\n]*)*"
+        r"(?:(?:\r?\n[ \t]*)?(?:\r?\n[ \t]*[A-Za-z0-9+/=]{16,})+)?)"
+    ),
+    re.compile(
+        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+        r"(?:[\s\S]{0,8192}?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----"
+        r"|(?:\r?\n[ \t]*(?:Proc-Type|DEK-Info):[^\r\n]*)*"
+        r"(?:(?:(?:\r?\n|\\n)[ \t]*+)?(?:(?:(?:\r?\n|\\n)[ \t]*+|[ \t]++)[A-Za-z0-9+/=]{16,})+)?)"
+    ),
+)
+_KEY_RULE = next(index for index, pattern in enumerate(_PATTERNS) if pattern.pattern.startswith("-----BEGIN"))
+# The rule sets matched in turn: the current one, and each with an earlier key rule.
+_TURN_RULES: tuple[tuple[re.Pattern[str], ...], ...] = (
+    _PATTERNS,
+    *(_PATTERNS[:_KEY_RULE] + (rule,) + _PATTERNS[_KEY_RULE + 1 :] for rule in _EARLIER_KEY_RULES),
+)
+
 # A line starting with :: is a workflow command even in a log or a posted
 # comment; neutralize it instead of trusting the destination to escape it.
 _WORKFLOW_COMMAND = re.compile(r"^::", re.MULTILINE)
@@ -61,24 +86,43 @@ _WORKFLOW_COMMAND = re.compile(r"^::", re.MULTILINE)
 def redact(text: str) -> str:
     """``text`` with credential-shaped strings replaced and command lines defused.
 
-    Each pattern is matched twice, and every span either match covers is
-    withheld, overlapping or adjacent spans as one. It is matched on the
-    original text, so a wide earlier match cannot hide a narrower one: a
-    footerless key's base64 run takes in the scheme of a URL on the next line
-    ('postgresql+psycopg2://') and stops at ':', after which the URL rule would
-    miss the password. It is also matched in turn, as the patterns always ran,
-    on the text with each earlier match replaced: an Azure key's value run
-    takes in the label of a key glued after it, and the Azure rule finds that
-    second key only once a key match has replaced the first label; and a long
-    token between a private key's header and its footer shrinks to the marker,
-    which brings the footer within the key rule's bounded search. Each
-    character of that text maps back to the original span it stands for, so
-    every span indexes the original text.
+    Every span any of these readings matches is withheld, overlapping or
+    adjacent spans as one. Each pattern is matched on the original text, so a
+    wide earlier match cannot hide a narrower one: a footerless key's base64
+    run takes in the scheme of a URL on the next line ('postgresql+psycopg2://')
+    and stops at ':', after which the URL rule would miss the password. The
+    patterns are also matched in turn, as they always ran, on the text with
+    each earlier match replaced by the marker: an Azure key's value run takes
+    in the label of a key glued after it, and the Azure rule finds that second
+    key only once a key match has replaced the first label; a long token
+    between a private key's header and its footer shrinks to the marker, which
+    brings the footer within the key rule's bounded search; and a URL whose
+    password holds an Azure key matches once that key is replaced. They run
+    in turn with the current key rule and with each earlier one (see
+    ``_EARLIER_KEY_RULES``), whose narrower match left a URL's scheme for the
+    URL rule, and twice each, as a posted review body is redacted twice. Each
+    character of the text matched in turn maps back to the original span it
+    stands for, so every span indexes the original text.
     """
     spans = [match.span() for pattern in _PATTERNS for match in pattern.finditer(text)]
+    for rules in _TURN_RULES:
+        spans += _spans_in_turn(text, rules + rules)
+    pieces: list[str] = []
+    end = 0
+    for start, stop in sorted(spans):
+        if not pieces or start > end:
+            pieces += (text[end:start], _REDACTED)
+        end = max(end, stop)
+    pieces.append(text[end:])
+    return _WORKFLOW_COMMAND.sub("\\:\\:", "".join(pieces))
+
+
+def _spans_in_turn(text: str, rules: tuple[re.Pattern[str], ...]) -> list[tuple[int, int]]:
+    """The spans of ``text`` that ``rules`` match in turn, each match replaced before the next rule."""
+    spans: list[tuple[int, int]] = []
     current = text
     origin = [(index, index + 1) for index in range(len(text))]
-    for pattern in _PATTERNS:
+    for pattern in rules:
         pieces: list[str] = []
         mapped: list[tuple[int, int]] = []
         end = 0
@@ -97,11 +141,4 @@ def redact(text: str) -> str:
             pieces.append(current[end:])
             mapped += origin[end:]
             current, origin = "".join(pieces), mapped
-    pieces = []
-    end = 0
-    for start, stop in sorted(spans):
-        if not pieces or start > end:
-            pieces += (text[end:start], _REDACTED)
-        end = max(end, stop)
-    pieces.append(text[end:])
-    return _WORKFLOW_COMMAND.sub("\\:\\:", "".join(pieces))
+    return spans

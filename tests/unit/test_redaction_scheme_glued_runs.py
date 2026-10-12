@@ -295,6 +295,57 @@ def test_the_text_left_without_a_glued_run_is_read_again(text: str) -> None:
     assert sanitize_text(cleaned) == cleaned
 
 
+# Shapes a second fuzzing round found, with synthetic values: an earlier pass
+# changes how the scheme pass reads a run, which the established reading,
+# withholding the run in that pass, reads as the established rules did.
+_SECOND_ROUND_TEXTS = [
+    # A run that starts a quoted value on the credential's own line after the scheme's.
+    (f'Authorization:basic\nT--password"\n{VALUE}', [VALUE]),
+    # A scheme word glued on, after an option the option rule reads first.
+    (f"--token Bearer Bearer K--bearer Bearer {VALUE}", [VALUE]),
+    (f"SSWS B=c: {VALUE}_key: " + _key_block(""), [VALUE]),
+    (
+        '{"msg": "retry: Bearer Qm9iOnBhc3M5=trace: '
+        + VALUE
+        + "\\nprivate_key: "
+        + _key_block("PGP ", "AAAA\\n").replace("\n", "\\n")
+        + '"}',
+        [VALUE],
+    ),
+    (f"{VALUE}--auth=2\\p_key: " + _key_block("") + "Basic o--", [VALUE]),
+    (f"{VALUE}\nBasic\nk--token v\n" + _key_block("PGP ", "x\n"), [VALUE]),
+]
+_SECOND_ROUND_RECORDS = [
+    ({"token": "kQ9v7Lm2Xp", "h": f"Authorization: Bearer\nxZlj6QNd8uHvDZo--token-kQ9v7Lm2Xp {VALUE}"}, {}),
+    ({"token": ["Bearer K"], "h": f"--token Bearer Bearer K=x{VALUE}"}, {}),
+    ({"credentials": [f"svc:{VALUE}"], "log": f"Bearer t--svc:{VALUE}"}, {}),
+    ({"credentials": {"value": f"deploy@{VALUE}"}, "log": f"Basic dXNlcjpwYXNz=deploy@{VALUE}"}, {}),
+    (
+        {"settings": [{"name": "OpenAIKey", "value": f"ab:{VALUE}"}], "log": f"Basic t=ab:{VALUE}"},
+        {"redact_short_secrets": True},
+    ),
+    (
+        {"argv": ["tool", "--key", f"ab:{VALUE}"], "log": f"Bearer t=ab:{VALUE}"},
+        {"redact_short_secrets": True},
+    ),
+    ({"credentials": ["N"], "notes": f"Bearer F=N|{VALUE}"}, {}),
+]
+
+
+@pytest.mark.parametrize(("text", "values"), _SECOND_ROUND_TEXTS)
+def test_a_value_the_established_scheme_pass_withholds_stays_withheld(text: str, values: list[str]) -> None:
+    for value in values:
+        assert not _shown(text, value)
+
+
+@pytest.mark.parametrize(("record", "options"), _SECOND_ROUND_RECORDS)
+def test_a_record_value_the_established_reading_withholds_stays_withheld(
+    record: dict[str, object], options: dict[str, bool]
+) -> None:
+    cleaned = sanitize(record, **options)
+    assert all(VALUE not in str(field) for field in cleaned.values())
+
+
 def _tokens(text: str) -> Counter[str]:
     counts = Counter(re.findall(r"[A-Za-z0-9]+", text))
     del counts["REDACTED"]
@@ -326,9 +377,10 @@ def test_withholding_the_tails_last_shows_nothing_the_other_passes_withhold(
         for context in CONTEXTS
     ]
     last = [(sanitize_text(text), sanitize({"note": text})["note"]) for text in texts]
-    # The reading without the runs, merged in, is turned off as well.
+    # The established reading, merged in, is turned off as well.
     monkeypatch.setattr(redaction, "_withhold_scheme_tails", lambda text: text)
-    monkeypatch.setattr(redaction, "_cut_glued_runs", lambda text: text)
+    monkeypatch.setattr(redaction, "_merge_readings", lambda first, second: first)
+    monkeypatch.setattr(redaction, "_merge_copies", lambda first, second: first)
     passes = [(sanitize_text(text), sanitize({"note": text})["note"]) for text in texts]
     for text, (text_last, note_last), (text_passes, note_passes) in zip(texts, last, passes, strict=True):
         assert not _tokens(text_last) - _tokens(text_passes), text
@@ -400,13 +452,16 @@ def test_a_glued_run_ending_in_a_scheme_leaves_that_scheme_to_the_scan(
         # A name stays beside the value it withholds on the scheme's line.
         (f"Bearer {SECRET}--password {VALUE}", f"Bearer {REDACTED}--password {REDACTED}"),
         (f"Basic {SECRET}=password: {VALUE}", f'Basic {REDACTED}=password: "{REDACTED}"'),
-        (f"SSWS {SECRET}--auth {VALUE}", f"SSWS {REDACTED}--auth {REDACTED}"),
-        # On the credential's own line, after the scheme's line, the rest of
-        # that line goes: the established rules joined it to the scheme's line,
-        # where a header rule withheld it ('Authorization: Basic\\n<v>--token w').
-        (f"Bearer\n{SECRET}--password {VALUE}", f"Bearer {REDACTED}\n{REDACTED}"),
-        (f"Basic \n {SECRET}=password: {VALUE}", f"Basic {REDACTED}\n{REDACTED}"),
-        (f"SSWS\n\n{SECRET}--auth {VALUE}", f"SSWS {REDACTED}\n\n{REDACTED}"),
+        (f"SSWS {SECRET}--token {VALUE}", f"SSWS {REDACTED}--token {REDACTED}"),
+        # The established rules withheld this name with the credential and showed
+        # the value; neither reading shows only what the other does.
+        (f"SSWS {SECRET}--auth {VALUE}", REDACTED),
+        # A name on the credential's line after the scheme's: the established
+        # rules joined that line to the scheme's, so the readings' lines no
+        # longer pair up and the text is withheld, keeping its line breaks.
+        (f"Bearer\n{SECRET}--password {VALUE}", f"{REDACTED}\n"),
+        (f"Basic \n {SECRET}=password: {VALUE}", f"{REDACTED}\n"),
+        (f"SSWS\n\n{SECRET}--token {VALUE}", f"{REDACTED}\n\n"),
         (f"Bearer\n{SECRET}--{TAIL} x", f"Bearer {REDACTED}\n x"),
         (f"Bearer token\n{SECRET}=x{TAIL}\n", f"Bearer {REDACTED}\n\n"),
     ],

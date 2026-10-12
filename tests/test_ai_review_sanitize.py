@@ -9,6 +9,8 @@ check_secrets.py remains the authoritative file gate with exact approvals.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from tools.ai_review.sanitize import redact
@@ -158,6 +160,51 @@ def test_a_key_whose_footer_a_long_token_moves_out_of_reach_is_withheld_whole(to
     line = "Zqu8" + "jzPde0IgxLd6"
     out = redact(f"Scenario:\n{begin}\n{token}\n{line}\n{end}\nRotate it.")
     assert out == "Scenario:\n[redacted]\nRotate it."
+
+
+def _url_password_cases() -> list[tuple[str, int, list[str]]]:
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    azure = "AccountKey=" + "Ab3/" * 11
+    password, inner, tail = "Hq7Zr2" + "Lm9Xw4", "Pw6Ys0" + "Ga2Fe8", "Vt3Nb8" + "Kc5Jd1"
+    # Joined at runtime so the source holds no URL with a password.
+    scheme, user = "postgresql+psycopg2://", "u:"
+    url = scheme + user + f"{password};{azure};{tail}@h"
+    google = "AIzaHq7Zr2Lm9Xw4Vt3N" + "_b8Kc5Jd1Pw6Ys0Ga2F"
+    return [
+        (f"> {header}\n> {url}", 1, [password, tail]),
+        (f"{header} {url}", 1, [password, tail]),
+        (
+            f"> {header}\n> " + scheme + user + password + "redis://" + "a:" + f"{inner}@cache{tail}@h",
+            2,
+            [password, inner, tail],
+        ),
+        (f"> {header}\n> {google}{header}", 2, [google[20:]]),
+    ]
+
+
+@pytest.mark.parametrize(("text", "passes", "secrets"), _url_password_cases())
+def test_a_quoted_key_header_leaves_a_url_password_to_the_url_rule(
+    text: str, passes: int, secrets: list[str]
+) -> None:
+    # The key rule's run took in the URL's scheme ('postgresql+psycopg2'), so the
+    # URL rule, which matches only once the Azure key or inner URL in the password
+    # is replaced, never did. The earlier key rules stopped at the header and left
+    # the scheme; the patterns are matched in turn with them as well, twice, as a
+    # posted review body is redacted twice.
+    out = text
+    for _ in range(passes):
+        out = redact(out)
+    assert not any(secret in out for secret in secrets)
+
+
+def test_a_long_blank_run_after_a_key_header_is_scanned_in_linear_time() -> None:
+    # The blank runs before a footerless key's base64 lines could be split
+    # between two quantifiers, which made the scan quadratic in the run's length.
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    started = time.perf_counter()
+    for blank in (" ", "\t", "\\n "):
+        redact(header + "\n" + blank * 40_000 + "!")
+    assert time.perf_counter() - started < 5
 
 
 def test_workflow_commands_are_neutralized() -> None:

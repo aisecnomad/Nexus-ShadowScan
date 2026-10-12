@@ -1031,11 +1031,13 @@ incomplete (exit 3). Alerting keyed on SDK exception text should key on the
 connector name and exception type.
 
 Redaction reads a text with a run glued after a `Bearer`, `Basic` or `SSWS`
-credential (`<token>--x`, `<token>=x`) twice, with and without the run, and
-shows on each line only what both readings show; such a token's tail is
-withheld with it. Sanitized evidence around these credentials therefore
-withholds more, and a name glued after a credential on the line after its
-scheme is withheld with the rest of that line. Finding identity does not use
+credential (`<token>--x`, `<token>=x`) twice, as every rule reads the run and
+as the earlier rules withheld it with the credential, and shows on each line
+only what both readings show; such a token's tail is withheld with it.
+Sanitized evidence around these credentials therefore withholds more: a line
+the readings differ on in more than one place is withheld whole, and a text
+with a name glued after a credential on the line after its scheme is
+withheld whole, keeping its line breaks. Finding identity does not use
 evidence text. Regenerate retained reports, as after any change that
 withholds more.
 

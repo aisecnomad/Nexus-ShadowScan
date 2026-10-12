@@ -164,22 +164,22 @@ Documentation only; no scanner behaviour changes.
   tail was shown, now is too. The October 11 integration applied the
   token-word rule's glued-text guard to every scheme credential, so such a
   token's tail after the glue was left in sanitized text. A text with such a
-  run is now read twice and each line shows only what both readings show.
-  In one reading every rule reads the run, as in the October 11 rules, so a
-  name in it withholds the value after it (`=x--password v`, `--auth v`,
-  `--pat v`, which the October 12 rules showed); the run is withheld only
-  after every rule, and in `sanitize` after the values nested in credential
-  fields are removed from the other fields too, and a text that changes is
-  read once more. In the other the run goes with its credential before any
-  rule reads it, as in the October 12 rules, so a value the run hid from the
-  assignment rules is read. A line where neither reading only withholds one
-  more span than the other is withheld whole. A run stays only when it is
-  one name of plain words that a rule reads (`--password v`, `=password:
-  v`), beside the value it withheld, and on the credential's own line after
-  a scheme that ends a line the rest of that line is withheld. Differential
-  runs against both earlier rule sets over generated and fuzzed inputs, with
-  synthetic values, found no value either withholds that this shows; the
-  regression tests over all three schemes are drawn from them.
+  run is now read twice. In one reading every rule reads the run, as in the
+  October 11 rules, so a name in it withholds the value after it
+  (`=x--password v`, `--auth v`, `--pat v`, which the October 12 rules
+  showed); the run is withheld only after every rule, and in `sanitize`
+  after the values nested in credential fields are removed from the other
+  fields too, and a text that changes is read once more. In the other the
+  scheme pass withholds the run with its credential, as the October 12
+  rules did. Each line shows only what both readings show: where one line
+  shows nothing the other does not, that one is kept, and otherwise the
+  whole line is withheld. Where the October 12 rules joined the credential's
+  line to the scheme's (a name kept after a credential on the line after
+  its scheme), the readings' lines no longer pair up and the whole text is
+  withheld, keeping its line breaks. A run stays only when it is one name of
+  plain words that a rule reads (`--password v`, `=password: v`), beside the
+  value it withheld. The regression tests over all three schemes are drawn
+  from differential runs and fuzzing against both earlier rule sets.
 - `shadowscan run --set credentials_file=<value>` (and the other credential-file
   keys) warns again when the value is an opaque credential rather than a file
   location. Judging those keys by value had delegated to rules that recognize
@@ -214,8 +214,13 @@ Documentation only; no scanner behaviour changes.
   published. Every rule now also matches the original text, so a key body
   can no longer hide a URL password or account key that follows it. The
   rules still also run in turn, each earlier match replaced by the marker,
-  so a long token between a key's header and its footer still brings the
-  footer within the key rule's 8 KiB search and the whole block is withheld.
+  with the current key rule and with each earlier one, twice each, as a
+  posted review body is redacted twice: a long token between a key's header
+  and its footer still brings the footer within the key rule's 8 KiB search,
+  and a URL whose password holds an Azure key or another URL is still
+  withheld after a quoted key header, whose wider run would take the URL's
+  scheme. A long blank run after a key header is scanned in linear time;
+  it was quadratic.
 - Documentation: least-privilege rows for the five live low-code connectors;
   `cloud.azure` and `cloud.gcp` need no SDK extra with a pre-issued token and
   `cloud.kubernetes` and `cloud.openshift` are offline only (the sentence said

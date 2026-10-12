@@ -28,7 +28,7 @@ import sys
 import types
 import uuid
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, TypeVar
 
 from shadowscan.utils import (
     redaction_assignments,
@@ -62,8 +62,8 @@ from shadowscan.utils.redaction_commands import (
 from shadowscan.utils.redaction_formats import (
     _ADDED_PEM,
     _PEM,
+    _SCHEME_READING,
     _URL,
-    _cut_glued_runs,
     _redact_authorization,
     _redact_compact_colons,
     _redact_cookie_headers,
@@ -72,6 +72,7 @@ from shadowscan.utils.redaction_formats import (
     _redact_query_text,
     _redact_secret_tokens,
     _sanitize_url,
+    _SchemeReading,
     _withhold_scheme_tails,
 )
 from shadowscan.utils.redaction_markup import (
@@ -104,6 +105,7 @@ from shadowscan.utils.redaction_statements import _redact_python_assignments
 
 # Values the sanitizer descends into; sets and frozensets are traversed like lists.
 _CONTAINERS = (Mapping, list, tuple, set, frozenset)
+_T = TypeVar("_T")
 
 # Keys whose mapping or list of name/value records holds environment variables.
 _ENVIRONMENT_KEYS = frozenset({"env", "environment", "environment_variables", "environmentvariables"})
@@ -191,20 +193,29 @@ def sanitize_text(text: str) -> str:
     withheld. The runs glued after a scheme credential's marker go after
     every pass, since the passes read them (see ``_without_glued_runs``).
 
-    A text with such a run is read twice: as it is, and with its runs gone
-    before any pass reads it (see ``_cut_glued_runs``), as the established
-    rules withheld them; neither reading withholds all that the other does.
+    A text with such a run is read twice: so, and as the established rules
+    read it, withholding the run with its credential in the scheme pass (see
+    ``_SchemeReading``); neither reading withholds all that the other does.
     Each line then shows only what both readings show (see ``_merge_readings``).
     """
     text = _checked_text(text)
-    shown = _read_text(text)
-    cut = _cut_glued_runs(text)
-    return shown if cut == text else _merge_readings(shown, _read_text(cut))
+    reading = _SchemeReading(established=False)
+    shown = _in_reading(reading, lambda: _without_glued_runs(_redact_extended(_sanitize_established(text))))
+    if not reading.glued:
+        return shown
+    established = _in_reading(
+        _SchemeReading(established=True), lambda: _redact_extended(_sanitize_established(text))
+    )
+    return _merge_readings(shown, established)
 
 
-def _read_text(text: str) -> str:
-    """One reading of ``text`` by every pass, its glued runs withheld last (see ``sanitize_text``)."""
-    return _without_glued_runs(_redact_extended(_sanitize_established(text)))
+def _in_reading(reading: _SchemeReading, read: Callable[[], _T]) -> _T:
+    """``read()``, with the scheme pass taking part in ``reading`` (see ``_SchemeReading``)."""
+    token = _SCHEME_READING.set(reading)
+    try:
+        return read()
+    finally:
+        _SCHEME_READING.reset(token)
 
 
 def _merge_readings(first: str, second: str) -> str:
@@ -215,8 +226,9 @@ def _merge_readings(first: str, second: str) -> str:
     with it, a name in it withholds the value after it ('v=x--password w');
     without it, a value it hid from the assignment rules ('v=x = password:
     w') is read. Every pass keeps the lines of a text, so the two readings
-    are compared line by line (see ``_merged_line``). Readings whose lines do
-    not pair up withhold the whole text, keeping its line breaks.
+    are compared line by line (see ``_merged_line``). The established rules
+    joined a line kept after a scheme to the scheme's line; readings whose
+    lines do not pair up withhold the whole text, keeping its line breaks.
     """
     if first == second:
         return first
@@ -229,16 +241,30 @@ def _merge_readings(first: str, second: str) -> str:
 def _merged_line(one: str, other: str) -> str:
     """One line of two readings, showing nothing either withholds (see ``_merge_readings``).
 
-    Where one line is the other with one more span withheld (see
-    ``_line_shows_no_more``), that one is kept; otherwise the whole line is
-    withheld. Keeping the start and end both share would show what a third
-    reading withholds, and a second sanitization would read it differently.
+    Where one line shows only what the other shows (see ``_shows_within``),
+    that one is kept; otherwise the whole line is withheld.
     """
-    if one == other or _line_shows_no_more(other, one, end=False):
+    if one == other or _shows_within(other, one):
         return one
-    if _line_shows_no_more(one, other, end=False):
+    if _shows_within(one, other):
         return other
     return REDACTED + "\r" * one.endswith("\r")
+
+
+def _shows_within(kept: str, shown: str) -> bool:
+    """Whether ``shown`` is ``kept`` with spans withheld or removed, and nothing more.
+
+    Each piece ``shown`` shows between its markers occurs in ``kept``, in
+    order and without overlapping, so every character it shows ``kept``
+    shows as well.
+    """
+    position = 0
+    for piece in shown.split(REDACTED):
+        found = kept.find(piece, position)
+        if found < 0:
+            return False
+        position = found + len(piece)
+    return True
 
 
 # How often the text left once the glued runs go is read again (see _without_glued_runs).
@@ -526,16 +552,10 @@ class _Sanitizer:
     and knows only the values those find.
     """
 
-    def __init__(
-        self, *, redact_short_secrets: bool, env_values_are_secrets: bool, extended: bool, cut: bool = False
-    ) -> None:
+    def __init__(self, *, redact_short_secrets: bool, env_values_are_secrets: bool, extended: bool) -> None:
         self.redact_short_secrets = redact_short_secrets
         self.env_values_are_secrets = env_values_are_secrets
         self.extended = extended
-        # ``cut``: the reading without the runs glued after scheme credentials
-        # (see ``sanitize``); ``glued``: a text this pass read has such a run.
-        self.cut = cut
-        self.glued = False
         self.known: set[str] = set()
         # The same aliased object can occur both outside and inside an environment
         # block. Revisit it under the stricter naming policy, but still bound cycles.
@@ -635,14 +655,9 @@ class _Sanitizer:
         Only the established passes check the text's size, as before. The
         extended ones read what the established passes made of a value within
         the limit, which markers can make longer than the limit ('pwd=ab'
-        becomes 'pwd=[REDACTED]'), as ``sanitize_text`` does. The established
-        ones read a text without its glued runs in the ``cut`` reading.
+        becomes 'pwd=[REDACTED]'), as ``sanitize_text`` does.
         """
-        if self.extended:
-            return _redact_extended(text)
-        cut = _cut_glued_runs(text)
-        self.glued = self.glued or cut != text
-        return _sanitize_established(cut if self.cut else text)
+        return _redact_extended(text) if self.extended else _sanitize_established(text)
 
     def order(self) -> None:
         """Rank the known values longest first for replacement."""
@@ -806,9 +821,9 @@ class _NestedSanitizer(_Sanitizer):
     charged and bounded as the extended pass, which also reads a copy.
     """
 
-    def __init__(self, *, redact_short_secrets: bool, cut: bool = False) -> None:
+    def __init__(self, *, redact_short_secrets: bool) -> None:
         super().__init__(
-            redact_short_secrets=redact_short_secrets, env_values_are_secrets=False, extended=True, cut=cut
+            redact_short_secrets=redact_short_secrets, env_values_are_secrets=False, extended=True
         )
         # An aliased object can occur both outside and inside a credential
         # container. Revisit it under the stricter parent, but still bound cycles.
@@ -901,7 +916,7 @@ class _NestedSanitizer(_Sanitizer):
         """
         for value in tuple(self.known):
             self.charge(len(value))
-            spelling = _redact_extended(_sanitize_established(_cut_glued_runs(value) if self.cut else value))
+            spelling = _redact_extended(_sanitize_established(value))
             if spelling and spelling != REDACTED:
                 self.known.add(spelling)
         self.ordered = sorted(self.known, key=len, reverse=True)
@@ -967,27 +982,31 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     known 'x y'), and the third pass no longer found the rest.
 
     As ``sanitize_text`` does, a value whose texts hold such a run is read
-    twice, with the runs and without them, and each text of the copy shows
-    only what both readings show (see ``_merge_copies``).
+    twice, so and as the established rules read it, and each text of the copy
+    shows only what both readings show (see ``_merge_copies``).
     """
     _check_sanitization_structure(value)
-    shown, glued = _sanitize_reading(value, redact_short_secrets, env_values_are_secrets, cut=False)
-    if not glued:
+    reading = _SchemeReading(established=False)
+    shown = _in_reading(
+        reading,
+        lambda: _without_scheme_tails(_sanitize_reading(value, redact_short_secrets, env_values_are_secrets)),
+    )
+    if not reading.glued:
         return shown
-    cut, _ = _sanitize_reading(value, redact_short_secrets, env_values_are_secrets, cut=True)
-    return _merge_copies(shown, cut)
+    established = _in_reading(
+        _SchemeReading(established=True),
+        lambda: _sanitize_reading(value, redact_short_secrets, env_values_are_secrets),
+    )
+    return _merge_copies(shown, established)
 
 
-def _sanitize_reading(
-    value: Any, redact_short_secrets: bool, env_values_are_secrets: bool, *, cut: bool
-) -> tuple[Any, bool]:
-    """One reading of ``value`` by the three ``sanitize`` passes, and whether a text in it has a glued run."""
+def _sanitize_reading(value: Any, redact_short_secrets: bool, env_values_are_secrets: bool) -> Any:
+    """One reading of ``value`` by the three ``sanitize`` passes (see ``sanitize``)."""
     passes = [
         _Sanitizer(
             redact_short_secrets=redact_short_secrets,
             env_values_are_secrets=env_values_are_secrets,
             extended=extended,
-            cut=cut,
         )
         for extended in (False, True)
     ]
@@ -996,13 +1015,13 @@ def _sanitize_reading(
         sanitizer.discover(copy)
         sanitizer.order()
         copy = sanitizer.clean(copy)
-    nested = _NestedSanitizer(redact_short_secrets=redact_short_secrets, cut=cut)
+    nested = _NestedSanitizer(redact_short_secrets=redact_short_secrets)
     nested.discover(value)
     nested.known -= passes[0].known
-    if nested.known:
-        nested.order()
-        copy = nested.clean(copy)
-    return _without_scheme_tails(copy), passes[0].glued
+    if not nested.known:
+        return copy
+    nested.order()
+    return nested.clean(copy)
 
 
 def _merge_copies(first: Any, second: Any) -> Any:

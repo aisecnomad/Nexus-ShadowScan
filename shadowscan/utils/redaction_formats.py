@@ -9,6 +9,7 @@ fields.
 
 from __future__ import annotations
 
+import contextvars
 import re
 from urllib.parse import unquote
 
@@ -153,6 +154,11 @@ _AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUT
 _ESCAPED_AUTH = re.compile(
     r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUTH_CREDENTIAL
 )
+# The glued run a guard stop leaves after the credential, which the established
+# rules matched with it (see _redact_authorization_established).
+_AUTH_GLUED = r"(?P<glued>(?:--|=(?=[A-Za-z]))[A-Za-z0-9+/_.=-]*+)?"
+_AUTH_ESTABLISHED = re.compile(_AUTH.pattern + _AUTH_GLUED)
+_ESCAPED_AUTH_ESTABLISHED = re.compile(_ESCAPED_AUTH.pattern + _AUTH_GLUED)
 _ASSIGNED = re.compile(r"[ \t]*[:=]")
 _URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
@@ -166,13 +172,41 @@ def _redact_secret_tokens(text: str) -> str:
     return _DIGIT_TOKEN.sub(lambda match: match.group("glue") + REDACTED, text)
 
 
+class _SchemeReading:
+    """One reading of a text by the passes, as the scheme pass takes part in it.
+
+    ``established``: the pass withholds the run glued after a credential with
+    it, as the established rules did (see ``_redact_authorization_established``);
+    otherwise the run stays for the other passes to read and goes last (see
+    ``_withhold_scheme_tails``). ``glued``: a credential this reading met has
+    such a run, so the two readings differ (see ``redaction.sanitize_text``).
+    """
+
+    def __init__(self, *, established: bool) -> None:
+        self.established = established
+        self.glued = False
+
+
+# The reading the passes in progress take part in; none outside sanitize_text and sanitize.
+_SCHEME_READING: contextvars.ContextVar[_SchemeReading | None] = contextvars.ContextVar(
+    "_SCHEME_READING", default=None
+)
+
+
 def _redact_authorization(text: str) -> str:
     """Withhold the credential after an authorization scheme, keeping the scheme.
 
     The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
+    The run a guard stop leaves after the credential stays in the text; the
+    established reading withholds it here instead (see ``_SchemeReading``).
     """
+    reading = _SCHEME_READING.get()
+    if reading is not None and reading.established:
+        return _redact_authorization_established(text)
 
     def withheld(match: re.Match[str]) -> str:
+        if reading is not None and _GLUED_RUN.match(match.string, match.end()):
+            reading.glued = True
         credential = match.group("credential")
         if (
             match.group("word")
@@ -186,6 +220,47 @@ def _redact_authorization(text: str) -> str:
 
     text = _AUTH.sub(withheld, text)
     return _ESCAPED_AUTH.sub(lambda match: match.group("glue") + withheld(match), text)
+
+
+def _redact_authorization_established(text: str) -> str:
+    """The scheme pass as the established rules ran it: a glued run goes with the credential.
+
+    Kept only where it names a credential that a later pass reads ('--token v',
+    '=password: v'), or after the 'token' word. A kept run joins the scheme's
+    line, as those rules did; the lines of such a reading then no longer pair
+    up with the text's (see ``redaction._merge_readings``).
+    """
+
+    def kept_glued(match: re.Match[str]) -> bool:
+        glued = match.group("glued")
+        if not glued:
+            return False
+        if glued.startswith("--"):
+            name = glued.lstrip("-")
+            return bool(
+                name and not name.lower().startswith(("no-", "no_")) and _credential_name(name, numbered=True)
+            )
+        name = glued[1:]
+        return bool(
+            (_sensitive_assignment_key(name) or _setting_level(name))
+            and _ASSIGNED.match(match.string, match.end())
+        )
+
+    def withheld(match: re.Match[str]) -> str:
+        credential = match.group("credential")
+        glued = match.group("glued") or ""
+        if match.group("word"):
+            if (_sensitive_assignment_key(credential) or _setting_level(credential)) and _ASSIGNED.match(
+                match.string, match.end("credential")
+            ):
+                return match.group("scheme") + " " + REDACTED + match.group("gap") + credential + glued
+            return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n") + glued
+        if kept_glued(match):
+            return match.group("scheme") + " " + REDACTED + glued
+        return match.group("scheme") + " " + REDACTED + "\n" * match.group().count("\n")
+
+    text = _AUTH_ESTABLISHED.sub(withheld, text)
+    return _ESCAPED_AUTH_ESTABLISHED.sub(lambda match: match.group("glue") + withheld(match), text)
 
 
 # A scheme and the marker of its credential, as _redact_authorization leaves them.
@@ -269,49 +344,9 @@ def _withhold_scheme_tails(text: str) -> str:
     return _SCHEME_TAIL.sub(withheld, text) if REDACTED in text else text
 
 
-# A run a guard stop leaves glued after a scheme credential, read in the text
-# before any pass ('Bearer v--tail', 'Bearer v=x'). The possessive quantifier
-# keeps the scan linear in the text.
+# A run a guard stop leaves glued after a scheme credential ('Bearer v--tail',
+# 'Bearer v=x'). The possessive quantifier keeps the scan linear in the text.
 _GLUED_RUN = re.compile(r"(?:--|=(?=[A-Za-z]))[A-Za-z0-9+/_.=-]*+")
-
-
-def _cut_glued_runs(text: str) -> str:
-    """``text`` without the runs glued after its scheme credentials, but those that are one name a pass reads.
-
-    The text the passes read when a run goes with its credential before any
-    of them reads it, as the established rules withheld it (see
-    ``redaction._merge_readings``). A run that is one name a pass reads (see
-    ``_glued_name_kept``) stays, so that pass still withholds the value after it.
-    Where the scheme's blanks span lines ('Authorization: Basic\\n<v>--token
-    w'), the established rules joined such a name to the scheme's line, and a
-    header or setting rule there withheld the rest of it; the rest of the
-    credential's line is withheld instead, which keeps the lines.
-    """
-    if "--" not in text and "=" not in text:
-        return text
-    cuts: dict[int, tuple[int, str]] = {}
-    for pattern in (_AUTH, _ESCAPED_AUTH):
-        for match in pattern.finditer(text):
-            run = _GLUED_RUN.match(text, match.end())
-            if not run:
-                continue
-            if not _glued_name_kept(run.group(), text, run.end()):
-                cuts[run.start()] = (run.end(), "")
-            elif "\n" in text[match.end("scheme") : match.start("credential")]:
-                end = text.find("\n", run.end())
-                end = len(text) if end < 0 else end - (text[end - 1] == "\r")
-                cuts[run.start()] = (max(end, run.end()), REDACTED)
-    if not cuts:
-        return text
-    pieces: list[str] = []
-    cursor = 0
-    for start in sorted(cuts):
-        if start >= cursor:
-            end, marker = cuts[start]
-            pieces.extend((text[cursor:start], marker))
-            cursor = end
-    pieces.append(text[cursor:])
-    return "".join(pieces)
 
 
 def _redact_jwts(text: str) -> str:
