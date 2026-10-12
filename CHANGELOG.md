@@ -5,6 +5,84 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### ShadowBench, the nine-surface discovery benchmark (October 12)
+
+- `benchmarks/shadowbench/` and `tools/shadowbench/`: two benchmark tracks
+  that measure shadow AI agent discovery across all nine surfaces, carried
+  from #193 and #194 side by side (`python -m tools.shadowbench
+  {cases|estate} <command>`). The *cases* track generates platform-native
+  inputs at a recorded seed (346 cases: 738 expected entities, 735 decoys,
+  26 pinned public repositories on the code surface), with loopback mock
+  services and inert live processes for tools that only work live. The
+  *estate* track is one authored fictional organization, Adatum Logistics,
+  whose 139 frozen files span the nine surfaces with 137 labeled entities
+  (87 positive, 27 control, 23 near-miss). Both are author-written: neither
+  is independent review, field precision or a verdict on another vendor.
+- Integration: each track keeps its own harness under `cases/` or
+  `estate/`; the estate's authored files sit under `estate/artifacts/` with
+  every frozen digest unchanged. The vendor letter grades (`grades.json`,
+  `GRADES.md`) and the two PDFs are not carried: the grades were a judgment
+  over author-written corpora, and neither PDF could be rebuilt from the
+  repository. The estate's fictional organization is renamed from Vantor,
+  since 2025 a real company's name, to Adatum in every file, token and
+  recorded prediction; the replacement has the same length, so re-scoring
+  gave identical results.
+- Data errata: the estate artifact
+  `home/dev-laptop-02/marcus/.vscode/extensions/github.copilot-1.388.0/package.json`
+  was frozen and scored but never committed, because `.gitignore` excludes
+  `.vscode/`. It is replaced by a minimal manifest (the label rests on the
+  directory name), `.gitignore` re-includes estate `.vscode/` trees, and a
+  test fails when any frozen file is untracked. `services.json` names the
+  live-sim host by its real path.
+- Cases scoring fails closed: an error, a missing row or a run the tool marks
+  incomplete never earns a true negative; a results file the run manifest
+  does not vouch for, a corpus digest mismatch, an unknown status, a
+  duplicate or an unknown case is refused unless `--force` is given. A
+  reported directory no longer earns credit for the files under it, a
+  positive case counts as found only with a true positive, code keys
+  outside the fact taxonomy are neither credited nor charged (246 of
+  AgentDiscover's 247 code "false positives" were such keys), and McNemar
+  with no shared case reads n/a. `verify --regenerate` now rebuilds the
+  committed corpus (it derived 38 cases per surface instead of 40), the
+  generator digest covers the code corpus, and case inputs are validated
+  before the runner stages them.
+- Cases runner: tools run as uid 65534 with `no_new_privs` in fresh
+  network, PID and mount namespaces with `/root` and `/home` hidden; a
+  timeout kills the whole namespace; scratch directories must be private;
+  mock services bind loopback only, on unprivileged ports; adapters fail
+  closed on empty or malformed output, run version probes with a scrubbed
+  environment and a timeout, and fetch pinned repositories without hooks,
+  submodules or non-HTTPS remotes. `install_tools.sh` states that installs
+  are version-pinned, not hash-locked.
+- Estate scoring: in-scope entity metrics count only the entities on a
+  tool's declared surfaces, with estate-wide detection a separate column;
+  a unit whose run failed, timed out, was incomplete, exited with a code
+  its adapter does not accept, or was never reached earns no true
+  negatives; attribution is restricted to the prediction's surface and
+  unit and prefers the entity that expects the fact, and the report lists
+  every multi-candidate attribution; a surplus generic fact no longer adds
+  a true positive.
+- Estate runner and adapters: each unit runs on a private copy of the
+  estate, a drifted freeze refuses the run, and `runs.json` records the
+  harness commit and freeze digest; freeze and validate reject symlinks;
+  validate reports anchor collisions (`--strict` fails on them); wrapper
+  scripts quote every corpus-derived value and propagate exit codes; the
+  Cisco and Snyk wrappers refuse common MCP server launchers; AI-Infra-Guard
+  predictions no longer carry text taken from the answer key.
+- Re-scored runs (raw rows unchanged): on the cases track ShadowScan's
+  estate recall is 619 of 738 (was 622) and in-scope F1 82% (was 83%), and
+  AgentDiscover's code precision is 96% (was 9%); on the estate track
+  single-surface tools are scored on their own surfaces (AgentDiscover 5 of
+  6 positives in scope, not 5 of 87), vet's in-scope value precision is
+  100% (was 86%), and Agentic Radar's units whose commands all exited 1
+  without output are incomplete. Each track's `REPORT.md` has the numbers.
+- Repository: pre-commit's whitespace and end-of-file fixers skip
+  ShadowBench data and the mypy hook skips the estate's sample
+  repositories; `.gitattributes` reaches nested benchmark results;
+  `AGENTS.md` lists benchmark corpora and artifacts as untrusted;
+  `tools/README.md` indexes the repository tooling, and the README links
+  the benchmarks with their limits.
+
 ### Post-merge review fixes (October 11)
 
 - A plain `Bearer`, `Basic` or `SSWS` credential containing `--` or `=` plus a
