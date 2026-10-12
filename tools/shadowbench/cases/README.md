@@ -23,9 +23,9 @@ Every command is a subcommand of `python -m tools.shadowbench.cases`:
 |---|---|---|
 | `generate` | `generate.py` | Build the corpus at a seed (`--seed`, `--per-surface`, `--output`). Export, runtime and active-network cases compose entity drafts into one platform-native input; endpoint and passive-network cases reuse the pre-registered families of `tools/benchmark`; code cases pin repositories from `benchmarks/shadow-ai-discovery/corpus.json`, and generation refuses to run without that file. |
 | `verify` | `verify.py` | Load and validate a corpus and compare its recorded generator digest with the current sources: exit 0 when they match, otherwise exit 1 with a hint to use `--regenerate`. `--regenerate` rebuilds the cases at the recorded seed and per-surface count and compares the parsed case lists (header and `created` stamp ignored): identical cases exit 0 even when the digest differs, and any difference exits 1 and names the first differing case or, when one list is a prefix of the other, the two case counts. The committed corpus needs `--regenerate`, because its digest predates both the move to `cases/` and the digest's inclusion of the code corpus. |
-| `run` | `runner.py` | Materialize each case, execute every adapter's invocations through `stage.py` in isolation, write one JSONL row per (tool, case) and `manifest.json`, and keep each run's raw output locally under `<out>/raw/<tool>/`. Needs root. |
+| `run` | `runner.py` | Materialize each case, execute every adapter's invocations through `stage.py` in isolation, write one JSONL row per (tool, case) and `manifest.json` (with the harness commit), and keep each run's raw output locally under `<out>/raw/<tool>/`. Needs root and a `gcc` that can link a static binary. |
 | `score` | `score.py` | Entity-level and case-level metrics per tool, surface and modality; estate recall; agent tier; paired McNemar against a reference tool. Refuses results the run manifest does not vouch for (another corpus digest, a results file for a tool the manifest does not record as run, row statuses that differ from its counts) unless `--force`, which records each override; refuses malformed rows even with `--force`. |
-| `report` | `report.py` | Render `metrics.json` as Markdown, with any `--force` override listed at the top. |
+| `report` | `report.py` | Render `metrics.json` as Markdown, with any `--force` override listed at the top and, when the manifest has the harness fields, the harness commit and its state beside the corpus and platform. |
 
 `contract.py` defines the surfaces, modalities, case layout, entity keys and
 the adapter protocol. `corpus.py` is the case model and validates case inputs
@@ -33,8 +33,10 @@ on load. `families/` holds the entity families and their rubrics.
 `mockserv.py` serves the loopback services of active-network cases.
 `stage.py` is what runs inside the namespaces. `adapters/` holds one module
 per tool, `adapters/registry.py` loads them, and `adapters/_probe.py` runs the
-version probes. `fetch_code.py` fetches the pinned code-surface repositories
-and `install_tools.sh` installs the third-party tools.
+version probes. `fetch_code.py` fetches the pinned code-surface repositories;
+it is not a subcommand but a module of its own, run from the repository root
+as `python -m tools.shadowbench.cases.fetch_code DEST`. `install_tools.sh`
+installs the third-party tools.
 
 ## Isolation
 
@@ -59,10 +61,12 @@ namespace, kills and reaps all but its own inert processes, and records the
 case as an error if any process survives. When the stage itself overruns, the
 runner kills its process group, which ends every process in the namespace.
 
-The runner needs a `gcc` that can link a static binary, to build the inert
-process. It refuses to start unless:
+Before any tool runs, the runner refuses to start, with exit 2 and the reason,
+unless:
 
 * it runs as root and `unshare` (util-linux) is on the fixed `PATH`;
+* every case and checkout id in the corpus matches `[A-Za-z0-9._-]+`, since
+  the ids name directories;
 * the scratch directory (`--scratch`, or a new temporary directory) belongs to
   the runner and gives group and other nothing but search (mode 0711, as the
   runner creates it), because every run's `work/` belongs to the same uid and
@@ -71,13 +75,20 @@ process. It refuses to start unless:
 * the scratch directory, `tool_root` (by default the directory holding
   `tools.json`) and every absolute path in `tools.json` lie outside `/root`
   and `/home`, which the stage hides, and uid 65534 can traverse to the
-  scratch directory.
+  scratch directory;
+* `gcc` can compile and statically link the inert process binary, which needs
+  gcc and the C library's static archive (`glibc-static` or `libc6-dev`,
+  depending on the distribution). A missing compiler or a failed link is
+  reported with gcc's exit code and the end of its output.
 
 The tools must also be readable and executable by uid 65534. After a tool
 exits, any symlink it left that leads out of `work/`, and any FIFO, socket or
 device node, is removed before the adapter reads the output as root.
 
-The runner calls each adapter's `version()` once, outside the stage and as
+The manifest records a version for each tool that ran. When the tool's entry
+in `tools.json` has a `version` string (see Tool configuration), the runner
+records that string as given, without a probe. Otherwise it calls the
+adapter's `version()` once, after the tool's cases, outside the stage and as
 the runner's user. An adapter that runs the tool's binary for it does so only
 through `adapters/_probe.py`: the probe gets a fixed `PATH`, a throwaway
 `HOME` that is also its working directory, no other inherited environment, an
@@ -116,20 +127,23 @@ record `unknown` when theirs does not.
 ShadowScan's `bin` is a Python interpreter with ShadowScan's dependencies and
 its `repo` is the checkout put on `PYTHONPATH`; like every other path here, it
 must lie outside `/root` and `/home`. AI-Infra-Guard's `fingerprints` and
-`vuln` default to `<tool_root>/share/ai-infra-guard/`. The Snyk, Cisco,
-`agent-discovery` and AgentDiscover entries also accept a `version` string,
-which the manifest then records instead of a probed version.
+`vuln` default to `<tool_root>/share/ai-infra-guard/`. Any entry may also
+carry a `version` string. The runner records it in the manifest as given,
+for every tool alike, without probing the tool or checking the string against
+it; an entry without one gets the version its adapter probes.
 
 Each adapter's module docstring states the exact command line and the mapping
 from the tool's output to entity keys. [`install_tools.sh`](install_tools.sh)
 builds or installs every tool at the pinned commit or version into a tool root
 in this layout and writes `<tool root>/tools.json` for them, without the
-ShadowScan entry. Installs are version-pinned, not hash-locked: each PyPI
-tool is pinned to one version, but its transitive dependencies resolve at
-install time, and the Fleet wrapper's indirect Go modules are resolved by
-`go mod tidy`. Record `uv pip freeze` for each venv and the wrapper's
-`go.sum` next to any results. The script downloads third-party code; review
-it and run it on a disposable machine.
+ShadowScan entry. Each entry it writes carries the pinned version or commit as
+`version`, in the form the committed 2026-10-11 manifest records; remove the
+field to record what the installed tool reports instead. Installs are
+version-pinned, not hash-locked: each PyPI tool is pinned to one version, but
+its transitive dependencies resolve at install time, and the Fleet wrapper's
+indirect Go modules are resolved by `go mod tidy`. Record `uv pip freeze` for
+each venv and the wrapper's `go.sum` next to any results. The script
+downloads third-party code; review it and run it on a disposable machine.
 
 ## Reproduce
 
@@ -155,12 +169,23 @@ hardened `git` calls: `https` remotes only, hooks off, submodules never
 fetched, the caller's `GIT_*` variables dropped except the TLS CA settings,
 TLS verification on, no symlinked destination, and `rev-parse HEAD` checked
 against the pinned commit. The runner checks each checkout's HEAD again before
-copying it into a case. `run` records the corpus path and SHA-256, the
-generator digest, the platform and each tool's version and row-status counts
-in `manifest.json`; `score` copies them into `metrics.json`, so a report names
-the corpus and the tool versions it describes. Neither file records the
-harness commit, so the adapters that produced the rows and the scorer that
-produced the metrics must be identified from the repository history.
+copying it into a case.
+
+`run` records in `manifest.json` the corpus path and SHA-256, the generator
+digest, the platform, each tool's version and row-status counts, and the
+harness the run came from: `harness_commit` is the checkout's `HEAD` (null
+when git cannot name it, for example when it refuses a checkout that another
+user owns), and `harness_dirty` says whether anything under `tools/`,
+untracked files included, differed from it (null when unknown). Untracked
+files count because the registry imports every module in `adapters/`. Git
+runs without the caller's `GIT_*` variables. `score` copies these fields into
+`metrics.json`, and the report names the corpus, the tool versions and, for a
+manifest that has the harness fields, the harness commit and its state. The
+scorer's own commit is not recorded, so the code that produced `metrics.json`
+must still be identified from the repository history. The committed
+2026-10-11 manifest predates the harness fields; its report names no harness
+commit, and the code that produced its rows can only be inferred from that
+history.
 
 ## Adding a tool
 

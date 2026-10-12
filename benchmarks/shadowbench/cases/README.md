@@ -219,7 +219,8 @@ the two case counts). The committed corpus passes only with
 `--regenerate`. Anyone can use it to confirm that the committed cases are what
 the current generator builds, and can generate a fresh corpus at another seed
 to test for overfitting to this one. The run manifest names the corpus hash,
-the generator digest, the platform and each tool's version or commit.
+the generator digest, the platform and each tool's version or commit;
+manifests written by the current runner also name the harness commit.
 
 ### Bias controls
 
@@ -315,19 +316,24 @@ the generator digest, the platform and each tool's version or commit.
 
 Each adapter's docstring records the version, the exact command and the
 output-to-entity mapping. `install_tools.sh` in the harness directory
-reproduces the installations at the pinned versions and commits. Installs are
-version-pinned, not hash-locked: transitive dependencies resolve at install
-time, so a later install can differ below the pinned tools.
+reproduces the installations at the pinned versions and commits and writes
+those versions into the `tools.json` it creates. The runner copies a
+`version` found there into the manifest unchecked, for every tool, and probes
+only tools without one. Installs are version-pinned, not hash-locked:
+transitive dependencies resolve at install time, so a later install can
+differ below the pinned tools.
 
 ## Results
 
 Committed runs live under `results/<date>/` with `manifest.json` (corpus path
 and hash, generator digest, platform, and per tool its version and row-status
-counts), one `<tool>.jsonl` of normalized rows, `metrics.json` and
-`REPORT.md`. The runner's raw output stays on the machine that ran it and is
-not committed. The newest `REPORT.md` holds the measured numbers; read them
-with the caveats above. Scoring needs no third-party tool, so anyone can check
-the committed metrics from the committed rows:
+counts; from the current runner on, also the harness commit and whether
+anything under `tools/` differed from it, which the report then names), one
+`<tool>.jsonl` of normalized rows, `metrics.json` and `REPORT.md`. The
+runner's raw output stays on the machine that ran it and is not committed.
+The newest `REPORT.md` holds the measured numbers; read them with the caveats
+above. Scoring needs no third-party tool, so anyone can check the committed
+metrics from the committed rows:
 
 ```bash
 python -m tools.shadowbench.cases score --corpus benchmarks/shadowbench/cases/corpus.json \
@@ -367,6 +373,15 @@ track:
   host's file system otherwise in view, `/root` and `/home` included. Fleet's
   table, which also reads `/home/*` and `/root`, therefore saw the host's
   homes; its adapter kept only rows under the case home.
+* The runner now records in `manifest.json` the harness commit and whether
+  anything under `tools/` differed from it, and the report names both. It
+  records the `version` that `tools.json` gives any tool; before, the Numbat,
+  vet, AI-Infra-Guard and Fleet adapters always probed their binaries and
+  ignored the version `install_tools.sh` wrote for them. It also refuses to
+  start, with a message, when `gcc` cannot build the inert process binary,
+  where it used to stop with a traceback. The 2026-10-11 manifest predates
+  the harness fields, so its report names no harness commit and re-renders
+  unchanged.
 
 ### The 2026-10-11 run, in brief
 
