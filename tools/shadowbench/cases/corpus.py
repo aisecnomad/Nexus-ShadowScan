@@ -150,17 +150,20 @@ class Corpus:
     generator_digest: str
     created: str
     notes: dict[str, Any] = field(default_factory=dict)
+    per_surface: int | None = None
+    """The ``--per-surface`` the cases were generated with; ``None`` in corpora written before it was kept."""
 
     def to_json(self) -> dict[str, Any]:
-        return {
-            "benchmark": "shadowbench",
-            "version": 1,
-            "seed": self.seed,
-            "generator_digest": self.generator_digest,
-            "created": self.created,
-            "notes": self.notes,
-            "cases": [c.to_json() for c in self.cases],
-        }
+        out: dict[str, Any] = {"benchmark": "shadowbench", "version": 1, "seed": self.seed}
+        if self.per_surface is not None:
+            out["per_surface"] = self.per_surface
+        out.update(
+            generator_digest=self.generator_digest,
+            created=self.created,
+            notes=self.notes,
+            cases=[c.to_json() for c in self.cases],
+        )
+        return out
 
     def by_surface(self) -> dict[str, list[Case]]:
         out: dict[str, list[Case]] = {s: [] for s in SURFACES}
@@ -183,12 +186,18 @@ def load_corpus(path: Path) -> Corpus:
     ids = [c.case_id for c in cases]
     if len(ids) != len(set(ids)):
         raise ValueError(f"{path}: duplicate case ids")
+    per_surface = data.get("per_surface")
+    if per_surface is not None and (
+        not isinstance(per_surface, int) or isinstance(per_surface, bool) or per_surface < 0
+    ):
+        raise ValueError(f"{path}: per_surface {per_surface!r} is not a non-negative integer")
     return Corpus(
         cases=cases,
         seed=int(data["seed"]),
         generator_digest=str(data["generator_digest"]),
         created=str(data["created"]),
         notes=dict(data.get("notes") or {}),
+        per_surface=per_surface,
     )
 
 

@@ -6,7 +6,10 @@ Export surfaces (identity, gateway, lowcode, saas, cloud, runtime/snapshot)
 compose several entity drafts into one platform-native export per case, so a
 case holds a realistic mix of agents, plain AI use and decoys. Endpoint,
 network and runtime/live cases hold one artifact, window or process set each.
-The same seed and generator source always produce the same bytes.
+The same seed, ``--per-surface`` and generator sources always produce the same
+cases; only the ``created`` stamp in the header differs between runs. Code
+cases come from ``benchmarks/shadow-ai-discovery/corpus.json``; without it the
+generator refuses to build rather than write a corpus with no code surface.
 """
 
 from __future__ import annotations
@@ -508,16 +511,28 @@ def _active_case(rd: Rand, case_label: str, index: int) -> Case:
     )
 
 
+def _require_code_corpus(corpus_path: Path) -> Path:
+    """The code-surface corpus, or a clear error: a corpus without its code cases is not this benchmark."""
+    if not corpus_path.is_file():
+        raise FileNotFoundError(
+            f"code-surface corpus {corpus_path} is missing; ShadowBench pins its code cases there, "
+            "so the generator refuses to build or digest a corpus without them"
+        )
+    return corpus_path
+
+
 def code_cases(corpus_path: Path = CODE_CORPUS, repo_ids: tuple[str, ...] = CODE_REPOS) -> list[Case]:
     """Code-surface cases: pinned public repositories with the discovery benchmark's fact-level truth.
 
     A ``provider:*`` fact is plain model use (``llm``); every other fact (framework, MCP, agent
     configuration, A2A, low-code export, agent IaC) is ``agent``. Tolerated facts are carried over.
     """
-    data = json.loads(corpus_path.read_text(encoding="utf-8"))
+    data = json.loads(_require_code_corpus(corpus_path).read_text(encoding="utf-8"))
     repos = {r["id"]: r for r in data["repos"]}
     cases: list[Case] = []
     for i, rid in enumerate(repo_ids, 1):
+        if rid not in repos:
+            raise ValueError(f"{corpus_path}: pinned code repository {rid} is not in the code corpus")
         r = repos[rid]
         expected = [
             TruthEntity(
@@ -542,6 +557,7 @@ def code_cases(corpus_path: Path = CODE_CORPUS, repo_ids: tuple[str, ...] = CODE
                 checkout={"id": rid, "host": r["host"], "path": r["path"], "commit": r["commit"]},
             )
         )
+        validate_case(cases[-1])
     return cases
 
 
@@ -554,6 +570,9 @@ def _quota(n: int) -> list[str]:
 
 
 def build(seed: int, per_surface: int) -> list[Case]:
+    if per_surface < 0:
+        raise ValueError(f"per_surface must be non-negative, not {per_surface}")
+    code_corpus = _require_code_corpus(CODE_CORPUS)
     cases: list[Case] = []
     plan: list[tuple[str, str]] = [
         ("identity", "okta-export"),
@@ -612,13 +631,17 @@ def build(seed: int, per_surface: int) -> list[Case]:
                 )
             validate_case(case)
             cases.append(case)
-    if CODE_CORPUS.exists():
-        cases += code_cases()
-    return cases
+    return cases + code_cases(code_corpus)
 
 
 def generator_digest() -> str:
-    here = Path(__file__).parent
+    """SHA-256 over every source the cases are built from, named by repository-relative path.
+
+    That covers the generator, its families, the ``tools/benchmark`` families it reuses and the
+    code-surface corpus the code cases are drawn from. Paths are part of the digest, so moving
+    the sources changes it even when they still build the same cases (``verify --regenerate``).
+    """
+    here = Path(__file__).resolve().parent
     files = [
         here / "generate.py",
         here / "corpus.py",
@@ -631,6 +654,7 @@ def generator_digest() -> str:
         bench / "endpoint_cases.py",
         bench / "network_cases.py",
         bench / "repo_cases.py",
+        _require_code_corpus(CODE_CORPUS),
     ]
     return digest_files(files, here.parents[2])
 
@@ -643,9 +667,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--output", type=Path, required=True)
     args = ap.parse_args(argv)
+    if args.per_surface < 0:
+        ap.error("--per-surface must be non-negative")
     cases = build(args.seed, args.per_surface)
     corpus = Corpus(
-        cases, args.seed, generator_digest(), datetime.now(UTC).replace(microsecond=0).isoformat()
+        cases,
+        args.seed,
+        generator_digest(),
+        datetime.now(UTC).replace(microsecond=0).isoformat(),
+        per_surface=args.per_surface,
     )
     digest = dump_corpus(corpus, args.output)
     by_surface: dict[str, dict[str, int]] = {}
