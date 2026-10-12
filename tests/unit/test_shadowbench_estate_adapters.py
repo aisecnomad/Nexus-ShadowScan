@@ -146,7 +146,12 @@ def test_hostile_unit_and_binary_paths_stay_inert(
         assert (out_dir / name).is_file(), name
     if tool_id == "cisco_mcp_scanner":
         config_args = [call[call.index("--config-path") + 1] for call in calls if "--config-path" in call]
-        assert config_args == [str(home / ".claude.json")]
+        # The unit runs on a private copy of the estate (runner.run_unit), so the config is the
+        # same home-relative file inside that copy, never the frozen tree itself.
+        (config_arg,) = config_args
+        relative = (home / ".claude.json").relative_to(estate)
+        assert Path(config_arg).parts[-len(relative.parts) :] == relative.parts
+        assert not Path(config_arg).is_relative_to(estate)
 
 
 def test_generated_script_words_parse_as_literals(tmp_path: Path) -> None:

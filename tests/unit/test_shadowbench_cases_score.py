@@ -39,6 +39,10 @@ def _case(
         expected=[TruthEntity(key.split(":", 1)[0], key, label, {}, "planted") for key, label in expected],
         tolerated=list(tolerated),
         decoys=list(decoys),
+        # Code cases, and only code cases, carry a pinned checkout (corpus.validate_case).
+        checkout={"id": cid, "host": "github.com", "path": f"example/{cid}", "commit": "0" * 40}
+        if surface == "code"
+        else None,
     )
 
 
