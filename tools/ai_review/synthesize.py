@@ -389,6 +389,13 @@ def render(
             "> One or more reviewer artifacts were missing, unreadable or off-schema. "
             "The gate fails closed; re-run the reviewers."
         )
+    if reason == "stale_findings":
+        lines.append("")
+        lines.append(
+            "> One or more findings named files outside this pull request's diff and were "
+            "dropped from this review. The findings on files the diff does contain are "
+            "listed above; the gate fails closed on the stale ones."
+        )
     budget = MAX_REVIEW_BODY - PUBLISHER_RESERVE - _FOOTER_RESERVE - len("\n".join(lines)) - len(_TRAILER)
     entries, listed, unlisted = _fit(findings, budget)
     for entry in entries:
@@ -451,9 +458,10 @@ def main() -> int:
 
     unique, duplicates = dedupe(raw, scanner_fingerprints)
     if reason == "stale_findings":
-        # A finding that names a file the diff does not contain is counted and
-        # named in the reason, never rendered against that file; the findings
-        # on files the diff does contain stay in the review.
+        # A finding that names a file the diff does not contain is dropped and
+        # disclosed by render()'s stale-findings notice, never rendered against
+        # that file; the findings on files the diff does contain stay in the
+        # review.
         unique = [f for f in unique if f.path is None or f.path in diff_files]
     body, comments = render(
         unique,

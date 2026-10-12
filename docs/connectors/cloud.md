@@ -10,8 +10,12 @@ and IAM roles with AI-related permissions across major cloud providers.
     From a reviewed checkout, install cloud extras with `pip install ".[cloud]"`.
     For deployment, follow the [hash-locked install](../getting-started/install.md).
 
-All cloud connectors need the matching extra (`aws`, `gcp`, `azure` or `oci`)
-for live mode, or a JSONL record dump for offline mode. They use read-only
+`cloud.aws` and `cloud.oci` need the `aws` and `oci` extras for live mode;
+`cloud.azure` and `cloud.gcp` need `azure` and `gcp` unless a pre-issued
+`access_token` is supplied, when only the HTTPS client is used;
+`cloud.kubernetes` and `cloud.openshift` are offline only. Offline mode needs a
+JSONL record dump (a workload export for Kubernetes and OpenShift) and no
+extra. They use read-only
 list/describe/get calls only.
 
 See the [shared connector entry guide](../connectors.md#connector-entry-guide)

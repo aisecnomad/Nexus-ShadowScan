@@ -68,7 +68,8 @@ demand adds neither either: a person or a call (the API, another scenario, an
 AI agent or an MCP client) can start it. A Workbot event trigger reacts to
 workspace events, a bot's messages included, and is event-triggered. n8n classifies its trigger
 nodes by type, Make reads `scheduling.type` and webhook modules, Workato the
-provider of the recipe's trigger line, and Zapier the first step's app. A
+provider and trigger name of the recipe's trigger line (a Workbot line without
+a trigger name records no initiation), and Zapier the first step's app. A
 Zapier export record needs an `id`, `title`,
 `name` or `Zap` field; any other object is reported as an unsupported record
 and makes the scan incomplete. A CSV row whose cells are all blank is skipped

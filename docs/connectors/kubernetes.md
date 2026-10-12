@@ -18,6 +18,7 @@ and AI workload namespaces without an egress NetworkPolicy. These are
 heuristics, not proof that a workload executed or is reachable from the public
 internet.
 
-`cloud.*` connectors inherit the scanner's `allow_instance_credentials`
-approval hook. The offline analyzers make no credential or tenant requests.
-Live Kubernetes collection is not implemented.
+`cloud.kubernetes` and `cloud.openshift` use no credentials and accept no
+credential option: `allow_instance_credentials` is rejected on their entries.
+The offline analyzers make no credential or tenant requests. Live Kubernetes
+collection is not implemented.

@@ -413,6 +413,7 @@ def test_scope_descriptions_name_every_discovery_surface() -> None:
         "pyproject.toml description": _pyproject()["project"]["description"],
         "CITATION.cff abstract": _load_yaml(ROOT / "CITATION.cff")["abstract"],
         "README introduction": intro.group(1),
+        "docs/index.md": _read(ROOT / "docs" / "index.md"),
         "shadowscan --help": cli.main.help or "",
         "HTML report header": header.group(0),
     }

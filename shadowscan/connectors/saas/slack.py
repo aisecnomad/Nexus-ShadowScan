@@ -59,7 +59,8 @@ class SlackConnector(BaseConnector):
     config_keys: ClassVar[dict[str, str]] = {
         "token": "xoxb/xoxp token (env SLACK_TOKEN); admin.apps.* need an org admin user token",
         "team_id": (
-            "expected workspace id for live collection; required for offline exports without a team record"
+            "expected workspace id for live collection (env SLACK_TEAM_ID); "
+            "required for offline exports without a team record"
         ),
         "input": "offline: JSON export of users / apps / integration logs",
     }

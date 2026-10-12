@@ -15,8 +15,8 @@ that would alias or fail to materialize on a supported host are rejected before
 scanning. Sample creation never overwrites an existing path; an unexpected host
 alias stops evaluation instead of changing the labeled input.
 
-The eight bundled corpora (synthetic, public, realistic, review, field review,
-attribution, current SDK idioms and independent) are regression checks on known
+The nine bundled corpora (synthetic, public, realistic, review, field review,
+attribution, current SDK idioms, benchmark follow-up and independent) are regression checks on known
 inputs. The synthetic, realistic, review, attribution, current SDK idioms and
 public sets were written or selected by the maintainers; the independent corpus
 was labeled separately, as described below. None of them is a random or
@@ -44,6 +44,25 @@ newly flagged control or near-miss repository, or a repository whose scan was
 complete in the baseline and is now incomplete (exit 3) fails the run.
 Incomplete runs are scored on the facts they found and marked `(incomplete)`
 in REPORT.md, never as clean negatives.
+
+## ShadowBench: nine surfaces against other tools
+
+`benchmarks/shadowbench/` extends the comparison to every discovery surface in
+two tracks that share one harness, `tools/shadowbench/`
+(`python -m tools.shadowbench <track> <command>`). The **synthetic** track
+generates identity, gateway, low-code, SaaS, cloud, endpoint, network and
+runtime inputs from written rubrics in the platforms' native shapes, with
+entity-level truth, tolerated keys and decoys, and reuses 26 pinned
+repositories of the code-surface corpus; active-network cases serve mock
+products on loopback and live-runtime cases spawn inert processes inside the
+tool's namespaces, so scanners that only work live can be measured offline.
+The **estate** track scores the same tools against the authored, SHA-256-frozen
+artifacts of one fictional organization, with 137 labeled entities anchored to
+unique tokens inside them, so every true positive, false positive, true
+negative and false negative is countable. Both corpora are author-written, so
+each is a behaviour check on known inputs, not field precision or recall; see
+each track's README for the rubrics or protocol, the bias controls and the
+limits, and its newest `REPORT.md` for the measured numbers.
 
 ## Run the reproducible corpora
 
@@ -572,7 +591,7 @@ restricted release record. Changing labels, exclusions, scanner signatures or
 sampling after seeing results requires a new blinded holdout and reviewed policy.
 
 The standalone command requires declared human labels, rejects known-gap waivers
-and exact source reuse from the eight bundled evaluated corpora. It cannot find
+and exact source reuse from the nine bundled evaluated corpora. It cannot find
 undisclosed private prior evaluations or near duplicates. For a production
 rollout, run [`tools.acceptance.verify`](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) with
 declared `prior_corpora` and the separately reviewed tenant canary evidence.

@@ -1,0 +1,29 @@
+{
+ "plugins": [
+  {
+   "key": "ai.glean.confluence",
+   "name": "Glean for Confluence",
+   "vendor": {
+    "name": "Glean Technologies",
+    "link": "https://glean.com"
+   },
+   "description": "Enterprise search and AI assistant across Confluence spaces",
+   "enabled": true,
+   "userInstalled": true,
+   "version": "1.8.2",
+   "_product": "confluence"
+  },
+  {
+   "key": "com.chronosoft.timesheets",
+   "name": "Timesheets",
+   "vendor": {
+    "name": "ChronoSoft"
+   },
+   "description": "Worklog timesheets and approval reports for Jira projects",
+   "enabled": true,
+   "userInstalled": true,
+   "version": "4.1.0",
+   "_product": "jira"
+  }
+ ]
+}

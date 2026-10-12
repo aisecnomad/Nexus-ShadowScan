@@ -278,3 +278,46 @@ def test_inventory_check_renders_card_fields_literally(tmp_path: Path):
     assert result.exit_code == 0, result.output
     assert "[bold red]owner[/]" in result.output and "[/]" in result.output
     assert "Traceback" not in result.output
+
+
+# ------------------------------------------------------- usage errors (audit round 2)
+def test_code_mode_without_a_remote_target_is_a_usage_error(tmp_path: Path):
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--mode", "api"])
+    assert result.exit_code == 1, result.output
+    assert "--mode applies only to" in _flat(result.output)
+
+
+def test_signatures_list_rejects_an_unknown_category():
+    result = CliRunner().invoke(main, ["signatures", "list", "--category", "frameworkk"])
+    assert result.exit_code == 1, result.output
+    assert "frameworkk" in result.output and "'framework'" in _flat(result.output)
+
+
+def test_signatures_test_rejects_an_unknown_ecosystem():
+    result = CliRunner().invoke(main, ["signatures", "test", "langchain", "--ecosystem", "pypii"])
+    assert result.exit_code == 1, result.output
+    assert "pypii" in result.output and "the loaded packs declare" in _flat(result.output)
+
+
+def test_inventory_stubs_rejects_an_unknown_kind(tmp_path: Path):
+    report = tmp_path / "report.json"
+    report.write_text('{"findings": []}')
+    result = CliRunner().invoke(
+        main, ["inventory", "stubs", str(report), "-o", str(tmp_path / "out"), "--kinds", "agent,nope"]
+    )
+    assert result.exit_code == 1, result.output
+    assert "nope" in result.output and "mcp-server" in _flat(result.output)
+
+
+def test_a_global_option_after_the_command_says_where_it_goes():
+    result = CliRunner().invoke(main, ["connectors", "-v"])
+    assert result.exit_code == 1, result.output
+    assert "go before the command" in _flat(result.output)
+
+
+def test_merge_refuses_a_directory_as_the_output_path(tmp_path: Path):
+    report = tmp_path / "a.json"
+    report.write_text('{"findings": []}')
+    result = CliRunner().invoke(main, ["merge", str(report), "-o", str(tmp_path)])
+    assert result.exit_code == 1, result.output
+    assert "directory" in _flat(result.output)

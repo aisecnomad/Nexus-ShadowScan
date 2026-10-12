@@ -146,11 +146,11 @@ package.
 
    ```bash
    git -c advice.detachedHead=false checkout --detach v0.1.2
-   python -m venv "$TMPDIR/rebuild" && "$TMPDIR/rebuild/bin/python" -m pip install \
+   python -m venv "${TMPDIR:-/tmp}/rebuild" && "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip install \
      --require-hashes --only-binary=:all: -r requirements-build.lock
-   SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" "$TMPDIR/rebuild/bin/python" -m pip wheel . \
-     --no-deps --no-build-isolation --wheel-dir "$TMPDIR/rebuild/dist"
-   sha256sum "$TMPDIR/rebuild/dist/"nexusshadowscan-*.whl wheels/nexusshadowscan-*.whl
+   SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip wheel . \
+     --no-deps --no-build-isolation --wheel-dir "${TMPDIR:-/tmp}/rebuild/dist"
+   sha256sum "${TMPDIR:-/tmp}/rebuild/dist/"nexusshadowscan-*.whl wheels/nexusshadowscan-*.whl
    ```
 
    A differing digest means the published wheel was not built from that

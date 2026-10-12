@@ -5,6 +5,96 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Post-merge review fixes (October 11)
+
+- A plain `Bearer`, `Basic` or `SSWS` credential containing `--` or `=` plus a
+  letter is again withheld whole. The October 11 integration applied the
+  token-word rule's glued-text guard to every scheme credential, so such a
+  token's tail after the glue was left in sanitized text. The run a guard stop
+  leaves is now kept only when it names a credential a later rule reads
+  (`=password: v`, `--token v`, whose values those rules withhold) and is
+  withheld with the credential otherwise, with regression tests over all three
+  schemes for both shapes.
+- `shadowscan run --set credentials_file=<value>` (and the other credential-file
+  keys) warns again when the value is an opaque credential rather than a file
+  location. Judging those keys by value had delegated to rules that recognize
+  only known token formats, so a bare hexadecimal or generic opaque token
+  pasted in place of the path drew no command-line warning.
+- A Workato recipe whose Workbot trigger line carries no trigger name records
+  no initiation instead of reading as event-triggered: the name is what
+  separates a command a person operates from an event trigger, and the
+  connector no longer guesses when the export omits it.
+- The AI review gate's published review now states when findings named files
+  outside the pull request's diff and were dropped (the gate already failed
+  `stale_findings`; the drop was silent in the rendered body). The cancelled-
+  publication test delivers a real `SIGTERM`, so the handler registration in
+  `main()` is pinned. The publishing runbook's rebuild recipe guards `TMPDIR`
+  (`${TMPDIR:-/tmp}`), so it runs on a stock Linux shell, and the low-code
+  connector guide states that Workato classifies by provider and trigger name.
+
+### ShadowBench, the nine-surface discovery benchmark (October 11)
+
+- `benchmarks/shadowbench/` and `tools/shadowbench/`: a standardized,
+  tool-neutral benchmark across all nine discovery surfaces, in two tracks
+  that share one harness (`python -m tools.shadowbench <track> <command>`).
+- The `synthetic` track: a seeded generator writes platform-native inputs
+  (Okta and Graph exports, LiteLLM and Bedrock invocation logs, Power
+  Platform and n8n exports, Slack and GitHub App admin exports, AWS CLI
+  outputs and Kubernetes workload lists, developer home directories, Zeek
+  logs, osquery process tables) with entity-level ground truth, tolerated
+  keys and decoys; active-network cases serve mock products on loopback and
+  live-runtime cases spawn inert processes, so active scanners and process
+  scanners run offline. Code cases reuse 26 pinned repositories of the
+  code-surface corpus. The runner executes every adapter in fresh network
+  and PID namespaces and keeps the verbatim output; the scorer reports
+  entity and case-level precision, recall, F1, specificity, agent-tier
+  recall and false alarms, estate recall and paired McNemar tests with
+  intervals. Adapters cover ShadowScan, Snyk Agent Scan, Cisco MCP Scanner,
+  Microsoft's `agent-discovery`, AgentDiscover, Numbat, SafeDep vet,
+  AI-Infra-Guard and Fleet's `ai_tools` table.
+- The `estate` track: the authored artifacts of one fictional organization,
+  Vantor Logistics, across the nine surfaces, frozen by SHA-256 with 137
+  labeled entities (positive, control, near-miss) anchored to unique tokens
+  inside the artifacts, so a tool's predictions are attributed to entities
+  and unattributed in-scope predictions count as false positives. Its
+  adapters cover ShadowScan, Snyk Agent Scan, Numbat, AgentSight, Cisco MCP
+  Scanner, AI-Infra-Guard and the code-surface wrappers; the label-
+  completeness audit and errata are recorded in its corpus.
+- The corpora, rubrics, labels and results of both tracks are author-written
+  and not independent review; each track's README states the limits.
+- Carried from the two source pull requests with these corrections: the
+  synthetic track's `verify --regenerate` derived the per-surface count as
+  the case total over nine surfaces (38) instead of the generator's 40, so it
+  never reproduced the committed corpus; it now reads the count from a
+  generated surface, and a regeneration that matches passes even when the
+  generator sources moved. The estate's
+  `github.copilot-1.388.0/package.json` artifact was listed in its freeze and
+  corpus but never committed (the repository ignores `.vscode/`); the
+  extension manifest was reconstructed from the entity's definition
+  (publisher, name and version), the ignore rule exempts the estate's home
+  trees, and the freeze was regenerated over the 139 artifacts.
+
+### Command-line and documentation corrections (October 11)
+
+- `signatures list --category`, `signatures test --ecosystem` and
+  `inventory stubs --kinds` reject values they do not know instead of silently
+  matching nothing; `code --mode` without a remote target is a usage error;
+  `-v`/`-q` typed after the command say where they go; `merge -o` refuses a
+  directory and `merge -f` shows its default; eight options gained help text
+  and `run` and `signatures test` readable one-line summaries.
+- AI review gate: the publication sanitizer withholds a private key quoted
+  without its footer on one line or with escaped line breaks; before, only
+  real line breaks were recognized and the base64 body was published.
+- Documentation: least-privilege rows for the five live low-code connectors;
+  `cloud.azure` and `cloud.gcp` need no SDK extra with a pre-issued token and
+  `cloud.kubernetes` and `cloud.openshift` are offline only (the sentence said
+  every cloud connector needs its extra); `saas.generic` marks the scan
+  incomplete on any unnamed record, as the code does; `SLACK_TEAM_ID` and
+  `GITHUB_API_URL` are named in the key help; the eight offline inventories
+  have entries of their own in the connector summary; the Kubernetes guide no
+  longer advertises `allow_instance_credentials`, which those connectors
+  reject.
+
 ### Integration review corrections (October 11)
 
 - `shadowscan run --set` no longer warns that a credential is on the command

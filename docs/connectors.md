@@ -39,28 +39,6 @@ does any file in an offline input directory without one of the connector's
 export suffixes (a `README.md`, `.DS_Store` or rotated log): remove it or point
 `input` at the export file.
 
-The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
-`endpoint.models`, `endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes` and
-`cloud.openshift`) analyze exports. See the
-[Kubernetes and OpenShift guide](connectors/kubernetes.md) for workload exports
-and the [endpoint guide](connectors/endpoint.md) for MCP, OTLP, Ollama,
-model-artifact metadata, and eBPF exports. These connectors do not perform
-local host filesystem discovery, and their findings carry no device name, so
-lifecycle links do not apply to them. The one live probe among them is opt-in:
-`endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (at most
-`max_agent_cards`, default 100), optionally verifies their signatures against
-the operator-trusted keys at `agent_card_jwks_url`, and trusts a private CA
-from `ca_bundle` (see the
-[A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe)). It never
-fetches a URL declared inside a card and never contacts an MCP server. A job
-that sets both `input` and `agent_card_urls` is refused (exit 3), because a
-replay never probes.
-Model metadata is not parsed from GGUF/safetensors files, and MCP fingerprints
-have no rug-pull baseline. When no `input` is set, `endpoint.inventory` reads a
-fixed list of local user-scope locations and `runtime.processes` reads `/proc`
-on Linux; the engine links the two for the same tool on the same device (see
-the [endpoint](connectors/endpoint.md) and [runtime](connectors/runtime.md)
-guides).
 These three keys are declared once on `BaseConnector.shared_config_keys` and
 apply to every connector that reads an export file, so `shadowscan connectors`
 lists them after each connector's own keys. `code.filesystem`, `code.github` and
@@ -737,6 +715,13 @@ never its query string, and their count is reported as a scan note. In
 `key=value` text lines, quoted values honor `\"` and `\\` escapes; a line that
 repeats a key or leaves a quote open is malformed and makes the scan incomplete.
 
+### `gateway.otel`
+Analyzes offline OpenTelemetry GenAI span exports; span prompt and completion
+content is not retained. The connector performs no collection, and its
+findings carry no device name, so lifecycle links do not apply to them. See the
+[endpoint guide](connectors/endpoint.md) for the OTLP export format and the
+shared [offline input limits](#offline-input-limits).
+
 ## Low-code
 
 ### `lowcode.power-platform`
@@ -831,7 +816,7 @@ not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.
 Findings use the immutable workspace ID as `account`; the display name is stored
 in `metadata.workspace_name`. An offline export without a team record requires
-an explicit `team_id`. Conflicting or malformed workspace envelopes make the
+an explicit `team_id` (or env `SLACK_TEAM_ID`). Conflicting or malformed workspace envelopes make the
 scan incomplete and prevent attribution. A record that names another or an
 invalid workspace ID (for example a Slack Connect bot) is skipped and counted,
 and the scan is incomplete; the workspace's other records are still reported.
@@ -904,8 +889,12 @@ and resource IDs and sets the provider, so keep it stable between scans.
 
 ## Cloud
 
-All cloud connectors need the matching extra (`aws`, `gcp`, `azure` or `oci`)
-for live mode, or a JSONL record dump for offline mode. They use read-only
+`cloud.aws` and `cloud.oci` need the `aws` and `oci` extras for live mode;
+`cloud.azure` and `cloud.gcp` need `azure` and `gcp` unless a pre-issued
+`access_token` is supplied, when only the HTTPS client is used;
+`cloud.kubernetes` and `cloud.openshift` are offline only. Offline mode needs a
+JSONL record dump (a workload export for Kubernetes and OpenShift) and no
+extra. They use read-only
 list/describe/get calls only.
 
 Cloud record exports withhold every environment value of a function, app or
@@ -1087,6 +1076,13 @@ SDK objects become records through `oci.util.to_dict`, or through the model's
 declared fields when the SDK cannot be imported; an object that cannot be
 converted is skipped with a warning and makes the scan incomplete.
 
+### `cloud.kubernetes` and `cloud.openshift`
+Analyze offline Kubernetes and OpenShift workload exports (images, exposure,
+GPU, privilege and egress-policy indicators). Live collection is not
+implemented and the connectors use no credentials; their findings carry no
+device name, so lifecycle links do not apply to them. See the
+[Kubernetes and OpenShift guide](connectors/kubernetes.md).
+
 ## Endpoint
 
 ### `endpoint.inventory`
@@ -1112,6 +1108,28 @@ account's home), `label` (device name; default the host name),
 `shell_history`, `max_entries`. Offline, `input` replays exported records or
 reads osquery `vscode_extensions`, `chrome_extensions` and `firefox_addons`
 results. See the [endpoint guide](connectors/endpoint.md).
+
+When no `input` is set, `endpoint.inventory` reads a fixed list of local
+user-scope locations and `runtime.processes` reads `/proc` on Linux; the engine
+links the two for the same tool on the same device (see the
+[endpoint](connectors/endpoint.md) and [runtime](connectors/runtime.md)
+guides).
+
+### `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`
+The offline inventories analyze host and runtime, MCP tool-list, Ollama, local
+model metadata and eBPF event exports; see the
+[endpoint guide](connectors/endpoint.md). They do not perform local host
+filesystem discovery, and their findings carry no device name, so lifecycle
+links do not apply to them. The one live probe among them is opt-in:
+`endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (at most
+`max_agent_cards`, default 100), optionally verifies their signatures against
+the operator-trusted keys at `agent_card_jwks_url`, and trusts a private CA
+from `ca_bundle` (see the
+[A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe)). It never
+fetches a URL declared inside a card and never contacts an MCP server. A job
+that sets both `input` and `agent_card_urls` is refused (exit 3), because a
+replay never probes. Model metadata is not parsed from GGUF/safetensors files,
+and MCP fingerprints have no rug-pull baseline.
 
 ## Network
 
@@ -1163,6 +1181,11 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Okta | API token from a read-only admin, or OAuth `okta.apps.read` |
 | Slack | token with `users:read`; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`) |
 | ServiceNow | basic or bearer credentials with read access to the `sn_aia_*`, `sys_hub_flow` and `oauth_entity` tables through the Table API |
+| Salesforce | connected app (client-credentials flow) whose integration user has read access to the objects the REST `query` and Tooling `query` endpoints return; verify the object permissions in your org |
+| n8n | API key; the connector reads `/api/v1/workflows` only |
+| Make | API token with read access to scenarios (including blueprints) and AI agents (`/api/v2/scenarios`, `/api/v2/ai-agents`); verify the scope names in your organization |
+| Zapier | OAuth bearer token with the `zap` scope for `https://api.zapier.com/v2/zaps` |
+| Workato | API client with read access to recipes (`/api/recipes`); verify the privilege name in your workspace |
 | Notion | internal integration token with the *read user information* capability (`GET /v1/users`) |
 | Zoom | Server-to-Server OAuth app with `marketplace:read:list_apps:admin` |
 | Atlassian | site admin basic auth with an API token for the Universal Plugin Manager listing |

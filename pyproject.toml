@@ -77,7 +77,14 @@ line-length = 110
 target-version = "py311"
 # archive/ holds retained review artifacts; pre-commit's ruff hooks pass
 # --force-exclude, so this keeps them from being rewritten.
-exclude = ["tests/fixtures", "examples", "archive"]
+exclude = [
+  "tests/fixtures",
+  "examples",
+  "archive",
+  # Estate benchmark corpus artifacts: authored sample repositories and
+  # exports under test, not project code.
+  "benchmarks/shadowbench/estate/artifacts",
+]
 
 [tool.ruff.lint]
 # BLE: a broad `except` that does not re-raise is flagged; an intentional one
@@ -111,6 +118,8 @@ indent-style = "space"
 
 [tool.mypy]
 python_version = "3.11"
+# Estate benchmark corpus artifacts are inputs under test, not project code.
+exclude = ["benchmarks/shadowbench/estate/artifacts/"]
 warn_unused_ignores = true
 warn_return_any = true
 warn_unreachable = true
@@ -128,6 +137,8 @@ ignore_missing_imports = false
 [[tool.mypy.overrides]]
 module = [
     "regex",
+    "reportlab",
+    "reportlab.*",
     "boto3",
     "boto3.*",
     "botocore",

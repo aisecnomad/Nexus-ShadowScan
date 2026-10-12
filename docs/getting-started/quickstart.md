@@ -8,6 +8,11 @@ No credentials needed — scan a repository or directory:
 shadowscan code .
 ```
 
+Scanning the ShadowScan checkout itself reports an incomplete scan (exit 3):
+its redaction test fixtures intentionally exceed the sanitizer's limits, and
+the scanner fails closed rather than skip them silently. Scan one of your own
+projects, or start with the offline demo below.
+
 To mark which agents are sanctioned, add `--inventory <path>` with an existing
 card file or directory (for example the bundled `agent-card.yaml`); the path must
 exist. See [inventory](../inventory.md).
@@ -22,6 +27,9 @@ shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 ```
 
 Open `report.html` to explore findings with evidence drill-down.
+
+The bundled `agent-card.yaml` and `examples/` directory come from a repository
+checkout; the PyPI wheel does not ship them (see [installation](install.md)).
 
 ## 3. Scan with live connectors
 

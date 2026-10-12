@@ -1,0 +1,12 @@
+[
+  { "token": "googlebot", "name": "Googlebot" },
+  { "token": "bingbot", "name": "Bingbot" },
+  { "token": "yandexbot", "name": "YandexBot" },
+  { "token": "baiduspider", "name": "Baiduspider" },
+  { "token": "duckduckbot", "name": "DuckDuckBot" },
+  { "token": "applebot", "name": "Applebot" },
+  { "token": "ahrefsbot", "name": "AhrefsBot" },
+  { "token": "semrushbot", "name": "SemrushBot" },
+  { "token": "facebookexternalhit", "name": "FacebookExternalHit" },
+  { "token": "uptimerobot", "name": "UptimeRobot" }
+]

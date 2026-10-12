@@ -1,0 +1,95 @@
+{
+ "started": "2026-10-11T18:10:09+00:00",
+ "corpus": "benchmarks/shadowbench/corpus.json",
+ "corpus_sha256": "5997346ad000a0639709718b66743bb794d5f53faff3c2f38e78dbcc8ba36663",
+ "generator_digest": "9a825de5273a7fa8e42c26f2c224e19ee5e86e7f88cf5b7f2bb5e5b47519241e",
+ "platform": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+ "python": "3.13.16",
+ "workers": 3,
+ "cases": 346,
+ "tools": {
+  "agentdiscover": {
+   "tool": "agentdiscover",
+   "version": "2.9.5",
+   "seconds": 76.8,
+   "statuses": {
+    "unsupported": 280,
+    "ok": 66
+   }
+  },
+  "agentmesh-discovery": {
+   "tool": "agentmesh-discovery",
+   "version": "agentmesh-discovery 5.0.0",
+   "seconds": 15.2,
+   "statuses": {
+    "unsupported": 260,
+    "ok": 86
+   }
+  },
+  "ai-infra-guard": {
+   "tool": "ai-infra-guard",
+   "version": "v4.6.5",
+   "seconds": 16.1,
+   "statuses": {
+    "unsupported": 326,
+    "ok": 20
+   }
+  },
+  "cisco-mcp-scanner": {
+   "tool": "cisco-mcp-scanner",
+   "version": "cisco-ai-mcp-scanner 4.8.6",
+   "seconds": 71.8,
+   "statuses": {
+    "unsupported": 306,
+    "ok": 40
+   }
+  },
+  "fleet-ai-tools": {
+   "tool": "fleet-ai-tools",
+   "version": "fleet ai_tools (fleetdm/fleet main cf1217bafcd5cdce367165b1c604f94ed559e3d0, 2026-10-11; upstream karmine05/agentic-detector v0.3.0 7c942d0)",
+   "seconds": 3.8,
+   "statuses": {
+    "unsupported": 286,
+    "ok": 60
+   }
+  },
+  "numbat": {
+   "tool": "numbat",
+   "version": "dev+77ece3a76dce",
+   "seconds": 2.6,
+   "statuses": {
+    "unsupported": 306,
+    "ok": 40
+   }
+  },
+  "shadowscan": {
+   "tool": "shadowscan",
+   "version": "0.1.2+2d43f508fc95",
+   "seconds": 307.2,
+   "statuses": {
+    "ok": 326,
+    "unsupported": 20
+   }
+  },
+  "snyk-agent-scan": {
+   "tool": "snyk-agent-scan",
+   "version": "0.6.8",
+   "seconds": 16.8,
+   "statuses": {
+    "unsupported": 306,
+    "ok": 40
+   }
+  },
+  "vet": {
+   "tool": "vet",
+   "version": "v1.20.0",
+   "seconds": 16.1,
+   "statuses": {
+    "unsupported": 280,
+    "ok": 66
+   }
+  }
+ },
+ "skipped_adapters": {},
+ "finished": "2026-10-11T18:18:56+00:00"
+}

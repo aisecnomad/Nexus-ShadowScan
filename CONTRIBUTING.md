@@ -62,6 +62,19 @@ connectors; do not commit live tenant exports.
 
 Run `make help` for a quick reference of all development commands.
 
+## Repository map
+
+| Path | What lives there |
+|---|---|
+| `shadowscan/` | The scanner package: engine, CLI, connectors, signatures, mappings, risk and autonomy models, reporters and redaction. [docs/architecture.md](docs/architecture.md#modules) tabulates module responsibilities. |
+| `tests/` | The pytest suite. Unit tests sit in `tests/unit/`, named after the module they exercise; offline fixtures sit under `tests/fixtures/`; `tests/test_repository_policy.py` and `tests/test_repository_consistency.py` are the `make policy` gates. |
+| `tools/` | Tooling CI runs outside the package: the secrets and per-connector coverage gates, the regression corpora (`tools/evaluation/`), the acceptance verifier (`tools/acceptance/`), release, governance and container checks, benchmark harnesses, and the AI review gate internals (`tools/ai_review/`). |
+| `benchmarks/` | Benchmark corpora and recorded results; [benchmarks/README.md](benchmarks/README.md) indexes every benchmark, its harness and its limits. |
+| `examples/` | The offline demo configuration (`shadowscan.offline.yaml`), sample inventories, canary and eBPF fixtures, and consumer CI examples (GitHub Actions workflows and Kubernetes manifests). |
+| `docs/` | The MkDocs site (`mkdocs.yml` holds the nav): getting-started guides, connector guides, concepts, operations runbooks, ADRs and the API reference. |
+| `archive/reviews/` | Dated review records; per [AGENTS.md](AGENTS.md), not independent human review. |
+| `.github/` | Workflows, issue forms, the pull request template, the label taxonomy (`labels.yml`), Dependabot configuration and branch rulesets. |
+
 ## Run one test
 
 After the development setup above, run one offline test from the repository root:
@@ -241,7 +254,8 @@ contract. In brief:
 6. Describe each key in `config_keys` and run `make connector-reference`, which
    regenerates [docs/connectors/reference.md](docs/connectors/reference.md); a
    test fails when it is stale. Document required API scopes and the offline
-   export format in the connector guide under `docs/connectors/`.
+   export format in the connector guide under `docs/connectors/`, and add the
+   connector's summary row to [docs/connectors.md](docs/connectors.md).
 
 `BaseConnector.load_offline` already reads `input` exports. Declare an
 [engine hook](docs/architecture.md#engine-hooks) only when the engine must

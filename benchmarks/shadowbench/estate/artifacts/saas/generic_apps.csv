@@ -1,0 +1,3 @@
+App ID,App Name,Publisher,Permissions,Users,Installed By,Status,Domain
+gmp-perplexity-vq7x4,Perplexity,Perplexity AI,"https://www.googleapis.com/auth/drive.readonly, https://www.googleapis.com/auth/userinfo.email",41,tom@vantor.example,unsanctioned,perplexity.ai
+gmp-gemini-exch-t8r2,Gemini Exchange Portal,Gemini Trust Company,https://www.googleapis.com/auth/userinfo.email,6,nika@vantor.example,unsanctioned,gemini.com
