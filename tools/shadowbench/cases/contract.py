@@ -4,8 +4,12 @@ Everything an adapter needs is here: the surface and modality names, the
 materialized case layout a tool is pointed at, the entity keys a tool's output
 is mapped onto, and the declarative adapter protocol. Adapters never execute
 the tool themselves; they return invocations, and the runner executes them in
-the isolation the modality needs (no network; a fresh PID namespace unless the
-case stages live processes or services the tool must see).
+fresh network, PID and mount namespaces (see ``stage.py``): as uid/gid 65534
+with no supplementary groups, with an empty ``/root`` and ``/home``, and with
+exactly the environment the invocation declares. The case's live processes and
+services are staged inside those namespaces. The work directory an adapter is
+given, and the case under it, belong to that uid for the run; the tool must
+not need anything else under ``/root`` or ``/home``.
 
 Surfaces and modalities
 -----------------------
@@ -96,6 +100,9 @@ MODALITIES: Mapping[str, tuple[str, ...]] = {
     "network": ("passive", "active"),
     "runtime": ("snapshot", "live"),
 }
+
+SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+"""The fixed ``PATH`` tools and the stage get; never the operator's."""
 
 LABELS: tuple[str, ...] = ("agent", "llm", "none")
 Label = Literal["agent", "llm", "none"]
@@ -240,10 +247,15 @@ def supports(adapter: Adapter, surface: str, modality: str) -> bool:
 
 
 def base_env(home: Path, work: Path) -> dict[str, str]:
-    """A minimal environment: no inherited credentials, a case-local HOME."""
+    """A minimal environment built from scratch with a case-local HOME.
+
+    Nothing is read from the operator's environment, so no credential, proxy or
+    token variable reaches a tool; the stage passes an invocation's ``env`` as the
+    tool's whole environment.
+    """
     return {
         "HOME": str(home),
-        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "PATH": SYSTEM_PATH,
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
         "TMPDIR": str(work),

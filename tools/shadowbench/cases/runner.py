@@ -5,16 +5,28 @@
 
 For each (tool, case) the runner materializes the case under a scratch
 directory, asks the adapter for its invocations, and executes them through
-``stage.py`` inside fresh network and PID namespaces (``unshare``), with the
-case's mock services and inert processes present. The adapter then normalizes
-the output into entities. One JSONL row per (tool, case) goes to
+``stage.py`` inside fresh network, PID and mount namespaces (``unshare``), with
+the case's mock services and inert processes present. The adapter then
+normalizes the output into entities. One JSONL row per (tool, case) goes to
 ``<out>/<tool>.jsonl``; verbatim tool output goes to ``<out>/raw/<tool>/``.
+
+Each run gets ``<scratch>/<tool>-<case>-XXXX/`` (mode 0711) holding ``work/``,
+the tool's tree, which belongs to uid/gid 65534 for the run, and ``control/``
+(root only), where the stage spec and the stage's result stay out of the
+tool's reach. Tools run as 65534 with ``/root`` and ``/home`` hidden (see
+``stage.py``), so the scratch directory and every path in ``tools.json`` must
+lie outside those and be reachable by that uid; the runner refuses to start
+otherwise. Before the adapter reads the tool's output as root, any symlink the
+tool left that leads out of ``work/`` and any FIFO, socket or device node in it
+is removed.
 
 A crash, timeout or unreadable output is recorded as ``error`` and never as a
 clean negative. A run that exits outside the adapter's accepted codes but still
-reports entities keeps them and is flagged ``incomplete``. ``runtime/live``
-rows carry the pid map so reported pids are translated to the corpus's
-``proc:<index>`` keys before scoring.
+reports entities keeps them and is flagged ``incomplete``. On a timeout the
+runner kills ``unshare``'s process group; with ``--kill-child`` and ``--pid``
+that takes down every process in the namespace before the work tree is
+removed. ``runtime/live`` rows carry the pid map so reported pids are
+translated to the corpus's ``proc:<index>`` keys before scoring.
 
 Case and checkout ids from the corpus name directories, so they must match
 ``[A-Za-z0-9._-]+``. A code case may not also carry files, and no input file
@@ -31,6 +43,8 @@ import os
 import platform
 import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -44,6 +58,7 @@ from typing import Any
 
 from tools.shadowbench.cases.adapters.registry import load_adapters
 from tools.shadowbench.cases.contract import (
+    SYSTEM_PATH,
     Adapter,
     AdapterResult,
     MaterializedCase,
@@ -52,9 +67,12 @@ from tools.shadowbench.cases.contract import (
     supports,
 )
 from tools.shadowbench.cases.corpus import Case, Corpus, corpus_digest, load_corpus
-from tools.shadowbench.cases.stage import build_fakeproc
+from tools.shadowbench.cases.stage import HIDDEN, build_fakeproc
 
 STAGE_TIMEOUT_GRACE = 120
+KILL_GRACE = 10.0
+TOOL_UID = TOOL_GID = 65534
+"""The identity tools and inert processes run as (``nobody``/``nogroup`` on most systems)."""
 
 _SAFE_NAME = re.compile(r"[A-Za-z0-9._-]+")
 
@@ -134,15 +152,85 @@ def materialize(case: Case, root: Path, checkouts: Path | None = None) -> Materi
     )
 
 
-def _stage(spec: dict[str, Any], work: Path, repo: Path, timeout: float) -> dict[str, Any]:
-    spec_path = work / "stage_spec.json"
-    out_path = work / "stage_out.json"
-    spec_path.write_text(json.dumps(spec), encoding="utf-8")
-    cmd = [
+def _chown_tree(path: Path, uid: int, gid: int) -> None:
+    """Hand a tree the runner built to the tool's identity without following any symlink in it."""
+    os.lchown(path, uid, gid)
+    for top, dirs, files in os.walk(path):
+        for name in (*dirs, *files):
+            os.lchown(os.path.join(top, name), uid, gid)
+
+
+def _drop_unsafe_entries(work: Path) -> int:
+    """Remove what the tool left that the adapter, reading as root on the host, must not open.
+
+    The tool ran as uid 65534 with ``/root`` and ``/home`` hidden, but its output is read here
+    with neither restriction: a symlink it planted could lead to a host file it could never
+    read itself, and a FIFO would block the read forever. Symlinks that stay inside ``work``
+    are kept.
+    """
+    top = os.path.realpath(work)
+    removed = 0
+    for parent, dirs, files in os.walk(work):
+        for name in [*dirs, *files]:
+            path = os.path.join(parent, name)
+            mode = os.lstat(path).st_mode
+            if stat.S_ISDIR(mode) or stat.S_ISREG(mode):
+                continue
+            if stat.S_ISLNK(mode) and os.path.commonpath([top, os.path.realpath(path)]) == top:
+                continue
+            os.unlink(path)
+            removed += 1
+            if name in dirs:
+                dirs.remove(name)
+    return removed
+
+
+def isolation_problems(scratch: Path, tool_config: dict[str, Any]) -> list[str]:
+    """Why tools running as uid 65534 with ``/root`` and ``/home`` hidden could not run from here."""
+    hidden = [Path(p).resolve() for p in HIDDEN]
+
+    def hidden_root(path: Path) -> Path | None:
+        resolved = path.resolve()
+        return next((h for h in hidden if resolved.is_relative_to(h)), None)
+
+    problems: list[str] = []
+    covered = hidden_root(scratch)
+    if covered is not None:
+        problems.append(f"scratch directory {scratch} lies under {covered}, which the stage hides from tools")
+    else:
+        for part in (scratch.resolve(), *scratch.resolve().parents):
+            if not os.stat(part).st_mode & stat.S_IXOTH:
+                problems.append(f"uid {TOOL_UID} cannot traverse {part} to reach scratch directory {scratch}")
+                break
+    paths: list[tuple[str, str]] = []
+    if isinstance(tool_config.get("tool_root"), str):
+        paths.append(("tool_root", tool_config["tool_root"]))
+    tools = tool_config.get("tools")
+    tools = tools if isinstance(tools, dict) else {}
+    for name, cfg in sorted(tools.items()):
+        if not isinstance(cfg, dict):
+            continue
+        for key, value in sorted(cfg.items()):
+            if isinstance(value, str) and value.startswith("/"):
+                paths.append((f"tools.{name}.{key}", value))
+    for label, value in paths:
+        covered = hidden_root(Path(value))
+        if covered is not None:
+            problems.append(f"{label} = {value} lies under {covered}, which the stage hides from tools")
+    return problems
+
+
+def stage_command(spec_path: Path, out_path: Path) -> list[str]:
+    """The stage's command line: no network, its own PID and mount namespaces, gone when unshare dies."""
+    return [
         "unshare",
         "--net",
         "--pid",
         "--fork",
+        "--kill-child",
+        "--mount",
+        "--propagation",
+        "private",
         "--mount-proc",
         "--",
         sys.executable,
@@ -151,26 +239,66 @@ def _stage(spec: dict[str, Any], work: Path, repo: Path, timeout: float) -> dict
         str(spec_path),
         str(out_path),
     ]
+
+
+def _kill_stage(proc: subprocess.Popen[bytes]) -> None:
+    """Kill unshare and the stage; the stage is the namespace's init, so every tool process dies too."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        proc.communicate(timeout=KILL_GRACE)
+    except subprocess.TimeoutExpired:
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                stream.close()
+        try:
+            proc.wait(timeout=KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def _stage(spec: dict[str, Any], control: Path, repo: Path, timeout: float) -> dict[str, Any]:
+    """Run the stage on ``spec``; its spec and result files live in ``control``, never in the work tree."""
+    spec_path = control / "stage_spec.json"
+    out_path = control / "stage_out.json"
+    full = {**spec, "run_as": [TOOL_UID, TOOL_GID], "host_mnt_ns": os.readlink("/proc/self/ns/mnt")}
+    spec_path.write_text(json.dumps(full), encoding="utf-8")
     env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PATH": SYSTEM_PATH,
         "PYTHONPATH": str(repo),
         "LANG": "C.UTF-8",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    proc = subprocess.Popen(
+        stage_command(spec_path, out_path),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+        cwd=str(repo),
+        start_new_session=True,
+    )
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, env=env, check=False, cwd=str(repo)
-        )
+        _, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        return {"error": "stage timed out", "runs": [], "processes": []}
+        _kill_stage(proc)
+        return _stage_error(f"stage timed out after {timeout:.0f}s")
     if not out_path.exists():
-        return {
-            "error": f"stage produced no output (exit {proc.returncode}): {proc.stderr[-500:]}",
-            "runs": [],
-            "processes": [],
-        }
-    result: dict[str, Any] = json.loads(out_path.read_text(encoding="utf-8"))
+        stderr = err.decode("utf-8", "replace")[-500:]
+        return _stage_error(f"stage produced no output (exit {proc.returncode}): {stderr}")
+    try:
+        result = json.loads(out_path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        return _stage_error(f"stage output unreadable: {exc}")
+    if not isinstance(result, dict):
+        return _stage_error("stage output is not an object")
     return result
+
+
+def _stage_error(message: str) -> dict[str, Any]:
+    return {"error": message, "runs": [], "processes": []}
 
 
 def _with_note(note: str, extra: str) -> str:
@@ -187,7 +315,9 @@ def run_one(
     checkouts: Path | None,
 ) -> dict[str, Any]:
     prefix = f"{adapter.name}-{safe_name(case.case_id, 'case id')}-"
-    work = Path(tempfile.mkdtemp(prefix=prefix, dir=scratch))
+    run_dir = Path(tempfile.mkdtemp(prefix=prefix, dir=scratch))
+    work = run_dir / "work"
+    control = run_dir / "control"
     row: dict[str, Any] = {
         "tool": adapter.name,
         "case": case.case_id,
@@ -199,6 +329,10 @@ def run_one(
     }
     started = time.monotonic()
     try:
+        # The tool may pass through run_dir to work/, but cannot list it or enter control/.
+        run_dir.chmod(0o711)
+        work.mkdir(mode=0o700)
+        control.mkdir(mode=0o700)
         mat = materialize(case, work / "case", checkouts)
         invocations = adapter.invocations(mat, env, work)
         spec = {
@@ -218,7 +352,9 @@ def run_one(
             ],
         }
         total_timeout = sum(inv.timeout for inv in invocations) + STAGE_TIMEOUT_GRACE
-        staged = _stage(spec, work, repo, total_timeout)
+        _chown_tree(work, TOOL_UID, TOOL_GID)
+        staged = _stage(spec, control, repo, total_timeout)
+        unsafe = _drop_unsafe_entries(work)
         runs = [
             RunResult(
                 int(r["code"]), str(r["stdout"]), str(r["stderr"]), float(r["seconds"]), bool(r["timed_out"])
@@ -266,6 +402,8 @@ def run_one(
                 result.note = _with_note(result.note, f"{harness} harness/self process reports ignored")
         if bad_exit is not None:
             result.note = _with_note(result.note, f"exit {bad_exit} is outside the accepted codes")
+        if unsafe:
+            result.note = _with_note(result.note, f"{unsafe} unsafe links or special files removed from work")
         row.update(result.to_json())
         row["seconds"] = round(sum(r.seconds for r in runs), 3)
         row["incomplete"] = bool(result.raw.get("incomplete")) or bad_exit is not None
@@ -282,7 +420,7 @@ def run_one(
         row["incomplete"] = False
         row["raw"] = {}
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(run_dir, ignore_errors=True)
     return row
 
 
@@ -378,7 +516,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
     if os.geteuid() != 0:
-        print("the runner needs root for unshare --net --pid --mount-proc", file=sys.stderr)
+        print(
+            f"the runner needs root for unshare --net --pid --mount and to run tools as uid {TOOL_UID}",
+            file=sys.stderr,
+        )
+        return 2
+    if shutil.which("unshare", path=SYSTEM_PATH) is None:
+        print(f"unshare (util-linux) is not on {SYSTEM_PATH}", file=sys.stderr)
         return 2
     corpus: Corpus = load_corpus(args.corpus)
     bad_ids = unsafe_ids(corpus.cases)
@@ -399,9 +543,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.cases:
         ids = {s for s in args.cases.split(",") if s}
         cases = [c for c in cases if c.case_id in ids]
+    if args.scratch is None:
+        scratch = Path(tempfile.mkdtemp(prefix="shadowbench-"))
+        scratch.chmod(0o711)
+    else:
+        scratch = args.scratch.resolve()  # the stage runs from the repository, not from here
+        scratch.mkdir(parents=True, exist_ok=True)
+    isolation = isolation_problems(scratch, env.config)
+    if isolation:
+        print("\n".join(isolation), file=sys.stderr)
+        return 2
     args.out.mkdir(parents=True, exist_ok=True)
-    scratch = args.scratch or Path(tempfile.mkdtemp(prefix="shadowbench-"))
-    scratch.mkdir(parents=True, exist_ok=True)
     fakeproc = build_fakeproc(scratch / "fakeproc")
     manifest: dict[str, Any] = {
         "started": datetime.now(UTC).replace(microsecond=0).isoformat(),
