@@ -45,6 +45,27 @@ complete in the baseline and is now incomplete (exit 3) fails the run.
 Incomplete runs are scored on the facts they found and marked `(incomplete)`
 in REPORT.md, never as clean negatives.
 
+## ShadowBench: nine surfaces against other tools
+
+`benchmarks/shadowbench/` extends that comparison to every discovery surface
+in two tracks, each with its own harness under `tools/shadowbench/`
+(`python -m tools.shadowbench`). The *cases* track generates platform-native
+inputs at a recorded seed from written rubrics: identity, gateway, low-code,
+SaaS and cloud exports, developer home directories, network logs, process
+tables, loopback mock services and inert live processes. Each input has
+entity-level truth, tolerated keys and decoys, and the code surface reuses 26
+pinned repositories of the code-surface corpus. The *estate* track is one
+authored fictional organization whose artifacts span all nine surfaces at
+once. It is frozen by SHA-256 and scored entity by entity, including whether a
+tool tells registered agents from shadow ones. Both tracks are synthetic and
+author-written, apart from the cases track's code repositories, and the same
+maintainer wrote ShadowScan, the harnesses, the labels and every other tool's
+adapter. They check behaviour on known inputs; they do not measure field
+precision or recall and are not a verdict on any vendor's product. See
+[`benchmarks/shadowbench/README.md`](https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/shadowbench/README.md)
+for how the tracks differ, and each track's README and newest `REPORT.md` for
+the method, the limits and the measured numbers.
+
 ## Run the reproducible corpora
 
 From the reviewed checkout, with the package dependencies installed:

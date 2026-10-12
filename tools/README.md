@@ -27,6 +27,7 @@ none of them can show.
 
 | Package | Question it answers | Entry point |
 |---|---|---|
+| [`shadowbench/`](shadowbench/README.md) | All nine surfaces: generated per-surface cases with decoys, and one authored organization scored entity by entity | `python -m tools.shadowbench` |
 | [`discovery_benchmark/`](discovery_benchmark/README.md) | Code surface: which facts do discovery tools find in 87 pinned public repositories; `benchmark.yml` reruns ShadowScan on it weekly as a regression gate | `python -m tools.discovery_benchmark` |
 | [`benchmark/`](benchmark/README.md) | Seeded, generated head-to-head cases on repository, endpoint and network inputs, plus the sampled real-world cohort under [`benchmark/realworld/`](benchmark/realworld/README.md) | `python -m tools.benchmark.run` |
 | [`benchmark_realworld/`](benchmark_realworld/README.md) | Public repositories read as a working tree and as `$HOME`, labeled under a written protocol | `python -m tools.benchmark_realworld.run` |
