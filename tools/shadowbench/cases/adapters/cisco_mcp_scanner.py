@@ -42,17 +42,21 @@ whose stderr holds neither a ``Found MCP config file`` nor a ``Config file not
 found`` line did not enumerate the home and is an error, never an empty
 result. The tool writes ``.npm/_logs`` into the home when it tries an ``npx``
 server.
+
+``version()`` asks the venv interpreter for the distribution version through
+``_probe`` (scrubbed environment, throwaway home, timeout) unless
+``tools.json`` pins a version.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from tools.shadowbench.cases.adapters._probe import distribution_version
 from tools.shadowbench.cases.contract import (
     AdapterResult,
     Entity,
@@ -65,28 +69,13 @@ from tools.shadowbench.cases.contract import (
     tail,
 )
 
-BIN = "mcp-scanner"
+TOOL = "cisco-mcp-scanner"  # the tools.json key: the adapter name, as for every other adapter
+BIN = "mcp-scanner"  # the console script; still accepted as the key this adapter used to read
 DISTRIBUTION = "cisco-ai-mcp-scanner"
 RAW_LIMIT = 200_000
 
 _SERVER_LINE = re.compile(r"Scanning server '(?P<name>.+?)' from (?P<path>.+?)\s*$")
 _CONFIG_LINE = re.compile(r"(Found MCP config file|Config file not found): ")
-
-
-def _distribution_version(binary: str, distribution: str) -> str:
-    """Ask the interpreter next to the console script for the installed distribution version."""
-    python = Path(binary).parent / "python"
-    if not python.exists():
-        return "unknown"
-    code = f"import importlib.metadata as m; print(m.version({distribution!r}))"
-    try:
-        proc = subprocess.run(
-            [str(python), "-I", "-c", code], capture_output=True, text=True, timeout=30, check=False
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    text = proc.stdout.strip()
-    return text if proc.returncode == 0 and text else "unknown"
 
 
 def _json_object(text: str) -> dict[str, Any] | None:
@@ -105,25 +94,29 @@ class CiscoMCPScanner:
     display = "Cisco MCP Scanner"
     surfaces: Mapping[str, frozenset[str]] = {"endpoint": frozenset({"home"})}
 
+    @staticmethod
+    def _binary(env: ToolEnv) -> str | None:
+        return env.binary(TOOL) or env.binary(BIN)
+
     def unavailable_reason(self, env: ToolEnv) -> str | None:
-        binary = env.binary(BIN)
+        binary = self._binary(env)
         if not binary:
-            return f"no 'bin' configured for {BIN} in tools.json"
+            return f"no 'bin' configured for {TOOL} in tools.json"
         if not Path(binary).exists():
             return f"{binary} does not exist"
         return None
 
     def version(self, env: ToolEnv) -> str:
-        pinned = env.tool(BIN).get("version")
+        pinned = (env.tool(TOOL) or env.tool(BIN)).get("version")
         if isinstance(pinned, str) and pinned:
             return pinned
-        binary = env.binary(BIN)
-        return _distribution_version(binary, DISTRIBUTION) if binary else "unknown"
+        binary = self._binary(env)
+        return distribution_version(binary, DISTRIBUTION) if binary else "unknown"
 
     def invocations(self, case: MaterializedCase, env: ToolEnv, work: Path) -> list[Invocation]:
         if case.home is None:
             return []
-        binary = env.binary(BIN) or BIN
+        binary = self._binary(env) or BIN
         argv = (binary, "--analyzers", "yara", "--format", "raw", "--log-level", "debug", "known-configs")
         environ = {**base_env(case.home, work), "MCP_SCANNER_STDIO_TIMEOUT": "2"}
         # ~12 s per enumerated stdio server (see module docstring); well-known configs are few.

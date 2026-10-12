@@ -54,22 +54,28 @@ Detection rules:
   ``agent_type`` with ``taxonomy.facts_from_name`` (``crewai.yaml`` ->
   ``framework:crewai``, Compose ``langchain`` -> ``framework:langchain``),
   label ``agent``; a hit that maps to no fact
-  (``agentmesh.yaml`` -> ``agt``, ``copilot-setup-steps.yml``) is emitted as a
-  ``file`` entity keyed ``artifact:<path relative to repo>``.
+  (``agentmesh.yaml`` -> ``agt``, ``copilot-setup-steps.yml``) is dropped and
+  listed as ``unmapped_files`` in the note: code truth holds only taxonomy
+  facts, so any other key could never match (the ShadowScan adapter drops its
+  unmappable findings the same way).
 * runtime/live: each process hit becomes ``process:<tags.pid>``, label
   ``agent``; the tool's own ``agent-discovery scan`` process is dropped.
+
+``version()`` asks the venv interpreter for the distribution version and runs
+``agent-discovery --version``, both through ``_probe`` (scrubbed environment,
+throwaway home, timeout), unless ``tools.json`` pins a version.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from tools.discovery_benchmark import taxonomy
+from tools.shadowbench.cases.adapters._probe import cli_version, distribution_version
 from tools.shadowbench.cases.contract import (
     AdapterResult,
     Entity,
@@ -86,32 +92,6 @@ BIN = "agentmesh-discovery"
 DISTRIBUTION = "agentmesh-discovery"
 RAW_LIMIT = 200_000
 _SELF = "agent-discovery"
-_VERSION = re.compile(r"(\d+\.\d+\.\d+\S*)")
-
-
-def _distribution_version(binary: str, distribution: str) -> str:
-    """Ask the interpreter next to the console script for the installed distribution version."""
-    python = Path(binary).parent / "python"
-    if not python.exists():
-        return "unknown"
-    code = f"import importlib.metadata as m; print(m.version({distribution!r}))"
-    try:
-        proc = subprocess.run(
-            [str(python), "-I", "-c", code], capture_output=True, text=True, timeout=30, check=False
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    text = proc.stdout.strip()
-    return text if proc.returncode == 0 and text else "unknown"
-
-
-def _cli_version(binary: str) -> str:
-    try:
-        proc = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    match = _VERSION.search(proc.stdout + proc.stderr)
-    return match.group(1) if match else "unknown"
 
 
 def _json_array(text: str) -> list[Any] | None:
@@ -166,8 +146,8 @@ class AgentMeshDiscovery:
         binary = env.binary(BIN)
         if not binary:
             return "unknown"
-        dist = _distribution_version(binary, DISTRIBUTION)
-        cli = _cli_version(binary)
+        dist = distribution_version(binary, DISTRIBUTION)
+        cli = cli_version(binary)
         return f"{dist} (cli {cli})" if dist != "unknown" else cli
 
     def invocations(self, case: MaterializedCase, env: ToolEnv, work: Path) -> list[Invocation]:
@@ -232,8 +212,7 @@ class AgentMeshDiscovery:
             # for files the path table does not know (crewai.yaml, a Compose file naming langchain).
             facts = set(taxonomy.facts_for_config_path(rel)) or set(taxonomy.facts_from_name(agent_type))
             if not facts:
-                unmapped.append(rel)
-                found.setdefault(key, Entity("file", key, "agent", {"agent_type": agent_type}))
+                unmapped.append(rel)  # dropped: an artifact key never matches code truth
                 continue
             for fact in sorted(facts):
                 attrs = {"path": rel, "agent_type": agent_type}

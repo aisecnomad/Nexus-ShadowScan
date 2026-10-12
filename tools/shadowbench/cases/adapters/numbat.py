@@ -17,6 +17,12 @@ true when the agent's config directory exists under the home; ``present`` also
 covers at-rest transcripts under the agent's session roots and numbat-owned
 hook configuration. numbat prints agent display names only, never a path.
 
+Fail closed: empty stdout (an empty home prints ``[]``) or output that is not a
+JSON array is an error. A row whose ``at_rest_scan_incomplete`` is set means
+numbat did not finish reading that agent's at-rest data: the result is still
+normalized but flagged incomplete (``raw["incomplete"]``), and the note names
+those agents.
+
 Mapping: every ``present`` row becomes ``artifact:<config dir>`` labelled
 ``agent``, where the config dir is the home-relative directory numbat's
 descriptor table (``cmd/numbat/agents.go``, ``agentDescriptors[].configDirRel``)
@@ -34,16 +40,20 @@ to the same place numbat looks.
 ``numbat scan`` and ``numbat timeline`` are not used for inventory: on a home
 without session transcripts they print a ``diagnostic`` record ("no agent
 artifacts found under <home>") and exit 1.
+
+``version()`` runs ``numbat --version`` through ``_probe`` (scrubbed
+environment, throwaway home, timeout).
 """
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
+from tools.shadowbench.cases.adapters._probe import run_probe
 from tools.shadowbench.cases.contract import (
     AdapterResult,
     Entity,
@@ -105,12 +115,9 @@ class NumbatAdapter:
         binary = env.binary(TOOL)
         if not binary:
             return "unknown"
-        try:
-            proc = subprocess.run(
-                [binary, "--version"], capture_output=True, text=True, timeout=30, check=False
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return f"unknown ({exc})"
+        proc = run_probe([binary, "--version"])
+        if proc is None:
+            return "unknown"
         match = _VERSION.search(proc.stdout + proc.stderr)
         return match.group(1) if match else (proc.stdout.strip() or "unknown")
 
@@ -133,8 +140,11 @@ class NumbatAdapter:
             return AdapterResult(status="error", note="numbat agents timed out")
         if run.code != 0:
             return AdapterResult(status="error", note=f"numbat agents exit {run.code}: {tail(run.stderr)}")
+        if not run.stdout.strip():
+            # An empty home prints "[]": no output at all is a failed run, never a clean negative.
+            return AdapterResult(status="error", note=f"numbat agents printed nothing: {tail(run.stderr)}")
         try:
-            data = json.loads(run.stdout or "[]")
+            data = json.loads(run.stdout)
         except json.JSONDecodeError as exc:
             return AdapterResult(status="error", note=f"numbat agents output is not JSON: {exc}")
         if not isinstance(data, list):
@@ -142,6 +152,13 @@ class NumbatAdapter:
         home = case.home or work
         entities: dict[str, Entity] = {}
         unmapped: list[str] = []
+        incomplete = sorted(
+            {
+                str(row.get("agent") or "?")
+                for row in data
+                if isinstance(row, dict) and _flag(row.get("at_rest_scan_incomplete"))
+            }
+        )
         for row in data:
             if not isinstance(row, dict) or not row.get("present"):
                 continue
@@ -166,10 +183,28 @@ class NumbatAdapter:
                     "files": _files_under(home / rel),
                 },
             )
-        note = f"unmapped agent names: {', '.join(sorted(set(unmapped)))}" if unmapped else ""
+        notes = []
+        if incomplete:
+            notes.append(f"at-rest scan incomplete for: {', '.join(incomplete)}")
+        if unmapped:
+            notes.append(f"unmapped agent names: {', '.join(sorted(set(unmapped)))}")
         return AdapterResult(
-            status="ok", entities=list(entities.values()), note=note, raw={"agents": data[:200]}
+            status="ok",
+            entities=list(entities.values()),
+            note="; ".join(notes),
+            raw={"agents": data[:200], "incomplete": bool(incomplete)},
         )
+
+
+def _flag(value: Any) -> bool:
+    """Whether a numbat flag is set; a value of an unexpected type counts as set (fail closed)."""
+    if value is None or isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int | float):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "false", "0", "no"}
+    return True
 
 
 def _choose_dir(home: Path, candidates: tuple[str, ...]) -> str:

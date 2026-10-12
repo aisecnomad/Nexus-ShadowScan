@@ -62,20 +62,25 @@ Detection rules:
   ``taxonomy.facts_from_name`` ("CrewAI Agent detected" -> ``framework:crewai``,
   "Unmanaged OpenAI client detected" -> ``provider:openai``). ``provider:*``
   facts are labeled ``llm``, everything else ``agent``. A hit that maps to no
-  fact is emitted as a ``file`` entity keyed ``artifact:<path relative to repo>``.
+  fact is dropped and listed as ``unmapped`` in the note: code truth holds
+  only taxonomy facts, so any other key could never match (the ShadowScan
+  adapter drops its unmappable findings the same way).
+
+``version()`` runs ``agentdiscover --version`` through ``_probe`` (scrubbed
+environment, throwaway home, timeout) unless ``tools.json`` pins a version.
 """
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
 import tomllib
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from tools.discovery_benchmark import taxonomy
+from tools.shadowbench.cases.adapters._probe import cli_version
 from tools.shadowbench.cases.contract import (
     AdapterResult,
     Entity,
@@ -92,7 +97,6 @@ BIN = "agentdiscover"
 RAW_LIMIT = 200_000
 OUTPUT_DIR = "agentdiscover"
 AGENT_RULES = frozenset({"DAI001", "DAI002", "DAI003"})
-_VERSION = re.compile(r"(\d+\.\d+\.\d+\S*)")
 
 # mcp_detector.MCP_CONFIG_LOCATIONS of agentdiscover 2.9.5: client -> (candidate paths, format, key).
 # "~/" paths expand with HOME; the others are relative to the scanned root.
@@ -133,15 +137,6 @@ CLIENT_CONFIGS: dict[str, tuple[tuple[str, ...], str, str]] = {
     "Generic Project MCP": ((".cursor/mcp.json",), "json", "mcpServers"),
 }
 MANIFEST_SOURCES = {"package.json": "npm", "requirements.txt": "pypi"}
-
-
-def _cli_version(binary: str) -> str:
-    try:
-        proc = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    match = _VERSION.search(proc.stdout + proc.stderr)
-    return match.group(1) if match else "unknown"
 
 
 def _json_report(text: str) -> dict[str, Any] | None:
@@ -262,7 +257,7 @@ class AgentDiscover:
         if isinstance(pinned, str) and pinned:
             return pinned
         binary = env.binary(BIN)
-        return _cli_version(binary) if binary else "unknown"
+        return cli_version(binary) if binary else "unknown"
 
     @staticmethod
     def _root(case: MaterializedCase) -> Path | None:
@@ -386,8 +381,7 @@ class AgentDiscover:
 
         def emit(facts: set[str], rel: str, **attrs: Any) -> None:
             if not facts:
-                unmapped.append(rel)
-                out.add("file", f"artifact:{rel}", "agent", path=rel, **attrs)
+                unmapped.append(rel)  # dropped: an artifact key never matches code truth
                 return
             for fact in sorted(facts):
                 out.add("fact", fact, _fact_label(fact), path=rel, **attrs)

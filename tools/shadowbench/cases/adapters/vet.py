@@ -43,18 +43,28 @@ whose path matches no rule yields ``mcp-client-config:generic``; a coding-agent
 or project-config item without a matching rule yields ``agent-config:generic``.
 Facts are entities of kind ``fact`` labelled ``agent`` for the
 ``mcp-client-config``, ``agent-config`` and ``a2a`` categories and ``llm`` otherwise.
+An item that maps to no fact (an extension, agent CLI, plugin or skill whose
+paths match no rule) is dropped: code truth holds only taxonomy facts, so any
+other key could never match, and the ShadowScan adapter drops its unmappable
+findings the same way. The ``generic`` fallbacks above are the ones the
+code-surface benchmark's own vet adapter (``tools.discovery_benchmark``) emits.
+
+Fail closed: ``null`` or ``[]`` in the report is an empty result; a missing,
+empty or unparseable report after exit 0 is an error. ``version()`` runs
+``vet version`` through ``_probe`` (scrubbed environment, throwaway home,
+timeout, telemetry off).
 """
 
 from __future__ import annotations
 
 import json
 import re
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from tools.discovery_benchmark import taxonomy
+from tools.shadowbench.cases.adapters._probe import run_probe
 from tools.shadowbench.cases.contract import (
     AdapterResult,
     Entity,
@@ -84,7 +94,7 @@ SKIP_KINDS = frozenset({7})  # non-AI IDE extension
 AGENT_FACT_CATEGORIES = frozenset({"mcp-client-config", "agent-config", "a2a"})
 _RANK = {"agent": 2, "llm": 1, "ai": 0}
 _VERSION = re.compile(r"v\d+\.\d+\.\d+\S*")
-_EMPTY_REPORTS = frozenset({"", "null", "[]"})
+_EMPTY_REPORTS = frozenset({"null", "[]"})
 
 
 class VetAdapter:
@@ -102,17 +112,9 @@ class VetAdapter:
         binary = env.binary(TOOL)
         if not binary:
             return "unknown"
-        try:
-            proc = subprocess.run(
-                [binary, "version", "--no-banner"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-                env={"VET_DISABLE_TELEMETRY": "true", "HOME": "/nonexistent", "PATH": "/usr/bin:/bin"},
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return f"unknown ({exc})"
+        proc = run_probe([binary, "version", "--no-banner"], extra_env={"VET_DISABLE_TELEMETRY": "true"})
+        if proc is None:
+            return "unknown"
         match = _VERSION.search(proc.stdout + proc.stderr)
         return match.group(0) if match else "unknown"
 
@@ -152,11 +154,14 @@ class VetAdapter:
 
 def _load_items(report: Path) -> tuple[list[dict[str, Any]], str]:
     if not report.exists():
-        return [], ""  # vet writes no report when it finds nothing
+        # vet writes "null" or "[]" when it finds nothing: no report at all is a failed run.
+        return [], f"vet exited 0 but wrote no {report.name}"
     try:
         text = report.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return [], f"cannot read {report.name}: {exc}"
+    if not text.strip():
+        return [], f"{report.name} is empty"
     if text.strip() in _EMPTY_REPORTS:
         return [], ""
     try:

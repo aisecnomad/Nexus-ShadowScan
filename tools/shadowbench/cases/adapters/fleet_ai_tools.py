@@ -56,16 +56,21 @@ running process alone scores below the table's emit floor); the three
 MCP-marker processes each produced a ``mcp_server`` row with its pid. The
 wrapper drops the row for its own pid, which the ``mcp_server`` marker would
 otherwise match through a ``--types mcp_server`` argument.
+
+Fail closed: the wrapper always prints a JSON array (``[]`` when the table has
+no rows), so empty stdout or output that is not a JSON array is an error.
+``version()`` runs ``fleet-ai-tools -version`` through ``_probe`` (scrubbed
+environment, throwaway home, timeout).
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from tools.shadowbench.cases.adapters._probe import run_probe
 from tools.shadowbench.cases.contract import (
     AdapterResult,
     Entity,
@@ -113,13 +118,8 @@ class FleetAIToolsAdapter:
         binary = env.binary(TOOL)
         if not binary:
             return "unknown"
-        try:
-            proc = subprocess.run(
-                [binary, "-version"], capture_output=True, text=True, timeout=30, check=False
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            return f"unknown ({exc})"
-        return proc.stdout.strip() or "unknown"
+        proc = run_probe([binary, "-version"])
+        return (proc.stdout.strip() if proc is not None else "") or "unknown"
 
     def invocations(self, case: MaterializedCase, env: ToolEnv, work: Path) -> list[Invocation]:
         home = case.home or work
@@ -133,8 +133,11 @@ class FleetAIToolsAdapter:
             return AdapterResult(status="error", note="fleet-ai-tools timed out")
         if run.code != 0:
             return AdapterResult(status="error", note=f"fleet-ai-tools exit {run.code}: {tail(run.stderr)}")
+        if not run.stdout.strip():
+            # The wrapper prints "[]" for no rows: no output at all is a failed run, never a clean negative.
+            return AdapterResult(status="error", note=f"fleet-ai-tools printed nothing: {tail(run.stderr)}")
         try:
-            data = json.loads(run.stdout or "[]")
+            data = json.loads(run.stdout)
         except json.JSONDecodeError as exc:
             return AdapterResult(status="error", note=f"fleet-ai-tools output is not JSON: {exc}")
         if not isinstance(data, list):

@@ -35,6 +35,12 @@ advisory text, an "Application Summary" table and a vulnerability table. A
 target that answers neither scheme prints nothing. A target with no bracketed
 fingerprint is reachable but unidentified and is not reported as an entity.
 
+Fail closed: every staged service is an HTTP server that answers, so a working
+scan prints at least one result line. Output (stdout, then the ``-o`` file)
+with no result line is an error, never a clean negative. ``version()`` reads
+the banner of ``ai-infra-guard --help`` run through ``_probe`` (scrubbed
+environment, throwaway home, timeout).
+
 Mapping: each identified URL maps to ``service:<ip>:<port>`` (host and port
 from the URL, 80/443 when absent) with the label of its strongest fingerprint
 (``agent`` > ``llm`` > ``ai``) by the fingerprint ``info.name`` the tool prints
@@ -78,12 +84,12 @@ from the URL, 80/443 when absent) with the label of its strongest fingerprint
 from __future__ import annotations
 
 import re
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from tools.shadowbench.cases.adapters._probe import run_probe
 from tools.shadowbench.cases.contract import (
     AdapterResult,
     Entity,
@@ -302,10 +308,9 @@ class AIInfraGuardAdapter:
         binary = env.binary(TOOL)
         if not binary:
             return "unknown"
-        try:
-            proc = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=30, check=False)
-        except (OSError, subprocess.SubprocessError) as exc:
-            return f"unknown ({exc})"
+        proc = run_probe([binary, "--help"])
+        if proc is None:
+            return "unknown"
         match = _BANNER_VERSION.search(_ANSI.sub("", proc.stdout + proc.stderr))
         return match.group(1) if match else "unknown"
 
@@ -347,12 +352,14 @@ class AIInfraGuardAdapter:
             return AdapterResult(
                 status="error", note=f"ai-infra-guard scan exit {run.code}: {tail(_ANSI.sub('', run.stderr))}"
             )
-        text = run.stdout
-        if not _LINE.search(_ANSI.sub("", text), re.MULTILINE):
-            output = work / OUTPUT
-            if output.exists():
-                text = output.read_text(encoding="utf-8", errors="replace")
-        results = parse_results(text)
+        results = parse_results(run.stdout)
+        output = work / OUTPUT
+        if not results and output.is_file():
+            results = parse_results(output.read_text(encoding="utf-8", errors="replace"))
+        if not results:
+            # Every staged service answers HTTP, so a working scan prints a line per target.
+            note = f"no result line in the scan output: {tail(_ANSI.sub('', run.stderr or run.stdout))}"
+            return AdapterResult(status="error", note=note)
         services = {f"{s.get('ip')}:{s.get('port')}" for s in case.services}
         entities: dict[str, Entity] = {}
         for result in results:

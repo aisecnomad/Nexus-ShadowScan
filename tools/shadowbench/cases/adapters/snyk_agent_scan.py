@@ -36,16 +36,20 @@ file it was read from. Paths outside the home (system-managed configs, project
 ``.mcp.json`` files elsewhere) are dropped. The decoy ``.minecraft/mcp.json``
 is not a known client location and is not reported; ``.claude/agents/*.md``
 subagents and ``.claude/settings.json`` are not reported by this version.
+
+``version()`` asks the venv interpreter for the distribution version through
+``_probe`` (scrubbed environment, throwaway home, timeout) unless
+``tools.json`` pins a version.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from tools.shadowbench.cases.adapters._probe import distribution_version
 from tools.shadowbench.cases.contract import (
     AdapterResult,
     Entity,
@@ -61,22 +65,6 @@ from tools.shadowbench.cases.contract import (
 BIN = "snyk-agent-scan"
 DISTRIBUTION = "snyk-agent-scan"
 RAW_LIMIT = 200_000
-
-
-def _distribution_version(binary: str, distribution: str) -> str:
-    """Ask the interpreter next to the console script for the installed distribution version."""
-    python = Path(binary).parent / "python"
-    if not python.exists():
-        return "unknown"
-    code = f"import importlib.metadata as m; print(m.version({distribution!r}))"
-    try:
-        proc = subprocess.run(
-            [str(python), "-I", "-c", code], capture_output=True, text=True, timeout=30, check=False
-        )
-    except (OSError, subprocess.SubprocessError):
-        return "unknown"
-    text = proc.stdout.strip()
-    return text if proc.returncode == 0 and text else "unknown"
 
 
 def _json_object(text: str) -> dict[str, Any] | None:
@@ -108,7 +96,7 @@ class SnykAgentScan:
         if isinstance(pinned, str) and pinned:
             return pinned
         binary = env.binary(BIN)
-        return _distribution_version(binary, DISTRIBUTION) if binary else "unknown"
+        return distribution_version(binary, DISTRIBUTION) if binary else "unknown"
 
     def invocations(self, case: MaterializedCase, env: ToolEnv, work: Path) -> list[Invocation]:
         if case.home is None:

@@ -35,17 +35,27 @@ workflow id, Slack app id, GitHub ``app_slug``, ARN or ``k8s:`` path, endpoint
 ``files``, network ``client``, runtime ``pids``). A finding is ``agent`` when
 its kind is ``agent``, ``mcp-server`` or ``agent-config`` or its metadata
 carries a non-empty ``agent_indicators`` list; otherwise ``llm``. Findings
-whose resource cannot be mapped are kept in the raw output and ignored. An
-incomplete scan (exit 3) is still normalized and flagged ``incomplete``.
+whose resource cannot be mapped are kept in the raw output and ignored. On the
+code surface the report goes through the code-surface benchmark's own
+ShadowScan adapter, which maps findings onto taxonomy facts and drops the ones
+that map to none, the rule every adapter follows there. An incomplete scan
+(exit 3) is still normalized and flagged ``incomplete``; a missing report or
+one that is not a JSON object with a ``findings`` list is an error.
+
+``version()`` runs ``python -m shadowscan.cli --version`` through ``_probe``
+(scrubbed environment, throwaway home, timeout) and appends the checkout's
+short commit.
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from tools.shadowbench.cases.adapters._probe import run_probe
 from tools.shadowbench.cases.contract import (
     AdapterResult,
     Entity,
@@ -250,22 +260,21 @@ class ShadowScanAdapter:
         return None
 
     def version(self, env: ToolEnv) -> str:
-        import subprocess
-
         repo = str(env.tool("shadowscan").get("repo"))
+        out = run_probe(
+            [env.binary("shadowscan") or "python", "-m", "shadowscan.cli", "--version"],
+            extra_env={"PYTHONPATH": repo, "PYTHONDONTWRITEBYTECODE": "1"},
+            timeout=60,
+        )
+        if out is None:
+            return "unknown"
         try:
-            out = subprocess.run(
-                [env.binary("shadowscan") or "python", "-m", "shadowscan.cli", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                env={**base_env(Path(repo), Path(repo)), "PYTHONPATH": repo},
-                check=False,
-            )
+            # git on the operator's own checkout (trusted), not a tool under test.
             head = subprocess.run(
                 ["git", "-C", repo, "rev-parse", "--short=12", "HEAD"],
                 capture_output=True,
                 text=True,
+                timeout=30,
                 check=False,
             )
             return f"{(out.stdout or out.stderr).strip().split()[-1]}+{head.stdout.strip()}"
@@ -439,9 +448,15 @@ class ShadowScanAdapter:
             return AdapterResult("error", note=f"exit {run.code}: {tail(run.stderr or run.stdout)}")
         if case.surface == "code":
             return self._normalize_code(work, run)
-        report = _load(report_path)
-        findings = report.get("findings", [])
-        summary = report.get("summary", {})
+        try:
+            report = _load(report_path)
+        except (OSError, ValueError) as exc:
+            return AdapterResult("error", note=f"exit {run.code}: report.json is unreadable: {exc}"[:400])
+        findings = report.get("findings") if isinstance(report, dict) else None
+        summary = report.get("summary") if isinstance(report, dict) else None
+        if not isinstance(findings, list) or not isinstance(summary, dict):
+            # A report without its findings list or summary is malformed, never an empty scan.
+            return AdapterResult("error", note=f"exit {run.code}: report.json has no findings or summary")
         entities: dict[str, Entity] = {}
         unmapped = 0
         for f in findings:
