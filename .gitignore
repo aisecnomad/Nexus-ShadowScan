@@ -43,4 +43,6 @@ htmlcov/
 !/benchmarks/shadowbench/estate/artifacts/**/.vscode/
 
 .shadowscan-state/
+# Worktrees that coding-agent sessions create inside the checkout.
+/.claude/worktrees/
 /site/
