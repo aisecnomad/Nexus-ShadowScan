@@ -42,10 +42,16 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
     )
     lines.append("")
     lines.append(
-        "Ground truth is author-written labeling with evidence pointers, frozen before any "
-        "tool ran. It is not independent human review; the same maintainer wrote ShadowScan, "
-        "the harness and the labels. See the benchmark README for the protocol and its limits."
+        "Ground truth is author-written labeling with evidence pointers. The labels were written from "
+        "vendor semantics together with the artifacts, which were checked only to parse cleanly in "
+        "ShadowScan's offline loaders. Then, in one label-completeness audit, every runnable tool ran "
+        "once; the audit added one secondary anchor and one corpus-level tolerated pair. The corpus was "
+        "frozen after that audit, and the scored run came after the freeze; the README's errata list the "
+        "frozen files changed since. It is not independent human review; the same maintainer wrote "
+        "ShadowScan, the harness and the labels. See the benchmark README for the protocol and its limits."
     )
+    lines.append("")
+    lines.append(_provenance(run))
     lines.append("")
     skipped = run.get("tools_skipped", {})
     if skipped:
@@ -182,7 +188,21 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
                 cells.append(f"{_pct(counts.get('f1'))} ({counts['tp']}/{counts['fp']}/{counts['fn']})")
         lines.append(f"| {data['name']} | " + " | ".join(cells) + " |")
     lines.append("")
-    lines.append("Cells read F1 (true positives / false positives / false negatives).")
+    lines.append(
+        "Cells read F1 (true positives / false positives / false negatives). A prediction attributed "
+        "to no entity is a false positive in the cell of the surface its adapter gave it or, without "
+        "one, of the surface its fact's category lives on when there is only one."
+    )
+    unplaced = [
+        f"{data['name']} {data['value_level'].get('unplaced_fp', 0)}"
+        for _tool_id, data in tools
+        if data["value_level"].get("unplaced_fp", 0)
+    ]
+    if unplaced:
+        lines.append(
+            "Unattributed predictions that no single surface holds, charged as false positives in the "
+            f"value totals but in no cell above: {'; '.join(unplaced)}."
+        )
     lines.append("")
 
     lines.append("## Control and near-miss entities")
@@ -282,6 +302,70 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
                 lines.append(f"- … and {len(extras) - 15} more")
             lines.append("")
     return "\n".join(lines) + "\n"
+
+
+def _provenance(run: dict[str, Any]) -> str:
+    """What the run recorded about the harness revision and its freeze, and what `score` found.
+
+    Only what runs.json records is shown: a run that predates these fields
+    gets a sentence saying so, and a value of the wrong shape is not shown.
+    """
+    if not any(key in run for key in score.PROVENANCE_FIELDS):
+        return (
+            "This run recorded no harness commit and no freeze digest: its runs.json predates those "
+            "fields, so this report cannot show which harness revision produced the run or which freeze "
+            "manifest its estate was checked against."
+        )
+    commit = run.get("harness_commit")
+    if "harness_commit" not in run:
+        text = "The run recorded no harness commit"
+    elif commit is None:
+        text = "The harness commit could not be read when the run started"
+    elif score.plain_commit(commit):
+        text = f"The harness ran from commit `{commit}`"
+    else:
+        text = "The recorded harness commit is not a commit id and is not shown"
+    dirty = run.get("harness_dirty")
+    if dirty is True:
+        text += ", with tracked files under `tools/` modified from it"
+    elif dirty is False:
+        text += ", with no tracked file under `tools/` modified"
+    elif "harness_dirty" in run:
+        text += "; whether tracked files under `tools/` were modified is unknown"
+    parts = [text + "."]
+    freeze = run.get("freeze")
+    if "freeze" not in run:
+        parts.append("It recorded no freeze digest.")
+    elif (
+        isinstance(freeze, dict)
+        and score.plain_digest(freeze.get("sha256"))
+        and isinstance(freeze.get("files"), int)
+        and isinstance(freeze.get("drift_after"), list)
+    ):
+        drifted = len(freeze["drift_after"])
+        after = (
+            "no frozen file had changed when it finished"
+            if not drifted
+            else f"**when it finished, frozen files had changed: {drifted}** (`freeze.drift_after`)"
+        )
+        parts.append(
+            "Before it started, the corpus and estate matched the freeze manifest with SHA-256 "
+            f"`{freeze['sha256']}` ({freeze['files']} files); {after}."
+        )
+    else:
+        parts.append("Its freeze record is malformed and is not shown.")
+    if "freeze" in run:
+        problems = run.get(score.FREEZE_PROBLEMS)
+        if not isinstance(problems, list):
+            parts.append("These metrics do not record whether that freeze still held when they were scored.")
+        elif not problems:
+            parts.append(
+                "When scored, the freeze manifest was that one and the corpus and estate still matched it."
+            )
+        else:
+            listed = "; ".join(str(problem) for problem in problems)
+            parts.append(f"**Scored with `--allow-freeze-mismatch`, although {listed}.**")
+    return " ".join(parts)
 
 
 def _harness_sentence(tools: list[tuple[str, dict[str, Any]]]) -> str:

@@ -9,6 +9,7 @@ import sys
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from tools.discovery_benchmark.adapters import ToolConfig
 from tools.discovery_benchmark.runner import RunPolicy
@@ -26,6 +27,7 @@ from tools.shadowbench.estate.corpus import (
     load_corpus,
     load_freeze,
     open_regular,
+    sha256_file,
     unit_dir,
     walk_estate,
 )
@@ -251,12 +253,55 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _freeze_problems(record: dict[str, Any], corpus_path: Path, estate: Path, freeze_path: Path) -> list[str]:
+    """What no longer holds of a run's freeze `record`; empty when all of it holds.
+
+    The run matched the estate to a freeze manifest before it started and
+    recorded any drift after it finished. Its rows score the frozen corpus
+    only when nothing drifted, `freeze_path` is that same manifest, and the
+    corpus and estate scored against still match it. The messages go into
+    metrics.json, so they name no local path.
+    """
+    problems: list[str] = []
+    if record["drift_after"]:
+        problems.append(f"the estate changed during the run (drifted files: {len(record['drift_after'])})")
+    try:
+        if sha256_file(freeze_path) != record["sha256"]:
+            problems.append("the freeze manifest is not the one the run was checked against")
+        drift = freeze_drift(load_freeze(freeze_path), freeze_digests(corpus_path, estate))
+    except OSError as exc:
+        return [*problems, f"the freeze manifest, corpus or estate cannot be read ({type(exc).__name__})"]
+    if drift:
+        problems.append(
+            f"the corpus and estate scored against differ from the freeze manifest (files: {len(drift)})"
+        )
+    return problems
+
+
 def cmd_score(args: argparse.Namespace) -> int:
     corpus = load_corpus(args.corpus)
     services_path = args.estate / "services" / "services.json"
     services = score_mod.load_services(services_path)
     manifest = json.loads(args.runs.read_text(encoding="utf-8"))
     rows = manifest.get("results", []) if isinstance(manifest, dict) else []
+    freeze_problems: list[str] | None = None
+    if isinstance(manifest, dict):
+        malformed = score_mod.malformed_provenance(manifest)
+        if malformed is not None:
+            raise CorpusError(f"{args.runs}: the {malformed} record is malformed")
+        if "freeze" in manifest:
+            freeze_problems = _freeze_problems(manifest["freeze"], args.corpus, args.estate, args.freeze)
+    if freeze_problems:
+        listed = "; ".join(freeze_problems)
+        if not args.allow_freeze_mismatch:
+            print(
+                f"score: {args.runs} records a freeze that no longer holds against {args.freeze}: {listed}. "
+                "Its rows would not be scored against the frozen corpus the run was checked against; pass "
+                "--allow-freeze-mismatch to score them anyway (metrics.json and the report then say so).",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"note: scoring despite a freeze that no longer holds: {listed}", file=sys.stderr)
     needing = sorted(
         {
             (str(row.get("tool")), str(row.get("unit")))
@@ -285,6 +330,9 @@ def cmd_score(args: argparse.Namespace) -> int:
         for adapter in _adapters()
     }
     metrics = score_mod.score_all(corpus, manifest, specs, services)
+    if freeze_problems is not None:
+        # Present only when the run recorded a freeze: empty means the check found it holding.
+        metrics["run"][score_mod.FREEZE_PROBLEMS] = freeze_problems
     args.out.write_text(json.dumps(metrics, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {args.out}")
     return 0
@@ -348,6 +396,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="score live-sim runs and recorded scan targets even when services/services.json is missing "
         "or lists no service: every scan target is then unattributed and a live-sim run reaches no entity",
+    )
+    p_score.add_argument(
+        "--freeze",
+        type=Path,
+        default=default_freeze,
+        help="freeze manifest a run that records a freeze digest is checked against before it is scored",
+    )
+    p_score.add_argument(
+        "--allow-freeze-mismatch",
+        action="store_true",
+        help="score a run whose recorded freeze no longer holds (the estate drifted during the run, the "
+        "freeze manifest is not the one it recorded, or the corpus or estate differs from it); "
+        "metrics.json and the report then list what does not hold",
     )
     p_score.add_argument("--runs", type=Path, required=True)
     p_score.add_argument("--out", type=Path, required=True)

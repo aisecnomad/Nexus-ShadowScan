@@ -177,8 +177,17 @@ ran from (null when it cannot be read), and `harness_dirty` says whether
 tracked files under `tools/` differed from it; untracked files are not
 checked. `freeze.sha256` is the digest of the freeze manifest file,
 `freeze.files` the number of digests it holds and `freeze.drift_after` the
-drift found after the run. The committed 2026-10-11 `runs.json` predates
-all of these fields and has none of them.
+drift found after the run. `score` copies these fields into `metrics.json`
+and `report` shows them. For a run that records a freeze, `score` first
+checks that nothing drifted during the run, that the freeze manifest
+(`--freeze`, default [`FREEZE.json`](FREEZE.json)) has the digest the run
+recorded, and that the corpus and estate it scores against still match
+that manifest. If any of these fails, it names what failed and exits 2
+without writing anything; with `--allow-freeze-mismatch` it scores the run
+anyway, and `metrics.json` (`run.freeze_problems`) and `REPORT.md` list what
+failed. The committed 2026-10-11 `runs.json` predates all of these fields
+and has none of them, so `score` has nothing to check, and its `REPORT.md`
+says that the run recorded no harness commit and no freeze digest.
 
 **`--as-user ACCOUNT`.** Commands then run through `setpriv` as that
 account with only the scrubbed environment. The account owns the unit's
@@ -452,7 +461,14 @@ Other non-zero exits an adapter declares as success are counted in
   category; a surplus generic on a category already matched is neither
   credited nor charged (the code-surface scorer credits it). Tolerated
   facts are dropped first, and unattributed in-scope predictions are false
-  positives. *In-scope* counts only a tool's declared surfaces.
+  positives. *In-scope* counts only a tool's declared surfaces. In the
+  per-surface breakdown an unattributed prediction is a false positive on
+  the surface its adapter gave it or, without one, on the one surface its
+  fact's category lives on; one whose category lives on several surfaces
+  is counted as `unplaced_fp`, so the surfaces and `unplaced_fp` add up to
+  the estate-wide value counts. F1 is computed from the true positive,
+  false positive and false negative counts, not from the rounded precision
+  and recall.
 - **Estate-wide.** Positives detected out of all 87, and value recall
   over all 104 expected facts on the nine surfaces: the cost of partial
   surface coverage.
@@ -615,7 +631,12 @@ service and some run needs it (a `sim` run, or one that records scan
 targets), `score` names those runs and exits 2 without writing anything.
 With `--allow-missing-services` it prints a note instead and scores them
 anyway: every scan target is then unattributed and a `sim` run reaches no
-entity. To re-score the committed run, pass
+entity. A run that records a freeze is checked against `--freeze` (default
+`FREEZE.json`) as described under
+[Execution and isolation](#execution-and-isolation); `score` exits 2 when
+that check fails unless `--allow-freeze-mismatch` is given, and a malformed
+`harness_commit`, `harness_dirty` or `freeze` record stops it with a
+`corpus error` and exit 2 either way. To re-score the committed run, pass
 `--runs benchmarks/shadowbench/estate/results/2026-10-11/runs.json`.
 
 `tools.json` maps tool ids to installed binaries:

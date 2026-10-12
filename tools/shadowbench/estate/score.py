@@ -86,7 +86,9 @@ scorer credits one):
   already matched is neither charged nor credited); tolerated facts are
   dropped before scoring; facts a tool reports outside the taxonomy never
   reach the scorer (adapters drop them). Unattributed predictions are false
-  positives.
+  positives; the per-surface breakdown charges one to its placement when
+  that is a single surface and counts the rest as unplaced (`unplaced_fp`).
+  F1 is computed from the counts, not from rounded precision and recall.
 - entity level, in scope: only entities on the tool's declared surfaces. A
   positive is detected when an attributed prediction matches an expected
   fact; a control or near-miss is flagged by any attributed prediction.
@@ -135,6 +137,14 @@ _TARGET_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}")
 #: The target a prediction gets when its row's record is malformed; it names no service.
 NO_TARGET = f"<{MALFORMED_TARGETS}>"
 
+#: What runs.json records about the harness revision and the freeze the run was checked against.
+#: A runs.json that predates these fields (the committed 2026-10-11 run) has none; none is filled in.
+PROVENANCE_FIELDS = ("harness_commit", "harness_dirty", "freeze")
+#: The metrics `run` key where `score` records what no longer holds of the run's freeze record.
+FREEZE_PROBLEMS = "freeze_problems"
+_COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+
 # Rules that pick the owner of a prediction whose anchors match several entities.
 RULE_FACT = "expects the fact"
 RULE_CATEGORY = "shares the fact's category"
@@ -162,10 +172,10 @@ class Counts:
 
     @property
     def f1(self) -> float | None:
-        p, r = self.precision, self.recall
-        if p is None or r is None or (p + r) == 0:
-            return None if p is None or r is None else 0.0
-        return round(2 * p * r / (p + r), _ROUND)
+        # From the counts, not from the rounded precision and recall, which can move the 4th place.
+        if not self.tp + self.fp or not self.tp + self.fn:
+            return None
+        return round(2 * self.tp / (2 * self.tp + self.fp + self.fn), _ROUND)
 
     def add(self, other: Counts) -> None:
         self.tp += other.tp
@@ -622,6 +632,16 @@ def score_tool(
     out_of_scope += len(attribution.unattributed) - len(unattributed_scoped)
     value_in_scope.fp += len(unattributed_scoped)
     value_all.fp += len(attribution.unattributed)
+    # The per-surface cells charge an unattributed prediction to its one surface; one whose
+    # category spans several surfaces, or that has none, is unplaced, so the cells and
+    # `unplaced_fp` together add up to `all`.
+    unplaced_fp = 0
+    for prediction in attribution.unattributed:
+        placed = placement(prediction)
+        if len(placed) == 1:
+            by_surface[next(iter(placed))].fp += 1
+        else:
+            unplaced_fp += 1
 
     detected = in_scope_hit["positive"]
     flagged = in_scope_hit["control"] + in_scope_hit["nearmiss"]
@@ -690,6 +710,7 @@ def score_tool(
             "in_scope": value_in_scope.to_dict(),
             "all": value_all.to_dict(),
             "by_surface": {surface: counts.to_dict() for surface, counts in by_surface.items()},
+            "unplaced_fp": unplaced_fp,
         },
         "shadow_layer": {
             "scored": shadow_expected,
@@ -709,13 +730,55 @@ def _unattributed_item(prediction: dict[str, Any]) -> dict[str, Any]:
     return item
 
 
+def plain_commit(value: object) -> bool:
+    """Whether `value` is a full git commit id, as `harness_commit` records one."""
+    return isinstance(value, str) and _COMMIT.fullmatch(value) is not None
+
+
+def plain_digest(value: object) -> bool:
+    """Whether `value` is a lowercase hex SHA-256, as `freeze.sha256` records one."""
+    return isinstance(value, str) and _DIGEST.fullmatch(value) is not None
+
+
+def malformed_provenance(manifest: Mapping[str, Any]) -> str | None:
+    """The first provenance field runs.json records in the wrong shape, or None.
+
+    An absent field is not malformed (older runs predate them), and a null
+    `harness_commit` or `harness_dirty` is what the runner writes when git
+    cannot tell.
+    """
+    commit, dirty, freeze = (manifest.get(key) for key in PROVENANCE_FIELDS)
+    if commit is not None and not plain_commit(commit):
+        return "harness_commit"
+    if dirty is not None and not isinstance(dirty, bool):
+        return "harness_dirty"
+    if "freeze" in manifest and not (
+        isinstance(freeze, dict)
+        and plain_digest(freeze.get("sha256"))
+        and isinstance(freeze.get("files"), int)
+        and not isinstance(freeze["files"], bool)
+        and freeze["files"] >= 0
+        and isinstance(freeze.get("drift_after"), list)
+        and all(isinstance(name, str) for name in freeze["drift_after"])
+    ):
+        return "freeze"
+    return None
+
+
 def score_all(
     corpus: EstateCorpus,
     manifest: dict[str, Any],
     specs: dict[str, dict[str, Any]],
     services: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Score every tool in `specs` that the run did not skip; `services` is as `load_services` reads it."""
+    """Score every tool in `specs` that the run did not skip; `services` is as `load_services` reads it.
+
+    The run's provenance fields are copied as recorded when present; a
+    malformed one stops scoring (CorpusError) rather than reaching the metrics.
+    """
+    malformed = malformed_provenance(manifest)
+    if malformed is not None:
+        raise CorpusError(f"runs.json: the {malformed} record is malformed")
     runs = list(manifest.get("results", []))
     expected_by_surface: dict[str, int] = defaultdict(int)
     for entity in corpus.by_class("positive"):
@@ -747,6 +810,7 @@ def score_all(
             "policy": manifest.get("policy"),
             "workers": manifest.get("workers"),
             "tools_skipped": manifest.get("tools_skipped", {}),
+            **{key: manifest[key] for key in PROVENANCE_FIELDS if key in manifest},
         },
         "tools": tools,
     }
