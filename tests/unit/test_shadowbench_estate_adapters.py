@@ -26,7 +26,13 @@ from tools.shadowbench.estate.adapters.code_wrappers import (
     AgenticRadarEstateAdapter,
     VetEstateAdapter,
 )
-from tools.shadowbench.estate.adapters.common import LAUNCHERS, client_slug, refuse_launchers
+from tools.shadowbench.estate.adapters.common import (
+    CLIENT_SLUGS,
+    LAUNCHERS,
+    client_slug,
+    client_words,
+    refuse_launchers,
+)
 from tools.shadowbench.estate.adapters.mcp_scan import McpScanAdapter
 from tools.shadowbench.estate.adapters.numbat import NumbatAdapter
 from tools.shadowbench.estate.runner import RunResult, _slug, run_command, run_unit
@@ -368,10 +374,38 @@ def test_client_slug_prefers_the_most_specific_client(name: str, slug: str) -> N
         ("decline-bot", "generic"),
         ("", "generic"),
         ("node", "generic"),
+        # One-word and camelCase spellings, and every separator for the same words.
+        ("ClaudeCode", "claude-code"),
+        ("claudecode", "claude-code"),
+        ("ClaudeDesktop", "claude-desktop"),
+        ("GeminiCLI", "gemini-cli"),
+        ("GitHubCopilot", "copilot"),
+        ("CopilotChat", "copilot"),
+        ("CursorAgent", "cursor"),
+        ("AmazonQDeveloper", "amazon-q"),
+        ("VSCode", "generic"),
+        ("lm-studio", "lm-studio"),
+        ("LM_Studio", "lm-studio"),
+        ("LMStudio", "lm-studio"),
+        ("claudecodeagent", "claude-code"),
+        ("claudedesktopapp", "claude-desktop"),
+        # Short keys inside other words stay unmatched.
+        ("incline", "generic"),
+        ("decliner", "generic"),
+        ("encodex", "generic"),
     ],
 )
 def test_client_slug_table(name: str, slug: str) -> None:
     assert client_slug(name) == slug
+
+
+def test_client_slug_keys_never_collide() -> None:
+    """Keys that compare equal once case and separators are dropped must map to one slug."""
+    slugs: dict[str, set[str]] = {}
+    for key, slug in CLIENT_SLUGS.items():
+        slugs.setdefault("".join(client_words(key)), set()).add(slug)
+        assert client_slug(key) == slug, key
+    assert {key: found for key, found in slugs.items() if len(found) > 1} == {}
 
 
 # --- wrapped code-surface commands keep their working directory -----------------------------------

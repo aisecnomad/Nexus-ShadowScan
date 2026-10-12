@@ -10,9 +10,10 @@ from pathlib import Path
 from tools.shadowbench.estate import taxonomy
 
 #: Client display names and ids, as third-party tools print them, mapped onto
-#: `ai-client:` taxonomy values. Keys are written in normalized form (see
-#: `normalize_client`); `client_slug` tries an exact match before any
-#: substring match, so order here carries no meaning.
+#: `ai-client:` taxonomy values. Keys are compared as words (see
+#: `client_words`), so case and separators do not matter; `client_slug`
+#: tries an exact match before any partial one, so order here carries no
+#: meaning.
 CLIENT_SLUGS: dict[str, str] = {
     "claude code": "claude-code",
     "claude-code": "claude-code",
@@ -44,37 +45,56 @@ CLIENT_SLUGS: dict[str, str] = {
 }
 
 _QUALIFIER = re.compile(r"\([^)]*\)|\[[^\]]*\]")
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_WORD = re.compile(r"[a-z0-9]+")
+#: Keys shorter than this are only matched as whole words: `cline` is inside
+#: `decline` and `incline`.
+_MIN_FRAGMENT = 6
 
 
-def normalize_client(name: str) -> str:
-    """Lowercase, `_` as `-`, whitespace collapsed: `Claude_Desktop ` -> `claude-desktop`."""
-    return " ".join(name.lower().replace("_", "-").split())
+def client_words(name: str) -> tuple[str, ...]:
+    """Lowercase alphanumeric words: `Claude_Desktop `, `claude-desktop` -> ('claude', 'desktop')."""
+    return tuple(_WORD.findall(name.lower()))
 
 
-_NORMALIZED_SLUGS = {normalize_client(key): slug for key, slug in CLIENT_SLUGS.items()}
-_LONGEST_FIRST = sorted(_NORMALIZED_SLUGS.items(), key=lambda item: (-len(item[0]), item[0]))
+_BY_WORDS = {client_words(key): slug for key, slug in CLIENT_SLUGS.items()}
+_BY_COMPACT = {"".join(words): slug for words, slug in _BY_WORDS.items()}
+_LONGEST_FIRST = sorted(_BY_WORDS.items(), key=lambda item: (-len("".join(item[0])), item[0]))
 
 
-def _contains(text: str, key: str) -> bool:
-    return re.search(rf"(?<![a-z0-9]){re.escape(key)}(?![a-z0-9])", text) is not None
+def _has_run(words: tuple[str, ...], key: tuple[str, ...]) -> bool:
+    """Whether `key` occurs in `words` as consecutive whole words."""
+    return any(words[start : start + len(key)] == key for start in range(len(words) - len(key) + 1))
 
 
 def client_slug(name: str) -> str:
     """The `ai-client:` value for a client name a tool printed.
 
-    An exact match on the normalized name wins, then on the name without its
-    parenthesized qualifiers (`Cline (VS Code)` is Cline, not VS Code), then
-    the longest table key found as a whole word, so `Claude Desktop App` is
-    Claude Desktop rather than the shorter `claude`.
+    Names compare as their run-together words, so case and separators do not
+    matter (`Claude_Desktop`, `claude-desktop`, `ClaudeDesktop`). An exact
+    match wins, first on the whole name, then on the name without its
+    parenthesized qualifiers (`Cline (VS Code)` is Cline, not VS Code). Next
+    comes the longest table key found as whole words, in the name as written
+    or with camelCase split (`Claude Desktop App` is Claude Desktop rather
+    than the shorter `claude`; `CopilotChat` is Copilot). Last, the longest
+    key of at least `_MIN_FRAGMENT` letters inside the run-together name
+    (`claudecodeagent`).
     """
-    full = normalize_client(name)
-    head = normalize_client(_QUALIFIER.sub(" ", name))
-    for candidate in (full, head):
-        if candidate in _NORMALIZED_SLUGS:
-            return _NORMALIZED_SLUGS[candidate]
-    for candidate in (head, full):
+    head = _QUALIFIER.sub(" ", name)
+    for text in (name, head):
+        compact = "".join(client_words(text))
+        if compact in _BY_COMPACT:
+            return _BY_COMPACT[compact]
+    for text in (head, name):
+        forms = (client_words(text), client_words(_CAMEL.sub(" ", text)))
         for key, slug in _LONGEST_FIRST:
-            if candidate and _contains(candidate, key):
+            if any(_has_run(words, key) for words in forms):
+                return slug
+    for text in (head, name):
+        compact = "".join(client_words(text))
+        for key, slug in _LONGEST_FIRST:
+            fragment = "".join(key)
+            if len(fragment) >= _MIN_FRAGMENT and fragment in compact:
                 return slug
     return taxonomy.GENERIC
 
