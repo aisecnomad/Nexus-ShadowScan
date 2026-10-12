@@ -8,6 +8,7 @@ corpus content ever runs.
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 from pathlib import Path
@@ -16,6 +17,7 @@ import pytest
 
 from tools.discovery_benchmark.runner import RunPolicy
 from tools.shadowbench.estate.adapters import ToolConfig
+from tools.shadowbench.estate.adapters.ai_infra_guard import AiInfraGuardAdapter
 from tools.shadowbench.estate.adapters.code_wrappers import (
     AgentDiscoverEstateAdapter,
     AgenticRadarEstateAdapter,
@@ -153,3 +155,40 @@ def test_wrapped_commands_that_run_in_the_run_directory_are_unchanged(
 
     assert [c.argv for c in converted] == [c.argv for c in inner]
     assert [c.ok_exit_codes for c in converted] == [c.ok_exit_codes for c in inner]
+
+
+# --- AI-Infra-Guard: attribution comes from the tool's output only --------------------------------
+
+_SCAN = (
+    "\x1b[32mhttp://127.0.0.1:11434 [200] [ollama:0.3.9]\x1b[0m\n"
+    "http://127.0.0.1:8000 [200] [openai-compatible] [vllm:0.6.3]\n"
+    "scan finished\n"
+)
+
+
+def test_ai_infra_guard_predictions_never_carry_the_services_anchor(tmp_path: Path) -> None:
+    services = {
+        "services": [
+            {"id": "a", "kind": "ollama", "port": 11434, "anchor": "dev-laptop-02:marcus:ollama"},
+            {"id": "b", "kind": "vllm", "port": 8000, "anchor": "build-runner-3:ci:vllm"},
+        ]
+    }
+    (tmp_path / "services.json").write_text(json.dumps(services), encoding="utf-8")
+    (tmp_path / "scan.txt").write_text(_SCAN, encoding="utf-8")
+
+    normalized = AiInfraGuardAdapter().normalize("sim", tmp_path)
+
+    assert normalized.error is None
+    assert [(p.fact, p.text) for p in normalized.predictions] == [
+        ("agent-process:ollama", "http://127.0.0.1:11434 ollama:0.3.9"),
+        ("agent-process:vllm", "http://127.0.0.1:8000 openai-compatible vllm:0.6.3"),
+    ]
+
+
+@pytest.mark.parametrize("text", ["", "scan finished\n", "error: dial tcp: connection refused\n"])
+def test_ai_infra_guard_scan_without_target_lines_is_an_error(tmp_path: Path, text: str) -> None:
+    (tmp_path / "scan.txt").write_text(text, encoding="utf-8")
+
+    normalized = AiInfraGuardAdapter().normalize("sim", tmp_path)
+
+    assert normalized.error == "scan.txt holds no target result line"

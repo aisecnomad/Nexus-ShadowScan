@@ -5,6 +5,12 @@ as loopback mock services (see `tools/shadowbench/estate/simhost.py` and
 `artifacts/services/services.json`); the scanner fingerprints those targets.
 Fingerprint and CVE scanning needs no model key; the scan contacts only the
 listed loopback targets.
+
+Prediction text holds only what the scanner printed: the target URL it
+reported and its fingerprints. The services file's `anchor` is the answer
+key for which estate entity a mock mirrors, so it never reaches a
+prediction; mapping a loopback target back to an entity is the scorer's
+decision, not the tool's.
 """
 
 from __future__ import annotations
@@ -13,7 +19,6 @@ import json
 import re
 from pathlib import Path
 from shutil import copyfile
-from typing import Any
 
 from tools.shadowbench.estate.adapters import (
     Command,
@@ -38,6 +43,7 @@ SPEC = ToolSpec(
 _SIMHOST = Path(__file__).resolve().parent.parent / "simhost.py"
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 _FP_SLUGS = {"ollama": "ollama", "vllm": "vllm"}
+_TARGET_LINE = re.compile(r"^(http://127\.0\.0\.1:\d+)\s+\[(\d+)\]\s*(.*)$")
 
 
 class AiInfraGuardAdapter:
@@ -100,32 +106,29 @@ class AiInfraGuardAdapter:
         scan = out_dir / "scan.txt"
         if not scan.exists():
             return Normalized(error="scan.txt missing")
-        services: dict[int, dict[str, Any]] = {}
-        services_path = out_dir / "services.json"
-        if services_path.exists():
-            for service in json.loads(services_path.read_text(encoding="utf-8")).get("services", []):
-                services[int(service["port"])] = service
         text = _ANSI.sub("", scan.read_text(encoding="utf-8", errors="replace"))
         result = Normalized()
         for line in text.splitlines():
-            match = re.match(r"^(http://127\.0\.0\.1:(\d+))\s+\[(\d+)\]\s*(.*)$", line)
+            match = _TARGET_LINE.match(line)
             if not match:
                 continue
             result.raw_count += 1
-            url, port, _status, rest = match.groups()
+            url, _status, rest = match.groups()
             fingerprints = [group.strip() for group in re.findall(r"\[([^\]]*)\]", rest) if group.strip()]
             if not fingerprints:
                 continue
             names = [fp.split(":", 1)[0].strip().lower() for fp in fingerprints]
             known = [name for name in names if name in _FP_SLUGS]
             slug = _FP_SLUGS[known[0]] if known else "generic"
-            service = services.get(int(port), {})
-            anchor = str(service.get("anchor", ""))
             result.predictions.append(
                 Prediction(
                     fact=f"agent-process:{slug}",
-                    text=f"{url} {' '.join(fingerprints)} {anchor}",
+                    text=f"{url} {' '.join(fingerprints)}",
                     surface="runtime",
                 )
             )
+        if not result.raw_count:
+            # Every target answers the mock host, so a report without one target
+            # line is a failed or unreadable scan, not an empty estate.
+            result.error = "scan.txt holds no target result line"
         return result
