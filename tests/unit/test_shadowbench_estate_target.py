@@ -124,7 +124,9 @@ def test_scan_target_prediction_is_attributed_by_the_harness_and_counted() -> No
 
     assert result["per_entity"]["runtime.ollama-marcus"]["tp"] == 1
     assert result["per_entity"]["runtime.vllm-runner"]["tp"] == 1
-    assert result["entity_level"]["positives_detected"] == 2 and result["entity_level"]["tn"] == 1
+    # No mock service stands in for the control, so the live-sim never reaches it.
+    assert result["entity_level"]["positives_detected"] == 2 and result["entity_level"]["tn"] == 0
+    assert result["entity_level"]["negatives_not_reached"] == 1
     assert result["value_level"]["in_scope"]["fp"] == 0
     counts = result["predictions"]
     assert counts["attributed"] == counts["harness_attributed"] == 2
@@ -198,7 +200,9 @@ def test_malformed_scan_targets_make_the_run_incomplete(targets: Any) -> None:
     result = _score(row)
     assert result["complete"] is False
     assert result["predictions"]["unknown_scan_target"] == 2 and result["predictions"]["attributed"] == 0
-    assert result["entity_level"]["tn"] == 0 and result["entity_level"]["negatives_unscored"] == 1
+    # The failed run leaves the two mirrored positives unscored; it never reached the control.
+    assert result["entity_level"]["tn"] == 0 and result["entity_level"]["positives_unscored"] == 2
+    assert result["entity_level"]["negatives_not_reached"] == 1
 
 
 def test_load_services_reads_ids_and_anchors_and_refuses_bad_files(tmp_path: Path) -> None:

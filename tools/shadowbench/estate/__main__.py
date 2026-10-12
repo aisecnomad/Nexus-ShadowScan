@@ -255,11 +255,28 @@ def cmd_score(args: argparse.Namespace) -> int:
     corpus = load_corpus(args.corpus)
     services_path = args.estate / "services" / "services.json"
     services = score_mod.load_services(services_path)
-    if not services:
-        print(
-            f"note: no services in {services_path}; every scan target scores as unattributed", file=sys.stderr
-        )
     manifest = json.loads(args.runs.read_text(encoding="utf-8"))
+    rows = manifest.get("results", []) if isinstance(manifest, dict) else []
+    needing = sorted(
+        {
+            (str(row.get("tool")), str(row.get("unit")))
+            for row in rows
+            if isinstance(row, dict) and score_mod.needs_services(row)
+        }
+    )
+    if needing and not services:
+        consequence = "every scan target scores as unattributed and a live-sim run reaches no entity"
+        if not args.allow_missing_services:
+            # repr() keeps a control character in a recorded tool or unit name off the terminal.
+            listed = ", ".join(f"{tool!r} on {unit!r}" for tool, unit in needing)
+            print(
+                f"score: {services_path} is missing or lists no service, and these runs need it to map "
+                f"scanned loopback services to estate hosts: {listed}. Without it {consequence}; "
+                "pass --allow-missing-services to score them that way.",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"note: no services in {services_path}; {consequence}", file=sys.stderr)
     specs = {
         adapter.spec.id: {  # type: ignore[attr-defined]
             "name": adapter.spec.name,  # type: ignore[attr-defined]
@@ -325,6 +342,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=default_estate,
         help="estate whose services/services.json maps a scanned loopback service to its host",
+    )
+    p_score.add_argument(
+        "--allow-missing-services",
+        action="store_true",
+        help="score live-sim runs and recorded scan targets even when services/services.json is missing "
+        "or lists no service: every scan target is then unattributed and a live-sim run reaches no entity",
     )
     p_score.add_argument("--runs", type=Path, required=True)
     p_score.add_argument("--out", type=Path, required=True)

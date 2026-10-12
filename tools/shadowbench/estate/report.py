@@ -109,14 +109,15 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
     lines.append("")
     lines.append(
         "A run is incomplete when its status is not ok, the adapter reported it incomplete, it "
-        "recorded an error, it ran no command, a command timed out or exited with a code the "
-        "adapter does not declare as success, or every one of its commands exited non-zero and it "
-        "produced no output. A code or home unit that labels an entity on the tool's declared "
-        "surfaces is missing when the tool has no run for it and no whole-estate run. Every entity "
-        "an incomplete or missing run reaches is unscored: its positives count as missed and its "
-        "negatives earn no true negative, so a failed run never reads as a clean result. An entity "
-        "that no complete run reaches, such as an estate export outside every home tree a per-home "
-        "tool scans, is not reached: its positives count as missed and its negatives earn no true "
+        "recorded an error, its scan-target record is malformed, it ran no command, a command timed "
+        "out or exited with a code the adapter does not declare as success, or every one of its "
+        "commands exited non-zero and it produced no output. A code or home unit that labels an "
+        "entity on the tool's declared surfaces is missing when the tool has no run for it and no "
+        "whole-estate run. Every entity an incomplete or missing run reaches is unscored: its "
+        "positives count as missed and its negatives earn no true negative, so a failed run never "
+        "reads as a clean result. An entity that no complete run reaches, such as an estate export "
+        "outside every home tree a per-home tool scans or a runtime entity no live-sim mock service "
+        "stands in for, is not reached: its positives count as missed and its negatives earn no true "
         "negative either. Other non-zero exits an adapter declares as success are counted here but "
         "not treated as failures. runs.json records exit codes but no stderr, so whether such an "
         'exit meant "nothing found" or a failure cannot be checked from the published results; that '
@@ -142,17 +143,20 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
     lines.append(
         "A prediction is attributed only to an entity on its own surface that its run can reach "
         "(for a per-repository or per-home run, the entities with artifacts in that repository or "
-        "home tree). When the anchors of several positives appear in a prediction, one that expects "
-        "the predicted fact wins, then one whose expected or tolerated facts share its category. "
-        "When a control or near-miss is among them, that preference does not apply, so a flag on a "
-        "negative is never handed to a positive. What is still tied goes to the longest anchor, "
-        "then the first entity id in sort order. Every prediction matching several entities is "
-        "listed under its tool below with the rule that chose its owner; it is ambiguous when the "
-        "anchor length or the id chose. A per-repository or per-home prediction that names no "
-        "anchor goes to the one entity of that repository or home that expects its fact, if there "
-        "is exactly one. Tolerated counts predictions dropped by a corpus-level tolerated pair. "
-        "Unattributed predictions are false positives. Predictions outside the declared surfaces "
-        "count in the estate-wide numbers only."
+        "home tree; for the live-sim run, the entities its mock services stand in for). When the "
+        "anchors of several such entities appear in a prediction and all of them are positives, one "
+        "that expects the predicted fact wins, then one whose expected or tolerated facts share its "
+        "category; what is still tied goes to the longest anchor, then the first entity id in sort "
+        "order. When a control or near-miss is among them, that preference does not apply and the "
+        "anchor length, then the entity id, decide among all of them, so a flag on a negative can "
+        "still go to a positive with a longer anchor or an earlier id. Every prediction matching "
+        "several entities is listed under its tool below with the rule that chose its owner; it is "
+        "ambiguous when the anchor length or the id chose, which is always so when a negative is "
+        "among the candidates. A per-repository or per-home prediction that names no anchor goes to "
+        "the one entity of that repository or home that expects its fact, if there is exactly one. "
+        "Tolerated counts predictions dropped by a corpus-level tolerated pair. Unattributed "
+        "predictions are false positives. Predictions outside the declared surfaces count in the "
+        "estate-wide numbers only."
     )
     lines.append("")
     harness = _harness_sentence(tools)
@@ -272,8 +276,7 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
             lines.append("Predictions attributed to no entity (charged as false positives):")
             lines.append("")
             for item in extras[:15]:
-                target = item.get(score.SCAN_TARGET)
-                note = f" (scan target `{target}` maps to no estate host)" if target is not None else ""
+                note = _target_note(item.get(score.SCAN_TARGET))
                 lines.append(f"- `{item['fact']}` — {item['text']}{note}")
             if len(extras) > 15:
                 lines.append(f"- … and {len(extras) - 15} more")
@@ -302,6 +305,15 @@ def _harness_sentence(tools: list[tuple[str, dict[str, Any]]]) -> str:
         "loopback port to the estate host it stands in for (`artifacts/services/services.json`); the "
         "tool itself named only the loopback port it scanned."
     )
+
+
+def _target_note(target: object) -> str:
+    """The note on an unattributed prediction's scan target; a target that is not plain is not shown."""
+    if target is None:
+        return ""
+    if target == score.NO_TARGET or score.plain_scan_target(target):
+        return f" (scan target `{target}` maps to no estate host)"
+    return " (its scan target is not a plain id and is not shown; it maps to no estate host)"
 
 
 def _unscored_in_scope(data: dict[str, Any]) -> list[str]:

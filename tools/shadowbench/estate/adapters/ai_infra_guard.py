@@ -22,6 +22,12 @@ scorer maps a service id to the entity whose primary anchor is that
 service's `anchor` and counts the result as harness attribution, not the
 tool's; a target that names no service is a false positive.
 
+Reach: the run's unit is `sim`, and the scorer counts it as reaching only
+the entities a service in the estate's services.json stands in for (the
+frozen file under `score --estate`, not the staged copy). The live-sim
+stages no mock for any other runtime entity, so those earn this tool no
+true negative and their positives count as missed.
+
 Port offset: on a host where a real server holds 11434 or 8000, tools.json
 `ai_infra_guard.port_offset` (an integer, default 0) moves every mock
 service, through simhost's `--port-offset`, and every `--target` by that
@@ -48,7 +54,7 @@ from tools.shadowbench.estate.adapters import (
     run_version,
 )
 from tools.shadowbench.estate.corpus import EstateCorpus
-from tools.shadowbench.estate.score import SCAN_TARGETS
+from tools.shadowbench.estate.score import SCAN_TARGETS, SIM_UNIT
 
 SPEC = ToolSpec(
     id="ai_infra_guard",
@@ -118,7 +124,7 @@ class AiInfraGuardAdapter:
         )
 
     def units(self, cfg: ToolConfig, estate: Path, corpus: EstateCorpus) -> list[str]:
-        return ["sim"] if (estate / "services" / "services.json").exists() else []
+        return [SIM_UNIT] if (estate / "services" / "services.json").exists() else []
 
     def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
         offset = port_offset(cfg)

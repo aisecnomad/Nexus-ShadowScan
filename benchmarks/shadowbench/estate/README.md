@@ -237,7 +237,10 @@ Every port is bound before the scanner starts; a busy port stops simhost
 with exit 2 and a message naming the port, so the unit fails and is marked
 incomplete instead of probing a real server. `tools.json`
 `ai_infra_guard.port_offset` (an integer, default 0) is passed to simhost
-as `--port-offset` and added to every scan target's port.
+as `--port-offset` and added to every scan target's port. The live-sim
+stages nothing for the other eight runtime entities, and the scorer counts
+the run as reaching only the two that `services.json` mirrors (see
+[Attribution](#attribution)).
 
 ## Tools
 
@@ -351,8 +354,12 @@ Each prediction goes to at most one entity:
    repository (`code:<repo>`) or one home tree (`home:<device>`) reaches the
    entities labeled with that unit plus the estate-wide entities with an
    artifact inside that tree, such as an MCP server configured in several
-   homes. Any other run, such as ShadowScan's `estate` run or
-   AI-Infra-Guard's `sim` run, reaches every entity.
+   homes. ShadowScan's whole-estate run (`estate`) reaches every entity.
+   AI-Infra-Guard's live-sim run (`sim`) reaches only the entities a
+   service in `services.json` stands in for, those whose primary anchor is
+   a service's `anchor`: `runtime.ollama-serve-marcus` and
+   `runtime.vllm-build-runner`. Without a services file it reaches
+   nothing, and so does a run over any other unit.
 3. Among candidates whose anchor occurs in the prediction text
    (case-insensitive substring), when all of them are positives, one that
    expects the predicted fact (exactly, or by category for a `generic`
@@ -362,12 +369,16 @@ Each prediction goes to at most one entity:
    positive whose anchor merely co-occurs. What is still tied, or every
    candidate when a negative is among them, goes to the longest matching
    anchor, then the first entity id; those two tie-breaks can still give
-   such a prediction to a positive. Every prediction that matched several
-   candidates is counted and recorded with its candidates and the rule
-   that chose its owner (`metrics.json` keeps up to 50 per tool,
-   `REPORT.md` shows up to 15); it counts as **ambiguous** when the anchor
-   length or the entity id chose, which is always the case when a negative
-   was among the candidates.
+   such a prediction to a positive. For example, an
+   `ai-service-contact:gemini` prediction whose text is
+   `10.31.4.50 192.168.7.30` names the crypto-exchange near-miss
+   (`10.31.4.50`) and the Gemini positive (`192.168.7.30`), and goes to the
+   positive because the positive's anchor is longer. Every prediction that
+   matched several candidates is counted and recorded with its candidates
+   and the rule that chose its owner (`metrics.json` keeps up to 50 per
+   tool, `REPORT.md` shows up to 15); it counts as **ambiguous** when the
+   anchor length or the entity id chose, which is always the case when a
+   negative was among the candidates.
 4. **Fallback.** When no candidate's anchor matches and the run covers one
    repository or home tree, the prediction goes to the one candidate
    labeled with that unit that expects the fact: inventory tools print
@@ -384,7 +395,11 @@ Each prediction goes to at most one entity:
    scanned loopback port to the estate host it stands in for, not the tool
    naming the host. A target that names no service, or matches no single
    candidate, leaves the prediction unattributed and is counted under
-   `unknown_scan_target`; a malformed record marks the run incomplete.
+   `unknown_scan_target`. A malformed record marks the run incomplete and
+   leaves all its predictions unattributed. A target that is not one line
+   of at most 160 letters, digits and `._:/-`, starting with a letter or
+   digit, makes the record malformed, so its text reaches neither
+   `metrics.json` nor `REPORT.md`.
 
 An attributed prediction takes its entity's surface, so it is in scope
 exactly when the tool declares that surface. Unattributed predictions are
@@ -408,8 +423,9 @@ accepts exit 1 only from its `export-mcpfw-policy` step; its `scan` and
 non-zero is already incomplete by the exit-code rule.
 
 A code or home unit that labels an entity on a tool's declared surfaces is
-**missing** when the tool has no run for it and no whole-estate run; a tool
-with no runs at all is missing everywhere.
+**missing** when the tool has no run for it and no whole-estate (`estate`)
+run; a `sim` run does not count as one. A tool with no runs at all is
+missing everywhere.
 
 Every entity an incomplete or missing run reaches is **unscored** for that
 tool: its expected facts count as missed, a positive is not detected, and a
@@ -418,7 +434,9 @@ An in-scope entity that no complete run reaches is **not reached**, with
 the same consequences. The four endpoint entities whose only artifacts are
 offline exports under `artifacts/endpoint-exports/` (three positives, one
 control) are outside every home tree, so the per-home tools never reach
-them. Other non-zero exits an adapter declares as success are counted in
+them. Likewise the live-sim never reaches the eight runtime entities no
+mock service stands in for (four positives, two controls, two near-misses).
+Other non-zero exits an adapter declares as success are counted in
 `REPORT.md` under Run status but not treated as failures.
 
 ### Metrics
@@ -584,9 +602,13 @@ reports 12 such warnings and exits 0.
 command, default 900), `--as-user ACCOUNT`, `--keep-network` and
 `--only TOOL[,TOOL...]`. `score` reads `services/services.json` under
 `--estate` (default `benchmarks/shadowbench/estate/artifacts`) to resolve
-scan targets. It stops on a malformed services file; without one it prints
-a note and every scan target scores as unattributed. To re-score the
-committed run, pass
+scan targets and the live-sim run's reach. A malformed services file stops
+it with a `corpus error` and exit 2. When the file is missing or lists no
+service and some run needs it (a `sim` run, or one that records scan
+targets), `score` names those runs and exits 2 without writing anything.
+With `--allow-missing-services` it prints a note instead and scores them
+anyway: every scan target is then unattributed and a `sim` run reaches no
+entity. To re-score the committed run, pass
 `--runs benchmarks/shadowbench/estate/results/2026-10-11/runs.json`.
 
 `tools.json` maps tool ids to installed binaries:
@@ -625,10 +647,12 @@ reproduction.
   surface, which keeps most of these apart, but a prediction placed on the
   colliding entity's surface can still be attributed through one. Fixing
   them needs a new freeze.
-- **Runs that are not per-unit reach everything.** A run that is not
-  per-repository or per-home counts as reaching every entity, so its tool
-  earns true negatives on its declared surfaces for entities its input did
-  not contain, as AI-Infra-Guard does on the runtime surface.
+- **Reach comes from the unit, not from what a tool read.** The scorer
+  decides which entities a run could see from its unit alone: a repository
+  or home tree, the whole estate, or the entities the live-sim's
+  `services.json` mirrors. ShadowScan's `estate` run reaches every entity,
+  so an unflagged negative on its surfaces is a true negative whether or
+  not one of its connectors parsed that negative's artifact.
 - **One estate, one snapshot.** 137 entities authored by one process on
   one date; the corpus cannot measure field base rates, scale behavior, or
   live-collection reliability.

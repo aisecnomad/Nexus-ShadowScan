@@ -7,21 +7,28 @@ Attribution (`attribute`) gives each prediction at most one owning entity:
 2. Candidates are the entities on the prediction's surface (its own
    `surface` field, or, when that is missing or unknown, the surfaces its
    fact's category lives on) that the prediction's run reaches. A
-   whole-estate run reaches every entity; a unit-bound run (`code:<repo>`,
-   `home:<device>`) reaches the entities of that unit and the estate-wide
-   entities with an artifact inside the unit's tree, such as an MCP server
-   configured in several home trees.
+   whole-estate run (`estate`) reaches every entity; a unit-bound run
+   (`code:<repo>`, `home:<device>`) reaches the entities of that unit and
+   the estate-wide entities with an artifact inside the unit's tree, such
+   as an MCP server configured in several home trees. The live-sim run
+   (`sim`) reaches only the entities a services.json service stands in for:
+   those whose primary anchor is a service's `anchor`. A run over any other
+   unit reaches nothing.
 3. Among candidates whose anchor appears in the prediction's text
    (case-insensitive substring), when all of them are positives, an entity
    that expects the predicted fact (exactly, or by category for a
    `generic` value) beats one whose expected or tolerated facts share its
-   category, which beats the rest. When a control or near-miss is among
-   them, that preference does not apply, so a flag on a negative is never
-   handed to a positive whose anchor merely co-occurs. Whatever is still
-   tied goes to the longest matching anchor, then the entity id. Every
-   prediction whose anchors match more than one candidate is recorded with
-   the candidates and the rule that chose its owner, and it is counted as
-   ambiguous when the anchor length or the id chose.
+   category, which beats the rest; whatever is still tied goes to the
+   longest matching anchor, then the entity id. When a control or
+   near-miss is among them, that preference does not apply (it would hand
+   every flag on a negative to a positive whose anchor co-occurs): every
+   candidate goes straight to the longest matching anchor, then the entity
+   id, and those two tie-breaks can still hand the flag to a positive whose
+   anchor is longer or whose id sorts first. Every prediction whose anchors
+   match more than one candidate is recorded with the candidates and the
+   rule that chose its owner, and it is counted as ambiguous when the
+   anchor length or the id chose, which is always so when a negative is
+   among the candidates.
 4. When no candidate's anchor matches and the run is unit-bound, the
    prediction falls back to the one candidate labeled with the run's own
    unit that expects the fact: inventory tools echo client names, not the
@@ -38,8 +45,11 @@ goes to the one candidate whose primary anchor equals that service's
 `anchor`, and counts as *harness-attributed*: the harness, not the tool,
 mapped the port to the host. A target that names no service in the estate's
 services.json, or a service whose anchor is no candidate's primary anchor,
-leaves the prediction unattributed (a false positive) and is counted. Rows
-without the detail key are scored as before.
+leaves the prediction unattributed (a false positive) and is counted. A
+target must be one line of at most 160 letters, digits and `._:/-`, starting
+with a letter or digit; any other makes the record malformed, so no target
+text reaches the metrics or the report unchecked. Rows without the detail
+key are scored as before.
 
 An attributed prediction takes its entity's surface, so it is in scope
 exactly when the tool declares that surface; an unattributed prediction is
@@ -55,15 +65,17 @@ did not declare as success (the runner records that as the command's `ok`),
 or every one of its commands exited non-zero and it produced no output: the
 adapter accepted those exits, but "nothing found" cannot then be told from a
 failure. A code or home unit that labels an entity on the tool's declared
-surfaces is missing when the tool has no row for it and no whole-estate
-row, and a tool with no rows at all is missing everywhere. Every entity an
+surfaces is missing when the tool has no row for it and no `estate` row,
+and a tool with no rows at all is missing everywhere. Every entity an
 incomplete or missing run reaches is *unscored* for the tool: its expected
 facts count as missed, a positive is not detected, and a negative earns no
 true negative (a flag on it is still a false positive). An entity that no
 complete run reaches is *not reached*: a positive there is missed and a
-negative earns no true negative. An incomplete run never reads as a clean
-negative. Other non-zero exits an adapter declares as success are counted
-and reported, not failed.
+negative earns no true negative. A complete live-sim run therefore earns
+no true negative for a runtime control or near-miss that no mock service
+stands in for. An incomplete run never reads as a clean negative. Other
+non-zero exits an adapter declares as success are counted and reported, not
+failed.
 
 Scoring then uses the code-surface benchmark's value matching, except that
 a surplus generic earns no second true positive here (the code-surface
@@ -107,13 +119,21 @@ MISSING_RUN = "no run recorded"
 NO_OUTPUT = "every command exited non-zero and the run produced no output"
 MALFORMED_TARGETS = "malformed scan targets"
 
+#: The whole-estate unit: one run over every artifact (ShadowScan's offline scan).
+ESTATE_UNIT = "estate"
+#: The live-sim unit (AI-Infra-Guard against `simhost.py`); it reaches only what services.json mirrors.
+SIM_UNIT = "sim"
+
 #: Run `detail` key where an adapter records each prediction's scan target, in prediction order.
 SCAN_TARGETS = "scan_targets"
 #: The prediction field the scorer reads a scan target from; only the run's record sets it.
 SCAN_TARGET = "scan_target"
 #: Service ids in services.json. A URL, or the marker below, can never be one.
 _SERVICE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-_NO_TARGET = f"<{MALFORMED_TARGETS}>"
+#: A recorded scan target: a service id or the loopback URL the tool reported, on one line.
+_TARGET_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}")
+#: The target a prediction gets when its row's record is malformed; it names no service.
+NO_TARGET = f"<{MALFORMED_TARGETS}>"
 
 # Rules that pick the owner of a prediction whose anchors match several entities.
 RULE_FACT = "expects the fact"
@@ -219,11 +239,17 @@ def load_services(path: Path) -> dict[str, str]:
     return anchors
 
 
+def plain_scan_target(target: object) -> bool:
+    """Whether `target` is a scan target the scorer accepts: one line of `_TARGET_TEXT` characters."""
+    return isinstance(target, str) and _TARGET_TEXT.fullmatch(target) is not None
+
+
 def _recorded_targets(row: dict[str, Any]) -> tuple[list[str | None] | None, bool]:
     """The row's scan targets, one per prediction, and whether the record is malformed.
 
     (None, False) when the row records none: the scorer then reads its
-    predictions as it always has.
+    predictions as it always has. A target that is not a plain one-line id
+    makes the record malformed, so its text never reaches the metrics.
     """
     detail = row.get("detail")
     if not isinstance(detail, dict) or SCAN_TARGETS not in detail:
@@ -234,10 +260,16 @@ def _recorded_targets(row: dict[str, Any]) -> tuple[list[str | None] | None, boo
         not isinstance(targets, list)
         or not isinstance(predictions, list)
         or len(targets) != len(predictions)
-        or not all(target is None or (isinstance(target, str) and target) for target in targets)
+        or not all(target is None or plain_scan_target(target) for target in targets)
     ):
         return None, True
     return targets, False
+
+
+def needs_services(row: dict[str, Any]) -> bool:
+    """Whether scoring the row reads services.json: a live-sim run, or one that records scan targets."""
+    detail = row.get("detail")
+    return row.get("unit") == SIM_UNIT or (isinstance(detail, dict) and SCAN_TARGETS in detail)
 
 
 def row_predictions(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -250,10 +282,10 @@ def row_predictions(row: dict[str, Any]) -> list[dict[str, Any]]:
     targets, malformed = _recorded_targets(row)
     predictions: list[dict[str, Any]] = []
     for index, raw in enumerate(row.get("predictions", [])):
-        prediction = {**dict(raw), "unit": row.get("unit", "estate")}
+        prediction = {**dict(raw), "unit": row.get("unit", ESTATE_UNIT)}
         prediction.pop(SCAN_TARGET, None)
         if malformed:
-            prediction[SCAN_TARGET] = _NO_TARGET
+            prediction[SCAN_TARGET] = NO_TARGET
         elif targets is not None and targets[index] is not None:
             prediction[SCAN_TARGET] = targets[index]
         predictions.append(prediction)
@@ -266,11 +298,28 @@ def unit_bound(unit: str) -> bool:
     return bool(sep and name) and kind in _UNIT_KINDS
 
 
-def reaches(unit: str, entity: Entity) -> bool:
-    """True when a run over `unit` can see `entity`'s artifacts."""
-    if not unit_bound(unit) or entity.unit == unit:
+def stands_in_for(anchor: str, entity: Entity) -> bool:
+    """True when the services.json service with this `anchor` mirrors `entity`: it is its primary anchor."""
+    return entity.anchors[0] == anchor
+
+
+def reaches(unit: str, entity: Entity, services: Mapping[str, str] | None = None) -> bool:
+    """True when a run over `unit` can see `entity`'s artifacts.
+
+    The live-sim stages a mock service only for the entities services.json
+    mirrors (`services`, as `load_services` reads it), so a `sim` run reaches
+    those alone; without services it reaches nothing. A unit that is neither
+    the whole estate, the live-sim nor a code or home unit reaches nothing.
+    """
+    if unit == ESTATE_UNIT:
         return True
-    if entity.unit != "estate":
+    if unit == SIM_UNIT:
+        return any(stands_in_for(anchor, entity) for anchor in (services or {}).values())
+    if not unit_bound(unit):
+        return False
+    if entity.unit == unit:
+        return True
+    if entity.unit != ESTATE_UNIT:
         return False
     kind, _, name = unit.partition(":")
     return any(artifact.startswith(f"{kind}/{name}/") for artifact in entity.artifacts)
@@ -325,6 +374,8 @@ def choose_owner(matched: list[tuple[Entity, int]], fact: str) -> tuple[Entity, 
     The preference for an entity that expects the fact, or its category, applies
     only among positives: a control or near-miss has no expected facts, so the
     preference would hand every flag on it to a positive whose anchor co-occurs.
+    With a negative among them the anchors alone decide, and a positive with
+    the longer anchor, or the first id, still wins.
     """
     pool = matched
     if all(entity.klass == "positive" for entity, _ in matched):
@@ -342,7 +393,7 @@ def harness_owner(reachable: list[Entity], services: Mapping[str, str], target: 
     anchor = services.get(target)
     if anchor is None:
         return None
-    owners = [entity for entity in reachable if entity.anchors[0] == anchor]
+    owners = [entity for entity in reachable if stands_in_for(anchor, entity)]
     return owners[0] if len(owners) == 1 else None
 
 
@@ -354,7 +405,8 @@ def attribute(
     """Attribute predictions to entities; the module docstring has the rules.
 
     `services` maps a services.json id to its anchor (`load_services`); a
-    prediction's `scan_target` is resolved through it.
+    prediction's `scan_target` is resolved through it, and a live-sim run
+    reaches only the entities it mirrors.
     """
     tolerated = [(item.fact, item.anchor) for item in corpus.tolerated_global]
     result = Attribution(entity_predictions={e.id: [] for e in corpus.entities})
@@ -365,8 +417,8 @@ def attribute(
             result.tolerated += 1
             continue
         surfaces = placement(prediction)
-        unit = str(prediction.get("unit", "estate"))
-        reachable = [e for e in corpus.entities if e.surface in surfaces and reaches(unit, e)]
+        unit = str(prediction.get("unit", ESTATE_UNIT))
+        reachable = [e for e in corpus.entities if e.surface in surfaces and reaches(unit, e, services)]
         target = prediction.get(SCAN_TARGET)
         if target is not None:
             # The harness says which host the scanned port stands in for; the text is not read.
@@ -451,7 +503,12 @@ class Completeness:
     accepted_nonzero: int = 0
 
 
-def _completeness(corpus: EstateCorpus, surfaces: frozenset[str], rows: list[dict[str, Any]]) -> Completeness:
+def _completeness(
+    corpus: EstateCorpus,
+    surfaces: frozenset[str],
+    rows: list[dict[str, Any]],
+    services: Mapping[str, str] | None = None,
+) -> Completeness:
     if not rows:
         everything = {entity.id for entity in corpus.entities}
         return Completeness([{"unit": "all", "reason": MISSING_RUN}], everything, set())
@@ -459,7 +516,7 @@ def _completeness(corpus: EstateCorpus, surfaces: frozenset[str], rows: list[dic
     complete_units: set[str] = set()
     result = Completeness([], set(), set())
     for row in rows:
-        unit = str(row.get("unit", "estate"))
+        unit = str(row.get("unit", ESTATE_UNIT))
         reason = incomplete_reason(row)
         if reason is None:
             complete_units.add(unit)
@@ -470,16 +527,17 @@ def _completeness(corpus: EstateCorpus, surfaces: frozenset[str], rows: list[dic
                 result.commands += 1
                 if command.get("ok") is True and command.get("exit_code") not in (0, None):
                     result.accepted_nonzero += 1
-    seen = {str(row.get("unit", "estate")) for row in rows}
-    if all(unit_bound(unit) for unit in seen):
+    seen = {str(row.get("unit", ESTATE_UNIT)) for row in rows}
+    # Only an `estate` row covers every code and home unit; a live-sim row covers none.
+    if ESTATE_UNIT not in seen:
         for entity in corpus.entities:
             if entity.surface in surfaces and unit_bound(entity.unit) and entity.unit not in seen:
                 gaps.setdefault(entity.unit, MISSING_RUN)
     result.gaps = [{"unit": unit, "reason": reason} for unit, reason in sorted(gaps.items())]
     for entity in corpus.entities:
-        if any(reaches(unit, entity) for unit in gaps):
+        if any(reaches(unit, entity, services) for unit in gaps):
             result.unscored.add(entity.id)
-        if any(reaches(unit, entity) for unit in complete_units - set(gaps)):
+        if any(reaches(unit, entity, services) for unit in complete_units - set(gaps)):
             result.reached.add(entity.id)
     return result
 
@@ -499,7 +557,7 @@ def score_tool(
     rows = [row for row in runs if row.get("tool") == tool_id]
     predictions = [prediction for row in rows for prediction in row_predictions(row)]
     attribution = attribute(corpus, predictions, services)
-    completeness = _completeness(corpus, surfaces, rows)
+    completeness = _completeness(corpus, surfaces, rows, services)
 
     value_in_scope = Counts()
     value_all = Counts()
@@ -657,7 +715,7 @@ def score_all(
     specs: dict[str, dict[str, Any]],
     services: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Score every tool in `specs` that the run did not skip; `services` is for `attribute`."""
+    """Score every tool in `specs` that the run did not skip; `services` is as `load_services` reads it."""
     runs = list(manifest.get("results", []))
     expected_by_surface: dict[str, int] = defaultdict(int)
     for entity in corpus.by_class("positive"):
