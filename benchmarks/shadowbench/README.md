@@ -25,10 +25,10 @@ model, adapters, runner and scorer.
 | | [Cases](cases/README.md) | [Estate](estate/README.md) |
 |---|---|---|
 | Question | Per surface and input type: does the tool find the expected entities in one platform-native input, and leave its decoys alone? | Across one organization's whole estate at once: which entities does the tool find, which controls and near-misses does it flag, and does it tell registered agents from shadow ones? |
-| Inputs | 320 cases generated at a recorded seed from written rubrics on eight surfaces, plus 26 public repositories pinned by commit | One authored fictional organization, Adatum Logistics: repositories, home directories and vendor-format exports on all nine surfaces |
+| Inputs | 320 cases generated from written rubrics on eight surfaces (the committed corpus's seed had no effect; see its README), plus 26 public repositories pinned by commit | One authored fictional organization, Adatum Logistics: repositories, home directories and vendor-format exports on all nine surfaces |
 | Ground truth | Per-case entities labeled `agent` or `llm`, tolerated keys and decoys | 137 entities (87 positive, 27 control, 23 near-miss), each with facts, evidence pointers and anchors |
 | Size | 346 cases, 738 expected entities, 735 decoys | 139 frozen files |
-| Integrity check | `verify --regenerate` rebuilds the corpus from the generator at its seed | `verify-freeze` checks every file against `FREEZE.json` |
+| Integrity check | `verify` rebuilds the corpus from the generator and compares every case | `verify-freeze` checks every file against `FREEZE.json` |
 | Distinctive measurements | Wilson and bootstrap intervals, agent-tier recall, paired McNemar tests; loopback mock services and inert live processes for tools that only work live | Value-level and entity-level scoring with anchors, estate-wide recall, a registry layer that checks shadow-versus-registered classification |
 | Harness | [`tools/shadowbench/cases/`](../../tools/shadowbench/cases/README.md) | [`tools/shadowbench/estate/`](../../tools/shadowbench/estate/) |
 | Results | [`cases/results/`](cases/results/) | [`estate/results/`](estate/results/) |
@@ -44,7 +44,7 @@ From the repository root, after `make install`:
 
 ```bash
 python -m tools.shadowbench                      # list the tracks
-python -m tools.shadowbench cases verify --corpus benchmarks/shadowbench/cases/corpus.json --regenerate
+python -m tools.shadowbench cases verify --corpus benchmarks/shadowbench/cases/corpus.json
 python -m tools.shadowbench estate validate
 python -m tools.shadowbench estate verify-freeze
 ```

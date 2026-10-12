@@ -1035,7 +1035,13 @@ Plugin approvals can pin the import target and the providing release
 against installed metadata, not file hashes, so keep installing plugins from
 reviewed, hash-pinned requirements. Give JWTs
 and connector credentials through files, stdin or `${ENV_VAR}` references:
-the CLI warns, but still runs, when they arrive as arguments. Incremental
+the CLI warns, but still runs, when they arrive as arguments. A credential-file
+key (`credentials_file`, `service_account_file`, `token_file`) set with
+`--set` warns only when its value looks like an opaque credential rather than
+a location: a value with a path or a file-name shape around a random name
+(`/run/secrets/<hex>`, `acme-prod-123456-1a2b3c4d5e6f.json`) is a location,
+while a bare opaque token, or one under a directory that is itself an opaque
+run, still warns, and `tokens` always does. Incremental
 cache entries are authenticated only when a stable identity key is
 configured; without one, keep the state directory writable only by the
 scanner account.

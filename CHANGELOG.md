@@ -43,10 +43,17 @@ summarizes each release for people who install and operate ShadowScan.
   positive case counts as found only with a true positive, code keys
   outside the fact taxonomy are neither credited nor charged (246 of
   AgentDiscover's 247 code "false positives" were such keys), and McNemar
-  with no shared case reads n/a. `verify --regenerate` now rebuilds the
-  committed corpus (it derived 38 cases per surface instead of 40), the
-  generator digest covers the code corpus, and case inputs are validated
-  before the runner stages them.
+  with no shared case reads n/a. Decoys an adapter declares it never passes
+  to the tool (AWS IAM roles for ShadowScan) earn that tool no true
+  negative. `verify` always rebuilds the corpus and compares the cases (it
+  derived 38 cases per surface instead of 40, and plain `verify` compared
+  only the header digest), the generator digest covers the code corpus, and
+  case inputs are validated before the runner stages them. The generator's
+  `--seed` had no effect: each stream's seed kept only the end of its
+  modality name, and four pairs of modalities shared a stream. New corpora
+  record a hash-based stream scheme; the committed corpus keeps the legacy
+  one, so it still rebuilds exactly, and its README states the
+  consequences.
 - Cases runner: tools run as uid 65534 with `no_new_privs` in fresh
   network, PID and mount namespaces with `/root` and `/home` hidden; a
   timeout kills the whole namespace; scratch directories must be private;
@@ -70,7 +77,12 @@ summarizes each release for people who install and operate ShadowScan.
   mirrors, so AI-Infra-Guard earns no true negative for runtime entities it
   was never shown; `score` exits 2 without `services.json` unless
   `--allow-missing-services` is given, and a malformed scan target makes its
-  run incomplete.
+  run incomplete. `score` refuses a run whose recorded freeze drifted or
+  differs from the current `FREEZE.json` unless `--allow-freeze-mismatch`
+  is given; F1 is computed from counts, not rounded precision and recall;
+  per-surface value tables include unattributed false positives; and the
+  report's provenance sentence follows the README protocol (labels before
+  any tool ran, one audit pass of every runnable tool, then the freeze).
 - Estate runner and adapters: each unit runs on a private copy of the
   estate, a drifted freeze refuses the run, and `runs.json` records the
   harness commit and freeze digest; Snyk Agent Scan, Numbat and vet
@@ -119,7 +131,9 @@ summarizes each release for people who install and operate ShadowScan.
   keys) warns again when the value is an opaque credential rather than a file
   location. Judging those keys by value had delegated to rules that recognize
   only known token formats, so a bare hexadecimal or generic opaque token
-  pasted in place of the path drew no command-line warning.
+  pasted in place of the path drew no command-line warning. A value shaped
+  like a location stays quiet even when its file name is random (a mounted
+  `/run/secrets/<hex>`, a downloaded `<project>-<hex>.json` key).
 - A Workato recipe whose Workbot trigger line carries no trigger name records
   no initiation instead of reading as event-triggered: the name is what
   separates a command a person operates from an event trigger, and the
@@ -141,8 +155,11 @@ summarizes each release for people who install and operate ShadowScan.
   directory and `merge -f` shows its default; eight options gained help text
   and `run` and `signatures test` readable one-line summaries.
 - AI review gate: the publication sanitizer withholds a private key quoted
-  without its footer on one line or with escaped line breaks; before, only
-  real line breaks were recognized and the base64 body was published.
+  without its footer on one line, with escaped line breaks (LF or CRLF), in a
+  Markdown blockquote, or encrypted with Proc-Type and DEK-Info headers;
+  before, only real line breaks were recognized and the base64 body was
+  published. Every rule now also matches the original text, so a key body
+  can no longer hide a URL password or account key that follows it.
 - Documentation: least-privilege rows for the five live low-code connectors;
   `cloud.azure` and `cloud.gcp` need no SDK extra with a pre-issued token and
   `cloud.kubernetes` and `cloud.openshift` are offline only (the sentence said
