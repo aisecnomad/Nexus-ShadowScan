@@ -37,6 +37,8 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+# The estate benchmark's authored home trees include an editor extension directory.
+!benchmarks/shadowbench/estate/artifacts/home/*/*/.vscode/
 
 .shadowscan-state/
 /site/

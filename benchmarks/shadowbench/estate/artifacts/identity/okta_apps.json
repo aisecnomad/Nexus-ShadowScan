@@ -1,0 +1,129 @@
+[
+ {
+  "id": "0oa6ffnote4vq7m",
+  "name": "oidc_client",
+  "label": "Fireflies.ai Notetaker",
+  "status": "ACTIVE",
+  "signOnMode": "OPENID_CONNECT",
+  "created": "2025-04-14T09:30:00.000Z",
+  "lastUpdated": "2025-09-18T11:05:00.000Z",
+  "settings": {
+   "oauthClient": {
+    "application_type": "web",
+    "grant_types": [
+     "authorization_code",
+     "refresh_token"
+    ],
+    "redirect_uris": [
+     "https://app.fireflies.ai/okta/callback"
+    ]
+   }
+  },
+  "credentials": {
+   "oauthClient": {
+    "client_id": "0oa6ffnote4vq7m-client",
+    "token_endpoint_auth_method": "client_secret_basic"
+   }
+  },
+  "_grants": [],
+  "_tokens": [
+   {
+    "userId": "u-dana",
+    "scopes": [
+     "openid",
+     "email",
+     "profile"
+    ]
+   },
+   {
+    "userId": "u-marcus",
+    "scopes": [
+     "openid",
+     "email"
+    ]
+   }
+  ]
+ },
+ {
+  "id": "0oa7cnagkq83zz",
+  "name": "oidc_client",
+  "label": "contract-negotiator-agent-kq83",
+  "status": "ACTIVE",
+  "signOnMode": "OPENID_CONNECT",
+  "created": "2025-07-02T08:00:00.000Z",
+  "lastUpdated": "2025-09-29T16:40:00.000Z",
+  "settings": {
+   "oauthClient": {
+    "application_type": "service",
+    "grant_types": [
+     "client_credentials",
+     "urn:ietf:params:oauth:grant-type:token-exchange"
+    ],
+    "redirect_uris": []
+   }
+  },
+  "credentials": {
+   "oauthClient": {
+    "client_id": "0oa7cnagkq83zz-client",
+    "token_endpoint_auth_method": "private_key_jwt"
+   }
+  },
+  "_grants": [
+   {
+    "scopeId": "okta.users.read"
+   }
+  ],
+  "_tokens": []
+ },
+ {
+  "id": "0oa9glnsrch2xp4",
+  "name": "glean",
+  "label": "Glean Search",
+  "status": "ACTIVE",
+  "signOnMode": "SAML_2_0",
+  "created": "2025-05-20T12:00:00.000Z",
+  "lastUpdated": "2025-08-11T12:00:00.000Z",
+  "_links": {
+   "appLinks": [
+    {
+     "href": "https://app.glean.com/sso/okta"
+    }
+   ]
+  }
+ },
+ {
+  "id": "0oa5gemfx77tr3d",
+  "name": "oidc_client",
+  "label": "Gemini Trading Desk",
+  "status": "ACTIVE",
+  "signOnMode": "OPENID_CONNECT",
+  "created": "2025-02-03T10:00:00.000Z",
+  "lastUpdated": "2025-06-30T10:00:00.000Z",
+  "settings": {
+   "oauthClient": {
+    "application_type": "web",
+    "grant_types": [
+     "authorization_code"
+    ],
+    "redirect_uris": [
+     "https://exchange.gemini.com/oauth/callback"
+    ]
+   }
+  },
+  "credentials": {
+   "oauthClient": {
+    "client_id": "gemini-fx-trading-77r3",
+    "token_endpoint_auth_method": "client_secret_basic"
+   }
+  },
+  "_grants": [],
+  "_tokens": [
+   {
+    "userId": "u-nika",
+    "scopes": [
+     "openid"
+    ]
+   }
+  ]
+ }
+]

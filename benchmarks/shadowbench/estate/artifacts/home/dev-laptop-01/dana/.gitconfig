@@ -1,0 +1,5 @@
+[user]
+	name = Dana
+	email = dana@vantor.example
+[pull]
+	rebase = true

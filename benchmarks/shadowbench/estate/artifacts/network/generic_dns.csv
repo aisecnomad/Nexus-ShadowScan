@@ -1,0 +1,4 @@
+timestamp,client_ip,query,answers
+2025-10-11T08:05:00Z,192.168.7.30,generativelanguage.googleapis.com,"142.250.1.95"
+2025-10-11T08:05:04Z,192.168.7.31,openrouter.ai,"104.18.2.161,104.18.3.161"
+2025-10-11T08:05:08Z,192.168.7.40,slack.com,"44.206.5.13"

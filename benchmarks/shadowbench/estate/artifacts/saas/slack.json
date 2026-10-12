@@ -1,0 +1,104 @@
+[
+ {
+  "_kind": "team",
+  "id": "T0VANTOR1",
+  "name": "vantor",
+  "domain": "vantor"
+ },
+ {
+  "_kind": "bot_user",
+  "id": "U0VQ7CLDBOT",
+  "is_bot": true,
+  "name": "claude",
+  "real_name": "Claude",
+  "profile": {
+   "api_app_id": "A0VQ7CLAUDE",
+   "real_name": "Claude",
+   "title": "Anthropic assistant"
+  },
+  "updated": 1757000000
+ },
+ {
+  "_kind": "approved_app",
+  "app": {
+   "id": "A0VQ7CLAUDE",
+   "name": "Claude",
+   "app_homepage_url": "https://claude.ai",
+   "is_app_directory_approved": true
+  },
+  "scopes": [
+   {
+    "name": "channels:history"
+   },
+   {
+    "name": "chat:write"
+   }
+  ],
+  "last_resolved_by": {
+   "actor_id": "U0DANA0ADM"
+  },
+  "date_updated": 1757000000
+ },
+ {
+  "_kind": "app_request",
+  "app": {
+   "id": "A0RD8READAI",
+   "name": "Read.ai"
+  },
+  "user": {
+   "email": "priya@vantor.example"
+  },
+  "message": "need meeting summaries for ops standups",
+  "scopes": [
+   {
+    "name": "channels:history"
+   }
+  ]
+ },
+ {
+  "_kind": "approved_app",
+  "app": {
+   "id": "A0WD5WDPKR",
+   "name": "Wudpecker",
+   "app_homepage_url": "https://www.wudpecker.io",
+   "is_app_directory_approved": true
+  },
+  "scopes": [
+   {
+    "name": "commands"
+   },
+   {
+    "name": "incoming-webhook"
+   }
+  ],
+  "last_resolved_by": {
+   "actor_id": "U0DANA0ADM"
+  },
+  "date_updated": 1756400000
+ },
+ {
+  "_kind": "approved_app",
+  "app": {
+   "id": "A0WH4FRGSTS",
+   "name": "Freight Status Webhook",
+   "is_app_directory_approved": false
+  },
+  "scopes": [
+   {
+    "name": "commands"
+   },
+   {
+    "name": "incoming-webhook"
+   }
+  ],
+  "date_updated": 1755100000
+ },
+ {
+  "_kind": "integration_log",
+  "app_id": "A0VQ7CLAUDE",
+  "user_name": "dana",
+  "change_type": "added",
+  "date": "1756900000",
+  "scope": "chat:write,channels:history"
+ }
+]

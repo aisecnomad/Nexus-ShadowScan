@@ -45,6 +45,25 @@ complete in the baseline and is now incomplete (exit 3) fails the run.
 Incomplete runs are scored on the facts they found and marked `(incomplete)`
 in REPORT.md, never as clean negatives.
 
+## ShadowBench: nine surfaces against other tools
+
+`benchmarks/shadowbench/` extends the comparison to every discovery surface in
+two tracks that share one harness, `tools/shadowbench/`
+(`python -m tools.shadowbench <track> <command>`). The **synthetic** track
+generates identity, gateway, low-code, SaaS, cloud, endpoint, network and
+runtime inputs from written rubrics in the platforms' native shapes, with
+entity-level truth, tolerated keys and decoys, and reuses 26 pinned
+repositories of the code-surface corpus; active-network cases serve mock
+products on loopback and live-runtime cases spawn inert processes inside the
+tool's namespaces, so scanners that only work live can be measured offline.
+The **estate** track scores the same tools against the authored, SHA-256-frozen
+artifacts of one fictional organization, with 137 labeled entities anchored to
+unique tokens inside them, so every true positive, false positive, true
+negative and false negative is countable. Both corpora are author-written, so
+each is a behaviour check on known inputs, not field precision or recall; see
+each track's README for the rubrics or protocol, the bias controls and the
+limits, and its newest `REPORT.md` for the measured numbers.
+
 ## Run the reproducible corpora
 
 From the reviewed checkout, with the package dependencies installed:

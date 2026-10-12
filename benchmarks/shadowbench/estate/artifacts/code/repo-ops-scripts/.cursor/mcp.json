@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "ops-postgres": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "mcp/postgres",
+        "postgresql://ops_ro@pg.vantor.example:5432/ops"
+      ]
+    }
+  }
+}
