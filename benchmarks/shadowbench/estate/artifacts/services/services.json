@@ -1,5 +1,5 @@
 {
- "comment": "Loopback mock services mirroring the estate's running model servers (runtime entities). Used by tools/estate_benchmark/simhost.py for live network-fingerprinting tools.",
+ "comment": "Loopback mock services mirroring the estate's running model servers (runtime entities). Used by tools/shadowbench/estate/simhost.py for live network-fingerprinting tools.",
  "services": [
   {
    "id": "ollama-dev-laptop-02",
