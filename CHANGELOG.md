@@ -102,15 +102,18 @@ summarizes each release for people who install and operate ShadowScan.
   a letter is again withheld whole, and one after the `token` word, whose
   tail was shown, now is too. The October 11 integration applied the
   token-word rule's glued-text guard to every scheme credential, so such a
-  token's tail after the glue was left in sanitized text. The run a guard
-  stop leaves is now kept when any name in it may be one a later rule reads
-  (`=password: v`, `=x--password v`, `--auth v`, whose values those rules
-  withhold) and is withheld with the credential otherwise; a run that a
-  colon follows (a URL scheme, a user, a setting path) or that ends in
-  another scheme is left as it was for the later rules. A comparison with
-  the October 11 rules over crafted and generated inputs found no value
-  they withhold that is now shown, and the regression tests over all three
-  schemes are drawn from its cases.
+  token's tail after the glue was left in sanitized text. Every rule still
+  reads the run a guard stop leaves, as in the October 11 rules: the
+  option, assignment, URL and setting rules withhold the values they find in
+  or past it. Only then is the run withheld with the credential, unless it
+  may hold a name a rule reads (`=password: v`, `=x--password v`,
+  `--auth v`), which stays beside the value that rule withheld; a token
+  tail that holds such a name (`<token>--x/Key`) therefore stays shown. By
+  construction the last step shows no value the October 11 rules withhold:
+  it only removes text they leave, and reading the result once more only
+  withholds more. A comparison with them over crafted and generated inputs
+  found none either, and the regression tests over all three schemes are
+  drawn from its cases.
 - `shadowscan run --set credentials_file=<value>` (and the other credential-file
   keys) warns again when the value is an opaque credential rather than a file
   location. Judging those keys by value had delegated to rules that recognize
