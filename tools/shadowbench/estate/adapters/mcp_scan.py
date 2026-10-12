@@ -3,7 +3,9 @@
 `inspect` mode only — the default `scan` sends tool descriptions to a
 verification API. stdin is /dev/null so the per-server consent prompt
 auto-denies: no configured MCP server command is executed and no remote MCP
-URL is contacted, yet every server is still inventoried.
+URL is contacted, yet every server is still inventoried. Refusing launcher
+shims (`npx`, `uvx`, `docker`, ...) come first on PATH as well, so a consent
+change in a later release still cannot start a corpus-configured server.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from tools.shadowbench.estate.adapters import (
 )
 from tools.shadowbench.estate.adapters.common import (
     client_slug,
+    refuse_launchers,
     sh_command,
     write_script,
 )
@@ -58,6 +61,7 @@ class McpScanAdapter:
         out = out_dir.absolute()
         argv = (cfg.binary("mcp_scan") or "snyk-agent-scan", "inspect", "--json")
         lines = [
+            *refuse_launchers(out / "shims"),
             "exec " + sh_command(argv, stdin="/dev/null", stdout=out / "inspect.json"),
         ]
         script = write_script(out / "run.sh", lines)

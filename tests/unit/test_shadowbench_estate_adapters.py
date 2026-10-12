@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,7 @@ from tools.shadowbench.estate.adapters.code_wrappers import (
     AgenticRadarEstateAdapter,
     VetEstateAdapter,
 )
-from tools.shadowbench.estate.adapters.common import client_slug
+from tools.shadowbench.estate.adapters.common import LAUNCHERS, client_slug, refuse_launchers
 from tools.shadowbench.estate.adapters.mcp_scan import McpScanAdapter
 from tools.shadowbench.estate.adapters.numbat import NumbatAdapter
 from tools.shadowbench.estate.runner import RunResult, _slug, run_command, run_unit
@@ -403,3 +404,80 @@ def test_ai_infra_guard_scan_without_target_lines_is_an_error(tmp_path: Path, te
     normalized = AiInfraGuardAdapter().normalize("sim", tmp_path)
 
     assert normalized.error == "scan.txt holds no target result line"
+
+
+# --- MCP server launchers never run, whatever the host has installed ------------------------------
+
+
+def _host_launchers(tmp_path: Path) -> Path:
+    """A directory standing in for a host with npx, uvx and docker installed: each
+    one leaves a marker when it runs."""
+    host = tmp_path / "hostbin"
+    host.mkdir()
+    for name in ("npx", "uvx", "docker"):
+        launcher = host / name
+        launcher.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(tmp_path / f'pwned-{name}'))}\n")
+        launcher.chmod(0o755)
+    return host
+
+
+def _launching_stub(tmp_path: Path, name: str, stdout: str) -> tuple[Path, Path]:
+    """A fake scanner that tries to start configured MCP servers the way a client would."""
+    launches = tmp_path / "launches.log"
+    log = shlex.quote(str(launches))
+    script = shlex.quote(f"open({str(tmp_path / 'pwned-python3')!r}, 'w')")
+    before = "\n".join(
+        [
+            f"npx -y @modelcontextprotocol/server-github; echo npx=$? >> {log}",
+            f"uvx mcp-server-fetch; echo uvx=$? >> {log}",
+            f"docker run -i --rm mcp/server; echo docker=$? >> {log}",
+            f"python3 -c {script}; echo python3=$? >> {log}",
+        ]
+    )
+    stub = _stub(tmp_path / "bin" / name, tmp_path / "calls.log", stdout=stdout, before=before)
+    return stub, launches
+
+
+@pytest.mark.parametrize(
+    ("adapter", "tool_id", "binary", "stdout"),
+    [
+        (CiscoMcpScannerAdapter(), "cisco_mcp_scanner", "mcp-scanner", EMPTY_SCAN),
+        (McpScanAdapter(), "mcp_scan", "snyk-agent-scan", "{}"),
+    ],
+    ids=["cisco_mcp_scanner", "mcp_scan"],
+)
+def test_mcp_server_launchers_are_refused_even_when_the_host_has_them(
+    tmp_path: Path, adapter: Adapter, tool_id: str, binary: str, stdout: str
+) -> None:
+    host = _host_launchers(tmp_path)
+    stub, launches = _launching_stub(tmp_path, binary, stdout)
+    estate, _ = _home(tmp_path, device="laptop", user="dana")
+
+    result, _ = _run(adapter, tool_id, stub, tmp_path, estate, "home:laptop", extra_path=(str(host),))
+
+    assert _markers(tmp_path) == []
+    recorded = launches.read_text(encoding="utf-8").split()
+    assert recorded and all(entry.endswith("=126") for entry in recorded), recorded
+    assert result.status == "ok", (result.error, result.commands)
+
+
+def test_launcher_shims_refuse_without_reading_arguments(tmp_path: Path) -> None:
+    lines = refuse_launchers(tmp_path / "shims")
+
+    assert lines[0].startswith("PATH=")
+    for name in LAUNCHERS:
+        proc = subprocess.run(
+            [str(tmp_path / "shims" / name), "-c", f"touch {tmp_path / 'pwned-shim'}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=tmp_path,
+        )
+        assert proc.returncode == 126, name
+        assert f"refused to start {name}" in proc.stderr
+    assert _markers(tmp_path) == []
+
+
+def test_launcher_shim_directory_with_a_colon_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must not contain ':'"):
+        refuse_launchers(tmp_path / "a:b")

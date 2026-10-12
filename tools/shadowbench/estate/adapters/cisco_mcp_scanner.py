@@ -2,12 +2,15 @@
 
 YARA analyzer only (no API keys, no network). The scanner enumerates tools by
 actually connecting to each configured MCP server; the benchmark never
-executes corpus content, and its configs reference nonexistent commands, so
-servers it cannot launch are absent from scan_results. That behavior is part
-of what the benchmark measures, and the run also passes the Claude config
-files explicitly because the Linux known-configs list omits them. Every
-scanner step runs; the script exits with the first non-zero status, so a
-crash never reads as an empty inventory.
+executes corpus content, so the wrapper puts refusing launcher shims (`npx`,
+`uvx`, `docker`, `python3`, ... see `common.LAUNCHERS`) first on PATH: a
+stdio launch fails whatever the host has installed, and servers the scanner
+cannot launch are absent from scan_results. The scanner itself runs from
+its configured virtualenv binary and needs none of those launchers. That
+behavior is part of what the benchmark measures, and the run also passes the
+Claude config files explicitly because the Linux known-configs list omits
+them. Every scanner step runs; the script exits with the first non-zero
+status, so a crash never reads as an empty inventory.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from tools.shadowbench.estate.adapters import (
 from tools.shadowbench.estate.adapters.common import (
     STATUS_EXIT,
     STATUS_INIT,
+    refuse_launchers,
     sh_step,
     write_script,
 )
@@ -70,6 +74,7 @@ class CiscoMcpScannerAdapter:
         out = out_dir.absolute()
         base = (binary, "--analyzers", "yara", "--format", "raw")
         lines = [
+            *refuse_launchers(out / "shims"),
             STATUS_INIT,
             sh_step((*base, "known-configs"), stdout=out / "known.json", stderr=out / "known.err"),
         ]

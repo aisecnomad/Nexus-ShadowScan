@@ -128,3 +128,58 @@ def write_script(path: Path, lines: Sequence[str]) -> Path:
     path.write_text("\n".join(["#!/bin/sh", *lines]) + "\n", encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+# --- Launcher shims ----------------------------------------------------------
+
+#: Programs an MCP client configuration can name as a server command. A tool
+#: that starts configured servers must never get to run one: the benchmark
+#: never executes corpus content, whatever the host has installed.
+LAUNCHERS: tuple[str, ...] = (
+    "npx",
+    "npm",
+    "pnpm",
+    "pnpx",
+    "yarn",
+    "bun",
+    "bunx",
+    "deno",
+    "node",
+    "nodejs",
+    "uv",
+    "uvx",
+    "pipx",
+    "python",
+    "python3",
+    *(f"python3.{minor}" for minor in range(8, 15)),
+    "docker",
+    "podman",
+    "nerdctl",
+    "java",
+    "dotnet",
+    "go",
+)
+
+_SHIM = "#!/bin/sh\nprintf '%s\\n' {message} >&2\nexit 126\n"
+
+
+def refuse_launchers(directory: Path) -> list[str]:
+    """Write refusing `LAUNCHERS` shims into `directory`; return the lines that put them first on PATH.
+
+    Each shim prints why it refused and exits 126 without reading its
+    arguments. Only PATH lookups are covered: an absolute command path in a
+    client configuration, or a configuration that sets its own `PATH`, is
+    not intercepted, so third-party tools still belong on a disposable
+    runner with no credentials.
+    """
+    directory = directory.absolute()
+    if ":" in str(directory):
+        # A colon would split the PATH entry and silently disable every shim.
+        raise ValueError(f"launcher shim directory must not contain ':': {directory}")
+    directory.mkdir(exist_ok=True)
+    for name in LAUNCHERS:
+        message = f"shadowbench: refused to start {name}: the benchmark never executes corpus content"
+        shim = directory / name
+        shim.write_text(_SHIM.format(message=shlex.quote(message)), encoding="utf-8")
+        shim.chmod(0o755)
+    return [f'PATH={shlex.quote(str(directory))}:"$PATH"', "export PATH"]
