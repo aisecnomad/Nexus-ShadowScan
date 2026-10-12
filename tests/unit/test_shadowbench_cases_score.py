@@ -11,7 +11,11 @@ import pytest
 
 from tools.shadowbench.cases import report, score
 from tools.shadowbench.cases.contract import TruthEntity
-from tools.shadowbench.cases.corpus import Case, Corpus, dump_corpus
+from tools.shadowbench.cases.corpus import Case, Corpus, corpus_digest, dump_corpus, load_corpus
+
+ROOT = Path(__file__).resolve().parents[2]
+CASES = ROOT / "benchmarks" / "shadowbench" / "cases"
+RUN = CASES / "results" / "2026-10-11"
 
 # --- helpers --------------------------------------------------------------------------------------
 
@@ -336,3 +340,15 @@ def test_mcnemar_with_shared_cases_and_no_discordant_pair_is_one(tmp_path: Path)
     v = metrics["tools"]["other"]["vs_reference"]
     assert (v["shared"], v["mcnemar_p"]) == (1, 1.0)
     assert "| other | shadowscan | 1 | 0 | 0 | 1.000 |" in report.render(metrics, corpus_path)
+
+
+# --- the committed run ----------------------------------------------------------------------------
+
+
+def test_committed_metrics_and_report_are_what_the_scorer_produces() -> None:
+    """The published numbers must be re-derivable from the committed rows with the committed scorer."""
+    corpus_path = CASES / "corpus.json"
+    metrics = score.score(load_corpus(corpus_path), RUN, corpus_sha256=corpus_digest(corpus_path))
+    committed = json.loads((RUN / "metrics.json").read_text(encoding="utf-8"))
+    assert json.loads(json.dumps(metrics)) == committed
+    assert report.render(committed, corpus_path) == (RUN / "REPORT.md").read_text(encoding="utf-8")
