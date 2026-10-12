@@ -1,0 +1,8 @@
+{
+  "tool": "cursorstats",
+  "about": "terminal cursor movement statistics collected by the cursorstats shell plugin",
+  "version": "0.3.1",
+  "sessions": 42,
+  "keystrokes": 182344,
+  "last_run": "2026-09-30T18:04:11Z"
+}

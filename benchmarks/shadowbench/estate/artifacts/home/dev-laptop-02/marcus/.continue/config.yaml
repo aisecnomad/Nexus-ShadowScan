@@ -1,0 +1,16 @@
+name: vantor-local-assistant
+version: 1.0.2
+schema: v1
+models:
+  - name: Claude Sonnet
+    provider: anthropic
+    model: claude-sonnet-4-5
+    roles:
+      - chat
+      - edit
+mcpServers:
+  - name: github
+    command: npx
+    args:
+      - "-y"
+      - "@modelcontextprotocol/server-github@2025.4.8"

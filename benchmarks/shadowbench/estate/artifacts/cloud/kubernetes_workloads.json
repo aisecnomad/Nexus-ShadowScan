@@ -1,0 +1,108 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "linehaul-ollama-g5v",
+        "namespace": "ml-serving",
+        "labels": {"app": "linehaul-ollama-g5v", "team": "ml-platform"}
+      },
+      "spec": {
+        "replicas": 1,
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "ollama",
+                "image": "ollama/ollama:0.3.12",
+                "env": [{"name": "OLLAMA_HOST", "value": "0.0.0.0:11434"}],
+                "ports": [{"containerPort": 11434}],
+                "resources": {"requests": {"nvidia.com/gpu": 1}, "limits": {"nvidia.com/gpu": 1}}
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "eta-vllm-serving-q9z",
+        "namespace": "ml-serving",
+        "labels": {"app": "eta-vllm-serving-q9z", "team": "ml-platform"}
+      },
+      "spec": {
+        "replicas": 2,
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "server",
+                "image": "registry.vantor.example/ml/vllm-serving:0.6.3",
+                "args": ["--model", "Qwen/Qwen2.5-7B-Instruct", "--port", "8000"],
+                "env": [{"name": "HF_HOME", "value": "/cache/hf"}],
+                "ports": [{"containerPort": 8000}],
+                "resources": {"limits": {"nvidia.com/gpu": "1"}}
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "fleet-portal-nginx-b7p",
+        "namespace": "web",
+        "labels": {"app": "fleet-portal-nginx-b7p", "team": "web"}
+      },
+      "spec": {
+        "replicas": 3,
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "nginx",
+                "image": "nginx:1.27.2",
+                "env": [{"name": "TZ", "value": "UTC"}],
+                "ports": [{"containerPort": 80}]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "metadata": {
+        "name": "sagemaker-billing-exporter",
+        "namespace": "finops",
+        "labels": {"app": "sagemaker-billing-exporter", "team": "finops"}
+      },
+      "spec": {
+        "replicas": 1,
+        "template": {
+          "spec": {
+            "containers": [
+              {
+                "name": "exporter",
+                "image": "python:3.12-slim",
+                "command": ["python", "-m", "exporter"],
+                "env": [
+                  {"name": "AWS_REGION", "value": "us-east-1"},
+                  {"name": "EXPORT_BUCKET", "value": "vantor-finops-reports"}
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

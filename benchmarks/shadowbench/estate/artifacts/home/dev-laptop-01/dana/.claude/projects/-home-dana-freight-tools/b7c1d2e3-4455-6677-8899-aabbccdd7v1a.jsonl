@@ -1,0 +1,2 @@
+{"type":"user","uuid":"u-1","sessionId":"b7c1d2e3-4455-6677-8899-aabbccdd7v1a","timestamp":"2026-10-06T09:12:00.000Z","cwd":"/home/dana/freight-tools","message":{"role":"user","content":"add retry logic to the carrier rate fetcher"}}
+{"type":"assistant","uuid":"a-1","parentUuid":"u-1","sessionId":"b7c1d2e3-4455-6677-8899-aabbccdd7v1a","timestamp":"2026-10-06T09:12:08.000Z","cwd":"/home/dana/freight-tools","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Bash","input":{"command":"pytest -q tests/test_rates.py"}}]}}

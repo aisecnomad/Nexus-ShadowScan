@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "eta-postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres@0.6.2",
+        "postgresql://eta_ro@pg.vantor.example:5432/eta"
+      ]
+    },
+    "telemetry": {
+      "type": "http",
+      "url": "https://mcp.vantor.example/telemetry/mcp"
+    }
+  }
+}

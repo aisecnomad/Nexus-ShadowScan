@@ -1,0 +1,40 @@
+{
+ "extra_path": "",
+ "tools": {
+  "shadowscan": {
+   "bin": "<venvs>/shadowscan/bin/shadowscan"
+  },
+  "mcp_scan": {
+   "bin": "<tools>/mcp-scan/venv/bin/snyk-agent-scan"
+  },
+  "numbat": {
+   "bin": "<tools>/numbat/numbat"
+  },
+  "agentic_radar": {
+   "bin": "<tools>/agentic-radar/venv/bin/agentic-radar"
+  },
+  "agentsight": {
+   "bin": "<tools>/agentsight/agentsight"
+  },
+  "ai_infra_guard": {
+   "bin": "<tools>/ai-infra-guard/bin/ai-infra-guard",
+   "fps": "<tools>/ai-infra-guard/data/fingerprints",
+   "vul": "<tools>/ai-infra-guard/data/vuln"
+  },
+  "cisco_mcp_scanner": {
+   "bin": "<tools>/mcp-scanner/venv/bin/mcp-scanner"
+  },
+  "vet": {
+   "bin": "<tools>/vet/bin/vet"
+  },
+  "agentdiscover": {
+   "bin": "<tools>/agentdiscover/venv/bin/agent-discover"
+  },
+  "power_pwn": {
+   "bin": "<tools>/power-pwn/venv/bin/powerpwn"
+  },
+  "cartography": {
+   "bin": "<tools>/cartography/venv/bin/cartography"
+  }
+ }
+}
