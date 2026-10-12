@@ -35,6 +35,11 @@ translated to the corpus's ``proc:<index>`` keys before scoring.
 Case and checkout ids from the corpus name directories, so they must match
 ``[A-Za-z0-9._-]+``. A code case may not also carry files, and no input file
 is written through a symlink.
+
+Before any tool runs, the runner refuses to start, with exit 2 and a message,
+when it is not root, ``unshare`` is missing, a case or checkout id is unsafe,
+the scratch directory or a configured path fails the checks above, or ``gcc``
+cannot build the static inert binary that live-runtime cases spawn.
 """
 
 from __future__ import annotations
@@ -533,6 +538,21 @@ def unsafe_ids(cases: list[Case]) -> list[str]:
     return problems
 
 
+def fakeproc_problem(exc: Exception) -> str:
+    """Why ``build_fakeproc`` could not build the inert binary, in one line for the operator."""
+    if isinstance(exc, FileNotFoundError) and exc.filename == "gcc":
+        reason = "gcc is not on PATH"
+    elif isinstance(exc, subprocess.CalledProcessError):
+        stderr = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else exc.stderr or ""
+        reason = f"gcc exited {exc.returncode}: {' '.join(stderr.split())[-300:] or '(no output)'}"
+    else:
+        reason = f"{type(exc).__name__}: {exc}"
+    return (
+        f"cannot build the inert process binary ({reason}); the runner needs a gcc that can link a"
+        " static binary (gcc and the C library's static archive, such as glibc-static or libc6-dev)"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corpus", type=Path, required=True)
@@ -582,8 +602,12 @@ def main(argv: list[str] | None = None) -> int:
     if isolation:
         print("\n".join(isolation), file=sys.stderr)
         return 2
+    try:
+        fakeproc = build_fakeproc(scratch / "fakeproc")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(fakeproc_problem(exc), file=sys.stderr)
+        return 2
     args.out.mkdir(parents=True, exist_ok=True)
-    fakeproc = build_fakeproc(scratch / "fakeproc")
     manifest: dict[str, Any] = {
         "started": datetime.now(UTC).replace(microsecond=0).isoformat(),
         "corpus": str(args.corpus),
