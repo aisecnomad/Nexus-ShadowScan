@@ -2,16 +2,18 @@
 
 ``python -m tools.shadowbench.cases verify --corpus corpus.json``
 
-Prints the corpus SHA-256 and the generator digest recorded in the corpus next
-to the digest of the current sources, then rebuilds the cases from the current
-sources at the recorded seed and per-surface count and compares the rebuilt
-case list with the stored one after both are parsed as JSON (the header,
-``created`` stamp and formatting are not compared). The cases are always
-rebuilt, which takes about a second: a matching digest only says the sources
-are unchanged, not that nobody edited the cases. Identical cases pass (exit 0)
-even when the digests differ, which happens whenever a source file moved or
-changed without changing what it builds; verify says so. Any difference exits
-1. ``--regenerate`` is accepted for older commands and changes nothing.
+Prints the corpus SHA-256, the stream scheme (``legacy`` when the header names
+none, with the modalities that scheme made share a random stream) and the
+generator digest recorded in the corpus next to the digest of the current
+sources. It then rebuilds the cases from the current sources at the recorded
+seed, per-surface count and stream scheme and compares the rebuilt case list
+with the stored one after both are parsed as JSON (the header, ``created``
+stamp and formatting are not compared). The cases are always rebuilt, which
+takes about a second: a matching digest only says the sources are unchanged,
+not that nobody edited the cases. Identical cases pass (exit 0) even when the
+digests differ, which happens whenever a source file moved or changed without
+changing what it builds; verify says so. Any difference exits 1.
+``--regenerate`` is accepted for older commands and changes nothing.
 """
 
 from __future__ import annotations
@@ -23,8 +25,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from tools.shadowbench.cases.corpus import Corpus, corpus_digest, load_corpus
-from tools.shadowbench.cases.generate import build, generator_digest
+from tools.shadowbench.cases.corpus import LEGACY_STREAMS, Corpus, corpus_digest, load_corpus
+from tools.shadowbench.cases.generate import build, generator_digest, shared_streams
 
 
 def per_surface(corpus: Corpus) -> int:
@@ -60,14 +62,22 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     corpus = load_corpus(args.corpus)
     print(f"cases {len(corpus.cases)}; seed {corpus.seed}; corpus sha256 {corpus_digest(args.corpus)}")
+    scheme = corpus.streams
+    recorded = "recorded" if corpus.stream_scheme is not None else "the header names none"
+    print(f"stream scheme {scheme} ({recorded})")
+    if scheme == LEGACY_STREAMS:
+        print("the legacy stream scheme ignores the seed: every seed builds these cases at this per-surface")
+    for group in shared_streams(corpus.seed, scheme):
+        print(f"{' and '.join(group)} share one random stream")
     current = generator_digest()
     print(f"generator digest recorded {corpus.generator_digest}\ngenerator digest now      {current}")
     same_sources = current == corpus.generator_digest
     if not same_sources:
         print("generator sources changed since this corpus was written")
     n = per_surface(corpus)
+    cases = build(corpus.seed, n, stream_scheme=scheme)
     # Round-trip through JSON so the rebuilt cases compare exactly as they would be written.
-    rebuilt = json.loads(json.dumps([c.to_json() for c in build(corpus.seed, n)], ensure_ascii=False))
+    rebuilt = json.loads(json.dumps([c.to_json() for c in cases], ensure_ascii=False))
     stored = json.loads(args.corpus.read_text(encoding="utf-8"))["cases"]
     if rebuilt != stored:
         where = _first_difference(rebuilt, stored)

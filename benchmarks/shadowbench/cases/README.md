@@ -30,7 +30,8 @@ this description. Nothing here is a release artifact.
 > are not an independent evaluation, and any ShadowScan lead is suspect until
 > someone without a stake reruns the benchmark, ideally with their own seed,
 > their own families, and their own labels. Everything needed to do that is
-> committed and hashed.
+> committed and hashed. The committed corpus's own seed had no effect on its
+> cases (see Random streams); a corpus generated now at another seed differs.
 
 ## What is measured
 
@@ -183,8 +184,9 @@ family, label or difficulty disagrees with its file or case, and an
 
 ## How the corpus is built, and how to check it
 
-`python -m tools.shadowbench.cases generate --seed 20261011 --per-surface 40 --output corpus.json`
-writes the corpus. Each export-style case draws entity families by quota (45%
+`python -m tools.shadowbench.cases generate --seed <seed> --per-surface 40 --output corpus.json`
+writes a corpus; the committed one is rebuilt as described under Random
+streams below. Each export-style case draws entity families by quota (45%
 agent, 15% plain AI, 40% decoy, with at least one decoy slot per export except
 on the gateway surface, which has no decoys), redraws collisions, and renders
 the platform's files. Endpoint and passive-network cases reuse the 25 endpoint
@@ -201,34 +203,76 @@ each named by its repository-relative path: the generator and its case model
 (`generate.py`, `corpus.py`, `contract.py`), its families, the
 `tools/benchmark` families it reuses and, in the current code, the
 code-surface corpus. Corpora written now also record the `--per-surface`
-count. The committed corpus predates that field; `verify` infers 40 from its
-largest generated surface. Its recorded digest was computed before the
+count and the stream scheme (below). The committed corpus predates both
+fields; `verify` infers 40 from its largest generated surface and uses the
+legacy stream scheme. Its recorded digest was computed before the
 harness moved to `tools/shadowbench/cases/` and before the digest covered the
 code corpus, so it no longer matches the current sources.
 
 `python -m tools.shadowbench.cases verify --corpus corpus.json` loads and
-validates the corpus, prints the recorded and the current generator digest,
-then rebuilds the cases from the current sources at the recorded seed and
-per-surface count and compares the parsed case lists; the header, the
-`created` stamp and the formatting are not compared. It always rebuilds,
-because a matching digest says only that the sources are unchanged, not that
-nobody edited the cases. Identical cases exit 0 even when the digests differ,
-and verify says that the sources changed but build the same cases; any
-difference exits 1 and names the first differing case (or, when one list is a
-prefix of the other, the two case counts). `--regenerate` is still accepted
-and changes nothing. The committed corpus passes, with that note about its
-digest. Anyone can use it to confirm that the committed cases are what
-the current generator builds, and can generate a fresh corpus at another seed
-to test for overfitting to this one. The run manifest names the corpus hash,
-the generator digest, the platform and each tool's version or commit;
-manifests written by the current runner also name the harness commit.
+validates the corpus, prints its stream scheme and the recorded and the
+current generator digest, then rebuilds the cases from the current sources at
+the recorded seed, per-surface count and stream scheme and compares the
+parsed case lists; the header, the `created` stamp and the formatting are not
+compared. It always rebuilds, because a matching digest says only that the
+sources are unchanged, not that nobody edited the cases. Identical cases exit
+0 even when the digests differ, and verify says that the sources changed but
+build the same cases; any difference exits 1 and names the first differing
+case (or, when one list is a prefix of the other, the two case counts).
+`--regenerate` is still accepted and changes nothing. The committed corpus
+passes, with that note about its digest. Anyone can use it to confirm that
+the committed cases are what the current generator builds. To test for
+overfitting to this corpus, generate a fresh one at another seed with the
+default `sha256` scheme (the generator prints the scheme, and `verify` names
+it); a corpus generated before this fix used the legacy streams whatever its
+seed. The run manifest names the corpus hash, the generator digest, the
+platform and each tool's version or commit; manifests written by the current
+runner also name the harness commit.
+
+### Random streams
+
+Each generated surface and modality draws its cases from its own random
+stream. Corpora written now record `"stream_scheme": "sha256"`: each stream
+is seeded from a SHA-256 of the seed, the surface and the modality, so every
+seed builds its own cases and no two modalities share a stream.
+
+**The committed 2026-10-11 corpus was built with an older, faulty
+derivation**, which its header does not name and which the generator keeps
+as the `legacy` scheme only so that the corpus still rebuilds. It turned the
+text `<seed>:<surface>:<modality>` into an integer and kept the last 62 bits,
+which always fall inside the modality name. As a result:
+
+* **The seed had no effect.** Under that derivation every seed builds the
+  committed 346 cases at `--per-surface 40`, so before this fix a rerun
+  "with your own seed" rebuilt this corpus, and no comparison across seeds
+  was possible. Whatever seed the 4-case-per-surface smoke corpus the
+  adapters were calibrated on (see Bias controls) was generated at, it drew
+  from the scored corpus's own streams; its cases differ from the scored
+  ones, but it was not an independent draw.
+* **Four pairs of modalities shared one stream**: Okta and Entra,
+  LiteLLM and Power Platform, Bedrock logs and Slack, AWS and Kubernetes.
+  Within each pair the case labels come in the same order, case for case (on
+  the gateway side, which has no decoys, a planned `none` case becomes
+  `llm`). The number of cases with each label is fixed by quota whatever the
+  stream, and the entities inside the cases differ, because each platform's
+  families consume the stream differently; only the first draws coincide
+  (the first Okta and Entra cases have the same entity count). So the two
+  modalities of a pair are not independent draws, and nothing in the
+  committed results shows how the numbers vary from one seed to another.
+
+`verify` prints the scheme a corpus uses and the modalities that share a
+stream under it. `generate --seed 20261011 --per-surface 40
+--stream-scheme legacy` rebuilds the committed cases (with the scheme
+recorded in the header); never use `legacy` for a new corpus.
 
 ### Bias controls
 
 * By the author's account, the rubrics, families, generator, adapters and
   original scorer were written before the scored run, and the adapters were
   calibrated on probe inputs and a 4-case-per-surface smoke corpus, never on
-  the scored corpus. The git history cannot confirm this: the harness, the
+  the scored corpus. That smoke corpus drew from the scored corpus's own
+  random streams, because the seed had no effect (see Random streams). The
+  git history cannot confirm any of this: the harness, the
   rubrics, the corpus and results were first committed together, in one
   commit. Calibration changes are recorded in each adapter's docstring.
 * The published metrics do not come from that original scorer. Its rules were
@@ -353,6 +397,12 @@ track:
   path, `benchmarks/shadowbench/corpus.json`.
 * The vendor letter grades (`grades.json`), the PDF report and the code that
   produced them were removed.
+* The generator's `--seed` had no effect, and four pairs of modalities
+  shared a random stream (see Random streams). New corpora seed each stream
+  from a SHA-256 of the seed, surface and modality and record
+  `"stream_scheme": "sha256"`; a corpus without the field, the committed one
+  among them, is rebuilt with the legacy derivation, so its cases, rows and
+  metrics are unchanged by the fix.
 * The scorer was fixed and the run re-scored from the unchanged rows, so only
   `metrics.json` and `REPORT.md` changed. Matching is now one-way (a reported
   parent directory no longer earns credit); a positive case needs a true

@@ -6,10 +6,15 @@ Export surfaces (identity, gateway, lowcode, saas, cloud, runtime/snapshot)
 compose several entity drafts into one platform-native export per case, so a
 case holds a realistic mix of agents, plain AI use and decoys. Endpoint,
 network and runtime/live cases hold one artifact, window or process set each.
-The same seed, ``--per-surface`` and generator sources always produce the same
+Each (surface, modality) draws from its own random stream, seeded as the
+recorded ``stream_scheme`` says (``stream_seed``). The same seed,
+``--per-surface``, stream scheme and generator sources always produce the same
 cases; only the ``created`` stamp in the header differs between runs. Code
 cases come from ``benchmarks/shadow-ai-discovery/corpus.json``; without it the
 generator refuses to build rather than write a corpus with no code surface.
+
+``--stream-scheme legacy`` rebuilds the committed 2026-10-11 cases, whose seed
+had no effect; never use it for a new corpus.
 """
 
 from __future__ import annotations
@@ -25,7 +30,15 @@ from typing import Any
 
 from tools.benchmark.common import Rand
 from tools.shadowbench.cases.contract import TruthEntity
-from tools.shadowbench.cases.corpus import Case, Corpus, digest_files, dump_corpus, validate_case
+from tools.shadowbench.cases.corpus import (
+    LEGACY_STREAMS,
+    STREAM_SCHEMES,
+    Case,
+    Corpus,
+    digest_files,
+    dump_corpus,
+    validate_case,
+)
 from tools.shadowbench.cases.families import (
     Draft,
     cloud,
@@ -54,6 +67,52 @@ CODE_REPOS: tuple[str, ...] = (
 )  # fmt: skip
 QUOTAS = (("agent", 0.45), ("llm", 0.15), ("none", 0.40))
 Family = Callable[[Rand], Draft]
+PLAN: tuple[tuple[str, str], ...] = (
+    ("identity", "okta-export"),
+    ("identity", "entra-export"),
+    ("gateway", "litellm-export"),
+    ("gateway", "bedrock-export"),
+    ("lowcode", "powerplatform-export"),
+    ("lowcode", "n8n-export"),
+    ("saas", "slack-export"),
+    ("saas", "github-export"),
+    ("cloud", "aws-export"),
+    ("cloud", "k8s-export"),
+    ("endpoint", "home"),
+    ("network", "passive"),
+    ("network", "active"),
+    ("runtime", "snapshot"),
+    ("runtime", "live"),
+)
+"""The generated (surface, modality) pairs, in corpus order; code cases follow them."""
+STREAM_SCHEME = "sha256"
+"""The stream scheme every new corpus is generated with."""
+
+
+def stream_seed(seed: int, surface: str, modality: str, scheme: str) -> int:
+    """The seed of one (surface, modality) random stream under ``scheme``.
+
+    ``sha256`` hashes the seed, surface and modality together, so every seed builds its own cases
+    and no two modalities share a stream. ``legacy`` is how the committed 2026-10-11 corpus was
+    built, kept only so that it still rebuilds: it reduced the big-endian key modulo 2**62, which
+    keeps the key's last 62 bits. Those always fall inside the modality name, so the seed had no
+    effect, and modalities whose keys end in the same 62 bits (``okta-export`` and
+    ``entra-export``, among others) shared one stream (``shared_streams``).
+    """
+    key = f"{seed}:{surface}:{modality}".encode()
+    if scheme == LEGACY_STREAMS:
+        return int.from_bytes(key, "big") % (2**62)
+    if scheme == "sha256":
+        return int.from_bytes(hashlib.sha256(key).digest()[:8], "big")
+    raise ValueError(f"unknown stream scheme {scheme!r} (expected one of {', '.join(STREAM_SCHEMES)})")
+
+
+def shared_streams(seed: int, scheme: str) -> list[list[str]]:
+    """Groups of ``surface/modality`` names that draw from one random stream under ``scheme``."""
+    groups: dict[int, list[str]] = {}
+    for surface, modality in PLAN:
+        groups.setdefault(stream_seed(seed, surface, modality, scheme), []).append(f"{surface}/{modality}")
+    return [group for group in groups.values() if len(group) > 1]
 
 
 def _dump(value: Any) -> str:
@@ -569,32 +628,18 @@ def _quota(n: int) -> list[str]:
     return labels
 
 
-def build(seed: int, per_surface: int) -> list[Case]:
+def build(seed: int, per_surface: int, *, stream_scheme: str = STREAM_SCHEME) -> list[Case]:
+    """The cases at ``seed``; a corpus that records no stream scheme was built with ``legacy``."""
     if per_surface < 0:
         raise ValueError(f"per_surface must be non-negative, not {per_surface}")
+    if stream_scheme not in STREAM_SCHEMES:
+        raise ValueError(f"unknown stream scheme {stream_scheme!r}")
     code_corpus = _require_code_corpus(CODE_CORPUS)
     cases: list[Case] = []
-    plan: list[tuple[str, str]] = [
-        ("identity", "okta-export"),
-        ("identity", "entra-export"),
-        ("gateway", "litellm-export"),
-        ("gateway", "bedrock-export"),
-        ("lowcode", "powerplatform-export"),
-        ("lowcode", "n8n-export"),
-        ("saas", "slack-export"),
-        ("saas", "github-export"),
-        ("cloud", "aws-export"),
-        ("cloud", "k8s-export"),
-        ("endpoint", "home"),
-        ("network", "passive"),
-        ("network", "active"),
-        ("runtime", "snapshot"),
-        ("runtime", "live"),
-    ]
-    per_modality = {s: per_surface // sum(1 for ss, _m in plan if ss == s) for s in {s for s, _m in plan}}
-    for surface, modality in plan:
+    per_modality = {s: per_surface // sum(1 for ss, _m in PLAN if ss == s) for s in {s for s, _m in PLAN}}
+    for surface, modality in PLAN:
         n = per_modality[surface]
-        rd = Rand(int.from_bytes(f"{seed}:{surface}:{modality}".encode(), "big") % (2**62))
+        rd = Rand(stream_seed(seed, surface, modality, stream_scheme))
         labels = _quota(n)
         rd.shuffle(labels)
         for i, label in enumerate(labels, 1):
@@ -666,16 +711,24 @@ def main(argv: list[str] | None = None) -> int:
         "--per-surface", type=int, default=40, help="cases per surface (split across its modalities)"
     )
     ap.add_argument("--output", type=Path, required=True)
+    ap.add_argument(
+        "--stream-scheme",
+        choices=STREAM_SCHEMES,
+        default=STREAM_SCHEME,
+        help=f"how each modality's random stream is seeded (default {STREAM_SCHEME}); {LEGACY_STREAMS} "
+        "only rebuilds the committed 2026-10-11 cases, and its seed has no effect",
+    )
     args = ap.parse_args(argv)
     if args.per_surface < 0:
         ap.error("--per-surface must be non-negative")
-    cases = build(args.seed, args.per_surface)
+    cases = build(args.seed, args.per_surface, stream_scheme=args.stream_scheme)
     corpus = Corpus(
         cases,
         args.seed,
         generator_digest(),
         datetime.now(UTC).replace(microsecond=0).isoformat(),
         per_surface=args.per_surface,
+        stream_scheme=args.stream_scheme,
     )
     digest = dump_corpus(corpus, args.output)
     by_surface: dict[str, dict[str, int]] = {}
@@ -684,8 +737,12 @@ def main(argv: list[str] | None = None) -> int:
         by_surface[c.surface][c.label] += 1
     print(
         f"wrote {len(cases)} cases to {args.output}\ncorpus sha256 {digest}\n"
-        f"generator digest {corpus.generator_digest}"
+        f"generator digest {corpus.generator_digest}\nstream scheme {corpus.streams}"
     )
+    if args.stream_scheme == LEGACY_STREAMS:
+        print("warning: under the legacy stream scheme the seed has no effect on the cases")
+    for group in shared_streams(args.seed, args.stream_scheme):
+        print(f"warning: {' and '.join(group)} share one random stream")
     for s, counts in by_surface.items():
         entities = sum(len(c.expected) for c in cases if c.surface == s)
         print(f"  {s:9s} {counts}  expected entities={entities}")

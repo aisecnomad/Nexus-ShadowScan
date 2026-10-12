@@ -20,6 +20,9 @@ from typing import Any, TypeGuard
 from tools.shadowbench.cases.contract import LABELS, MODALITIES, SURFACES, TruthEntity
 
 LABEL_RANK = {"none": 0, "llm": 1, "agent": 2}
+LEGACY_STREAMS = "legacy"
+STREAM_SCHEMES: tuple[str, ...] = ("sha256", LEGACY_STREAMS)
+"""How the generator seeds each modality's random stream (``generate.stream_seed``)."""
 LOOPBACK = "127.0.0.1"
 CHECKOUT_ID = re.compile(r"[A-Za-z0-9._-]+")
 COMMIT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
@@ -241,11 +244,20 @@ class Corpus:
     notes: dict[str, Any] = field(default_factory=dict)
     per_surface: int | None = None
     """The ``--per-surface`` the cases were generated with; ``None`` in corpora written before it was kept."""
+    stream_scheme: str | None = None
+    """One of ``STREAM_SCHEMES``; ``None`` in corpora written before it was kept, which are ``legacy``."""
+
+    @property
+    def streams(self) -> str:
+        """The stream scheme the cases were built with: the recorded one, else ``legacy``."""
+        return self.stream_scheme or LEGACY_STREAMS
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"benchmark": "shadowbench", "version": 1, "seed": self.seed}
         if self.per_surface is not None:
             out["per_surface"] = self.per_surface
+        if self.stream_scheme is not None:
+            out["stream_scheme"] = self.stream_scheme
         out.update(
             generator_digest=self.generator_digest,
             created=self.created,
@@ -280,6 +292,11 @@ def load_corpus(path: Path) -> Corpus:
         not isinstance(per_surface, int) or isinstance(per_surface, bool) or per_surface < 0
     ):
         raise ValueError(f"{path}: per_surface {per_surface!r} is not a non-negative integer")
+    # Absent means the legacy scheme; anything present must name a scheme, or verify would rebuild
+    # the cases with streams other than the ones they were drawn from.
+    stream_scheme = data.get("stream_scheme")
+    if stream_scheme is not None and stream_scheme not in STREAM_SCHEMES:
+        raise ValueError(f"{path}: stream_scheme {stream_scheme!r} is not one of {', '.join(STREAM_SCHEMES)}")
     return Corpus(
         cases=cases,
         seed=int(data["seed"]),
@@ -287,6 +304,7 @@ def load_corpus(path: Path) -> Corpus:
         created=str(data["created"]),
         notes=dict(data.get("notes") or {}),
         per_surface=per_surface,
+        stream_scheme=stream_scheme,
     )
 
 

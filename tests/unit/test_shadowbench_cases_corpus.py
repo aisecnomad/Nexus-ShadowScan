@@ -40,8 +40,25 @@ def _small_corpus(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
 
 
 def test_build_reproduces_the_committed_cases(stored: dict[str, Any]) -> None:
-    rebuilt = json.loads(json.dumps([c.to_json() for c in generate.build(20261011, 40)]))
+    rebuilt = json.loads(
+        json.dumps([c.to_json() for c in generate.build(20261011, 40, stream_scheme="legacy")])
+    )
     assert rebuilt == stored["cases"]
+
+
+def test_committed_corpus_records_no_stream_scheme_and_verifies_as_legacy(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    corpus = load_corpus(CORPUS)
+    assert corpus.stream_scheme is None
+    assert corpus.streams == "legacy"
+    assert "stream_scheme" not in corpus.to_json()
+    assert verify.main(["--corpus", str(CORPUS)]) == 0
+    out = capsys.readouterr().out
+    assert "stream scheme legacy (the header names none)" in out
+    assert "the legacy stream scheme ignores the seed" in out
+    assert "identity/okta-export and identity/entra-export share one random stream" in out
+    assert "regenerated cases are identical (per-surface 40)" in out
 
 
 def test_committed_corpus_verifies_with_regenerate(capsys: pytest.CaptureFixture[str]) -> None:
@@ -87,8 +104,16 @@ def test_new_corpora_record_per_surface_and_verify(
 ) -> None:
     path = _small_corpus(tmp_path, capsys)
     header = json.loads(path.read_text(encoding="utf-8"))
-    assert list(header)[:5] == ["benchmark", "version", "seed", "per_surface", "generator_digest"]
+    assert list(header)[:6] == [
+        "benchmark",
+        "version",
+        "seed",
+        "per_surface",
+        "stream_scheme",
+        "generator_digest",
+    ]
     assert header["per_surface"] == 4
+    assert header["stream_scheme"] == generate.STREAM_SCHEME == "sha256"
     assert load_corpus(path).per_surface == 4
     assert verify.main(["--corpus", str(path)]) == 0
     assert verify.main(["--corpus", str(path), "--regenerate"]) == 0
@@ -211,6 +236,110 @@ def test_build_rejects_a_negative_per_surface() -> None:
 def test_corpus_header_round_trips_per_surface() -> None:
     assert "per_surface" not in Corpus([], 1, "d", "now").to_json()
     assert Corpus([], 1, "d", "now", per_surface=7).to_json()["per_surface"] == 7
+
+
+def test_corpus_header_round_trips_the_stream_scheme() -> None:
+    assert "stream_scheme" not in Corpus([], 1, "d", "now").to_json()
+    assert Corpus([], 1, "d", "now", stream_scheme="sha256").to_json()["stream_scheme"] == "sha256"
+    assert Corpus([], 1, "d", "now").streams == "legacy"
+
+
+# --- random streams -------------------------------------------------------------------------------
+
+
+def _labels_by_modality(cases: list[Case]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for case in cases:
+        out.setdefault(f"{case.surface}/{case.modality}", []).append(case.label)
+    return out
+
+
+def test_two_seeds_build_different_corpora() -> None:
+    """The stream seed kept only the key's last 62 bits, all inside the modality name.
+
+    So ``--seed`` had no effect: every seed built the committed corpus's cases, and a rerun or
+    calibration "at another seed" silently reused them.
+    """
+    one = [c.to_json() for c in generate.build(1, 4)]
+    two = [c.to_json() for c in generate.build(2, 4)]
+    assert one != two
+    assert [c.to_json() for c in generate.build(generate.DEFAULT_SEED, 4)] != one
+    for surface, modality in generate.PLAN:
+        assert generate.stream_seed(1, surface, modality, "sha256") != generate.stream_seed(
+            2, surface, modality, "sha256"
+        )
+
+
+def test_no_two_modalities_share_a_stream() -> None:
+    """Okta and Entra (and three other pairs) drew from one stream and had identical case labels."""
+    for seed in (1, 2, generate.DEFAULT_SEED):
+        assert generate.shared_streams(seed, "sha256") == []
+    labels = _labels_by_modality(generate.build(generate.DEFAULT_SEED, 40))
+    for first, second in (
+        ("identity/okta-export", "identity/entra-export"),
+        ("cloud/aws-export", "cloud/k8s-export"),
+    ):
+        assert labels[first] != labels[second]
+
+
+def test_the_legacy_scheme_is_kept_as_it_was() -> None:
+    """Only so the committed corpus rebuilds: its seed has no effect and four pairs share streams."""
+    assert generate.shared_streams(generate.DEFAULT_SEED, "legacy") == [
+        ["identity/okta-export", "identity/entra-export"],
+        ["gateway/litellm-export", "lowcode/powerplatform-export"],
+        ["gateway/bedrock-export", "saas/slack-export"],
+        ["cloud/aws-export", "cloud/k8s-export"],
+    ]
+    one = [c.to_json() for c in generate.build(1, 4, stream_scheme="legacy")]
+    assert one == [c.to_json() for c in generate.build(generate.DEFAULT_SEED, 4, stream_scheme="legacy")]
+    labels = _labels_by_modality(generate.build(generate.DEFAULT_SEED, 40, stream_scheme="legacy"))
+    assert labels["identity/okta-export"] == labels["identity/entra-export"]
+
+
+def test_generate_records_the_legacy_scheme_and_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "legacy.json"
+    argv = ["--seed", "1", "--per-surface", "4", "--stream-scheme", "legacy", "--output", str(path)]
+    assert generate.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "stream scheme legacy" in out
+    assert "the seed has no effect" in out
+    assert "cloud/aws-export and cloud/k8s-export share one random stream" in out
+    assert json.loads(path.read_text(encoding="utf-8"))["stream_scheme"] == "legacy"
+    assert verify.main(["--corpus", str(path)]) == 0
+    assert "stream scheme legacy (recorded)" in capsys.readouterr().out
+
+
+def test_a_corpus_verifies_only_under_its_own_stream_scheme(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Dropping the field makes verify rebuild with the legacy streams, which build other cases."""
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["stream_scheme"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert verify.main(["--corpus", str(path)]) == 1
+    assert "regenerated cases DIFFER" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("value", ["md5", "", 1, ["sha256"]])
+def test_load_rejects_an_unknown_stream_scheme(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], value: object
+) -> None:
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["stream_scheme"] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="stream_scheme"):
+        load_corpus(path)
+
+
+def test_build_rejects_an_unknown_stream_scheme() -> None:
+    with pytest.raises(ValueError, match="stream scheme"):
+        generate.build(1, 1, stream_scheme="md5")
+    with pytest.raises(ValueError, match="stream scheme"):
+        generate.stream_seed(1, "identity", "okta-export", "md5")
 
 
 # --- case validation ------------------------------------------------------------------------------
