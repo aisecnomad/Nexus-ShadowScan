@@ -165,5 +165,8 @@ shadowscan connectors --surface code       # filter by surface
 ```bash
 shadowscan signatures list                         # show the installed signature set
 shadowscan signatures test langchain               # test what a value matches
-shadowscan signatures test sk-proj-abc...          # key formats: a truncated value prints "no match"; paste the full-length key
+# Key formats: test a synthetic value of the full length and format (a truncated
+# one prints "no match"), never a live key, which shell history and process
+# listings would keep.
+shadowscan signatures test "sk-proj-$(printf 'x%.0s' $(seq 48))"
 ```

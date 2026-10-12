@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from click.testing import CliRunner
 
 from shadowscan import cli
 from shadowscan.config import argv_credential_keys
+
+ROOT = Path(__file__).resolve().parents[2]
 
 SECRET = "Zq8Lm2Xw9Rt4Yu7Io1Pa5Sd3Fg6Hj0Kl"
 JWT = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0."
@@ -111,6 +116,19 @@ def test_run_without_secrets_does_not_warn(monkeypatch) -> None:
     result = CliRunner().invoke(cli.main, ["run", "identity.okta", "--set", "org_url=https://acme.okta.com"])
     assert result.exit_code == 0, result.output
     assert "command line" not in result.output
+
+
+def test_the_guide_checks_key_formats_with_a_synthetic_value() -> None:
+    # `signatures test` reads the value from argv only: the guide must not send a
+    # live key there, and the synthetic value it shows must be enough to match.
+    guide = (ROOT / "docs" / "getting-started" / "configuration.md").read_text(encoding="utf-8")
+    section = guide.split("## Signature listing", 1)[1]
+    assert "never a live key" in section and "paste" not in section
+    example = re.search(r"signatures test \"sk-proj-\$\(printf 'x%\.0s' \$\(seq (\d+)\)\)\"", section)
+    assert example is not None
+    result = CliRunner().invoke(cli.main, ["signatures", "test", "sk-proj-" + "x" * int(example[1])])
+    assert result.exit_code == 0, result.output
+    assert "provider.openai" in result.output and "no match" not in result.output
 
 
 def test_jwt_arguments_warn_without_echoing_the_token(monkeypatch) -> None:
