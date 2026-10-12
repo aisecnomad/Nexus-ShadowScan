@@ -123,7 +123,9 @@ def materialize(case: Case, root: Path, checkouts: Path | None = None) -> Materi
             # A copied repository may hold symlinks; nothing from the corpus is written into it.
             raise ValueError(f"case {case.case_id} carries files beside its checkout")
         if checkouts is None:
-            raise RuntimeError("code cases need --checkouts (fetched with tools.discovery_benchmark fetch)")
+            raise RuntimeError(
+                "code cases need --checkouts (fetched with python -m tools.shadowbench.cases.fetch_code)"
+            )
         name = safe_name(str(case.checkout["id"]), "checkout id")
         base = checkouts.resolve()
         src = (base / name).resolve()

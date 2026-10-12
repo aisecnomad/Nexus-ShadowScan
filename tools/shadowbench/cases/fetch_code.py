@@ -1,9 +1,9 @@
 """Fetch the code-surface repositories of the ShadowBench corpus at their pinned commits.
 
-``python tools/shadowbench/cases/fetch_code.py DEST`` creates ``DEST/<repo id>`` for every
-repository in :data:`tools.shadowbench.cases.generate.CODE_REPOS`, at the commit the code
-corpus (``benchmarks/shadow-ai-discovery``) pins. Only ``git`` runs, and the repositories
-are untrusted input, so every call is hardened:
+``python -m tools.shadowbench.cases.fetch_code DEST``, run from the repository root, creates
+``DEST/<repo id>`` for every repository in :data:`tools.shadowbench.cases.generate.CODE_REPOS`,
+at the commit the code corpus (``benchmarks/shadow-ai-discovery``) pins. Only ``git`` runs,
+and the repositories are untrusted input, so every call is hardened:
 
 * the remote must be an ``https://`` URL without credentials, and git may use no other
   transport (``protocol.allow=never`` plus ``protocol.https.allow=always``), so neither a
@@ -140,7 +140,7 @@ def fetch_pinned(url: str, commit: str, branch: str, dest: Path) -> str:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 1:
-        print("usage: fetch_code.py DEST", file=sys.stderr)
+        print("usage: python -m tools.shadowbench.cases.fetch_code DEST", file=sys.stderr)
         return 2
     dest = Path(argv[0])
     corpus = load_corpus(CODE_CORPUS)

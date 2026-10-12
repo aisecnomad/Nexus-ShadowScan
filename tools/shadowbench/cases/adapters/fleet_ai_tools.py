@@ -18,10 +18,13 @@ Invocation (no flags; ``HOME`` is the case home or the work dir)::
     fleet-ai-tools
 
 The table enumerates homes as ``/home/*``, ``/root`` and ``os.UserHomeDir()``
-(``$HOME``), so the case home is scanned alongside the real homes on the host
-and this adapter keeps only rows whose ``path`` lies under the case home (the
-rest stay in ``raw``). Output is a JSON array of string-valued rows with the
-table's columns: ``type`` (``mcp_server``, ``agents``, ``agent_instruction``,
+(``$HOME``). Inside the stage ``/home`` and ``/root`` are empty tmpfs mounts
+(see ``stage.py``), so ``$HOME`` is the only home it finds there. On
+endpoint/home this adapter still keeps only rows whose ``path`` lies under the
+case home (the rest stay in ``raw``). The 2026-10-11 run predates those mounts:
+the table then also scanned the host's real homes, and the same filter dropped
+their rows. Output is a JSON array of string-valued rows with the table's
+columns: ``type`` (``mcp_server``, ``agents``, ``agent_instruction``,
 ``apps``, ``ide_plugins``, ``browser_extension``, ``sockets``), ``name``,
 ``identifier``, ``path``, ``source`` (the client or ``process``/``evidence``),
 ``category``, ``confidence``, ``evidence``, ``endpoint``, ``location``, ``pid``,
