@@ -3,11 +3,13 @@
 **Discover evidence of AI agents and related integrations, then reconcile it
 against your approved inventory.**
 
-ShadowScan collects observations across code repositories, identity providers,
-LLM gateway logs, low-code platforms, SaaS applications, cloud accounts,
-endpoints, network logs and running processes. It
-normalizes those observations into findings with evidence, risk factors and
-inventory matches so analysts can investigate ownership and capabilities.
+ShadowScan collects observations across nine surfaces: code repositories,
+identity providers, LLM gateway logs, low-code platforms, SaaS applications,
+cloud accounts, endpoints (developer workstations and host inventories),
+network logs and running processes. It normalizes those observations into
+findings with evidence, risk factors and inventory matches so analysts can
+investigate ownership and capabilities. [Architecture](architecture.md)
+describes how a scan flows from connectors through the engine to reports.
 
 These pages live in the
 [repository documentation directory](https://github.com/aisecnomad/Project-Nexus/tree/main/docs).
@@ -44,9 +46,21 @@ severity as an enforcement threshold.
   `shadowscan connectors` and consult the [connector reference](connectors.md)
   for supported input modes, required SDK extras and permissions.
 - Findings include evidence, risk factors and reconciliation against the
-  supplied Agent Cards or other supported inventory formats.
+  supplied Agent Cards or other supported inventory formats, and against
+  vendor agent registries the operator explicitly trusts.
+- Each applicable finding carries an [autonomy tier](concepts/autonomy.md)
+  interval (L0 to L5) and edition-qualified
+  [threat and control references](concepts/mappings.md) (OWASP, MITRE ATLAS,
+  MAESTRO, NIST AI RMF, ISO/IEC 42001, EU AI Act, AIUC-1). References are
+  author mappings, not compliance determinations.
 - Reports support table, JSON, SARIF, CSV, Markdown, HTML, CycloneDX (AI-BOM)
   and OCSF (Detection Finding events) formats.
+- JSON reports feed the follow-up commands: `diff` for
+  [drift](operations/drift.md) against a baseline, `merge` for fleet reports,
+  `dashboard` for a static [fleet dashboard](operations/dashboard.md) and
+  `controls` for a [control evidence report](operations/controls.md).
+- Opt-in [LLM triage](operations/llm-triage.md) adds an advisory model verdict
+  to the highest-risk findings; it never changes scores.
 - Incremental scanning can reuse eligible complete results for unchanged local
   inputs; see [scan semantics](scanning.md) for its constraints.
 
@@ -66,6 +80,7 @@ See [evaluation](evaluation.md), [production deployment](production.md) and
 
 - [Installation](getting-started/install.md)
 - [Quick start](getting-started/quickstart.md)
+- [Architecture](architecture.md)
 - [Connector reference](connectors.md)
 - [Security policy](security.md)
 - [Community and support](community.md)

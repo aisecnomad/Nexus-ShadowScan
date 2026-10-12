@@ -66,7 +66,7 @@ Run `make help` for a quick reference of all development commands.
 
 | Path | What lives there |
 |---|---|
-| `shadowscan/` | The scanner package: engine, CLI, connectors, signatures, mappings, risk and autonomy models, reporters and redaction. [docs/architecture.md](docs/architecture.md#modules) tabulates module responsibilities. |
+| `shadowscan/` | The scanner package: engine, CLI, connectors, signatures, mappings, risk and autonomy models, reporters and redaction. [docs/architecture.md](docs/architecture.md#package-layout) describes each module's responsibility. |
 | `tests/` | The pytest suite. Unit tests sit in `tests/unit/`, named after the module they exercise; offline fixtures sit under `tests/fixtures/`; `tests/test_repository_policy.py` and `tests/test_repository_consistency.py` are the `make policy` gates. |
 | `tools/` | Tooling CI runs outside the package: the secrets and per-connector coverage gates, the regression corpora (`tools/evaluation/`), the acceptance verifier (`tools/acceptance/`), release, governance and container checks, benchmark harnesses, and the AI review gate internals (`tools/ai_review/`). |
 | `benchmarks/` | Benchmark corpora and recorded results; [benchmarks/README.md](benchmarks/README.md) indexes every benchmark, its harness and its limits. |

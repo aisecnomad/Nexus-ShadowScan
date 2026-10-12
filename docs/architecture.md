@@ -1,88 +1,131 @@
 # Architecture
 
+ShadowScan is a read-only scanner that runs as one process. **Connectors** turn
+provider APIs, offline exports, files and logs into **findings**. The
+**engine** merges, correlates, reconciles and scores those findings, and
+**reporters** publish the result. A second group of commands works on JSON
+reports after a scan: comparison, fleet merge, the fleet dashboard and the
+control evidence report.
+
+Product knowledge lives in YAML signature packs and threat and control
+knowledge in YAML mapping catalogs. The engine and the reporters never name a
+product or a connector; behaviour that differs by connector is a capability the
+connector class declares (see [engine hooks](#engine-hooks)).
+
 ```
-                 ┌────────────────────────── signatures/data/*.yaml ──────────────────────────┐
-                 │ frameworks · providers · protocols · coding agents · platforms · cloud     │
-                 │ services · observability · identity apps · policies · heuristics           │
-                 └───────────────────────────────┬────────────────────────────────────────────┘
-                                                 │ SignatureIndex (dependency, import, code, file,
-                                                 │ env, domain, user_agent, image, iac, name,
-                                                 │ scope, model, secret, client_id matchers)
-   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
-   │  code.*   │  │identity.* │  │gateway.*  │  │lowcode.*  │  │  saas.*   │  │  cloud.*  │  │endpoint.* │  │network.*  │  │runtime.*  │   connectors
-   │ fs/gh/gl  │  │okta/entra │  │logs/otel  │  │pp/sf/snow │  │slack/teams│  │aws/gcp/az │  │inv/host/  │  │  logs     │  │processes  │   collect() live → records
-   │           │  │gws/auth0  │  │           │  │n8n/make   │  │gh-apps/…  │  │oci/k8s/os │  │mcp/ollama │  │           │  │           │   load_offline() → records
-   │           │  │jwt        │  │           │  │zap/work   │  │atlassian/ │  │           │  │models/    │  │           │  │           │   analyze(records) → Findings
-   │           │  │           │  │           │  │           │  │notion/zoom│  │           │  │ebpf       │  │           │  │           │
-   └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘  └─────┬─────┘
-         └──────────────┴──────────────┴──────┬───────┴──────────────┴──────────────┴──────────────┴──────────────┴──────────────┘
-                                              ▼
-                                   ┌────────────────────┐
-                                   │       Engine       │  merge duplicates → correlate across surfaces →
-                                   │                    │  reconcile with Inventory (shadow?) → Risk → sort
-                                   └─────────┬──────────┘
-                                             ▼
-              table · json · sarif · csv · markdown · html · cyclonedx · ocsf   (reporters)
-                   JSON reports → merge → dashboard + inventory.json   (fleet views)
+ signatures/data/*.yaml: frameworks · providers · protocols · coding agents · platforms
+ cloud services · identity apps · permission policies · observability · heuristics
+                                      │
+                                      │ SignatureIndex: dependency, import, code,
+                                      │ file, env, domain, user_agent, image, iac,
+                                      │ name, scope, model, secret, client_id
+                                      ▼
+┌──────────────────────────────── connectors ────────────────────────────────┐
+│ code      filesystem · github · gitlab                                     │
+│ identity  okta · entra · google-workspace · auth0 · jwt                    │
+│ gateway   logs · otel                                                      │
+│ lowcode   power-platform · salesforce · servicenow · n8n · make · zapier · │
+│           workato                                                          │
+│ saas      slack · microsoft-teams · github-apps · atlassian · notion ·     │
+│           zoom · generic                                                   │
+│ cloud     aws · gcp · azure · oci · kubernetes · openshift                 │
+│ endpoint  inventory · host · mcp · ollama · models · ebpf                  │
+│ network   logs                                                             │
+│ runtime   processes                    + plugins named in options.plugins  │
+│                                                                            │
+│ collect()       live API  ─┐                                               │
+│                            ├─► records ─► analyze() ─► findings            │
+│ load_offline()  input     ─┘      └─► sanitized --dump-records export      │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      ▼
+┌─────────────────────────────── Engine.run() ───────────────────────────────┐
+│ supervised jobs: thread pool · deadlines · plugin workers · incremental    │
+│ merge → correlate → MCP registry provenance → vendor registry              │
+│ reconciliation → inventory match (shadow?) → autonomy · declared           │
+│ governance → risk → min_confidence → sort → LLM triage (opt-in, advisory)  │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      ▼
+ ScanResult ─► reporters ◄─ mappings/data/*.yaml: threat and control references
+               table · json · sarif · csv · markdown · html · cyclonedx · ocsf
+                                      │ json
+                                      ▼
+ JSON reports ─► diff · merge · dashboard (+ inventory.json) · controls · inventory stubs
 ```
 
-## Modules
+## Scan pipeline
 
-| module | responsibility |
-|---|---|
-| `shadowscan/models.py` | `Finding`, `Evidence`, `Risk`, `ScanResult`; confidence = noisy-OR of evidence weights, each group of correlated evidence counted once at its strongest weight (`confidence_group`, else the same signal outside the code surface) |
-| `shadowscan/signatures/` | YAML loader/validator (`loader.py`) and matchers (`matcher.py`); packs in `data/` |
-| `shadowscan/connectors/base.py` | `BaseConnector` (`collect`, `analyze`, `load_offline`, `run`, record dumping, [engine hooks](#engine-hooks)), `ConnectorContext` |
-| `shadowscan/connectors/offline.py` | offline export reading: file discovery without following links, confined readers with byte limits, JSON / JSONL / YAML / CSV parsing, envelope and pagination checks |
-| `shadowscan/connectors/common.py` | turning matches into evidence / frameworks / capabilities, permission classification, blob scanning, merging the metadata of duplicate findings |
-| `shadowscan/connectors/<surface>/` | one module per data source (code, identity, gateway, lowcode, saas, cloud, endpoint, network, runtime) |
-| `shadowscan/connectors/code/remote.py` | shared by `code.github` and `code.gitlab`: offline clone loading, clone hardening and origin pinning, API snapshots and blob verification |
-| `shadowscan/connectors/code/source_semantics.py` | bounded Python import binding, reachability and tool attribution, including literal comprehension exclusions |
-| `shadowscan/connectors/code/polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py` | bounded lexical import and scope checks for supported Go agent constructors and .NET automatic tool invocation; no cross-file type resolution |
-| `shadowscan/utils/http.py` | shared HTTPS client: destination policy, retries, 16 MiB response limit and whole-body read deadline |
-| `shadowscan/utils/files.py` | confined reads: no link followed in any path component, directories opened for traversal only (`O_PATH` on Linux) |
-| `shadowscan/utils/redaction.py` | redaction API (`sanitize`, `sanitize_text`, `policy_token`) driving the passes in the `redaction_*` modules; patch rules here, never in a `redaction_*` module |
-| `shadowscan/registry.py` | inventory formats and reconciliation, capability-card stub generation |
-| `shadowscan/registries.py` | vendor registry record contract (`metadata.registry_record`), registry reconciliation statuses, approvals of trusted registries |
-| `shadowscan/risk.py` | additive, explainable risk model |
-| `shadowscan/autonomy.py` | autonomy tier interval (L0 to L5) for each applicable finding and its comparison with a declared level |
-| `shadowscan/mappings/` | edition-qualified threat and control catalogs and rules (`data/`), validator; derives `metadata.threats` and `metadata.controls` at export |
-| `shadowscan/governance.py` | governance facts a Capability Card declares (`governance:`), recorded on the findings it registers as `metadata.declared_governance` |
-| `shadowscan/controls.py`, `shadowscan/reporters/controls.py` | `shadowscan controls`: findings per control of the control catalogs, with the completeness of the evidence (Markdown, CSV, JSON) |
-| `shadowscan/engine.py` | parallel connector execution, merge, correlation, reconciliation, scoring; no connector names |
-| `shadowscan/config.py` | YAML config with `${ENV}` expansion, `--set` parsing, connector key validation |
-| `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |
-| `shadowscan/reporters/` | output formats |
-| `shadowscan/fleet.py` | `merge` of several reports: identity-checked union, three-valued shadow status, per-source times, inventory and connector runs |
-| `shadowscan/dashboard.py` | the `shadowscan.inventory/v1` document behind `dashboard`: coverage per source and connector, counts, autonomy against shadow status, registry and reference summaries, drift and history |
-| `shadowscan/reporters/dashboard.py` | the static dashboard page rendered from that document; not a `--format` |
-| `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `endpoint`, `connectors`, `signatures`, `inventory`, `mcp-registry`, `diff`, `merge`, `dashboard` |
+`Engine.run()` in `shadowscan/engine.py` runs these stages in order. Every
+stage except the advisory LLM triage fails closed: a gap it cannot fill is
+recorded in the scan statistics and makes the scan incomplete (exit 3), never a
+smaller report that looks clean.
 
-## Finding lifecycle
+1. **Setup.** `ScanConfig` reads the YAML configuration (`${VAR}` expansion,
+   unknown and duplicate keys rejected) and applies command-line overrides. The
+   engine loads the signature index (built-in packs plus `signatures:` packs),
+   the inventory and the risk policy. It rejects `--only` selectors that match
+   no enabled connector name or label. Without `allow_credential_mixing` it
+   also rejects a scan that runs a code connector beside another live
+   credentialed connector (cloud, identity other than `identity.jwt`, SaaS,
+   low-code, a live remote repository or a plugin).
+2. **Collection.** Each connector entry runs as one job in a thread pool of
+   `options.parallel` workers. A supervisor enforces each job's
+   `connector_timeout_seconds` deadline. A live job calls `collect()`; an entry
+   with `input` calls `load_offline()`. With `plugin_execution: process`, an
+   allowlisted plugin runs in a spawned worker that can be killed at its
+   deadline (`plugin_process.py`). `--incremental` reuses a cached result for an
+   unchanged local checkout or static export (`incremental.py`).
+   `--dump-records` publishes sanitized records for offline replay. A live
+   connector that declares `attests_live_scope` records the principal and
+   listings its provider reported. After collection the engine builds the
+   report's `collection_scope` from the selected inputs and those records
+   (`comparison.py`).
+3. **Analysis.** `analyze()` turns records into findings. Product knowledge
+   comes from the signature index: every match becomes an `Evidence` with a
+   weight and can add frameworks, model providers, capabilities, tags and
+   policy classes. `finalize()` computes confidence and promotes
+   `framework-usage` to `agent` when an agent indicator matched.
+4. **Post-processing**, in this order:
+   1. **Merge** findings with the same stable identity (`merge.py`; see
+      [finding identity](#finding-identity-and-merging)). A merged finding too
+      large to sanitize within the output budget is dropped and reported as an
+      `engine.postprocess` error.
+   2. **Correlate** (`correlation.py`). Findings on different surfaces that
+      share resource ids, normalised names or repository labels are linked in
+      `metadata.related`. Gateway activity is attached to the code it is bound
+      to by `correlation_bindings` (`metadata.runtime_activity`). Endpoint
+      findings are linked to a running process of the same tool on the same
+      device (`metadata.lifecycle`, `observed-running`). Correlation changes
+      neither confidence nor risk.
+   3. **Match MCP servers** against the pinned MCP Registry snapshots in
+      `options.mcp_registries` (`mcp_registry.py`).
+   4. **Reconcile vendor registry records** with observed findings
+      (`metadata.registry_reconciliation`, `registries.py`).
+   5. **Reconcile with the inventory**, including the approved records of
+      trusted registries: `shadow`, `registry_match` and an inherited owner
+      (`registry.py`).
+   6. **Classify autonomy** (`metadata.autonomy`, compared with a matched
+      card's declared level; `autonomy.py`) and record the matched card's
+      declared governance facts (`metadata.declared_governance`;
+      `governance.py`).
+   7. **Score** risk (`risk.py`).
+5. **Filter and order.** Findings below `min_confidence` are dropped, together
+   with the related, runtime, lifecycle and reconciliation links that name
+   them. Vendor registry record findings are kept whatever their confidence,
+   because their approvals apply regardless. Findings are sorted by risk score,
+   then confidence.
+6. **LLM triage** (opt-in; `triage.py`). With `llm_triage.enabled`, the
+   highest-risk findings receive an advisory model verdict. Triage never
+   changes scores, and its failures are warnings, not coverage gaps. Under
+   `--job-deadline-seconds` it stops early enough to leave time to write the
+   report.
+7. **Publication.** The engine writes the record export manifest when records
+   are exported, and the reporters render the `ScanResult`. Edition-qualified
+   `metadata.threats` and `metadata.controls` are derived from each finding
+   when it is serialized (`Finding.to_dict`, `shadowscan/mappings/`). SARIF
+   carries `file:line` for code findings and logical locations elsewhere; HTML
+   is self-contained.
 
-1. A connector produces raw **records** (API objects, log lines, files). Live
-   records can be dumped to JSONL (`--dump-records`) and replayed offline.
-2. `analyze()` turns records into findings. Product knowledge is looked up in
-   the signature index; every match becomes an `Evidence` with a weight and
-   may add frameworks, model providers, capabilities, tags and policy classes.
-3. `finalize()` computes confidence and promotes `framework-usage` to `agent`
-   when an agent indicator matched.
-4. The engine **merges** findings with the same stable source identity (surface,
-   connector, provider, account, region, resource and observation discriminator),
-   **correlates** across surfaces by resource ids and normalised names
-   (`metadata.related`), **reconciles** vendor registry records with observed
-   findings (`metadata.registry_reconciliation`) and then with the inventory,
-   including approved records of trusted registries (`shadow`,
-   `registry_match`, inherited owner), **classifies** autonomy
-   (`metadata.autonomy`, compared with a matched entry's declared level),
-   records the matched card's declared governance facts
-   (`metadata.declared_governance`) and
-   **scores** risk. Findings below
-   `min_confidence` are then dropped, together with the `related` links that
-   name them; vendor registry record findings are kept whatever their
-   confidence, since their approvals apply regardless.
-5. Reporters render. SARIF carries `file:line` for code findings and logical
-   locations elsewhere; HTML is self-contained.
+### Record exports
 
 Record exports are sanitized and published atomically with owner-only
 permissions. Each JSONL line must be strict JSON and fit the replay line limit;
@@ -92,6 +135,8 @@ prevents publication of the entire new export, preserving any prior file.
 Encoding and export-size failures retain the original records for live analysis;
 a sanitizer safety rejection skips the unsafe record before analysis. Successful
 empty collections produce an explicit empty inventory instead of a zero-byte file.
+
+### Finding identity and merging
 
 Merging keeps the first observation's owner and metadata and unions evidence,
 frameworks, capabilities, tags, permissions and models. Metadata that combines
@@ -106,6 +151,148 @@ is the resource-type family before `/`; connectors emitting distinct observation
 of one resource within the same family must supply different stable
 `identity_discriminator` values. Schema upgrades require fresh comparison
 baselines and invalidate older incremental caches.
+
+## Execution and isolation
+
+Options are keys under `options:`; most also have a command-line flag.
+
+| option | default | what it bounds |
+|---|---|---|
+| `parallel` | 4 | worker threads shared by all connector jobs |
+| `connector_timeout_seconds` | 120 | each connector's completion deadline; an expired job's results are discarded and the scan is incomplete ([deadlines and parallelism](scanning.md#connector-deadlines-and-parallelism)) |
+| `job_deadline_seconds`, `--job-deadline-seconds` | off | the whole CLI process, including setup and output; expiry exits 3 |
+| `plugin_execution` | `thread` | `process` runs each allowlisted plugin in a spawned worker that is killed at its deadline; built-in connectors always use threads ([plugin execution](connectors.md#third-party-plugin-execution)) |
+| `allow_private_origin` | `false` | HTTPS clients refuse loopback, link-local, private and cloud-metadata destinations (`utils/http.py`) |
+| `allow_credential_mixing` | `false` | repository scans and live tenant collection run as separate scans |
+| `allow_instance_credentials` | `false` | cloud connectors use an explicit audit identity, not instance or managed-identity credentials |
+
+Thread cancellation is cooperative: Python cannot interrupt a thread blocked in
+a vendor SDK, so the CLI writes the incomplete report and exits without joining
+it. The process backend is lifecycle isolation, not a security sandbox; a
+plugin keeps the scanner's privileges and credentials. Enforce a host or CI job
+timeout for a hard limit.
+
+## After the scan: report commands
+
+These commands read files that a scan or an operator wrote, usually JSON
+reports (`--format json`). None contacts a provider except
+`mcp-registry snapshot`, whose job is to fetch a registry listing.
+
+| command | modules | produces |
+|---|---|---|
+| `diff` | `comparison.py` | new, resolved and changed findings with drift classes (inventory, capability, autonomy, governance, coverage); missing findings resolve only between complete, comparable scans ([comparing reports](scanning.md#comparing-reports)) |
+| `merge` | `fleet.py` | one fleet report: identity-checked union, three-valued shadow status, per-source times; incomplete when any source is |
+| `dashboard` | `dashboard.py`, `reporters/dashboard.py` | a static, self-contained HTML page and the `shadowscan.inventory/v1` JSON document ([fleet dashboard](operations/dashboard.md)) |
+| `controls` | `controls.py`, `reporters/controls.py` | findings per NIST AI RMF, ISO/IEC 42001, EU AI Act and AIUC-1 control, with evidence completeness, as Markdown, CSV or JSON ([control evidence report](operations/controls.md)) |
+| `inventory stubs`, `inventory check` | `registry.py` | Capability Card stubs for shadow findings; validation of inventory files |
+| `mcp-registry snapshot` | `mcp_registry.py` | a complete MCP Registry listing and the SHA-256 that pins it in `options.mcp_registries` |
+
+## Package layout
+
+### Core
+
+| module | responsibility |
+|---|---|
+| `shadowscan/models.py` | `Finding`, `Evidence`, `Risk`, `ScanResult`; confidence = noisy-OR of evidence weights, each group of correlated evidence counted once at its strongest weight (`confidence_group`, else the same signal outside the code surface) |
+| `shadowscan/config.py` | YAML config with `${ENV}` expansion, `--set` parsing, connector key validation |
+| `shadowscan/engine.py` | parallel connector execution under deadline supervision, merge, correlation, reconciliation, scoring; no connector names |
+| `shadowscan/merge.py` | merging findings with the same id: first observation's owner and metadata, unioned evidence and technologies |
+| `shadowscan/correlation.py` | cross-surface links (`metadata.related`), gateway-to-code runtime activity, endpoint-to-process lifecycle links |
+| `shadowscan/incremental.py` | content-addressed reuse of completed static connector results (`--incremental`, `--state-dir`) |
+| `shadowscan/plugin_process.py` | killable spawned workers for `plugin_execution: process`; one size-bounded JSON result per worker, never pickle |
+| `shadowscan/comparison.py` | `collection_scope` provenance and fingerprint, report loading, `diff` comparison with drift classes and baseline lifecycle |
+| `shadowscan/triage.py` | opt-in, advisory LLM triage of the highest-risk findings |
+| `shadowscan/endpoint.py` | well-known AI client configuration locations that `shadowscan endpoint` reads through `code.filesystem` |
+| `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |
+| `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `endpoint`, `connectors`, `signatures`, `inventory`, `mcp-registry`, `diff`, `merge`, `dashboard`, `controls` |
+
+### Detection, inventory and assessment
+
+| module | responsibility |
+|---|---|
+| `shadowscan/signatures/` | YAML schema (`schema.py`), loader and validator (`loader.py`, `validate.py`) and matchers (`matcher.py`); packs in `data/` |
+| `shadowscan/registry.py` | inventory formats and reconciliation, capability-card stub generation |
+| `shadowscan/registries.py` | vendor registry record contract (`metadata.registry_record`), registry reconciliation statuses, approvals of trusted registries |
+| `shadowscan/mcp_registry.py` | MCP Registry snapshots: the `mcp-registry snapshot` client, snapshot pinning and loading, provenance of configured MCP servers, approved MCP catalogs |
+| `shadowscan/risk.py` | additive, explainable risk model |
+| `shadowscan/autonomy.py` | autonomy tier interval (L0 to L5) for each applicable finding and its comparison with a declared level |
+| `shadowscan/governance.py` | governance facts a Capability Card declares (`governance:`), recorded on the findings it registers as `metadata.declared_governance` |
+| `shadowscan/mappings/` | edition-qualified threat and control catalogs and rules (`data/`), schema, loader and validator; derives `metadata.threats` and `metadata.controls` at export |
+
+### Reports and fleet views
+
+| module | responsibility |
+|---|---|
+| `shadowscan/reporters/` | output formats: `table`, `json`, `sarif`, `csv`, `markdown`, `html`, `cyclonedx`, `ocsf`; `_publication.py` holds the fail-closed normalization shared at report publication |
+| `shadowscan/fleet.py` | `merge` of several reports: identity-checked union, three-valued shadow status, per-source times, inventory and connector runs |
+| `shadowscan/dashboard.py` | the `shadowscan.inventory/v1` document behind `dashboard`: coverage per source and connector, counts, autonomy against shadow status, registry and reference summaries, drift and history |
+| `shadowscan/reporters/dashboard.py` | the static dashboard page rendered from that document; not a `--format` |
+| `shadowscan/controls.py`, `shadowscan/reporters/controls.py` | `shadowscan controls`: findings per control of the control catalogs, with the completeness of the evidence (Markdown, CSV, JSON) |
+
+### Connector framework
+
+| module | responsibility |
+|---|---|
+| `shadowscan/connectors/__init__.py` | connector registry: built-in names, entry-point listing without importing plugins, the `options.plugins` allowlist with optional target and distribution pins, [plugin identity rules](#plugin-identity-rules) |
+| `shadowscan/connectors/base.py` | `BaseConnector` (`collect`, `analyze`, `load_offline`, `run`, record dumping, [engine hooks](#engine-hooks)), `ConnectorContext` |
+| `shadowscan/connectors/offline.py` | offline export reading: file discovery without following links, confined readers with byte limits, JSON / JSONL / YAML / CSV parsing, envelope and pagination checks |
+| `shadowscan/connectors/common.py` | turning matches into evidence / frameworks / capabilities, permission classification, blob scanning, merging the metadata of duplicate findings |
+| `shadowscan/connectors/mcp_risk.py` | static risk checks for configured MCP servers, shared by the code, endpoint and cloud connectors |
+| `shadowscan/connectors/posture.py` | security posture of AI coding and personal agents, read from their settings files (code and endpoint) |
+| `shadowscan/connectors/agent_behavior.py` | behavioural indicators that an LLM caller is an agent, from request metadata alone (gateway and network) |
+
+### Connectors by surface
+
+| package | connectors | notes |
+|---|---|---|
+| `connectors/code/` | `code.filesystem`, `code.github`, `code.gitlab` | see [code scanner internals](#code-scanner-internals) |
+| `connectors/identity/` | `identity.okta`, `identity.entra`, `identity.google-workspace`, `identity.auth0`, `identity.jwt` | `common.py` holds the shared OAuth app assessment |
+| `connectors/gateway/` | `gateway.logs`, `gateway.otel` | `normalise.py` turns each log schema into events; `gateway.otel` is implemented in `endpoint/runtime.py` and re-exported by `otel.py` |
+| `connectors/lowcode/` | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | the four automation platforms share `automation.py` |
+| `connectors/saas/` | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | one module per provider; `generic.py` reads any CSV or JSON app inventory |
+| `connectors/cloud/` | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci`, `cloud.kubernetes`, `cloud.openshift` | `aws_registry.py` and `gcp_registry.py` read vendor agent registries; `credentials.py` holds the instance-credential policy; `kubernetes.py` serves both workload inventories |
+| `connectors/endpoint/` | `endpoint.inventory`, `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`, `endpoint.ebpf` | `catalog.py` lists what `endpoint.inventory` looks for; `runtime.py` holds the offline host and runtime inventories; `a2a.py` is the opt-in A2A Agent Card probe of `endpoint.mcp` |
+| `connectors/network/` | `network.logs` | DNS, TLS SNI and flow records |
+| `connectors/runtime/` | `runtime.processes` | process inventories or `/proc`; command lines are never kept |
+
+### Code scanner internals
+
+`code.filesystem` is the largest connector; `code.github` and `code.gitlab`
+reuse it on the checkouts they fetch, in clone or API mode. Its helpers are bounded and conservative:
+each one proves a narrow construct or declines, and none imports or runs
+scanned code. [ADR-005](adrs/005-code-scanner-module-boundaries.md) proposes
+splitting the connector class itself.
+
+| module | responsibility |
+|---|---|
+| `filesystem.py` | the connector: tree walk, coverage accounting, file dispatch, ownership and finding construction |
+| `walk.py` | bounded, non-recursive directory walking that never follows links; project-root markers |
+| `remote.py` | shared by `code.github` and `code.gitlab`: offline clone loading, clone hardening and origin pinning, API snapshots and blob verification |
+| `manifests.py`, `mcp_config.py`, `semantic_config.py` | dependency manifests, containers, IaC and CI files; MCP client and server configuration; agent manifests and low-code exports |
+| `mcp_tools.py`, `instruction_content.py` | what an MCP server can do from the tools it registers; hidden content, fetched code and invisible text in agent instruction files |
+| `source_semantics.py` | bounded Python import binding, reachability and tool attribution, including literal comprehension exclusions; import-bound calls for common JavaScript and TypeScript |
+| `source_ranges.py`, `source_identity.py`, `source_capabilities.py` | lexical ranges that cannot establish executable code; identities of named Python agent constructions; capabilities configured on agent constructors |
+| `import_provenance.py`, `python_reexports.py` | ambiguous absolute Python imports; a narrow class of re-exports |
+| `tool_attribution.py`, `provider_tools.py`, `provider_loops.py`, `responses_loops.py` | Python tool registrations, provider request tool configuration and tool loops, OpenAI Responses actions |
+| `langgraph_semantics.py`, `genkit_semantics.py`, `vercel_tools.py` | framework-specific proofs: LangGraph tool cycles, Genkit agents and tool loops, Vercel AI SDK tool execution |
+| `javascript_dispatch.py`, `javascript_reachability.py`, `javascript_tool_attribution.py` | JavaScript Responses dispatch, literal dead-branch exclusion, tool registrations linked to their execution sites |
+| `polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py`, `java_semantics.py` | bounded lexical import and scope checks for LangChainGo constructors, .NET automatic tool invocation and Spring AI annotated tools; no cross-file type resolution |
+| `catalogs.py`, `rule_packs.py` | data files that name technologies without using them, and detection-rule packs, so neither counts as an integration |
+| `ownership.py` | CODEOWNERS glob matching without backtracking regular expressions |
+
+### Utilities
+
+| module | responsibility |
+|---|---|
+| `shadowscan/utils/http.py` | shared HTTPS client: destination policy, retries, 16 MiB response limit and whole-body read deadline |
+| `shadowscan/utils/files.py` | confined reads: no link followed in any path component, directories opened for traversal only (`O_PATH` on Linux) |
+| `shadowscan/utils/output.py` | atomic, owner-readable output files and private export directories |
+| `shadowscan/utils/redaction.py` | redaction API (`sanitize`, `sanitize_text`, `policy_token`) driving the passes in the `redaction_*` modules; patch rules here, never in a `redaction_*` module |
+| `shadowscan/utils/git.py` | hardened `git` invocation for clones and metadata reads |
+| `shadowscan/utils/jwks.py` | bounded, origin-pinned JWKS fetching and analysis-only JWT and JWS verification |
+| `shadowscan/utils/safe_json.py`, `safe_yaml.py`, `jsonc.py`, `jcs.py` | unambiguous JSON, bounded YAML and lenient JSONC parsing of untrusted input; RFC 8785 canonical JSON |
+| `shadowscan/utils/credential_identity.py`, `identity.py` | secret-keyed credential pseudonyms; identity scope checks shared by discovery and registry approval |
+| `shadowscan/utils/deadline.py`, `digest.py`, `platform.py`, `text.py` | the CLI job deadline; content digests of the scanner's own source; supported platforms for path confinement; small text helpers |
 
 ## Engine hooks
 
@@ -153,6 +340,7 @@ for them, because an attested scope lets missing findings count as resolved.
 from shadowscan.connectors.base import BaseConnector, ConnectorContext
 from shadowscan.connectors.common import apply_matches, finalize, name_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.utils.http import HttpClient
 
 class AcmeAgentHubConnector(BaseConnector):
     name = "platform.acme-hub"          # surface.provider
@@ -224,7 +412,8 @@ findings, the scan is incomplete, and the reason is available through
 * Neither the entry-point name nor the declared `name` may be a built-in
   connector name, a variant of one that differs only by case or surrounding
   whitespace, or a bare built-in namespace (`code`, `identity`, `gateway`,
-  `lowcode`, `saas`, `cloud`). Names must be single printable tokens.
+  `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime`). Names must be
+  single printable tokens.
 * A name registered by more than one entry point with different targets is
   ambiguous; none of those entries is listed or loaded, whatever the
   installation order.
