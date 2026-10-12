@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from tools.shadowbench.cases import generate, pdf_report, report, runner, score, verify
+from tools.shadowbench.cases import generate, report, runner, score, verify
 
 COMMANDS = {
     "generate": generate.main,
@@ -12,7 +12,6 @@ COMMANDS = {
     "run": runner.main,
     "score": score.main,
     "report": report.main,
-    "pdf": pdf_report.main,
 }
 
 
