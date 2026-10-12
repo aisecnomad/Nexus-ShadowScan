@@ -8,6 +8,14 @@ shims (`npx`, `uvx`, `docker`, ...) come first on PATH as well, so a consent
 change in a later release still cannot start a server configured with one of
 those launchers; other command names and absolute paths are not intercepted
 (see `common.refuse_launchers`).
+
+The adapter reads `inspect.json` as an object keyed by client directory or
+config path whose values are client records: objects with a `servers` list,
+or with a `client` name and no `servers`. An empty object is an empty
+inventory. A report that holds entries but no client record (an error
+object such as `{"error": ...}`, or a shape this adapter does not know) is
+an adapter error, never an empty inventory. Other entries beside a record
+are skipped, and a `client` that is not a string names no client.
 """
 
 from __future__ import annotations
@@ -42,6 +50,23 @@ SPEC = ToolSpec(
     categories=frozenset({"ai-client", "mcp"}),
     notes="inspect --json with consent auto-denied; no MCP server is executed or contacted",
 )
+
+
+def _client_name(entry: dict[str, Any]) -> str:
+    """The entry's `client` name; a null or non-string client is no name."""
+    client = entry.get("client")
+    return client if isinstance(client, str) else ""
+
+
+def _client_record(entry: object) -> bool:
+    """Whether an `inspect.json` value is a client record: a `servers` list, or a client and no servers."""
+    if not isinstance(entry, dict):
+        return False
+    servers = entry.get("servers")
+    if isinstance(servers, list):
+        return True
+    # A null or empty `servers` value reads as no servers, as `servers or []` below reads it.
+    return not servers and bool(_client_name(entry))
 
 
 class McpScanAdapter:
@@ -79,14 +104,14 @@ class McpScanAdapter:
             return Normalized(error=f"inspect.json unparseable: {exc}")
         if not isinstance(data, dict):
             return Normalized(error="inspect.json is not an object")
+        if data and not any(_client_record(entry) for entry in data.values()):
+            return Normalized(error="inspect.json holds no client record")
         result = Normalized(raw_count=0)
         for key, entry in data.items():
-            if not isinstance(entry, dict):
+            if not _client_record(entry):
                 continue
-            client = str(entry.get("client", ""))
+            client = _client_name(entry)
             servers = entry.get("servers") or []
-            if not isinstance(servers, list):
-                continue
             result.raw_count += len(servers)
             if client:
                 result.predictions.append(

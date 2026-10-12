@@ -3,6 +3,12 @@
 `numbat agents` inventories installed agents from their root directories and
 at-rest transcripts; `numbat scan` emits evidence records whose local paths
 help anchor attribution. Both run fully local.
+
+The adapter reads `agents.json` as a list of agent records: objects with an
+`agent` name and a `present` or `detected` field. An empty list is an empty
+inventory. A list that holds entries but no agent record (`[{"error": ...}]`,
+or rows without the agent fields) is an adapter error, never an empty
+inventory. Other rows beside a record are skipped.
 """
 
 from __future__ import annotations
@@ -32,6 +38,14 @@ SPEC = ToolSpec(
     categories=frozenset({"ai-client"}),
     notes="agents --format json plus scan --emit all; local only",
 )
+
+
+def _agent_record(entry: object) -> bool:
+    """Whether an `agents.json` row is an agent record: an `agent` name and `present` or `detected`."""
+    if not isinstance(entry, dict):
+        return False
+    name = entry.get("agent")
+    return isinstance(name, str) and bool(name) and ("present" in entry or "detected" in entry)
 
 
 class NumbatAdapter:
@@ -74,6 +88,8 @@ class NumbatAdapter:
             return Normalized(error=f"agents.json unparseable: {exc}")
         if not isinstance(agents, list):
             return Normalized(error="agents.json is not a list")
+        if agents and not any(_agent_record(entry) for entry in agents):
+            return Normalized(error="agents.json holds no agent record")
         evidence: dict[str, list[str]] = {}
         scan_path = out_dir / "scan.ndjson"
         if scan_path.exists():
@@ -92,7 +108,7 @@ class NumbatAdapter:
                         evidence[source].append(local)
         result = Normalized(raw_count=len(agents))
         for entry in agents:
-            if not isinstance(entry, dict):
+            if not _agent_record(entry):
                 continue
             if not (entry.get("present") or entry.get("detected")):
                 continue

@@ -312,13 +312,26 @@ The normalizers differ in how strictly they read a report:
   an empty inventory. Cisco needs a `scan_results` list in every output;
   AgentSight needs a session record that names its agent (`comm`) in any
   report that is not an empty list.
-- Snyk Agent Scan and Numbat: a missing, empty or unparseable report is an
-  adapter error, and so is one whose top level is not an object (Snyk) or
-  a list (Numbat). Inside such a report they skip entries of the wrong
-  shape, so a report holding only those, such as an error object, reads as
-  nothing found and the run counts as complete.
-- vet on home trees: a missing, empty or unparseable `ai.json` is an
-  adapter error; a report that is not a list reads as nothing found.
+- Snyk Agent Scan, Numbat and vet on home trees: a missing, empty or
+  unparseable report is an adapter error, and so is one whose top level is
+  not an object (Snyk) or a list (Numbat, vet), or one that holds entries
+  none of which is a client or agent record. A record is, for Snyk, an
+  object with a `servers` list, or with a `client` name and no `servers`;
+  for Numbat, an object with an `agent` name and a `present` or `detected`
+  field; for vet, an object with an `App` or `Name`, or a non-empty
+  `MCPServer` object. An error report such as `{"error": ...}` or
+  `[{"error": ...}]` is therefore an error, not an empty inventory. An
+  empty object (Snyk) or list (Numbat, vet) reads as nothing found, and so
+  does vet's `null`, which the code-surface vet adapter records vet writing
+  when it finds nothing. Entries that are not records are skipped when the
+  report also holds a record, and a Snyk `client` that is not a string
+  names no client.
+
+These rules are stricter than the 2026-10-11 adapters were, but they would
+not have changed that run's rows: every committed Snyk Agent Scan, Numbat
+and vet home prediction names its client or server as text, so it was read
+from such a record, and the one Numbat row without predictions
+(`home:win-laptop-03`) recorded `raw_count` 0, an empty list.
 
 ## Scoring
 

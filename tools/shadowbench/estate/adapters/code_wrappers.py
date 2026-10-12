@@ -137,8 +137,23 @@ class AgentDiscoverEstateAdapter(_WrappedCodeAdapter):
         )
 
 
+def _vet_record(item: object) -> bool:
+    """Whether an `ai.json` item is a vet record: an `App` or `Name`, or an `MCPServer` object."""
+    if not isinstance(item, dict):
+        return False
+    named = any(isinstance(item.get(key), str) and item[key] for key in ("App", "Name"))
+    return named or (isinstance(item.get("MCPServer"), dict) and bool(item["MCPServer"]))
+
+
 class VetEstateAdapter(_WrappedCodeAdapter):
-    """vet on code repositories plus `vet ai discover` on home trees."""
+    """vet on code repositories plus `vet ai discover` on home trees.
+
+    On a home tree `ai.json` must be a list. `null` and an empty list read as
+    nothing found: the code-surface adapter records that vet writes either
+    when it finds nothing. Any other top level, or a list holding items but no
+    vet record, is an adapter error, never an empty inventory. Other items
+    beside a record are skipped.
+    """
 
     def __init__(self) -> None:
         self.inner = VetAdapter()
@@ -186,10 +201,16 @@ class VetEstateAdapter(_WrappedCodeAdapter):
             data = json.loads(path.read_text(encoding="utf-8"))
         except ValueError as exc:
             return Normalized(error=f"ai.json unparseable: {exc}")
-        items = data if isinstance(data, list) else []
+        if data is None:
+            return Normalized()
+        if not isinstance(data, list):
+            return Normalized(error="ai.json is not a list")
+        if data and not any(_vet_record(item) for item in data):
+            return Normalized(error="ai.json holds no vet record")
+        items: list[Any] = data
         result = Normalized(raw_count=len(items))
         for item in items:
-            if not isinstance(item, dict):
+            if not _vet_record(item):
                 continue
             server: dict[str, Any] = item.get("MCPServer") or {}
             name = str(item.get("Name") or item.get("App") or "")
