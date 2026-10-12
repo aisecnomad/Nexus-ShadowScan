@@ -8,7 +8,7 @@ export async function answer(question: string): Promise<string> {
   const result = await generateText({
     model: openai("gpt-4o-mini"),
     system:
-      "You are the Vantor Logistics support assistant. Answer questions " +
+      "You are the Adatum Logistics support assistant. Answer questions " +
       "about shipments, quotes and delivery windows. Cite the tracking id.",
     prompt: question,
     tools: {

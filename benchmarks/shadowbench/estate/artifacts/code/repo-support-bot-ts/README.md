@@ -1,10 +1,10 @@
 # support-bot
 
-Customer support assistant for Vantor Logistics: answers shipment, quote
+Customer support assistant for Adatum Logistics: answers shipment, quote
 and delivery-window questions over HTTP, exposes its shipment tools as an
 MCP server, and publishes an A2A agent card for partner integrations.
 
-Internal clone: `git@git.vantor.example:platform/repo-support-bot-ts.git`
+Internal clone: `git@git.adatum.example:platform/repo-support-bot-ts.git`
 
 ## Run
 

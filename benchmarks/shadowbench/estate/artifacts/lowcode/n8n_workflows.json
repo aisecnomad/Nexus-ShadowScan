@@ -35,7 +35,7 @@
      "type": "@n8n/n8n-nodes-langchain.toolHttpRequest",
      "name": "Carrier registry lookup",
      "parameters": {
-      "url": "https://carriers.vantor.example/api/lookup"
+      "url": "https://carriers.adatum.example/api/lookup"
      }
     },
     {
@@ -72,7 +72,7 @@
      "name": "Manifest consistency check",
      "parameters": {
       "method": "POST",
-      "url": "https://vllm.vantor.example/v1/chat/completions",
+      "url": "https://vllm.adatum.example/v1/chat/completions",
       "jsonBody": "{\"model\": \"qwen2.5-72b-instruct\", \"messages\": [{\"role\": \"system\", \"content\": \"Flag manifests whose pallet counts disagree with the BOL.\"}]}"
      }
     },

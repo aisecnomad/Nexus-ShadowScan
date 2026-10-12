@@ -1,5 +1,5 @@
 {
-  "name": "@vantor/ua-robot-parser",
+  "name": "@adatum/ua-robot-parser",
   "version": "3.4.1",
   "description": "Tiny user-agent parser: browser, OS and robot classification for the edge logs.",
   "license": "MIT",

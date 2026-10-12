@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { lookupShipment } from "./shipments.js";
 
-const server = new McpServer({ name: "vantor-support-tools", version: "2.1.0" });
+const server = new McpServer({ name: "adatum-support-tools", version: "2.1.0" });
 
 server.tool(
   "track_shipment",

@@ -1,9 +1,9 @@
 # repo-site
 
-Static customer documentation site for Vantor Logistics: booking windows,
+Static customer documentation site for Adatum Logistics: booking windows,
 cut-off times and shipping FAQs. Markdown in, HTML out, no server.
 
-Internal clone: `git@git.vantor.example:platform/repo-site.git`
+Internal clone: `git@git.adatum.example:platform/repo-site.git`
 
 ## Build
 

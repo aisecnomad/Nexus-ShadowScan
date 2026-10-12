@@ -32,7 +32,7 @@
    "predictions": [
     {
      "fact": "bot-app:claude",
-     "text": "github:installation:70110955 GitHub App installed: claude https://github.com/organizations/vantor-logistics/settings/installations/70110955",
+     "text": "github:installation:70110955 GitHub App installed: claude https://github.com/organizations/adatum-logistics/settings/installations/70110955",
      "surface": "saas",
      "shadow": true
     },
@@ -62,7 +62,7 @@
     },
     {
      "fact": "mcp:server",
-     "text": "https://freight-docs-mcp-g2p.vantor.example/mcp/search_freight_docs MCP tool search_freight_docs on https://freight-docs-mcp-g2p.vantor.example/mcp search_freight_docs",
+     "text": "https://freight-docs-mcp-g2p.adatum.example/mcp/search_freight_docs MCP tool search_freight_docs on https://freight-docs-mcp-g2p.adatum.example/mcp search_freight_docs",
      "surface": "endpoint",
      "shadow": true
     },
@@ -74,7 +74,7 @@
     },
     {
      "fact": "cloud-ai:ai-foundry-agent",
-     "text": "/subscriptions/sub-vantor-1/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/vantor-foundry/projects/freight-ops/agents/asst_cdocr4w0021 Azure AI Foundry agent: customs-doc-agent-r4w https://vantor-foundry.services.ai.azure.com/api/projects/freight-ops",
+     "text": "/subscriptions/sub-adatum-1/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/adatum-foundry/projects/freight-ops/agents/asst_cdocr4w0021 Azure AI Foundry agent: customs-doc-agent-r4w https://adatum-foundry.services.ai.azure.com/api/projects/freight-ops",
      "surface": "cloud",
      "shadow": true
     },
@@ -122,7 +122,7 @@
     },
     {
      "fact": "a2a:agent-card",
-     "text": "repo-support-bot-ts/public/.well-known/agent.json A2A agent card: Vantor Support Agent public/.well-known/agent.json",
+     "text": "repo-support-bot-ts/public/.well-known/agent.json A2A agent card: Adatum Support Agent public/.well-known/agent.json",
      "surface": "code",
      "shadow": true
     },
@@ -140,7 +140,7 @@
     },
     {
      "fact": "gateway-caller:agentic",
-     "text": "access:vantor-quote-crew-j9f/1.3 crewai/0.80.0 python-requests/2.32.3 Agentic caller 'vantor-quote-crew-j9f/1.3 crewai/0.80.0 python-requests/2.32.3' (user-agent): 6 requests via ChatGPT / OpenAI, CrewAI {'api.openai.com': 6} {}",
+     "text": "access:adatum-quote-crew-j9f/1.3 crewai/0.80.0 python-requests/2.32.3 Agentic caller 'adatum-quote-crew-j9f/1.3 crewai/0.80.0 python-requests/2.32.3' (user-agent): 6 requests via ChatGPT / OpenAI, CrewAI {'api.openai.com': 6} {}",
      "surface": "gateway",
      "shadow": true
     },
@@ -188,25 +188,25 @@
     },
     {
      "fact": "mcp:server",
-     "text": "https://freight-docs-mcp-g2p.vantor.example/mcp/summarize_tariff_page MCP tool summarize_tariff_page on https://freight-docs-mcp-g2p.vantor.example/mcp summarize_tariff_page",
+     "text": "https://freight-docs-mcp-g2p.adatum.example/mcp/summarize_tariff_page MCP tool summarize_tariff_page on https://freight-docs-mcp-g2p.adatum.example/mcp summarize_tariff_page",
      "surface": "endpoint",
      "shadow": true
     },
     {
      "fact": "oauth-app:fireflies",
-     "text": "okta:app:0oa6ffnote4vq7m Okta OAuth app: Fireflies.ai Notetaker https://vantor.okta.com/admin/app/oidc_client/instance/0oa6ffnote4vq7m",
+     "text": "okta:app:0oa6ffnote4vq7m Okta OAuth app: Fireflies.ai Notetaker https://adatum.okta.com/admin/app/oidc_client/instance/0oa6ffnote4vq7m",
      "surface": "identity",
      "shadow": true
     },
     {
      "fact": "ai-service-contact:cursor",
-     "text": "network:vantor-zeek:10.31.4.23:coding-agent.cursor AI service contacted: Cursor (api2.cursor.sh) from 10.31.4.23 10.31.4.23 coding-agent.cursor {'api2.cursor.sh': 2}",
+     "text": "network:adatum-zeek:10.31.4.23:coding-agent.cursor AI service contacted: Cursor (api2.cursor.sh) from 10.31.4.23 10.31.4.23 coding-agent.cursor {'api2.cursor.sh': 2}",
      "surface": "network",
      "shadow": true
     },
     {
      "fact": "service-identity:generic",
-     "text": "okta:app:0oa7cnagkq83zz Okta service app: contract-negotiator-agent-kq83 https://vantor.okta.com/admin/app/oidc_client/instance/0oa7cnagkq83zz",
+     "text": "okta:app:0oa7cnagkq83zz Okta service app: contract-negotiator-agent-kq83 https://adatum.okta.com/admin/app/oidc_client/instance/0oa7cnagkq83zz",
      "surface": "identity",
      "shadow": true
     },
@@ -218,7 +218,7 @@
     },
     {
      "fact": "cloud-ai:k8s-ai-workload",
-     "text": "k8s:vantor-prod/ml-serving/Deployment/linehaul-ollama-g5v Kubernetes Deployment linehaul-ollama-g5v",
+     "text": "k8s:adatum-prod/ml-serving/Deployment/linehaul-ollama-g5v Kubernetes Deployment linehaul-ollama-g5v",
      "surface": "cloud",
      "shadow": true
     },
@@ -266,7 +266,7 @@
     },
     {
      "fact": "gateway-caller:agentic",
-     "text": "aws:arn:aws:sts::210987654321:assumed-role/vantor-fleet-ops-agent-x9r4/build-runner-3 Agentic caller 'arn:aws:sts::210987654321:assumed-role/vantor-fleet-ops-agent-x9r4/build-runner-3' (principal): 6 requests to anthropic.claude-3-5-sonnet-20241022-v2:0 {'bedrock-runtime.us-east-1.amazonaws.com': 6} {'anthropic.claude-3-5-sonnet-20241022-v2:0': 6}",
+     "text": "aws:arn:aws:sts::210987654321:assumed-role/adatum-fleet-ops-agent-x9r4/build-runner-3 Agentic caller 'arn:aws:sts::210987654321:assumed-role/adatum-fleet-ops-agent-x9r4/build-runner-3' (principal): 6 requests to anthropic.claude-3-5-sonnet-20241022-v2:0 {'bedrock-runtime.us-east-1.amazonaws.com': 6} {'anthropic.claude-3-5-sonnet-20241022-v2:0': 6}",
      "surface": "gateway",
      "shadow": true
     },
@@ -302,7 +302,7 @@
     },
     {
      "fact": "mcp:server",
-     "text": "endpoint:dev-laptop-01:dana:mcp-config:claude-code MCP servers configured for Claude Code on dev-laptop-01 (~dana) ~/.claude.json Claude Code vantor-freight-mcp /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:claude-code MCP servers configured for Claude Code on dev-laptop-01 (~dana) ~/.claude.json Claude Code adatum-freight-mcp /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db",
      "surface": "endpoint",
      "shadow": true
     },
@@ -338,7 +338,7 @@
     },
     {
      "fact": "mcp:server",
-     "text": "endpoint:dev-laptop-01:dana:mcp-config:cursor MCP servers configured for Cursor on dev-laptop-01 (~dana) ~/.cursor/mcp.json Cursor vantor-freight-mcp /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:cursor MCP servers configured for Cursor on dev-laptop-01 (~dana) ~/.cursor/mcp.json Cursor adatum-freight-mcp /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db",
      "surface": "endpoint",
      "shadow": true
     },
@@ -362,7 +362,7 @@
     },
     {
      "fact": "mcp:server",
-     "text": "endpoint:dev-laptop-01:dana:mcp-config:windsurf MCP servers configured for Windsurf on dev-laptop-01 (~dana) ~/.codeium/windsurf/mcp_config.json Windsurf vantor-freight-mcp /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:windsurf MCP servers configured for Windsurf on dev-laptop-01 (~dana) ~/.codeium/windsurf/mcp_config.json Windsurf adatum-freight-mcp /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db",
      "surface": "endpoint",
      "shadow": true
     },
@@ -386,7 +386,7 @@
     },
     {
      "fact": "cloud-ai:dialogflow",
-     "text": "projects/vantor-ml/locations/global/agents/4f1c9d2e-7a3b-4c5d-9e8f-0a1b2c3d4e5f Dialogflow CX agent: driver-helpdesk-cx-k2n projects/vantor-ml/locations/global/agents/4f1c9d2e-7a3b-4c5d-9e8f-0a1b2c3d4e5f",
+     "text": "projects/adatum-ml/locations/global/agents/4f1c9d2e-7a3b-4c5d-9e8f-0a1b2c3d4e5f Dialogflow CX agent: driver-helpdesk-cx-k2n projects/adatum-ml/locations/global/agents/4f1c9d2e-7a3b-4c5d-9e8f-0a1b2c3d4e5f",
      "surface": "cloud",
      "shadow": true
     },
@@ -428,7 +428,7 @@
     },
     {
      "fact": "oauth-app:glean",
-     "text": "okta:app:0oa9glnsrch2xp4 Okta OAuth app: Glean Search https://vantor.okta.com/admin/app/glean/instance/0oa9glnsrch2xp4",
+     "text": "okta:app:0oa9glnsrch2xp4 Okta OAuth app: Glean Search https://adatum.okta.com/admin/app/glean/instance/0oa9glnsrch2xp4",
      "surface": "identity",
      "shadow": true
     },
@@ -452,7 +452,7 @@
     },
     {
      "fact": "oauth-app:gemini",
-     "text": "okta:app:0oa5gemfx77tr3d Okta OAuth app: Gemini Trading Desk https://vantor.okta.com/admin/app/oidc_client/instance/0oa5gemfx77tr3d",
+     "text": "okta:app:0oa5gemfx77tr3d Okta OAuth app: Gemini Trading Desk https://adatum.okta.com/admin/app/oidc_client/instance/0oa5gemfx77tr3d",
      "surface": "identity",
      "shadow": true
     },
@@ -476,7 +476,7 @@
     },
     {
      "fact": "gateway-caller:llm",
-     "text": "access:vantor-run-audit-z3m/1.4 LLM caller 'vantor-run-audit-z3m/1.4' (user-agent): 3 requests via ChatGPT / OpenAI {'api.openai.com': 3} {}",
+     "text": "access:adatum-run-audit-z3m/1.4 LLM caller 'adatum-run-audit-z3m/1.4' (user-agent): 3 requests via ChatGPT / OpenAI {'api.openai.com': 3} {}",
      "surface": "gateway",
      "shadow": true
     },
@@ -548,7 +548,7 @@
     },
     {
      "fact": "gateway-caller:agentic",
-     "text": "azure:oid-dispatch-7h2q Agentic caller 'app-vantor-dispatch-7h2q' (principal): 4 requests via Microsoft Agent Framework to gpt-4o {} {'gpt-4o': 4}",
+     "text": "azure:oid-dispatch-7h2q Agentic caller 'app-adatum-dispatch-7h2q' (principal): 4 requests via Microsoft Agent Framework to gpt-4o {} {'gpt-4o': 4}",
      "surface": "gateway",
      "shadow": true
     },
@@ -566,7 +566,7 @@
     },
     {
      "fact": "ai-service-contact:openrouter",
-     "text": "network:vantor-dns:192.168.7.31:provider.openrouter AI service contacted: OpenRouter (openrouter.ai) from 192.168.7.31 192.168.7.31 provider.openrouter {'openrouter.ai': 1}",
+     "text": "network:adatum-dns:192.168.7.31:provider.openrouter AI service contacted: OpenRouter (openrouter.ai) from 192.168.7.31 192.168.7.31 provider.openrouter {'openrouter.ai': 1}",
      "surface": "network",
      "shadow": true
     },
@@ -578,13 +578,13 @@
     },
     {
      "fact": "mcp:server",
-     "text": "vantor-freight-mcp/carrier_contract_lookup MCP tool carrier_contract_lookup on vantor-freight-mcp carrier_contract_lookup",
+     "text": "adatum-freight-mcp/carrier_contract_lookup MCP tool carrier_contract_lookup on adatum-freight-mcp carrier_contract_lookup",
      "surface": "endpoint",
      "shadow": true
     },
     {
      "fact": "mcp:server",
-     "text": "vantor-freight-mcp/quote_lane_rate MCP tool quote_lane_rate on vantor-freight-mcp quote_lane_rate",
+     "text": "adatum-freight-mcp/quote_lane_rate MCP tool quote_lane_rate on adatum-freight-mcp quote_lane_rate",
      "surface": "endpoint",
      "shadow": true
     },
@@ -602,13 +602,13 @@
     },
     {
      "fact": "cloud-ai:azure-openai",
-     "text": "/subscriptions/sub-vantor-1/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/vantor-openai-weu-c4x Azure OpenAI account: vantor-openai-weu-c4x (1 deployment(s)) /subscriptions/sub-vantor-1/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/vantor-openai-weu-c4x",
+     "text": "/subscriptions/sub-adatum-1/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/adatum-openai-weu-c4x Azure OpenAI account: adatum-openai-weu-c4x (1 deployment(s)) /subscriptions/sub-adatum-1/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/adatum-openai-weu-c4x",
      "surface": "cloud",
      "shadow": true
     },
     {
      "fact": "gateway-caller:agentic",
-     "text": "service:vantor-invoice-agent-d4k/agent:invoice-reconciler Observed GenAI caller invoice-reconciler (vantor-invoice-agent-d4k) claude-sonnet-4-20250514",
+     "text": "service:adatum-invoice-agent-d4k/agent:invoice-reconciler Observed GenAI caller invoice-reconciler (adatum-invoice-agent-d4k) claude-sonnet-4-20250514",
      "surface": "gateway",
      "shadow": true
     },
@@ -620,13 +620,13 @@
     },
     {
      "fact": "ai-service-contact:gemini",
-     "text": "network:vantor-dns:192.168.7.30:provider.google-gemini AI service contacted: Google Gemini API (AI Studio) (generativelanguage.googleapis.com) from 192.168.7.30 192.168.7.30 provider.google-gemini {'generativelanguage.googleapis.com': 1}",
+     "text": "network:adatum-dns:192.168.7.30:provider.google-gemini AI service contacted: Google Gemini API (AI Studio) (generativelanguage.googleapis.com) from 192.168.7.30 192.168.7.30 provider.google-gemini {'generativelanguage.googleapis.com': 1}",
      "surface": "network",
      "shadow": true
     },
     {
      "fact": "ai-service-contact:anthropic",
-     "text": "network:vantor-zeek:10.31.4.21:provider.anthropic AI service contacted: Anthropic (api.anthropic.com) from 10.31.4.21 10.31.4.21 provider.anthropic {'api.anthropic.com': 6}",
+     "text": "network:adatum-zeek:10.31.4.21:provider.anthropic AI service contacted: Anthropic (api.anthropic.com) from 10.31.4.21 10.31.4.21 provider.anthropic {'api.anthropic.com': 6}",
      "surface": "network",
      "shadow": true
     },
@@ -656,7 +656,7 @@
     },
     {
      "fact": "bot-app:coderabbit",
-     "text": "github:installation:70110427 GitHub App installed: coderabbitai https://github.com/organizations/vantor-logistics/settings/installations/70110427",
+     "text": "github:installation:70110427 GitHub App installed: coderabbitai https://github.com/organizations/adatum-logistics/settings/installations/70110427",
      "surface": "saas",
      "shadow": false
     },
@@ -686,13 +686,13 @@
     },
     {
      "fact": "bot-app:copilot",
-     "text": "teams:app:ta-copilot-freight-vq71 Teams app with bot: Vantor Freight Copilot",
+     "text": "teams:app:ta-copilot-freight-vq71 Teams app with bot: Adatum Freight Copilot",
      "surface": "saas",
      "shadow": true
     },
     {
      "fact": "ai-service-contact:openai",
-     "text": "network:vantor-zeek:10.31.4.22:provider.openai AI service contacted: OpenAI (api.openai.com) from 10.31.4.22 10.31.4.22 provider.openai {'api.openai.com': 1}",
+     "text": "network:adatum-zeek:10.31.4.22:provider.openai AI service contacted: OpenAI (api.openai.com) from 10.31.4.22 10.31.4.22 provider.openai {'api.openai.com': 1}",
      "surface": "network",
      "shadow": true
     },
@@ -704,19 +704,19 @@
     },
     {
      "fact": "ai-service-contact:ollama",
-     "text": "network:vantor-zeek:10.31.4.24:provider.ollama AI service contacted: Ollama (10.31.9.9:11434) from 10.31.4.24 10.31.4.24 provider.ollama {'10.31.9.9:11434': 3}",
+     "text": "network:adatum-zeek:10.31.4.24:provider.ollama AI service contacted: Ollama (10.31.9.9:11434) from 10.31.4.24 10.31.4.24 provider.ollama {'10.31.9.9:11434': 3}",
      "surface": "network",
      "shadow": true
     },
     {
      "fact": "cloud-ai:generic",
-     "text": "projects/vantor-ml/locations/us-central1/services/gemini-settlement-sync-d8r Cloud Run service: gemini-settlement-sync-d8r https://gemini-settlement-sync-d8r-xq2a.a.run.app",
+     "text": "projects/adatum-ml/locations/us-central1/services/gemini-settlement-sync-d8r Cloud Run service: gemini-settlement-sync-d8r https://gemini-settlement-sync-d8r-xq2a.a.run.app",
      "surface": "cloud",
      "shadow": true
     },
     {
      "fact": "gateway-caller:llm",
-     "text": "access:Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0 Safari/537.36 LLM caller 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0 Safari/537.36' (user-agent): 4 requests {'helpdesk-chat-w8s.vantor.example': 4} {}",
+     "text": "access:Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0 Safari/537.36 LLM caller 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0 Safari/537.36' (user-agent): 4 requests {'helpdesk-chat-w8s.adatum.example': 4} {}",
      "surface": "gateway",
      "shadow": true
     },
@@ -764,13 +764,13 @@
     },
     {
      "fact": "bot-app:generic",
-     "text": "notion:bot:nb-jirasync-vantor8x Notion integration: vantor-jira-sync",
+     "text": "notion:bot:nb-jirasync-adatum8x Notion integration: adatum-jira-sync",
      "surface": "saas",
      "shadow": true
     },
     {
      "fact": "model-store:ollama",
-     "text": "endpoint:dev-laptop-01:dana:local-model:ollama Local models stored for Ollama on dev-laptop-01 (~dana) ~/.ollama/models/manifests llama3.1:8b vantor/freight-notes-lm-vd1x:latest",
+     "text": "endpoint:dev-laptop-01:dana:local-model:ollama Local models stored for Ollama on dev-laptop-01 (~dana) ~/.ollama/models/manifests llama3.1:8b adatum/freight-notes-lm-vd1x:latest",
      "surface": "endpoint",
      "shadow": true
     }
@@ -915,7 +915,7 @@
     },
     {
      "fact": "mcp:server",
-     "text": "vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.codeium/windsurf/mcp_config.json /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db windsurf",
+     "text": "adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.codeium/windsurf/mcp_config.json /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db windsurf",
      "surface": "endpoint",
      "shadow": null
     },
@@ -933,7 +933,7 @@
     },
     {
      "fact": "mcp:server",
-     "text": "vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db cursor",
+     "text": "adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db cursor",
      "surface": "endpoint",
      "shadow": null
     },
@@ -963,7 +963,7 @@
     },
     {
      "fact": "mcp:server",
-     "text": "vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.claude.json /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db claude code",
+     "text": "adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.claude.json /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db claude code",
      "surface": "endpoint",
      "shadow": null
     }
@@ -2734,13 +2734,13 @@
     },
     {
      "fact": "mcp:server",
-     "text": "vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.claude.json /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "text": "adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.claude.json /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db",
      "surface": "endpoint",
      "shadow": null
     },
     {
      "fact": "ai-client:claude-code",
-     "text": "claude_code vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.claude.json",
+     "text": "claude_code adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.claude.json",
      "surface": "endpoint",
      "shadow": null
     },
@@ -2758,13 +2758,13 @@
     },
     {
      "fact": "mcp:server",
-     "text": "vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "text": "adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db",
      "surface": "endpoint",
      "shadow": null
     },
     {
      "fact": "ai-client:cursor",
-     "text": "cursor vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json",
+     "text": "cursor adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json",
      "surface": "endpoint",
      "shadow": null
     },
@@ -2782,13 +2782,13 @@
     },
     {
      "fact": "mcp:server",
-     "text": "vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "text": "adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db",
      "surface": "endpoint",
      "shadow": null
     },
     {
      "fact": "ai-client:cursor",
-     "text": "cursor vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json",
+     "text": "cursor adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.cursor/mcp.json",
      "surface": "endpoint",
      "shadow": null
     },
@@ -2806,13 +2806,13 @@
     },
     {
      "fact": "mcp:server",
-     "text": "vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.codeium/windsurf/mcp_config.json /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "text": "adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.codeium/windsurf/mcp_config.json /home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp --rates-db /home/dana/freight/rates.db",
      "surface": "endpoint",
      "shadow": null
     },
     {
      "fact": "ai-client:windsurf",
-     "text": "windsurf vantor-freight-mcp <estate>/home/dev-laptop-01/dana/.codeium/windsurf/mcp_config.json",
+     "text": "windsurf adatum-freight-mcp <estate>/home/dev-laptop-01/dana/.codeium/windsurf/mcp_config.json",
      "surface": "endpoint",
      "shadow": null
     },

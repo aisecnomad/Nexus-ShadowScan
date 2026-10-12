@@ -1,4 +1,4 @@
-module git.vantor.example/platform/repo-ops-scripts
+module git.adatum.example/platform/repo-ops-scripts
 
 go 1.22
 

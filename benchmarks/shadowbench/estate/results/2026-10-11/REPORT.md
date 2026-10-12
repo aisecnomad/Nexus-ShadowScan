@@ -137,7 +137,7 @@ Missed in-scope positives: code.repo-freight-crew, code.repo-support-bot-ts, cod
 
 ### Numbat
 
-Missed in-scope positives: endpoint.windsurf-dl01, endpoint.claude-desktop-dl01, endpoint.ollama-store-dl01, endpoint.continue-dl02, endpoint.copilot-ext-dl02, endpoint.claude-ext-dl02, endpoint.claude-desktop-wl03, endpoint.amazon-q-wl03, endpoint.cline-wl03, endpoint.lmstudio-store-wl03, endpoint.mcp-github, endpoint.mcp-vantor-freight, endpoint.mcp-freight-docs-poisoned, endpoint.ollama-build-runner-3, endpoint.ebpf-openai-egress
+Missed in-scope positives: endpoint.windsurf-dl01, endpoint.claude-desktop-dl01, endpoint.ollama-store-dl01, endpoint.continue-dl02, endpoint.copilot-ext-dl02, endpoint.claude-ext-dl02, endpoint.claude-desktop-wl03, endpoint.amazon-q-wl03, endpoint.cline-wl03, endpoint.lmstudio-store-wl03, endpoint.mcp-github, endpoint.mcp-adatum-freight, endpoint.mcp-freight-docs-poisoned, endpoint.ollama-build-runner-3, endpoint.ebpf-openai-egress
 
 ### Agentic Radar
 
@@ -145,9 +145,9 @@ Missed in-scope positives: code.repo-freight-crew, code.repo-support-bot-ts, cod
 
 ### AgentSight (local sessions)
 
-Missed in-scope positives: endpoint.cursor-dl01, endpoint.windsurf-dl01, endpoint.claude-desktop-dl01, endpoint.ollama-store-dl01, endpoint.codex-dl02, endpoint.gemini-cli-dl02, endpoint.continue-dl02, endpoint.copilot-ext-dl02, endpoint.claude-ext-dl02, endpoint.claude-desktop-wl03, endpoint.amazon-q-wl03, endpoint.cline-wl03, endpoint.lmstudio-store-wl03, endpoint.mcp-github, endpoint.mcp-vantor-freight, endpoint.mcp-freight-docs-poisoned, endpoint.ollama-build-runner-3, endpoint.ebpf-openai-egress
+Missed in-scope positives: endpoint.cursor-dl01, endpoint.windsurf-dl01, endpoint.claude-desktop-dl01, endpoint.ollama-store-dl01, endpoint.codex-dl02, endpoint.gemini-cli-dl02, endpoint.continue-dl02, endpoint.copilot-ext-dl02, endpoint.claude-ext-dl02, endpoint.claude-desktop-wl03, endpoint.amazon-q-wl03, endpoint.cline-wl03, endpoint.lmstudio-store-wl03, endpoint.mcp-github, endpoint.mcp-adatum-freight, endpoint.mcp-freight-docs-poisoned, endpoint.ollama-build-runner-3, endpoint.ebpf-openai-egress
 
 ### Cisco MCP Scanner
 
-Missed in-scope positives: endpoint.claude-code-dl01, endpoint.cursor-dl01, endpoint.windsurf-dl01, endpoint.claude-desktop-dl01, endpoint.ollama-store-dl01, endpoint.codex-dl02, endpoint.gemini-cli-dl02, endpoint.continue-dl02, endpoint.copilot-ext-dl02, endpoint.claude-ext-dl02, endpoint.claude-desktop-wl03, endpoint.amazon-q-wl03, endpoint.cline-wl03, endpoint.lmstudio-store-wl03, endpoint.mcp-github, endpoint.mcp-vantor-freight, endpoint.mcp-freight-docs-poisoned, endpoint.ollama-build-runner-3, endpoint.ebpf-openai-egress
+Missed in-scope positives: endpoint.claude-code-dl01, endpoint.cursor-dl01, endpoint.windsurf-dl01, endpoint.claude-desktop-dl01, endpoint.ollama-store-dl01, endpoint.codex-dl02, endpoint.gemini-cli-dl02, endpoint.continue-dl02, endpoint.copilot-ext-dl02, endpoint.claude-ext-dl02, endpoint.claude-desktop-wl03, endpoint.amazon-q-wl03, endpoint.cline-wl03, endpoint.lmstudio-store-wl03, endpoint.mcp-github, endpoint.mcp-adatum-freight, endpoint.mcp-freight-docs-poisoned, endpoint.ollama-build-runner-3, endpoint.ebpf-openai-egress
 

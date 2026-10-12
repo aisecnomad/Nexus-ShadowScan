@@ -7,7 +7,7 @@
         "-i",
         "--rm",
         "mcp/postgres",
-        "postgresql://ops_ro@pg.vantor.example:5432/ops"
+        "postgresql://ops_ro@pg.adatum.example:5432/ops"
       ]
     }
   }

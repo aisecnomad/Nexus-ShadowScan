@@ -28,7 +28,7 @@ resource "aws_bedrockagent_agent" "dispatch_quoter" {
   agent_resource_role_arn     = aws_iam_role.dispatch_quoter.arn
   foundation_model            = var.bedrock_foundation_model
   idle_session_ttl_in_seconds = 600
-  instruction                 = "Quote spot freight requests from the Vantor rate card and escalate quotes above the lane budget to the dispatch desk."
+  instruction                 = "Quote spot freight requests from the Adatum rate card and escalate quotes above the lane budget to the dispatch desk."
 
   tags = {
     environment = var.environment

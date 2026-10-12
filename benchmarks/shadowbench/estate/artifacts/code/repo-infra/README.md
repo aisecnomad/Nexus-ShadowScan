@@ -3,9 +3,9 @@
 Terraform for the freight-desk automation stack: the Bedrock dispatch
 quoting agent in AWS account 210987654321 (eu-central-1) and the Azure
 OpenAI deployment used by dock document processing (subscription
-sub-vantor-1, westeurope).
+sub-adatum-1, westeurope).
 
-Internal clone: `git@git.vantor.example:platform/repo-infra.git`
+Internal clone: `git@git.adatum.example:platform/repo-infra.git`
 
 ## Apply
 

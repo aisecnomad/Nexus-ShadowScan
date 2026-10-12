@@ -1,10 +1,10 @@
 # freight-crew
 
-Carrier quote triage crew for the Vantor Logistics freight desk. Scores
+Carrier quote triage crew for the Adatum Logistics freight desk. Scores
 inbound spot quotes against the rate card and proposes next week's lane
 assignments.
 
-Internal clone: `git@git.vantor.example:platform/repo-freight-crew.git`
+Internal clone: `git@git.adatum.example:platform/repo-freight-crew.git`
 
 ## Run
 

@@ -6,7 +6,7 @@
    "type": "person",
    "name": "Dana Okafor",
    "person": {
-    "email": "dana@vantor.example"
+    "email": "dana@adatum.example"
    }
   },
   {
@@ -15,7 +15,7 @@
    "type": "person",
    "name": "Marcus Hale",
    "person": {
-    "email": "marcus@vantor.example"
+    "email": "marcus@adatum.example"
    }
   },
   {
@@ -28,25 +28,25 @@
      "type": "workspace",
      "workspace": true
     },
-    "workspace_name": "Vantor Logistics"
+    "workspace_name": "Adatum Logistics"
    }
   },
   {
    "object": "user",
-   "id": "nb-jirasync-vantor8x",
+   "id": "nb-jirasync-adatum8x",
    "type": "bot",
-   "name": "vantor-jira-sync",
+   "name": "adatum-jira-sync",
    "bot": {
     "owner": {
      "type": "user",
      "user": {
       "name": "Marcus Hale",
       "person": {
-       "email": "marcus@vantor.example"
+       "email": "marcus@adatum.example"
       }
      }
     },
-    "workspace_name": "Vantor Logistics"
+    "workspace_name": "Adatum Logistics"
    }
   }
  ]

@@ -14,7 +14,7 @@
   "servicePrincipalType": "Application",
   "accountEnabled": true,
   "createdDateTime": "2025-06-09T00:00:00Z",
-  "appOwnerOrganizationId": "vantor-tenant",
+  "appOwnerOrganizationId": "adatum-tenant",
   "notes": "AutoGen agent that drafts and sends carrier dispatch emails"
  },
  {
@@ -59,7 +59,7 @@
   "servicePrincipalType": "Application",
   "accountEnabled": true,
   "createdDateTime": "2025-01-20T00:00:00Z",
-  "appOwnerOrganizationId": "vantor-tenant",
+  "appOwnerOrganizationId": "adatum-tenant",
   "notes": "Nightly billing export from the IBM AIX hosts into SAP"
  },
  {

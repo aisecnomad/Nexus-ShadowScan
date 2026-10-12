@@ -20,5 +20,5 @@ provider "aws" {
 
 provider "azurerm" {
   features {}
-  subscription_id = "sub-vantor-1"
+  subscription_id = "sub-adatum-1"
 }

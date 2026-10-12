@@ -1,7 +1,7 @@
 # repo-n8n-flows
 
 Version-controlled exports of the freight-desk n8n workflows. The n8n
-instance at flows.vantor.example is the runtime; this repository is the
+instance at flows.adatum.example is the runtime; this repository is the
 reviewed source of truth. Export with
 `n8n export:workflow --all --separate` and commit the JSON files under
 `workflows/`.

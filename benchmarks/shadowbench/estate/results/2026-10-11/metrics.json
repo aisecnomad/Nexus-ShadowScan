@@ -1135,7 +1135,7 @@
      "fp": 0,
      "fn": 0
     },
-    "endpoint.mcp-vantor-freight": {
+    "endpoint.mcp-adatum-freight": {
      "class": "positive",
      "surface": "endpoint",
      "detected": true,
@@ -2499,7 +2499,7 @@
      "fp": 0,
      "fn": 0
     },
-    "endpoint.mcp-vantor-freight": {
+    "endpoint.mcp-adatum-freight": {
      "class": "positive",
      "surface": "endpoint",
      "detected": true,
@@ -3863,7 +3863,7 @@
      "fp": 0,
      "fn": 1
     },
-    "endpoint.mcp-vantor-freight": {
+    "endpoint.mcp-adatum-freight": {
      "class": "positive",
      "surface": "endpoint",
      "detected": false,
@@ -5227,7 +5227,7 @@
      "fp": 0,
      "fn": 1
     },
-    "endpoint.mcp-vantor-freight": {
+    "endpoint.mcp-adatum-freight": {
      "class": "positive",
      "surface": "endpoint",
      "detected": false,
@@ -6591,7 +6591,7 @@
      "fp": 0,
      "fn": 1
     },
-    "endpoint.mcp-vantor-freight": {
+    "endpoint.mcp-adatum-freight": {
      "class": "positive",
      "surface": "endpoint",
      "detected": false,
@@ -7955,7 +7955,7 @@
      "fp": 0,
      "fn": 1
     },
-    "endpoint.mcp-vantor-freight": {
+    "endpoint.mcp-adatum-freight": {
      "class": "positive",
      "surface": "endpoint",
      "detected": false,
@@ -9319,7 +9319,7 @@
      "fp": 0,
      "fn": 1
     },
-    "endpoint.mcp-vantor-freight": {
+    "endpoint.mcp-adatum-freight": {
      "class": "positive",
      "surface": "endpoint",
      "detected": false,
@@ -10684,7 +10684,7 @@
      "fp": 0,
      "fn": 0
     },
-    "endpoint.mcp-vantor-freight": {
+    "endpoint.mcp-adatum-freight": {
      "class": "positive",
      "surface": "endpoint",
      "detected": true,
@@ -12048,7 +12048,7 @@
      "fp": 0,
      "fn": 1
     },
-    "endpoint.mcp-vantor-freight": {
+    "endpoint.mcp-adatum-freight": {
      "class": "positive",
      "surface": "endpoint",
      "detected": false,

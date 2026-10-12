@@ -4,7 +4,7 @@ One question, asked across every surface at once: given a realistic
 organization's artifacts, which discovery tools find the AI agents and AI
 usage hiding in them, how precisely, and at what false-positive cost?
 
-The corpus models **Vantor Logistics**, a fictional organization, as a
+The corpus models **Adatum Logistics**, a fictional organization, as a
 single estate of vendor-format artifacts across all nine ShadowScan
 surfaces: code repositories, identity-provider exports, gateway logs,
 low-code platform exports, SaaS app inventories, cloud inventories,
@@ -98,6 +98,16 @@ reads the manifest itself may behave differently on a re-run than in the
 2026-10-11 run. `.gitignore` now re-includes `.vscode/` under `artifacts/`,
 and `tests/unit/test_shadowbench_estate.py` fails if any frozen file is not
 tracked.
+
+**Erratum (integration, 2026-10-12).** #194 named the fictional organization
+*Vantor*, which is also the name a real company adopted in 2025, and gave it
+tenant hostnames on real SaaS domains. Every occurrence, in file contents,
+directory names, the three JWT payloads that carried it, `corpus.json` and
+the recorded predictions in `runs.json`, was replaced with the same-length,
+case-preserving name *Adatum*. A same-length name keeps anchor lengths, so
+"longest anchor wins" attribution is unchanged: re-scoring the renamed
+`runs.json` gives exactly the renamed `metrics.json` and `REPORT.md`.
+`FREEZE.json` and the four synthetic-JWT allowlist digests were recomputed.
 
 ## Execution and isolation
 

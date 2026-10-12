@@ -2,21 +2,21 @@
  {
   "_kind": "teamsApp",
   "id": "ta-copilot-freight-vq71",
-  "externalId": "ext-vantor-cpl-1",
-  "displayName": "Vantor Freight Copilot",
+  "externalId": "ext-adatum-cpl-1",
+  "displayName": "Adatum Freight Copilot",
   "distributionMethod": "organization",
   "appDefinitions": [
    {
     "version": "1.4.0",
     "publishingState": "published",
-    "description": "Declarative Copilot agent that answers freight quoting and lane questions for Vantor Logistics",
+    "description": "Declarative Copilot agent that answers freight quoting and lane questions for Adatum Logistics",
     "createdBy": {
      "user": {
       "displayName": "Dana Okafor"
      }
     },
     "bot": {
-     "id": "bot-vantor-cpl-7f31"
+     "id": "bot-adatum-cpl-7f31"
     },
     "authorization": {
      "requiredPermissionSet": {
@@ -56,7 +56,7 @@
  {
   "_kind": "teamsApp",
   "id": "ta-mistralroute-p9x3",
-  "externalId": "ext-vantor-mrp-2",
+  "externalId": "ext-adatum-mrp-2",
   "displayName": "Mistral Route Planner",
   "distributionMethod": "store",
   "appDefinitions": [

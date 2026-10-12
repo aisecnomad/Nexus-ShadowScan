@@ -3,7 +3,7 @@
  "metadata": {
   "name": "ShadowBench estate corpus (shadow AI agent discovery)",
   "snapshot_date": "2026-10-11",
-  "estate": "Vantor Logistics (fictional): vantor.example, devices dev-laptop-01/dev-laptop-02/win-laptop-03/build-runner-3, AWS 210987654321, GCP vantor-ml, Azure sub-vantor-1, k8s vantor-prod",
+  "estate": "Adatum Logistics (fictional): adatum.example, devices dev-laptop-01/dev-laptop-02/win-laptop-03/build-runner-3, AWS 210987654321, GCP adatum-ml, Azure sub-adatum-1, k8s adatum-prod",
   "labeling": "Every entity was authored together with its artifacts and labeled from the artifact's vendor semantics before any tool ran on the merged corpus. Artifact formats were verified parse-clean against ShadowScan's offline loaders during authoring (completeness only); labels were never changed because a tool missed or flagged an entity, and the corpus deliberately keeps positives known to exceed documented detection and negatives known to be over-flagged, including by ShadowScan itself. This is author-written labeling with evidence pointers, not independent human review.",
   "classes": {
    "positive": "a genuine AI agent or AI usage per the artifact's vendor semantics",
@@ -888,7 +888,7 @@
    "unit": "estate",
    "registered": false,
    "difficulty": "easy",
-   "rationale": "LiteLLM caller doing plain chat completions with end-user attribution (nika@vantor.example) and no tool use: real LLM usage, not an agent."
+   "rationale": "LiteLLM caller doing plain chat completions with end-user attribution (nika@adatum.example) and no tool use: real LLM usage, not an agent."
   },
   {
    "id": "gateway.bedrock-fleet-ops",
@@ -898,13 +898,13 @@
     {
      "fact": "gateway-caller:agentic",
      "evidence": [
-      "gateway/bedrock_invocations.jsonl#identity.arn=arn:aws:sts::210987654321:assumed-role/vantor-fleet-ops-agent-x9r4/build-runner-3 Converse with toolConfig, stopReason=tool_use"
+      "gateway/bedrock_invocations.jsonl#identity.arn=arn:aws:sts::210987654321:assumed-role/adatum-fleet-ops-agent-x9r4/build-runner-3 Converse with toolConfig, stopReason=tool_use"
      ]
     }
    ],
    "tolerated": [],
    "anchors": [
-    "vantor-fleet-ops-agent-x9r4"
+    "adatum-fleet-ops-agent-x9r4"
    ],
    "artifacts": [
     "gateway/bedrock_invocations.jsonl"
@@ -922,13 +922,13 @@
     {
      "fact": "gateway-caller:agentic",
      "evidence": [
-      "gateway/azure_openai_diag.json#identity.claims.appid=app-vantor-dispatch-7h2q userAgent=agent-framework/1.4.0"
+      "gateway/azure_openai_diag.json#identity.claims.appid=app-adatum-dispatch-7h2q userAgent=agent-framework/1.4.0"
      ]
     }
    ],
    "tolerated": [],
    "anchors": [
-    "app-vantor-dispatch-7h2q",
+    "app-adatum-dispatch-7h2q",
     "oid-dispatch-7h2q"
    ],
    "artifacts": [
@@ -947,13 +947,13 @@
     {
      "fact": "gateway-caller:agentic",
      "evidence": [
-      "gateway/egress_proxy.log#user-agent vantor-quote-crew-j9f/1.3 crewai/0.80.0 POST /v1/chat/completions host=api.openai.com"
+      "gateway/egress_proxy.log#user-agent adatum-quote-crew-j9f/1.3 crewai/0.80.0 POST /v1/chat/completions host=api.openai.com"
      ]
     }
    ],
    "tolerated": [],
    "anchors": [
-    "vantor-quote-crew-j9f"
+    "adatum-quote-crew-j9f"
    ],
    "artifacts": [
     "gateway/egress_proxy.log"
@@ -971,13 +971,13 @@
     {
      "fact": "gateway-caller:agentic",
      "evidence": [
-      "gateway/otel_spans.json#service.name=vantor-invoice-agent-d4k gen_ai.agent.name=invoice-reconciler gen_ai.operation.name=invoke_agent"
+      "gateway/otel_spans.json#service.name=adatum-invoice-agent-d4k gen_ai.agent.name=invoice-reconciler gen_ai.operation.name=invoke_agent"
      ]
     }
    ],
    "tolerated": [],
    "anchors": [
-    "vantor-invoice-agent-d4k",
+    "adatum-invoice-agent-d4k",
     "invoice-reconciler"
    ],
    "artifacts": [
@@ -996,14 +996,14 @@
     {
      "fact": "gateway-caller:llm",
      "evidence": [
-      "gateway/egress_proxy.log#user-agent vantor-yard-planner-q6w/0.9 POST /generate host=tgi-yard.vantor.example"
+      "gateway/egress_proxy.log#user-agent adatum-yard-planner-q6w/0.9 POST /generate host=tgi-yard.adatum.example"
      ]
     }
    ],
    "tolerated": [],
    "anchors": [
-    "vantor-yard-planner-q6w",
-    "tgi-yard.vantor.example"
+    "adatum-yard-planner-q6w",
+    "tgi-yard.adatum.example"
    ],
    "artifacts": [
     "gateway/egress_proxy.log"
@@ -1020,7 +1020,7 @@
    "expected": [],
    "tolerated": [],
    "anchors": [
-    "vantorwikisync"
+    "adatumwikisync"
    ],
    "artifacts": [
     "gateway/egress_proxy.log"
@@ -1028,7 +1028,7 @@
    "unit": "estate",
    "registered": false,
    "difficulty": "easy",
-   "rationale": "Intranet wiki page fetches (GET /index.html and wiki pages on wiki.vantor.example): ordinary non-AI traffic with no model, LLM host or inference path."
+   "rationale": "Intranet wiki page fetches (GET /index.html and wiki pages on wiki.adatum.example): ordinary non-AI traffic with no model, LLM host or inference path."
   },
   {
    "id": "gateway.egress-helpdesk-browser",
@@ -1054,7 +1054,7 @@
    "expected": [],
    "tolerated": [],
    "anchors": [
-    "vantor-billing-cron-t6b"
+    "adatum-billing-cron-t6b"
    ],
    "artifacts": [
     "gateway/otel_spans.json"
@@ -1071,7 +1071,7 @@
    "expected": [],
    "tolerated": [],
    "anchors": [
-    "vantor-run-audit-z3m"
+    "adatum-run-audit-z3m"
    ],
    "artifacts": [
     "gateway/egress_proxy.log"
@@ -1088,7 +1088,7 @@
    "expected": [],
    "tolerated": [],
    "anchors": [
-    "vantor-treasury-ticker-p5q"
+    "adatum-treasury-ticker-p5q"
    ],
    "artifacts": [
     "gateway/egress_proxy.log"
@@ -1290,7 +1290,7 @@
     {
      "fact": "lowcode-agent:n8n",
      "evidence": [
-      "lowcode/n8n_workflows.json#wf-dockqa-x3v9t httpRequest POST https://vllm.vantor.example/v1/chat/completions model qwen2.5-72b-instruct"
+      "lowcode/n8n_workflows.json#wf-dockqa-x3v9t httpRequest POST https://vllm.adatum.example/v1/chat/completions model qwen2.5-72b-instruct"
      ]
     }
    ],
@@ -1473,7 +1473,7 @@
    "unit": "estate",
    "registered": false,
    "difficulty": "easy",
-   "rationale": "Anthropic Claude Slack app approved in the vantor workspace with a bot user and chat:write/channels:history scopes; an installed AI assistant per Slack app semantics."
+   "rationale": "Anthropic Claude Slack app approved in the adatum workspace with a bot user and chat:write/channels:history scopes; an installed AI assistant per Slack app semantics."
   },
   {
    "id": "saas.slack-readai-request",
@@ -1556,7 +1556,7 @@
    "tolerated": [],
    "anchors": [
     "ta-copilot-freight-vq71",
-    "bot-vantor-cpl-7f31"
+    "bot-adatum-cpl-7f31"
    ],
    "artifacts": [
     "saas/teams_apps.json"
@@ -1764,8 +1764,8 @@
    "expected": [],
    "tolerated": [],
    "anchors": [
-    "nb-jirasync-vantor8x",
-    "vantor-jira-sync"
+    "nb-jirasync-adatum8x",
+    "adatum-jira-sync"
    ],
    "artifacts": [
     "saas/notion_users.json"
@@ -2013,14 +2013,14 @@
     {
      "fact": "cloud-ai:azure-openai",
      "evidence": [
-      "cloud/azure_records.jsonl#vantor-openai-weu-c4x",
+      "cloud/azure_records.jsonl#adatum-openai-weu-c4x",
       "cloud/azure_records.jsonl#gpt-4o-dispatch"
      ]
     }
    ],
    "tolerated": [],
    "anchors": [
-    "vantor-openai-weu-c4x",
+    "adatum-openai-weu-c4x",
     "gpt-4o-dispatch"
    ],
    "artifacts": [
@@ -2078,7 +2078,7 @@
    "unit": "estate",
    "registered": false,
    "difficulty": "easy",
-   "rationale": "A Deployment in cluster vantor-prod running the ollama/ollama image with a GPU request and port 11434: a self-hosted LLM runtime by image semantics. The runner config supplies cluster: vantor-prod, so findings land at k8s:vantor-prod/ml-serving/Deployment/linehaul-ollama-g5v."
+   "rationale": "A Deployment in cluster adatum-prod running the ollama/ollama image with a GPU request and port 11434: a self-hosted LLM runtime by image semantics. The runner config supplies cluster: adatum-prod, so findings land at k8s:adatum-prod/ml-serving/Deployment/linehaul-ollama-g5v."
   },
   {
    "id": "cloud.k8s-eta-vllm",
@@ -2128,7 +2128,7 @@
    "expected": [],
    "tolerated": [],
    "anchors": [
-    "vantorfreightdocs7q"
+    "adatumfreightdocs7q"
    ],
    "artifacts": [
     "cloud/azure_records.jsonl"
@@ -2324,7 +2324,7 @@
      "fact": "model-store:ollama",
      "evidence": [
       "home/dev-laptop-01/dana/.ollama/models/manifests/registry.ollama.ai/library/llama3.1/8b#manifest",
-      "home/dev-laptop-01/dana/.ollama/models/manifests/registry.ollama.ai/vantor/freight-notes-lm-vd1x/latest#manifest"
+      "home/dev-laptop-01/dana/.ollama/models/manifests/registry.ollama.ai/adatum/freight-notes-lm-vd1x/latest#manifest"
      ]
     }
    ],
@@ -2335,7 +2335,7 @@
    ],
    "artifacts": [
     "home/dev-laptop-01/dana/.ollama/models/manifests/registry.ollama.ai/library/llama3.1/8b",
-    "home/dev-laptop-01/dana/.ollama/models/manifests/registry.ollama.ai/vantor/freight-notes-lm-vd1x/latest"
+    "home/dev-laptop-01/dana/.ollama/models/manifests/registry.ollama.ai/adatum/freight-notes-lm-vd1x/latest"
    ],
    "unit": "home:dev-laptop-01",
    "registered": false,
@@ -2554,7 +2554,7 @@
     {
      "fact": "model-store:lm-studio",
      "evidence": [
-      "home/win-laptop-03/priya/.lmstudio/models/vantor/tinyllama-dispatch-vq3w/tinyllama-dispatch-vq3w.q4_k_m.gguf#gguf-file"
+      "home/win-laptop-03/priya/.lmstudio/models/adatum/tinyllama-dispatch-vq3w/tinyllama-dispatch-vq3w.q4_k_m.gguf#gguf-file"
      ]
     }
    ],
@@ -2563,7 +2563,7 @@
     "tinyllama-dispatch-vq3w"
    ],
    "artifacts": [
-    "home/win-laptop-03/priya/.lmstudio/models/vantor/tinyllama-dispatch-vq3w/tinyllama-dispatch-vq3w.q4_k_m.gguf"
+    "home/win-laptop-03/priya/.lmstudio/models/adatum/tinyllama-dispatch-vq3w/tinyllama-dispatch-vq3w.q4_k_m.gguf"
    ],
    "unit": "home:win-laptop-03",
    "registered": false,
@@ -2614,23 +2614,23 @@
    "rationale": "One MCP server identity (the pinned npx GitHub server) configured across ten client configuration files on all three devices; per MCP semantics this is one configured server, counted once estate-wide."
   },
   {
-   "id": "endpoint.mcp-vantor-freight",
+   "id": "endpoint.mcp-adatum-freight",
    "surface": "endpoint",
    "class": "positive",
    "expected": [
     {
      "fact": "mcp:server",
      "evidence": [
-      "home/dev-laptop-01/dana/.claude.json#mcpServers.vantor-freight-mcp",
-      "home/dev-laptop-01/dana/.cursor/mcp.json#mcpServers.vantor-freight-mcp",
-      "home/dev-laptop-01/dana/.codeium/windsurf/mcp_config.json#mcpServers.vantor-freight-mcp",
-      "endpoint-exports/mcp_tool_inventory.json#server=vantor-freight-mcp"
+      "home/dev-laptop-01/dana/.claude.json#mcpServers.adatum-freight-mcp",
+      "home/dev-laptop-01/dana/.cursor/mcp.json#mcpServers.adatum-freight-mcp",
+      "home/dev-laptop-01/dana/.codeium/windsurf/mcp_config.json#mcpServers.adatum-freight-mcp",
+      "endpoint-exports/mcp_tool_inventory.json#server=adatum-freight-mcp"
      ]
     }
    ],
    "tolerated": [],
    "anchors": [
-    "vantor-freight-mcp"
+    "adatum-freight-mcp"
    ],
    "artifacts": [
     "home/dev-laptop-01/dana/.claude.json",
@@ -2994,7 +2994,7 @@
    "unit": "estate",
    "registered": false,
    "difficulty": "easy",
-   "rationale": "A client browsing www.vantor.example and github.com over full DNS+TLS+flow chains: ordinary corporate and developer traffic with no AI service involved; flagging it is a false positive."
+   "rationale": "A client browsing www.adatum.example and github.com over full DNS+TLS+flow chains: ordinary corporate and developer traffic with no AI service involved; flagging it is a false positive."
   },
   {
    "id": "network.slack-generic-dns",
