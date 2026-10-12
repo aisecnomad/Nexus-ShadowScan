@@ -2,7 +2,9 @@
 
 Most tests run unprivileged. The ``needs_namespaces`` tests run the real stage
 under ``unshare`` and only run as root on a host that allows network, PID and
-mount namespaces.
+mount namespaces. The ``needs_procfs`` tests need Linux procfs, and the
+``needs_open_tmpdir`` tests need a $TMPDIR uid 65534 can reach; macOS has
+neither.
 """
 
 from __future__ import annotations
@@ -86,6 +88,11 @@ def _git_repo(path: Path, files: dict[str, str], links: dict[str, str] | None = 
 
 
 needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+# runner._stage records the runner's mount namespace from /proc/self/ns/mnt, and the stage and these
+# tests read /proc/<pid>/...; macOS has no procfs.
+needs_procfs = pytest.mark.skipif(
+    not os.path.lexists("/proc/self/ns/mnt"), reason="needs Linux procfs (/proc/self/ns/mnt)"
+)
 
 
 class FakeAdapter:
@@ -250,6 +257,7 @@ def fake_popen(monkeypatch: pytest.MonkeyPatch) -> type[FakePopen]:
     return FakePopen
 
 
+@needs_procfs
 def test_stage_is_started_with_an_environment_built_from_scratch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_popen: type[FakePopen]
 ) -> None:
@@ -269,6 +277,7 @@ def test_stage_is_started_with_an_environment_built_from_scratch(
     assert spec["host_mnt_ns"] == os.readlink("/proc/self/ns/mnt")
 
 
+@needs_procfs
 def test_stage_runs_in_its_own_process_group_and_dies_with_unshare(
     tmp_path: Path, fake_popen: type[FakePopen]
 ) -> None:
@@ -278,6 +287,7 @@ def test_stage_runs_in_its_own_process_group_and_dies_with_unshare(
     assert call["start_new_session"] is True
 
 
+@needs_procfs
 def test_stage_starts_outside_the_repository_without_its_cwd_on_sys_path(
     tmp_path: Path, fake_popen: type[FakePopen]
 ) -> None:
@@ -290,6 +300,7 @@ def test_stage_starts_outside_the_repository_without_its_cwd_on_sys_path(
     assert call["env"]["PYTHONPATH"] == str(ROOT)
 
 
+@needs_procfs
 def test_stage_timeout_kills_the_whole_process_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_popen: type[FakePopen]
 ) -> None:
@@ -483,8 +494,23 @@ def test_isolation_problems_refuse_hidden_paths() -> None:
     assert not any("tools.shadowscan.bin" in p for p in problems)
 
 
+@functools.cache
+def _closed_tmpdir() -> Path | None:
+    """The first directory on the way to $TMPDIR that uid 65534 cannot traverse, if any.
+
+    ``isolation_problems`` rightly reports one; macOS gives every user a 0700 $TMPDIR.
+    """
+    base = Path(tempfile.gettempdir()).resolve()
+    return next((p for p in (base, *base.parents) if not os.stat(p).st_mode & stat.S_IXOTH), None)
+
+
+needs_open_tmpdir = pytest.mark.skipif(
+    _closed_tmpdir() is not None, reason=f"uid 65534 cannot traverse {_closed_tmpdir()} to reach $TMPDIR"
+)
+
+
 def _private_scratch() -> Path:
-    """A 0711 scratch directory under a 0711 parent that uid 65534 can reach (unless /tmp is closed)."""
+    """A 0711 scratch directory under a 0711 parent in $TMPDIR (see ``needs_open_tmpdir``)."""
     top = Path(tempfile.mkdtemp(prefix="shadowbench-test-"))
     top.chmod(0o711)
     (top / "scratch").mkdir(mode=0o711)
@@ -492,6 +518,7 @@ def _private_scratch() -> Path:
     return top
 
 
+@needs_open_tmpdir
 def test_isolation_problems_refuse_a_scratch_dir_the_tool_cannot_reach() -> None:
     top = _private_scratch()
     try:
@@ -504,6 +531,7 @@ def test_isolation_problems_refuse_a_scratch_dir_the_tool_cannot_reach() -> None
         shutil.rmtree(top, ignore_errors=True)
 
 
+@needs_open_tmpdir
 def test_isolation_problems_check_the_tool_root_tools_json_implies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -524,6 +552,7 @@ def test_isolation_problems_check_the_tool_root_tools_json_implies(
     ]
 
 
+@needs_open_tmpdir
 def test_isolation_problems_check_an_implied_tool_root_under_root() -> None:
     env = ToolEnv(Path("/root/nsb"), {"tools": {"ai-infra-guard": {"bin": "/opt/nsb/bin/ai-infra-guard"}}})
     top = _private_scratch()
@@ -632,6 +661,7 @@ def test_stage_refuses_to_run_tools_without_an_unprivileged_identity(tmp_path: P
         assert not (tmp_path / "ran").exists()
 
 
+@needs_procfs
 def test_stage_refuses_to_set_up_outside_a_fresh_namespace(tmp_path: Path) -> None:
     before = _no_new_privs()
     spec = {
@@ -665,6 +695,7 @@ def _coreutils_sleep() -> str | None:
     return found if found and os.path.basename(os.path.realpath(found)) == "sleep" else None
 
 
+@needs_procfs
 @pytest.mark.skipif(_coreutils_sleep() is None, reason="needs a standalone sleep binary")
 def test_inert_processes_get_a_fixed_minimal_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -685,6 +716,7 @@ def test_inert_processes_get_a_fixed_minimal_environment(
     assert SENTINEL not in raw.decode()
 
 
+@needs_procfs
 @pytest.mark.skipif(_coreutils_sleep() is None, reason="needs a standalone sleep binary")
 def test_inert_processes_never_inherit_the_stage_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -708,6 +740,7 @@ def test_inert_processes_never_inherit_the_stage_working_directory(
     assert cwds == ["/", str(work)]
 
 
+@needs_procfs
 def test_strays_tell_running_processes_from_zombies_to_reap() -> None:
     child = subprocess.Popen(["sleep", "60"])
     try:
@@ -799,11 +832,10 @@ def _kill_leftovers(scratch: Path) -> None:
 @pytest.fixture
 def scratch() -> Iterator[Path]:
     """A scratch directory uid 65534 can traverse, laid out like ``run_one``'s run directory."""
+    if _closed_tmpdir() is not None:
+        pytest.skip(f"uid 65534 cannot traverse {_closed_tmpdir()}")
     path = Path(tempfile.mkdtemp(prefix="shadowbench-test-"))
     path.chmod(0o711)
-    if any(not os.stat(p).st_mode & stat.S_IXOTH for p in path.parents):
-        shutil.rmtree(path)
-        pytest.skip(f"uid 65534 cannot traverse {path.parent}")
     try:
         yield path
     finally:
