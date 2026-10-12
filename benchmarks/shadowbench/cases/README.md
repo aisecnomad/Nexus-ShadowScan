@@ -426,6 +426,15 @@ track:
   Against the earlier `metrics.json`, ShadowScan's estate recall went from
   622 to 619 of 738, its in-scope F1 from 83% to 82% and its decoy
   specificity from 75% to 64%; AgentDiscover's code F1 went from 13% to 37%.
+* The scorer then stopped crediting ShadowScan with true negatives for
+  decoys its adapter never passes to it: the 17 IAM-role decoys of 15
+  aws-export cases (see Withheld decoys under Metrics). Re-scored from the
+  unchanged rows, ShadowScan's in-scope decoy specificity is 63% (421 of
+  668; it was 64%, 438 of 685), its aws-export specificity 96% (46 of 48;
+  was 97%, 63 of 65) and its cloud specificity still 98% (114 of 116; was
+  131 of 133). Its agent false-alarm rate is 18% of 907 entities (was of
+  924), 12% on cloud (was 11%). No case-level outcome changed, since every
+  negative aws-export case also holds decoys ShadowScan is given.
 * `verify --regenerate` had inferred a per-surface count of 38 for the
   committed corpus, rebuilt a smaller corpus and reported a difference,
   although the code still builds the committed cases. It now infers 40 and
@@ -477,11 +486,12 @@ product.
 
 * **ShadowScan.** Estate recall 84% (619 of 738); in-scope entity precision,
   recall and F1 78%, 88% and 82% (F1 interval 80–85%); specificity on decoys
-  64%. Specificity by surface: cloud 98%, low-code 91%, identity 57%, runtime
-  45%, SaaS 33%; its other surfaces have no decoys in the cases it ran. Its
-  weak points are where the rubric and its design disagree. It reports non-AI
-  service identities (sync, backup, SCIM, Terraform and audit apps, managed
-  identities)
+  63% (421 of 668), leaving out the 17 IAM-role decoys its adapter never
+  passes to it. Specificity by surface: cloud 98%, low-code 91%, identity
+  57%, runtime 45%, SaaS 33%; its other surfaces have no decoys in the cases
+  it ran. Its weak points are where the rubric and its design disagree. It
+  reports non-AI service identities (sync, backup, SCIM, Terraform and audit
+  apps, managed identities)
   and the *MCP Partner Center* name decoy (69 identity false positives), every
   non-AI Slack app (53 of 53 Slack decoys), and classic topic-only Copilot
   Studio bots (11 Power Platform false positives). All 17 of its runtime false

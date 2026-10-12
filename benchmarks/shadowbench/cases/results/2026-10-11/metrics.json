@@ -197,6 +197,7 @@
     "endpoint"
    ],
    "coverage": "2/9",
+   "withheld_decoys": {},
    "in_scope": {
     "cases": 66,
     "scored": 66,
@@ -205,6 +206,7 @@
     "incomplete": 0,
     "expected": 133,
     "decoys": 0,
+    "decoys_withheld": 0,
     "tp": 26,
     "fp": 1,
     "fn": 107,
@@ -239,6 +241,7 @@
     "case": {
      "positives": 40,
      "negatives": 26,
+     "negatives_withheld": 0,
      "tp": 11,
      "fn": 29,
      "fp": 0,
@@ -266,6 +269,7 @@
      "incomplete": 0,
      "expected": 109,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 25,
      "fp": 1,
      "fn": 84,
@@ -300,6 +304,7 @@
      "case": {
       "positives": 16,
       "negatives": 10,
+      "negatives_withheld": 0,
       "tp": 10,
       "fn": 6,
       "fp": 0,
@@ -321,6 +326,7 @@
        "incomplete": 0,
        "expected": 109,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 25,
        "fp": 1,
        "fn": 84,
@@ -355,6 +361,7 @@
        "case": {
         "positives": 16,
         "negatives": 10,
+        "negatives_withheld": 0,
         "tp": 10,
         "fn": 6,
         "fp": 0,
@@ -378,6 +385,7 @@
      "incomplete": 0,
      "expected": 24,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 1,
      "fp": 0,
      "fn": 23,
@@ -412,6 +420,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 1,
       "fn": 23,
       "fp": 0,
@@ -433,6 +442,7 @@
        "incomplete": 0,
        "expected": 24,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 1,
        "fp": 0,
        "fn": 23,
@@ -467,6 +477,7 @@
        "case": {
         "positives": 24,
         "negatives": 16,
+        "negatives_withheld": 0,
         "tp": 1,
         "fn": 23,
         "fp": 0,
@@ -499,6 +510,7 @@
     "runtime"
    ],
    "coverage": "3/9",
+   "withheld_decoys": {},
    "in_scope": {
     "cases": 86,
     "scored": 86,
@@ -507,6 +519,7 @@
     "incomplete": 0,
     "expected": 181,
     "decoys": 81,
+    "decoys_withheld": 0,
     "tp": 15,
     "fp": 2,
     "fn": 166,
@@ -541,6 +554,7 @@
     "case": {
      "positives": 52,
      "negatives": 34,
+     "negatives_withheld": 0,
      "tp": 13,
      "fn": 39,
      "fp": 2,
@@ -568,6 +582,7 @@
      "incomplete": 0,
      "expected": 109,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 5,
      "fp": 0,
      "fn": 104,
@@ -602,6 +617,7 @@
      "case": {
       "positives": 16,
       "negatives": 10,
+      "negatives_withheld": 0,
       "tp": 3,
       "fn": 13,
       "fp": 0,
@@ -623,6 +639,7 @@
        "incomplete": 0,
        "expected": 109,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 5,
        "fp": 0,
        "fn": 104,
@@ -657,6 +674,7 @@
        "case": {
         "positives": 16,
         "negatives": 10,
+        "negatives_withheld": 0,
         "tp": 3,
         "fn": 13,
         "fp": 0,
@@ -680,6 +698,7 @@
      "incomplete": 0,
      "expected": 24,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 4,
      "fp": 2,
      "fn": 20,
@@ -714,6 +733,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 4,
       "fn": 20,
       "fp": 2,
@@ -735,6 +755,7 @@
        "incomplete": 0,
        "expected": 24,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 4,
        "fp": 2,
        "fn": 20,
@@ -769,6 +790,7 @@
        "case": {
         "positives": 24,
         "negatives": 16,
+        "negatives_withheld": 0,
         "tp": 4,
         "fn": 20,
         "fp": 2,
@@ -792,6 +814,7 @@
      "incomplete": 0,
      "expected": 48,
      "decoys": 81,
+     "decoys_withheld": 0,
      "tp": 6,
      "fp": 0,
      "fn": 42,
@@ -826,6 +849,7 @@
      "case": {
       "positives": 12,
       "negatives": 8,
+      "negatives_withheld": 0,
       "tp": 6,
       "fn": 6,
       "fp": 0,
@@ -847,6 +871,7 @@
        "incomplete": 0,
        "expected": 48,
        "decoys": 81,
+       "decoys_withheld": 0,
        "tp": 6,
        "fp": 0,
        "fn": 42,
@@ -881,6 +906,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 6,
         "fn": 6,
         "fp": 0,
@@ -911,6 +937,7 @@
     "network"
    ],
    "coverage": "1/9",
+   "withheld_decoys": {},
    "in_scope": {
     "cases": 20,
     "scored": 20,
@@ -919,6 +946,7 @@
     "incomplete": 0,
     "expected": 32,
     "decoys": 50,
+    "decoys_withheld": 0,
     "tp": 26,
     "fp": 0,
     "fn": 6,
@@ -953,6 +981,7 @@
     "case": {
      "positives": 12,
      "negatives": 8,
+     "negatives_withheld": 0,
      "tp": 12,
      "fn": 0,
      "fp": 0,
@@ -980,6 +1009,7 @@
      "incomplete": 0,
      "expected": 32,
      "decoys": 50,
+     "decoys_withheld": 0,
      "tp": 26,
      "fp": 0,
      "fn": 6,
@@ -1014,6 +1044,7 @@
      "case": {
       "positives": 12,
       "negatives": 8,
+      "negatives_withheld": 0,
       "tp": 12,
       "fn": 0,
       "fp": 0,
@@ -1035,6 +1066,7 @@
        "incomplete": 0,
        "expected": 32,
        "decoys": 50,
+       "decoys_withheld": 0,
        "tp": 26,
        "fp": 0,
        "fn": 6,
@@ -1069,6 +1101,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 0,
@@ -1099,6 +1132,7 @@
     "endpoint"
    ],
    "coverage": "1/9",
+   "withheld_decoys": {},
    "in_scope": {
     "cases": 40,
     "scored": 40,
@@ -1107,6 +1141,7 @@
     "incomplete": 0,
     "expected": 24,
     "decoys": 0,
+    "decoys_withheld": 0,
     "tp": 1,
     "fp": 0,
     "fn": 23,
@@ -1141,6 +1176,7 @@
     "case": {
      "positives": 24,
      "negatives": 16,
+     "negatives_withheld": 0,
      "tp": 1,
      "fn": 23,
      "fp": 0,
@@ -1168,6 +1204,7 @@
      "incomplete": 0,
      "expected": 24,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 1,
      "fp": 0,
      "fn": 23,
@@ -1202,6 +1239,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 1,
       "fn": 23,
       "fp": 0,
@@ -1223,6 +1261,7 @@
        "incomplete": 0,
        "expected": 24,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 1,
        "fp": 0,
        "fn": 23,
@@ -1257,6 +1296,7 @@
        "case": {
         "positives": 24,
         "negatives": 16,
+        "negatives_withheld": 0,
         "tp": 1,
         "fn": 23,
         "fp": 0,
@@ -1288,6 +1328,7 @@
     "runtime"
    ],
    "coverage": "2/9",
+   "withheld_decoys": {},
    "in_scope": {
     "cases": 60,
     "scored": 60,
@@ -1296,6 +1337,7 @@
     "incomplete": 0,
     "expected": 72,
     "decoys": 81,
+    "decoys_withheld": 0,
     "tp": 14,
     "fp": 2,
     "fn": 58,
@@ -1330,6 +1372,7 @@
     "case": {
      "positives": 36,
      "negatives": 24,
+     "negatives_withheld": 0,
      "tp": 12,
      "fn": 24,
      "fp": 2,
@@ -1357,6 +1400,7 @@
      "incomplete": 0,
      "expected": 24,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 9,
      "fp": 2,
      "fn": 15,
@@ -1391,6 +1435,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 9,
       "fn": 15,
       "fp": 2,
@@ -1412,6 +1457,7 @@
        "incomplete": 0,
        "expected": 24,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 9,
        "fp": 2,
        "fn": 15,
@@ -1446,6 +1492,7 @@
        "case": {
         "positives": 24,
         "negatives": 16,
+        "negatives_withheld": 0,
         "tp": 9,
         "fn": 15,
         "fp": 2,
@@ -1469,6 +1516,7 @@
      "incomplete": 0,
      "expected": 48,
      "decoys": 81,
+     "decoys_withheld": 0,
      "tp": 5,
      "fp": 0,
      "fn": 43,
@@ -1503,6 +1551,7 @@
      "case": {
       "positives": 12,
       "negatives": 8,
+      "negatives_withheld": 0,
       "tp": 3,
       "fn": 9,
       "fp": 0,
@@ -1524,6 +1573,7 @@
        "incomplete": 0,
        "expected": 48,
        "decoys": 81,
+       "decoys_withheld": 0,
        "tp": 5,
        "fp": 0,
        "fn": 43,
@@ -1558,6 +1608,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 3,
         "fn": 9,
         "fp": 0,
@@ -1588,6 +1639,7 @@
     "endpoint"
    ],
    "coverage": "1/9",
+   "withheld_decoys": {},
    "in_scope": {
     "cases": 40,
     "scored": 40,
@@ -1596,6 +1648,7 @@
     "incomplete": 0,
     "expected": 24,
     "decoys": 0,
+    "decoys_withheld": 0,
     "tp": 1,
     "fp": 0,
     "fn": 23,
@@ -1630,6 +1683,7 @@
     "case": {
      "positives": 24,
      "negatives": 16,
+     "negatives_withheld": 0,
      "tp": 1,
      "fn": 23,
      "fp": 0,
@@ -1657,6 +1711,7 @@
      "incomplete": 0,
      "expected": 24,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 1,
      "fp": 0,
      "fn": 23,
@@ -1691,6 +1746,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 1,
       "fn": 23,
       "fp": 0,
@@ -1712,6 +1768,7 @@
        "incomplete": 0,
        "expected": 24,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 1,
        "fp": 0,
        "fn": 23,
@@ -1746,6 +1803,7 @@
        "case": {
         "positives": 24,
         "negatives": 16,
+        "negatives_withheld": 0,
         "tp": 1,
         "fn": 23,
         "fp": 0,
@@ -1784,6 +1842,11 @@
     "saas"
    ],
    "coverage": "9/9",
+   "withheld_decoys": {
+    "cloud/aws-export": [
+     "resource:arn:aws:iam::"
+    ]
+   },
    "in_scope": {
     "cases": 326,
     "scored": 326,
@@ -1791,11 +1854,12 @@
     "missing": 0,
     "incomplete": 27,
     "expected": 706,
-    "decoys": 685,
+    "decoys": 668,
+    "decoys_withheld": 17,
     "tp": 619,
     "fp": 176,
     "fn": 87,
-    "tn": 438,
+    "tn": 421,
     "out_of_taxonomy": 0,
     "precision": 0.7786163522012579,
     "precision_ci": [
@@ -1807,10 +1871,10 @@
      0.8504651174364981,
      0.8989980103419601
     ],
-    "specificity": 0.6394160583941606,
+    "specificity": 0.6302395209580839,
     "specificity_ci": [
-     0.6027723682606065,
-     0.6745047867907039
+     0.5929843088683288,
+     0.6660053645134433
     ],
     "f1": 0.8247834776815456,
     "f1_ci": [
@@ -1821,11 +1885,12 @@
     "agent_tp": 269,
     "agent_recall": 0.7556179775280899,
     "agent_false_alarms": 164,
-    "agent_false_alarm_universe": 924,
-    "agent_false_alarm_rate": 0.1774891774891775,
+    "agent_false_alarm_universe": 907,
+    "agent_false_alarm_rate": 0.18081587651598677,
     "case": {
      "positives": 212,
      "negatives": 114,
+     "negatives_withheld": 0,
      "tp": 203,
      "fn": 9,
      "fp": 50,
@@ -1853,6 +1918,7 @@
      "incomplete": 7,
      "expected": 109,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 99,
      "fp": 3,
      "fn": 10,
@@ -1887,6 +1953,7 @@
      "case": {
       "positives": 16,
       "negatives": 10,
+      "negatives_withheld": 0,
       "tp": 16,
       "fn": 0,
       "fp": 1,
@@ -1908,6 +1975,7 @@
        "incomplete": 7,
        "expected": 109,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 99,
        "fp": 3,
        "fn": 10,
@@ -1942,6 +2010,7 @@
        "case": {
         "positives": 16,
         "negatives": 10,
+        "negatives_withheld": 0,
         "tp": 16,
         "fn": 0,
         "fp": 1,
@@ -1965,6 +2034,7 @@
      "incomplete": 0,
      "expected": 96,
      "decoys": 159,
+     "decoys_withheld": 0,
      "tp": 93,
      "fp": 69,
      "fn": 3,
@@ -1999,6 +2069,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 24,
       "fn": 0,
       "fp": 16,
@@ -2020,6 +2091,7 @@
        "incomplete": 0,
        "expected": 46,
        "decoys": 75,
+       "decoys_withheld": 0,
        "tp": 43,
        "fp": 30,
        "fn": 3,
@@ -2054,6 +2126,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 8,
@@ -2075,6 +2148,7 @@
        "incomplete": 0,
        "expected": 50,
        "decoys": 84,
+       "decoys_withheld": 0,
        "tp": 50,
        "fp": 39,
        "fn": 0,
@@ -2109,6 +2183,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 8,
@@ -2132,6 +2207,7 @@
      "incomplete": 0,
      "expected": 124,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 124,
      "fp": 0,
      "fn": 0,
@@ -2166,6 +2242,7 @@
      "case": {
       "positives": 40,
       "negatives": 0,
+      "negatives_withheld": 0,
       "tp": 40,
       "fn": 0,
       "fp": 0,
@@ -2187,6 +2264,7 @@
        "incomplete": 0,
        "expected": 59,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 59,
        "fp": 0,
        "fn": 0,
@@ -2221,6 +2299,7 @@
        "case": {
         "positives": 20,
         "negatives": 0,
+        "negatives_withheld": 0,
         "tp": 20,
         "fn": 0,
         "fp": 0,
@@ -2242,6 +2321,7 @@
        "incomplete": 0,
        "expected": 65,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 65,
        "fp": 0,
        "fn": 0,
@@ -2276,6 +2356,7 @@
        "case": {
         "positives": 20,
         "negatives": 0,
+        "negatives_withheld": 0,
         "tp": 20,
         "fn": 0,
         "fp": 0,
@@ -2299,6 +2380,7 @@
      "incomplete": 0,
      "expected": 78,
      "decoys": 118,
+     "decoys_withheld": 0,
      "tp": 78,
      "fp": 11,
      "fn": 0,
@@ -2333,6 +2415,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 24,
       "fn": 0,
       "fp": 4,
@@ -2354,6 +2437,7 @@
        "incomplete": 0,
        "expected": 36,
        "decoys": 72,
+       "decoys_withheld": 0,
        "tp": 36,
        "fp": 0,
        "fn": 0,
@@ -2388,6 +2472,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 0,
@@ -2409,6 +2494,7 @@
        "incomplete": 0,
        "expected": 42,
        "decoys": 46,
+       "decoys_withheld": 0,
        "tp": 42,
        "fp": 11,
        "fn": 0,
@@ -2443,6 +2529,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 4,
@@ -2466,6 +2553,7 @@
      "incomplete": 0,
      "expected": 88,
      "decoys": 110,
+     "decoys_withheld": 0,
      "tp": 77,
      "fp": 74,
      "fn": 11,
@@ -2500,6 +2588,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 24,
       "fn": 0,
       "fp": 15,
@@ -2521,6 +2610,7 @@
        "incomplete": 0,
        "expected": 39,
        "decoys": 57,
+       "decoys_withheld": 0,
        "tp": 28,
        "fp": 21,
        "fn": 11,
@@ -2555,6 +2645,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 7,
@@ -2576,6 +2667,7 @@
        "incomplete": 0,
        "expected": 49,
        "decoys": 53,
+       "decoys_withheld": 0,
        "tp": 49,
        "fp": 53,
        "fn": 0,
@@ -2610,6 +2702,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 8,
@@ -2632,11 +2725,12 @@
      "missing": 0,
      "incomplete": 0,
      "expected": 77,
-     "decoys": 133,
+     "decoys": 116,
+     "decoys_withheld": 17,
      "tp": 58,
      "fp": 2,
      "fn": 19,
-     "tn": 131,
+     "tn": 114,
      "out_of_taxonomy": 0,
      "precision": 0.9666666666666667,
      "precision_ci": [
@@ -2648,10 +2742,10 @@
       0.6464664778213065,
       0.8359592544662053
      ],
-     "specificity": 0.9849624060150376,
+     "specificity": 0.9827586206896551,
      "specificity_ci": [
-      0.9468303450047878,
-      0.9958664155720042
+      0.9393090753779318,
+      0.9952589868394763
      ],
      "f1": 0.8467153284671532,
      "f1_ci": [
@@ -2662,11 +2756,12 @@
      "agent_tp": 18,
      "agent_recall": 0.4090909090909091,
      "agent_false_alarms": 18,
-     "agent_false_alarm_universe": 166,
-     "agent_false_alarm_rate": 0.10843373493975904,
+     "agent_false_alarm_universe": 149,
+     "agent_false_alarm_rate": 0.12080536912751678,
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 23,
       "fn": 1,
       "fp": 1,
@@ -2687,11 +2782,12 @@
        "missing": 0,
        "incomplete": 0,
        "expected": 35,
-       "decoys": 65,
+       "decoys": 48,
+       "decoys_withheld": 17,
        "tp": 28,
        "fp": 2,
        "fn": 7,
-       "tn": 63,
+       "tn": 46,
        "out_of_taxonomy": 0,
        "precision": 0.9333333333333333,
        "precision_ci": [
@@ -2703,10 +2799,10 @@
         0.6410838679545052,
         0.8995755358072957
        ],
-       "specificity": 0.9692307692307692,
+       "specificity": 0.9583333333333334,
        "specificity_ci": [
-        0.8945729439078441,
-        0.9915210028398983
+        0.8602434401996508,
+        0.9884981066142424
        ],
        "f1": 0.8615384615384616,
        "f1_ci": [
@@ -2717,11 +2813,12 @@
        "agent_tp": 14,
        "agent_recall": 0.7777777777777778,
        "agent_false_alarms": 2,
-       "agent_false_alarm_universe": 82,
-       "agent_false_alarm_rate": 0.024390243902439025,
+       "agent_false_alarm_universe": 65,
+       "agent_false_alarm_rate": 0.03076923076923077,
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 11,
         "fn": 1,
         "fp": 1,
@@ -2743,6 +2840,7 @@
        "incomplete": 0,
        "expected": 42,
        "decoys": 68,
+       "decoys_withheld": 0,
        "tp": 30,
        "fp": 0,
        "fn": 12,
@@ -2777,6 +2875,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 0,
@@ -2800,6 +2899,7 @@
      "incomplete": 0,
      "expected": 24,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 17,
      "fp": 0,
      "fn": 7,
@@ -2834,6 +2934,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 17,
       "fn": 7,
       "fp": 0,
@@ -2855,6 +2956,7 @@
        "incomplete": 0,
        "expected": 24,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 17,
        "fp": 0,
        "fn": 7,
@@ -2889,6 +2991,7 @@
        "case": {
         "positives": 24,
         "negatives": 16,
+        "negatives_withheld": 0,
         "tp": 17,
         "fn": 7,
         "fp": 0,
@@ -2912,6 +3015,7 @@
      "incomplete": 0,
      "expected": 12,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 11,
      "fp": 0,
      "fn": 1,
@@ -2946,6 +3050,7 @@
      "case": {
       "positives": 12,
       "negatives": 8,
+      "negatives_withheld": 0,
       "tp": 11,
       "fn": 1,
       "fp": 0,
@@ -2967,6 +3072,7 @@
        "incomplete": 0,
        "expected": 12,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 11,
        "fp": 0,
        "fn": 1,
@@ -3001,6 +3107,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 11,
         "fn": 1,
         "fp": 0,
@@ -3024,6 +3131,7 @@
      "incomplete": 20,
      "expected": 98,
      "decoys": 165,
+     "decoys_withheld": 0,
      "tp": 62,
      "fp": 17,
      "fn": 36,
@@ -3058,6 +3166,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 24,
       "fn": 0,
       "fp": 13,
@@ -3079,6 +3188,7 @@
        "incomplete": 20,
        "expected": 48,
        "decoys": 81,
+       "decoys_withheld": 0,
        "tp": 29,
        "fp": 7,
        "fn": 19,
@@ -3113,6 +3223,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 8,
@@ -3134,6 +3245,7 @@
        "incomplete": 0,
        "expected": 50,
        "decoys": 84,
+       "decoys_withheld": 0,
        "tp": 33,
        "fp": 10,
        "fn": 17,
@@ -3168,6 +3280,7 @@
        "case": {
         "positives": 12,
         "negatives": 8,
+        "negatives_withheld": 0,
         "tp": 12,
         "fn": 0,
         "fp": 5,
@@ -3191,6 +3304,7 @@
     "endpoint"
    ],
    "coverage": "1/9",
+   "withheld_decoys": {},
    "in_scope": {
     "cases": 40,
     "scored": 40,
@@ -3199,6 +3313,7 @@
     "incomplete": 0,
     "expected": 24,
     "decoys": 0,
+    "decoys_withheld": 0,
     "tp": 7,
     "fp": 0,
     "fn": 17,
@@ -3233,6 +3348,7 @@
     "case": {
      "positives": 24,
      "negatives": 16,
+     "negatives_withheld": 0,
      "tp": 7,
      "fn": 17,
      "fp": 0,
@@ -3260,6 +3376,7 @@
      "incomplete": 0,
      "expected": 24,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 7,
      "fp": 0,
      "fn": 17,
@@ -3294,6 +3411,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 7,
       "fn": 17,
       "fp": 0,
@@ -3315,6 +3433,7 @@
        "incomplete": 0,
        "expected": 24,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 7,
        "fp": 0,
        "fn": 17,
@@ -3349,6 +3468,7 @@
        "case": {
         "positives": 24,
         "negatives": 16,
+        "negatives_withheld": 0,
         "tp": 7,
         "fn": 17,
         "fp": 0,
@@ -3380,6 +3500,7 @@
     "endpoint"
    ],
    "coverage": "2/9",
+   "withheld_decoys": {},
    "in_scope": {
     "cases": 66,
     "scored": 66,
@@ -3388,6 +3509,7 @@
     "incomplete": 0,
     "expected": 133,
     "decoys": 0,
+    "decoys_withheld": 0,
     "tp": 17,
     "fp": 39,
     "fn": 116,
@@ -3422,6 +3544,7 @@
     "case": {
      "positives": 40,
      "negatives": 26,
+     "negatives_withheld": 0,
      "tp": 14,
      "fn": 26,
      "fp": 16,
@@ -3449,6 +3572,7 @@
      "incomplete": 0,
      "expected": 109,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 9,
      "fp": 0,
      "fn": 100,
@@ -3483,6 +3607,7 @@
      "case": {
       "positives": 16,
       "negatives": 10,
+      "negatives_withheld": 0,
       "tp": 6,
       "fn": 10,
       "fp": 0,
@@ -3504,6 +3629,7 @@
        "incomplete": 0,
        "expected": 109,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 9,
        "fp": 0,
        "fn": 100,
@@ -3538,6 +3664,7 @@
        "case": {
         "positives": 16,
         "negatives": 10,
+        "negatives_withheld": 0,
         "tp": 6,
         "fn": 10,
         "fp": 0,
@@ -3561,6 +3688,7 @@
      "incomplete": 0,
      "expected": 24,
      "decoys": 0,
+     "decoys_withheld": 0,
      "tp": 8,
      "fp": 39,
      "fn": 16,
@@ -3595,6 +3723,7 @@
      "case": {
       "positives": 24,
       "negatives": 16,
+      "negatives_withheld": 0,
       "tp": 8,
       "fn": 16,
       "fp": 16,
@@ -3616,6 +3745,7 @@
        "incomplete": 0,
        "expected": 24,
        "decoys": 0,
+       "decoys_withheld": 0,
        "tp": 8,
        "fp": 39,
        "fn": 16,
@@ -3650,6 +3780,7 @@
        "case": {
         "positives": 24,
         "negatives": 16,
+        "negatives_withheld": 0,
         "tp": 8,
         "fn": 16,
         "fp": 16,
