@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
+import posixpath
 import sys
+from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 from tools.discovery_benchmark.adapters import ToolConfig
@@ -13,19 +15,20 @@ from tools.discovery_benchmark.runner import RunPolicy
 from tools.shadowbench.estate import report as report_mod
 from tools.shadowbench.estate import runner as runner_mod
 from tools.shadowbench.estate import score as score_mod
-from tools.shadowbench.estate.corpus import CorpusError, load_corpus
-
-
-def _estate_files(estate: Path) -> list[Path]:
-    return sorted(path for path in estate.rglob("*") if path.is_file())
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 16), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+from tools.shadowbench.estate.corpus import (
+    FREEZE_SCHEMA,
+    CorpusError,
+    EstateCorpus,
+    EstateTree,
+    UnsafeEstateError,
+    freeze_digests,
+    freeze_drift,
+    load_corpus,
+    load_freeze,
+    open_regular,
+    unit_dir,
+    walk_estate,
+)
 
 
 def _decoded_jwt_payloads(text: str) -> str:
@@ -48,24 +51,88 @@ def _decoded_jwt_payloads(text: str) -> str:
     return "\n".join(decoded)
 
 
-def cmd_validate(corpus_path: Path, estate: Path) -> int:
+def _artifact_files(artifact: str, tree: EstateTree) -> list[str] | None:
+    """The estate files an artifact path covers (a file, or every file below a directory)."""
+    rel = posixpath.normpath(artifact)
+    if rel == ".":
+        return list(tree.files)
+    if rel in tree.files:
+        return [rel]
+    if rel in tree.dirs:
+        return [path for path in tree.files if path.startswith(rel + "/")]
+    return None
+
+
+def _anchor_collisions(
+    corpus: EstateCorpus,
+    tree: EstateTree,
+    owned: dict[str, set[str]],
+    haystack: Callable[[str], str],
+) -> list[str]:
+    """Anchors that also occur in estate files outside their own entity's artifacts.
+
+    A tool reporting something from such a file can carry the anchor and be
+    attributed to the wrong entity. Each file is searched with its estate
+    path, because tools echo paths. These are warnings: some are deliberate
+    (the agent registry names registered entities, the live-sim services
+    file names the runtime entities it mirrors).
+    """
+    owners: dict[str, list[str]] = defaultdict(list)
+    for entity in corpus.entities:
+        for rel in owned[entity.id]:
+            owners[rel].append(entity.id)
+    lines: list[str] = []
+    for entity in corpus.entities:
+        for anchor in entity.anchors:
+            hits = [rel for rel in tree.files if rel not in owned[entity.id] and anchor in haystack(rel)]
+            if not hits:
+                continue
+            places = []
+            for rel in hits:
+                others = sorted(owners.get(rel, []))
+                if not others:
+                    places.append(f"{rel} (no entity)")
+                    continue
+                more = f" and {len(others) - 3} more" if len(others) > 3 else ""
+                places.append(f"{rel} (artifact of {', '.join(others[:3])}{more})")
+            lines.append(f"{entity.id}: anchor {anchor!r} also occurs in {'; '.join(places)}")
+    return lines
+
+
+def cmd_validate(corpus_path: Path, estate: Path, *, strict: bool = False) -> int:
     corpus = load_corpus(corpus_path)
-    problems: list[str] = []
+    tree = walk_estate(estate)
+    problems = [f"symlink or special file in estate: {rel}" for rel in tree.rejected]
+    raw: dict[str, str] = {}
+    searchable: dict[str, str] = {}
+
+    def raw_text(rel: str) -> str:
+        if rel not in raw:
+            with open_regular(estate / rel) as handle:
+                raw[rel] = handle.read().decode("utf-8", errors="replace")
+        return raw[rel]
+
+    def haystack(rel: str) -> str:
+        if rel not in searchable:
+            text = raw_text(rel)
+            searchable[rel] = f"{rel}\n{text}{_decoded_jwt_payloads(text)}".lower()
+        return searchable[rel]
+
+    owned: dict[str, set[str]] = {}
     for entity in corpus.entities:
         texts: list[str] = []
+        owned[entity.id] = set()
         for artifact in entity.artifacts:
-            path = estate / artifact
-            if not path.exists():
+            members = _artifact_files(artifact, tree)
+            if members is None:
                 problems.append(f"{entity.id}: missing artifact {artifact}")
                 continue
-            if path.is_dir():
-                texts.extend(f.read_text(encoding="utf-8", errors="replace") for f in _estate_files(path))
-            else:
-                texts.append(path.read_text(encoding="utf-8", errors="replace"))
-        raw = "\n".join(texts)
+            owned[entity.id].update(members)
+            texts.extend(raw_text(rel) for rel in members)
+        joined_raw = "\n".join(texts)
         # Base64url is case-sensitive: decode JWT payloads from the raw text,
         # then lowercase everything for the anchor search.
-        joined = (raw + _decoded_jwt_payloads(raw)).lower()
+        joined = (joined_raw + _decoded_jwt_payloads(joined_raw)).lower()
         primary = entity.anchors[0]
         in_artifacts = primary in joined or primary in "/".join(entity.artifacts).lower()
         # A composite anchor (host:user:tool) is grounded when every part appears.
@@ -73,11 +140,17 @@ def cmd_validate(corpus_path: Path, estate: Path) -> int:
             # Parts under 4 characters are connector-synthesized abbreviations
             # (e.g. "mcp" in a resource id), not artifact content.
             in_artifacts = all(part in joined for part in primary.split(":") if len(part) >= 4)
-        if joined and not in_artifacts:
+        # Empty artifacts ground nothing: the anchor must still be found.
+        if not in_artifacts:
             problems.append(f"{entity.id}: primary anchor {primary!r} not found in its artifacts")
-    for path in _estate_files(estate):
-        if path.is_symlink():
-            problems.append(f"symlink in estate: {path}")
+        directory = unit_dir(entity.unit)
+        if directory is not None and directory not in tree.dirs:
+            problems.append(f"{entity.id}: unit {entity.unit} has no directory {directory} in the estate")
+    collisions = _anchor_collisions(corpus, tree, owned, haystack)
+    for collision in collisions:
+        print(f"WARN {collision}")
+    if strict and collisions:
+        problems.append(f"{len(collisions)} anchor collisions (--strict)")
     if problems:
         for problem in problems:
             print(f"PROBLEM {problem}")
@@ -87,26 +160,36 @@ def cmd_validate(corpus_path: Path, estate: Path) -> int:
         f"({len(corpus.by_class('positive'))} positive, "
         f"{len(corpus.by_class('control'))} control, "
         f"{len(corpus.by_class('nearmiss'))} near-miss)"
+        + (f", {len(collisions)} anchor collision warnings" if collisions else "")
     )
     return 0
 
 
+def _current_freeze(corpus_path: Path, estate: Path) -> dict[str, str] | None:
+    """The digests a freeze records, or None (with the reasons printed) for an unsafe estate."""
+    try:
+        return freeze_digests(corpus_path, estate)
+    except UnsafeEstateError as exc:
+        for entry in exc.entries:
+            print(f"PROBLEM symlink or special file in estate: {entry}")
+        return None
+
+
 def cmd_freeze(corpus_path: Path, estate: Path, out: Path) -> int:
-    files = {str(path.relative_to(estate.parent)): _sha256(path) for path in _estate_files(estate)}
-    files[corpus_path.name] = _sha256(corpus_path)
-    out.write_text(json.dumps({"schema": 1, "sha256": files}, indent=1) + "\n", encoding="utf-8")
+    files = _current_freeze(corpus_path, estate)
+    if files is None:
+        return 1
+    out.write_text(json.dumps({"schema": FREEZE_SCHEMA, "sha256": files}, indent=1) + "\n", encoding="utf-8")
     print(f"froze {len(files)} files -> {out}")
     return 0
 
 
 def cmd_verify_freeze(corpus_path: Path, estate: Path, freeze_path: Path) -> int:
-    recorded = json.loads(freeze_path.read_text(encoding="utf-8"))["sha256"]
-    current = {str(path.relative_to(estate.parent)): _sha256(path) for path in _estate_files(estate)}
-    current[corpus_path.name] = _sha256(corpus_path)
-    drift = sorted(
-        set(recorded) ^ set(current)
-        | {name for name in set(recorded) & set(current) if recorded[name] != current[name]}
-    )
+    recorded = load_freeze(freeze_path)
+    current = _current_freeze(corpus_path, estate)
+    if current is None:
+        return 1
+    drift = freeze_drift(recorded, current)
     if drift:
         for name in drift:
             print(f"DRIFT {name}")
@@ -177,20 +260,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     default_corpus = Path("benchmarks/shadowbench/estate/corpus.json")
     default_estate = Path("benchmarks/shadowbench/estate/artifacts")
+    default_freeze = Path("benchmarks/shadowbench/estate/FREEZE.json")
 
     p_validate = sub.add_parser("validate", help="validate the corpus and anchor presence")
     p_validate.add_argument("--corpus", type=Path, default=default_corpus)
     p_validate.add_argument("--estate", type=Path, default=default_estate)
+    p_validate.add_argument(
+        "--strict", action="store_true", help="fail on anchor collisions instead of warning"
+    )
 
     p_freeze = sub.add_parser("freeze", help="write the sha256 freeze manifest")
     p_freeze.add_argument("--corpus", type=Path, default=default_corpus)
     p_freeze.add_argument("--estate", type=Path, default=default_estate)
-    p_freeze.add_argument("--out", type=Path, default=Path("benchmarks/shadowbench/estate/FREEZE.json"))
+    p_freeze.add_argument("--out", type=Path, default=default_freeze)
 
     p_verify = sub.add_parser("verify-freeze", help="check the estate against the freeze manifest")
     p_verify.add_argument("--corpus", type=Path, default=default_corpus)
     p_verify.add_argument("--estate", type=Path, default=default_estate)
-    p_verify.add_argument("--freeze", type=Path, default=Path("benchmarks/shadowbench/estate/FREEZE.json"))
+    p_verify.add_argument("--freeze", type=Path, default=default_freeze)
 
     p_run = sub.add_parser("run", help="run every adapter against its estate units")
     p_run.add_argument("--corpus", type=Path, default=default_corpus)
@@ -220,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "validate":
-            return cmd_validate(args.corpus, args.estate)
+            return cmd_validate(args.corpus, args.estate, strict=args.strict)
         if args.command == "freeze":
             return cmd_freeze(args.corpus, args.estate, args.out)
         if args.command == "verify-freeze":

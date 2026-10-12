@@ -10,10 +10,15 @@ and false negatives.
 
 from __future__ import annotations
 
+import errno
+import hashlib
 import json
+import os
+import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from tools.shadowbench.estate import taxonomy
 
@@ -21,10 +26,34 @@ SCHEMA = 1
 CLASSES = ("positive", "control", "nearmiss")
 DIFFICULTIES = ("easy", "medium", "hard")
 MAX_CORPUS_BYTES = 8_000_000
+#: Unit ids: `estate`, or `code:<name>` / `home:<name>` naming a directory
+#: under the estate's `code/` or `home/`.
+UNIT_KINDS = ("code", "home")
+UNIT_NAME = re.compile(r"[a-z0-9][a-z0-9._-]*")
+#: Secondary anchors are matched as substrings of tool output, like primary
+#: ones; a short one would attribute unrelated predictions.
+MIN_SECONDARY_ANCHOR = 6
+FREEZE_SCHEMA = 1
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class CorpusError(ValueError):
     """Raised when the corpus file is malformed."""
+
+
+class UnsafeEstateError(CorpusError):
+    """Raised when the estate holds a symlink or a special file.
+
+    The estate is untrusted input: a link could point a freeze, a validation
+    or a tool run at files outside it, so it is rejected and never followed.
+    """
+
+    def __init__(self, entries: tuple[str, ...]) -> None:
+        self.entries = entries
+        shown = ", ".join(entries[:10])
+        if len(entries) > 10:
+            shown += f" and {len(entries) - 10} more"
+        super().__init__(f"symlinks and special files are not allowed in the estate: {shown}")
 
 
 @dataclass(frozen=True)
@@ -114,6 +143,25 @@ class EstateCorpus:
         return payload
 
 
+def parse_unit(unit: str) -> tuple[str, str]:
+    """Split a unit id into its kind and name: ("estate", "") or ("code"|"home", <name>)."""
+    if unit == "estate":
+        return "estate", ""
+    kind, sep, name = unit.partition(":")
+    if sep and kind in UNIT_KINDS and UNIT_NAME.fullmatch(name):
+        return kind, name
+    raise CorpusError(
+        f"unit {unit!r} must be 'estate', 'code:<name>' or 'home:<name>' "
+        f"with <name> matching {UNIT_NAME.pattern}"
+    )
+
+
+def unit_dir(unit: str) -> str | None:
+    """The estate-relative directory a unit id names, or None for the whole estate."""
+    kind, name = parse_unit(unit)
+    return None if kind == "estate" else f"{kind}/{name}"
+
+
 def _require_str(record: dict[str, Any], key: str, label: str) -> str:
     value = record.get(key)
     if not isinstance(value, str) or not value:
@@ -181,6 +229,11 @@ def entity_from_dict(record: dict[str, Any]) -> Entity:
             raise CorpusError(f"{label}: anchors must be lowercase ({anchor})")
     if len(anchors[0]) < 4:
         raise CorpusError(f"{label}: the primary anchor must be at least 4 characters")
+    for anchor in anchors[1:]:
+        if len(anchor) < MIN_SECONDARY_ANCHOR:
+            raise CorpusError(
+                f"{label}: secondary anchors must be at least {MIN_SECONDARY_ANCHOR} characters ({anchor})"
+            )
 
     artifacts = _str_tuple(record.get("artifacts"), f"{label} artifacts")
     if not artifacts:
@@ -198,6 +251,10 @@ def entity_from_dict(record: dict[str, Any]) -> Entity:
     unit = record.get("unit", "estate")
     if not isinstance(unit, str) or not unit:
         raise CorpusError(f"{label}: unit must be a non-empty string")
+    try:
+        parse_unit(unit)
+    except CorpusError as exc:
+        raise CorpusError(f"{label}: {exc}") from None
 
     return Entity(
         id=entity_id,
@@ -271,3 +328,134 @@ def load_corpus(path: Path) -> EstateCorpus:
 
 def save_corpus(corpus: EstateCorpus, path: Path) -> None:
     path.write_text(json.dumps(corpus.to_dict(), indent=1) + "\n", encoding="utf-8")
+
+
+# --- estate files and the freeze manifest ---------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EstateTree:
+    """An estate listing taken without following any symlink.
+
+    Paths are POSIX and relative to the estate root, in `Path` order.
+    `rejected` holds every entry that is neither a regular file nor a real
+    directory (symlinks, FIFOs, sockets, devices); none of them is opened.
+    """
+
+    files: tuple[str, ...]
+    dirs: tuple[str, ...]
+    rejected: tuple[str, ...]
+
+
+def _raise(exc: OSError) -> None:
+    raise exc
+
+
+def _path_order(rel: str) -> list[str]:
+    return rel.split("/")
+
+
+def walk_estate(estate: Path) -> EstateTree:
+    """List the estate from `lstat` alone; an unreadable directory raises instead of vanishing."""
+    try:
+        mode = os.lstat(estate).st_mode
+    except FileNotFoundError:
+        raise CorpusError(f"estate {estate} does not exist") from None
+    if not stat.S_ISDIR(mode):
+        raise CorpusError(f"estate {estate} is not a directory (a symlinked root is not followed)")
+    files: list[str] = []
+    dirs: list[str] = []
+    rejected: list[str] = []
+    for current, dirnames, filenames in os.walk(estate, onerror=_raise, followlinks=False):
+        base = Path(current).relative_to(estate)
+        kept: list[str] = []
+        for name in dirnames:
+            rel = (base / name).as_posix()
+            if stat.S_ISDIR(os.lstat(os.path.join(current, name)).st_mode):
+                kept.append(name)
+                dirs.append(rel)
+            else:
+                rejected.append(rel)
+        dirnames[:] = kept
+        for name in filenames:
+            rel = (base / name).as_posix()
+            if stat.S_ISREG(os.lstat(os.path.join(current, name)).st_mode):
+                files.append(rel)
+            else:
+                rejected.append(rel)
+    return EstateTree(
+        files=tuple(sorted(files, key=_path_order)),
+        dirs=tuple(sorted(dirs, key=_path_order)),
+        rejected=tuple(sorted(rejected, key=_path_order)),
+    )
+
+
+def open_regular(path: Path) -> BinaryIO:
+    """Open a regular file without following a symlink at its last component."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            raise UnsafeEstateError((str(path),)) from None
+        raise
+    handle = os.fdopen(fd, "rb")
+    if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+        handle.close()
+        raise UnsafeEstateError((str(path),))
+    return handle
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open_regular(path) as handle:
+        for chunk in iter(lambda: handle.read(1 << 16), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def estate_prefix(estate: Path) -> str:
+    """The key prefix FREEZE.json gives estate files: the estate directory's own name."""
+    return Path(os.path.abspath(estate)).name
+
+
+def estate_digests(estate: Path) -> dict[str, str]:
+    """SHA-256 of every estate file, keyed `<estate dir name>/<relative path>`."""
+    tree = walk_estate(estate)
+    if tree.rejected:
+        raise UnsafeEstateError(tree.rejected)
+    prefix = estate_prefix(estate)
+    return {f"{prefix}/{rel}": sha256_file(estate / rel) for rel in tree.files}
+
+
+def freeze_digests(corpus_path: Path, estate: Path) -> dict[str, str]:
+    """Every digest a freeze manifest records: the estate files plus the corpus file."""
+    digests = estate_digests(estate)
+    digests[corpus_path.name] = sha256_file(corpus_path)
+    return digests
+
+
+def freeze_drift(recorded: dict[str, str], current: dict[str, str]) -> list[str]:
+    """Names added, removed or changed between two digest maps."""
+    changed = {name for name in recorded.keys() & current.keys() if recorded[name] != current[name]}
+    return sorted((recorded.keys() ^ current.keys()) | changed)
+
+
+def load_freeze(path: Path) -> dict[str, str]:
+    """The digest map of a freeze manifest; a malformed manifest raises."""
+    with open_regular(path) as handle:
+        raw = handle.read()
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except ValueError as exc:
+        raise CorpusError(f"freeze manifest {path} is not valid JSON: {exc}") from None
+    digests = payload.get("sha256") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != FREEZE_SCHEMA
+        or not isinstance(digests, dict)
+        or not digests
+        or any(not isinstance(value, str) or not _SHA256.fullmatch(value) for value in digests.values())
+    ):
+        raise CorpusError(f"freeze manifest {path} is malformed")
+    return {str(name): str(value) for name, value in digests.items()}
