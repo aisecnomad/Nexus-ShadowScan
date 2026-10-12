@@ -96,9 +96,10 @@ MCP server's `initialize`, an OpenClaw gateway's `/health`, and decoys such as
 a Grafana login page, a Jenkins banner, a Datadog Agent Manager page and a
 Minecraft *Bedrock* panel. **Live runtime** cases spawn an inert static binary
 under each recorded process name with the recorded command line, inside the
-tool's PID namespace and as the tool's own unprivileged user, so a tool that
-reads `/proc` sees exactly the processes a snapshot describes. Reported pids
-are translated back to the corpus's process keys.
+tool's PID namespace, so a tool that reads `/proc` sees exactly the processes
+a snapshot describes. The current harness runs them as the tool's own
+unprivileged user; in the 2026-10-11 run they and the tools ran as root.
+Reported pids are translated back to the corpus's process keys.
 
 ### Platform-native inputs and conversions
 
@@ -120,10 +121,10 @@ Per tool, per surface and per modality, over the cases the tool ran
   nor penalized. Otherwise it matches an expected or decoy key when the two
   are equal or, for `artifact:` keys (home-directory paths), when the
   reported path lies inside the expected or decoy directory (a tool that
-  cites a file in Claude Code's `.claude` directory has found it). Matching is one-way: a
-  reported ancestor directory of an expected file never matches. The
-  directories a tool may name instead are tolerated keys, which earn no
-  credit. Reported keys are de-duplicated.
+  cites a file in Claude Code's `.claude` directory has found it). Matching
+  is one-way: a reported ancestor directory of an expected file never
+  matches. The directories a tool may name instead are tolerated keys, which
+  earn no credit. Reported keys are de-duplicated.
 * **Entity level.** A matched expected key is a true positive and an unmatched
   one a false negative. A reported key that matches nothing expected or
   tolerated is a false positive; one that hits a decoy also counts against
@@ -151,12 +152,13 @@ Per tool, per surface and per modality, over the cases the tool ran
   also reported as missing. An error is never a correct outcome: every expected
   entity is missed, the decoys stay in the specificity denominator without
   being true negatives, a positive case is missed and a negative case is a
-  false alarm. A run the tool itself marks incomplete (ShadowScan's exit 3, for
-  example, or an exit outside the adapter's accepted codes that still reported
-  entities) keeps the true and false positives it reported but never earns a
-  true negative: its unflagged decoys are not true negatives and a negative
-  case it scanned incompletely is a false alarm. A positive case it found
-  still counts as found. Incomplete runs are also counted separately.
+  false alarm. A run marked incomplete (the tool says so, as with ShadowScan's
+  exit 3, or the runner flags an exit outside the adapter's accepted codes that
+  still reported entities) keeps the true and false positives it reported but
+  never earns a true negative: its unflagged decoys are not true negatives,
+  and a negative case it scanned incompletely is a false alarm. A positive
+  case it found still counts as found. Incomplete runs are also counted
+  separately.
 * **Estate recall.** True positives over all 738 expected entities in the
   corpus, charging a tool for every surface and modality it does not run
   (those rows are `unsupported` and left out of in-scope metrics).
@@ -187,20 +189,22 @@ agent, 15% plain AI, 40% decoy, with at least one decoy slot per export except
 on the gateway surface, which has no decoys), redraws collisions, and renders
 the platform's files. Endpoint and passive-network cases reuse the 25 endpoint
 and 17 network families the earlier head-to-head benchmark pre-registered in
-`tools/benchmark/`, adding the artifact or client key each family plants. Code cases come from the pinned
+`tools/benchmark/`, adding the artifact or client key each family plants.
+Code cases come from the pinned
 [code-surface corpus](../../shadow-ai-discovery/corpus.json), whose facts and
 tolerated facts are carried over; `provider:*` facts are `llm`, all others
 `agent`. Without that file the generator refuses to run rather than write a
 corpus with no code surface.
 
 The corpus header records the seed and a SHA-256 over the generator sources,
-each named by its repository-relative path: the generator, its families, the
-`tools/benchmark` families it reuses and, in the current code, the code-surface
-corpus. Corpora written now also record the `--per-surface` count. The
-committed corpus predates that field; `verify` infers 40 from its largest
-generated surface. Its recorded digest was computed before the harness moved
-to `tools/shadowbench/cases/` and before the digest covered the code corpus,
-so it no longer matches the current sources.
+each named by its repository-relative path: the generator and its case model
+(`generate.py`, `corpus.py`, `contract.py`), its families, the
+`tools/benchmark` families it reuses and, in the current code, the
+code-surface corpus. Corpora written now also record the `--per-surface`
+count. The committed corpus predates that field; `verify` infers 40 from its
+largest generated surface. Its recorded digest was computed before the
+harness moved to `tools/shadowbench/cases/` and before the digest covered the
+code corpus, so it no longer matches the current sources.
 
 `python -m tools.shadowbench.cases verify --corpus corpus.json` loads and
 validates the corpus and compares the recorded digest with the current one. It
@@ -210,7 +214,8 @@ sources at the recorded seed and per-surface count and compares the parsed
 case lists; the header, the `created` stamp and the formatting are not
 compared. Identical cases exit 0 even when the digests differ, and verify says
 that the sources changed but build the same cases; any difference exits 1 and
-names the first differing case. The committed corpus passes only with
+names the first differing case (or, when one list is a prefix of the other,
+the two case counts). The committed corpus passes only with
 `--regenerate`. Anyone can use it to confirm that the committed cases are what
 the current generator builds, and can generate a fresh corpus at another seed
 to test for overfitting to this one. The run manifest names the corpus hash,
@@ -219,11 +224,19 @@ the generator digest, the platform and each tool's version or commit.
 ### Bias controls
 
 * By the author's account, the rubrics, families, generator, adapters and
-  scoring rules were written before the scored run, and the adapters were
+  original scorer were written before the scored run, and the adapters were
   calibrated on probe inputs and a 4-case-per-surface smoke corpus, never on
   the scored corpus. The git history cannot confirm this: the harness, the
   rubrics, the corpus and results were first committed together, in one
   commit. Calibration changes are recorded in each adapter's docstring.
+* The published metrics do not come from that original scorer. Its rules were
+  revised after the run, during integration review and with the run's results
+  in view: one-way artifact matching, a true positive needed to find a case,
+  no true negative from an error, a missing row or an incomplete run, and
+  out-of-taxonomy code keys counted apart. The revised rules were re-applied
+  to the unchanged rows (see Integration changes under Results). The adapters
+  were also changed after the run; the committed rows come from the earlier
+  adapters.
 * Decoys are drawn from the confusions real tools make: service identities
   without AI, infrastructure *agents*, *Bedrock* game servers, *MCP* (Minecraft
   Coder Pack, Microsoft Cloud Partner), *copilot* seat reports, *Gemini*
@@ -237,7 +250,9 @@ the generator digest, the platform and each tool's version or commit.
   and no inherited credentials. This is not a sandbox: a tool can still read
   world-readable files elsewhere on the host. The
   [harness README](../../../tools/shadowbench/cases/README.md) gives the
-  details. No tool is given an allowlist, an inventory or a known-agent list.
+  details. This is the current harness: the 2026-10-11 rows were recorded
+  under weaker isolation, described under Integration changes. No tool is
+  given an allowlist, an inventory or a known-agent list.
 * Tools are scored only on surfaces and modalities they declare; estate recall
   shows the cost of the surfaces they do not cover without penalizing their
   in-scope precision.
@@ -278,9 +293,46 @@ the generator digest, the platform and each tool's version or commit.
   JSON error bodies in view.
 * **The gateway surface has no decoys.** Every caller in an LLM gateway log
   uses a model, so the gateway test is agent tier only.
-* **Small per-surface samples.** Twenty cases per modality give wide
+* **Small per-surface samples.** Twenty cases per modality on most surfaces
+  (40 endpoint homes in its one modality, 26 code repositories) give wide
   intervals; the report prints them. Regenerate at a larger `--per-surface`
   for narrower ones.
+
+## Tools
+
+| Tool | Version benchmarked | Surfaces it ran on | How it is run |
+|---|---|---|---|
+| ShadowScan (Project Nexus) | the checkout named in `tools.json` (0.1.2 at `2d43f508fc95` in the 2026-10-11 run) | all nine; network passive only | one offline connector per modality (see the adapter docstring); `endpoint.inventory` on the home, `runtime.processes` on `/proc` for live cases |
+| Snyk Agent Scan | 0.6.8 | endpoint | `snyk-agent-scan inspect --json` with `HOME` set to the case, consent prompts declined (no server started, nothing uploaded) |
+| Cisco MCP Scanner | 4.8.6 | endpoint | `mcp-scanner known-configs --analyzers yara`; every server its debug log names from a config under the home counts, whether or not it could start offline |
+| Microsoft Agent Governance Toolkit, `agent-discovery` | 5.0.0 | code, endpoint, runtime (live) | `scan -s config` on the repository or home; `scan -s process` in the PID namespace; its own process is ignored |
+| AgentDiscover Scanner | 2.9.5 | code, endpoint | `scan-all --skip-layers 2,3,4,5 --format json` |
+| Numbat (Perplexity) | 77ece3a (2026-10-09) | endpoint | `numbat agents --format json` with `HOME` set to the case; its unit is the client's configuration directory |
+| SafeDep vet | v1.20.0 | code, endpoint | `vet ai discover --scope project` / `--scope system` |
+| AI-Infra-Guard (Tencent) | v4.6.5 (d9f3aa4) | network (active) | `ai-infra-guard scan -t ip:port ...` with its fingerprint files offline |
+| Fleet `ai_tools` table | fleetdm/fleet cf1217b (2026-10-11) | endpoint, runtime (live) | the table's `Generate` function compiled into a small Go program (`fleet-ai-tools`), no osquery daemon needed; rows outside the case home are dropped |
+| Cartography, Copilot Studio Kit, k8s-aibom, AgentSight | — | not run | no offline entry point; see Known limits |
+
+Each adapter's docstring records the version, the exact command and the
+output-to-entity mapping. `install_tools.sh` in the harness directory
+reproduces the installations at the pinned versions and commits. Installs are
+version-pinned, not hash-locked: transitive dependencies resolve at install
+time, so a later install can differ below the pinned tools.
+
+## Results
+
+Committed runs live under `results/<date>/` with `manifest.json` (corpus path
+and hash, generator digest, platform, and per tool its version and row-status
+counts), one `<tool>.jsonl` of normalized rows, `metrics.json` and
+`REPORT.md`. The runner's raw output stays on the machine that ran it and is
+not committed. The newest `REPORT.md` holds the measured numbers; read them
+with the caveats above. Scoring needs no third-party tool, so anyone can check
+the committed metrics from the committed rows:
+
+```bash
+python -m tools.shadowbench.cases score --corpus benchmarks/shadowbench/cases/corpus.json \
+    --results benchmarks/shadowbench/cases/results/2026-10-11 --out /tmp/metrics.json
+```
 
 ### Integration changes
 
@@ -296,21 +348,25 @@ track:
   produced them were removed.
 * The scorer was fixed and the run re-scored from the unchanged rows, so only
   `metrics.json` and `REPORT.md` changed. Matching is now one-way (a reported
-  parent directory no longer earns credit), a positive case needs a true
-  positive, an error, a missing row or an incomplete scan
-  never earns a true negative, code keys outside the fact taxonomy are counted
-  apart instead of as false positives, and results must be vouched for by the
-  run manifest. Against the earlier `metrics.json`, ShadowScan's estate recall
-  went from 622 to 619 of 738, its in-scope F1 from 83% to 82% and its decoy
+  parent directory no longer earns credit); a positive case needs a true
+  positive; an error, a missing row or an incomplete scan never earns a true
+  negative; code keys outside the fact taxonomy are counted apart instead of
+  as false positives; and results must be vouched for by the run manifest.
+  Against the earlier `metrics.json`, ShadowScan's estate recall went from
+  622 to 619 of 738, its in-scope F1 from 83% to 82% and its decoy
   specificity from 75% to 64%; AgentDiscover's code F1 went from 13% to 37%.
 * `verify --regenerate` had inferred a per-surface count of 38 for the
   committed corpus, rebuilt a smaller corpus and reported a difference,
   although the code still builds the committed cases. It now infers 40 and
   compares the parsed case lists.
 * The runner, the stage and the adapters were hardened for future runs: tools
-  now run unprivileged with operator homes hidden, and adapters fail closed on
-  partial or malformed output. The committed rows were recorded before these
-  changes.
+  now run as uid 65534 with `/root` and `/home` hidden, and adapters fail
+  closed on partial or malformed output. The committed rows were recorded
+  before these changes. In that run the tools and the inert processes ran as
+  root, in fresh network and PID namespaces with their own `/proc` but the
+  host's file system otherwise in view, `/root` and `/home` included. Fleet's
+  table, which also reads `/home/*` and `/root`, therefore saw the host's
+  homes; its adapter kept only rows under the case home.
 
 ### The 2026-10-11 run, in brief
 
@@ -341,7 +397,8 @@ product.
   64%. Specificity by surface: cloud 98%, low-code 91%, identity 57%, runtime
   45%, SaaS 33%; its other surfaces have no decoys in the cases it ran. Its
   weak points are where the rubric and its design disagree. It reports non-AI
-  service identities (sync, backup, SCIM and audit apps, managed identities)
+  service identities (sync, backup, SCIM, Terraform and audit apps, managed
+  identities)
   and the *MCP Partner Center* name decoy (69 identity false positives), every
   non-AI Slack app (53 of 53 Slack decoys), and classic topic-only Copilot
   Studio bots (11 Power Platform false positives). All 17 of its runtime false
@@ -385,39 +442,3 @@ product.
   (60), p = 0.080, not significant at 0.05. AI-Infra-Guard shares no case with
   ShadowScan, so it has no test. These tests measure agreement with the
   author's rubric on the author's corpus.
-
-## Tools
-
-| Tool | Version benchmarked | Surfaces it ran on | How it is run |
-|---|---|---|---|
-| ShadowScan (Project Nexus) | the checkout named in `tools.json` (0.1.2 at `2d43f508fc95` in the 2026-10-11 run) | all nine; network passive only | one offline connector per modality (see the adapter docstring); `endpoint.inventory` on the home, `runtime.processes` on `/proc` for live cases |
-| Snyk Agent Scan | 0.6.8 | endpoint | `snyk-agent-scan inspect --json` with `HOME` set to the case, consent prompts declined (no server started, nothing uploaded) |
-| Cisco MCP Scanner | 4.8.6 | endpoint | `mcp-scanner known-configs --analyzers yara`; every server its debug log names from a config under the home counts, whether or not it could start offline |
-| Microsoft Agent Governance Toolkit, `agent-discovery` | 5.0.0 | code, endpoint, runtime (live) | `scan -s config` on the repository or home; `scan -s process` in the PID namespace; its own process is ignored |
-| AgentDiscover Scanner | 2.9.5 | code, endpoint | `scan-all --skip-layers 2,3,4,5 --format json` |
-| Numbat (Perplexity) | 77ece3a (2026-10-09) | endpoint | `numbat agents --format json` with `HOME` set to the case; its unit is the client's configuration directory |
-| SafeDep vet | v1.20.0 | code, endpoint | `vet ai discover --scope project` / `--scope system` |
-| AI-Infra-Guard (Tencent) | v4.6.5 (d9f3aa4) | network (active) | `ai-infra-guard scan -t ip:port ...` with its fingerprint files offline |
-| Fleet `ai_tools` table | fleetdm/fleet cf1217b (2026-10-11) | endpoint, runtime (live) | the table's `Generate` function compiled into a small Go program (`fleet-ai-tools`), no osquery daemon needed; rows outside the case home are dropped |
-| Cartography, Copilot Studio Kit, k8s-aibom, AgentSight | — | not run | no offline entry point; see Known limits |
-
-Each adapter's docstring records the version, the exact command and the
-output-to-entity mapping. `install_tools.sh` in the harness directory
-reproduces the installations at the pinned versions and commits. Installs are
-version-pinned, not hash-locked: transitive dependencies resolve at install
-time, so a later install can differ below the pinned tools.
-
-## Results
-
-Committed runs live under `results/<date>/` with `manifest.json` (corpus path
-and hash, generator digest, platform, and per tool its version and row-status
-counts), one `<tool>.jsonl` of normalized rows, `metrics.json` and
-`REPORT.md`. The runner's raw output stays on the machine that ran it and is
-not committed. The newest `REPORT.md` holds the measured numbers; read them
-with the caveats above. Scoring needs no third-party tool, so anyone can check
-the committed metrics from the committed rows:
-
-```bash
-python -m tools.shadowbench.cases score --corpus benchmarks/shadowbench/cases/corpus.json \
-    --results benchmarks/shadowbench/cases/results/2026-10-11 --out /tmp/metrics.json
-```

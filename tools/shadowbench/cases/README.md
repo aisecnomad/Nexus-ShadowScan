@@ -22,7 +22,7 @@ Every command is a subcommand of `python -m tools.shadowbench.cases`:
 | Command | Module | What it does |
 |---|---|---|
 | `generate` | `generate.py` | Build the corpus at a seed (`--seed`, `--per-surface`, `--output`). Export, runtime and active-network cases compose entity drafts into one platform-native input; endpoint and passive-network cases reuse the pre-registered families of `tools/benchmark`; code cases pin repositories from `benchmarks/shadow-ai-discovery/corpus.json`, and generation refuses to run without that file. |
-| `verify` | `verify.py` | Load and validate a corpus and compare its recorded generator digest with the current sources: exit 0 when they match, otherwise exit 1 with a hint to use `--regenerate`. `--regenerate` rebuilds the cases at the recorded seed and per-surface count and compares the parsed case lists (header and `created` stamp ignored): identical cases exit 0 even when the digest differs, and any difference exits 1 and names the first differing case. The committed corpus needs `--regenerate`, because its digest predates the move to `cases/`. |
+| `verify` | `verify.py` | Load and validate a corpus and compare its recorded generator digest with the current sources: exit 0 when they match, otherwise exit 1 with a hint to use `--regenerate`. `--regenerate` rebuilds the cases at the recorded seed and per-surface count and compares the parsed case lists (header and `created` stamp ignored): identical cases exit 0 even when the digest differs, and any difference exits 1 and names the first differing case or, when one list is a prefix of the other, the two case counts. The committed corpus needs `--regenerate`, because its digest predates both the move to `cases/` and the digest's inclusion of the code corpus. |
 | `run` | `runner.py` | Materialize each case, execute every adapter's invocations through `stage.py` in isolation, write one JSONL row per (tool, case) and `manifest.json`, and keep each run's raw output locally under `<out>/raw/<tool>/`. Needs root. |
 | `score` | `score.py` | Entity-level and case-level metrics per tool, surface and modality; estate recall; agent tier; paired McNemar against a reference tool. Refuses results the run manifest does not vouch for (another corpus digest, a results file for a tool the manifest does not record as run, row statuses that differ from its counts) unless `--force`, which records each override; refuses malformed rows even with `--force`. |
 | `report` | `report.py` | Render `metrics.json` as Markdown, with any `--force` override listed at the top. |
@@ -82,8 +82,13 @@ the runner's user. An adapter that runs the tool's binary for it does so only
 through `adapters/_probe.py`: the probe gets a fixed `PATH`, a throwaway
 `HOME` that is also its working directory, no other inherited environment, an
 empty stdin, a timeout and, when run as root with `unshare` available, an
-empty network namespace. A probe that cannot start, fails or times out records
-`unknown`.
+empty network namespace. A probe that cannot start or times out records
+`unknown`. Otherwise the adapter reads the version from what the probe
+printed, whatever its exit code; only the installed-package lookup (Snyk,
+Cisco, `agent-discovery`) requires exit 0. Fleet records the printed text as
+it is, ShadowScan its last word plus the checkout's commit, and Numbat the
+printed text when its version pattern does not match; the other adapters
+record `unknown` when theirs does not.
 
 ## Tool configuration
 
@@ -118,22 +123,27 @@ which the manifest then records instead of a probed version.
 Each adapter's module docstring states the exact command line and the mapping
 from the tool's output to entity keys. [`install_tools.sh`](install_tools.sh)
 builds or installs every tool at the pinned commit or version into a tool root
-in this layout. Installs are version-pinned, not hash-locked: each PyPI tool is
-pinned to one version, but its transitive dependencies resolve at install time,
-and the Fleet wrapper's indirect Go modules are resolved by `go mod tidy`.
-Record `uv pip freeze` for each venv and the wrapper's `go.sum` next to any
-results. The script downloads third-party code; review it and run it on a
-disposable machine.
+in this layout and writes `<tool root>/tools.json` for them, without the
+ShadowScan entry. Installs are version-pinned, not hash-locked: each PyPI
+tool is pinned to one version, but its transitive dependencies resolve at
+install time, and the Fleet wrapper's indirect Go modules are resolved by
+`go mod tidy`. Record `uv pip freeze` for each venv and the wrapper's
+`go.sum` next to any results. The script downloads third-party code; review
+it and run it on a disposable machine.
 
 ## Reproduce
 
 ```bash
+git clone . /opt/nsb/Project-Nexus    # from your checkout: a copy outside /root and /home
+cd /opt/nsb/Project-Nexus
 python -m tools.shadowbench.cases verify --corpus benchmarks/shadowbench/cases/corpus.json --regenerate
-bash tools/shadowbench/cases/install_tools.sh /opt/nsb/tools
+bash tools/shadowbench/cases/install_tools.sh /opt/nsb/tools    # writes /opt/nsb/tools/tools.json
 python -m venv /opt/nsb/venv && /opt/nsb/venv/bin/pip install --require-hashes --only-binary=:all: -r requirements.lock
+# add to "tools" in /opt/nsb/tools/tools.json:
+#   "shadowscan": {"bin": "/opt/nsb/venv/bin/python", "repo": "/opt/nsb/Project-Nexus"}
 python -m tools.shadowbench.cases.fetch_code /opt/nsb/checkouts
 sudo python -m tools.shadowbench.cases run --corpus benchmarks/shadowbench/cases/corpus.json \
-    --tools /opt/nsb/tools.json --checkouts /opt/nsb/checkouts --out /opt/nsb/results --workers 3
+    --tools /opt/nsb/tools/tools.json --checkouts /opt/nsb/checkouts --out /opt/nsb/results --workers 3
 python -m tools.shadowbench.cases score --corpus benchmarks/shadowbench/cases/corpus.json \
     --results /opt/nsb/results --out /opt/nsb/results/metrics.json
 python -m tools.shadowbench.cases report --corpus benchmarks/shadowbench/cases/corpus.json \
@@ -147,8 +157,10 @@ TLS verification on, no symlinked destination, and `rev-parse HEAD` checked
 against the pinned commit. The runner checks each checkout's HEAD again before
 copying it into a case. `run` records the corpus path and SHA-256, the
 generator digest, the platform and each tool's version and row-status counts
-in `manifest.json`; `score` copies them into `metrics.json`, so a report always
-names the exact inputs and code it describes.
+in `manifest.json`; `score` copies them into `metrics.json`, so a report names
+the corpus and the tool versions it describes. Neither file records the
+harness commit, so the adapters that produced the rows and the scorer that
+produced the metrics must be identified from the repository history.
 
 ## Adding a tool
 
