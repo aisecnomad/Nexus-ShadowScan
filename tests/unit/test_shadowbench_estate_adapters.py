@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -561,3 +562,27 @@ def test_launcher_shims_refuse_without_reading_arguments(tmp_path: Path) -> None
 def test_launcher_shim_directory_with_a_colon_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must not contain ':'"):
         refuse_launchers(tmp_path / "a:b")
+
+
+#: The committed corpus's device home trees, which the server-launching tools scan.
+CORPUS_HOMES = (
+    Path(__file__).resolve().parents[2] / "benchmarks" / "shadowbench" / "estate" / "artifacts" / "home"
+)
+_JSON_COMMAND = re.compile(r'"command"\s*:\s*"([^"]*)"')
+_TEXT_COMMAND = re.compile(r'^\s*command\s*[:=]\s*"?([^"\s]+)', re.MULTILINE)
+_SETS_PATH = re.compile(r'"PATH"\s*:|^\s*PATH\s*[:=]', re.MULTILINE)
+
+
+def test_corpus_home_configs_name_only_refused_launchers_or_absolute_paths() -> None:
+    """The shims refuse only `LAUNCHERS`: any other bare command name in a home config would run."""
+    commands: set[str] = set()
+    for path in sorted(CORPUS_HOMES.rglob("*")):
+        # Session transcripts (.jsonl) record agent tool calls, not MCP server configurations.
+        if not path.is_file() or path.suffix == ".jsonl":
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        commands.update(_JSON_COMMAND.findall(text), _TEXT_COMMAND.findall(text))
+        assert not _SETS_PATH.search(text), f"{path} sets PATH for a server"
+    bare = {command for command in commands if not command.startswith("/")}
+    assert "npx" in bare, "the corpus home trees name no npx server"
+    assert bare <= set(LAUNCHERS), sorted(bare - set(LAUNCHERS))

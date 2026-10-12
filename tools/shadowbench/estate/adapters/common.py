@@ -152,9 +152,10 @@ def write_script(path: Path, lines: Sequence[str]) -> Path:
 
 # --- Launcher shims ----------------------------------------------------------
 
-#: Programs an MCP client configuration can name as a server command. A tool
-#: that starts configured servers must never get to run one: the benchmark
-#: never executes corpus content, whatever the host has installed.
+#: Common launchers an MCP client configuration names as a server command. A
+#: tool that starts configured servers never gets to run one of these,
+#: whatever the host has installed. The list is not exhaustive (see
+#: `refuse_launchers`).
 LAUNCHERS: tuple[str, ...] = (
     "npx",
     "npm",
@@ -187,10 +188,11 @@ def refuse_launchers(directory: Path) -> list[str]:
     """Write refusing `LAUNCHERS` shims into `directory`; return the lines that put them first on PATH.
 
     Each shim prints why it refused and exits 126 without reading its
-    arguments. Only PATH lookups are covered: an absolute command path in a
-    client configuration, or a configuration that sets its own `PATH`, is
-    not intercepted, so third-party tools still belong on a disposable
-    runner with no credentials.
+    arguments. Only PATH lookups of the names in `LAUNCHERS` are refused:
+    any other command name found on PATH (`sh`, `bash`, `perl`, `curl`, ...)
+    still runs, as do an absolute command path in a client configuration and
+    a configuration that sets its own `PATH`. Third-party tools therefore
+    still belong on a disposable runner with no credentials.
     """
     directory = directory.absolute()
     if ":" in str(directory):

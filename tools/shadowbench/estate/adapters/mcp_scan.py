@@ -5,7 +5,9 @@ verification API. stdin is /dev/null so the per-server consent prompt
 auto-denies: no configured MCP server command is executed and no remote MCP
 URL is contacted, yet every server is still inventoried. Refusing launcher
 shims (`npx`, `uvx`, `docker`, ...) come first on PATH as well, so a consent
-change in a later release still cannot start a corpus-configured server.
+change in a later release still cannot start a server configured with one of
+those launchers; other command names and absolute paths are not intercepted
+(see `common.refuse_launchers`).
 """
 
 from __future__ import annotations

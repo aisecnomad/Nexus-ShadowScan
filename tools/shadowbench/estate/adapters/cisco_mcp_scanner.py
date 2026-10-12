@@ -1,15 +1,21 @@
 """Cisco MCP Scanner: endpoint MCP discovery from well-known client configs.
 
 YARA analyzer only (no API keys, no network). The scanner enumerates tools by
-actually connecting to each configured MCP server; the benchmark never
-executes corpus content, so the wrapper puts refusing launcher shims (`npx`,
-`uvx`, `docker`, `python3`, ... see `common.LAUNCHERS`) first on PATH: a
-stdio launch fails whatever the host has installed, and servers the scanner
-cannot launch are absent from scan_results. The scanner itself runs from
-its configured virtualenv binary and needs none of those launchers. That
-behavior is part of what the benchmark measures, and the run also passes the
-Claude config files explicitly because the Linux known-configs list omits
-them.
+actually connecting to each configured MCP server, and servers it cannot
+launch are absent from scan_results; that behavior is part of what the
+benchmark measures. The run also passes the Claude config files explicitly
+because the Linux known-configs list omits them.
+
+The wrapper puts refusing shims for the common server launchers (`npx`,
+`uvx`, `docker`, `python3`, ... see `common.LAUNCHERS`) first on PATH, so a
+server configured with one of those names fails to start whatever the host
+has installed. The scanner runs from its configured virtualenv binary and
+needs none of them. Only those names are refused: any other command the host
+has on PATH (`sh`, `bash`, `perl`, ...), an absolute command path, or a
+configuration that sets its own PATH still runs, so the tool belongs on a
+disposable runner. The committed corpus's home configurations name only
+`npx` and one absolute path under `/home/dana/tools/`, which the corpus does
+not ship: it runs only if the runner itself has that file.
 
 Every scanner step runs; the script exits with the first non-zero status, so
 a crash never reads as an empty inventory. Each `--format raw` output must be
