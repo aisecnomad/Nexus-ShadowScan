@@ -15,9 +15,19 @@ runs, and the source is checked again afterwards. `runs.json` records the
 freeze manifest's digest, any drift found after the run, the files each tool
 changed in its own copy, and the harness commit.
 
+With `--as-user` the tool's account owns the output directory and the
+estate copy while its commands run, so the runner never opens a file there
+by path: its capture files and `result.json` are created afresh through a
+descriptor of the directory, and a capture is measured and cut through the
+descriptor the tool wrote to. Before anything reads what the account wrote
+(`normalize`, the estate-change listing), both trees are handed back to the
+runner and every symlink, hard link or special file in them is removed,
+never followed.
+
 A unit that timed out, exited with a code its adapter does not declare as
-success, or hit an adapter error is marked incomplete: partial or missing
-output never reads as a clean negative.
+success, hit an adapter error, or left a link or special file among its
+outputs is marked incomplete: partial or missing output never reads as a
+clean negative.
 """
 
 from __future__ import annotations
@@ -26,9 +36,11 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -63,6 +75,12 @@ ROOT = Path(__file__).resolve().parents[3]
 #: Unit directory and output file names: one plain path component, never `..`.
 _SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _RESERVED_OUTPUTS = re.compile(r"result\.json|home|tmp|\d+\.std(?:out|err)\.txt")
+#: Opens a directory itself, never a symlink standing in for one.
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+#: Creates a new file; fails rather than open anything already at the name, a symlink included.
+_CREATE_FLAGS = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+#: Output subdirectories that are the tool's own scratch space; no adapter reads them.
+_SCRATCH_OUTPUTS = ("home/", "tmp/")
 
 
 class FreezeDrift(RuntimeError):
@@ -98,6 +116,9 @@ class RunResult:
     incomplete: bool = False
     #: Estate files the tool added, changed or removed in its private copy.
     estate_changes: list[str] = field(default_factory=list)
+    #: Links and special files the --as-user account left in the output directory,
+    #: removed before normalizing.
+    removed_outputs: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -135,6 +156,33 @@ def harness_revision() -> dict[str, Any]:
     return {"commit": head, "dirty": None if status is None else bool(status)}
 
 
+def _create_output(dir_fd: int, name: str) -> int:
+    """Create `name` afresh in the directory open as `dir_fd` and return a write descriptor.
+
+    With --as-user the tool's account can write the output directory, so
+    whatever it left under the name (a symlink to a root-only file, say) is
+    unlinked rather than written through, and the exclusive create fails if
+    anything reappears there in between.
+    """
+    try:
+        os.unlink(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        pass
+    return os.open(name, _CREATE_FLAGS, 0o644, dir_fd=dir_fd)
+
+
+def _cap(fd: int) -> bool:
+    """Cut the capture open as `fd` to MAX_CAPTURE_BYTES; True when it was longer.
+
+    Measured and cut through the descriptor the tool wrote to: by path, the
+    tool could have swapped its capture for a link to a file the runner would cut.
+    """
+    if os.fstat(fd).st_size <= MAX_CAPTURE_BYTES:
+        return False
+    os.ftruncate(fd, MAX_CAPTURE_BYTES)
+    return True
+
+
 def run_command(
     command: Command,
     *,
@@ -147,23 +195,34 @@ def run_command(
     tmp.mkdir(exist_ok=True)
     env = scrubbed_env(policy, home, tmp, command.env)
     argv = _wrap(policy, command.argv, env)
-    stdout_path = out_dir / f"{index}.stdout.txt"
-    stderr_path = out_dir / f"{index}.stderr.txt"
+    stdout_name = f"{index}.stdout.txt"
+    stderr_name = f"{index}.stderr.txt"
+    refusal: str | None = None
     if command.stdout_name is not None:
-        name = command.stdout_name
-        if not _SAFE_NAME.fullmatch(name) or _RESERVED_OUTPUTS.fullmatch(name):
-            stderr_path.write_text(
-                f"refused stdout_name {name!r}: not a plain output file name\n", encoding="utf-8"
-            )
-            return CommandResult(
-                list(command.argv), None, 0.0, False, False, stdout_path.name, stderr_path.name
-            )
-        stdout_path = out_dir / name
+        if _SAFE_NAME.fullmatch(command.stdout_name) and not _RESERVED_OUTPUTS.fullmatch(command.stdout_name):
+            stdout_name = command.stdout_name
+        else:
+            refusal = f"refused stdout_name {command.stdout_name!r}: not a plain output file name\n"
+    failed = CommandResult(list(command.argv), None, 0.0, False, False, stdout_name, stderr_name)
+    dir_fd = os.open(out_dir, _DIR_FLAGS)
+    try:
+        err = os.fdopen(_create_output(dir_fd, stderr_name), "wb")
+        if refusal is not None:
+            with err:
+                err.write(refusal.encode())
+            return failed
+        try:
+            out = os.fdopen(_create_output(dir_fd, stdout_name), "wb")
+        except OSError:
+            err.close()
+            raise
+    finally:
+        os.close(dir_fd)
     started = time.monotonic()
     timed_out = False
     exit_code: int | None = None
     timeout = command.timeout or policy.timeout
-    with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
+    with out, err:
         try:
             proc = subprocess.Popen(
                 argv,
@@ -176,9 +235,7 @@ def run_command(
             )
         except OSError as exc:
             err.write(str(exc).encode())
-            return CommandResult(
-                list(command.argv), None, 0.0, False, False, stdout_path.name, stderr_path.name
-            )
+            return failed
         try:
             exit_code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -188,32 +245,80 @@ def run_command(
             except ProcessLookupError:
                 pass
             proc.wait()
-    seconds = time.monotonic() - started
-    report_cut = False
-    for path in (stdout_path, stderr_path):
-        if path.stat().st_size > MAX_CAPTURE_BYTES:
-            with path.open("r+b") as handle:
-                handle.truncate(MAX_CAPTURE_BYTES)
-            # A report kept under its own name is tool output, not a log: a cut one is partial.
-            report_cut = report_cut or (path == stdout_path and command.stdout_name is not None)
+        seconds = time.monotonic() - started
+        # A report kept under its own name is tool output, not a log: a cut one is partial.
+        report_cut = _cap(out.fileno()) and command.stdout_name is not None
+        _cap(err.fileno())
     ok = not timed_out and exit_code in command.ok_exit_codes and not report_cut
     return CommandResult(
-        list(command.argv),
-        exit_code,
-        round(seconds, 3),
-        timed_out,
-        ok,
-        stdout_path.name,
-        stderr_path.name,
+        list(command.argv), exit_code, round(seconds, 3), timed_out, ok, stdout_name, stderr_name
     )
 
 
-def _estate_changes(copy: Path, expected: dict[str, str]) -> list[str]:
+def _reclaim(top: Path) -> list[str]:
+    """Take back a tree the --as-user account could write, before the runner reads it.
+
+    Each directory is handed to the runner and made 0755 before it is listed,
+    so neither the account nor a process it left behind can add, rename or
+    remove entries in it any more. Symlinks, hard links and special files are
+    then removed, never followed, and regular files are handed back as well.
+    Directories are entered through descriptors only. Returns the removed
+    entries, relative to `top`.
+    """
+    uid, gid = os.geteuid(), os.getegid()
+    removed: list[str] = []
+    stack: list[tuple[int, str, Iterator[str]]] = []
+
+    def enter(fd: int, rel: str) -> None:
+        try:
+            os.fchown(fd, uid, gid)
+            os.fchmod(fd, 0o755)
+            names = iter(sorted(os.listdir(fd)))
+        except BaseException:
+            os.close(fd)
+            raise
+        stack.append((fd, rel, names))
+
+    try:
+        enter(os.open(top, _DIR_FLAGS), "")
+        while stack:
+            dir_fd, rel, names = stack[-1]
+            name = next(names, None)
+            if name is None:
+                stack.pop()
+                os.close(dir_fd)
+                continue
+            entry = os.lstat(name, dir_fd=dir_fd)
+            if stat.S_ISDIR(entry.st_mode):
+                enter(os.open(name, _DIR_FLAGS, dir_fd=dir_fd), f"{rel}{name}/")
+            elif stat.S_ISREG(entry.st_mode) and entry.st_nlink == 1:
+                os.chown(name, uid, gid, dir_fd=dir_fd, follow_symlinks=False)
+                # The parent can no longer change, so `name` is still the file lstat saw.
+                os.chmod(name, stat.S_IMODE(entry.st_mode) & 0o755, dir_fd=dir_fd)
+            else:
+                # A hard link may name a file outside the run; a FIFO would block a reader.
+                os.unlink(name, dir_fd=dir_fd)
+                removed.append(f"{rel}{name}")
+    finally:
+        for fd, _, _ in stack:
+            os.close(fd)
+    return removed
+
+
+def _listed(names: list[str]) -> list[str]:
+    listed = sorted(names)
+    if len(listed) > MAX_LISTED_CHANGES:
+        return [*listed[:MAX_LISTED_CHANGES], f"... and {len(listed) - MAX_LISTED_CHANGES} more"]
+    return listed
+
+
+def _estate_changes(copy: Path, expected: dict[str, str], removed: list[str]) -> list[str]:
     """Estate files a tool added, changed or removed in its private copy.
 
     Informational: tools legitimately write caches into HOME. Files the
     freeze does not know are listed without being hashed, so a large cache
-    costs a directory walk only.
+    costs a directory walk only. `removed` holds the links and special files
+    taken out of the copy (relative to its parent, like the freeze keys).
     """
     prefix = copy.name
     try:
@@ -227,10 +332,7 @@ def _estate_changes(copy: Path, expected: dict[str, str]) -> list[str]:
         }
     except (OSError, CorpusError) as exc:
         return [f"<estate copy unreadable after the run: {type(exc).__name__}>"]
-    listed = sorted(changes)
-    if len(listed) > MAX_LISTED_CHANGES:
-        return [*listed[:MAX_LISTED_CHANGES], f"... and {len(listed) - MAX_LISTED_CHANGES} more"]
-    return listed
+    return _listed(list(changes | set(removed)))
 
 
 def _run_isolated(
@@ -266,20 +368,30 @@ def _run_isolated(
         commands = adapter.commands(cfg, unit, copy, out_dir)
     except Exception as exc:  # noqa: BLE001 - adapter bugs must not kill the matrix
         return RunResult(tool, unit, "error", elapsed(), error=f"commands: {exc}", incomplete=True)
-    # As --as-user, the tool writes its outputs and, through HOME, its estate copy.
-    _chown_tree(out_dir, policy.as_user)
-    _chown_tree(workdir, policy.as_user)
     results: list[CommandResult] = []
     status = "ok"
-    for index, command in enumerate(commands):
-        result = run_command(command, index=index, policy=policy, out_dir=out_dir, home=out_dir / "home")
-        results.append(result)
-        if result.timed_out:
-            status = "timeout"
-            break
-        if not result.ok:
-            status = "failed"
-    changes = _estate_changes(copy, expected)
+    removed: list[str] = []
+    removed_from_copy: list[str] = []
+    try:
+        # As --as-user, the tool writes its outputs and, through HOME, its estate copy.
+        _chown_tree(out_dir, policy.as_user)
+        _chown_tree(workdir, policy.as_user)
+        for index, command in enumerate(commands):
+            result = run_command(command, index=index, policy=policy, out_dir=out_dir, home=out_dir / "home")
+            results.append(result)
+            if result.timed_out:
+                status = "timeout"
+                break
+            if not result.ok:
+                status = "failed"
+    finally:
+        if policy.as_user:
+            # Nothing the account wrote is read, or written over, until the runner owns it again.
+            removed = _reclaim(out_dir)
+            removed_from_copy = _reclaim(workdir)
+    changes = _estate_changes(copy, expected, removed_from_copy)
+    # A link where a report belonged would otherwise read as a tool that found nothing.
+    unsafe_report = any(not name.startswith(_SCRATCH_OUTPUTS) for name in removed)
     try:
         normalized = adapter.normalize(unit, out_dir)
     except Exception as exc:  # noqa: BLE001 - adapter bugs must not kill the matrix
@@ -292,6 +404,7 @@ def _run_isolated(
             error=f"normalize: {exc}",
             incomplete=True,
             estate_changes=changes,
+            removed_outputs=_listed(removed),
         )
     if normalized.error and status == "ok":
         status = "failed"
@@ -315,9 +428,20 @@ def _run_isolated(
         error=normalized.error,
         detail=normalized.detail,
         # Whatever a timed-out, failed or erroring run reported is partial.
-        incomplete=normalized.incomplete or status != "ok",
+        incomplete=normalized.incomplete or status != "ok" or unsafe_report,
         estate_changes=changes,
+        removed_outputs=_listed(removed),
     )
+
+
+def _write_result(out_dir: Path, row: RunResult) -> None:
+    dir_fd = os.open(out_dir, _DIR_FLAGS)
+    try:
+        fd = _create_output(dir_fd, "result.json")
+    finally:
+        os.close(dir_fd)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(row.to_dict(), indent=1) + "\n")
 
 
 def run_unit(
@@ -336,7 +460,8 @@ def run_unit(
     The copy must match `baseline` (the estate's `estate_digests`; computed
     from `estate` when omitted) before anything runs. It lives in `workdir`,
     which is created here (a fresh temporary directory by default) and
-    removed afterwards.
+    removed afterwards. Once the directories exist, every outcome, an
+    unexpected exception included, is written to `out_dir/result.json`.
     """
     if out_dir.exists():
         shutil.rmtree(out_dir)
@@ -350,7 +475,7 @@ def run_unit(
     started = time.monotonic()
     try:
         row = _run_isolated(adapter, cfg, unit, estate, out_dir, policy, workdir, baseline, started)
-    except (OSError, CorpusError) as exc:
+    except Exception as exc:  # noqa: BLE001 - one unit's failure is recorded, not raised
         row = RunResult(
             adapter.spec.id,
             unit,
@@ -362,7 +487,8 @@ def run_unit(
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
         shutil.rmtree(out_dir / "tmp", ignore_errors=True)
-    (out_dir / "result.json").write_text(json.dumps(row.to_dict(), indent=1) + "\n", encoding="utf-8")
+    # The account may still own out_dir if the run stopped early: never write by path.
+    _write_result(out_dir, row)
     return row
 
 
@@ -442,6 +568,7 @@ def run_matrix(
         def _run(pair: tuple[Adapter, str]) -> RunResult:
             adapter, unit = pair
             slug = _slug(unit)
+            # No directory can safely be named after this unit, so it has a runs.json row only.
             if not _SAFE_NAME.fullmatch(slug):
                 return RunResult(
                     adapter.spec.id, unit, "error", 0.0, error=f"unsafe unit id {unit!r}", incomplete=True

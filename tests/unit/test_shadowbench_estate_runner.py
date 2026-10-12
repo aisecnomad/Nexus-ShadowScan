@@ -263,7 +263,7 @@ _WRITE_HOME = (
     "(home / '.cache' / 'tool' / 'state.db').write_text('cache')\n"
     "with open(home / '.cursor' / 'mcp.json', 'a') as handle:\n"
     "    handle.write(' ')\n"
-    "pathlib.Path(sys.argv[1]).write_text(json.dumps({'home': str(home)}))\n"
+    "pathlib.Path(sys.argv[1]).write_text(json.dumps({'home': str(home), 'uid': os.getuid()}))\n"
 )
 
 
@@ -526,8 +526,145 @@ def test_as_user_tools_can_write_their_output_and_home(tmp_path: Path) -> None:
             RunPolicy(as_user="nobody", timeout=60),
         )
         assert row.status == "ok", (out_root / "out" / "0.stderr.txt").read_text()
-        assert (out_root / "out" / "seen.json").stat().st_uid == user.pw_uid
+        seen = out_root / "out" / "seen.json"
+        assert json.loads(seen.read_text())["uid"] == user.pw_uid
+        # The runner takes its output back before reading it.
+        assert seen.stat().st_uid == os.geteuid() and (out_root / "out").stat().st_uid == os.geteuid()
         assert "artifacts/home/dev-x/dana/.cache/tool/state.db" in row.estate_changes
+    finally:
+        shutil.rmtree(out_root, ignore_errors=True)
+
+
+# The tool plants links where the runner writes next: its result.json and the next capture file.
+_PLANT = "import os, sys\nos.symlink(sys.argv[1], 'result.json')\nos.symlink(sys.argv[2], '1.stdout.txt')\n"
+# The tool swaps its own capture for a link to a file the capture limit would cut.
+_SWAP = "import os, sys\nos.unlink(sys.argv[1])\nos.symlink(sys.argv[2], sys.argv[1])\n"
+
+
+def _victims(where: Path) -> dict[Path, bytes]:
+    where.mkdir()
+    victims = {where / name: f"{name} must stay intact\n".encode() * 8 for name in ("a", "b", "c")}
+    for path, data in victims.items():
+        path.write_bytes(data)
+        path.chmod(0o600)
+    return victims
+
+
+def _planting(python: str, victims: list[Path]) -> list[Command]:
+    return [
+        Command((python, "-c", _PLANT, str(victims[0]), str(victims[1]))),
+        Command((python, "-c", "print('attacker-controlled line')")),
+        Command((python, "-c", _SWAP, "2.stdout.txt", str(victims[2]))),
+    ]
+
+
+def test_the_runner_never_writes_through_links_in_the_output_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runner wrote result.json and capture files by path, through whatever stood there.
+
+    With --as-user the account owns the output directory, so that let a tool
+    make the root runner overwrite or truncate any file.
+    """
+    _, artifacts, _ = _make_estate(tmp_path)
+    victims = _victims(tmp_path / "victims")
+    monkeypatch.setattr(runner, "MAX_CAPTURE_BYTES", 40)
+    out = tmp_path / "out"
+    row = runner.run_unit(
+        _Scripted(lambda unit, estate, out_dir: _planting(sys.executable, list(victims))),
+        CFG,
+        "home:dev-x",
+        artifacts,
+        out,
+        RunPolicy(timeout=60),
+    )
+    assert {path: path.read_bytes() for path in victims} == victims
+    assert row.status == "ok", row.commands
+    assert not (out / "result.json").is_symlink()
+    assert json.loads((out / "result.json").read_text())["status"] == "ok"
+    assert (out / "1.stdout.txt").read_text() == "attacker-controlled line\n"
+
+
+def test_an_unexpected_error_still_writes_result_json(tmp_path: Path) -> None:
+    """Only OSError and CorpusError were caught: an unknown --as-user account left no result.json."""
+    _, artifacts, _ = _make_estate(tmp_path)
+    adapter = _Scripted(lambda unit, estate, out_dir: [Command((sys.executable, "-c", "pass"))])
+    out = tmp_path / "out"
+    row = runner.run_unit(adapter, CFG, "home:dev-x", artifacts, out, RunPolicy(as_user="no-such-user-xyz"))
+    assert row.status == "error" and row.incomplete and row.error and row.error.startswith("KeyError")
+    assert json.loads((out / "result.json").read_text())["error"] == row.error
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="no FIFOs on this platform")
+def test_reclaim_removes_links_and_special_files_without_following_them(tmp_path: Path) -> None:
+    top = tmp_path / "out"
+    (top / "sub" / "deep").mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("keep", encoding="utf-8")
+    (top / "report.json").write_text("{}", encoding="utf-8")
+    (top / "link").symlink_to(outside)
+    (top / "sub" / "dirlink").symlink_to(tmp_path, target_is_directory=True)
+    os.link(outside, top / "sub" / "hard")
+    os.mkfifo(top / "sub" / "deep" / "pipe")
+    (top / "sub").chmod(0o777)
+    (top / "report.json").chmod(0o666)
+
+    assert runner._reclaim(top) == ["link", "sub/deep/pipe", "sub/dirlink", "sub/hard"]
+    assert outside.read_text(encoding="utf-8") == "keep" and outside.stat().st_nlink == 1
+    assert (top / "report.json").read_text(encoding="utf-8") == "{}"
+    assert stat.S_IMODE((top / "sub").stat().st_mode) == 0o755
+    assert stat.S_IMODE((top / "report.json").stat().st_mode) == 0o644
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid")
+    or os.geteuid() != 0
+    or not shutil.which("setpriv")
+    or not Path("/usr/bin/python3").exists()
+    or _nobody() is None,
+    reason="needs root, setpriv, /usr/bin/python3 and a 'nobody' account",
+)
+def test_an_as_user_tool_cannot_make_the_root_runner_write_or_read_through_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The --as-user account owned out_dir; root then wrote, truncated and read through its links."""
+    _, artifacts, _ = _make_estate(tmp_path)
+    victims = _victims(tmp_path / "victims")
+    secret = tmp_path / "victims" / "secret"
+    secret.write_text("root-only-secret-q9\n", encoding="utf-8")
+    secret.chmod(0o600)
+    monkeypatch.setattr(runner, "MAX_CAPTURE_BYTES", 40)
+    out_root = Path(tempfile.mkdtemp(prefix="estate-as-user-"))
+    try:
+        out_root.chmod(0o755)
+        out = out_root / "out"
+
+        def make(unit: str, estate: Path, out_dir: Path) -> list[Command]:
+            plant_report = f"import os; os.symlink({str(secret)!r}, 'report.json')"
+            planted = _planting("/usr/bin/python3", list(victims))
+            return [*planted, Command(("/usr/bin/python3", "-c", plant_report))]
+
+        def normalize(unit: str, out_dir: Path) -> Normalized:
+            report = out_dir / "report.json"
+            if not report.exists():
+                return Normalized(error="report.json missing")
+            return Normalized(predictions=[Prediction("mcp:server", report.read_text(), "endpoint")])
+
+        row = runner.run_unit(
+            _Scripted(make, normalize),
+            CFG,
+            "home:dev-x",
+            artifacts,
+            out,
+            RunPolicy(as_user="nobody", timeout=60),
+        )
+        assert [c.ok for c in row.commands] == [True, True, True, True], (out / "0.stderr.txt").read_text()
+        assert {path: path.read_bytes() for path in victims} == victims
+        assert row.removed_outputs == ["2.stdout.txt", "report.json", "result.json"]
+        assert row.incomplete and row.predictions == []
+        assert "root-only-secret-q9" not in (out / "result.json").read_text()
+        assert (out / "result.json").stat().st_uid == os.geteuid()
+        assert (out / "1.stdout.txt").read_text() == "attacker-controlled line\n"
     finally:
         shutil.rmtree(out_root, ignore_errors=True)
 
