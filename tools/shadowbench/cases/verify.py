@@ -1,17 +1,17 @@
-"""Verify a committed corpus: it loads, validates, and matches the generator at its recorded seed.
+"""Verify a corpus: it loads, validates, and its cases are what the generator builds at its recorded seed.
 
-``python -m tools.shadowbench.cases verify --corpus corpus.json [--regenerate]``
+``python -m tools.shadowbench.cases verify --corpus corpus.json``
 
 Prints the corpus SHA-256 and the generator digest recorded in the corpus next
-to the digest of the current sources. Without ``--regenerate`` the corpus
-passes (exit 0) only when the two digests are equal; otherwise verify exits 1
-and asks for ``--regenerate``. With ``--regenerate`` the cases are rebuilt from
-the current sources at the recorded seed and per-surface count, and the
-rebuilt case list is compared with the stored one after both are parsed as
-JSON (the header, ``created`` stamp and formatting are not compared). Identical
-cases pass even when the digests differ, which happens whenever a source file
-moved or changed without changing what it builds; verify says so. Any
-difference exits 1.
+to the digest of the current sources, then rebuilds the cases from the current
+sources at the recorded seed and per-surface count and compares the rebuilt
+case list with the stored one after both are parsed as JSON (the header,
+``created`` stamp and formatting are not compared). The cases are always
+rebuilt, which takes about a second: a matching digest only says the sources
+are unchanged, not that nobody edited the cases. Identical cases pass (exit 0)
+even when the digests differ, which happens whenever a source file moved or
+changed without changing what it builds; verify says so. Any difference exits
+1. ``--regenerate`` is accepted for older commands and changes nothing.
 """
 
 from __future__ import annotations
@@ -52,7 +52,11 @@ def _first_difference(rebuilt: list[Any], stored: list[Any]) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--corpus", type=Path, required=True)
-    ap.add_argument("--regenerate", action="store_true")
+    ap.add_argument(
+        "--regenerate",
+        action="store_true",
+        help="accepted for older commands; verify always rebuilds and compares the cases",
+    )
     args = ap.parse_args(argv)
     corpus = load_corpus(args.corpus)
     print(f"cases {len(corpus.cases)}; seed {corpus.seed}; corpus sha256 {corpus_digest(args.corpus)}")
@@ -61,11 +65,6 @@ def main(argv: list[str] | None = None) -> int:
     same_sources = current == corpus.generator_digest
     if not same_sources:
         print("generator sources changed since this corpus was written")
-    if not args.regenerate:
-        if same_sources:
-            return 0
-        print("rerun with --regenerate to check whether the current sources still build the same cases")
-        return 1
     n = per_surface(corpus)
     # Round-trip through JSON so the rebuilt cases compare exactly as they would be written.
     rebuilt = json.loads(json.dumps([c.to_json() for c in build(corpus.seed, n)], ensure_ascii=False))

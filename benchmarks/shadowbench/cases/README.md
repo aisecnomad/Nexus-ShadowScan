@@ -207,16 +207,17 @@ harness moved to `tools/shadowbench/cases/` and before the digest covered the
 code corpus, so it no longer matches the current sources.
 
 `python -m tools.shadowbench.cases verify --corpus corpus.json` loads and
-validates the corpus and compares the recorded digest with the current one. It
-exits 0 when they match and 1 otherwise, with a hint to rerun with
-`--regenerate`. With `--regenerate` it rebuilds the cases from the current
-sources at the recorded seed and per-surface count and compares the parsed
-case lists; the header, the `created` stamp and the formatting are not
-compared. Identical cases exit 0 even when the digests differ, and verify says
-that the sources changed but build the same cases; any difference exits 1 and
-names the first differing case (or, when one list is a prefix of the other,
-the two case counts). The committed corpus passes only with
-`--regenerate`. Anyone can use it to confirm that the committed cases are what
+validates the corpus, prints the recorded and the current generator digest,
+then rebuilds the cases from the current sources at the recorded seed and
+per-surface count and compares the parsed case lists; the header, the
+`created` stamp and the formatting are not compared. It always rebuilds,
+because a matching digest says only that the sources are unchanged, not that
+nobody edited the cases. Identical cases exit 0 even when the digests differ,
+and verify says that the sources changed but build the same cases; any
+difference exits 1 and names the first differing case (or, when one list is a
+prefix of the other, the two case counts). `--regenerate` is still accepted
+and changes nothing. The committed corpus passes, with that note about its
+digest. Anyone can use it to confirm that the committed cases are what
 the current generator builds, and can generate a fresh corpus at another seed
 to test for overfitting to this one. The run manifest names the corpus hash,
 the generator digest, the platform and each tool's version or commit;
@@ -364,7 +365,10 @@ track:
 * `verify --regenerate` had inferred a per-surface count of 38 for the
   committed corpus, rebuilt a smaller corpus and reported a difference,
   although the code still builds the committed cases. It now infers 40 and
-  compares the parsed case lists.
+  compares the parsed case lists. Plain `verify` (without `--regenerate`)
+  exited 0 whenever the recorded generator digest matched, without looking
+  at the cases, so a corpus whose truth was edited consistently passed; it
+  now always rebuilds and compares the cases.
 * The runner, the stage and the adapters were hardened for future runs: tools
   now run as uid 65534 with `/root` and `/home` hidden, and adapters fail
   closed on partial or malformed output. The committed rows were recorded

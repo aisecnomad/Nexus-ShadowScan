@@ -63,11 +63,14 @@ def test_committed_corpus_per_surface_is_inferred() -> None:
     assert verify.per_surface(corpus) == 40
 
 
-def test_digest_mismatch_without_regenerate_fails_with_a_hint(capsys: pytest.CaptureFixture[str]) -> None:
+def test_committed_corpus_verifies_without_regenerate(capsys: pytest.CaptureFixture[str]) -> None:
+    """verify always rebuilds the cases, so the committed corpus passes on its cases, not its digest."""
     corpus = load_corpus(CORPUS)
     assert corpus.generator_digest != generate.generator_digest()
-    assert verify.main(["--corpus", str(CORPUS)]) == 1
-    assert "rerun with --regenerate" in capsys.readouterr().out
+    assert verify.main(["--corpus", str(CORPUS)]) == 0
+    out = capsys.readouterr().out
+    assert "generator sources changed since this corpus was written" in out
+    assert "regenerated cases are identical (per-surface 40)" in out
 
 
 def test_every_committed_case_validates(stored: dict[str, Any]) -> None:
@@ -117,28 +120,54 @@ def test_load_rejects_a_malformed_per_surface(
         load_corpus(path)
 
 
-def test_regenerate_fails_when_a_case_was_edited(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize("flags", [[], ["--regenerate"]])
+def test_verify_fails_when_a_case_was_edited(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flags: list[str]
+) -> None:
     path = _small_corpus(tmp_path, capsys)
     data = json.loads(path.read_text(encoding="utf-8"))
     data["cases"][3]["rationale"] += " (edited)"
     path.write_text(json.dumps(data), encoding="utf-8")
-    assert verify.main(["--corpus", str(path), "--regenerate"]) == 1
+    assert verify.main(["--corpus", str(path), *flags]) == 1
     out = capsys.readouterr().out
     assert "DIFFER" in out
     assert data["cases"][3]["id"] in out
 
 
-def test_regenerate_passes_a_moved_generator_and_says_so(
+def test_plain_verify_compares_the_cases_when_the_digest_matches(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Plain verify returned 0 on a matching digest without looking at the cases.
+
+    Moving an expected entity into the decoys, with the case label fixed up so the corpus still
+    loads, passed as an integrity check; only ``--regenerate`` caught it.
+    """
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["generator_digest"] == generate.generator_digest()
+    case = next(c for c in data["cases"] if c["surface"] == "identity" and c["truth"]["expected"])
+    moved = case["truth"]["expected"].pop(0)
+    case["truth"]["decoys"] = sorted([*case["truth"]["decoys"], moved["key"]])
+    case["label"] = Case.from_json({k: v for k, v in case.items() if k != "label"}).label
+    path.write_text(json.dumps(data), encoding="utf-8")
+    load_corpus(path)  # the edit is self-consistent: only rebuilding the cases can catch it
+    assert verify.main(["--corpus", str(path)]) == 1
+    out = capsys.readouterr().out
+    assert "regenerated cases DIFFER" in out
+    assert case["id"] in out
+
+
+def test_verify_passes_a_moved_generator_and_says_so(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = _small_corpus(tmp_path, capsys)
     data = json.loads(path.read_text(encoding="utf-8"))
     data["generator_digest"] = "0" * 64
     path.write_text(json.dumps(data), encoding="utf-8")
-    assert verify.main(["--corpus", str(path)]) == 1
-    assert verify.main(["--corpus", str(path), "--regenerate"]) == 0
-    out = capsys.readouterr().out
-    assert "sources changed since the corpus was written but produce the same cases" in out
+    for flags in ([], ["--regenerate"]):
+        assert verify.main(["--corpus", str(path), *flags]) == 0
+        out = capsys.readouterr().out
+        assert "sources changed since the corpus was written but produce the same cases" in out
 
 
 def test_generator_digest_covers_the_code_corpus(monkeypatch: pytest.MonkeyPatch) -> None:

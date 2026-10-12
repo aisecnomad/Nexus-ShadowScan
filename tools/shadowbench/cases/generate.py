@@ -639,7 +639,7 @@ def generator_digest() -> str:
 
     That covers the generator, its families, the ``tools/benchmark`` families it reuses and the
     code-surface corpus the code cases are drawn from. Paths are part of the digest, so moving
-    the sources changes it even when they still build the same cases (``verify --regenerate``).
+    the sources changes it even when they still build the same cases (``verify`` says so).
     """
     here = Path(__file__).resolve().parent
     files = [
