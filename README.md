@@ -479,6 +479,11 @@ for where the code, tests, docs, tooling and benchmarks live.
   and log provenance. See [evaluation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/evaluation.md) and
   [rollout acceptance](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#rollout-acceptance) before using a risk
   threshold as a production gate.
+- **Benchmarks against other tools:** The
+  [benchmarks](https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/README.md),
+  including the nine-surface ShadowBench, compare ShadowScan with other
+  discovery tools on inputs and labels the same maintainer wrote. They show
+  behaviour on those inputs, not field accuracy, and none is independent.
 - **Assurance results:** The baseline and later results use a frozen corpus of
   42 public files (30 negatives), labeled by two AI reviewers before evaluation.
   The labelers share model capabilities, so these are not independent human
