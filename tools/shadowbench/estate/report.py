@@ -83,9 +83,10 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
     lines.append(
         "In-scope metrics count only the entities and expected facts on the surfaces a tool "
         "declares: entity TP/FP/TN/FN are positives detected, negatives flagged, negatives left "
-        "clean and positives missed among those entities. The estate-wide columns charge every "
-        "tool for every positive and every expected fact on all nine surfaces. A tool marked "
-        "incomplete had at least one run that did not complete; see Run status."
+        "clean and positives missed among those entities. A negative counts as a true negative only "
+        "when a complete run of the tool reached it. The estate-wide columns charge every tool for "
+        "every positive and every expected fact on all nine surfaces. A tool marked incomplete had "
+        "at least one run that did not complete; see Run status."
     )
     lines.append("")
 
@@ -94,52 +95,64 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
     lines.append("")
     lines.append(
         "| Tool | Units run | Statuses | Incomplete or missing units | Commands | "
-        "Non-zero exits the adapter accepts | Unscored in-scope entities |"
+        "Non-zero exits the adapter accepts | Unscored in-scope entities | "
+        "In-scope entities no complete run reached |"
     )
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|")
     for _tool_id, data in tools:
         statuses = ", ".join(f"{count} {status}" for status, count in data["runs"].items()) or "none"
-        gaps = ", ".join(f"{gap['unit']} ({gap['reason']})" for gap in data["incomplete_units"]) or "none"
         lines.append(
-            f"| {data['name']} | {data['units']} | {statuses} | {gaps} "
+            f"| {data['name']} | {data['units']} | {statuses} | {_gaps_cell(data)} "
             f"| {data['commands']['total']} | {data['commands']['nonzero_exit_accepted']} "
-            f"| {len(_unscored_in_scope(data))} |"
+            f"| {len(_unscored_in_scope(data))} | {len(_not_reached_in_scope(data))} |"
         )
     lines.append("")
     lines.append(
         "A run is incomplete when its status is not ok, the adapter reported it incomplete, it "
-        "recorded an error, or a command timed out or exited with a code the adapter does not "
-        "declare as success; a code or home unit with no run is missing. Every entity an "
-        "incomplete or missing run reaches is unscored: its positives count as missed and its "
-        "negatives earn no true negative, so a failed run never reads as a clean result. Non-zero "
-        "exits an adapter declares as success are counted here but not treated as failures; check "
-        "the run's stderr captures before relying on a tool whose commands mostly exit non-zero."
+        "recorded an error, it ran no command, a command timed out or exited with a code the "
+        "adapter does not declare as success, or every one of its commands exited non-zero and it "
+        "produced no output. A code or home unit that labels an entity on the tool's declared "
+        "surfaces is missing when the tool has no run for it and no whole-estate run. Every entity "
+        "an incomplete or missing run reaches is unscored: its positives count as missed and its "
+        "negatives earn no true negative, so a failed run never reads as a clean result. An entity "
+        "that no complete run reaches, such as an estate export outside every home tree a per-home "
+        "tool scans, is not reached: its positives count as missed and its negatives earn no true "
+        "negative either. Other non-zero exits an adapter declares as success are counted here but "
+        "not treated as failures. runs.json records exit codes but no stderr, so whether such an "
+        'exit meant "nothing found" or a failure cannot be checked from the published results; that '
+        "is why a run whose commands all exited non-zero without output counts as incomplete."
     )
     lines.append("")
 
     lines.append("## Attribution")
     lines.append("")
     lines.append(
-        "| Tool | Predictions | Tolerated | Attributed | Ambiguous | Unattributed | "
-        "Outside declared surfaces |"
+        "| Tool | Predictions | Tolerated | Attributed | Matched several entities | Ambiguous | "
+        "Unattributed | Outside declared surfaces |"
     )
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|")
     for _tool_id, data in tools:
         counts = data["predictions"]
         lines.append(
             f"| {data['name']} | {counts['total']} | {counts['tolerated']} | {counts['attributed']} "
-            f"| {counts['ambiguous']} | {counts['unattributed']} | {counts['out_of_scope']} |"
+            f"| {counts['multi_match']} | {counts['ambiguous']} | {counts['unattributed']} "
+            f"| {counts['out_of_scope']} |"
         )
     lines.append("")
     lines.append(
         "A prediction is attributed only to an entity on its own surface that its run can reach "
         "(for a per-repository or per-home run, the entities with artifacts in that repository or "
-        "home tree). Among entities whose anchor appears in the prediction, one that expects the "
-        "predicted fact wins, then one whose expected or tolerated facts share its category. A "
-        "prediction still matching several entities goes to the longest anchor, then the first "
-        "entity id in sort order, and is counted as ambiguous. Tolerated counts predictions dropped "
-        "by a corpus-level tolerated pair. Unattributed predictions are false positives. "
-        "Predictions outside the declared surfaces count in the estate-wide numbers only."
+        "home tree). When the anchors of several positives appear in a prediction, one that expects "
+        "the predicted fact wins, then one whose expected or tolerated facts share its category. "
+        "When a control or near-miss is among them, that preference does not apply, so a flag on a "
+        "negative is never handed to a positive. What is still tied goes to the longest anchor, "
+        "then the first entity id in sort order. Every prediction matching several entities is "
+        "listed under its tool below with the rule that chose its owner; it is ambiguous when the "
+        "anchor length or the id chose. A per-repository or per-home prediction that names no "
+        "anchor goes to the one entity of that repository or home that expects its fact, if there "
+        "is exactly one. Tolerated counts predictions dropped by a corpus-level tolerated pair. "
+        "Unattributed predictions are false positives. Predictions outside the declared surfaces "
+        "count in the estate-wide numbers only."
     )
     lines.append("")
 
@@ -178,12 +191,15 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
                 cells.append("out of scope")
             elif row.get("flagged"):
                 cells.append("flagged")
+            elif row.get("unscored", True):
+                cells.append("unscored")
             else:
-                cells.append("unscored" if row.get("unscored", True) else "clean")
+                cells.append("clean" if row.get("reached", False) else "not reached")
         lines.append(f"| {entity.id} | {entity.surface} | {entity.klass} | " + " | ".join(cells) + " |")
     lines.append("")
     lines.append(
-        "An unscored negative was reached by an incomplete or missing run and is not a true negative."
+        "An unscored negative was reached by an incomplete or missing run, and no complete run of the "
+        "tool reached a negative marked not reached; neither is a true negative."
     )
     lines.append("")
 
@@ -224,17 +240,28 @@ def render(metrics: dict[str, Any], corpus: EstateCorpus, *, title: str) -> str:
                 f"as missed, negatives earn no true negative): {', '.join(unscored)}"
             )
             lines.append("")
-        ambiguous = data.get("ambiguous", [])
-        if ambiguous:
-            lines.append("Ambiguous attributions (several entities matched equally; owner chosen by rule):")
+        not_reached = _not_reached_in_scope(data)
+        if not_reached:
+            lines.append(
+                "In-scope entities no complete run reached (positives count as missed, negatives earn "
+                f"no true negative): {', '.join(not_reached)}"
+            )
             lines.append("")
-            for item in ambiguous[:15]:
+        multi = data.get("multi_match", [])
+        if multi:
+            lines.append(
+                f"Predictions matching several entities: {data['predictions']['multi_match']}, of which "
+                f"{data['predictions']['ambiguous']} ambiguous (owner chosen by anchor length or entity "
+                "id, not by the entities' labels):"
+            )
+            lines.append("")
+            for item in multi[:15]:
                 lines.append(
-                    f"- `{item['fact']}` → {item['entity']} (candidates: {', '.join(item['candidates'])}) "
-                    f"— {item['text']}"
+                    f"- `{item['fact']}` → {item['entity']} by {item['rule']} "
+                    f"(candidates: {', '.join(item['candidates'])}) — {item['text']}"
                 )
-            if len(ambiguous) > 15:
-                lines.append(f"- … and {len(ambiguous) - 15} more")
+            if data["predictions"]["multi_match"] > 15:
+                lines.append(f"- … and {data['predictions']['multi_match'] - 15} more")
             lines.append("")
         extras = data.get("unattributed", [])
         if extras:
@@ -254,6 +281,24 @@ def _unscored_in_scope(data: dict[str, Any]) -> list[str]:
         for entity_id, row in data["per_entity"].items()
         if row.get("unscored", True) and row["surface"] in data["surfaces"]
     ]
+
+
+def _not_reached_in_scope(data: dict[str, Any]) -> list[str]:
+    return [
+        entity_id
+        for entity_id, row in data["per_entity"].items()
+        if not row.get("unscored", True)
+        and not row.get("reached", False)
+        and row["surface"] in data["surfaces"]
+    ]
+
+
+def _gaps_cell(data: dict[str, Any]) -> str:
+    """Incomplete or missing units, grouped by reason."""
+    by_reason: dict[str, list[str]] = {}
+    for gap in data["incomplete_units"]:
+        by_reason.setdefault(gap["reason"], []).append(gap["unit"])
+    return "; ".join(f"{reason}: {', '.join(units)}" for reason, units in by_reason.items()) or "none"
 
 
 def _runs_cell(data: dict[str, Any]) -> str:

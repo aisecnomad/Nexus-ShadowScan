@@ -12,16 +12,21 @@ Attribution (`attribute`) gives each prediction at most one owning entity:
    entities with an artifact inside the unit's tree, such as an MCP server
    configured in several home trees.
 3. Among candidates whose anchor appears in the prediction's text
-   (case-insensitive substring), entities that expect the predicted fact
-   (exactly, or by category for a `generic` value) beat entities whose
-   expected or tolerated facts share its category, which beat the rest.
-   When more than one entity is left, the longest matching anchor and then
-   the entity id pick the owner, and the prediction is counted and listed
-   as ambiguous.
+   (case-insensitive substring), when all of them are positives, an entity
+   that expects the predicted fact (exactly, or by category for a
+   `generic` value) beats one whose expected or tolerated facts share its
+   category, which beats the rest. When a control or near-miss is among
+   them, that preference does not apply, so a flag on a negative is never
+   handed to a positive whose anchor merely co-occurs. Whatever is still
+   tied goes to the longest matching anchor, then the entity id. Every
+   prediction whose anchors match more than one candidate is recorded with
+   the candidates and the rule that chose its owner, and it is counted as
+   ambiguous when the anchor length or the id chose.
 4. When no candidate's anchor matches and the run is unit-bound, the
-   prediction falls back to the one candidate that expects the fact:
-   inventory tools echo client names, not the corpus's anchors. With no
-   such candidate, or several, it stays unattributed.
+   prediction falls back to the one candidate labeled with the run's own
+   unit that expects the fact: inventory tools echo client names, not the
+   corpus's anchors. Estate-wide entities take no fallback. With no such
+   candidate, or several, the prediction stays unattributed.
 
 An attributed prediction takes its entity's surface, so it is in scope
 exactly when the tool declares that surface; an unattributed prediction is
@@ -30,27 +35,37 @@ placed at all). Predictions outside the declared surfaces count in the
 estate-wide numbers only and are reported as out of scope, never dropped.
 
 Completeness: a run row is incomplete when its status is not `ok`, the
-adapter flagged it incomplete, it recorded an error, or any of its commands
-timed out or exited with a code the adapter did not declare as success
-(the runner records that as the command's `ok`). A code or home unit the
-corpus labels is missing for a tool that ran other units of that kind but
-has no row for it, and a tool with no rows at all is missing everywhere.
-Every entity an incomplete or missing run reaches is *unscored* for the
-tool: its expected facts count as missed, a positive is not detected, and a
-negative earns no true negative (a flag on it is still a false positive).
-An incomplete run never reads as a clean negative. Non-zero exits an
-adapter declares as success are counted and reported, not failed.
+adapter flagged it incomplete, it recorded an error, it ran no command, any
+of its commands timed out or exited with a code the adapter did not declare
+as success (the runner records that as the command's `ok`), or every one of
+its commands exited non-zero and it produced no output: the adapter
+accepted those exits, but "nothing found" cannot then be told from a
+failure. A code or home unit that labels an entity on the tool's declared
+surfaces is missing when the tool has no row for it and no whole-estate
+row, and a tool with no rows at all is missing everywhere. Every entity an
+incomplete or missing run reaches is *unscored* for the tool: its expected
+facts count as missed, a positive is not detected, and a negative earns no
+true negative (a flag on it is still a false positive). An entity that no
+complete run reaches is *not reached*: a positive there is missed and a
+negative earns no true negative. An incomplete run never reads as a clean
+negative. Other non-zero exits an adapter declares as success are counted
+and reported, not failed.
 
-Scoring then mirrors the code-surface benchmark:
+Scoring then uses the code-surface benchmark's value matching, except that
+a surplus generic earns no second true positive here (the code-surface
+scorer credits one):
 
 - value level: exact facts, with `<category>:generic` consuming one expected
-  fact of its category; tolerated facts are dropped before scoring; facts a
-  tool reports outside the taxonomy never reach the scorer (adapters drop
-  them). Unattributed predictions are false positives.
+  fact of its category (a surplus generic on an expected category that is
+  already matched is neither charged nor credited); tolerated facts are
+  dropped before scoring; facts a tool reports outside the taxonomy never
+  reach the scorer (adapters drop them). Unattributed predictions are false
+  positives.
 - entity level, in scope: only entities on the tool's declared surfaces. A
   positive is detected when an attributed prediction matches an expected
   fact; a control or near-miss is flagged by any attributed prediction.
-  Unflagged, scored negatives are true negatives.
+  Unflagged negatives that a complete run reached and no incomplete or
+  missing run reached are true negatives.
 - estate-wide: positives detected out of every positive, and value recall
   charged for every expected fact on all nine surfaces.
 - the shadow layer scores registry reconciliation for tools that emit a
@@ -71,6 +86,15 @@ from tools.shadowbench.estate.corpus import Entity, EstateCorpus
 _ROUND = 4
 _UNIT_KINDS = ("code", "home")
 MISSING_RUN = "no run recorded"
+NO_OUTPUT = "every command exited non-zero and the run produced no output"
+
+# Rules that pick the owner of a prediction whose anchors match several entities.
+RULE_FACT = "expects the fact"
+RULE_CATEGORY = "shares the fact's category"
+RULE_ANCHOR = "longest anchor"
+RULE_ID = "entity id"
+#: Rules that choose by how the anchors read rather than by the entities' labels.
+AMBIGUOUS_RULES = frozenset({RULE_ANCHOR, RULE_ID})
 
 
 @dataclass
@@ -182,8 +206,32 @@ def _preference(entity: Entity, fact: str) -> int:
 class Attribution:
     entity_predictions: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     unattributed: list[dict[str, Any]] = field(default_factory=list)
-    ambiguous: list[dict[str, Any]] = field(default_factory=list)
+    #: Predictions whose anchors matched several candidates, with the rule that chose.
+    multi_match: list[dict[str, Any]] = field(default_factory=list)
     tolerated: int = 0
+
+    @property
+    def ambiguous(self) -> list[dict[str, Any]]:
+        """Multiple matches whose owner the anchors chose, not the entities' labels."""
+        return [item for item in self.multi_match if item["rule"] in AMBIGUOUS_RULES]
+
+
+def choose_owner(matched: list[tuple[Entity, int]], fact: str) -> tuple[Entity, str]:
+    """The owner among anchor-matching (entity, longest anchor) pairs, and the rule that chose it.
+
+    The preference for an entity that expects the fact, or its category, applies
+    only among positives: a control or near-miss has no expected facts, so the
+    preference would hand every flag on it to a positive whose anchor co-occurs.
+    """
+    pool = matched
+    if all(entity.klass == "positive" for entity, _ in matched):
+        best = min(_preference(entity, fact) for entity, _ in matched)
+        pool = [(entity, length) for entity, length in matched if _preference(entity, fact) == best]
+        if len(pool) == 1 and best < 2:
+            return pool[0][0], RULE_FACT if best == 0 else RULE_CATEGORY
+    longest = max(length for _, length in pool)
+    top = sorted((entity for entity, length in pool if length == longest), key=lambda entity: entity.id)
+    return top[0], RULE_ANCHOR if len(top) == 1 else RULE_ID
 
 
 def attribute(corpus: EstateCorpus, predictions: list[dict[str, Any]]) -> Attribution:
@@ -199,27 +247,28 @@ def attribute(corpus: EstateCorpus, predictions: list[dict[str, Any]]) -> Attrib
         surfaces = placement(prediction)
         unit = str(prediction.get("unit", "estate"))
         reachable = [e for e in corpus.entities if e.surface in surfaces and reaches(unit, e)]
-        ranked: list[tuple[int, int, str, Entity]] = []
+        matched: list[tuple[Entity, int]] = []
         for entity in reachable:
             lengths = [len(anchor) for anchor in entity.anchors if anchor in text]
             if lengths:
-                ranked.append((_preference(entity, fact), -max(lengths), entity.id, entity))
+                matched.append((entity, max(lengths)))
         owner: Entity | None = None
-        if ranked:
-            ranked.sort(key=lambda item: (item[0], item[1], item[2]))
-            best = [item for item in ranked if item[0] == ranked[0][0]]
-            owner = best[0][3]
-            if len(best) > 1:
-                result.ambiguous.append(
+        if matched:
+            owner, rule = choose_owner(matched, fact)
+            if len(matched) > 1:
+                result.multi_match.append(
                     {
                         "fact": fact,
                         "text": str(prediction.get("text", ""))[:160],
                         "entity": owner.id,
-                        "candidates": [item[2] for item in best],
+                        "rule": rule,
+                        "candidates": sorted(entity.id for entity, _ in matched),
                     }
                 )
         elif unit_bound(unit):
-            candidates = [entity for entity in reachable if _expects(entity, fact)]
+            # Only the run's own unit: an estate-wide entity reached through the unit's
+            # tree (an MCP server in several homes) must be named by its anchor.
+            candidates = [entity for entity in reachable if entity.unit == unit and _expects(entity, fact)]
             if len(candidates) == 1:
                 owner = candidates[0]
         if owner is None:
@@ -241,6 +290,8 @@ def incomplete_reason(row: dict[str, Any]) -> str | None:
     commands = row.get("commands")
     if not isinstance(commands, list):
         return "no command records"
+    if not commands:
+        return "no commands run"
     for command in commands:
         if not isinstance(command, dict):
             return "malformed command record"
@@ -248,36 +299,56 @@ def incomplete_reason(row: dict[str, Any]) -> str | None:
             return "command timed out"
         if command.get("ok") is not True:
             return f"command exit code {command.get('exit_code')} is not one the adapter declares as success"
+    if all(command.get("exit_code") != 0 for command in commands) and not (
+        row.get("predictions") or row.get("raw_count")
+    ):
+        return NO_OUTPUT
     return None
 
 
-def _completeness(
-    corpus: EstateCorpus, rows: list[dict[str, Any]]
-) -> tuple[list[dict[str, str]], set[str], int, int]:
-    """Incomplete and missing units, the entity ids they leave unscored, and
-    the command count and non-zero exits the adapter accepted."""
+@dataclass
+class Completeness:
+    """Incomplete and missing units, the entity ids they leave unscored, the
+    entity ids some complete run reaches, and the command tallies."""
+
+    gaps: list[dict[str, str]]
+    unscored: set[str]
+    reached: set[str]
+    commands: int = 0
+    accepted_nonzero: int = 0
+
+
+def _completeness(corpus: EstateCorpus, surfaces: frozenset[str], rows: list[dict[str, Any]]) -> Completeness:
     if not rows:
-        return [{"unit": "all", "reason": MISSING_RUN}], {entity.id for entity in corpus.entities}, 0, 0
+        everything = {entity.id for entity in corpus.entities}
+        return Completeness([{"unit": "all", "reason": MISSING_RUN}], everything, set())
     gaps: dict[str, str] = {}
-    commands = accepted_nonzero = 0
+    complete_units: set[str] = set()
+    result = Completeness([], set(), set())
     for row in rows:
         unit = str(row.get("unit", "estate"))
         reason = incomplete_reason(row)
-        if reason is not None:
+        if reason is None:
+            complete_units.add(unit)
+        else:
             gaps.setdefault(unit, reason)
         for command in row.get("commands") or []:
             if isinstance(command, dict):
-                commands += 1
+                result.commands += 1
                 if command.get("ok") is True and command.get("exit_code") not in (0, None):
-                    accepted_nonzero += 1
+                    result.accepted_nonzero += 1
     seen = {str(row.get("unit", "estate")) for row in rows}
-    kinds = {unit.partition(":")[0] for unit in seen if unit_bound(unit)}
+    if all(unit_bound(unit) for unit in seen):
+        for entity in corpus.entities:
+            if entity.surface in surfaces and unit_bound(entity.unit) and entity.unit not in seen:
+                gaps.setdefault(entity.unit, MISSING_RUN)
+    result.gaps = [{"unit": unit, "reason": reason} for unit, reason in sorted(gaps.items())]
     for entity in corpus.entities:
-        if unit_bound(entity.unit) and entity.unit.partition(":")[0] in kinds and entity.unit not in seen:
-            gaps.setdefault(entity.unit, MISSING_RUN)
-    unscored = {entity.id for entity in corpus.entities if any(reaches(unit, entity) for unit in gaps)}
-    listed = [{"unit": unit, "reason": reason} for unit, reason in sorted(gaps.items())]
-    return listed, unscored, commands, accepted_nonzero
+        if any(reaches(unit, entity) for unit in gaps):
+            result.unscored.add(entity.id)
+        if any(reaches(unit, entity) for unit in complete_units - set(gaps)):
+            result.reached.add(entity.id)
+    return result
 
 
 def _unattributed_in_scope(prediction: dict[str, Any], surfaces: frozenset[str]) -> bool:
@@ -296,16 +367,18 @@ def score_tool(
         {**dict(p), "unit": row.get("unit", "estate")} for row in rows for p in row.get("predictions", [])
     ]
     attribution = attribute(corpus, predictions)
-    gaps, unscored, commands, accepted_nonzero = _completeness(corpus, rows)
+    completeness = _completeness(corpus, surfaces, rows)
 
     value_in_scope = Counts()
     value_all = Counts()
     by_surface: dict[str, Counts] = {surface: Counts() for surface in taxonomy.SURFACES}
     entity_rows: dict[str, dict[str, Any]] = {}
-    # In-scope tallies per class: entities, detected or flagged, and unscored without a hit.
+    # In-scope tallies per class: entities, detected or flagged, and, without a hit,
+    # unscored or not reached by any complete run.
     in_scope_total: dict[str, int] = defaultdict(int)
     in_scope_hit: dict[str, int] = defaultdict(int)
     in_scope_unscored: dict[str, int] = defaultdict(int)
+    in_scope_not_reached: dict[str, int] = defaultdict(int)
     detected_all = flagged_all = out_of_scope = 0
     shadow_expected = shadow_correct = 0
 
@@ -316,7 +389,8 @@ def score_tool(
             out_of_scope += len(attributed)
         facts = {str(p["fact"]) for p in attributed} - set(entity.tolerated)
         counts = match_values(facts, entity.expected_facts)
-        entity_unscored = entity.id in unscored
+        entity_unscored = entity.id in completeness.unscored
+        entity_reached = entity.id in completeness.reached
         if entity_unscored:
             counts = Counts(tp=0, fp=counts.fp, fn=counts.fn + counts.tp)
         if in_scope:
@@ -334,6 +408,8 @@ def score_tool(
                 in_scope_hit[entity.klass] += 1
             elif entity_unscored:
                 in_scope_unscored[entity.klass] += 1
+            elif not entity_reached:
+                in_scope_not_reached[entity.klass] += 1
         verdicts = [p.get("shadow") for p in attributed if p.get("shadow") is not None]
         if in_scope and entity_detected and verdicts:
             shadow_expected += 1
@@ -346,6 +422,7 @@ def score_tool(
             "detected": entity_detected,
             "flagged": entity_flagged,
             "unscored": entity_unscored,
+            "reached": entity_reached,
             "tp": counts.tp,
             "fp": counts.fp,
             "fn": counts.fn,
@@ -359,8 +436,15 @@ def score_tool(
     detected = in_scope_hit["positive"]
     flagged = in_scope_hit["control"] + in_scope_hit["nearmiss"]
     negatives_unscored = in_scope_unscored["control"] + in_scope_unscored["nearmiss"]
+    negatives_not_reached = in_scope_not_reached["control"] + in_scope_not_reached["nearmiss"]
     entity_counts = Counts(tp=detected, fp=flagged, fn=in_scope_total["positive"] - detected)
-    true_negatives = in_scope_total["control"] + in_scope_total["nearmiss"] - flagged - negatives_unscored
+    true_negatives = (
+        in_scope_total["control"]
+        + in_scope_total["nearmiss"]
+        - flagged
+        - negatives_unscored
+        - negatives_not_reached
+    )
     positives_all = len(corpus.by_class("positive"))
     statuses: dict[str, int] = defaultdict(int)
     for row in rows:
@@ -370,9 +454,9 @@ def score_tool(
     return {
         "runs": dict(sorted(statuses.items())),
         "units": len(rows),
-        "complete": not gaps,
-        "incomplete_units": gaps,
-        "commands": {"total": commands, "nonzero_exit_accepted": accepted_nonzero},
+        "complete": not completeness.gaps,
+        "incomplete_units": completeness.gaps,
+        "commands": {"total": completeness.commands, "nonzero_exit_accepted": completeness.accepted_nonzero},
         "seconds": {
             "median": round(median(seconds), 2) if seconds else None,
             "max": round(seconds[-1], 2) if seconds else None,
@@ -384,11 +468,13 @@ def score_tool(
             "positives": in_scope_total["positive"],
             "positives_detected": detected,
             "positives_unscored": in_scope_unscored["positive"],
+            "positives_not_reached": in_scope_not_reached["positive"],
             "controls": in_scope_total["control"],
             "controls_flagged": in_scope_hit["control"],
             "nearmiss": in_scope_total["nearmiss"],
             "nearmiss_flagged": in_scope_hit["nearmiss"],
             "negatives_unscored": negatives_unscored,
+            "negatives_not_reached": negatives_not_reached,
         },
         "estate_wide": {
             "positives": positives_all,
@@ -410,11 +496,12 @@ def score_tool(
             "total": len(predictions),
             "tolerated": attribution.tolerated,
             "attributed": sum(len(items) for items in attribution.entity_predictions.values()),
+            "multi_match": len(attribution.multi_match),
             "ambiguous": len(attribution.ambiguous),
             "unattributed": len(attribution.unattributed),
             "out_of_scope": out_of_scope,
         },
-        "ambiguous": attribution.ambiguous[:50],
+        "multi_match": attribution.multi_match[:50],
         "unattributed": [
             {"fact": p.get("fact"), "text": str(p.get("text", ""))[:160]}
             for p in attribution.unattributed[:50]
