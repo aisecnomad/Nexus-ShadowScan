@@ -3,7 +3,9 @@
 Corpus: 137 labeled entities across the nine surfaces (87 positive carrying 104 expected facts, 27 control, 23 near-miss; 4 positives are registered in the supplied agent registry).
 Run started 2026-10-11T17:53:24.976620+00:00 and finished 2026-10-11T17:54:01.548038+00:00; runs are parallel, so timings include contention and are indicative only.
 
-Ground truth is author-written labeling with evidence pointers, frozen before any tool ran. It is not independent human review; the same maintainer wrote ShadowScan, the harness and the labels. See the benchmark README for the protocol and its limits.
+Ground truth is author-written labeling with evidence pointers. The labels were written from vendor semantics together with the artifacts, which were checked only to parse cleanly in ShadowScan's offline loaders. Then, in one label-completeness audit, every runnable tool ran once; the audit added one secondary anchor and one corpus-level tolerated pair. The corpus was frozen after that audit, and the scored run came after the freeze; the README's errata list the frozen files changed since. It is not independent human review; the same maintainer wrote ShadowScan, the harness and the labels. See the benchmark README for the protocol and its limits.
+
+This run recorded no harness commit and no freeze digest: its runs.json predates those fields, so this report cannot show which harness revision produced the run or which freeze manifest its estate was checked against.
 
 Tools skipped in this run:
 
@@ -72,7 +74,7 @@ A prediction is attributed only to an entity on its own surface that its run can
 | AgentSight (local sessions) | out of scope (0/0/23) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | 10% (1/0/18) | out of scope (0/0/6) | out of scope (0/0/6) |
 | Cisco MCP Scanner | out of scope (0/0/23) | out of scope (0/0/12) | out of scope (0/0/7) | out of scope (0/0/10) | out of scope (0/0/11) | out of scope (0/0/10) | n/a (0/0/19) | out of scope (0/0/6) | out of scope (0/0/6) |
 
-Cells read F1 (true positives / false positives / false negatives).
+Cells read F1 (true positives / false positives / false negatives). A prediction attributed to no entity is a false positive in the cell of the surface its adapter gave it or, without one, of the surface its fact's category lives on when there is only one.
 
 ## Control and near-miss entities
 

@@ -180,7 +180,8 @@
       "recall": 1.0,
       "f1": 1.0
      }
-    }
+    },
+    "unplaced_fp": 0
    },
    "shadow_layer": {
     "scored": 83,
@@ -1900,7 +1901,7 @@
      "fn": 95,
      "precision": 1.0,
      "recall": 0.0865,
-     "f1": 0.1592
+     "f1": 0.1593
     },
     "by_surface": {
      "code": {
@@ -1975,7 +1976,8 @@
       "recall": 0.0,
       "f1": null
      }
-    }
+    },
+    "unplaced_fp": 0
    },
    "shadow_layer": {
     "scored": 0,
@@ -3740,7 +3742,8 @@
       "recall": 0.0,
       "f1": null
      }
-    }
+    },
+    "unplaced_fp": 0
    },
    "shadow_layer": {
     "scored": 0,
@@ -5354,7 +5357,7 @@
      "fn": 21,
      "precision": 1.0,
      "recall": 0.087,
-     "f1": 0.1601
+     "f1": 0.16
     },
     "all": {
      "tp": 2,
@@ -5371,7 +5374,7 @@
       "fn": 21,
       "precision": 1.0,
       "recall": 0.087,
-      "f1": 0.1601
+      "f1": 0.16
      },
      "identity": {
       "tp": 0,
@@ -5437,7 +5440,8 @@
       "recall": 0.0,
       "f1": null
      }
-    }
+    },
+    "unplaced_fp": 0
    },
    "shadow_layer": {
     "scored": 0,
@@ -6991,7 +6995,7 @@
     "fn": 18,
     "precision": 1.0,
     "recall": 0.0526,
-    "f1": 0.0999,
+    "f1": 0.1,
     "tn": 5,
     "positives": 19,
     "positives_detected": 1,
@@ -7018,7 +7022,7 @@
      "fn": 18,
      "precision": 1.0,
      "recall": 0.0526,
-     "f1": 0.0999
+     "f1": 0.1
     },
     "all": {
      "tp": 1,
@@ -7083,7 +7087,7 @@
       "fn": 18,
       "precision": 1.0,
       "recall": 0.0526,
-      "f1": 0.0999
+      "f1": 0.1
      },
      "network": {
       "tp": 0,
@@ -7101,7 +7105,8 @@
       "recall": 0.0,
       "f1": null
      }
-    }
+    },
+    "unplaced_fp": 0
    },
    "shadow_layer": {
     "scored": 0,
@@ -8765,7 +8770,8 @@
       "recall": 0.3333,
       "f1": 0.5
      }
-    }
+    },
+    "unplaced_fp": 0
    },
    "shadow_layer": {
     "scored": 0,
@@ -10429,7 +10435,8 @@
       "recall": 0.0,
       "f1": null
      }
-    }
+    },
+    "unplaced_fp": 0
    },
    "shadow_layer": {
     "scored": 0,
@@ -12028,7 +12035,7 @@
       "fn": 20,
       "precision": 1.0,
       "recall": 0.1304,
-      "f1": 0.2307
+      "f1": 0.2308
      },
      "identity": {
       "tp": 0,
@@ -12094,7 +12101,8 @@
       "recall": 0.0,
       "f1": null
      }
-    }
+    },
+    "unplaced_fp": 0
    },
    "shadow_layer": {
     "scored": 0,
@@ -13864,7 +13872,7 @@
      "fn": 96,
      "precision": 1.0,
      "recall": 0.0769,
-     "f1": 0.1428
+     "f1": 0.1429
     },
     "by_surface": {
      "code": {
@@ -13939,7 +13947,8 @@
       "recall": 0.0,
       "f1": null
      }
-    }
+    },
+    "unplaced_fp": 0
    },
    "shadow_layer": {
     "scored": 0,

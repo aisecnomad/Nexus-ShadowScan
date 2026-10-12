@@ -501,7 +501,10 @@ replacement. No stdout, stderr or raw tool report was committed.
 with the scorer as fixed during integration on 2026-10-12, so they differ
 from the numbers the original pull request published. Running `score` and
 `report` on the committed `runs.json` at this commit reproduces both files
-byte for byte.
+byte for byte. The last re-score computed F1 from the counts instead of
+from rounded precision and recall: eight F1 values in `metrics.json` moved
+in the fourth decimal place (AgentSight's 0.0999 became 0.1, for example),
+and no percentage in `REPORT.md` or below changed.
 
 Headline, in the order `REPORT.md` lists the tools (by in-scope value F1).
 Letters in brackets point to the [disclosures](#disclosures-for-the-2026-10-11-run)
