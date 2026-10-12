@@ -66,23 +66,38 @@ def redact(text: str) -> str:
     original text, so a wide earlier match cannot hide a narrower one: a
     footerless key's base64 run takes in the scheme of a URL on the next line
     ('postgresql+psycopg2://') and stops at ':', after which the URL rule would
-    miss the password. It is also matched in turn, on the text with the earlier
-    matches masked, as the patterns always ran: an Azure key's value run takes
-    in the label of a key glued after it, and the Azure rule finds that second
-    key only once a key match has masked the first label. A mask keeps the
-    length, so every span indexes the original text.
+    miss the password. It is also matched in turn, as the patterns always ran,
+    on the text with each earlier match replaced: an Azure key's value run
+    takes in the label of a key glued after it, and the Azure rule finds that
+    second key only once a key match has replaced the first label; and a long
+    token between a private key's header and its footer shrinks to the marker,
+    which brings the footer within the key rule's bounded search. Each
+    character of that text maps back to the original span it stands for, so
+    every span indexes the original text.
     """
-    spans: list[tuple[int, int]] = []
-
-    def withhold(match: re.Match[str]) -> str:
-        spans.append(match.span())
-        return "\0" * len(match[0])
-
-    masked = text
+    spans = [match.span() for pattern in _PATTERNS for match in pattern.finditer(text)]
+    current = text
+    origin = [(index, index + 1) for index in range(len(text))]
     for pattern in _PATTERNS:
-        spans.extend(match.span() for match in pattern.finditer(text))
-        masked = pattern.sub(withhold, masked)
-    pieces: list[str] = []
+        pieces: list[str] = []
+        mapped: list[tuple[int, int]] = []
+        end = 0
+        for match in pattern.finditer(current):
+            start, stop = match.span()
+            if start == stop:
+                continue
+            # The map is ordered, so a match covers its first character's span to its last's.
+            covered = (origin[start][0], origin[stop - 1][1])
+            spans.append(covered)
+            pieces += (current[end:start], _REDACTED)
+            mapped += origin[end:start]
+            mapped += [covered] * len(_REDACTED)
+            end = stop
+        if pieces:
+            pieces.append(current[end:])
+            mapped += origin[end:]
+            current, origin = "".join(pieces), mapped
+    pieces = []
     end = 0
     for start, stop in sorted(spans):
         if not pieces or start > end:

@@ -3,11 +3,12 @@
 The credential stops before the run, and every pass reads the run as any
 other text: a name in it withholds the value after it, a run the assignment
 rules read on past keeps the value they reach withheld, and a run that ends in
-another scheme leaves that scheme to the scan. After all of them, a run that
-may hold no name a pass reads is the token's own tail and is withheld with the
-credential, with or without the 'token' word. That last step only removes
-text, so each value below stays withheld as the passes withhold it, and no
-tail below is shown.
+another scheme leaves that scheme to the scan. After all of them, and in
+``sanitize`` after the known values are removed too, the run is withheld with
+the credential, with or without the 'token' word, unless the whole run is one
+name a pass reads ('--password'). That last step only removes text, so each
+value below stays withheld as the passes withhold it, and no tail below is
+shown.
 """
 
 from __future__ import annotations
@@ -154,6 +155,146 @@ def test_a_token_tail_is_withheld_whatever_follows_it(
     assert sanitize_text(cleaned) == cleaned
 
 
+@pytest.mark.parametrize("context", [*CONTEXTS, "please send {} now", "Authorization: {}"])
+@pytest.mark.parametrize(
+    "glued",
+    [
+        # A run that may hold a name, but is not one, was kept whole when no
+        # pass withheld anything after it, and the token's tail was shown.
+        "={t}=--abc={v}",
+        "={t}=--abc={v}: x",
+        "=x{t}+--abc",
+        "--{t}/password",
+        "=x{t}--token",
+        "=x{t}=password",
+        "=x{t}=api-key",
+        # A name's last word ('pass') kept a run that is the token's tail.
+        "--{t}.pass",
+    ],
+)
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize("credential", [SECRET, "token " + SECRET, "dXNlcjpwYXNz=="])
+def test_a_token_tail_that_only_may_hold_a_name_is_withheld(
+    credential: str, scheme: str, glued: str, context: str
+) -> None:
+    text = _placed(context, f"{scheme} {credential}" + glued.format(t=TAIL, v=VALUE))
+    for value in (TAIL[:9], TAIL[-9:], VALUE, SECRET):
+        assert not _shown(text, value)
+
+
+def test_a_token_tail_after_a_private_key_block_is_withheld() -> None:
+    # Fuzzing found the tail above shown next to an armored PGP key block,
+    # which sends the text through the block comparison first.
+    block = "-----BEGIN PGP " + "PRIVATE KEY BLOCK-----\n\nabc\n-----END PGP " + "PRIVATE KEY BLOCK-----"
+    text = f"password: x{block}Bearer\r\n{SECRET}={TAIL}=--abc={VALUE}: x"
+    for value in (TAIL[:9], TAIL[-9:], VALUE, SECRET):
+        assert not _shown(text, value)
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize("word", ["", "token "])
+@pytest.mark.parametrize("glued", ["=x ", "--x ", "=x=y "])
+def test_a_known_value_a_glued_run_starts_is_withheld_whole(word: str, scheme: str, glued: str) -> None:
+    # The value nested in a credential container is removed from the other
+    # fields last. Withheld before that, the run took the start of the value
+    # with it, and the rest of the value was no longer found and was shown.
+    known = glued[1:] + VALUE
+    record = {"password": [known], "note": f"{scheme} {word}{SECRET}{glued}{VALUE}"}
+    note = sanitize(record)["note"]
+    assert VALUE not in note and SECRET not in note
+    # A known value that is not nested is removed before the text passes.
+    assert VALUE not in sanitize({"password": known, "note": record["note"]})["note"]
+
+
+# Fuzzer-found shapes, rebuilt from synthetic parts: a credential nested in a
+# container under a sensitive key, then the same text glued after a scheme
+# credential in another field. Removed last, the nested value was split by the
+# withheld run first, and the rest of it was shown.
+_PART = "Tq7Rb" + "N3pXc"
+_NESTED = [
+    ({"password": [f"Bearer a--{_PART}"], "m": f"Bearer a--{_PART}--key"}, _PART),
+    ({"secret": {"x": f"Basic a={_PART}"}, "m": f"Basic a={_PART}=apikey"}, _PART),
+    ({"token": [f"SSWS a--{_PART}"], "m": f"SSWS a--{_PART}=-"}, _PART),
+    ({"password": [f"Bearer token {SECRET}--{_PART}"], "m": f"Bearer token {SECRET}--{_PART}--auth"}, _PART),
+    ({"password": [f"x {VALUE}"], "note": f"Bearer {SECRET}--x {VALUE}"}, VALUE),
+    ({"password": [f"b&db={VALUE}"], "note": f"ssws x--b&db={VALUE}"}, VALUE),
+    ({"password": [f"l\ndb: {VALUE}"], "note": f"ssws x--l\ndb: {VALUE}"}, VALUE),
+    ({"client_secret": [{"v": f"g\n{VALUE}"}], "note": f"Bearer\nx--g\n{VALUE}"}, VALUE),
+    (
+        {
+            "password": [f"{VALUE[:6]}!{VALUE[6:]}"],
+            "note": f"headers: Bearer {SECRET}--{VALUE[:6]}!{VALUE[6:]}",
+        },
+        VALUE[6:],
+    ),
+    # A short credential withholds the whole field it occurs in.
+    ({"password": ["k:Q7w"], "note": "BASIC x--k:Q7wSessionId"}, "Q7w"),
+]
+
+
+@pytest.mark.parametrize("short", [False, True])
+@pytest.mark.parametrize(("record", "value"), _NESTED)
+def test_a_nested_credential_after_a_glued_run_is_withheld_whole(
+    record: dict[str, object], value: str, short: bool
+) -> None:
+    cleaned = sanitize(record, redact_short_secrets=short)
+    assert all(value not in str(field) for field in cleaned.values())
+
+
+def _key_block(armor: str, body: str = "") -> str:
+    begin, end = (
+        "-----BEGIN " + armor + "PRIVATE KEY BLOCK-----",
+        "-----END " + armor + "PRIVATE KEY BLOCK-----",
+    )
+    return f"{begin}\n{body}{end}"
+
+
+@pytest.mark.parametrize(
+    ("text", "values"),
+    [
+        (f"Basic F=L= password: {VALUE}" + _key_block("") + TAIL, [VALUE, TAIL]),
+        (
+            f"Basic F=L= password: {VALUE}"
+            + _key_block("PGP ", "lQOYBF0Ab12Cd34\n")
+            + f"\nBearer {SECRET}={TAIL}=--abc",
+            [VALUE, TAIL, "lQOYBF0Ab12Cd34"],
+        ),
+        (
+            f"note {VALUE} " + _key_block("PGP ", "lQOYBF7wQ2kBCAC9\n") + f"-Bearer {SECRET}--trace",
+            [VALUE, "trace"],
+        ),
+        (
+            "a " + _key_block("PGP ", "lQOYBF7wQ2kBCAC9\n") + f"-Bearer {SECRET}--trace\nsession {VALUE}",
+            [VALUE],
+        ),
+        (f"{VALUE}{_key_block('')}-Bearer 3--", [VALUE]),
+    ],
+)
+def test_a_glued_run_does_not_loosen_the_key_block_fallback(text: str, values: list[str]) -> None:
+    # Withheld inside the extended passes, the run made the two readings that
+    # _withhold_key_blocks compares agree, and the text after the block, which
+    # the fallback withholds, was shown.
+    cleaned = sanitize_text(text)
+    assert not any(value in cleaned for value in values)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Bearer\ne=o=\\password: s://a://@",
+        "s://a://@SSWS b=Q: token: t",
+        "SSWS t--s://s://:s://@b",
+        "SSWS 7--s://?token=&G://?sig=",
+    ],
+)
+def test_the_text_left_without_a_glued_run_is_read_again(text: str) -> None:
+    # Without the run, the text can say plainly what the passes did not read
+    # in it ('...password: v'); it is read once more, so sanitizing the result
+    # again changes nothing.
+    cleaned = sanitize_text(text)
+    assert sanitize_text(cleaned) == cleaned
+
+
 def _tokens(text: str) -> Counter[str]:
     counts = Counter(re.findall(r"[A-Za-z0-9]+", text))
     del counts["REDACTED"]
@@ -185,7 +326,9 @@ def test_withholding_the_tails_last_shows_nothing_the_other_passes_withhold(
         for context in CONTEXTS
     ]
     last = [(sanitize_text(text), sanitize({"note": text})["note"]) for text in texts]
+    # The reading without the runs, merged in, is turned off as well.
     monkeypatch.setattr(redaction, "_withhold_scheme_tails", lambda text: text)
+    monkeypatch.setattr(redaction, "_cut_glued_runs", lambda text: text)
     passes = [(sanitize_text(text), sanitize({"note": text})["note"]) for text in texts]
     for text, (text_last, note_last), (text_passes, note_passes) in zip(texts, last, passes, strict=True):
         assert not _tokens(text_last) - _tokens(text_passes), text
@@ -254,9 +397,16 @@ def test_a_glued_run_ending_in_a_scheme_leaves_that_scheme_to_the_scan(
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        (f"Bearer\n{SECRET}--password {VALUE}", f"Bearer {REDACTED}\n--password {REDACTED}"),
-        (f"Basic \n {SECRET}=password: {VALUE}", f'Basic {REDACTED}\n=password: "{REDACTED}"'),
-        (f"SSWS\n\n{SECRET}--auth {VALUE}", f"SSWS {REDACTED}\n\n--auth {REDACTED}"),
+        # A name stays beside the value it withholds on the scheme's line.
+        (f"Bearer {SECRET}--password {VALUE}", f"Bearer {REDACTED}--password {REDACTED}"),
+        (f"Basic {SECRET}=password: {VALUE}", f'Basic {REDACTED}=password: "{REDACTED}"'),
+        (f"SSWS {SECRET}--auth {VALUE}", f"SSWS {REDACTED}--auth {REDACTED}"),
+        # On the credential's own line, after the scheme's line, the rest of
+        # that line goes: the established rules joined it to the scheme's line,
+        # where a header rule withheld it ('Authorization: Basic\\n<v>--token w').
+        (f"Bearer\n{SECRET}--password {VALUE}", f"Bearer {REDACTED}\n{REDACTED}"),
+        (f"Basic \n {SECRET}=password: {VALUE}", f"Basic {REDACTED}\n{REDACTED}"),
+        (f"SSWS\n\n{SECRET}--auth {VALUE}", f"SSWS {REDACTED}\n\n{REDACTED}"),
         (f"Bearer\n{SECRET}--{TAIL} x", f"Bearer {REDACTED}\n x"),
         (f"Bearer token\n{SECRET}=x{TAIL}\n", f"Bearer {REDACTED}\n\n"),
     ],
@@ -265,6 +415,32 @@ def test_a_glued_run_keeps_the_line_breaks_after_the_scheme(text: str, expected:
     # The scheme's blanks may span lines; excerpt lines stay aligned whether
     # the run is kept or withheld.
     assert sanitize_text(text) == expected
+
+
+@pytest.mark.parametrize(
+    "prefix", ["Authorization: ", "Cookie: a=b; ", "-H 'Authorization: ", 'curl -H "Authorization: ']
+)
+@pytest.mark.parametrize("scheme", SCHEMES)
+@pytest.mark.parametrize(
+    "follow",
+    [
+        "--Token\\u0022: {v}",
+        "---pass|{v}",
+        '--subscription-key":"{v}"}} x',
+        "--DB_PASSWORD {v} {t}",
+        "--apikey\\n{v}",
+    ],
+)
+def test_a_name_on_the_credentials_line_after_a_header_scheme_is_withheld(
+    prefix: str, scheme: str, follow: str
+) -> None:
+    # The header rule withholds the scheme and the credential, and the line
+    # after it held the glued name and the value no rule read after it. The
+    # established rules joined the two lines, and the header rule withheld both.
+    text = f"{prefix}{scheme}\n{SECRET}" + follow.format(v=VALUE, t=TAIL)
+    assert not _shown(text, VALUE)
+    assert not _shown(text, TAIL)
+    assert sanitize_text(text).count("\n") == text.count("\n")
 
 
 def test_long_glued_runs_are_read_in_linear_time() -> None:

@@ -12,16 +12,17 @@ from __future__ import annotations
 import re
 from urllib.parse import unquote
 
-from shadowscan.utils.redaction_commands import _CLI_GLUED_OPTION, _cli_option_mode
+from shadowscan.utils.redaction_assignments import _wordy
+from shadowscan.utils.redaction_commands import _cli_option_mode
 from shadowscan.utils.redaction_rules import (
     _KEY_NORMALISE,
     _REFERENCE,
     _VALUE_SEMICOLON,
     REDACTED,
+    _credential_name,
     _kept_value,
     _redact_value,
     _sensitive_assignment_key,
-    _sensitive_flag,
     _setting_level,
 )
 
@@ -130,7 +131,7 @@ _ADDED_PEM = re.compile(
 # glued text a later pass reads, so withholding the credential keeps the name that
 # withholds the value after it ('v--token w', 'v=password: w'): a '--option' name,
 # and a '=name' assignment (base64 padding is never followed by a letter). The run
-# such a stop leaves after the marker is withheld last, unless it may hold a name
+# such a stop leaves after the marker is withheld last, unless it is one such name
 # (see _withhold_scheme_tails).
 _AUTH_CHAR_GUARD = r"(?!--)(?!=[A-Za-z])"
 _AUTH_CHAR = r"(?:" + _AUTH_CHAR_GUARD + r"[A-Za-z0-9+/_.=-])"
@@ -202,41 +203,44 @@ _SCHEME_TAIL = re.compile(
     + _SCHEME_MARKER
     + r")[A-Za-z0-9+/_.=-])*+)"
 )
-# Where a glued run splits into the names a later pass may read: an assignment's
-# '=', and a '+' or '/', which can start a key ('v=x/api-key: w').
-_GLUED_NAME_SEPARATOR = re.compile(r"[=+/]")
-_GLUED_WORD_SEPARATOR = re.compile(r"[-_.]")
 
 
-def _glued_run_read_later(glued: str) -> bool:
-    """Whether ``glued``, the run after a scheme credential, may hold a name a pass reads.
+# A name of words, as a glued run must be to stay: no digit, so no token's tail.
+_PLAIN_NAME = re.compile(r"[A-Za-z]+(?:[-_.][A-Za-z]+)*")
+_SCHEME_WORDS = frozenset({"bearer", "basic", "ssws"})
 
-    Any name in it counts, not only the first: '=x--password v', '--x=password: v'
-    and '--x/api-key: v' each hold a name a pass reads to withhold the value
-    after it. A name counts when an option rule reads it ('--auth', '--pat',
-    '--cookie'), or when the run, a piece of it between '=', '+', '/' or '--',
-    or such a piece's last word names a credential for the assignment, setting
-    or argument rules. An option after '+' or '=' ('--x+--key') is one the
-    option rules count in their word, so that run counts as well.
+
+def _glued_name_kept(glued: str, text: str, end: int) -> bool:
+    """Whether the run glued after a scheme credential's marker is one name a pass reads.
+
+    The run as a whole must be the name, made of words ('api-key', not
+    'x9Kq2.pass'): a '--option' named for a credential or read by the option
+    rules ('--token', '--auth', '--cookie'), or a '=name' named for a
+    credential or a setting before an assignment's ':' or '=' ('=password:
+    v'). It stays beside the value the pass withheld after it. Any other run
+    is withheld whole, a name inside it included: by then every pass has
+    read the run and withheld the value after such a name ('v=x--password
+    w'), and the rest of the run can be the token's own tail ('v=x1=--abc=y2').
+    ``end`` is where the run ends in ``text``.
     """
-    if "+-" in glued or "=-" in glued:
-        return True
-    # Each distinct option and name is judged once, so a long run of repeated
-    # pieces stays cheap.
-    options = {match.group() for match in _CLI_GLUED_OPTION.finditer(glued)}
-    if any(_cli_option_mode(option) for option in options):
-        return True
-    names: set[str] = set()
-    for piece in (glued, *_GLUED_NAME_SEPARATOR.split(glued)):
-        for part in (piece, *piece.split("--")):
-            name = part.strip("-.=")
-            names.update((name, _GLUED_WORD_SEPARATOR.split(name)[-1]))
-    names.discard("")
-    return any(_sensitive_flag(name) or _setting_level(name) for name in names)
+    option = glued.startswith("--")
+    name = glued.lstrip("-") if option else glued[1:]
+    if not _PLAIN_NAME.fullmatch(name) or not _wordy(re.sub(r"[-.]", "_", name)):
+        return False
+    if name.lower() in _SCHEME_WORDS:
+        # The next scheme, glued on ('v----bearer Bearer w'): read as an option, it takes
+        # that scheme's word as its value and leaves the credential after it.
+        return False
+    if option:
+        return not name.lower().startswith(("no-", "no_")) and (
+            _credential_name(name) or bool(_cli_option_mode(glued))
+        )
+    named = _sensitive_assignment_key(name) or _setting_level(name)
+    return bool(named and _ASSIGNED.match(text, end))
 
 
 def _withhold_scheme_tails(text: str) -> str:
-    """Withhold the run glued after a scheme credential's marker, unless it may hold a name.
+    """Withhold the run glued after a scheme credential's marker, unless it is one name a pass reads.
 
     The credential stops before glued text ('Bearer v--tail', 'Bearer v=x'),
     and every other pass reads the run left after its marker as any other
@@ -244,24 +248,70 @@ def _withhold_scheme_tails(text: str) -> str:
     the assignment, URL and setting rules read on past it to values they
     withhold ('v=x=y\\npassword: w'). Withheld with the credential, the run hid
     that text from them, and they showed the value. So the run is withheld
-    here, after all of them and after the second reading they may need (see
-    ``_redact_nested_urls``). This step only removes text they left, and
-    reading the result once more only withholds more, so whatever they
-    withhold stays withheld. A run that may hold a name a pass reads (see
-    ``_glued_run_read_later``) stays, so the name is shown beside the value it
-    withheld; so does a token's tail that holds such a name ('v--x/Key').
+    here, after all of them: ``sanitize_text`` runs this last, and ``sanitize``
+    after it has also removed the known values from every field, so a value
+    the run starts ('Bearer token v=x y' for a known 'x y') is still found
+    whole. Both then read a text this changes once more (see
+    ``redaction._without_glued_runs``). This step only removes text, so
+    whatever the passes withhold stays withheld. Only a run that is one name
+    a pass reads (see ``_glued_name_kept``) stays, beside the value it withheld.
     """
 
     def withheld(match: re.Match[str]) -> str:
-        glued = match.group("glued")
-        if _glued_run_read_later(glued):
+        if _glued_name_kept(match.group("glued"), text, match.end()):
             return match.group()
         if _NEXT_SCHEME_MARKER.match(text, match.end()):
             # The separators before the next scheme stay ('-Bearer [REDACTED]').
+            glued = match.group("glued")
             return match.group("head") + glued[len(glued.rstrip("-+/.=")) :]
         return match.group("head")
 
     return _SCHEME_TAIL.sub(withheld, text) if REDACTED in text else text
+
+
+# A run a guard stop leaves glued after a scheme credential, read in the text
+# before any pass ('Bearer v--tail', 'Bearer v=x'). The possessive quantifier
+# keeps the scan linear in the text.
+_GLUED_RUN = re.compile(r"(?:--|=(?=[A-Za-z]))[A-Za-z0-9+/_.=-]*+")
+
+
+def _cut_glued_runs(text: str) -> str:
+    """``text`` without the runs glued after its scheme credentials, but those that are one name a pass reads.
+
+    The text the passes read when a run goes with its credential before any
+    of them reads it, as the established rules withheld it (see
+    ``redaction._merge_readings``). A run that is one name a pass reads (see
+    ``_glued_name_kept``) stays, so that pass still withholds the value after it.
+    Where the scheme's blanks span lines ('Authorization: Basic\\n<v>--token
+    w'), the established rules joined such a name to the scheme's line, and a
+    header or setting rule there withheld the rest of it; the rest of the
+    credential's line is withheld instead, which keeps the lines.
+    """
+    if "--" not in text and "=" not in text:
+        return text
+    cuts: dict[int, tuple[int, str]] = {}
+    for pattern in (_AUTH, _ESCAPED_AUTH):
+        for match in pattern.finditer(text):
+            run = _GLUED_RUN.match(text, match.end())
+            if not run:
+                continue
+            if not _glued_name_kept(run.group(), text, run.end()):
+                cuts[run.start()] = (run.end(), "")
+            elif "\n" in text[match.end("scheme") : match.start("credential")]:
+                end = text.find("\n", run.end())
+                end = len(text) if end < 0 else end - (text[end - 1] == "\r")
+                cuts[run.start()] = (max(end, run.end()), REDACTED)
+    if not cuts:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    for start in sorted(cuts):
+        if start >= cursor:
+            end, marker = cuts[start]
+            pieces.extend((text[cursor:start], marker))
+            cursor = end
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def _redact_jwts(text: str) -> str:
@@ -373,15 +423,6 @@ def _redact_nested_urls(text: str) -> str:
     'https://a/login?next=https://u:secret@b'), and the established pass reads
     the first authority alone. Each inner URL is read as far as the next one,
     which keeps the scan linear.
-
-    This is the last of the extended passes, and a text it changes is read
-    once more, as the next sanitization would read it, ending here again
-    (``redaction._redact_extended``). The runs glued after a scheme
-    credential's marker are withheld only where the URLs change nothing,
-    which is the very end (see ``_withhold_scheme_tails``): withheld before
-    that reading, a run hid from it what it reads. A text they change is read
-    once more as well, unless it already is that second reading. Where the
-    second reading changes URLs again, the runs stay as the passes leave them.
     """
 
     def nested(match: re.Match[str]) -> str:
@@ -395,8 +436,7 @@ def _redact_nested_urls(text: str) -> str:
             pieces.append(_URL.sub(_sanitize_url, inner))
         return "".join(pieces)
 
-    urls = _URL.sub(nested, text) if "://" in text else text
-    return urls if urls != text else _withhold_scheme_tails(text)
+    return _URL.sub(nested, text) if "://" in text else text
 
 
 def _query_value(field: str, *, bare: bool = False) -> str:

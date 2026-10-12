@@ -148,6 +148,18 @@ def test_every_check_secrets_family_is_redacted() -> None:
         assert out.startswith("prefix ") and out.endswith(" suffix")
 
 
+@pytest.mark.parametrize("token", ["sk-" + "A" * 8171, "glpat-" + "B" * 8200, "hf_" + "C" * 8300])
+def test_a_key_whose_footer_a_long_token_moves_out_of_reach_is_withheld_whole(token: str) -> None:
+    # Matched in turn, an earlier rule replaced the token with the marker, which
+    # brought the footer within the key rule's bounded search. A replacement
+    # that kept the token's length left the footer out of reach, and the key
+    # lines after the token and the footer were published.
+    begin, end = "-----BEGIN " + "PRIVATE KEY-----", "-----END " + "PRIVATE KEY-----"
+    line = "Zqu8" + "jzPde0IgxLd6"
+    out = redact(f"Scenario:\n{begin}\n{token}\n{line}\n{end}\nRotate it.")
+    assert out == "Scenario:\n[redacted]\nRotate it."
+
+
 def test_workflow_commands_are_neutralized() -> None:
     out = redact("normal line\n::set-output name=x::1\n::warning::hi")
     assert "\n::" not in out
