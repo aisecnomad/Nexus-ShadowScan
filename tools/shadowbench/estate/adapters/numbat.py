@@ -8,6 +8,7 @@ help anchor attribution. Both run fully local.
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 from tools.shadowbench.estate.adapters import (
@@ -20,7 +21,7 @@ from tools.shadowbench.estate.adapters import (
     run_version,
     unit_path,
 )
-from tools.shadowbench.estate.adapters.common import client_slug
+from tools.shadowbench.estate.adapters.common import client_slug, sh_command, write_script
 from tools.shadowbench.estate.corpus import EstateCorpus
 
 SPEC = ToolSpec(
@@ -47,19 +48,20 @@ class NumbatAdapter:
 
     def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
         home = unit_path(unit, estate)
-        binary = cfg.binary("numbat")
-        script = out_dir / "run.sh"
-        script.write_text(
-            "#!/bin/sh\n"
+        binary = cfg.binary("numbat") or "numbat"
+        out = out_dir.absolute()
+        agents = out / "agents.json"
+        lines = [
             # `agents` exits 1 when no agent artifacts exist under HOME; an empty
             # inventory is a valid result, so only a missing/empty file fails.
-            f'"{binary}" agents --format json > "{out_dir}/agents.json"; status=$?\n'
-            f'[ -s "{out_dir}/agents.json" ] || exit "$status"\n'
-            f'"{binary}" scan --emit all > "{out_dir}/scan.ndjson" 2> "{out_dir}/scan.err"\n'
-            "exit 0\n",
-            encoding="utf-8",
-        )
-        script.chmod(0o755)
+            sh_command((binary, "agents", "--format", "json"), stdout=agents) + "; status=$?",
+            f'[ -s {shlex.quote(str(agents))} ] || exit "$status"',
+            sh_command(
+                (binary, "scan", "--emit", "all"), stdout=out / "scan.ndjson", stderr=out / "scan.err"
+            ),
+            "exit 0",
+        ]
+        script = write_script(out / "run.sh", lines)
         return [Command(argv=("/bin/sh", str(script)), env={"HOME": str(home)})]
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:

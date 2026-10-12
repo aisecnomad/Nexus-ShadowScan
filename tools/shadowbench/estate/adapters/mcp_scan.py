@@ -22,7 +22,11 @@ from tools.shadowbench.estate.adapters import (
     python_package_version,
     unit_path,
 )
-from tools.shadowbench.estate.adapters.common import client_slug
+from tools.shadowbench.estate.adapters.common import (
+    client_slug,
+    sh_command,
+    write_script,
+)
 from tools.shadowbench.estate.corpus import EstateCorpus
 
 SPEC = ToolSpec(
@@ -51,13 +55,12 @@ class McpScanAdapter:
 
     def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
         home = unit_path(unit, estate)
-        script = out_dir / "run.sh"
-        script.write_text(
-            "#!/bin/sh\n"
-            f'exec "{cfg.binary("mcp_scan")}" inspect --json < /dev/null > "{out_dir}/inspect.json"\n',
-            encoding="utf-8",
-        )
-        script.chmod(0o755)
+        out = out_dir.absolute()
+        argv = (cfg.binary("mcp_scan") or "snyk-agent-scan", "inspect", "--json")
+        lines = [
+            "exec " + sh_command(argv, stdin="/dev/null", stdout=out / "inspect.json"),
+        ]
+        script = write_script(out / "run.sh", lines)
         return [Command(argv=("/bin/sh", str(script)), env={"HOME": str(home)})]
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:

@@ -3,12 +3,15 @@
 Mode A only — `report prompts/audit --json` reads agent-native session
 stores under $HOME. The eBPF capture mode is environment-blocked here:
 fentry/fexit program loads return EPERM on this kernel, which the run
-records as the reason the runtime surface stays out of scope.
+records as the reason the runtime surface stays out of scope. Both reports
+run; the script exits with the first non-zero status, and a missing, empty or
+unparseable report is an adapter error, never an empty session list.
 """
 
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 from tools.shadowbench.estate.adapters import (
@@ -21,7 +24,13 @@ from tools.shadowbench.estate.adapters import (
     run_version,
     unit_path,
 )
-from tools.shadowbench.estate.adapters.common import client_slug
+from tools.shadowbench.estate.adapters.common import (
+    STATUS_EXIT,
+    STATUS_INIT,
+    client_slug,
+    sh_step,
+    write_script,
+)
 from tools.shadowbench.estate.corpus import EstateCorpus
 
 SPEC = ToolSpec(
@@ -33,6 +42,8 @@ SPEC = ToolSpec(
     notes="report prompts/audit --json over $HOME session stores; eBPF runtime capture is "
     "blocked in this environment (fentry/fexit EPERM)",
 )
+
+_REPORTS = ("prompts", "audit")
 
 _COMM_SLUGS = {
     "claude": "claude-code",
@@ -58,42 +69,51 @@ class AgentSightAdapter:
 
     def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
         home = unit_path(unit, estate)
-        binary = cfg.binary("agentsight")
-        work = out_dir / "work"
+        binary = cfg.binary("agentsight") or "agentsight"
+        out = out_dir.absolute()
+        work = out / "work"
         work.mkdir(exist_ok=True)
-        script = out_dir / "run.sh"
-        script.write_text(
-            "#!/bin/sh\n"
-            f'cd "{work}" || exit 1\n'
-            f'"{binary}" report prompts --json > "{out_dir}/prompts.json" 2> "{out_dir}/prompts.err"\n'
-            f'"{binary}" report audit --json > "{out_dir}/audit.json" 2> "{out_dir}/audit.err"\n'
-            "exit 0\n",
-            encoding="utf-8",
-        )
-        script.chmod(0o755)
+        lines = [STATUS_INIT, f"cd {shlex.quote(str(work))} || exit 1"]
+        for report in _REPORTS:
+            lines.append(
+                sh_step(
+                    (binary, "report", report, "--json"),
+                    stdout=out / f"{report}.json",
+                    stderr=out / f"{report}.err",
+                )
+            )
+        lines.append(STATUS_EXIT)
+        script = write_script(out / "run.sh", lines)
         return [Command(argv=("/bin/sh", str(script)), env={"HOME": str(home)})]
 
     @staticmethod
-    def _records(path: Path) -> list[dict[str, object]]:
+    def _records(path: Path) -> tuple[list[dict[str, object]], str | None]:
+        """The report's records, or an error when the report is missing, empty or not JSON."""
         if not path.exists() or not path.stat().st_size:
-            return []
+            return [], f"{path.name} missing or empty"
         text = path.read_text(encoding="utf-8", errors="replace")
         start = min((idx for idx in (text.find("["), text.find("{")) if idx >= 0), default=-1)
         if start < 0:
-            return []
+            return [], f"{path.name} holds no JSON"
         try:
             data = json.loads(text[start:])
-        except ValueError:
-            return []
+        except ValueError as exc:
+            return [], f"{path.name} unparseable: {exc}"
         if isinstance(data, dict):
-            return [data]
+            return [data], None
         if isinstance(data, list):
-            return [item for item in data if isinstance(item, dict)]
-        return []
+            return [item for item in data if isinstance(item, dict)], None
+        return [], f"{path.name} is not an object or a list"
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:
-        records = self._records(out_dir / "prompts.json") + self._records(out_dir / "audit.json")
-        result = Normalized(raw_count=len(records))
+        records: list[dict[str, object]] = []
+        errors: list[str] = []
+        for report in _REPORTS:
+            found, error = self._records(out_dir / f"{report}.json")
+            records.extend(found)
+            if error:
+                errors.append(error)
+        result = Normalized(raw_count=len(records), error="; ".join(errors) or None)
         seen: set[str] = set()
         for record in records:
             comm = str(record.get("comm", "")).lower()

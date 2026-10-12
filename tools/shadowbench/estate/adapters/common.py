@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import re
+import shlex
+from collections.abc import Sequence
+from pathlib import Path
 
 from tools.shadowbench.estate import taxonomy
 
@@ -74,3 +77,54 @@ def client_slug(name: str) -> str:
             if candidate and _contains(candidate, key):
                 return slug
     return taxonomy.GENERIC
+
+
+# --- Wrapper scripts ---------------------------------------------------------
+#
+# Some tools need a shell (output redirection, several steps per unit). Every
+# value interpolated into a generated script is shell-quoted: run directories
+# carry estate unit names, which come from the corpus and are untrusted.
+
+#: Script lines that start the first-failure tracker `step` lines update.
+STATUS_INIT = "status=0"
+#: The last script line: the exit status of the first step that failed.
+STATUS_EXIT = 'exit "$status"'
+
+
+def sh_command(
+    argv: Sequence[str | Path],
+    *,
+    stdin: str | Path | None = None,
+    stdout: str | Path | None = None,
+    stderr: str | Path | None = None,
+) -> str:
+    """One shell command line with every word and redirection target quoted."""
+    line = shlex.join(str(part) for part in argv)
+    for operator, target in (("<", stdin), (">", stdout), ("2>", stderr)):
+        if target is not None:
+            line += f" {operator} {shlex.quote(str(target))}"
+    return line
+
+
+def sh_step(
+    argv: Sequence[str | Path],
+    *,
+    stdin: str | Path | None = None,
+    stdout: str | Path | None = None,
+    stderr: str | Path | None = None,
+) -> str:
+    """A command line that records its exit status in `status` unless an earlier step failed.
+
+    The script keeps running later steps, then `STATUS_EXIT` reports the first
+    failure, so a crash in any step never reads as a clean run. A failed
+    redirection counts as a failed step.
+    """
+    command = sh_command(argv, stdin=stdin, stdout=stdout, stderr=stderr)
+    return f'{command} || {{ rc=$?; [ "$status" -ne 0 ] || status=$rc; }}'
+
+
+def write_script(path: Path, lines: Sequence[str]) -> Path:
+    """Write an executable POSIX shell script."""
+    path.write_text("\n".join(["#!/bin/sh", *lines]) + "\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path

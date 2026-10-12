@@ -5,7 +5,9 @@ actually connecting to each configured MCP server; the benchmark never
 executes corpus content, and its configs reference nonexistent commands, so
 servers it cannot launch are absent from scan_results. That behavior is part
 of what the benchmark measures, and the run also passes the Claude config
-files explicitly because the Linux known-configs list omits them.
+files explicitly because the Linux known-configs list omits them. Every
+scanner step runs; the script exits with the first non-zero status, so a
+crash never reads as an empty inventory.
 """
 
 from __future__ import annotations
@@ -22,6 +24,12 @@ from tools.shadowbench.estate.adapters import (
     home_units,
     python_package_version,
     unit_path,
+)
+from tools.shadowbench.estate.adapters.common import (
+    STATUS_EXIT,
+    STATUS_INIT,
+    sh_step,
+    write_script,
 )
 from tools.shadowbench.estate.corpus import EstateCorpus
 
@@ -58,41 +66,49 @@ class CiscoMcpScannerAdapter:
 
     def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
         home = unit_path(unit, estate)
-        binary = cfg.binary("cisco_mcp_scanner")
+        binary = cfg.binary("cisco_mcp_scanner") or "mcp-scanner"
+        out = out_dir.absolute()
+        base = (binary, "--analyzers", "yara", "--format", "raw")
         lines = [
-            "#!/bin/sh",
-            f'"{binary}" --analyzers yara --format raw known-configs '
-            f'> "{out_dir}/known.json" 2> "{out_dir}/known.err"',
+            STATUS_INIT,
+            sh_step((*base, "known-configs"), stdout=out / "known.json", stderr=out / "known.err"),
         ]
         for index, rel in enumerate(_CLAUDE_CONFIGS):
             config = home / rel
             if config.exists():
                 lines.append(
-                    f'"{binary}" --analyzers yara --format raw config --config-path "{config}" '
-                    f'> "{out_dir}/config{index}.json" 2> "{out_dir}/config{index}.err"'
+                    sh_step(
+                        (*base, "config", "--config-path", str(config)),
+                        stdout=out / f"config{index}.json",
+                        stderr=out / f"config{index}.err",
+                    )
                 )
-        lines.append("exit 0")
-        script = out_dir / "run.sh"
-        script.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        script.chmod(0o755)
+        lines.append(STATUS_EXIT)
+        script = write_script(out / "run.sh", lines)
         env = {"HOME": str(home), "LITELLM_LOCAL_MODEL_COST_MAP": "True"}
         return [Command(argv=("/bin/sh", str(script)), env=env)]
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:
         result = Normalized()
-        found_any_output = False
-        for path in sorted(out_dir.glob("*.json")):
-            if path.name == "result.json" or not path.stat().st_size:
+        outputs = sorted(path for path in out_dir.glob("*.json") if path.name != "result.json")
+        problems: list[str] = []
+        if not any(path.name == "known.json" for path in outputs):
+            problems.append("known.json missing")
+        for path in outputs:
+            if not path.stat().st_size:
+                problems.append(f"{path.name} empty")
                 continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except ValueError:
+                problems.append(f"{path.name} unparseable")
                 continue
             if not isinstance(data, dict):
+                problems.append(f"{path.name} is not an object")
                 continue
-            found_any_output = True
             rows = data.get("scan_results") or []
             if not isinstance(rows, list):
+                problems.append(f"{path.name} scan_results is not a list")
                 continue
             result.raw_count += len(rows)
             seen: set[str] = set()
@@ -110,6 +126,6 @@ class CiscoMcpScannerAdapter:
                         surface="endpoint",
                     )
                 )
-        if not found_any_output:
-            result.error = "no scanner output parsed"
+        if problems:
+            result.error = "scanner output unusable: " + "; ".join(problems)
         return result
