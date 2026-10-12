@@ -1,6 +1,6 @@
 # Architecture
 
-ShadowScan is a read-only scanner that runs as one process. **Connectors** turn
+ShadowScan is a read-only command-line scanner. **Connectors** turn
 provider APIs, offline exports, files and logs into **findings**. The
 **engine** merges, correlates, reconciles and scores those findings, and
 **reporters** publish the result. A second group of commands works on JSON
@@ -8,12 +8,15 @@ reports after a scan: comparison, fleet merge, the fleet dashboard and the
 control evidence report.
 
 Product knowledge lives in YAML signature packs and threat and control
-knowledge in YAML mapping catalogs. The engine and the reporters never name a
-product or a connector; behaviour that differs by connector is a capability the
-connector class declares (see [engine hooks](#engine-hooks)).
+knowledge in YAML mapping catalogs. The engine never names a product or a
+connector; behaviour that differs by connector is a capability the connector
+class declares (see [engine hooks](#engine-hooks)). Three policy tables outside
+the engine do name built-in connectors: credential isolation (`config.py`),
+incremental-cache eligibility (`incremental.py`) and the CycloneDX component
+classes (`reporters/cyclonedx.py`).
 
 ```
- signatures/data/*.yaml: frameworks · providers · protocols · coding agents · platforms
+ signatures/data/<category>/*.yaml: frameworks · providers · protocols · coding agents · platforms
  cloud services · identity apps · permission policies · observability · heuristics
                                       │
                                       │ SignatureIndex: dependency, import, code,
@@ -45,57 +48,67 @@ connector class declares (see [engine hooks](#engine-hooks)).
 │ governance → risk → min_confidence → sort → LLM triage (opt-in, advisory)  │
 └─────────────────────────────────────┬──────────────────────────────────────┘
                                       ▼
- ScanResult ─► reporters ◄─ mappings/data/*.yaml: threat and control references
+ ScanResult ─► reporters ◄─ mappings/data/{frameworks,rules}/*.yaml: threat and control references
                table · json · sarif · csv · markdown · html · cyclonedx · ocsf
                                       │ json
                                       ▼
- JSON reports ─► diff · merge · dashboard (+ inventory.json) · controls · inventory stubs
+ JSON reports ─► diff · merge · dashboard (+ inventory.json on request) · controls · inventory stubs
 ```
 
 ## Scan pipeline
 
-`Engine.run()` in `shadowscan/engine.py` runs these stages in order. Every
-stage except the advisory LLM triage fails closed: a gap it cannot fill is
-recorded in the scan statistics and makes the scan incomplete (exit 3), never a
-smaller report that looks clean.
+A scan runs these stages in order. The CLI (`shadowscan/cli.py`) reads the
+configuration in step 1 and renders the reports in step 7; `Engine.run()` in
+`shadowscan/engine.py` runs the rest. Setup refuses an invalid or unsafe
+configuration before anything is collected: the command exits 1 with no
+report. Every later stage except the advisory LLM triage fails closed: a gap it
+cannot fill is recorded in the scan statistics and makes the scan incomplete
+(exit 3), never a smaller report that looks clean.
 
-1. **Setup.** `ScanConfig` reads the YAML configuration (`${VAR}` expansion,
-   unknown and duplicate keys rejected) and applies command-line overrides. The
-   engine loads the signature index (built-in packs plus `signatures:` packs),
-   the inventory and the risk policy. It rejects `--only` selectors that match
-   no enabled connector name or label. Without `allow_credential_mixing` it
-   also rejects a scan that runs a code connector beside another live
-   credentialed connector (cloud, identity other than `identity.jwt`, SaaS,
-   low-code, a live remote repository or a plugin).
+1. **Setup.** The CLI reads the YAML configuration with `ScanConfig`
+   (`${VAR}` expansion, unknown and duplicate keys rejected) and applies
+   command-line overrides. The engine loads the signature index (built-in packs
+   plus `signatures:` packs), the inventory and the risk policy. Without
+   `allow_credential_mixing` it rejects a scan that runs a code connector beside
+   another live credentialed connector (cloud, identity other than
+   `identity.jwt`, SaaS, low-code, a live remote repository or a plugin). These
+   refusals exit 1. An `--only` selector that matches no enabled connector name
+   or label is recorded instead: no connector runs and the scan is incomplete
+   (exit 3).
 2. **Collection.** Each connector entry runs as one job in a thread pool of
    `options.parallel` workers. A supervisor enforces each job's
    `connector_timeout_seconds` deadline. A live job calls `collect()`; an entry
    with `input` calls `load_offline()`. With `plugin_execution: process`, an
    allowlisted plugin runs in a spawned worker that can be killed at its
    deadline (`plugin_process.py`). `--incremental` reuses a cached result for an
-   unchanged local checkout or static export (`incremental.py`).
-   `--dump-records` publishes sanitized records for offline replay. A live
-   connector that declares `attests_live_scope` records the principal and
-   listings its provider reported. After collection the engine builds the
-   report's `collection_scope` from the selected inputs and those records
-   (`comparison.py`).
-3. **Analysis.** `analyze()` turns records into findings. Product knowledge
-   comes from the signature index: every match becomes an `Evidence` with a
-   weight and can add frameworks, model providers, capabilities, tags and
-   policy classes. `finalize()` computes confidence and promotes
-   `framework-usage` to `agent` when an agent indicator matched.
+   unchanged `code.filesystem` checkout or an unchanged `input` export of a code
+   or cloud connector (`incremental.py`); a diff-scoped or `include` scan always
+   runs in full. `--dump-records` publishes sanitized records for offline
+   replay. A live connector that declares `attests_live_scope` records the
+   principal and listings its provider reported.
+3. **Analysis.** Inside each collection job, under the same deadline,
+   `analyze()` turns the records into findings as they stream in. Product
+   knowledge comes from the signature index: each match becomes an `Evidence`
+   with a weight (at most 12 per signature and signal type) and can add
+   frameworks, model providers, capabilities, tags and policy classes.
+   `finalize()` computes confidence and promotes `framework-usage` to `agent`
+   when an agent indicator matched. After every job has finished, the engine
+   builds the report's `collection_scope` from the selected inputs and the
+   attested scope records (`comparison.py`).
 4. **Post-processing**, in this order:
    1. **Merge** findings with the same stable identity (`merge.py`; see
       [finding identity](#finding-identity-and-merging)). A merged finding too
       large to sanitize within the output budget is dropped and reported as an
       `engine.postprocess` error.
-   2. **Correlate** (`correlation.py`). Findings on different surfaces that
-      share resource ids, normalised names or repository labels are linked in
+   2. **Correlate** (`correlation.py`). Findings from different connectors or
+      surfaces that share resource ids, normalised names or repository labels
+      are linked in
       `metadata.related`. Gateway activity is attached to the code it is bound
       to by `correlation_bindings` (`metadata.runtime_activity`). Endpoint
       findings are linked to a running process of the same tool on the same
       device (`metadata.lifecycle`, `observed-running`). Correlation changes
-      neither confidence nor risk.
+      neither confidence nor risk, unless an operator gives the
+      `observed-running` tag a weight in `risk_weights`.
    3. **Match MCP servers** against the pinned MCP Registry snapshots in
       `options.mcp_registries` (`mcp_registry.py`).
    4. **Reconcile vendor registry records** with observed findings
@@ -160,7 +173,7 @@ Options are keys under `options:`; most also have a command-line flag.
 |---|---|---|
 | `parallel` | 4 | worker threads shared by all connector jobs |
 | `connector_timeout_seconds` | 120 | each connector's completion deadline; an expired job's results are discarded and the scan is incomplete ([deadlines and parallelism](scanning.md#connector-deadlines-and-parallelism)) |
-| `job_deadline_seconds`, `--job-deadline-seconds` | off | the whole CLI process, including setup and output; expiry exits 3 |
+| `job_deadline_seconds`, `--job-deadline-seconds` | off | the CLI process and its output from the moment the deadline is armed: the flag while the command line is parsed, the option once the configuration is read; expiry exits 3 |
 | `plugin_execution` | `thread` | `process` runs each allowlisted plugin in a spawned worker that is killed at its deadline; built-in connectors always use threads ([plugin execution](connectors.md#third-party-plugin-execution)) |
 | `allow_private_origin` | `false` | HTTPS clients refuse loopback, link-local, private and cloud-metadata destinations (`utils/http.py`) |
 | `allow_credential_mixing` | `false` | repository scans and live tenant collection run as separate scans |
@@ -182,7 +195,7 @@ reports (`--format json`). None contacts a provider except
 |---|---|---|
 | `diff` | `comparison.py` | new, resolved and changed findings with drift classes (inventory, capability, autonomy, governance, coverage); missing findings resolve only between complete, comparable scans ([comparing reports](scanning.md#comparing-reports)) |
 | `merge` | `fleet.py` | one fleet report: identity-checked union, three-valued shadow status, per-source times; incomplete when any source is |
-| `dashboard` | `dashboard.py`, `reporters/dashboard.py` | a static, self-contained HTML page and the `shadowscan.inventory/v1` JSON document ([fleet dashboard](operations/dashboard.md)) |
+| `dashboard` | `dashboard.py`, `reporters/dashboard.py` | a static, self-contained HTML page and, with `--inventory-json`, the `shadowscan.inventory/v1` JSON document ([fleet dashboard](operations/dashboard.md)) |
 | `controls` | `controls.py`, `reporters/controls.py` | findings per NIST AI RMF, ISO/IEC 42001, EU AI Act and AIUC-1 control, with evidence completeness, as Markdown, CSV or JSON ([control evidence report](operations/controls.md)) |
 | `inventory stubs`, `inventory check` | `registry.py` | Capability Card stubs for shadow findings; validation of inventory files |
 | `mcp-registry snapshot` | `mcp_registry.py` | a complete MCP Registry listing and the SHA-256 that pins it in `options.mcp_registries` |
@@ -276,7 +289,7 @@ splitting the connector class itself.
 | `tool_attribution.py`, `provider_tools.py`, `provider_loops.py`, `responses_loops.py` | Python tool registrations, provider request tool configuration and tool loops, OpenAI Responses actions |
 | `langgraph_semantics.py`, `genkit_semantics.py`, `vercel_tools.py` | framework-specific proofs: LangGraph tool cycles, Genkit agents and tool loops, Vercel AI SDK tool execution |
 | `javascript_dispatch.py`, `javascript_reachability.py`, `javascript_tool_attribution.py` | JavaScript Responses dispatch, literal dead-branch exclusion, tool registrations linked to their execution sites |
-| `polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py`, `java_semantics.py` | bounded lexical import and scope checks for LangChainGo constructors, .NET automatic tool invocation and Spring AI annotated tools; no cross-file type resolution |
+| `polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py`, `java_semantics.py` | bounded lexical import and scope checks for LangChainGo constructors, .NET automatic tool invocation and Spring AI annotated tools; no general cross-file type resolution (a Spring AI tool class is matched by its qualified name across the project) |
 | `catalogs.py`, `rule_packs.py` | data files that name technologies without using them, and detection-rule packs, so neither counts as an integration |
 | `ownership.py` | CODEOWNERS glob matching without backtracking regular expressions |
 
@@ -303,13 +316,13 @@ defaults, which describe an ordinary connector.
 | hook | default | declared by | engine behaviour |
 |---|---|---|---|
 | `attests_live_scope` | `False` | `cloud.aws`, `cloud.azure`, `cloud.gcp`, `identity.entra` | after a live job (no `input`) the engine reads the connector's scope record (`ConnectorContext.scope_record`: the principal the provider reported, requested options, partitions and each listing's outcome) into a per-run ledger, which drops cancelled and timed-out jobs, and computes `collection_scope` after collection from it ([live collection scope](scanning.md#live-collection-scope)). Only built-in connectors are honoured: a plugin's record is never read |
-| `cache_roots_separately(roots, root_ids, *, labelled)` | `False` | `code.filesystem` | an incremental scan of several `paths` runs and caches one job per root; raising `ConnectorError` runs the connector once so its own validation reports the scan incomplete; any other exception marks the connector incomplete without running it |
+| `cache_roots_separately(roots, root_ids, *, labelled)` | `False` | `code.filesystem` | an incremental scan of several `paths` runs and caches each root separately, one after another inside the entry's job and under its one deadline; an exception from the hook (a `ConnectorError` such as labelled paths that do not resolve to distinct roots, or any other) marks the connector incomplete before it is constructed |
 | `emits_registry_records` | `False` | `cloud.aws`, `cloud.gcp`, `identity.entra` | the connector's findings may carry `metadata.registry_record` ([vendor registries](inventory.md#vendor-registries-as-inventory-sources)); the engine removes the key from every other connector's findings and records `registry record metadata ignored on N finding(s)` in that connector's stats, because an approved record of a trusted registry approves findings. Only built-in connectors are honoured: a plugin that declares the hook has its records removed the same way (`only built-in connectors may emit registry records`) |
-| `registry_record_types` | empty | `cloud.aws` (`aws-agent-registry`, `aws-agentcore-registry`), `cloud.gcp` (`google-agent-registry`, `gemini-enterprise`), `identity.entra` (`microsoft-agent-365`, `entra-agent-registry`) | the registry types (`shadowscan.registries.REGISTRY_TYPES`) a connector that declares `emits_registry_records` reads; the engine removes records of any other type from its findings (`the connector does not declare that registry type`), so a connector for one vendor cannot emit records for another vendor's registry |
+| `registry_record_types` | empty | `cloud.aws` (`aws-agent-registry`, `aws-agentcore-registry`), `cloud.gcp` (`google-agent-registry`, `gemini-enterprise`), `identity.entra` (`microsoft-agent-365`, `entra-agent-registry`) | the registry types (`shadowscan.registries.REGISTRY_TYPES`) a connector that declares `emits_registry_records` reads; the engine removes records of any other known type from its findings (`the connector does not declare that registry type`), so a connector for one vendor cannot emit records for another vendor's registry; a record of an unknown type stays, so reconciliation reports it as malformed |
 | `inherits_instance_credentials_approval()` | `True` for a connector on the cloud surface or one whose `config_keys` documents `allow_instance_credentials` | every `cloud.*` connector, plugins included, through its surface: the registry holds `cloud.*` names to it | the connector's `allow_instance_credentials` is set from `options.allow_instance_credentials`, whether or not it documents the key; a value in any connector entry is replaced the same way, so it never takes effect; an exception from the hook marks the connector incomplete without running it |
-| `scanned_local_paths(config)` | `[]` | `code.filesystem`; `code.github` and `code.gitlab` through their shared base class | the local files or directories the entry scans: `code.filesystem` paths (none when it replays an `input` export) and the offline clone directory (`input`) of a remote repository connector, whose live clones stay in private temporary directories; an approval inventory inside one of them is reported in the `engine.inventory` stats entry, because scanned content could edit its own approvals. Only built-in connectors are asked: the lookup never imports a plugin |
+| `scanned_local_paths(config)` | `[]` | `code.filesystem`; `code.github` and `code.gitlab` through their shared base class; `endpoint.inventory` | the local files or directories the entry scans: `code.filesystem` paths (none when it replays an `input` export), the offline clone directory (`input`) of a remote repository connector, whose live clones stay in private temporary directories, and the home directories `endpoint.inventory` inventories (none when it reads `input`); an approval inventory inside one of them is reported in the `engine.inventory` stats entry, because scanned content could edit its own approvals. Only built-in connectors are asked: the lookup never imports a plugin |
 | `scope_options` | empty | the connectors that declare `attests_live_scope` | the non-secret configuration keys a scope record repeats, as resolved; never a credential, profile or credential file |
-| `uses_run_identity_key` | `False` | `gateway.logs` | the connector's jobs share one private key per scan run (`ConnectorContext.gateway_identity_key`), so identical sources in one report share opaque caller and scope IDs that separate runs cannot link; when the operator sets `SHADOWSCAN_IDENTITY_KEY`, every run uses that stable key instead (`gateway_identity_key_stable`) and its IDs can be compared across runs |
+| `uses_run_identity_key` | `False` | `gateway.logs`, `gateway.otel` | the connector's jobs share one private key per scan run (`ConnectorContext.gateway_identity_key`), so identical sources in one report share opaque caller and scope IDs that separate runs cannot link; when the operator sets `SHADOWSCAN_IDENTITY_KEY`, every run uses that stable key instead (`gateway_identity_key_stable`) and its IDs can be compared across runs |
 
 The engine looks up the connector class once per configured entry and reads
 these hooks from it. As in collection, the lookup, which imports an approved

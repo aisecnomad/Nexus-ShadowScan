@@ -38,6 +38,15 @@ Documentation only; no scanner behaviour changes.
   `connectors.offline` and `connectors.common`.
 - ADR-005 records its status: still proposed, with `FilesystemConnector` at
   about 3,860 lines and 118 methods.
+- A check of the rewritten architecture page against the code corrected it
+  before release: analysis runs inside each collection job, not after
+  collection; setup refusals exit 1 with no report rather than 3; an engine
+  hook's exception marks the connector incomplete before construction;
+  `gateway.otel` also uses the run identity key and `endpoint.inventory` also
+  reports its scanned home directories; three policy tables outside the
+  engine name built-in connectors; and the incremental, correlation,
+  dashboard, job-deadline and registry-type statements say what the code
+  does.
 - `ROADMAP.md` separates the live endpoint collection that exists from what
   remains, and the `shadowscan` package docstring lists all nine surfaces.
 
