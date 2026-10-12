@@ -66,6 +66,35 @@ def harness(manifest: dict[str, Any]) -> str:
     return f" The runner, stage and adapters ran from harness commit `{commit}` {state}."
 
 
+def withheld(metrics: dict[str, Any]) -> list[str]:
+    """The paragraph naming the decoys adapters withheld from their tools; nothing when none was.
+
+    Metrics written before the scorer knew of withheld decoys have no such counts and render none.
+    """
+    parts = []
+    for name in _tool_order(metrics):
+        tool = metrics["tools"][name]
+        decoys = tool["in_scope"].get("decoys_withheld") or 0
+        negatives = (tool["in_scope"].get("case") or {}).get("negatives_withheld") or 0
+        if not decoys and not negatives:
+            continue
+        where = "; ".join(
+            f"{place}, keys starting {', '.join(f'`{p}`' for p in prefixes)}"
+            for place, prefixes in (tool.get("withheld_decoys") or {}).items()
+        )
+        cases = f" and {negatives} negative case{'s' * (negatives != 1)}" if negatives else ""
+        parts.append(f"{name}, {decoys} decoy{'s' * (decoys != 1)}{cases} ({where})")
+    if not parts:
+        return []
+    return [
+        "Decoys whose records a tool's adapter never passes to it, as the adapter declares, are left out "
+        "of that tool's specificity and agent false-alarm denominators unless the tool reports one anyway, "
+        "and a negative case whose every decoy was withheld is left out of its case-level results and the "
+        "paired comparison: " + "; ".join(parts) + ".",
+        "",
+    ]
+
+
 def _tool_order(metrics: dict[str, Any]) -> list[str]:
     def key(name: str) -> tuple[float, str]:
         est = metrics["tools"][name]["estate"]["recall"]
@@ -152,6 +181,7 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         "false-alarm denominator."
     )
     lines.append("")
+    lines += withheld(metrics)
     lines += ["## By surface", ""]
     for surface in SURFACES:
         info = metrics["surfaces"].get(surface)

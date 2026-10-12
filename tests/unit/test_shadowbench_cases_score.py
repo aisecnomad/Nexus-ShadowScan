@@ -6,6 +6,7 @@ import json
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -445,6 +446,117 @@ def test_a_code_truth_key_outside_the_taxonomy_is_refused(
     case = _case("c1", surface="code", modality="checkout", expected=[("artifact:agent.py", "agent")])
     corpus_path, results = _write(tmp_path, [case], {"t": [_row(case)]})
     assert "not a taxonomy fact" in _refused(tmp_path, corpus_path, results, capsys)
+
+
+# --- decoys an adapter never passes to its tool ---------------------------------------------------
+
+IAM = "resource:arn:aws:iam::123456789012:role/nightly-backup"
+LAMBDA = "resource:arn:aws:lambda:us-east-1:123456789012:function:resize-images"
+AGENT = "resource:arn:aws:bedrock:us-east-1:123456789012:agent/AGENT0001"
+
+
+def _aws(cid: str, expected: Iterable[tuple[str, str]] = (), decoys: Iterable[str] = ()) -> Case:
+    return _case(cid, "cloud", "aws-export", expected=expected, decoys=decoys)
+
+
+def test_a_decoy_the_adapter_withholds_is_not_a_true_negative(tmp_path: Path) -> None:
+    """ShadowScan's adapter never converts IAM roles, yet each IAM-role decoy was a ShadowScan TN."""
+    case = _aws("a1", expected=[(AGENT, "agent")], decoys=[IAM, LAMBDA])
+    # the tool flags the one decoy it was shown, so its specificity is 0, not the 50% the IAM role gave
+    rows = [_row(case, keys=[AGENT, LAMBDA])]
+    corpus_path, results = _write(tmp_path, [case], {"shadowscan": rows, "other": rows})
+    metrics = _score(tmp_path, corpus_path, results)
+    ss = metrics["tools"]["shadowscan"]
+    surface = ss["by_surface"]["cloud"]
+    for entry in (ss["in_scope"], surface, surface["modalities"]["aws-export"]):
+        assert (entry["tn"], entry["decoys"], entry["specificity"]) == (0, 1, 0.0)
+        assert (entry["fp"], entry["decoys_withheld"]) == (1, 1)
+    # the withheld decoy is not in the agent false-alarm universe either
+    assert (ss["in_scope"]["agent_false_alarms"], ss["in_scope"]["agent_false_alarm_universe"]) == (1, 1)
+    assert ss["withheld_decoys"] == {"cloud/aws-export": ["resource:arn:aws:iam::"]}
+    # a tool whose adapter declares nothing is scored on every decoy, as before
+    other = metrics["tools"]["other"]["in_scope"]
+    assert (other["tn"], other["decoys"], other["specificity"], other["decoys_withheld"]) == (1, 2, 0.5, 0)
+    assert metrics["tools"]["other"]["withheld_decoys"] == {}
+    text = report.render(metrics, corpus_path)
+    assert "shadowscan, 1 decoy (cloud/aws-export, keys starting `resource:arn:aws:iam::`)" in text
+
+
+def test_a_withheld_decoy_the_tool_reports_anyway_counts_against_it(tmp_path: Path) -> None:
+    case = _aws("a1", decoys=[IAM, LAMBDA])
+    corpus_path, results = _write(tmp_path, [case], {"shadowscan": [_row(case, keys=[IAM])]})
+    i = _score(tmp_path, corpus_path, results)["tools"]["shadowscan"]["in_scope"]
+    assert (i["fp"], i["tn"], i["decoys"], i["decoys_withheld"]) == (1, 1, 2, 0)
+    assert (i["agent_false_alarms"], i["agent_false_alarm_universe"]) == (1, 2)
+    assert (i["case"]["negatives"], i["case"]["fp"]) == (1, 1)
+
+
+def test_withheld_decoys_of_an_error_row_leave_the_denominator(tmp_path: Path) -> None:
+    case = _aws("a1", decoys=[IAM, LAMBDA])
+    corpus_path, results = _write(tmp_path, [case], {"shadowscan": [_row(case, "error")]})
+    i = _score(tmp_path, corpus_path, results)["tools"]["shadowscan"]["in_scope"]
+    # the error still earns no true negative on the decoy the tool was given
+    assert (i["tn"], i["decoys"], i["decoys_withheld"], i["specificity"]) == (0, 1, 1, 0.0)
+    assert (i["case"]["negatives"], i["case"]["fp"]) == (1, 1)
+
+
+def test_a_negative_case_whose_every_decoy_was_withheld_is_no_case_outcome(tmp_path: Path) -> None:
+    """A clean scan of an export the tool was shown nothing of is not a correct negative."""
+    blind = _aws("a1", decoys=[IAM])
+    shown = _aws("a2", decoys=[LAMBDA])
+    corpus_path, results = _write(
+        tmp_path,
+        [blind, shown],
+        {"shadowscan": [_row(blind), _row(shown)], "other": [_row(blind), _row(shown)]},
+    )
+    metrics = _score(tmp_path, corpus_path, results)
+    case_level = metrics["tools"]["shadowscan"]["in_scope"]["case"]
+    assert (case_level["negatives"], case_level["negatives_withheld"], case_level["tn"]) == (1, 1, 1)
+    assert metrics["tools"]["other"]["in_scope"]["case"]["negatives"] == 2
+    # the paired comparison leaves out the case the reference was shown nothing of
+    assert metrics["tools"]["other"]["vs_reference"]["shared"] == 1
+    assert "shadowscan, 1 decoy and 1 negative case (" in report.render(metrics, corpus_path)
+
+
+def test_a_negative_case_with_every_decoy_withheld_stays_a_false_alarm_when_it_fails(tmp_path: Path) -> None:
+    """Fail closed: an error, an incomplete scan or a false positive there is still a false alarm."""
+    cases = [_aws(f"a{i}", decoys=[IAM]) for i in range(3)]
+    rows = [_row(cases[0], "error"), _row(cases[1], incomplete=True), _row(cases[2], keys=[LAMBDA])]
+    corpus_path, results = _write(tmp_path, cases, {"shadowscan": rows})
+    case_level = _score(tmp_path, corpus_path, results)["tools"]["shadowscan"]["in_scope"]["case"]
+    assert (case_level["negatives"], case_level["negatives_withheld"], case_level["fp"]) == (3, 0, 3)
+
+
+def test_an_adapter_module_that_does_not_load_is_refused_unless_forced(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What a broken adapter withholds is unknown, so its tool's true negatives cannot be trusted."""
+    monkeypatch.setattr(score, "load_adapters", lambda: ({}, {"broken": "ImportError: no module"}))
+    case = _aws("a1", decoys=[LAMBDA])
+    corpus_path, results = _write(tmp_path, [case], {"t": [_row(case)]})
+    assert "adapter module broken does not load" in _refused(tmp_path, corpus_path, results, capsys)
+    metrics = _score(tmp_path, corpus_path, results, "--force")
+    assert any("adapter module broken" in problem for problem in metrics["forced"])
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        [("cloud", "aws-export")],
+        {("cloud",): ("resource:",)},
+        {("cloud", "aws-export"): ()},
+        {("cloud", "aws-export"): ("",)},
+        {("cloud", "aws-export"): "resource:arn:aws:iam::"},
+    ],
+)
+def test_a_malformed_withheld_declaration_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, declared: object
+) -> None:
+    adapter = SimpleNamespace(name="t", withheld_decoys=declared)
+    monkeypatch.setattr(score, "load_adapters", lambda: ({"t": adapter}, {}))
+    case = _aws("a1", decoys=[LAMBDA])
+    corpus_path, results = _write(tmp_path, [case], {"t": [_row(case)]})
+    assert "withheld_decoys" in _refused(tmp_path, corpus_path, results, capsys)
 
 
 # --- paired comparison (S6) -----------------------------------------------------------------------

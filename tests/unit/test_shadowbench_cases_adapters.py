@@ -18,9 +18,12 @@ from typing import Any
 import pytest
 
 from tools.discovery_benchmark import taxonomy
-from tools.shadowbench.cases import fetch_code
+from tools.shadowbench.cases import fetch_code, generate
 from tools.shadowbench.cases.adapters.registry import load_adapters
+from tools.shadowbench.cases.adapters.shadowscan import ADAPTER as SHADOWSCAN
+from tools.shadowbench.cases.adapters.shadowscan import convert_aws
 from tools.shadowbench.cases.contract import AdapterResult, MaterializedCase, RunResult, ToolEnv
+from tools.shadowbench.cases.corpus import Case, load_corpus
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALL = ROOT / "tools" / "shadowbench" / "cases" / "install_tools.sh"
@@ -319,7 +322,37 @@ def test_shadowscan_empty_complete_report_is_ok(tmp_path: Path) -> None:
     assert result.raw["incomplete"] is False
 
 
-# --- code surface: hits that map to no taxonomy fact are dropped -----------------------------------
+def _aws_cases() -> list[Case]:
+    committed = load_corpus(ROOT / "benchmarks" / "shadowbench" / "cases" / "corpus.json").cases
+    return [c for c in committed + generate.build(1, 40) if c.modality == "aws-export"]
+
+
+def test_shadowscan_withholds_exactly_the_decoys_convert_aws_drops(tmp_path: Path) -> None:
+    """The scorer leaves withheld decoys out of ShadowScan's specificity, so the declaration must be exact.
+
+    A prefix that missed an IAM role would credit ShadowScan with a record it never saw; one that
+    caught a Lambda or SageMaker decoy would drop a record it was shown.
+    """
+    prefixes = SHADOWSCAN.withheld_decoys[("cloud", "aws-export")]
+    shown = withheld = 0
+    for n, case in enumerate(_aws_cases()):
+        inputs, work = tmp_path / f"{n}" / "inputs", tmp_path / f"{n}" / "work"
+        for rel, text in case.files.items():
+            (inputs / rel).parent.mkdir(parents=True, exist_ok=True)
+            (inputs / rel).write_text(text, encoding="utf-8")
+        work.mkdir(parents=True)
+        converted = convert_aws(inputs, work).read_text(encoding="utf-8")
+        for key in case.decoys:
+            arn = key.removeprefix("resource:")
+            if key.startswith(prefixes):
+                withheld += 1
+                assert arn not in converted, (
+                    f"{case.case_id}: {key} is declared withheld but reaches the tool"
+                )
+            else:
+                shown += 1
+                assert arn in converted, f"{case.case_id}: {key} reaches no record the tool is given"
+    assert shown and withheld
 
 
 def _only_facts(result: AdapterResult) -> None:

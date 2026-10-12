@@ -21,7 +21,8 @@ saas        github-export         ``saas.github-apps`` on ``installations.json``
 cloud       aws-export            ``cloud.aws`` on a JSONL of the CLI outputs re-keyed into its dumped
                                   record kinds (account, bedrock-agent, agentcore-*, lambda,
                                   sagemaker-endpoint, bedrock-knowledge-base); IAM roles are not
-                                  converted (its offline IAM record needs pre-analysed policy fields)
+                                  converted (its offline IAM record needs pre-analysed policy fields),
+                                  so their decoys are declared in ``withheld_decoys``
 cloud       k8s-export            ``cloud.kubernetes`` on ``workloads.json`` unchanged
 endpoint    home                  ``endpoint.inventory`` with ``path`` = the case home
 network     passive               ``network.logs`` on the ``zeek/`` directory
@@ -251,6 +252,14 @@ class ShadowScanAdapter:
         "network": frozenset({"passive"}),
         "runtime": frozenset({"snapshot", "live"}),
     }
+    withheld_decoys: Mapping[tuple[str, str], tuple[str, ...]] = {
+        ("cloud", "aws-export"): ("resource:arn:aws:iam::",),
+    }
+    """Decoy key prefixes, per (surface, modality), of records the conversion never passes to ShadowScan.
+
+    ``convert_aws`` does not read ``aws/iam/``, so ShadowScan is never shown an IAM role. The scorer
+    leaves these decoys out of ShadowScan's specificity unless it reports one anyway.
+    """
 
     def unavailable_reason(self, env: ToolEnv) -> str | None:
         if not env.binary("shadowscan"):

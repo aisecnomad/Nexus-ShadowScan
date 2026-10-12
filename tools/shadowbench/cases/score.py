@@ -50,6 +50,21 @@ does. A positive case it found still counts as found. Incomplete rows are also
 counted separately. An ``unsupported`` row is excluded from in-scope metrics
 and counted as missed in estate recall.
 
+Withheld decoys. An adapter that converts a case's input for its tool may
+declare, per (surface, modality), the key prefixes of decoys whose records
+its conversion never passes on (``withheld_decoys``; ShadowScan's adapter
+does not convert AWS IAM roles). Such a decoy is left out of that tool's
+specificity and agent false-alarm denominators, whatever the row's status,
+unless the tool reports it anyway, which then counts against the tool like
+any other decoy hit; the count left out is reported as ``decoys_withheld``. A
+complete ``ok`` row on a negative case whose every decoy was withheld, and
+that reports no false positive, was shown nothing it could reject: it is
+left out of the tool's case-level negatives (``case.negatives_withheld``)
+and of the paired comparison. The declarations come from the adapter
+registry; an adapter module that does not load is refused unless ``--force``,
+since what it withholds is unknown. A tool without an adapter withholds
+nothing.
+
 Case level. A positive case is found when the tool reports at least one
 expected entity; a negative case is a false alarm when the tool reports at
 least one false positive, and is correct only on a complete ``ok`` run. Case
@@ -73,10 +88,12 @@ import random
 import statistics
 import sys
 from collections import Counter
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, get_args
 
 from tools.discovery_benchmark.taxonomy import is_fact
+from tools.shadowbench.cases.adapters.registry import load_adapters
 from tools.shadowbench.cases.contract import SURFACES, Status
 from tools.shadowbench.cases.corpus import Case, Corpus, corpus_digest, load_corpus
 
@@ -86,9 +103,42 @@ STATUSES: frozenset[str] = frozenset(get_args(Status))
 ROW_FIELDS: tuple[str, ...] = ("surface", "modality", "family", "label", "difficulty")
 """Case fields the runner copies into every row; a row that disagrees was recorded on another case."""
 
+Withheld = dict[tuple[str, str], tuple[str, ...]]
+"""Per (surface, modality), the key prefixes of the decoys an adapter never passes to its tool."""
+
 
 class ResultsError(ValueError):
     """Stored results that cannot be scored against this corpus without misreporting."""
+
+
+def withheld_decoys(tools: Iterable[str]) -> tuple[dict[str, Withheld], list[str]]:
+    """Each tool's declared ``withheld_decoys``, and a problem for each adapter module that does not load."""
+    adapters, unloaded = load_adapters()
+    out: dict[str, Withheld] = {}
+    for tool in tools:
+        declared = getattr(adapters.get(tool), "withheld_decoys", None) or {}
+        if not isinstance(declared, Mapping):
+            raise ResultsError(
+                f"adapter {tool}: withheld_decoys must map (surface, modality) to key prefixes"
+            )
+        entry: Withheld = {}
+        for where, prefixes in declared.items():
+            if (
+                not isinstance(where, tuple)
+                or len(where) != 2
+                or not all(isinstance(part, str) for part in where)
+                or not isinstance(prefixes, tuple | list | frozenset)
+                or not prefixes
+                or not all(isinstance(p, str) and p for p in prefixes)
+            ):
+                raise ResultsError(f"adapter {tool}: malformed withheld_decoys entry {where!r}: {prefixes!r}")
+            entry[(where[0], where[1])] = tuple(sorted(prefixes))
+        out[tool] = entry
+    problems = [
+        f"adapter module {module} does not load ({why}), so the decoys it withholds from its tool are unknown"
+        for module, why in sorted(unloaded.items())
+    ]
+    return out, problems
 
 
 def wilson(k: int, n: int) -> tuple[float | None, float | None, float | None]:
@@ -126,9 +176,13 @@ def _matches(reported: str, keys: list[str]) -> list[str]:
 
 
 class CaseScore:
-    """Entity-level outcome of one (tool, case); ``row`` is ``None`` when the tool has no row for it."""
+    """Entity-level outcome of one (tool, case); ``row`` is ``None`` when the tool has no row for it.
 
-    def __init__(self, case: Case, row: dict[str, Any] | None) -> None:
+    ``withheld`` holds the key prefixes of the decoys the tool's adapter never passed to it on this
+    case's surface and modality.
+    """
+
+    def __init__(self, case: Case, row: dict[str, Any] | None, withheld: tuple[str, ...] = ()) -> None:
         self.case = case
         self.missing = row is None
         if row is None:
@@ -147,6 +201,8 @@ class CaseScore:
         self.agent_false_alarms: set[str] = set()
         self.out_of_taxonomy: set[str] = set()
         self.extra = 0
+        # decoys the tool was never shown; one it reports anyway is a hit, and leaves this set below
+        self.withheld: set[str] = {d for d in case.decoys if withheld and d.startswith(withheld)}
         if self.status != "ok":
             return
         seen: set[str] = set()
@@ -178,6 +234,7 @@ class CaseScore:
             else:
                 self.fp_keys.add(key)
                 self.extra += 1
+        self.withheld -= self.decoy_hits
 
     @property
     def fn(self) -> int:
@@ -188,16 +245,35 @@ class CaseScore:
         return len(self.decoy_hits) + self.extra
 
     @property
+    def decoy_universe(self) -> int:
+        """The decoys this row is scored on: the case's, less those withheld from the tool."""
+        return len(self.case.decoys) - len(self.withheld)
+
+    @property
     def tn(self) -> int:
-        """Decoys left alone; an error or an incomplete run earns none."""
-        return len(self.case.decoys) - len(self.decoy_hits) if self.complete else 0
+        """Decoys left alone; an error or an incomplete run earns none, and a withheld decoy is none."""
+        return self.decoy_universe - len(self.decoy_hits) if self.complete else 0
+
+    @property
+    def blind(self) -> bool:
+        """A complete, clean run on a negative case whose every decoy was withheld from the tool.
+
+        The tool was shown nothing it could reject, so the case is no correct negative for it.
+        """
+        return (
+            self.complete
+            and not self.case.positive
+            and bool(self.case.decoys)
+            and self.decoy_universe == 0
+            and self.fp == 0
+        )
 
     @property
     def agent_false_alarm_universe(self) -> int:
         """Entities this row could have wrongly called agents; an incomplete run adds only those it did."""
         if not self.complete:
             return len(self.agent_false_alarms) if self.status == "ok" else 0
-        return sum(1 for e in self.case.expected if e.label == "llm") + len(self.case.decoys)
+        return sum(1 for e in self.case.expected if e.label == "llm") + self.decoy_universe
 
     @property
     def correct(self) -> bool:
@@ -218,7 +294,7 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
     fn = sum(s.fn for s in scored)
     fp = sum(s.fp for s in ok)
     tn = sum(s.tn for s in ok)
-    decoys = sum(len(s.case.decoys) for s in scored)
+    decoys = sum(s.decoy_universe for s in scored)
     exp_agents = sum(1 for s in scored for e in s.case.expected if e.label == "agent")
     tp_agent = sum(len(s.tp_agent) for s in ok)
     fa_universe = sum(s.agent_false_alarm_universe for s in ok)
@@ -240,9 +316,10 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
             if 2 * btp + bfp + bfn:
                 boots.append(2 * btp / (2 * btp + bfp + bfn))
         boots.sort()
-    # case level: an error is a missed positive, an error or incomplete negative a false alarm
+    # case level: an error is a missed positive, an error or incomplete negative a false alarm, and
+    # a negative case the tool was shown no decoy of is no outcome at all
     pos = [s for s in scored if s.case.positive]
-    neg = [s for s in scored if not s.case.positive]
+    neg = [s for s in scored if not s.case.positive and not s.blind]
     ctp = sum(1 for s in pos if s.correct)
     cfn = len(pos) - ctp
     ctn = sum(1 for s in neg if s.correct)
@@ -262,6 +339,7 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
         "incomplete": sum(1 for s in ok if s.incomplete),
         "expected": tp + fn,
         "decoys": decoys,
+        "decoys_withheld": sum(len(s.withheld) for s in scored),
         "tp": tp,
         "fp": fp,
         "fn": fn,
@@ -286,6 +364,7 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
         "case": {
             "positives": len(pos),
             "negatives": len(neg),
+            "negatives_withheld": sum(1 for s in scored if s.blind),
             "tp": ctp,
             "fn": cfn,
             "fp": cfp,
@@ -436,7 +515,8 @@ def score(
     if not isinstance(tool_runs, dict):
         raise ResultsError(f"{manifest_path}: tools must be a JSON object")
     ran, problems = _provenance(rows, tool_runs)
-    for problem in problems:
+    withheld, unloaded = withheld_decoys(sorted(set(rows) | ran))
+    for problem in problems + unloaded:
         refuse_unless_forced(problem)
     out: dict[str, Any] = {
         "corpus_sha256": recorded,
@@ -462,7 +542,10 @@ def score(
     # a forced score of a tool the manifest says ran but whose rows are gone scores as all missing
     for tool in sorted(set(rows) | ran):
         by_case = rows.get(tool, {})
-        scores = {c.case_id: CaseScore(c, by_case.get(c.case_id)) for c in corpus.cases}
+        scores = {
+            c.case_id: CaseScore(c, by_case.get(c.case_id), withheld[tool].get((c.surface, c.modality), ()))
+            for c in corpus.cases
+        }
         all_scores[tool] = scores
         supported = sorted({s.case.surface for s in scores.values() if s.status != "unsupported"})
         per_surface: dict[str, Any] = {}
@@ -482,6 +565,7 @@ def score(
             "version": (tool_runs.get(tool) or {}).get("version"),
             "surfaces_supported": supported,
             "coverage": f"{len(supported)}/{len([s for s in SURFACES if out['surfaces'][s]['cases']])}",
+            "withheld_decoys": {f"{s}/{m}": list(p) for (s, m), p in sorted(withheld[tool].items())},
             "in_scope": in_scope,
             "estate": {
                 "expected": total_expected,
@@ -499,7 +583,7 @@ def score(
             b = c = shared = 0
             for cid, s in scores.items():
                 r = ref[cid]
-                if s.status == "unsupported" or r.status == "unsupported":
+                if s.status == "unsupported" or r.status == "unsupported" or s.blind or r.blind:
                     continue
                 shared += 1
                 if s.correct and not r.correct:

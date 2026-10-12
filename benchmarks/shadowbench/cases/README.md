@@ -110,8 +110,10 @@ conversion is documented in the adapter docstring. ShadowScan's adapter embeds
 Okta grants and tokens into the app list, concatenates the Graph arrays with a
 role-id map, concatenates the Power Platform and Slack collections, and re-keys
 the AWS CLI outputs into its dumped record kinds; IAM roles are not converted
-(its offline IAM record needs pre-analysed policy fields), so the IAM decoy
-tests nothing for ShadowScan. Everything else is read unchanged.
+(its offline IAM record needs pre-analysed policy fields), so ShadowScan never
+sees an IAM-role decoy. Its adapter declares those decoys as withheld, and the
+scorer leaves them out of ShadowScan's specificity (see Metrics). Everything
+else is read unchanged.
 
 ## Metrics
 
@@ -160,6 +162,18 @@ Per tool, per surface and per modality, over the cases the tool ran
   and a negative case it scanned incompletely is a false alarm. A positive
   case it found still counts as found. Incomplete runs are also counted
   separately.
+* **Withheld decoys.** An adapter that converts a case's input may declare
+  the decoys whose records its conversion never passes to the tool, by key
+  prefix per surface and modality (`withheld_decoys`); ShadowScan's adapter
+  declares the AWS IAM roles it does not convert. A withheld decoy is left
+  out of that tool's specificity and agent false-alarm denominators, so a
+  record the tool never saw earns it no true negative, unless the tool
+  reports it anyway, which counts against it like any decoy hit. A negative
+  case whose every decoy was withheld, scanned completely with no false
+  positive, is left out of that tool's case-level results and the paired
+  comparison; an error, an incomplete scan or a false positive there is
+  still a false alarm. The metrics count both (`decoys_withheld`,
+  `case.negatives_withheld`), and the report names them.
 * **Estate recall.** True positives over all 738 expected entities in the
   corpus, charging a tool for every surface and modality it does not run
   (those rows are `unsupported` and left out of in-scope metrics).
