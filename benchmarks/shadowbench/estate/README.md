@@ -102,7 +102,7 @@ The corpus deliberately includes, in both directions:
    `python -m tools.shadowbench.estate verify-freeze` checks drift. The
    published run was produced after the original freeze. Since then,
    integration renamed the manifest's keys when the files moved to
-   `artifacts/` (digests unchanged), and the two errata below changed
+   `artifacts/` (digests unchanged), and the three errata below changed
    digests.
 
 **Erratum (integration, 2026-10-12).** The repository's `.vscode/` ignore
@@ -122,13 +122,22 @@ fictional organization *Vantor*, which is also the name a real company
 adopted in 2025, and gave it tenant hostnames on real SaaS domains. Every
 occurrence, in file contents, directory names, the three JWT payloads that
 carried it, `corpus.json` and the recorded predictions in `runs.json`, was
-replaced with the same-length, case-preserving name *Adatum*. A same-length
-name keeps every anchor's length, and attribution uses anchor length only
-to break ties, so the rename could not change attribution: re-scoring the
-renamed `runs.json` with the scorer of that time gave exactly the renamed
+replaced with the same-length, case-preserving name *Adatum*. The scorer of
+that time gave a prediction to the entity with the longest matching anchor,
+and a same-length name keeps every anchor's length, so re-scoring the
+renamed `runs.json` with that scorer gave exactly the renamed
 `metrics.json` and `REPORT.md`. `FREEZE.json` and the four synthetic-JWT
-allowlist digests were recomputed. The scorer was changed afterwards and
-the committed results were re-scored with it; see [Results](#results).
+allowlist digests were recomputed. The scorer changed afterwards: it now
+uses anchor length only to break ties (see [Attribution](#attribution)),
+and the committed results were re-scored with it (see [Results](#results)).
+
+**Erratum (integration, 2026-10-12).** The `comment` in
+[`artifacts/services/services.json`](artifacts/services/services.json)
+named the live-sim host `tools/estate_benchmark/simhost.py`, a path that
+never existed in this repository. It now names
+[`tools/shadowbench/estate/simhost.py`](../../../tools/shadowbench/estate/simhost.py),
+and `FREEZE.json` records the file's new digest. Neither simhost, the
+AI-Infra-Guard adapter nor the scorer reads the comment.
 
 ## Execution and isolation
 
@@ -149,8 +158,10 @@ name that hits the limit fails the command.
 
 **Private estate copies and the freeze.** Before anything runs, `run`
 compares the estate and `corpus.json` with the freeze manifest (`--freeze`,
-default [`FREEZE.json`](FREEZE.json)). On any difference it prints `DRIFT`
-lines and exits 1 without running a tool. Each unit then runs against its
+default [`FREEZE.json`](FREEZE.json)). On any digest difference it prints
+`DRIFT` lines and exits 1 without running a tool. A symlink or special file
+in the estate, or a malformed manifest, stops it before any tool runs with
+a `corpus error` message and exit 2. Each unit then runs against its
 own copy of the estate in a fresh temporary directory, and that copy must
 match the frozen digests before the unit's commands start (otherwise the
 unit is an error and incomplete). A cache or configuration a tool writes
@@ -177,18 +188,20 @@ others. The runner creates capture files and `result.json` afresh through a
 directory descriptor, never by path, and measures and cuts each capture
 through the descriptor the tool wrote to. Before anything reads what the
 account wrote, the runner takes both trees back and removes every symlink,
-hard link and special file in them without following it. A removed entry
-in the output directory, outside the tool's `home/` and `tmp/` scratch,
-marks the unit incomplete. Without `--as-user`, tools run as the account
-that started the harness; the 2026-10-11 run did not use `--as-user`.
+hard link and special file in them without following it. The row's
+`removed_outputs` lists the entries removed from the output directory; an
+entry outside the tool's `home/` and `tmp/` scratch marks the unit
+incomplete. Without `--as-user`, tools run as the account that started the
+harness; the 2026-10-11 run did not use `--as-user`.
 
 **This is not a sandbox.** There is no filesystem, network or process
 isolation. A tool can read anything its account can read, and the dead
 proxy only stops clients that honour the proxy variables. The version
-probes (`--version`, `--help`, package metadata) run before the matrix as
-the invoking account with its own environment, outside the scrubbed one.
-Run third-party tools only on an externally isolated, disposable machine
-with no credentials.
+probes (`--version`, `--help`, a `version` subcommand for vet and Numbat,
+or package metadata read through the tool's own Python) run before the
+matrix as the invoking account with its own environment, outside the
+scrubbed one. Run third-party tools only on an externally isolated,
+disposable machine with no credentials.
 
 **The benchmark is designed never to execute corpus content.** Tools that
 enumerate MCP servers by launching them run with that behavior disabled or
@@ -224,8 +237,7 @@ Every port is bound before the scanner starts; a busy port stops simhost
 with exit 2 and a message naming the port, so the unit fails and is marked
 incomplete instead of probing a real server. `tools.json`
 `ai_infra_guard.port_offset` (an integer, default 0) is passed to simhost
-as `--port-offset` and added to every scan target's port. The frozen
-`services.json` `comment` still names an older path for simhost.
+as `--port-offset` and added to every scan target's port.
 
 ## Tools
 
@@ -247,8 +259,9 @@ The runnable tools' versions are the ones `runs.json` `tool_versions`
 recorded by probing the installed binaries. The ShadowScan entry is its
 package version string: `main` had moved past the `v0.1.2` tag by
 2026-10-11 without changing it, and the run did not record which commit was
-installed. The power-pwn and Cartography versions were noted during
-provisioning.
+installed. `runs.json` records no version for a tool it skipped; the
+power-pwn and Cartography versions are the ones the original pull request
+listed.
 
 Exclusion evidence, recorded during provisioning on the machine that
 produced the 2026-10-11 run:
@@ -275,18 +288,37 @@ the repository (vet's) is started there through a fixed `/bin/sh`
 trampoline that changes into the repository and execs the unchanged argv,
 so the argv recorded in `runs.json` carries that prefix. In the 2026-10-11
 run vet's code commands started in the run directory instead; their argv
-named the repository with `-D` either way. The estate scorer differs from
-the code-surface scorer (see [Scoring](#scoring)), so the code numbers here
-are not interchangeable with that benchmark's.
+named the repository with `-D` either way. Those normalizers read a
+missing report as nothing found: vet's when `vet.json` is missing, empty,
+`null` or `[]`, Agentic Radar's for each framework whose report is missing
+or unparseable, and AgentDiscover's when `scan.sarif` is missing. A run
+whose commands all exited with accepted codes therefore counts as complete
+without a report, unless every command exited non-zero (see
+[Run completeness](#run-completeness)). The estate scorer differs from the
+code-surface scorer (see [Scoring](#scoring)), so the code numbers here are
+not interchangeable with that benchmark's.
 
 On the endpoint surface, the Cisco MCP Scanner and AgentSight wrapper
 scripts run every step and exit with the status of the first step that
 failed, and the Snyk Agent Scan script exits with the scanner's own
-status. Numbat's fails only when `numbat agents` leaves no report (the
-adapter reads its exit 1 on an empty inventory as a valid result); its
-`scan` step only adds evidence paths to the prediction text, and its exit
-status is not checked. For these four tools a missing, empty or malformed
-report is an adapter error, not an empty inventory.
+status. Numbat's script exits with the status of `numbat agents` when that
+step leaves no report, and with 0 otherwise (the adapter reads its exit 1
+on an empty inventory as a valid result); its `scan` step only adds
+evidence paths to the prediction text, and its exit status is not checked.
+The normalizers differ in how strictly they read a report:
+
+- Cisco MCP Scanner and AgentSight: a missing, empty or unparseable
+  report, or one without the records they expect, is an adapter error, not
+  an empty inventory. Cisco needs a `scan_results` list in every output;
+  AgentSight needs a session record that names its agent (`comm`) in any
+  report that is not an empty list.
+- Snyk Agent Scan and Numbat: a missing, empty or unparseable report is an
+  adapter error, and so is one whose top level is not an object (Snyk) or
+  a list (Numbat). Inside such a report they skip entries of the wrong
+  shape, so a report holding only those, such as an error object, reads as
+  nothing found and the run counts as complete.
+- vet on home trees: a missing, empty or unparseable `ai.json` is an
+  adapter error; a report that is not a list reads as nothing found.
 
 ## Scoring
 
@@ -313,13 +345,16 @@ Each prediction goes to at most one entity:
    expects the predicted fact (exactly, or by category for a `generic`
    value) wins, then one whose expected or tolerated facts share the fact's
    category. When a control or near-miss is among them, that preference is
-   skipped, so a flag on a negative is never handed to a positive whose
-   anchor merely co-occurs. What is still tied goes to the longest matching
-   anchor, then the first entity id. Every prediction that matched several
+   skipped, so the preference never hands a flag on a negative to a
+   positive whose anchor merely co-occurs. What is still tied, or every
+   candidate when a negative is among them, goes to the longest matching
+   anchor, then the first entity id; those two tie-breaks can still give
+   such a prediction to a positive. Every prediction that matched several
    candidates is counted and recorded with its candidates and the rule
    that chose its owner (`metrics.json` keeps up to 50 per tool,
    `REPORT.md` shows up to 15); it counts as **ambiguous** when the anchor
-   length or the entity id chose.
+   length or the entity id chose, which is always the case when a negative
+   was among the candidates.
 4. **Fallback.** When no candidate's anchor matches and the run covers one
    repository or home tree, the prediction goes to the one candidate
    labeled with that unit that expects the fact: inventory tools print
@@ -352,11 +387,12 @@ exit 3 but flags the run when the report says the scan was incomplete), it
 recorded an error, its scan-target record is malformed, it ran no command,
 a command timed out or exited with a code the adapter does not declare as
 success, or every one of its commands exited non-zero and it produced no
-output.
-The last rule exists because some adapters accept a non-zero exit:
-Agentic Radar and AgentDiscover accept exit 1, through the code-surface
-adapters they wrap, and without stderr "nothing found" cannot be told from
-a crash.
+output. The last rule exists because Agentic Radar accepts exit 1 from
+each of its five scans, through the code-surface adapter it wraps, and
+without stderr "nothing found" cannot be told from a crash. AgentDiscover
+accepts exit 1 only from its `export-mcpfw-policy` step; its `scan` and
+`deps` steps must exit 0, so a run of it in which every command exited
+non-zero is already incomplete by the exit-code rule.
 
 A code or home unit that labels an entity on a tool's declared surfaces is
 **missing** when the tool has no run for it and no whole-estate run; a tool
@@ -410,9 +446,9 @@ Committed under [`results/2026-10-11/`](results/2026-10-11/):
 - `tools.json`: the shape of the tool configuration.
 
 Local paths in `runs.json` and `tools.json` were replaced by placeholders
-(`<tools>`, `<run>`, `<estate>`, `<repo>`, `<venvs>`) by hand before
-publishing; the harness writes real paths and no script in the repository
-does the replacement. No stdout, stderr or raw tool report was committed.
+(`<tools>`, `<run>`, `<estate>`, `<repo>`, `<venvs>`) before publishing.
+The harness writes real paths, and no script in the repository does the
+replacement. No stdout, stderr or raw tool report was committed.
 
 `metrics.json` and `REPORT.md` are a re-score of the 2026-10-11 `runs.json`
 with the scorer as fixed during integration on 2026-10-12, so they differ
@@ -442,11 +478,11 @@ five scans exited 1 and reported nothing. The per-home tools (Snyk Agent
 Scan, Numbat, AgentSight, Cisco, and vet on the endpoint surface) did not
 reach the four endpoint-export entities, so each could detect at most 16 of
 the 19 endpoint positives and earn at most five true negatives of six.
-Precision of 100% means no attributed in-scope false positive among few
-predictions; it is not a precision estimate. No prediction in the run was
-unattributed or ambiguous: all 41 predictions that matched several
-entities, all of them client-versus-MCP-server pairs in one configuration
-file, were settled by the expects-the-fact rule.
+An in-scope value precision of 100% means no in-scope false positive,
+attributed or not, among few predictions; it is not a precision estimate.
+No prediction in the run was unattributed or ambiguous: all 41 predictions
+that matched several entities, all of them client-versus-MCP-server pairs
+in one configuration file, were settled by the expects-the-fact rule.
 
 ShadowScan's four misses are four of the hard positives listed under
 [Corpus](#corpus) (the text-generation-inference caller, the n8n
@@ -465,15 +501,16 @@ detected five of the six code positives, at 35% value recall.
 - **[a] AI-Infra-Guard's two detections came from the harness.** The
   adapter of that time appended each mock service's `services.json`
   anchor, the answer key, to the prediction text
-  (`dev-laptop-02:marcus:ollama`, `build-runner-3:ci:vllm`); the scanner
-  itself printed only the loopback URL and its fingerprints. The committed
-  `runs.json` keeps that text and records no scan targets, so the scorer
-  still attributes both predictions through the appended anchors. Scored at
-  this commit with the appended anchor removed and no scan target, the two
-  predictions are unattributed false positives: 0/6 detected, in-scope
-  value 0 TP / 2 FP / 6 FN, 0/87 estate-wide. The current adapter no longer
-  appends the anchor; it records each prediction's scan target, and the
-  scorer attributes it through `services.json` as described under
+  (`dev-laptop-02:marcus:ollama`, `build-runner-3:ci:vllm`); the part of
+  the scanner's output the adapter kept was the loopback URL and its
+  fingerprints. The committed `runs.json` keeps that text and records no
+  scan targets, so the scorer still attributes both predictions through
+  the appended anchors. Scored at this commit with the appended anchor
+  removed and no scan target, the two predictions are unattributed false
+  positives: 0/6 detected, in-scope value 0 TP / 2 FP / 6 FN, 0/87
+  estate-wide. The current adapter no longer appends the anchor; it
+  records each prediction's scan target, and the scorer attributes it
+  through `services.json` as described under
   [Attribution](#attribution). With those targets the same two predictions
   score 2/6, as harness attribution of a scanned loopback port to the host
   it stands in for, not as the tool naming the host. The live-sim stands in
@@ -489,8 +526,9 @@ detected five of the six code positives, at 35% value recall.
   show that the scanners ran cleanly. Cisco produced no record on any of
   its three home trees; AgentSight produced one record on dev-laptop-01 and
   none on the other two. The current wrappers exit with the first failing
-  step's status and treat a missing, empty or malformed report as an
-  error.
+  step's status, and the current normalizers treat a missing, empty or
+  unparseable report, or one without the records they expect, as an error
+  (see [Tools](#tools)).
 - **[c] Agentic Radar's exit 1.** 48 of its 50 commands exited 1, which its
   adapter (shared with `tools/discovery_benchmark`) accepts as success. On
   8 of 10 repositories every scan exited 1 and nothing was reported; the
@@ -532,9 +570,10 @@ reports 12 such warnings and exits 0.
 `run` takes `--freeze` (default `FREEZE.json`), `--timeout` (seconds per
 command, default 900), `--as-user ACCOUNT`, `--keep-network` and
 `--only TOOL[,TOOL...]`. `score` reads `services/services.json` under
-`--estate` (default `artifacts/`) to resolve scan targets. It stops on a
-malformed services file; without one it prints a note and every scan
-target scores as unattributed. To re-score the committed run, pass
+`--estate` (default `benchmarks/shadowbench/estate/artifacts`) to resolve
+scan targets. It stops on a malformed services file; without one it prints
+a note and every scan target scores as unattributed. To re-score the
+committed run, pass
 `--runs benchmarks/shadowbench/estate/results/2026-10-11/runs.json`.
 
 `tools.json` maps tool ids to installed binaries:
