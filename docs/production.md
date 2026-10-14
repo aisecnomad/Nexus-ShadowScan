@@ -1160,8 +1160,10 @@ sync integrations and bots named only "... Bot" are no longer inventoried;
 hint-only bots keep a bounded, possible-level confidence. Slack apps can now match `client_id` rule-pack signals by their
 app id, and Wudpecker and Tactiq apps are recognised as meeting note-takers.
 Auth0 non-machine clients attributed only by a model provider are now kept.
-GCP Cloud Run services and Cloud Functions whose only AI evidence was their own
-name or description are no longer reported.
+GCP Cloud Run services and Cloud Functions whose only AI evidence is an
+ambiguous product name (Gemini) in their name or description are no longer
+reported; a name or description that names an unambiguous product or provider
+(Anthropic Claude, OpenAI) is reported as before.
 
 Permission and machine-identity observations are not proof of agent execution,
 and observations in an offline export are not authenticated publisher evidence.

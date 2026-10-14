@@ -1019,8 +1019,9 @@ Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
 and endpoints per location, Dialogflow CX agents, Discovery Engine /
 Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,
 service accounts (user-managed keys), API keys restricted to Gemini, Secret
-Manager names, optional Cloud Audit Log callers (`audit_days`). Cloud Run and
-Cloud Functions names are hints only. Auth: ADC via
+Manager names, optional Cloud Audit Log callers (`audit_days`). An ambiguous
+product name (Gemini) on a Cloud Run service or Cloud Function stays a hint
+until another signal corroborates it. Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows potential access, not observed agent execution. Project IAM collection
