@@ -21,7 +21,7 @@ from shadowscan.connectors import builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.engine import Engine
-from shadowscan.models import Finding, Surface
+from shadowscan.models import Finding, Kind, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils import http
 
@@ -341,3 +341,45 @@ def test_lifecycle_coverage_is_unknown_when_connector_lookup_failed(monkeypatch)
     result = Engine(ScanConfig(connectors=[ConnectorSpec("platform.recorder")]), SignatureIndex([])).run()
     assert not result.complete
     assert captured[0]["runtime_coverage"] == "unknown"
+
+
+def test_confidence_threshold_prunes_lifecycle_observation_links_to_omitted_findings(monkeypatch):
+    # Lifecycle correlation runs before the confidence threshold. An omitted
+    # process finding's identifier names nothing in the report; the recorded
+    # observation time it contributed stays.
+    endpoint = Finding(
+        surface=Surface.ENDPOINT,
+        connector="endpoint.inventory",
+        kind=Kind.AI_APP,
+        title="Installed Claude Code",
+        resource="endpoint:build-01:claude",
+        resource_type="ai-app",
+        account="build-01",
+        frameworks=["coding-agent.claude-code"],
+        confidence=0.9,
+    )
+    process = Finding(
+        surface=Surface.RUNTIME,
+        connector="runtime.processes",
+        kind=Kind.RUNTIME_PROCESS,
+        title="Running Claude Code",
+        resource="runtime:build-01:claude:1",
+        resource_type="process",
+        account="build-01",
+        frameworks=["coding-agent.claude-code"],
+        tags=["observed-running"],
+        confidence=0.2,
+        metadata={"observed_at": "2026-01-02T00:30:00Z"},
+    )
+    connector, _ = _recording_connector(analyze=lambda self, records: [endpoint, process])
+    monkeypatch.setattr(engine_module, "get_connector_class", lambda name: connector)
+    config = ScanConfig(connectors=[ConnectorSpec("platform.recorder")], min_confidence=0.5)
+    result = Engine(config, SignatureIndex([])).run()
+    assert result.complete
+    (kept,) = result.findings
+    assert kept.id == endpoint.id
+    assessment = kept.metadata["lifecycle_observation"]
+    assert [sample["finding_id"] for sample in assessment["observations"]] == [None]
+    assert assessment["observations"][0]["observed_at"] == "2026-01-02T00:30:00+00:00"
+    assert kept.metadata["lifecycle"]["observation"]["observations"][0]["finding_id"] is None
+    assert kept.metadata["lifecycle"]["related"] == []

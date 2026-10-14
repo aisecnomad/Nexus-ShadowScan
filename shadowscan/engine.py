@@ -1470,15 +1470,30 @@ class Engine:
 
 
 def _prune_lifecycle_links(findings: list[Finding]) -> None:
-    """Drop ``metadata['lifecycle']['related']`` identifiers of findings absent from ``findings``."""
+    """Drop lifecycle identifiers of findings absent from ``findings``.
+
+    ``metadata['lifecycle']['related']`` loses the omitted identifiers. A
+    process sample in ``metadata['lifecycle_observation']`` (the assessment
+    ``lifecycle['observation']`` also holds) keeps its timestamp, which the
+    recorded observation established whatever the process finding's own
+    confidence, but no longer names the omitted finding.
+    """
     retained = {f.id for f in findings}
     for f in findings:
         lifecycle = f.metadata.get("lifecycle")
-        if not isinstance(lifecycle, dict):
-            continue
-        related = lifecycle.get("related")
-        if isinstance(related, list):
-            lifecycle["related"] = [link for link in related if link in retained]
+        if isinstance(lifecycle, dict):
+            related = lifecycle.get("related")
+            if isinstance(related, list):
+                lifecycle["related"] = [link for link in related if link in retained]
+            _prune_lifecycle_samples(lifecycle.get("observation"), retained)
+        _prune_lifecycle_samples(f.metadata.get("lifecycle_observation"), retained)
+
+
+def _prune_lifecycle_samples(assessment: Any, retained: set[str]) -> None:
+    samples = assessment.get("observations") if isinstance(assessment, dict) else None
+    for sample in samples if isinstance(samples, list) else []:
+        if isinstance(sample, dict) and sample.get("finding_id") not in retained:
+            sample["finding_id"] = None
 
 
 def _prune_related(findings: list[Finding]) -> None:
