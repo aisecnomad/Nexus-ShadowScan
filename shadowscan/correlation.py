@@ -1,7 +1,7 @@
 """Cross-surface correlation and gateway-to-code attribution.
 
-``correlate`` links findings across surfaces by resource ids and normalised
-names.  ``correlate_runtime`` conservatively attributes gateway telemetry to
+``correlate`` links exact, scoped identifiers and reports normalised names as
+separate review candidates. ``correlate_runtime`` conservatively attributes gateway telemetry to
 static framework findings using only operator-configured exact caller/scope
 bindings.  Gateway user agents are observations, not attestations: an
 ``observed`` result means the linked gateway recorded a timestamped request
@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
+from itertools import combinations
 from typing import Any
 
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -27,79 +29,285 @@ _NAME_KEYS = (
     "okta_name",
     "developer_name",
     "schema_name",
+    "repository",
+    "project",
+    "function_name",
+)
+_IDENTITY_KEYS = (
     "app_id",
     "client_id",
     "msa_app_id",
     "bot_id",
     "principal",
+    "principal_id",
     "caller",
-    "repository",
-    "project",
-    "function_name",
     "agent_id",
+    "arn",
+    "resource_id",
+    "role",
 )
+_SCOPE_KEYS = ("tenant", "tenant_id", "workspace", "workspace_id", "namespace")
+_MAX_CORRELATION_GROUP = 25
+_MAX_CORRELATION_PEERS = 24
+_CANDIDATE_LIMITATION = (
+    "Name similarity is a review hint, not proof of identity, ownership, runtime execution or authorization."
+)
+
+
+def _identity_text(value: object, *, allow_patterns: bool = False) -> str | None:
+    """Keep exact identity bytes; never repair a missing, padded or redacted identity."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > 2048
+        or REDACTED.lower() in value.lower()
+        or any(ord(char) < 32 for char in value)
+        or (not allow_patterns and any(char in "*?[]" for char in value))
+    ):
+        return None
+    return value
 
 
 def _normalise_key(s: Any) -> str | None:
     """Normalise a value for fuzzy cross-surface matching."""
-    if s is None:
+    text = _identity_text(s, allow_patterns=True)
+    if text is None:
         return None
-    t = re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
+    t = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return t if len(t) >= 5 else None
 
 
-def correlate(findings: list[Finding]) -> None:
-    """Link findings across surfaces that describe the same agent / identity / resource.
+def _global_resource(value: str) -> tuple[str, dict[str, str]] | None:
+    """Recognize fully qualified resource references without normalising their identifiers."""
+    if any(char.isspace() or char in "*?[]" for char in value):
+        return None
+    parts = value.split(":", 5)
+    if len(parts) == 6 and parts[0] == "arn" and all(parts[i] for i in (1, 2, 5)):
+        if parts[4] and not re.fullmatch(r"[0-9]{12}|aws", parts[4]):
+            return None
+        # A missing account cannot turn a truncated workload ARN into a global
+        # identity. Only known accountless namespaces are meaningful here.
+        if not parts[4] and not (
+            parts[2] in {"s3", "route53"}
+            or (parts[2] == "bedrock" and parts[5].startswith("foundation-model/"))
+        ):
+            return None
+        if parts[4] == "aws" and parts[2] != "iam":
+            return None
+        scope = {"provider": "aws"}
+        if parts[3]:
+            scope["region"] = parts[3]
+        if parts[4]:
+            scope["account"] = parts[4]
+        return "resource:aws-arn", scope
+    components = value.split("/")
+    if value.startswith("projects/") and len(components) >= 4 and all(components):
+        if components[1] in {"-", ".", ".."} or any(p in {".", ".."} for p in components):
+            return None
+        scope = {"provider": "gcp", "account": components[1]}
+        if len(components) >= 6 and components[2] in {"locations", "regions"}:
+            scope["region"] = components[3]
+        return "resource:gcp-name", scope
+    if (
+        value.startswith("/subscriptions/")
+        and len(components) >= 7
+        and all(components[1:])
+        and not any(p in {".", ".."} for p in components)
+    ):
+        return "resource:azure-id", {"provider": "azure", "account": components[2]}
+    if re.fullmatch(r"ocid1\.[a-z0-9]+\.[a-z0-9]+\.[a-z0-9-]*\.[A-Za-z0-9.]+", value):
+        return "resource:oci-id", {"provider": "oci"}
+    return None
 
-    Keys: resource ids (ARNs, app/client ids), normalised names and repository labels found in
-    metadata. Linked ids are stored in ``metadata['related']`` on both sides.
-    """
-    keys: dict[str, set[str]] = {}
-    for f in findings:
-        cand: set[str] = set()
-        res = _normalise_key(f.resource)
-        if res:
-            cand.add(f"res:{res}")
-        for k in _NAME_KEYS:
-            v = f.metadata.get(k)
-            if isinstance(v, str):
-                n = _normalise_key(v)
-                if n:
-                    cand.add(f"name:{n}")
-        if f.kind in {Kind.AGENT, Kind.BOT_APP, Kind.SERVICE_IDENTITY, Kind.OAUTH_GRANT, Kind.MCP_SERVER}:
-            tail = f.title.split(":", 1)[-1].strip() if ":" in f.title else None
-            n = _normalise_key(tail)
-            if n and len(n) >= 8:
-                cand.add(f"name:{n}")
-        for e in f.evidence:
-            if e.location and e.location.startswith(("arn:", "projects/", "/subscriptions/", "ocid1.")):
-                n = _normalise_key(e.location)
-                if n:
-                    cand.add(f"res:{n}")
-        for k in cand:
-            keys.setdefault(k, set()).add(f.id)
-    related: dict[str, set[str]] = {}
-    for ids in keys.values():
-        if 1 < len(ids) <= 25:
-            for i in ids:
-                related.setdefault(i, set()).update(ids - {i})
-    if not related:
-        return
-    by_id = {f.id: f for f in findings}
-    for fid, others in related.items():
-        linked_finding = by_id.get(fid)
-        if linked_finding:
-            links = sorted(
-                o
-                for o in others
-                if by_id.get(o)
-                and (
-                    by_id[o].connector != linked_finding.connector
-                    or by_id[o].surface != linked_finding.surface
-                )
+
+def _scope(finding: Finding, resource_scope: dict[str, str]) -> dict[str, str] | None:
+    """Refuse contradictory declared scope; source-code hosting is not the referenced cloud's scope."""
+    scope: dict[str, str] = {}
+    source_host = (
+        bool(resource_scope)
+        and finding.surface == Surface.CODE
+        and finding.provider in {"github", "gitlab", "filesystem"}
+    )
+    for key in ("provider", "account", "region"):
+        value = getattr(finding, key)
+        if value is not None:
+            usable = _identity_text(value)
+            if usable is None:
+                return None
+            if not source_host:
+                scope[key] = usable
+    for key in _SCOPE_KEYS:
+        value = finding.metadata.get(key)
+        if value is not None:
+            usable = _identity_text(value)
+            if usable is None:
+                return None
+            canonical = {"tenant_id": "tenant", "workspace_id": "workspace"}.get(key, key)
+            if canonical in scope and scope[canonical] != usable:
+                return None
+            scope[canonical] = usable
+    if any(key in scope and scope[key] != value for key, value in resource_scope.items()):
+        return None
+    return {**scope, **resource_scope}
+
+
+@dataclass
+class _CorrelationKey:
+    finding: Finding
+    fields: set[str]
+    scope: dict[str, str]
+    globally_scoped: bool
+
+
+def _correlation_keys(
+    findings: list[Finding], *, candidates: bool
+) -> dict[tuple[str, str], dict[str, _CorrelationKey]]:
+    keys: dict[tuple[str, str], dict[str, _CorrelationKey]] = {}
+    for finding in findings:
+        values: list[tuple[str, object]] = []
+        if candidates:
+            values.extend((f"metadata.{key}", finding.metadata.get(key)) for key in _NAME_KEYS)
+            if finding.kind in {
+                Kind.AGENT,
+                Kind.BOT_APP,
+                Kind.SERVICE_IDENTITY,
+                Kind.OAUTH_GRANT,
+                Kind.MCP_SERVER,
+            }:
+                tail = finding.title.split(":", 1)[1].strip() if ":" in finding.title else ""
+                if len(tail) >= 8:
+                    values.append(("title", tail))
+        else:
+            values.append(("resource", finding.resource))
+            values.extend((f"metadata.{key}", finding.metadata.get(key)) for key in _IDENTITY_KEYS)
+            values.extend(
+                (f"evidence[{number}].location", evidence.location)
+                for number, evidence in enumerate(finding.evidence)
+                if evidence.location and _global_resource(evidence.location)
             )
-            if links:
-                linked_finding.metadata["related"] = links
+        for field, raw in values:
+            value = _normalise_key(raw) if candidates else _identity_text(raw)
+            if value is None:
+                continue
+            qualified = None if candidates else _global_resource(value)
+            if (
+                not candidates
+                and not qualified
+                and value.startswith(("arn:", "projects/", "/subscriptions/", "ocid1."))
+            ):
+                continue
+            kind = "name" if candidates else field
+            resource_scope: dict[str, str] = {}
+            if qualified:
+                kind, resource_scope = qualified
+            elif not candidates and field == "resource":
+                kind = f"resource:{finding.resource_type.split('/', 1)[0]}"
+            elif not candidates and field == "metadata.agent_id":
+                kind = f"{field}:{finding.resource_type.split('/', 1)[0]}"
+            scope = _scope(finding, resource_scope)
+            if scope is None:
+                continue
+            # An opaque identifier is meaningful only within a known namespace
+            # and account/tenant. Matching absent scope is not identity evidence.
+            if (
+                not candidates
+                and not qualified
+                and (
+                    "provider" not in scope
+                    or not any(key in scope for key in ("account", "tenant", "workspace"))
+                )
+            ):
+                continue
+            group = keys.setdefault((kind, value), {})
+            entry = group.setdefault(finding.id, _CorrelationKey(finding, set(), scope, bool(qualified)))
+            entry.fields.add(field)
+    return keys
+
+
+def _compatible_scope(
+    left: _CorrelationKey, right: _CorrelationKey, *, candidates: bool
+) -> dict[str, str] | None:
+    if any(key in right.scope and right.scope[key] != value for key, value in left.scope.items()):
+        return None
+    if not candidates and not (left.globally_scoped and right.globally_scoped):
+        # One-sided tenant/account/region data must not silently widen a local ID.
+        if left.scope != right.scope:
+            return None
+    return dict(sorted({**left.scope, **right.scope}.items()))
+
+
+def _correlation_links(
+    groups: dict[tuple[str, str], dict[str, _CorrelationKey]],
+    *,
+    candidates: bool,
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    links: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for (kind, _), members in sorted(groups.items()):
+        if not 1 < len(members) <= _MAX_CORRELATION_GROUP:
+            continue
+        for first, second in combinations(sorted(members), 2):
+            left, right = members[first], members[second]
+            if (
+                left.finding.connector == right.finding.connector
+                and left.finding.surface == right.finding.surface
+            ):
+                continue
+            scope = _compatible_scope(left, right, candidates=candidates)
+            if scope is None:
+                continue
+            if any(
+                target not in links.get(source, {}) and len(links.get(source, {})) >= _MAX_CORRELATION_PEERS
+                for source, target in ((first, second), (second, first))
+            ):
+                continue
+            for source, target, own, other in ((first, second, left, right), (second, first, right, left)):
+                match = {
+                    "key_type": kind,
+                    "source_fields": sorted(own.fields),
+                    "target_fields": sorted(other.fields),
+                    "scope": scope,
+                }
+                details = links.setdefault(source, {}).setdefault(target, [])
+                if match not in details:
+                    details.append(match)
+    return links
+
+
+def correlate(findings: list[Finding]) -> None:
+    """Rebuild exact identifier relationships and separate, scoped name-review candidates.
+
+    An exact edge proves only matching identifiers in the available declarations,
+    not ownership, execution or approval. Provenance states which fields matched;
+    fuzzy names never enter ``related`` or feed runtime/registry decisions.
+    """
+    for finding in findings:
+        for field in ("related", "related_details", "related_candidates"):
+            finding.metadata.pop(field, None)
+    exact = _correlation_links(_correlation_keys(findings, candidates=False), candidates=False)
+    fuzzy = _correlation_links(_correlation_keys(findings, candidates=True), candidates=True)
+    for finding in findings:
+        if peers := exact.get(finding.id):
+            finding.metadata["related"] = sorted(peers)
+            finding.metadata["related_details"] = [
+                {"finding_id": other, "assurance": "exact-identifier", "matches": peers[other]}
+                for other in sorted(peers)
+            ]
+        candidates = {
+            key: value
+            for key, value in fuzzy.get(finding.id, {}).items()
+            if key not in exact.get(finding.id, {})
+        }
+        if candidates:
+            finding.metadata["related_candidates"] = [
+                {
+                    "finding_id": other,
+                    "assurance": "candidate",
+                    "matches": candidates[other],
+                    "limitation": _CANDIDATE_LIMITATION,
+                }
+                for other in sorted(candidates)
+            ]
 
 
 def _usable_code_identity(code: Finding) -> bool:

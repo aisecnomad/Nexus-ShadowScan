@@ -5,6 +5,24 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### App-name attribution and scoped correlation (October 14)
+
+- Google Gemini display names are possible-product hints until the same product
+  has non-name corroboration. Name, publisher and description repetitions and
+  generic inventory evidence cannot establish Google attribution or inflate an
+  uncorroborated hint above possible confidence. Permission and machine-identity
+  observations remain available for their own purposes.
+- Cross-surface correlation separates exact identifier links (`related`, with
+  `related_details` provenance) from name-similarity review candidates
+  (`related_candidates`). Conflicting scope blocks links; exact local identifiers
+  require shared scope. Global resource references preserve supported IaC links.
+  Correlation is rebuilt each run and confidence filtering prunes references to
+  omitted findings from all three fields. It grants neither registry approval
+  nor runtime evidence and does not change risk or confidence.
+- Rescan and rebuild comparison baselines after upgrading: signature and scanner
+  fingerprints change, and old fuzzy links must not be interpreted as exact
+  identity relationships. See the deployment migration notes.
+
 ### Documentation aligned with the code (October 12)
 
 Documentation only; no scanner behaviour changes.

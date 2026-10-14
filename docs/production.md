@@ -7,6 +7,35 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## App-name attribution and correlation migration (unreleased)
+
+The October 14 changes address ambiguous product names and cross-scope
+relationships. Rescan affected sources and rebuild comparison baselines under
+the reviewed revision. Scanner-source and signature fingerprints change; a
+disappearing technology label or relationship does not establish that an agent
+was removed or stopped executing.
+
+Google Gemini names without same-product non-name corroboration now remain
+possible-product hints. They do not establish Google AI attribution. A connector
+may still report the underlying identity, permissions or bot inventory when its
+documented inclusion policy calls for it. Hints and permissions are not proof of
+agent execution, and observations in an offline export are not authenticated
+publisher evidence.
+
+`metadata.related` now contains only exact identifier matches with compatible
+scope. Its `related_details` records explain the identifier type, matching fields
+and scope checks. Name similarity appears separately in `related_candidates`
+with candidate assurance and limitations. Do not combine candidate links with
+exact links in a downstream graph. Reject old relationships as exact identity
+evidence unless a new scan establishes them. Neither relationship type changes
+registry approval, risk, confidence or runtime activity. Confidence filtering
+removes references to findings omitted from the report.
+
+The bundled estate replay and new regression cases validate these behaviors on
+known authored inputs. They do not supply independent field accuracy or live
+tenant acceptance; follow the existing scope-specific acceptance procedure
+before enforcement.
+
 ## Unreleased attribution migration
 
 This section covers the Python re-export and governance observation changes.

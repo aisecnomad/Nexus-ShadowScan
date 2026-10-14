@@ -1439,7 +1439,7 @@ def _prune_lifecycle_links(findings: list[Finding]) -> None:
 
 
 def _prune_related(findings: list[Finding]) -> None:
-    """Drop ``metadata['related']`` links to findings absent from ``findings``.
+    """Drop exact and candidate correlation links to omitted findings.
 
     Correlation runs before the confidence threshold. A report must not link
     to a finding it omits; removing those identifiers from every list keeps
@@ -1448,15 +1448,27 @@ def _prune_related(findings: list[Finding]) -> None:
     retained = {f.id for f in findings}
     for f in findings:
         links = f.metadata.get("related")
-        if not isinstance(links, list):
-            continue
-        kept = [link for link in links if link in retained]
-        if len(kept) == len(links):
-            continue
-        if kept:
-            f.metadata["related"] = kept
-        else:
-            del f.metadata["related"]
+        if isinstance(links, list):
+            kept = [link for link in links if isinstance(link, str) and link in retained]
+            if kept:
+                f.metadata["related"] = kept
+            else:
+                f.metadata.pop("related", None)
+        for key in ("related_details", "related_candidates"):
+            details = f.metadata.get(key)
+            if not isinstance(details, list):
+                continue
+            remaining = [
+                item
+                for item in details
+                if isinstance(item, dict)
+                and isinstance(item.get("finding_id"), str)
+                and item["finding_id"] in retained
+            ]
+            if remaining:
+                f.metadata[key] = remaining
+            else:
+                f.metadata.pop(key, None)
 
 
 def _prune_runtime_links(findings: list[Finding]) -> None:

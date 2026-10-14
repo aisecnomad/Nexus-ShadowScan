@@ -100,10 +100,16 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       [finding identity](#finding-identity-and-merging)). A merged finding too
       large to sanitize within the output budget is dropped and reported as an
       `engine.postprocess` error.
-   2. **Correlate** (`correlation.py`). Findings from different connectors or
-      surfaces that share resource ids, normalised names or repository labels
-      are linked in
-      `metadata.related`. Gateway activity is attached to the code it is bound
+   2. **Correlate** (`correlation.py`). Exact identifiers with compatible scope
+      produce `metadata.related` links and `metadata.related_details` records
+      describing the identifier type, source fields and scope checks. Normalised
+      names produce only `metadata.related_candidates`, with candidate assurance
+      and explicit limitations; they never enter the exact-link list. Conflicting
+      accounts, tenants or other applicable scope prevent a match. A global
+      resource identifier can link an IaC reference without a separately supplied
+      account, but a local identifier needs shared scope. These links describe
+      the supplied observations, not independently verified ownership.
+      Gateway activity is attached to the code it is bound
       to by `correlation_bindings` (`metadata.runtime_activity`). Endpoint
       findings are linked to a running process of the same tool on the same
       device (`metadata.lifecycle`, `observed-running`). Correlation changes

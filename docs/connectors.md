@@ -26,6 +26,12 @@ internal PKI fails verification (and the scan is incomplete) unless the connecto
 offers an explicit CA option. Only `identity.jwt` does today (`ca_bundle`, JWKS
 endpoint); other connectors trust the default CA store.
 
+Ambiguous app-name signals retain possible-product hints until the same product
+has non-name corroboration; see [identity attribution](connectors/identity.md#ambiguous-product-names).
+Cross-surface name similarity produces candidate relationships separately from
+exact identifiers, with scope checks and matching provenance; see the
+[pipeline](architecture.md#scan-pipeline).
+
 ### Offline input limits
 
 Offline file and directory inputs use shared safety limits: 10,000 files,

@@ -173,11 +173,15 @@ def test_every_ambiguous_signal_can_be_corroborated():
             documents = (yaml.safe_load(handle) or {}).get("signatures", [])
         for data in documents:
             signature = signature_from_dict(data, str(path))
-            if any(signal.ambiguous for signal in signature.signals):
+            if any(signal.ambiguous and signal.type == "code" for signal in signature.signals):
                 assert any(
                     signal.type in {"import", "dependency"} or signal.type == "code" and not signal.ambiguous
                     for signal in signature.signals
                 ), signature.id
+            if any(signal.ambiguous and signal.type == "name" for signal in signature.signals):
+                assert any(signal.type in {"domain", "client_id", "scope"} for signal in signature.signals), (
+                    signature.id
+                )
 
 
 @pytest.mark.parametrize(
@@ -187,7 +191,7 @@ def test_every_ambiguous_signal_can_be_corroborated():
         {"type": "domain", "values": ["example.com"], "ambiguous": True},
     ],
 )
-def test_ambiguous_is_a_boolean_on_code_signals_only(signal):
+def test_ambiguous_is_boolean_and_rejected_on_unsupported_signal_types(signal):
     with pytest.raises(ValueError):
         signature_from_dict(
             {"id": "custom.sample", "name": "S", "category": "framework", "signals": [signal]}

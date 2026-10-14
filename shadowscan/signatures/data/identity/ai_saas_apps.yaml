@@ -58,6 +58,10 @@ signatures:
       - type: name
         patterns: ['(?i)\bgemini\b', '(?i)\bgoogle ai studio\b', '(?i)\bnotebooklm\b', '(?i)\bgoogle ai\b', '(?i)\bproject mariner\b']
         weight: 0.85
+        # Gemini is also a cryptocurrency exchange and a common project name.
+        # Display names, publishers and descriptions are self-declared; keep
+        # them as hints until this product has independent non-name evidence.
+        ambiguous: true
       - type: domain
         values: [gemini.google.com, aistudio.google.com, notebooklm.google.com, makersuite.google.com, bard.google.com]
         weight: 0.9

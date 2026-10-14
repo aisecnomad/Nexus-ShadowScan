@@ -11,6 +11,25 @@ See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
+### Ambiguous product names
+
+A display name can refer to an unrelated product. For example, a cryptocurrency
+integration named Gemini is not evidence of Google Gemini. Name signals marked
+`ambiguous: true` retain a possible-product hint; a matching non-name signal for
+the same signature is required before the product is attributed. Repeated name,
+publisher and description matches are correlated evidence, not independent
+confirmation. Ordinary OAuth scopes, a machine grant or an installed-app record
+do not establish AI usage. Permission and machine-identity observations can
+remain independently useful even when the product attribution is withheld.
+Intrinsic Entra agent identities and agent-registry records retain their agent
+evidence, including when their display name is Gemini. Qualified Google Gemini,
+AI Studio and NotebookLM names also require non-name corroboration, so name-only
+exports of genuine apps can remain tentative.
+
+See [signature confidence](../signatures.md#weights-and-confidence) for the
+data-driven ambiguity rule. Domain and client identifiers in an offline export
+are observations from that export, not authenticated publisher attestations.
+
 ## `identity.okta`
 `/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OAuth apps that
 match AI SaaS signatures or hold privileged scopes, and service apps

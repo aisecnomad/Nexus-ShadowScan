@@ -160,6 +160,10 @@ def apply_matches(
     ``metadata.potential_providers`` instead, for a code pattern without the
     library's import or dependency, or a mention too weak to establish.
 
+    Name signals marked ``ambiguous`` always remain weak, correlated hints.
+    They never establish a technology, its tags/capabilities or an agent
+    indicator; same-product non-name matches establish those independently.
+
     ``snippet`` may be a callable: it is invoked once, and only when the
     per-signature evidence quota retains a match, so an excerpt that reaches
     no report is never produced.
@@ -170,13 +174,17 @@ def apply_matches(
     indicators = 0
     for m in matches:
         sig = m.signature
-        if not establish:
+        ambiguous_name = m.signal.type == "name" and m.signal.ambiguous
+        matched_establish = establish and not ambiguous_name
+        if not matched_establish:
             if sig.category == "provider" or sig.category in TECH_CATEGORIES:
                 key = "potential_providers" if sig.category == "provider" else "potential_frameworks"
-                potential: list[str] = finding.metadata.setdefault(key, [])
-                if sig.id not in potential:
-                    potential.append(sig.id)
-                    potential.sort()
+                established = finding.model_providers if sig.category == "provider" else finding.frameworks
+                if sig.id not in established:
+                    potential: list[str] = finding.metadata.setdefault(key, [])
+                    if sig.id not in potential:
+                        potential.append(sig.id)
+                        potential.sort()
         elif sig.id == "identity-app.generic-ai-name":
             finding.add_tag("ai-name-hint")  # a hint, not a technology
         elif sig.category in TECH_CATEGORIES:
@@ -185,14 +193,24 @@ def apply_matches(
             finding.add_model_provider(sig.id)
         elif sig.category == "policy":
             finding.add_tag(sig.id)
-        if capabilities and establish:
+        if matched_establish:
+            for potential_key in ("potential_frameworks", "potential_providers"):
+                potential_values = finding.metadata.get(potential_key)
+                if isinstance(potential_values, list) and sig.id in potential_values:
+                    potential_values.remove(sig.id)
+                    if not potential_values:
+                        finding.metadata.pop(potential_key)
+        if capabilities and matched_establish:
             # Static source analysis can retain library-wide features as
             # potential metadata while scoring only the matched code signal.
             for cap in m.capabilities() if signature_capabilities else m.signal.capabilities:
                 finding.add_capability(cap)
-        for t in sig.tags:
-            finding.add_tag(t)
-        if establish and m.agent_indicator and (indicator_filter is None or indicator_filter(m)):
+        if not ambiguous_name:
+            for t in sig.tags:
+                finding.add_tag(t)
+        else:
+            finding.add_tag("ai-name-hint")
+        if matched_establish and m.agent_indicator and (indicator_filter is None or indicator_filter(m)):
             indicators += 1
         key = f"{sig.id}|{m.signal.type}"
         counts[key] = counts.get(key, 0) + 1
@@ -206,15 +224,22 @@ def apply_matches(
         loc = location
         if loc and m.line:
             loc = f"{loc}:{m.line}"
+        attributes: dict[str, Any] = {"category": sig.category, "value": value}
+        weight = max(0.0, min(1.0, m.weight * weight_scale))
+        if ambiguous_name:
+            # Multiple aliases/products/publisher fields are one weak name
+            # observation, never independent corroboration of AI use.
+            weight = min(weight, 0.2)
+            attributes.update(ambiguous_name=True, confidence_group="unverified-app-name")
         finding.add_evidence(
             Evidence(
                 signal=f"{m.signal.type}:{sig.id}",
                 description=describe_match(m).replace(m.value, value) if m.value else describe_match(m),
                 location=loc,
                 snippet=excerpt,
-                weight=max(0.0, min(1.0, m.weight * weight_scale)),
+                weight=weight,
                 signature=sig.id,
-                attributes={"category": sig.category, "value": value},
+                attributes=attributes,
             )
         )
     finding.metadata["agent_indicators"] = finding.metadata.get("agent_indicators", 0) + indicators
@@ -227,6 +252,34 @@ def finalize(finding: Finding, index: SignatureIndex | None = None) -> Finding:
     Source provenance, control flow and test exclusion belong to the code
     analyzer. Co-occurring snippets here cannot override that analysis.
     """
+    if (
+        finding.surface in {Surface.IDENTITY, Surface.SAAS}
+        and not finding.frameworks
+        and not finding.model_providers
+        and any(ev.attributes.get("ambiguous_name") is True for ev in finding.evidence)
+    ):
+        # An app's existence, installation count, scopes and M2M grant do not
+        # verify the AI product suggested by its display name. Preserve their
+        # descriptions and permission tags, but do not turn co-observations of
+        # the same ordinary app into strong AI confidence.
+        for ev in finding.evidence:
+            # These built-in observations establish agent/AI evidence without
+            # naming its product. A Gemini name must not erase that evidence
+            # or misattribute an Entra agent identity to Google's product.
+            if (
+                finding.connector == "identity.entra"
+                and ev.signal
+                in {
+                    "entra:agent-identity",
+                    "registry:microsoft-agent-365",
+                    "registry:entra-agent-registry",
+                }
+            ) or (
+                ev.signal == "scope:policy.llm-access-scopes" and ev.signature == "policy.llm-access-scopes"
+            ):
+                continue
+            ev.attributes["confidence_group"] = "unverified-app-name"
+            ev.weight = min(ev.weight, 0.35)
     finding.recompute_confidence()
     counts = finding.metadata.pop("_evidence_counts", None)
     if counts:

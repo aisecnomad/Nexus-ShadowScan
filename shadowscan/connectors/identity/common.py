@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from urllib.parse import urlsplit
 
-from shadowscan.connectors.common import apply_matches, classify_permissions, domain_matches, name_matches
+from shadowscan.connectors.common import apply_matches, classify_permissions, name_matches
 from shadowscan.models import Evidence, Finding, Kind
 from shadowscan.signatures import SignatureIndex
 
@@ -35,10 +36,23 @@ def assess_app(
     ``aliases`` are other spellings of the name, such as an app slug with its
     hyphens read as spaces; each signature still counts once.
     """
-    apply_matches(finding, name_matches(index, name, *aliases, publisher, description))
-    apply_matches(finding, domain_matches(index, *urls), weight_scale=0.8)
+    # OAuth reply/homepage URLs establish only their own hostname. A product
+    # domain in another site's path, query, fragment or userinfo is a mention,
+    # not corroboration of the app's product identity.
+    for url in urls:
+        if not isinstance(url, str) or not url:
+            continue
+        try:
+            parsed = urlsplit(url if "://" in url else f"//{url}")
+            host = parsed.hostname
+        except ValueError:
+            continue
+        if parsed.scheme not in {"", "http", "https"} or not host:
+            continue
+        apply_matches(finding, index.match_domain(host), weight_scale=0.8)
     if client_id:
         apply_matches(finding, index.match_client_id(client_id))
+    apply_matches(finding, name_matches(index, name, *aliases, publisher, description))
     classify_permissions(index, finding, scopes)
     gts = {str(g).lower() for g in grant_types if g}
     if gts & MACHINE_GRANT_TYPES:

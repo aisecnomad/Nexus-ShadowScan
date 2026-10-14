@@ -112,10 +112,13 @@ def test_merge_and_correlate():
         metadata={"names": ["ops-provisioning-04"], "name": "ops-provisioning-04"},
     )
     correlate([cloud, iac])
-    assert cloud.metadata["related"] == [iac.id] and iac.metadata["related"] == [cloud.id]
+    assert "related" not in cloud.metadata and "related" not in iac.metadata
+    assert cloud.metadata["related_candidates"][0]["finding_id"] == iac.id
+    assert iac.metadata["related_candidates"][0]["finding_id"] == cloud.id
 
 
-def test_confidence_threshold_prunes_links_to_omitted_findings(monkeypatch):
+@pytest.mark.parametrize("exact", [False, True])
+def test_confidence_threshold_prunes_links_to_omitted_findings(monkeypatch, exact):
     agent = "ops-provisioning-04"
     findings = {
         "cloud": _f(metadata={"agent_name": agent}, confidence=0.95),
@@ -160,6 +163,12 @@ def test_confidence_threshold_prunes_links_to_omitted_findings(monkeypatch):
             confidence=0.2,
         ),
     }
+    if exact:
+        resource = "arn:aws:bedrock:us-east-1:123456789012:agent/Agent-A"
+        for label in ("cloud", "identity"):
+            findings[label].resource = resource
+            findings[label].id = findings[label].compute_id()
+        findings["iac"].evidence.append(Evidence("iac:resource", "Cloud reference", location=resource))
 
     class Connector:
         def __init__(self, ctx):
@@ -176,9 +185,17 @@ def test_confidence_threshold_prunes_links_to_omitted_findings(monkeypatch):
     by_id = {f.id: f for f in result.findings}
     assert set(by_id) == {findings[label].id for label in ("cloud", "identity", "bot")}
     # Links among retained findings survive on both sides; none names an omitted finding.
-    assert by_id[findings["cloud"].id].metadata["related"] == [findings["identity"].id]
-    assert by_id[findings["identity"].id].metadata["related"] == [findings["cloud"].id]
-    assert "related" not in by_id[findings["bot"].id].metadata
+    detail_field = "related_details" if exact else "related_candidates"
+    assert [item["finding_id"] for item in by_id[findings["cloud"].id].metadata[detail_field]] == [
+        findings["identity"].id
+    ]
+    assert [item["finding_id"] for item in by_id[findings["identity"].id].metadata[detail_field]] == [
+        findings["cloud"].id
+    ]
+    if exact:
+        assert by_id[findings["cloud"].id].metadata["related"] == [findings["identity"].id]
+        assert by_id[findings["identity"].id].metadata["related"] == [findings["cloud"].id]
+    assert "related_candidates" not in by_id[findings["bot"].id].metadata
 
 
 def test_confidence_threshold_prunes_runtime_links_to_omitted_gateway_findings():

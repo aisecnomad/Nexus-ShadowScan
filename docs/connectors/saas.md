@@ -11,6 +11,11 @@ See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
+Display-name recognition follows the same
+[ambiguous-product-name rules](identity.md#ambiguous-product-names) as identity
+connectors. An app's existence or permissions do not corroborate an ambiguous
+AI product name.
+
 ## `saas.slack`
 `users.list` (bots), `admin.apps.approved.list` / `restricted` / `requests`
 (scopes, pending requests), `team.integrationLogs` (who installed what).
