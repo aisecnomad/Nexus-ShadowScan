@@ -298,6 +298,59 @@ def test_two_unscoped_opaque_identifiers_and_redacted_scope_cannot_create_exact_
 
 
 @pytest.mark.parametrize(
+    "unusable",
+    [
+        {"metadata": {"workspace": "Acme [EU]"}},
+        {"metadata": {"tenant": "[REDACTED]"}},
+        {"metadata": {"workspace_id": " ws-1"}},
+        {"connector": "identity.entra", "account": "tenant-*"},
+    ],
+)
+def test_unusable_scope_refuses_identifier_links_but_keeps_name_candidates(unusable):
+    values = dict(unusable)
+    metadata = {"app_id": "app-0001", "name": "Support Agent", **values.pop("metadata", {})}
+    left = finding(resource="opaque-id", metadata=metadata, **values)
+    right = peer(
+        resource="opaque-id", metadata={"app_id": "app-0001", "name": "support-agent", "tenant": "t-1"}
+    )
+    correlate([left, right])
+    assert "related" not in left.metadata and "related" not in right.metadata
+    [candidate] = left.metadata["related_candidates"]
+    assert candidate["finding_id"] == right.id
+    assert {match["key_type"] for match in candidate["matches"]} == {"name"}
+    assert [entry["finding_id"] for entry in right.metadata["related_candidates"]] == [left.id]
+
+
+def test_two_values_for_one_scope_still_refuse_every_link():
+    left = finding(resource="opaque-id", metadata={"name": "support-agent", "tenant": "a", "tenant_id": "b"})
+    right = peer(resource="opaque-id", metadata={"name": "support-agent"})
+    correlate([left, right])
+    assert not any(key.startswith("related") for key in left.metadata)
+
+
+def test_notion_bot_in_a_bracketed_workspace_stays_a_name_candidate(tmp_path, run_connector):
+    """A Notion workspace display name such as "Acme [EU]" is not an identifier to compare."""
+    users = json.loads((ROOT / "tests" / "fixtures" / "saas" / "notion_users.json").read_text())
+    slack = json.loads((ROOT / "tests" / "fixtures" / "saas" / "slack.json").read_text())
+    [bot] = [user for user in users["results"] if user["id"] == "n2"]
+    bot["name"], bot["bot"]["workspace_name"] = "Claude Assistant", "Acme [EU]"
+    [app] = [
+        record for record in slack if record.get("_kind") == "approved_app" and record["app"]["id"] == "A1"
+    ]
+    app["app"]["name"] = "Claude Assistant"
+    (tmp_path / "notion.json").write_text(json.dumps(users), encoding="utf-8")
+    (tmp_path / "slack.json").write_text(json.dumps(slack), encoding="utf-8")
+    notion, _ = run_connector("saas.notion", input=str(tmp_path / "notion.json"))
+    apps, _ = run_connector("saas.slack", input=str(tmp_path / "slack.json"))
+    correlate(notion + apps)
+    integration = next(f for f in notion if f.resource == "notion:bot:n2")
+    slack_app = next(f for f in apps if f.resource == "slack:app:A1")
+    assert integration.metadata["workspace"] == "Acme [EU]"
+    assert "related" not in integration.metadata
+    assert [entry["finding_id"] for entry in integration.metadata["related_candidates"]] == [slack_app.id]
+
+
+@pytest.mark.parametrize(
     "resource,provider,account,region",
     [
         (ARN, "aws", "123456789012", "us-east-1"),

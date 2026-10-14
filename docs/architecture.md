@@ -124,7 +124,11 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       be verified, produce only `metadata.related_candidates`, with candidate
       assurance and a limitation; they never enter the exact-link list. A
       conflicting declared tenant, account, subscription, project or
-      workspace prevents both kinds of link. These links describe the supplied
+      workspace prevents both kinds of link. A declared scope value that
+      cannot be compared (redacted, padded, or with wildcard characters, as a
+      display name such as `Acme [EU]` has) gives its finding no identifier
+      link, exact or candidate; its name similarity is still a candidate.
+      These links describe the supplied
       observations, not independently verified ownership. Gateway activity is attached to the code it is bound
       to by `correlation_bindings` (`metadata.runtime_activity`). Endpoint
       findings are linked to a running process of the same tool on the same

@@ -251,29 +251,39 @@ def _gcp_service_account(value: str) -> tuple[str, str, tuple[tuple[str, str], .
     return None
 
 
-def _declared_scope(finding: Finding) -> dict[str, str] | None:
-    """The identity scope a connector declares for its findings; ``None`` when it is unusable.
+def _declared_scope(finding: Finding) -> tuple[dict[str, str], bool] | None:
+    """The identity scope a connector declares for its findings, and whether all of it is comparable.
 
     Only namespaces with a documented meaning are used: a Microsoft tenant, a
     cloud account, subscription or project, or an explicit tenant/workspace
-    in metadata. A redacted, padded or wildcard scope value refuses every link.
+    in metadata. A redacted, padded or wildcard scope value (a display name
+    such as ``Acme [EU]`` looks like a wildcard) cannot be compared: it is left
+    out, and the finding gets no identifier link, exact or candidate. Its name
+    similarity is still a review candidate, as for a finding that declares no
+    such scope. Two different values for one scope (``tenant`` and
+    ``tenant_id``) refuse every link: ``None``.
     """
     scope: dict[str, str] = {}
+    comparable = True
     account_key = _ACCOUNT_SCOPE.get(finding.connector)
     if account_key is not None and finding.account is not None:
         usable = _identity_text(finding.account)
         if usable is None:
-            return None
-        scope[account_key] = usable
+            comparable = False
+        else:
+            scope[account_key] = usable
     for key, canonical in _METADATA_SCOPE.items():
         value = finding.metadata.get(key)
         if value is None:
             continue
         usable = _identity_text(value)
-        if usable is None or scope.get(canonical, usable) != usable:
+        if usable is None:
+            comparable = False
+            continue
+        if scope.get(canonical, usable) != usable:
             return None
         scope[canonical] = usable
-    return scope
+    return scope, comparable
 
 
 def _conflicts(left: dict[str, str], right: dict[str, str]) -> bool:
@@ -306,17 +316,20 @@ def _correlation_keys(findings: list[Finding]) -> tuple[_Groups, _Groups]:
     exact: _Groups = {}
     names: _Groups = {}
     for finding in findings:
-        declared = _declared_scope(finding)
-        if declared is None:
+        scoped = _declared_scope(finding)
+        if scoped is None:
             continue
+        declared, comparable = scoped
         repository = finding.surface == Surface.CODE
-        identifiers: list[tuple[str, object]] = [("resource", finding.resource)]
-        identifiers.extend((f"metadata.{key}", finding.metadata.get(key)) for key in _IDENTITY_KEYS)
-        identifiers.extend(
-            (f"evidence[{number}].location", evidence.location)
-            for number, evidence in enumerate(finding.evidence)
-            if evidence.location and _qualified_prefix(evidence.location)
-        )
+        identifiers: list[tuple[str, object]] = []
+        if comparable:
+            identifiers.append(("resource", finding.resource))
+            identifiers.extend((f"metadata.{key}", finding.metadata.get(key)) for key in _IDENTITY_KEYS)
+            identifiers.extend(
+                (f"evidence[{number}].location", evidence.location)
+                for number, evidence in enumerate(finding.evidence)
+                if evidence.location and _qualified_prefix(evidence.location)
+            )
         for source, raw in identifiers:
             value = _identity_text(raw)
             if value is None:

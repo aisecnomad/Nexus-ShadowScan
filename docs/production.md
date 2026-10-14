@@ -1317,6 +1317,11 @@ cloud account, subscription or project. Vendor names and gateway labels are not
 compared as scope. Name similarity, and equal local identifiers whose shared
 scope cannot be verified, move to `metadata.related_candidates` with candidate
 assurance and a limitation. A declared tenant or account conflict blocks both.
+A declared scope value that cannot be compared (redacted, padded, or with
+wildcard characters, as a Notion workspace display name such as `Acme [EU]`
+has) gives its finding no identifier link, exact or candidate, but its name
+similarity is still a review candidate; such a finding used to drop out of
+correlation entirely.
 In the bundled demo, the three identifier links main produced stay exact and
 three new same-ARN links appear; the three links main made from a display name
 or a caller label (a Teams bot and an Entra service principal named Otter.ai,
