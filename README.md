@@ -25,7 +25,7 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 ╭──────────────────────────────── ShadowScan ────────────────────────────────╮
 │ 133 findings  •  129 shadow (inventory: 4 registered agents)               │
-│ critical 16  high 63  medium 54  •  cloud 30 identity 19 endpoint 18 …     │
+│ critical 16  high 57  medium 60  •  cloud 30 identity 19 endpoint 18 …     │
 ╰────────────────────────────────────────────────────────────────────────────╯
  CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
@@ -100,7 +100,7 @@ name, never parsed) and `runtime.processes` reads `/proc` on Linux.
 
 ## Frameworks & products recognized
 
-233 signatures / 1133 signals, YAML-defined with explicit opt-in overrides:
+233 signatures / 1134 signals, YAML-defined with explicit opt-in overrides:
 
 * **Orchestrators** – LangChain, LangGraph, Deep Agents, LlamaIndex, CrewAI, Google ADK, AWS Strands Agents, Microsoft Agent Framework, Semantic Kernel, Microsoft.Extensions.AI, AutoGen/AG2, Hugging Face smolagents and Transformers Agents, OpenAI Agents SDK, OpenAI Swarm, Agency Swarm, Claude Agent SDK, Pydantic AI, Vercel AI SDK, Mastra, Haystack, DSPy, Instructor, Embedchain, Agno, Letta, MetaGPT, CAMEL, Griptape, Composio, Langroid, AgentScope, Swarms, AutoGPT, BabyAGI, BeeAI, Atomic Agents, Julep, Marvin, Mirascope, Qwen-Agent, NVIDIA NeMo Agent Toolkit, Dapr Agents, PraisonAI, SWE-agent, GPT Engineer, Open Interpreter, Chainlit, Prompt flow, Guardrails AI / NeMo Guardrails / LLM Guard, LangChain4j, Spring AI, Koog, Rig, LangChainGo, Genkit, Eino, M365 Agents SDK, Bot Framework, Teams AI, Cloudflare Agents, Inngest AgentKit, VoltAgent, CopilotKit/AG-UI, Rasa, Botpress, Browser Use, Stagehand, OpenHands, Nova Act, Anthropic computer use
 * **Protocols** – MCP (all client config locations, servers, registries, remote MCP hosts), A2A agent cards, ACP, tool/function-calling request shapes, ChatGPT plugin/GPT Action manifests
