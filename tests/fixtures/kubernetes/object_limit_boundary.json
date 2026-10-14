@@ -1,0 +1,32 @@
+[
+  {
+    "apiVersion": "v1",
+    "kind": "List",
+    "items": [
+      {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": "ordinary-one", "namespace": "ai"},
+        "spec": {"containers": [{"name": "app", "image": "busybox:example"}]}
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": "ordinary-two", "namespace": "ai"},
+        "spec": {"containers": [{"name": "app", "image": "busybox:example"}]}
+      }
+    ]
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "List",
+    "items": [
+      {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": "local-model", "namespace": "ai"},
+        "spec": {"containers": [{"name": "model", "image": "ollama/ollama:example"}]}
+      }
+    ]
+  }
+]

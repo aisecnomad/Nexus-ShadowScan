@@ -411,7 +411,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 
 | Key | Description |
 | --- | --- |
-| `site` | https://&lt;org&gt;.atlassian.net (env ATLASSIAN\_SITE) |
+| `site` | concrete HTTPS site origin, e.g. https://&lt;org&gt;.atlassian.net (env ATLASSIAN\_SITE; required for complete offline scans) |
 | `email` | site admin email (env ATLASSIAN\_EMAIL) |
 | `api_token` | API token (env ATLASSIAN\_API\_TOKEN) |
 | `products` | list of jira\|confluence to query (default both) |

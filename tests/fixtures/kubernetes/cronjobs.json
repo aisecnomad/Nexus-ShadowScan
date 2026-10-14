@@ -1,0 +1,52 @@
+{
+  "apiVersion": "v1",
+  "kind": "List",
+  "items": [
+    {
+      "apiVersion": "batch/v1",
+      "kind": "CronJob",
+      "metadata": {"name": "scheduled-model", "namespace": "ai"},
+      "spec": {
+        "schedule": "0 * * * *",
+        "jobTemplate": {
+          "spec": {
+            "template": {
+              "spec": {
+                "restartPolicy": "Never",
+                "hostNetwork": true,
+                "containers": [
+                  {
+                    "name": "model",
+                    "image": "ollama/ollama:example",
+                    "env": [{"name": "MODEL_BASE_URL", "value": "omitted"}],
+                    "resources": {"requests": {"nvidia.com/gpu": 1}},
+                    "securityContext": {"privileged": true}
+                  }
+                ],
+                "volumes": [{"name": "host", "hostPath": {"path": "/synthetic-host"}}]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "apiVersion": "batch/v1",
+      "kind": "CronJob",
+      "metadata": {"name": "scheduled-maintenance", "namespace": "ordinary"},
+      "spec": {
+        "schedule": "0 0 * * *",
+        "jobTemplate": {
+          "spec": {
+            "template": {
+              "spec": {
+                "restartPolicy": "Never",
+                "containers": [{"name": "app", "image": "busybox:example"}]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

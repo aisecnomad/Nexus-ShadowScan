@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlsplit
 
 # Some AWS observations use an ARN as their resource even when the connector
 # did not populate ``account``. Accept only a genuine account-bearing ARN,
@@ -10,6 +11,45 @@ import re
 _AWS_ACCOUNT = re.compile(r"[0-9]{12}\Z")
 _AWS_ACCOUNT_ARN = re.compile(r"arn:aws(?:-us-gov|-cn)?:[^:]+:[^:]*:([0-9]{12}):.+\Z")
 _GOOGLE_CUSTOMER = re.compile(r"C[a-zA-Z0-9]{1,63}\Z")
+_SITE_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
+
+
+def atlassian_site_origin(value: object) -> str | None:
+    """Canonical concrete HTTPS site origin; validation never contacts the network.
+
+    A plugin key identifies the same Marketplace app on many sites. Only a
+    trusted configured origin supplies its installation's account identity.
+    Paths, queries and credentials are rejected rather than stripped into a
+    less specific approval. DNS-name case, the default port and a terminal
+    slash do not distinguish HTTPS origins.
+    """
+    if not isinstance(value, str) or any(char.isspace() or not char.isprintable() for char in value):
+        return None
+    if any(char in value for char in ("\\", "?", "#")):
+        return None
+    try:
+        parsed = urlsplit(value)
+        host, port = parsed.hostname, parsed.port
+    except (ValueError, UnicodeError):
+        return None
+    if (
+        parsed.scheme != "https"
+        or not host
+        or len(host) > 253
+        or any(not _SITE_HOST_LABEL.fullmatch(label) for label in host.split("."))
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in ("", "/")
+        or parsed.netloc.endswith(":")
+        or port == 0
+    ):
+        return None
+    return f"https://{host}" + (f":{port}" if port is not None and port != 443 else "")
+
+
+def has_atlassian_account_scope(provider: str | None, account: str | None) -> bool:
+    """Marketplace keys alone cannot identify an installation's owning site."""
+    return provider != "atlassian" or atlassian_site_origin(account) is not None
 
 
 def google_customer_id(value: object) -> str | None:
@@ -39,7 +79,8 @@ def has_aws_account_scope(provider: str | None, account: str | None, resource: s
 # resource patterns must also list ``accounts`` explicitly, or the pattern
 # could approve a resource ID reused by an unrelated tenant (for example, a
 # single third-party OAuth client ID installed by many Google Workspace
-# customers). AWS is not listed: has_aws_account_scope already ties an
+# customers, or a Marketplace app key installed on unrelated Atlassian
+# sites). AWS is not listed: has_aws_account_scope already ties an
 # approved ARN to one account number structurally, so no separate card-level
 # requirement is needed for it.
 #
@@ -47,7 +88,7 @@ def has_aws_account_scope(provider: str | None, account: str | None, resource: s
 # shown to have the same reused-across-tenants shape; every call site that
 # reconciles or stubs a finding reads this one set instead of repeating its
 # own hardcoded provider check.
-PROVIDERS_REQUIRING_CARD_ACCOUNT_SCOPE = frozenset({"google-workspace"})
+PROVIDERS_REQUIRING_CARD_ACCOUNT_SCOPE = frozenset({"google-workspace", "atlassian"})
 
 
 def requires_card_account_scope(provider: str | None) -> bool:

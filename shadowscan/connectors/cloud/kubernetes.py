@@ -94,15 +94,51 @@ def _name(obj: dict[str, Any]) -> str:
     if not isinstance(metadata, dict):
         return ""
     value = metadata.get("name")
-    return value[:160] if isinstance(value, str) else ""
+    return value if isinstance(value, str) else ""
 
 
-def _namespace(obj: dict[str, Any]) -> str:
+_MAX_NAMESPACE = 63
+
+
+def _namespace(obj: dict[str, Any]) -> str | None:
+    """Return the full namespace, or None when it cannot be a distinct identity.
+
+    Namespaces are DNS labels of at most 63 characters. A non-string or
+    oversized value is malformed; shortening or defaulting it would merge
+    distinct objects into one resource identity.
+    """
     metadata = obj.get("metadata")
     if not isinstance(metadata, dict):
+        return None
+    if "namespace" not in metadata:
         return "default"
-    value = metadata.get("namespace", "default")
-    return value[:160] if isinstance(value, str) else "default"
+    value = metadata["namespace"]
+    if not isinstance(value, str) or len(value) > _MAX_NAMESPACE:
+        return None
+    return value
+
+
+def _list_pagination_issue(data: dict[str, Any]) -> str | None:
+    """Detect a chunked Kubernetes List page (``metadata.continue``).
+
+    The API server returns ``continue`` and ``remainingItemCount`` on every
+    page but the last when a client lists with ``limit``. Such a page is a
+    partial collection and must never be reported as complete.
+    """
+    metadata = data.get("metadata")
+    if metadata is None:
+        return None
+    if not isinstance(metadata, dict):
+        return "offline export has invalid pagination metadata"
+    token = metadata.get("continue")
+    remaining = metadata.get("remainingItemCount")
+    if token is not None and not isinstance(token, str):
+        return "offline export has invalid pagination metadata"
+    if remaining is not None and (type(remaining) is not int or remaining < 0):
+        return "offline export has invalid pagination metadata"
+    if token or (remaining is not None and remaining > 0):
+        return "offline export contains an uncollected next page"
+    return None
 
 
 def _kind(obj: dict[str, Any]) -> str:
@@ -110,10 +146,7 @@ def _kind(obj: dict[str, Any]) -> str:
     return value[:100] if isinstance(value, str) else ""
 
 
-def _workload_images(obj: dict[str, Any]) -> list[str]:
-    spec = obj.get("spec")
-    if not isinstance(spec, dict):
-        return []
+def _workload_images(spec: dict[str, Any]) -> list[str]:
     template = spec.get("template", spec)
     if not isinstance(template, dict):
         return []
@@ -145,6 +178,10 @@ class KubernetesConnector(BaseConnector):
         super().__init__(ctx)
         self.cluster = ctx.get("cluster")
 
+    @staticmethod
+    def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
+        return BaseConnector._offline_pagination_issue(data) or _list_pagination_issue(data)
+
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError(
             "cloud.kubernetes: live API collection is unavailable; provide an offline kubectl export"
@@ -158,25 +195,32 @@ class KubernetesConnector(BaseConnector):
         egress_policies: set[str] = set()
         for record in records:
             if "items" in record:
+                # A List envelope inside an array or JSONL export is not
+                # unwrapped by the shared loader, so check its continuation
+                # here. Observed items are still analyzed.
+                pagination_issue = self._offline_pagination_issue(record)
+                if pagination_issue:
+                    self.ctx.warn(f"{self.name}: {pagination_issue}")
                 items = record["items"]
                 if not isinstance(items, list):
-                    self.ctx.warn("cloud.kubernetes: malformed object list")
+                    self.ctx.warn(f"{self.name}: malformed object list")
                     continue
-                for item in items:
-                    if len(accepted) >= _MAX_OBJECTS:
-                        self.ctx.warn("cloud.kubernetes: object limit reached")
-                        break
-                    if not isinstance(item, dict):
-                        self.ctx.warn("cloud.kubernetes: malformed object")
-                        continue
-                    accepted.append(item)
+            else:
+                items = [record]
+            limit_exceeded = False
+            for item in items:
+                # Reaching the cap is complete only if no further object is
+                # present, including objects in a subsequent List envelope.
                 if len(accepted) >= _MAX_OBJECTS:
+                    self.ctx.warn(f"{self.name}: object limit reached")
+                    limit_exceeded = True
                     break
-                continue
-            if len(accepted) >= _MAX_OBJECTS:
-                self.ctx.warn("cloud.kubernetes: object limit reached")
+                if not isinstance(item, dict):
+                    self.ctx.warn(f"{self.name}: malformed object")
+                    continue
+                accepted.append(item)
+            if limit_exceeded:
                 break
-            accepted.append(record)
         for obj in accepted:
             if _kind(obj) == "NetworkPolicy":
                 spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
@@ -184,7 +228,9 @@ class KubernetesConnector(BaseConnector):
                 if isinstance(spec, dict) and (
                     (isinstance(policy_types, list) and "Egress" in policy_types) or "egress" in spec
                 ):
-                    egress_policies.add(_namespace(obj))
+                    policy_namespace = _namespace(obj)
+                    if policy_namespace is not None:
+                        egress_policies.add(policy_namespace)
         for obj in accepted:
             kind = _kind(obj)
             if kind not in _RECOGNIZED | (_OPENSHIFT if self.name == "cloud.openshift" else set()):
@@ -197,12 +243,30 @@ class KubernetesConnector(BaseConnector):
             if not resource_name:
                 self.ctx.warn(f"{self.name}: object without metadata.name")
                 continue
+            if len(resource_name) > 253:
+                self.ctx.warn(f"{self.name}: object has oversized metadata.name")
+                continue
             namespace = _namespace(obj)
+            if namespace is None:
+                self.ctx.warn(f"{self.name}: object has malformed metadata.namespace")
+                continue
             spec_value = obj.get("spec")
             if spec_value is not None and not isinstance(spec_value, dict):
                 self.ctx.warn(f"{self.name}: object has malformed spec")
                 continue
             workload_spec = spec_value if isinstance(spec_value, dict) else {}
+            if kind == "CronJob":
+                job_template = workload_spec.get("jobTemplate")
+                if not isinstance(job_template, dict):
+                    self.ctx.warn(f"{self.name}: workload has malformed job template")
+                    continue
+                job_spec = job_template.get("spec")
+                if not isinstance(job_spec, dict):
+                    self.ctx.warn(f"{self.name}: workload has malformed job spec")
+                    continue
+                # Image detection and posture checks must inspect the same
+                # nested Job template, never a top-level template lookalike.
+                workload_spec = job_spec
             if kind in _WORKLOAD_KINDS and not isinstance(workload_spec.get("template"), dict):
                 self.ctx.warn(f"{self.name}: workload has malformed pod template")
                 continue
@@ -214,7 +278,7 @@ class KubernetesConnector(BaseConnector):
             if kind == "Pod" and not isinstance(spec_value, dict):
                 self.ctx.warn(f"{self.name}: pod has malformed spec")
                 continue
-            images = _workload_images(obj)
+            images = _workload_images(workload_spec)
             selected = [
                 image
                 for image in images

@@ -60,6 +60,8 @@ from shadowscan.utils.files import (
     require_no_symlinks,
 )
 from shadowscan.utils.identity import (
+    atlassian_site_origin,
+    has_atlassian_account_scope,
     has_aws_account_scope,
     has_google_workspace_account_scope,
     requires_card_account_scope,
@@ -96,9 +98,11 @@ def _has_valid_account_scope(finding: Finding) -> bool:
     failed) and ``card_stub_for`` (which only needs the yes/no answer before
     deciding whether a generated card may bind account/resource evidence).
     """
-    return has_aws_account_scope(
-        finding.provider, finding.account, finding.resource
-    ) and has_google_workspace_account_scope(finding.provider, finding.account)
+    return (
+        has_aws_account_scope(finding.provider, finding.account, finding.resource)
+        and has_google_workspace_account_scope(finding.provider, finding.account)
+        and has_atlassian_account_scope(finding.provider, finding.account)
+    )
 
 
 def _has_usable_resource_identity(finding: Finding) -> bool:
@@ -487,6 +491,9 @@ class Inventory:
         if not has_google_workspace_account_scope(finding.provider, finding.account):
             finding.metadata["registry_match_reason"] = "missing-google-workspace-account-scope"
             return None
+        if not has_atlassian_account_scope(finding.provider, finding.account):
+            finding.metadata["registry_match_reason"] = "missing-atlassian-account-scope"
+            return None
         if finding.metadata.get("identity_unresolved") is True:
             finding.metadata["registry_match_reason"] = "unresolved-resource-identity"
             return None
@@ -522,12 +529,21 @@ class Inventory:
 
     @staticmethod
     def _scope_matches(entry: InventoryEntry, finding: Finding) -> bool:
+        account_matches = not entry.accounts or finding.account in entry.accounts
+        if finding.provider == "atlassian":
+            # HTTPS origins have canonical host/port spelling, while app
+            # resource patterns below remain case-sensitive literal IDs.
+            origin = atlassian_site_origin(finding.account)
+            account_matches = not entry.accounts or (
+                origin is not None
+                and any(atlassian_site_origin(account) == origin for account in entry.accounts)
+            )
         return (
             (not entry.surfaces or finding.surface.value in entry.surfaces)
             and (not entry.providers or finding.provider in entry.providers)
-            and (not entry.accounts or finding.account in entry.accounts)
+            and account_matches
             # Older generated cards omitted the tenant. A global OAuth client
-            # resource cannot confer approval across unrelated customers.
+            # or Marketplace app key cannot approve unrelated installations.
             and (not requires_card_account_scope(finding.provider) or bool(entry.accounts))
             and (not entry.regions or finding.region in entry.regions)
             # Several observations can share one resource (a repository's
