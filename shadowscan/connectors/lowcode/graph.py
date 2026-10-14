@@ -77,6 +77,27 @@ _N8N_INPUT_TYPES = frozenset(
     }
 )
 _N8N_HTTP_TYPES = frozenset({"n8n-nodes-base.httpRequest", _N8N_PREFIX + "toolHttpRequest"})
+# Every operation of the Send Email node delivers a message (v1 has no operation
+# selector; v2 offers send and sendAndWait), so the type alone is a sink.
+_N8N_SEND_TYPES = frozenset({"n8n-nodes-base.emailSend"})
+# Operations that carry workflow data out, keyed by the node type n8n registers
+# and named as each node declares them. An omitted, expression-valued or
+# unlisted operation gives no role: reads (select, find, aggregate, getAll,
+# search), updates of a node's own earlier message and deletions are not egress.
+# Postgres and MySQL v2 name their delete operation deleteTable (v1 only has
+# executeQuery, insert and update); executeQuery runs SQL the projection does
+# not parse, so it counts as a potential write. MongoDB names its delete
+# operation delete.
+_N8N_SQL_WRITE_OPERATIONS = frozenset({"deleteTable", "executeQuery", "insert", "update", "upsert"})
+_N8N_EGRESS_OPERATIONS: dict[str, frozenset[str]] = {
+    "n8n-nodes-base.slack": frozenset({"post", "sendAndWait"}),
+    "n8n-nodes-base.gmail": frozenset({"reply", "send", "sendAndWait"}),
+    "n8n-nodes-base.postgres": _N8N_SQL_WRITE_OPERATIONS,
+    "n8n-nodes-base.mySql": _N8N_SQL_WRITE_OPERATIONS,
+    "n8n-nodes-base.mongoDb": frozenset(
+        {"delete", "findOneAndReplace", "findOneAndUpdate", "insert", "update"}
+    ),
+}
 FLOWISE_AGENT_TYPES = frozenset(
     {
         "toolAgent",
@@ -138,10 +159,13 @@ def n8n_node_roles(node: dict[str, Any]) -> set[str]:
             roles.add("egress")
         if host in _LLM_HOSTS:
             roles.add("ai")
-    if kind in {"n8n-nodes-base.slack", "n8n-nodes-base.gmail"}:
+    if kind in _N8N_SEND_TYPES:
+        roles.add("egress")
+    operations = _N8N_EGRESS_OPERATIONS.get(kind)
+    if operations is not None:
         params = node.get("parameters")
         operation = params.get("operation") if isinstance(params, dict) else None
-        if isinstance(operation, str) and operation in {"send", "post"}:
+        if isinstance(operation, str) and operation in operations:
             roles.add("egress")
     return roles
 

@@ -1233,3 +1233,90 @@ def test_n8n_graph_failure_is_contained_to_its_workflow(index, monkeypatch, fail
         "n8n:workflow:wf1": "incomplete",
         **{f"n8n:workflow:wf{n}": "analyzed" for n in range(2, 5)},
     }
+
+
+# Sink and trigger registry entries use the node type and operation names n8n
+# declares (packages/nodes-base/nodes/<Node>/*.node.ts and their resource
+# descriptions); #217's spellings that n8n never registers get no role.
+@pytest.mark.parametrize(
+    "node_type,operation,egress",
+    [
+        ("n8n-nodes-base.emailSend", None, True),
+        ("n8n-nodes-base.emailSend", "send", True),
+        ("n8n-nodes-base.emailSend", "sendAndWait", True),
+        ("n8n-nodes-base.sendEmail", None, False),
+        ("n8n-nodes-base.postgres", "insert", True),
+        ("n8n-nodes-base.postgres", "update", True),
+        ("n8n-nodes-base.postgres", "upsert", True),
+        ("n8n-nodes-base.postgres", "deleteTable", True),
+        ("n8n-nodes-base.postgres", "executeQuery", True),
+        ("n8n-nodes-base.postgres", "select", False),
+        ("n8n-nodes-base.postgres", "delete", False),
+        ("n8n-nodes-base.postgres", "Insert", False),
+        ("n8n-nodes-base.postgres", None, False),
+        ("n8n-nodes-base.mySql", "insert", True),
+        ("n8n-nodes-base.mySql", "executeQuery", True),
+        ("n8n-nodes-base.mySql", "select", False),
+        ("n8n-nodes-base.mysql", "insert", False),
+        ("n8n-nodes-base.mongoDb", "insert", True),
+        ("n8n-nodes-base.mongoDb", "update", True),
+        ("n8n-nodes-base.mongoDb", "delete", True),
+        ("n8n-nodes-base.mongoDb", "findOneAndUpdate", True),
+        ("n8n-nodes-base.mongoDb", "findOneAndReplace", True),
+        ("n8n-nodes-base.mongoDb", "find", False),
+        ("n8n-nodes-base.mongoDb", "aggregate", False),
+        ("n8n-nodes-base.mongoDb", "deleteTable", False),
+        ("n8n-nodes-base.slack", "post", True),
+        ("n8n-nodes-base.slack", "sendAndWait", True),
+        ("n8n-nodes-base.slack", "update", False),
+        ("n8n-nodes-base.slack", "search", False),
+        ("n8n-nodes-base.slack", "postMessage", False),
+        ("n8n-nodes-base.slack", "sendMessage", False),
+        ("n8n-nodes-base.slack", "send", False),
+        ("n8n-nodes-base.gmail", "send", True),
+        ("n8n-nodes-base.gmail", "reply", True),
+        ("n8n-nodes-base.gmail", "getAll", False),
+        ("n8n-nodes-base.gmail", "post", False),
+    ],
+)
+def test_n8n_sink_registry_uses_declared_node_and_operation_names(node_type, operation, egress):
+    from shadowscan.connectors.lowcode.graph import n8n_node_roles
+
+    node = {"name": "sink", "type": node_type}
+    if operation is not None:
+        node["parameters"] = {"operation": operation}
+    roles = n8n_node_roles(node)
+    assert ("egress" in roles) is egress
+    assert "ai" not in roles and "untrusted-input" not in roles
+    assert not n8n_node_roles({**node, "disabled": True})
+
+
+@pytest.mark.parametrize(
+    "node_type,untrusted",
+    [("n8n-nodes-base.emailReadImap", True), ("n8n-nodes-base.imapTrigger", False)],
+)
+def test_n8n_imap_trigger_registry_uses_actual_registered_name(node_type, untrusted):
+    from shadowscan.connectors.lowcode.graph import n8n_node_roles
+
+    assert ("untrusted-input" in n8n_node_roles({"name": "mail", "type": node_type})) is untrusted
+
+
+@pytest.mark.parametrize(
+    "operation,expected", [("insert", True), ("select", False), ({"op": "insert"}, False)]
+)
+def test_n8n_database_sink_role_depends_on_the_declared_operation(index, operation, expected):
+    from copy import deepcopy
+
+    workflow = deepcopy(next(case for case in _graph_cases() if case["case"] == "database-write")["workflow"])
+    workflow["nodes"][2]["parameters"]["operation"] = operation
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    graph = finding.metadata["workflow_graph"]
+    assert graph["status"] == "analyzed" and not connector.ctx.stats.incomplete
+    assert graph["role_counts"]["egress"] == int(expected)
+    assert graph["potential_input_ai_egress_path"] is expected
+    # The sink changes graph metadata only: the inventory finding, its kind
+    # and its evidence come from the agent node either way.
+    assert finding.kind == Kind.AGENT
+    assert all("graph" not in evidence.signal for evidence in finding.evidence)
