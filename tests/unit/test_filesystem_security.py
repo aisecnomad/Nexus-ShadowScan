@@ -1873,3 +1873,20 @@ def test_extensionless_text_files_do_not_exhaust_the_artifact_budget(tmp_path, r
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
     assert [f.metadata["artifact_inventory"]["format"] for f in findings] == ["gguf"]
     assert not ctx.stats.errors and not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("name", ["weights.gguf", "pytorch_model.bin", "model.safetensors", "app.exe"])
+def test_lfs_pointer_named_like_an_artifact_keeps_the_lfs_diagnostic(tmp_path, run_connector, name):
+    from shadowscan.connectors.code import model_artifacts
+
+    pointer = Path("tests/fixtures/model_artifacts/lfs-pointer.gguf").read_bytes()
+    (tmp_path / name).write_bytes(pointer)
+    with pytest.raises(model_artifacts.LFSPointerError):
+        model_artifacts.inspect_artifact(tmp_path / name)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert not findings and ctx.stats.incomplete and not ctx.stats.errors
+    assert any(name in w and "Git LFS pointer" in w for w in ctx.stats.warnings)
+    _, strict = run_connector(
+        "code.filesystem", path=str(tmp_path), inspect_model_artifacts=True, strict_coverage=True
+    )
+    assert any(name in e and "Git LFS pointer" in e for e in strict.stats.errors)

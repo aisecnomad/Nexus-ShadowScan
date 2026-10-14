@@ -13,6 +13,7 @@ from pathlib import PurePath
 from typing import Any, BinaryIO
 
 from shadowscan.utils.files import changed_since, open_confined_file
+from shadowscan.utils.git import LFS_POINTER_MAX_BYTES, LFS_POINTER_PREFIX
 from shadowscan.utils.safe_json import strict_json_loads
 
 DEFAULT_METADATA_BYTES = 64 * 1024
@@ -417,6 +418,41 @@ def _binary_probe(reader: _Reader, prefix: bytes) -> bool:
     return b"\x00" in head
 
 
+class LFSPointerError(ValueError):
+    """The candidate is a Git LFS pointer; the object it stands for was never checked out."""
+
+
+def _lfs_pointer(reader: _Reader) -> bool:
+    """Whether a candidate a parser rejected, or found nothing in, is a Git LFS pointer.
+
+    Only a file no larger than a pointer is read again, and only for the
+    pointer line, so the budget and ``bytes_read`` of real artifacts are
+    unchanged; an exhausted budget leaves the parser's own diagnostic.
+    """
+    if not len(LFS_POINTER_PREFIX) <= reader.size <= LFS_POINTER_MAX_BYTES:
+        return False
+    if len(LFS_POINTER_PREFIX) > reader.remaining:
+        return False
+    reader.seek(0)
+    return reader.read(len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
+
+
+def _inspect(reader: _Reader, suffix: str) -> ArtifactInspection | None:
+    prefix = reader.read(min(4, reader.size))
+    if suffix == ".gguf" or prefix == b"GGUF":
+        return _gguf(reader)
+    if suffix == ".safetensors":
+        return _safetensors(reader)
+    if suffix == ".onnx":
+        return _onnx(reader)
+    if suffix in ARTIFACT_SUFFIXES or _binary_probe(reader, prefix):
+        return _pyinstaller(reader)
+    # An extensionless file without a NUL among its first bytes is text
+    # (LICENSE, Makefile, a script), not a packaged binary: the probe is
+    # all it costs, and the walk goes on to read it as source.
+    return None
+
+
 def inspect_artifact(
     path: PurePath,
     *,
@@ -425,27 +461,23 @@ def inspect_artifact(
     check: Callable[[], None] = lambda: None,
     charge: Callable[[int], None] = lambda size: None,
 ) -> ArtifactInspection | None:
-    """Inspect the selected regular file through one confined, identity-checked handle."""
+    """Inspect the selected regular file through one confined, identity-checked handle.
+
+    Raises :class:`LFSPointerError` for a Git LFS pointer in the artifact's
+    place, so the caller reports the pointer rather than an invalid header.
+    """
     if type(max_bytes) is not int or max_bytes < 128:
         raise ValueError("artifact metadata byte limit must be at least 128")
     with open_confined_file(path, label="model artifact", dir_fd=dir_fd) as (stream, before):
         reader = _Reader(stream, before.st_size, max_bytes, check, charge)
-        suffix = path.suffix.lower()
-        result: ArtifactInspection | None
-        prefix = reader.read(min(4, before.st_size))
-        if suffix == ".gguf" or prefix == b"GGUF":
-            result = _gguf(reader)
-        elif suffix == ".safetensors":
-            result = _safetensors(reader)
-        elif suffix == ".onnx":
-            result = _onnx(reader)
-        elif suffix in ARTIFACT_SUFFIXES or _binary_probe(reader, prefix):
-            result = _pyinstaller(reader)
-        else:
-            # An extensionless file without a NUL among its first bytes is text
-            # (LICENSE, Makefile, a script), not a packaged binary: the probe is
-            # all it costs, and the walk goes on to read it as source.
-            result = None
+        try:
+            result = _inspect(reader, path.suffix.lower())
+        except ValueError as exc:
+            if _lfs_pointer(reader):
+                raise LFSPointerError("Git LFS pointer file, not the artifact it stands for") from exc
+            raise
+        if result is None and _lfs_pointer(reader):
+            raise LFSPointerError("Git LFS pointer file, not the artifact it stands for")
         if changed_since(before, stream.fileno()):
             raise ValueError("artifact changed while reading")
         if result is not None:

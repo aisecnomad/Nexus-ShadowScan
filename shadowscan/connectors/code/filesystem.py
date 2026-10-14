@@ -117,7 +117,7 @@ from shadowscan.connectors.code.manifests import (
 )
 from shadowscan.connectors.code.mcp_config import _mcp_client_for, _parse_mcp_servers
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_capabilities, mcp_tool_names
-from shadowscan.connectors.code.model_artifacts import ARTIFACT_SUFFIXES, inspect_artifact
+from shadowscan.connectors.code.model_artifacts import ARTIFACT_SUFFIXES, LFSPointerError, inspect_artifact
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
@@ -3070,13 +3070,25 @@ class FilesystemConnector(BaseConnector):
                     raise ValueError("artifact scan-wide metadata byte limit exceeded")
                 scan.artifact_bytes_remaining -= size
 
-            result = inspect_artifact(
-                on_disk,
-                dir_fd=scan.root_fd,
-                max_bytes=self.model_metadata_bytes,
-                check=self.ctx.check_deadline,
-                charge=charge,
-            )
+            try:
+                result = inspect_artifact(
+                    on_disk,
+                    dir_fd=scan.root_fd,
+                    max_bytes=self.model_metadata_bytes,
+                    check=self.ctx.check_deadline,
+                    charge=charge,
+                )
+            except LFSPointerError:
+                # A checkout made without git-lfs holds a pointer in place of the
+                # artifact: the same coverage gap ``_read_source`` records for any
+                # other pointer file, not an invalid header.
+                message = f"code.filesystem: {rel}: Git LFS pointer file, not the content it stands for"
+                if self.strict_coverage:
+                    self.ctx.error(f"{message}; coverage incomplete")
+                else:
+                    self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+                _note_unread_settings(proj, rel)
+                return
             if result is not None:
                 kind = Kind.INFRA if result.format == "pyinstaller" else Kind.LOCAL_MODEL
                 finding = self._base(
