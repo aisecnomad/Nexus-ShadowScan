@@ -1138,8 +1138,9 @@ Analyze offline Kubernetes and OpenShift workload exports (images, exposure,
 GPU, privilege and egress-policy indicators), including nested CronJob pod
 templates. Resource identities preserve full valid object names and
 namespaces; object-limit truncation, a chunked `List` page with
-`metadata.continue` or `remainingItemCount`, and a malformed namespace leave
-coverage incomplete. Live collection is not
+`metadata.continue` or `remainingItemCount`, a malformed namespace and an
+object without a `kind` leave coverage incomplete; items of a raw API list
+(`PodList`) take the kind their envelope names. Live collection is not
 implemented and the connectors use no credentials; their findings carry no
 device name, so lifecycle links do not apply to them. Engine-named images,
 GPU requests or limits and `--model` arguments corroborate serving workloads;

@@ -1336,7 +1336,12 @@ now matches a declared `tgi` or `10.20.0.5` entry, as it already did in JSON
 logs. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
 setting it changes that source's ids by design, so rebaseline that source.
 
-**Kubernetes.** Workloads that set `nvidia.com/gpu` only in `limits` are now
+**Kubernetes.** Items of a raw API list (`kubectl get --raw /api/v1/pods`),
+which carry no `kind`, now take the kind their typed `List` names (`PodList`
+items are Pods) and are analyzed, so new findings can appear; earlier they were
+skipped without a warning. An object without a `kind` anywhere else, or with a
+non-string or empty `kind`, now makes a `cloud.kubernetes` or `cloud.openshift`
+scan incomplete (exit 3). Workloads that set `nvidia.com/gpu` only in `limits` are now
 reported as GPU workloads, and private-registry serving images whose name
 starts with an engine name (`registry.example/ml/vllm-serving`, also when
 pinned by digest) are now agent workloads, so new findings can appear. Engine

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
@@ -164,6 +164,35 @@ def _kind(obj: dict[str, Any]) -> str:
     return value[:100] if isinstance(value, str) else ""
 
 
+# A typed List kind (PodList, DeploymentList), which names the kind of its items.
+_TYPED_LIST_KIND = re.compile(r"([A-Z][A-Za-z0-9]{0,99})List")
+
+
+def _with_list_item_kinds(data: Any) -> Any:
+    """Fill a missing item ``kind`` from a typed List envelope.
+
+    The API server strips each item's kind and apiVersion from a typed list
+    (``GET /api/v1/pods`` returns a ``PodList`` whose items have none); kubectl
+    adds them back. The envelope's kind names the kind of every item, so an
+    item without one takes it. An item's own kind is never replaced, and an
+    untyped ``List`` names no item kind.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        return data
+    envelope_kind = data.get("kind")
+    typed = _TYPED_LIST_KIND.fullmatch(envelope_kind) if isinstance(envelope_kind, str) else None
+    if typed is None:
+        return data
+    item_kind = typed.group(1)
+    return {
+        **data,
+        "items": [
+            {**item, "kind": item_kind} if isinstance(item, dict) and "kind" not in item else item
+            for item in data["items"]
+        ],
+    }
+
+
 def _workload_images(spec: dict[str, Any]) -> list[str]:
     template = spec.get("template", spec)
     if not isinstance(template, dict):
@@ -200,6 +229,11 @@ class KubernetesConnector(BaseConnector):
     def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
         return BaseConnector._offline_pagination_issue(data) or _list_pagination_issue(data)
 
+    @classmethod
+    def _unwrap(cls, data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
+        # The shared loader unwraps a top-level List, so its kind must reach the items first.
+        return super()._unwrap(_with_list_item_kinds(data), on_error)
+
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError(
             "cloud.kubernetes: live API collection is unavailable; provide an offline kubectl export"
@@ -213,6 +247,7 @@ class KubernetesConnector(BaseConnector):
         egress_policies: set[str] = set()
         for record in records:
             if "items" in record:
+                record = _with_list_item_kinds(record)
                 # A List envelope inside a JSON array is not unwrapped by the
                 # shared loader, so check its continuation here. Observed
                 # items are still analyzed.
@@ -251,6 +286,15 @@ class KubernetesConnector(BaseConnector):
                         egress_policies.add(policy_namespace)
         for obj in accepted:
             kind = _kind(obj)
+            if not kind:
+                # Without a kind the object cannot be analyzed or ignored as
+                # another kind: it could be any workload.
+                self.ctx.warn(
+                    f"{self.name}: object has malformed kind"
+                    if "kind" in obj
+                    else f"{self.name}: object without kind outside a typed List"
+                )
+                continue
             if kind not in _RECOGNIZED | (_OPENSHIFT if self.name == "cloud.openshift" else set()):
                 continue
             metadata_value = obj.get("metadata")

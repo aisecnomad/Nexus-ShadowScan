@@ -8,7 +8,16 @@ load a kubeconfig; collect an inventory separately with read-only `kubectl get
 Every connector entry requires a stable `cluster` label. Resource identities
 use `k8s:<cluster>/<namespace>/<kind>/<name>`. Export Kubernetes `List`
 envelopes or individual objects. Never include Secret values; this analyzer
-does not need them. Provider environment values are not retained: only
+does not need them.
+
+kubectl writes each object's `kind`. A raw API list (`kubectl get --raw
+/api/v1/pods`, or a client library's list call) is a typed `List` such as
+`PodList` whose items carry no `kind`; each such item takes the kind its
+envelope names (`PodList` items are Pods), and an item's own `kind` is never
+replaced. An object with no `kind` outside a typed `List` (in an untyped
+`List`, a JSON array or JSONL), or with a `kind` that is not a non-empty
+string, cannot be analyzed: it is skipped with a warning that marks the scan
+incomplete (exit 3). Provider environment values are not retained: only
 configuration-presence tags are emitted. Secret references are not dereferenced.
 
 Resource identities retain complete object names, including names longer than
