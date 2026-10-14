@@ -1,0 +1,7 @@
+{
+  "tools": {
+    "shadowscan": {
+      "bin": "/workspace/scratch/59bbce174428/scanner-baseline"
+    }
+  }
+}

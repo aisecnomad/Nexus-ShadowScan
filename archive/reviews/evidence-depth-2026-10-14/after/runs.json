@@ -1,0 +1,900 @@
+{
+ "started": "2026-10-14T06:56:15.728919+00:00",
+ "harness_commit": "de05c5321bccbbf1a5f0ed75bfad05895fe5fdca",
+ "harness_dirty": false,
+ "freeze": {
+  "sha256": "e5df1238fe9166779bb927a938ccd89147a3621b004e869344f2799b21632e17",
+  "files": 139,
+  "drift_after": []
+ },
+ "policy": {
+  "timeout": 180,
+  "as_user": null,
+  "path": "/usr/bin:/bin",
+  "extra_path": [],
+  "keep_network": false
+ },
+ "workers": 1,
+ "tool_versions": {
+  "shadowscan": "0.1.2"
+ },
+ "tools_skipped": {},
+ "results": [
+  {
+   "tool": "shadowscan",
+   "unit": "estate",
+   "status": "ok",
+   "seconds": 10.663,
+   "predictions": [
+    {
+     "fact": "bot-app:claude",
+     "text": "github:installation:70110955 GitHub App installed: claude https://github.com/organizations/vantor-logistics/settings/installations/70110955",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "mcp-client-config:cursor",
+     "text": "repo-ops-scripts/.cursor/mcp.json MCP configuration: .cursor/mcp.json .cursor/mcp.json .cursor/mcp.json .cursor/mcp.json Cursor",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "mcp-client-config:claude-code",
+     "text": "repo-eta-graph/.mcp.json MCP configuration: .mcp.json .mcp.json .mcp.json Claude Code",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:agentcore",
+     "text": "arn:aws:bedrock-agentcore:us-east-1:210987654321:gateway/dispatch-tools-gw-m3t AgentCore Gateway (MCP): dispatch-tools-gw-m3t arn:aws:bedrock-agentcore:us-east-1:210987654321:gateway/dispatch-tools-gw-m3t",
+     "surface": "cloud",
+     "shadow": true
+    },
+    {
+     "fact": "lowcode-agent:now-assist",
+     "text": "servicenow:sn_aia_agent:dockagent7fq3wv ServiceNow AI agent: Dock Dispatch Agent",
+     "surface": "lowcode",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "https://freight-docs-mcp-g2p.vantor.example/mcp/search_freight_docs MCP tool search_freight_docs on https://freight-docs-mcp-g2p.vantor.example/mcp description:1 search_freight_docs",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "oauth-app:openai",
+     "text": "entra:sp:sp-chatgpt-dr51x Entra service principal: ChatGPT https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/~/Overview/objectId/sp-chatgpt-dr51x",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:ai-foundry-agent",
+     "text": "/subscriptions/sub-vantor-1/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/vantor-foundry/projects/freight-ops/agents/asst_cdocr4w0021 Azure AI Foundry agent: customs-doc-agent-r4w https://vantor-foundry.services.ai.azure.com/api/projects/freight-ops",
+     "surface": "cloud",
+     "shadow": true
+    },
+    {
+     "fact": "framework:vercel-ai",
+     "text": "repo-support-bot-ts Agent in repository root: Vercel AI SDK, Agent2Agent Protocol (A2A), Model Context Protocol (MCP) public/.well-known/agent.json src/agent.ts:8 src/agent.ts:8 package.json package.json package.json package.json src/mcp-server.ts:1 src/mcp-server.ts:2 src/mcp-server.ts:9 src/mcp-server.ts:19 src/mcp-server.ts:1 src/mcp-server.ts:1 src/mcp-server.ts:2 src/mcp-server.ts:2 src/mcp-s",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:sdk",
+     "text": "repo-support-bot-ts Agent in repository root: Vercel AI SDK, Agent2Agent Protocol (A2A), Model Context Protocol (MCP) public/.well-known/agent.json src/agent.ts:8 src/agent.ts:8 package.json package.json package.json package.json src/mcp-server.ts:1 src/mcp-server.ts:2 src/mcp-server.ts:9 src/mcp-server.ts:19 src/mcp-server.ts:1 src/mcp-server.ts:1 src/mcp-server.ts:2 src/mcp-server.ts:2 src/mcp-s",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "repo-support-bot-ts Agent in repository root: Vercel AI SDK, Agent2Agent Protocol (A2A), Model Context Protocol (MCP) public/.well-known/agent.json src/agent.ts:8 src/agent.ts:8 package.json package.json package.json package.json src/mcp-server.ts:1 src/mcp-server.ts:2 src/mcp-server.ts:9 src/mcp-server.ts:19 src/mcp-server.ts:1 src/mcp-server.ts:1 src/mcp-server.ts:2 src/mcp-server.ts:2 src/mcp-s",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "provider:openai",
+     "text": "repo-support-bot-ts Agent in repository root: Vercel AI SDK, Agent2Agent Protocol (A2A), Model Context Protocol (MCP) public/.well-known/agent.json src/agent.ts:8 src/agent.ts:8 package.json package.json package.json package.json src/mcp-server.ts:1 src/mcp-server.ts:2 src/mcp-server.ts:9 src/mcp-server.ts:19 src/mcp-server.ts:1 src/mcp-server.ts:1 src/mcp-server.ts:2 src/mcp-server.ts:2 src/mcp-s",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "lowcode-agent:agentforce",
+     "text": "salesforce:bot:0Xx5carrierbt7vq2k Salesforce bot/agent: Carrier Dispatch Agent",
+     "surface": "lowcode",
+     "shadow": true
+    },
+    {
+     "fact": "oauth-app:otter-ai",
+     "text": "google-workspace:oauth-client:77421983406-ot4vq.apps.googleusercontent.com Google Workspace OAuth app: Otter.ai",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "service-identity:generic",
+     "text": "entra:sp:sp-freight-dispatch-zn42 Entra service principal: freight-dispatch-agent-zn42 https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/~/Overview/objectId/sp-freight-dispatch-zn42",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "a2a:agent-card",
+     "text": "repo-support-bot-ts/public/.well-known/agent.json A2A agent card: Vantor Support Agent public/.well-known/agent.json",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "lowcode-agent:power-automate",
+     "text": "power-platform:flow:flow-claimsum-8kd3t Power Automate flow using Azure OpenAI: Summarise damage claims with Azure OpenAI",
+     "surface": "lowcode",
+     "shadow": true
+    },
+    {
+     "fact": "bot-app:fathom",
+     "text": "zoom:app:zm-fathom-vq7kt3 Zoom app: Fathom AI Notetaker",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "gateway-caller:agentic",
+     "text": "access:vantor-quote-crew-j9f/1.3 crewai/0.80.0 python-requests/2.32.3 Agentic caller 'vantor-quote-crew-j9f/1.3 crewai/0.80.0 python-requests/2.32.3' (user-agent): 6 requests via ChatGPT / OpenAI, CrewAI {'api.openai.com': 6} {}",
+     "surface": "gateway",
+     "shadow": true
+    },
+    {
+     "fact": "agent-config:claude-md",
+     "text": "repo-eta-graph Claude Code configured in repository root CLAUDE.md",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "token:service",
+     "text": "jwt:1ff5bed844cfe542 JWT (service) for svc-docparse-w9q44 from entra",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "bot-app:claude",
+     "text": "slack:app:A0VQ7CLAUDE Slack app (bot): Claude",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "framework:crewai",
+     "text": "repo-freight-crew Agent in repository root: CrewAI, LangChain pyproject.toml pyproject.toml src/freight_crew/config/agents.yaml src/freight_crew/crew.py:7 src/freight_crew/crew.py:25 src/freight_crew/crew.py:26 src/freight_crew/crew.py:31 src/freight_crew/crew.py:31 .env.example:1 .env.example:2 pyproject.toml pyproject.toml src/freight_crew/config/tasks.yaml src/freight_crew/crew.py src/freight_c",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "framework:langchain",
+     "text": "repo-freight-crew Agent in repository root: CrewAI, LangChain pyproject.toml pyproject.toml src/freight_crew/config/agents.yaml src/freight_crew/crew.py:7 src/freight_crew/crew.py:25 src/freight_crew/crew.py:26 src/freight_crew/crew.py:31 src/freight_crew/crew.py:31 .env.example:1 .env.example:2 pyproject.toml pyproject.toml src/freight_crew/config/tasks.yaml src/freight_crew/crew.py src/freight_c",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "provider:openai",
+     "text": "repo-freight-crew Agent in repository root: CrewAI, LangChain pyproject.toml pyproject.toml src/freight_crew/config/agents.yaml src/freight_crew/crew.py:7 src/freight_crew/crew.py:25 src/freight_crew/crew.py:26 src/freight_crew/crew.py:31 src/freight_crew/crew.py:31 .env.example:1 .env.example:2 pyproject.toml pyproject.toml src/freight_crew/config/tasks.yaml src/freight_crew/crew.py src/freight_c",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "lowcode-agent:n8n",
+     "text": "n8n:workflow:wf-leadqual-8rv2k n8n agent with AI steps: Carrier lead qualifier agent",
+     "surface": "lowcode",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "https://freight-docs-mcp-g2p.vantor.example/mcp/summarize_tariff_page MCP tool summarize_tariff_page on https://freight-docs-mcp-g2p.vantor.example/mcp summarize_tariff_page",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "oauth-app:fireflies",
+     "text": "okta:app:0oa6ffnote4vq7m Okta OAuth app: Fireflies.ai Notetaker https://adatum.okta.com/admin/app/oidc_client/instance/0oa6ffnote4vq7m",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "ai-service-contact:cursor",
+     "text": "network:adatum-zeek:10.31.4.23:coding-agent.cursor AI service contacted: Cursor (api2.cursor.sh) from 10.31.4.23 10.31.4.23 coding-agent.cursor {'api2.cursor.sh': 2}",
+     "surface": "network",
+     "shadow": true
+    },
+    {
+     "fact": "service-identity:generic",
+     "text": "okta:app:0oa7cnagkq83zz Okta service app: contract-negotiator-agent-kq83 https://adatum.okta.com/admin/app/oidc_client/instance/0oa7cnagkq83zz",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "bot-app:read-ai",
+     "text": "slack:app:A0RD8READAI Slack app: Read.ai",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:k8s-ai-workload",
+     "text": "k8s:adatum-prod/ml-serving/Deployment/linehaul-ollama-g5v Kubernetes Deployment linehaul-ollama-g5v",
+     "surface": "cloud",
+     "shadow": true
+    },
+    {
+     "fact": "bot-app:otter-ai",
+     "text": "teams:app:ta-otterai-mtg-k4m2 Teams app with bot: Otter.ai",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "model-store:generic",
+     "text": "0.0.0.0:11434/model/freight-eta-tuner-b3x7:latest Local LLM model freight-eta-tuner-b3x7:latest",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "model-store:generic",
+     "text": "0.0.0.0:11434/model/llama3.1:8b Local LLM model llama3.1:8b",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "bot-app:claude",
+     "text": "notion:bot:nb-claude-vq74ka Notion integration: Claude",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "provider:anthropic",
+     "text": "repo-n8n-flows/workflows/pod-summary-agent.json Exported agent workflow (n8n): workflows/pod-summary-agent.json workflows/pod-summary-agent.json workflows/pod-summary-agent.json workflows/pod-summary-agent.json",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "provider:openai",
+     "text": "repo-n8n-flows/workflows/quote-triage-agent.json Exported agent workflow (n8n): workflows/quote-triage-agent.json workflows/quote-triage-agent.json workflows/quote-triage-agent.json workflows/quote-triage-agent.json",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "gateway-caller:agentic",
+     "text": "litellm-alias:freight-eta-agent-vq7 Agentic caller 'freight-eta-agent-vq7' (service): 8 requests via LangChain to gpt-4o {} {'gpt-4o': 8}",
+     "surface": "gateway",
+     "shadow": true
+    },
+    {
+     "fact": "gateway-caller:agentic",
+     "text": "aws:arn:aws:sts::210987654321:assumed-role/vantor-fleet-ops-agent-x9r4/build-runner-3 Agentic caller 'arn:aws:sts::210987654321:assumed-role/vantor-fleet-ops-agent-x9r4/build-runner-3' (principal): 6 requests to anthropic.claude-3-5-sonnet-20241022-v2:0 {'bedrock-runtime.us-east-1.amazonaws.com': 6} {'anthropic.claude-3-5-sonnet-20241022-v2:0': 6}",
+     "surface": "gateway",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:agentcore",
+     "text": "arn:aws:bedrock-agentcore:us-east-1:210987654321:runtime/claims_intake_runtime_8kx-5q2 Bedrock AgentCore runtime: claims_intake_runtime_8kx arn:aws:bedrock-agentcore:us-east-1:210987654321:runtime/claims_intake_runtime_8kx-5q2 arn:aws:bedrock-agentcore:us-east-1:210987654321:runtime/claims_intake_runtime_8kx-5q2",
+     "surface": "cloud",
+     "shadow": true
+    },
+    {
+     "fact": "token:delegated-agent",
+     "text": "jwt:bbc6bc750209d016 JWT (delegated-agent) for customsbrkr-x7r21 from okta",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:vertex-agent",
+     "text": "projects/591627483025/locations/us-central1/reasoningEngines/8274619305 Vertex AI Agent Engine: cargo-eta-planner-p9d projects/591627483025/locations/us-central1/reasoningEngines/8274619305",
+     "surface": "cloud",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:win-laptop-03:priya:mcp-config:amazon-q MCP servers configured for Amazon Q Developer on win-laptop-03 (~priya) ~/.aws/amazonq/mcp.json Amazon Q Developer github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:claude-code MCP servers configured for Claude Code on dev-laptop-01 (~dana) ~/.claude.json Claude Code github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:claude-code MCP servers configured for Claude Code on dev-laptop-01 (~dana) ~/.claude.json Claude Code vantor-freight-mcp /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:claude-desktop MCP servers configured for Claude Desktop on dev-laptop-01 (~dana) ~/.config/Claude/claude_desktop_config.json Claude Desktop github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:win-laptop-03:priya:mcp-config:claude-desktop MCP servers configured for Claude Desktop on win-laptop-03 (~priya) ~/AppData/Roaming/Claude/claude_desktop_config.json Claude Desktop github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:win-laptop-03:priya:mcp-config:cline MCP servers configured for Cline on win-laptop-03 (~priya) ~/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json Cline github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-02:marcus:mcp-config:continue MCP servers configured for Continue on dev-laptop-02 (~marcus) ~/.continue/config.yaml Continue github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:cursor MCP servers configured for Cursor on dev-laptop-01 (~dana) ~/.cursor/mcp.json Cursor github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:cursor MCP servers configured for Cursor on dev-laptop-01 (~dana) ~/.cursor/mcp.json Cursor vantor-freight-mcp /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-02:marcus:mcp-config:gemini-cli MCP servers configured for Gemini CLI on dev-laptop-02 (~marcus) ~/.gemini/settings.json Gemini CLI github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-02:marcus:mcp-config:codex MCP servers configured for OpenAI Codex CLI on dev-laptop-02 (~marcus) ~/.codex/config.toml OpenAI Codex CLI github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:windsurf MCP servers configured for Windsurf on dev-laptop-01 (~dana) ~/.codeium/windsurf/mcp_config.json Windsurf github npx -y @modelcontextprotocol/server-github@2025.4.8",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "endpoint:dev-laptop-01:dana:mcp-config:windsurf MCP servers configured for Windsurf on dev-laptop-01 (~dana) ~/.codeium/windsurf/mcp_config.json Windsurf vantor-freight-mcp /home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp --rates-db /home/dana/freight/rates.db",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "lowcode-agent:agentforce",
+     "text": "salesforce:genai-planner:0GP4routepln9wk2qa Agentforce agent (planner): Route Exception Planner",
+     "surface": "lowcode",
+     "shadow": true
+    },
+    {
+     "fact": "oauth-app:perplexity",
+     "text": "google-marketplace:app:Perplexity google-marketplace app: Perplexity",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "bot-app:glean",
+     "text": "atlassian:confluence:app:ai.glean.confluence Atlassian app (confluence): Glean for Confluence",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:dialogflow",
+     "text": "projects/vantor-ml/locations/global/agents/4f1c9d2e-7a3b-4c5d-9e8f-0a1b2c3d4e5f Dialogflow CX agent: driver-helpdesk-cx-k2n projects/vantor-ml/locations/global/agents/4f1c9d2e-7a3b-4c5d-9e8f-0a1b2c3d4e5f",
+     "surface": "cloud",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:amazon-q",
+     "text": "endpoint:win-laptop-03:priya:agent-config:amazon-q Amazon Q Developer configured on win-laptop-03 (~priya) ~/.aws/amazonq/mcp.json Amazon Q Developer",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:cline",
+     "text": "endpoint:win-laptop-03:priya:agent-config:cline Cline configured on win-laptop-03 (~priya) ~/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json Cline",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:cursor",
+     "text": "endpoint:dev-laptop-01:dana:agent-config:cursor Cursor configured on dev-laptop-01 (~dana) ~/.cursor/mcp.json Cursor",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:gemini-cli",
+     "text": "endpoint:dev-laptop-02:marcus:agent-config:gemini-cli Gemini CLI configured on dev-laptop-02 (~marcus) ~/.gemini/settings.json Gemini CLI",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:codex",
+     "text": "endpoint:dev-laptop-02:marcus:agent-config:codex OpenAI Codex CLI configured on dev-laptop-02 (~marcus) ~/.codex/config.toml OpenAI Codex CLI",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:windsurf",
+     "text": "endpoint:dev-laptop-01:dana:agent-config:windsurf Windsurf configured on dev-laptop-01 (~dana) ~/.codeium/windsurf/mcp_config.json Windsurf",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "oauth-app:glean",
+     "text": "okta:app:0oa9glnsrch2xp4 Okta OAuth app: Glean Search https://adatum.okta.com/admin/app/glean/instance/0oa9glnsrch2xp4",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "lowcode-agent:workato",
+     "text": "workato:recipe:rcp-claimsgenai-w6r9t Workato workflow with AI steps: Draft claim responses with GenAI",
+     "surface": "lowcode",
+     "shadow": true
+    },
+    {
+     "fact": "lowcode-agent:make",
+     "text": "make:ai-agent:agt-tenderneg-5rq8w Make (Integromat) agent with AI steps: Tender negotiator",
+     "surface": "lowcode",
+     "shadow": true
+    },
+    {
+     "fact": "agent-process:claude-code",
+     "text": "runtime:dev-laptop-01:dana:claude-code Claude Code running on dev-laptop-01 (dana) dev-laptop-01 claude-code dev-laptop-01 dana",
+     "surface": "runtime",
+     "shadow": true
+    },
+    {
+     "fact": "oauth-app:gemini",
+     "text": "okta:app:0oa5gemfx77tr3d Okta OAuth app: Gemini Trading Desk https://adatum.okta.com/admin/app/oidc_client/instance/0oa5gemfx77tr3d",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "iac:bedrock",
+     "text": "repo-infra/bedrock.tf Infrastructure provisions Amazon Bedrock Agents / AgentCore / Flows: bedrock.tf bedrock.tf:26 bedrock.tf:47 bedrock.tf:57",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "framework:langgraph",
+     "text": "repo-eta-graph LLM usage in repository root: LangGraph, Model Context Protocol (MCP) pyproject.toml src/eta_graph/graph.py:7 .env.example:1 .env.example:2 .mcp.json pyproject.toml src/eta_graph/graph.py:6 src/eta_graph/graph.py:6 src/eta_graph/graph.py:7 src/eta_graph/graph.py:7 src/eta_graph/graph.py:43 src/eta_graph/graph.py:9 src/eta_graph/graph.py:20 src/eta_graph/graph.py:43 claude-sonnet-4-5",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "provider:anthropic",
+     "text": "repo-eta-graph LLM usage in repository root: LangGraph, Model Context Protocol (MCP) pyproject.toml src/eta_graph/graph.py:7 .env.example:1 .env.example:2 .mcp.json pyproject.toml src/eta_graph/graph.py:6 src/eta_graph/graph.py:6 src/eta_graph/graph.py:7 src/eta_graph/graph.py:7 src/eta_graph/graph.py:43 src/eta_graph/graph.py:9 src/eta_graph/graph.py:20 src/eta_graph/graph.py:43 claude-sonnet-4-5",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "gateway-caller:llm",
+     "text": "access:vantor-run-audit-z3m/1.4 LLM caller 'vantor-run-audit-z3m/1.4' (user-agent): 3 requests via ChatGPT / OpenAI {'api.openai.com': 3} {}",
+     "surface": "gateway",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:copilot",
+     "text": "endpoint:dev-laptop-02:marcus:ide-extension:github.copilot AI editor extension installed: GitHub Copilot on dev-laptop-02 (~marcus) ~/.vscode/extensions/github.copilot-1.388.0",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "framework:langchaingo",
+     "text": "repo-ops-scripts LLM usage in repository root: LangChainGo, Model Context Protocol (MCP) go.mod go.mod .cursor/mcp.json cmd/etabot/main.go:11 cmd/etabot/main.go:12 cmd/etabot/main.go:19 cmd/logsummary/main.go:12 cmd/logsummary/main.go:22 go.mod",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "provider:ollama",
+     "text": "repo-ops-scripts LLM usage in repository root: LangChainGo, Model Context Protocol (MCP) go.mod go.mod .cursor/mcp.json cmd/etabot/main.go:11 cmd/etabot/main.go:12 cmd/etabot/main.go:19 cmd/logsummary/main.go:12 cmd/logsummary/main.go:22 go.mod",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "provider:openai",
+     "text": "repo-ops-scripts LLM usage in repository root: LangChainGo, Model Context Protocol (MCP) go.mod go.mod .cursor/mcp.json cmd/etabot/main.go:11 cmd/etabot/main.go:12 cmd/etabot/main.go:19 cmd/logsummary/main.go:12 cmd/logsummary/main.go:22 go.mod",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "agent-process:aider",
+     "text": "runtime:dev-laptop-02:marcus:aider Aider running on dev-laptop-02 (marcus) dev-laptop-02 aider dev-laptop-02 marcus",
+     "surface": "runtime",
+     "shadow": true
+    },
+    {
+     "fact": "lowcode-agent:zapier",
+     "text": "zapier:zap:POD to ChatGPT summary zv82q Zapier workflow with AI steps: POD to ChatGPT summary zv82q",
+     "surface": "lowcode",
+     "shadow": true
+    },
+    {
+     "fact": "provider:anthropic",
+     "text": "repo-infra LLM usage in repository root: Amazon Bedrock Agents / AgentCore / Flows bedrock.tf:26 bedrock.tf:47 bedrock.tf:57 variables.tf:10 variables.tf:10 outputs.tf:8 azure-openai.tf:6 azure-openai.tf:20 azure-openai.tf:26 bedrock.tf:64 bedrock.tf:64 amazon.titan-embed-text-v2:0 anthropic.claude-3-5-sonnet-20241022-v2:0 arn:aws:bedrock:eu-central-1::foundation-model/amazon.titan-embed-text-v2:0",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "provider:azure-openai",
+     "text": "repo-infra LLM usage in repository root: Amazon Bedrock Agents / AgentCore / Flows bedrock.tf:26 bedrock.tf:47 bedrock.tf:57 variables.tf:10 variables.tf:10 outputs.tf:8 azure-openai.tf:6 azure-openai.tf:20 azure-openai.tf:26 bedrock.tf:64 bedrock.tf:64 amazon.titan-embed-text-v2:0 anthropic.claude-3-5-sonnet-20241022-v2:0 arn:aws:bedrock:eu-central-1::foundation-model/amazon.titan-embed-text-v2:0",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "provider:bedrock",
+     "text": "repo-infra LLM usage in repository root: Amazon Bedrock Agents / AgentCore / Flows bedrock.tf:26 bedrock.tf:47 bedrock.tf:57 variables.tf:10 variables.tf:10 outputs.tf:8 azure-openai.tf:6 azure-openai.tf:20 azure-openai.tf:26 bedrock.tf:64 bedrock.tf:64 amazon.titan-embed-text-v2:0 anthropic.claude-3-5-sonnet-20241022-v2:0 arn:aws:bedrock:eu-central-1::foundation-model/amazon.titan-embed-text-v2:0",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "provider:openai",
+     "text": "repo-infra LLM usage in repository root: Amazon Bedrock Agents / AgentCore / Flows bedrock.tf:26 bedrock.tf:47 bedrock.tf:57 variables.tf:10 variables.tf:10 outputs.tf:8 azure-openai.tf:6 azure-openai.tf:20 azure-openai.tf:26 bedrock.tf:64 bedrock.tf:64 amazon.titan-embed-text-v2:0 anthropic.claude-3-5-sonnet-20241022-v2:0 arn:aws:bedrock:eu-central-1::foundation-model/amazon.titan-embed-text-v2:0",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "iac:azure-openai",
+     "text": "repo-infra/azure-openai.tf Infrastructure provisions Azure OpenAI: azure-openai.tf azure-openai.tf:6 azure-openai.tf:20",
+     "surface": "code",
+     "shadow": true
+    },
+    {
+     "fact": "gateway-caller:agentic",
+     "text": "azure:oid-dispatch-7h2q Agentic caller 'app-vantor-dispatch-7h2q' (principal): 4 requests via Microsoft Agent Framework to gpt-4o {} {'gpt-4o': 4}",
+     "surface": "gateway",
+     "shadow": true
+    },
+    {
+     "fact": "agent-process:generic",
+     "text": "freight/freight-worker-6k9td/python3 Runtime process python3 communicated with an AI service",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "oauth-app:generic",
+     "text": "google-workspace:oauth-client:58203471196-rcm8w.apps.googleusercontent.com Google Workspace OAuth app: Reclaim.ai",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "ai-service-contact:openrouter",
+     "text": "network:adatum-dns:192.168.7.31:provider.openrouter AI service contacted: OpenRouter (openrouter.ai) from 192.168.7.31 192.168.7.31 provider.openrouter {'openrouter.ai': 1}",
+     "surface": "network",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:claude-code",
+     "text": "endpoint:dev-laptop-01:dana:agent-config:claude-code Claude Code configured on dev-laptop-01 (~dana) ~/.claude.json ~/.claude/agents ~/.claude/settings.json ~/.claude/settings.json Claude Code",
+     "surface": "endpoint",
+     "shadow": false
+    },
+    {
+     "fact": "mcp:server",
+     "text": "vantor-freight-mcp/carrier_contract_lookup MCP tool carrier_contract_lookup on vantor-freight-mcp carrier_contract_lookup",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "mcp:server",
+     "text": "vantor-freight-mcp/quote_lane_rate MCP tool quote_lane_rate on vantor-freight-mcp quote_lane_rate",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "agent-process:mcp-server",
+     "text": "runtime:dev-laptop-01:dana:mcp:@modelcontextprotocol/server-github MCP server: @modelcontextprotocol/server-github running on dev-laptop-01 (dana) dev-laptop-01 mcp:@modelcontextprotocol/server-github dev-laptop-01 dana",
+     "surface": "runtime",
+     "shadow": true
+    },
+    {
+     "fact": "oauth-app:gemini",
+     "text": "google-marketplace:app:Gemini Exchange Portal google-marketplace app: Gemini Exchange Portal",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:azure-openai",
+     "text": "/subscriptions/sub-vantor-1/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/vantor-openai-weu-c4x Azure OpenAI account: vantor-openai-weu-c4x (1 deployment(s)) /subscriptions/sub-vantor-1/resourceGroups/rg-ml/providers/Microsoft.CognitiveServices/accounts/vantor-openai-weu-c4x",
+     "surface": "cloud",
+     "shadow": true
+    },
+    {
+     "fact": "gateway-caller:agentic",
+     "text": "service:vantor-invoice-agent-d4k/agent:invoice-reconciler Observed GenAI caller invoice-reconciler (vantor-invoice-agent-d4k) claude-sonnet-4-20250514",
+     "surface": "gateway",
+     "shadow": true
+    },
+    {
+     "fact": "service-identity:generic",
+     "text": "auth0:client:m2mrateq-ag7x4 Auth0 M2M application: rate-quoter-agent",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "ai-service-contact:gemini",
+     "text": "network:adatum-dns:192.168.7.30:provider.google-gemini AI service contacted: Google Gemini API (AI Studio) (generativelanguage.googleapis.com) from 192.168.7.30 192.168.7.30 provider.google-gemini {'generativelanguage.googleapis.com': 1}",
+     "surface": "network",
+     "shadow": true
+    },
+    {
+     "fact": "ai-service-contact:anthropic",
+     "text": "network:adatum-zeek:10.31.4.21:provider.anthropic AI service contacted: Anthropic (api.anthropic.com) from 10.31.4.21 10.31.4.21 provider.anthropic {'api.anthropic.com': 6}",
+     "surface": "network",
+     "shadow": true
+    },
+    {
+     "fact": "lowcode-agent:copilot-studio",
+     "text": "power-platform:bot:bot-hrhelper-v7q2k Copilot Studio agent: HR Helper",
+     "surface": "lowcode",
+     "shadow": false
+    },
+    {
+     "fact": "lowcode-agent:now-assist",
+     "text": "servicenow:sys_hub_flow:cplclean4nw2xf8 ServiceNow flow with AI hints: Copilot license cleanup",
+     "surface": "lowcode",
+     "shadow": true
+    },
+    {
+     "fact": "service-identity:generic",
+     "text": "auth0:client:mcp2515-brdg-t44qe Auth0 M2M application: mcp2515-canbus-bridge",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "service-identity:generic",
+     "text": "entra:sp:mi-triage-u7p3x Entra managed identity: incident-triage-agent-mi https://entra.microsoft.com/#view/Microsoft_AAD_IAM/ManagedAppMenuBlade/~/Overview/objectId/mi-triage-u7p3x",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "bot-app:coderabbit",
+     "text": "github:installation:70110427 GitHub App installed: coderabbitai https://github.com/organizations/vantor-logistics/settings/installations/70110427",
+     "surface": "saas",
+     "shadow": false
+    },
+    {
+     "fact": "gateway-caller:llm",
+     "text": "litellm-alias:marketing-draftr-nk2 LLM caller 'marketing-draftr-nk2' (service): 5 requests to claude-3-5-sonnet-20241022 {} {'claude-3-5-sonnet-20241022': 5}",
+     "surface": "gateway",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:continue",
+     "text": "endpoint:dev-laptop-02:marcus:agent-config:continue Continue configured on dev-laptop-02 (~marcus) ~/.continue/config.yaml Continue",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "token:workload",
+     "text": "jwt:09067b015c72d0c6 JWT (workload) for system:serviceaccount:agent-runtime:yard-router-kp442 from kubernetes",
+     "surface": "identity",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:bedrock-agent",
+     "text": "arn:aws:bedrock:us-east-1:210987654321:agent/KR9FQAGT01 Bedrock Agent: freight-quote-agent-kr9 arn:aws:bedrock:us-east-1:210987654321:agent/KR9FQAGT01",
+     "surface": "cloud",
+     "shadow": false
+    },
+    {
+     "fact": "bot-app:copilot",
+     "text": "teams:app:ta-copilot-freight-vq71 Teams app with bot: Vantor Freight Copilot",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "ai-service-contact:openai",
+     "text": "network:adatum-zeek:10.31.4.22:provider.openai AI service contacted: OpenAI (api.openai.com) from 10.31.4.22 10.31.4.22 provider.openai {'api.openai.com': 1}",
+     "surface": "network",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:generic",
+     "text": "endpoint:dev-laptop-02:marcus:browser-extension:chrome:khbfcmaodnlebpjmdgcphnejadgbkpdf AI browser extension installed: Claude (Chrome) on dev-laptop-02 (~marcus) khbfcmaodnlebpjmdgcphnejadgbkpdf",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "ai-service-contact:ollama",
+     "text": "network:adatum-zeek:10.31.4.24:provider.ollama AI service contacted: Ollama (10.31.9.9:11434) from 10.31.4.24 10.31.4.24 provider.ollama {'10.31.9.9:11434': 3}",
+     "surface": "network",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:generic",
+     "text": "projects/vantor-ml/locations/us-central1/services/gemini-settlement-sync-d8r Cloud Run service: gemini-settlement-sync-d8r https://gemini-settlement-sync-d8r-xq2a.a.run.app",
+     "surface": "cloud",
+     "shadow": true
+    },
+    {
+     "fact": "gateway-caller:llm",
+     "text": "access:Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0 Safari/537.36 LLM caller 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0 Safari/537.36' (user-agent): 4 requests {'helpdesk-chat-w8s.vantor.example': 4} {}",
+     "surface": "gateway",
+     "shadow": true
+    },
+    {
+     "fact": "agent-process:ollama",
+     "text": "runtime:dev-laptop-02:marcus:ollama Ollama running on dev-laptop-02 (marcus) dev-laptop-02 ollama dev-laptop-02 marcus",
+     "surface": "runtime",
+     "shadow": true
+    },
+    {
+     "fact": "agent-process:ollama",
+     "text": "runtime:win-laptop-03:priya:ollama Ollama running on win-laptop-03 (priya) win-laptop-03 ollama win-laptop-03 priya",
+     "surface": "runtime",
+     "shadow": true
+    },
+    {
+     "fact": "agent-process:vllm",
+     "text": "runtime:build-runner-3:ci:vllm vLLM running on build-runner-3 (ci) build-runner-3 vllm build-runner-3 ci",
+     "surface": "runtime",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:claude-desktop",
+     "text": "endpoint:dev-laptop-01:dana:agent-config:claude-desktop Claude Desktop configured on dev-laptop-01 (~dana) ~/.config/Claude/claude_desktop_config.json Claude Desktop",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "ai-client:claude-desktop",
+     "text": "endpoint:win-laptop-03:priya:agent-config:claude-desktop Claude Desktop configured on win-laptop-03 (~priya) ~/AppData/Roaming/Claude/claude_desktop_config.json Claude Desktop",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "cloud-ai:generic",
+     "text": "arn:aws:lambda:us-east-1:210987654321:function:route-optimizer-llm-7fq Lambda function: route-optimizer-llm-7fq arn:aws:lambda:us-east-1:210987654321:function:route-optimizer-llm-7fq arn:aws:lambda:us-east-1:210987654321:function:route-optimizer-llm-7fq arn:aws:lambda:us-east-1:210987654321:function:route-optimizer-llm-7fq",
+     "surface": "cloud",
+     "shadow": true
+    },
+    {
+     "fact": "model-store:lm-studio",
+     "text": "endpoint:win-laptop-03:priya:local-model:lm-studio Local models stored for LM Studio on win-laptop-03 (~priya) ~/.lmstudio/models tinyllama-dispatch-vq3w.q4_k_m.gguf",
+     "surface": "endpoint",
+     "shadow": true
+    },
+    {
+     "fact": "bot-app:generic",
+     "text": "notion:bot:nb-jirasync-vantor8x Notion integration: vantor-jira-sync",
+     "surface": "saas",
+     "shadow": true
+    },
+    {
+     "fact": "model-store:ollama",
+     "text": "endpoint:dev-laptop-01:dana:local-model:ollama Local models stored for Ollama on dev-laptop-01 (~dana) ~/.ollama/models/manifests llama3.1:8b vantor/freight-notes-lm-vd1x:latest",
+     "surface": "endpoint",
+     "shadow": true
+    }
+   ],
+   "raw_count": 110,
+   "commands": [
+    {
+     "argv": [
+      "/workspace/scratch/59bbce174428/scanner-candidate",
+      "scan",
+      "-c",
+      "/workspace/scratch/59bbce174428/estate-candidate-with-cloud/shadowscan/estate/estate-config.json",
+      "--format",
+      "json",
+      "-o",
+      "/workspace/scratch/59bbce174428/estate-candidate-with-cloud/shadowscan/estate/report.json"
+     ],
+     "exit_code": 0,
+     "seconds": 10.568,
+     "timed_out": false,
+     "ok": true,
+     "stdout_file": "0.stdout.txt",
+     "stderr_file": "0.stderr.txt"
+    }
+   ],
+   "error": null,
+   "detail": {
+    "summary": {
+     "complete": true,
+     "status": "complete",
+     "total": 110,
+     "shadow": 106,
+     "by_surface": {
+      "saas": 12,
+      "code": 13,
+      "cloud": 10,
+      "lowcode": 10,
+      "endpoint": 31,
+      "identity": 14,
+      "gateway": 8,
+      "network": 6,
+      "runtime": 6
+     },
+     "by_kind": {
+      "bot-app": 10,
+      "mcp-server": 17,
+      "agent": 20,
+      "oauth-grant": 8,
+      "service-identity": 5,
+      "workflow": 4,
+      "gateway-caller": 8,
+      "agent-config": 9,
+      "token": 3,
+      "network-contact": 6,
+      "runtime-process": 6,
+      "infra": 2,
+      "framework-usage": 3,
+      "ai-app": 4,
+      "cloud-resource": 3,
+      "local-model": 2
+     },
+     "by_risk_level": {
+      "critical": 6,
+      "high": 59,
+      "medium": 45
+     },
+     "frameworks": {
+      "protocol.mcp": 17,
+      "cloud.aws-bedrock-agents": 5,
+      "identity-app.meeting-notetakers": 5,
+      "identity-app.openai-chatgpt": 4,
+      "identity-app.anthropic-claude": 3,
+      "coding-agent.claude-code": 3,
+      "framework.langchain": 3,
+      "platform.n8n": 3,
+      "identity-app.google-gemini": 3,
+      "platform.servicenow-now-assist": 2,
+      "protocol.a2a": 2,
+      "platform.salesforce-agentforce": 2,
+      "framework.crewai": 2,
+      "coding-agent.cursor": 2,
+      "framework.bot-framework": 2,
+      "cloud.gcp-vertex-agent-engine": 2,
+      "identity-app.glean": 2,
+      "protocol.chatgpt-plugin": 1,
+      "cloud.azure-ai-foundry-agents": 1,
+      "framework.vercel-ai-sdk": 1,
+      "identity-app.automation-agents": 1,
+      "platform.power-platform-ai": 1,
+      "framework.google-adk": 1,
+      "identity-app.perplexity": 1,
+      "coding-agent.amazon-q-developer": 1,
+      "coding-agent.cline": 1,
+      "coding-agent.gemini-cli": 1,
+      "coding-agent.openai-codex": 1,
+      "coding-agent.windsurf": 1,
+      "platform.workato": 1,
+      "platform.make": 1,
+      "framework.langgraph": 1,
+      "coding-agent.github-copilot": 1,
+      "framework.langchaingo": 1,
+      "coding-agent.aider": 1,
+      "platform.zapier": 1,
+      "framework.microsoft-agent-framework": 1,
+      "platform.copilot-studio": 1,
+      "identity-app.microsoft-copilot": 1,
+      "coding-agent.pr-review-bots": 1,
+      "coding-agent.continue": 1
+     },
+     "model_providers": {
+      "provider.openai": 15,
+      "provider.anthropic": 9,
+      "provider.ollama": 6,
+      "provider.azure-openai": 5,
+      "provider.aws-bedrock": 3,
+      "provider.google-vertex-ai": 1,
+      "provider.openrouter": 1,
+      "provider.google-gemini": 1,
+      "provider.vllm": 1,
+      "provider.lm-studio": 1
+     },
+     "errors": 0
+    }
+   },
+   "incomplete": false,
+   "estate_changes": [],
+   "removed_outputs": []
+  }
+ ],
+ "finished": "2026-10-14T06:56:26.947156+00:00"
+}
