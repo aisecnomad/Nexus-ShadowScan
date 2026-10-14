@@ -1839,3 +1839,37 @@ def test_gguf_hostile_array_counts_fail_fast_without_reading(tmp_path, payload):
     artifact.write_bytes(b"GGUF" + struct.pack("<IQQQ", 3, 0, 1, 1) + b"x" + struct.pack("<I", 9) + payload)
     with pytest.raises(ValueError, match="outside file"):
         inspect_artifact(artifact)
+
+
+def test_extensionless_text_candidates_cost_only_a_probe(tmp_path):
+    from shadowscan.connectors.code import model_artifacts
+
+    charged: list[int] = []
+    (tmp_path / "LICENSE").write_bytes(b"Apache License, Version 2.0\n" * 2048)
+    assert model_artifacts.inspect_artifact(tmp_path / "LICENSE", charge=charged.append) is None
+    assert sum(charged) <= model_artifacts.PROBE_BYTES
+    # A binary (NUL bytes among its first bytes) still gets the bounded tail read.
+    charged.clear()
+    cookie = Path("tests/fixtures/model_artifacts/empty-archive.bin").read_bytes()
+    (tmp_path / "bundled").write_bytes(b"\x7fELF\x02\x01\x01" + b"\0" * 57 + cookie)
+    result = model_artifacts.inspect_artifact(tmp_path / "bundled", charge=charged.append)
+    assert result and result.format == "pyinstaller"
+    assert sum(charged) > model_artifacts.PROBE_BYTES
+
+
+def test_extensionless_text_files_do_not_exhaust_the_artifact_budget(tmp_path, run_connector, monkeypatch):
+    import functools
+
+    monkeypatch.setattr(
+        filesystem_module,
+        "_ScanState",
+        functools.partial(filesystem_module._ScanState, artifact_bytes_remaining=4096),
+    )
+    for number in range(4):
+        (tmp_path / f"NOTICE{number}").write_bytes(b"notice text\n" * 2048)
+    (tmp_path / "model.gguf").write_bytes(
+        Path("tests/fixtures/model_artifacts/header-only.gguf").read_bytes()
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert [f.metadata["artifact_inventory"]["format"] for f in findings] == ["gguf"]
+    assert not ctx.stats.errors and not ctx.stats.incomplete

@@ -21,6 +21,10 @@ MAX_TENSORS = 2048
 # Strings in one GGUF array that are walked (each costs an 8-byte length read); a
 # tokenizer vocabulary is far longer and has no byte length to seek past.
 MAX_ARRAY_STRINGS = 1024
+# First bytes of an extensionless candidate that decide whether it is a binary at
+# all (a NUL byte) before the PyInstaller tail read spends its share of the
+# scan-wide budget on it; charged at this size, not the tail's.
+PROBE_BYTES = 64
 PYINSTALLER_MAGIC = b"MEI\x0c\x0b\x0a\x0b\x0e"
 ARTIFACT_SUFFIXES = frozenset({".gguf", ".safetensors", ".onnx", ".exe", ".bin", ".pkg"})
 
@@ -403,6 +407,16 @@ def _pyinstaller(reader: _Reader) -> ArtifactInspection | None:
     )
 
 
+def _binary_probe(reader: _Reader, prefix: bytes) -> bool:
+    """Whether an extensionless candidate is a binary at all: a NUL among its first bytes.
+
+    Only the bytes after ``prefix`` are read, so the probe costs ``PROBE_BYTES``
+    at most, charged at that size; the tail read follows only for a binary.
+    """
+    head = prefix + reader.read(max(0, min(PROBE_BYTES, reader.size) - len(prefix)))
+    return b"\x00" in head
+
+
 def inspect_artifact(
     path: PurePath,
     *,
@@ -425,8 +439,13 @@ def inspect_artifact(
             result = _safetensors(reader)
         elif suffix == ".onnx":
             result = _onnx(reader)
-        else:
+        elif suffix in ARTIFACT_SUFFIXES or _binary_probe(reader, prefix):
             result = _pyinstaller(reader)
+        else:
+            # An extensionless file without a NUL among its first bytes is text
+            # (LICENSE, Makefile, a script), not a packaged binary: the probe is
+            # all it costs, and the walk goes on to read it as source.
+            result = None
         if changed_since(before, stream.fileno()):
             raise ValueError("artifact changed while reading")
         if result is not None:
