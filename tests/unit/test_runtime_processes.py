@@ -721,3 +721,55 @@ def test_packaging_without_observed_source_is_incomplete(run_connector, tmp_path
     findings, ctx = run_connector("runtime.processes", input=str(_rows(tmp_path, [row])))
     assert len(findings) == 1 and ctx.stats.incomplete
     assert "runtime_inspection" not in findings[0].metadata
+
+
+def _no_such_process(monkeypatch, *sources):
+    """Opening these per-process files fails with ESRCH, as /proc does for a process without an mm."""
+    original = runtime_processes.os.open
+
+    def esrch(path, flags, *args, **kwargs):
+        if path in sources:
+            raise ProcessLookupError(3, "No such process")
+        return original(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(runtime_processes.os, "open", esrch)
+
+
+def test_kernel_threads_are_not_inspected(run_connector, monkeypatch, tmp_path):
+    """Regression (#220 verifier): kernel threads made every live inspect_env_keys scan incomplete."""
+    pid = _inspection_proc(tmp_path, monkeypatch, argv=b"")
+    # PF_KTHREAD (0x00200000) in the flags field, as kthreadd reports 0x208040.
+    (pid / "stat").write_text(
+        "12 (kworker/0:1) "
+        + " ".join(["S", "2", "0", "0", "0", "-1", "2129984"] + ["0"] * 12 + ["12345", "0"])
+    )
+    _no_such_process(monkeypatch, "environ", "maps", "fd")
+    findings, ctx = run_connector(
+        "runtime.processes", inspect_maps=True, inspect_fds=True, inspect_env_keys=["OLLAMA_MODELS"]
+    )
+    assert findings == [] and not ctx.stats.incomplete and not ctx.stats.warnings
+
+
+def test_esrch_on_an_unchanged_process_is_not_applicable(run_connector, monkeypatch, tmp_path):
+    _inspection_proc(tmp_path, monkeypatch, argv=b"claude\0")
+    _no_such_process(monkeypatch, "environ")
+    findings, ctx = run_connector("runtime.processes", inspect_maps=True, inspect_env_keys=["OLLAMA_MODELS"])
+    assert len(findings) == 1 and not ctx.stats.incomplete and not ctx.stats.warnings
+    (inspection,) = findings[0].metadata["runtime_inspection"]
+    assert inspection["status"] == {"maps": "ok", "fds": "not_requested", "environ": "not_applicable"}
+    assert inspection["environment_keys"] == []
+
+
+def test_esrch_when_the_process_changed_is_not_attributed(run_connector, monkeypatch, tmp_path):
+    pid = _inspection_proc(tmp_path, monkeypatch, argv=b"claude\0")
+    _no_such_process(monkeypatch, "environ")
+    original = RuntimeProcessConnector._inspect
+
+    def reuse(self, directory, budget):
+        result = original(self, directory, budget)
+        (pid / "stat").write_text((pid / "stat").read_text().replace("12345", "54321"))
+        return result
+
+    monkeypatch.setattr(RuntimeProcessConnector, "_inspect", reuse)
+    findings, ctx = run_connector("runtime.processes", inspect_env_keys=["OLLAMA_MODELS"])
+    assert findings == [] and any("identity changed" in warning for warning in ctx.stats.warnings)

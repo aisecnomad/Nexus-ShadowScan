@@ -77,7 +77,9 @@ stopped running.
   `inspection_timeout_seconds` bounds. Reading another user's maps or
   descriptors needs the same user or `CAP_SYS_PTRACE`. Denied or truncated
   selected inspection makes coverage incomplete; do not grant root merely to
-  erase that limitation.
+  erase that limitation. Kernel threads are not inspected, and a source that
+  fails with `ESRCH` on an unchanged process is recorded as `not_applicable`
+  without making coverage incomplete.
 - `network.logs`: `dns_max_ttl_seconds` (default 86,400) and
   `dns_clock_skew_seconds` (default 0) bound DNS attribution. These are on by
   default; the options only tune them.

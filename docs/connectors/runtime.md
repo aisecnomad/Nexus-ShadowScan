@@ -97,6 +97,11 @@ lack a boot ID, so they must not be used for joins across host restarts.
 Permission denial, malformed input and exhausted budgets mark coverage
 incomplete. No root privileges are requested; restricted non-root visibility
 is reported through the existing incomplete-scan mechanism.
+Kernel threads (`PF_KTHREAD` in `/proc/<pid>/stat`) run no user program and
+are not inspected. When a selected source fails with `ESRCH` while the
+process identity stays unchanged (a process without an address space, such as
+a zombie), that source's status is `not_applicable`, which leaves coverage
+complete.
 If only inspection identity or its budget is unavailable, independent readable
 command-line detections are retained without inspection attribution. Actual
 process exit or changed namespace/start identity omits that process observation.
@@ -117,8 +122,10 @@ when a file ends exactly at the cap. Reads are bounded and do not block on FIFOs
 Sanitized offline inventories can provide an `inspection` object with the same
 fixed labels, explicit `status` for `maps`, `fds` and `environ`, and process
 `identity` (`pid_namespace`, `start_time_ticks`, both decimal strings). A valid
-PID is required. Statuses are `ok`, `not_requested`, `denied`, `unreadable` or
-`truncated`; indicators require `ok` for their respective source. Optional
+PID is required. Statuses are `ok`, `not_requested`, `not_applicable`,
+`denied`, `unreadable` or `truncated`; indicators require `ok` for their
+respective source, and only `denied`, `unreadable` and `truncated` mark
+coverage incomplete. Optional
 `observed_at` is an ISO timestamp. Offline replay does no live inspection and
 needs no inspection options. See the synthetic
 [inspection fixture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tests/fixtures/runtime/inspection.jsonl).

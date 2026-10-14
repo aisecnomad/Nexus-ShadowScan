@@ -162,7 +162,13 @@ _ENV_KEYS = {
     "CUDA_VISIBLE_DEVICES",
     "TGI_HOSTNAME",
 }
-_INSPECTION_STATUSES = {"ok", "denied", "unreadable", "truncated", "not_requested"}
+_INSPECTION_STATUSES = {"ok", "denied", "unreadable", "truncated", "not_requested", "not_applicable"}
+# Statuses that leave inspection scope complete: read, not asked for, or a
+# source the process does not have (ESRCH from a process whose identity is
+# unchanged, such as a zombie without an address space).
+_COMPLETE_STATUSES = {"ok", "not_requested", "not_applicable"}
+# PF_KTHREAD in the flags field of /proc/<pid>/stat.
+_PF_KTHREAD = 0x00200000
 _MAP_LINE = re.compile(
     r"^[0-9a-f]+-[0-9a-f]+\s+[rwxps-]{4}\s+[0-9a-f]+\s+[0-9a-f]+:[0-9a-f]+\s+\d+(?:\s+(.*))?$", re.I
 )
@@ -170,6 +176,10 @@ _MAP_LINE = re.compile(
 
 class _InspectionLimit(Exception):
     """A fixed, non-sensitive limit reason."""
+
+
+class _KernelThread(Exception):
+    """A kernel thread: no user environment, mappings or descriptors to inspect."""
 
 
 @dataclass
@@ -221,8 +231,16 @@ def _proc_identity(directory: int, budget: _InspectionBudget) -> dict[str, str]:
     raw = budget.read(directory, "stat", 4096).decode("ascii", "replace")
     end = raw.rfind(")")
     fields = raw[end + 1 :].split() if end >= 0 else []
-    if len(fields) < 20 or not fields[19].isascii() or not fields[19].isdecimal():
+    if (
+        len(fields) < 20
+        or not fields[19].isascii()
+        or not fields[19].isdecimal()
+        or not fields[6].isascii()
+        or not fields[6].isdecimal()
+    ):
         raise ValueError("malformed process stat")
+    if int(fields[6]) & _PF_KTHREAD:
+        raise _KernelThread
     namespace = os.open("ns", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
     try:
         inode = os.stat("pid", dir_fd=namespace).st_ino
@@ -541,6 +559,10 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         """Unavailable enrichment never erases readable, independent command-line evidence."""
         try:
             return _proc_identity(directory, budget)
+        except _KernelThread:
+            # Linux returns ESRCH for a kernel thread's environ and similar
+            # sources; it runs no user program, so inspection does not apply.
+            return None
         except FileNotFoundError:
             # A namespace/stat file can be unavailable on a still-readable PID. Only
             # classify this as process disappearance if its command line also vanished.
@@ -592,6 +614,10 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 result["status"][source] = "ok"
             except PermissionError:
                 result["status"][source] = "denied"
+            except ProcessLookupError:
+                # ESRCH: the process has no such source (no address space). The
+                # identity check that follows tells this from a process exit.
+                result["status"][source] = "not_applicable"
             except FileNotFoundError:
                 # The following identity check identifies process exit. A missing source
                 # on a still-observable process is unavailable scope, not an exit.
@@ -731,7 +757,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             return None
         result["status"] = {name: status[name] for name in ("maps", "fds", "environ")}
         for source, outcome in result["status"].items():
-            if outcome not in {"ok", "not_requested"}:
+            if outcome not in _COMPLETE_STATUSES:
                 self.ctx.warn(f"runtime.processes: {source} inspection {outcome}; scope incomplete")
         if any(
             result[field_name] and result["status"][source] != "ok"
