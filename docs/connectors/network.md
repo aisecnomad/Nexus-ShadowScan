@@ -67,8 +67,14 @@ entries with an explicit limitation when more are available.
 Flow counts and bytes remain separated by connection UID until attribution,
 so one AI connection cannot claim another connection's traffic on the same
 address and port. UIDs are scoped to the client address and observation
-context. Flow groups also retain timestamps, so an aggregate cannot count
-stale bytes through one fresh DNS observation. A known non-AI TLS
+context. Each flow group keeps its flow times in at most 64 buckets: exact
+timestamps at first, then aligned intervals whose width doubles as more
+distinct times arrive (with a 500,000-bucket budget across groups beyond each
+group's first). DNS attributes a bucket only when one answer is valid for the
+whole interval, so an aggregate cannot count stale bytes through one fresh
+DNS observation. A bucket that coarsening merged across an answer's start or
+expiry stays unattributed, with the limitation "Flows grouped across a DNS
+validity boundary were not attributed through DNS". A known non-AI TLS
 name blocks DNS and service-port attribution for that connection; conflicting
 TLS service identities or endpoints leave its flows unattributed. A missing
 UID does not inherit a different connection's TLS name. Without linked TLS
@@ -124,7 +130,7 @@ Options:
 Malformed lines, records the connector cannot read as DNS, TLS or flow
 records, and DNS or TLS records without a client address make the scan
 incomplete. Analysis keeps at most 50,000 client addresses, 500,000 flow
-groups (context, client, server address, port, UID and timestamp), 500,000
+groups (context, client, server address, port and UID), 500,000
 TLS identities (context, client and UID), 500,000 DNS observations with at
 most 256 per context/client/address, and 32 JA4 observations per contact. Records beyond any bound are reported and make the scan
 incomplete. If TLS identity storage fills, flows with an unretained UID are
@@ -132,10 +138,24 @@ left unattributed because a discarded TLS record could contradict DNS.
 If DNS storage fills, DNS and service-port attribution are disabled for the
 input because a discarded answer could contradict retained evidence; directly
 linked TLS remains usable. Malformed TTLs, timestamps, context and explicit
-JA4 values also make the scan incomplete. Malformed or truncated input
-suppresses flow attribution, since a discarded record might contradict the
-retained DNS or SNI; direct query/TLS observations remain visible with that
-limitation. Observation timestamps are
+JA4 values also make the scan incomplete. A discarded record might contradict
+the retained DNS or SNI, so flow attribution is suppressed as far as that
+record could reach; direct query/TLS observations remain visible with the
+limitation:
+
+- Reaching `max_records`, an unreadable line or file, a record that is not an
+  object, and a DNS, TLS or unrecognized record without a client address
+  suppress flow attribution for the whole input ("Flow attribution disabled
+  because input was incomplete").
+- An unrecognized or incomplete record, a malformed context, a DNS answer list
+  over 32 or an invalid JA4 value whose record names a client suppresses flow
+  attribution and JA4 metadata for that client only ("Flow attribution disabled
+  because input for this client was incomplete").
+- A malformed timestamp or TTL keeps the record with that field unknown, and a
+  defective VPC flow record carries no DNS or TLS evidence, so neither
+  suppresses attribution.
+
+Each case still makes the scan incomplete. Observation timestamps are
 exporter-provided, not independently verified.
 
 VPC Flow Logs `SKIPDATA` records mean AWS did not capture some flows. They

@@ -962,3 +962,102 @@ def test_cadence_does_not_combine_separate_sensor_contexts(run_connector, tmp_pa
     assert not stats.incomplete and finding.confidence == 0.7
     assert "agent-loop" not in finding.tags and "loop_cadence" not in finding.metadata
     assert any("combines observation contexts" in item for item in finding.metadata["limitations"])
+
+
+def _uidless_flows(count, *, start=1001, client="192.0.2.10", server="203.0.113.8"):
+    return [
+        {"client": client, "dst_ip": server, "dst_port": 443, "ts": start + index, "bytes_out": 1}
+        for index in range(count)
+    ]
+
+
+def test_uidless_flows_group_by_connection_not_by_timestamp(run_connector, tmp_path, monkeypatch):
+    """Regression (#220 review F4): distinct timestamps must not exhaust the connection-group cap."""
+    monkeypatch.setattr(network_logs, "_MAX_PAIRS", 1)
+    rows = _temporal_rows(ttl=86400)[:1] + _uidless_flows(1000)
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete and not stats.warnings
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 1000 and finding.metadata["bytes_out"] == 1000
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_coalesced_flow_times_never_attribute_across_dns_validity(
+    run_connector, tmp_path, monkeypatch, reverse
+):
+    """Bounded time buckets attribute only what lies wholly inside an answer's validity."""
+    monkeypatch.setattr(network_logs, "_MAX_BUCKETS_PER_PAIR", 16)
+    # Answer at 1000 valid for 60 s: flows 940-999 precede it, 1000-1059 are
+    # fresh, 1060-1119 are stale. Coarsening must never move stale or early
+    # bytes into the fresh interval.
+    rows = _temporal_rows()[:1] + _uidless_flows(180, start=940)
+    if reverse:
+        rows.reverse()
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert 0 < finding.metadata["flows"] <= 60
+    assert all(1000 <= when < 1060 for when in _attributed_times(finding))
+    if finding.metadata["flows"] < 60:
+        assert any("DNS validity boundary" in item for item in finding.metadata["limitations"])
+
+
+def _attributed_times(finding):
+    first, last = finding.first_seen, finding.last_seen
+    from datetime import datetime
+
+    return [datetime.fromisoformat(value).timestamp() for value in (first, last) if value]
+
+
+def test_total_time_bucket_budget_coarsens_instead_of_dropping(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_BUCKETS_PER_PAIR", 64)
+    monkeypatch.setattr(network_logs, "_MAX_TOTAL_BUCKETS", 3)
+    rows = _temporal_rows(ttl=86400)[:1]
+    for client in ("192.0.2.10", "192.0.2.11"):
+        rows.append({**rows[0], "client": client})
+        rows += _uidless_flows(50, client=client)
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    for client in ("192.0.2.10", "192.0.2.11"):
+        assert found[(client, "provider.openai")].metadata["flows"] == 50
+
+
+def test_unrelated_malformed_record_keeps_other_clients_attribution(run_connector, tmp_path):
+    """Regression (#220 review F5): one client's defect must not disable every client's flows."""
+    rows = [
+        {"client": "10.0.0.5", "query": "api.openai.com", "answers": ["203.0.113.8"], "ts": 1000, "ttl": 300},
+        *_uidless_flows(5, client="10.0.0.5"),
+        {"client": "10.0.0.9"},
+    ]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    finding = found[("10.0.0.5", "provider.openai")]
+    assert finding.metadata["flows"] == 5 and finding.confidence > 0.5
+    assert not finding.metadata.get("limitations")
+
+
+def test_malformed_record_scopes_attribution_to_its_client(run_connector, tmp_path):
+    rows = [
+        {"client": "10.0.0.5", "query": "api.openai.com", "answers": ["203.0.113.8"], "ts": 1000, "ttl": 300},
+        *_uidless_flows(5, client="10.0.0.5"),
+        {"client": "10.0.0.5", "sensor": 7},
+    ]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    finding = found[("10.0.0.5", "provider.openai")]
+    assert finding.metadata["flows"] == 0
+    assert any("input for this client was incomplete" in item for item in finding.metadata["limitations"])
+
+
+@pytest.mark.parametrize("bad", [42, "not a record"])
+def test_record_without_a_client_still_disables_all_attribution(run_connector, tmp_path, bad):
+    rows = [
+        {"client": "10.0.0.5", "query": "api.openai.com", "answers": ["203.0.113.8"], "ts": 1000, "ttl": 300},
+        *_uidless_flows(5, client="10.0.0.5"),
+        bad,
+    ]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    finding = found[("10.0.0.5", "provider.openai")]
+    assert finding.metadata["flows"] == 0
+    assert "Flow attribution disabled because input was incomplete" in finding.metadata["limitations"]
