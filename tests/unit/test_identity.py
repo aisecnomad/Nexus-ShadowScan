@@ -52,7 +52,9 @@ def test_google_workspace_aggregates_per_client(run_connector, fixtures):
     )
     by_title = {f.title: f for f in findings}
     ff = by_title["Google Workspace OAuth app: Fireflies.ai Notetaker"]
-    assert ff.metadata["user_count"] == 2 and "identity-app.meeting-notetakers" in ff.frameworks
+    assert ff.metadata["user_count"] == 2
+    assert "identity-app.meeting-notetakers" in ff.metadata["potential_frameworks"]
+    assert "policy.data-access-scopes" in ff.tags
     assert "https://www.googleapis.com/auth/gmail.readonly" in ff.permissions
     assert "Google Workspace OAuth app: Expense Tool" not in by_title
 
@@ -66,6 +68,7 @@ def test_auth0_m2m(run_connector, fixtures):
     assert (
         f.kind == Kind.SERVICE_IDENTITY and "machine-identity" in f.tags and "write:tickets" in f.permissions
     )
+    assert f.confidence < 0.2
 
 
 def test_jwt_classification(run_connector, fixtures):

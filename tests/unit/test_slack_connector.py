@@ -307,7 +307,11 @@ def test_slack_non_dict_list_entries_are_skipped_not_fatal(run_connector):
             "ok": True,
             "members": [
                 "garbage",
-                {"id": "U1", "is_bot": True, "profile": {"api_app_id": "A0WD5WDPKR", "real_name": "Wudpecker"}},
+                {
+                    "id": "U1",
+                    "is_bot": True,
+                    "profile": {"api_app_id": "A0WD5WDPKR", "real_name": "Wudpecker"},
+                },
             ],
         },
     )

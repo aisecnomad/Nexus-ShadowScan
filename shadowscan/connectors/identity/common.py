@@ -29,18 +29,18 @@ def assess_app(
     grant_types: Iterable[str] = (),
     auth_method: str | None = None,
     aliases: Iterable[str] = (),
+    weak_names: bool = False,
 ) -> None:
-    """Apply identity-app signals, retaining display-name hits as weak evidence.
+    """Apply name / domain / scope / client-id signatures to an OAuth app finding.
 
     ``aliases`` are other spellings of the name, such as an app slug with its
-    hyphens read as spaces; each signature still counts once. A name, publisher
-    label, or description cannot establish a product without corroborating
-    domain, client-id, or scope evidence.
+    hyphens read as spaces; each signature still counts once. ``weak_names``
+    keeps name, publisher-label and description matches as evidence only.
     """
     apply_matches(
         finding,
         name_matches(index, name, *aliases, publisher, description),
-        establish=False,
+        establish=not weak_names,
     )
     apply_matches(finding, domain_matches(index, *urls), weight_scale=0.8)
     if client_id:
@@ -72,6 +72,26 @@ def identity_kind_for(*, user_consented: bool, machine: bool) -> Kind:
     if machine and not user_consented:
         return Kind.SERVICE_IDENTITY
     return Kind.OAUTH_GRANT
+
+
+def has_ai_app_signal(finding: Finding) -> bool:
+    """Whether product evidence or an identity/permission candidate merits low-confidence output."""
+    if has_strong_ai_app_signal(finding):
+        return True
+    weak_identity = finding.metadata.get("potential_frameworks") or finding.metadata.get(
+        "potential_providers"
+    )
+    granted_access = {
+        "policy.data-access-scopes",
+        "policy.llm-access-scopes",
+        "policy.privileged-scopes",
+    } & set(finding.tags)
+    return bool(weak_identity or granted_access or "machine-identity" in finding.tags)
+
+
+def has_strong_ai_app_signal(finding: Finding) -> bool:
+    """Whether a verified app identity, provider, or capability establishes AI use."""
+    return bool(finding.frameworks or finding.model_providers or finding.capabilities)
 
 
 def summarize_scopes(scopes: Iterable[str], limit: int = 25) -> list[str]:

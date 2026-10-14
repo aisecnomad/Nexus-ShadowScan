@@ -15,7 +15,13 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import failure_summary, finalize, max_pages_limit
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    assess_app,
+    has_ai_app_signal,
+    has_strong_ai_app_signal,
+    identity_kind_for,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -252,15 +258,19 @@ class Auth0Connector(BaseConnector):
             client_id=c.get("client_id"),
             grant_types=grant_types,
             auth_method=c.get("token_endpoint_auth_method"),
+            weak_names=True,
         )
         meta = c.get("client_metadata") or {}
         if meta:
             from shadowscan.connectors.common import apply_matches, name_matches
 
             apply_matches(
-                f, name_matches(self.index, " ".join(f"{k}={v}" for k, v in meta.items())), weight_scale=0.6
+                f,
+                name_matches(self.index, " ".join(f"{k}={v}" for k, v in meta.items())),
+                weight_scale=0.6,
+                establish=False,
             )
-        if not f.frameworks and not machine:
+        if not has_ai_app_signal(f) and not machine:
             return None
         f.add_evidence(
             Evidence(
@@ -286,4 +296,6 @@ class Auth0Connector(BaseConnector):
         )
         finalize(f, self.index)
         f.kind = kind
+        if not has_strong_ai_app_signal(f):
+            f.confidence = min(f.confidence, 0.15)
         return f

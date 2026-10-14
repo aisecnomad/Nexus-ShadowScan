@@ -193,6 +193,7 @@ class GenericSaaSConnector(BaseConnector):
             urls=url_list,
             scopes=scopes,
             client_id=str(app_id) if app_id else None,
+            weak_names=True,
         )
         interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags)
         if not interesting and not self.keep_all:

@@ -495,6 +495,7 @@ class SlackConnector(BaseConnector):
             ],
             scopes=scope_names,
             client_id=app_id,
+            weak_names=True,
         )
         interesting = (
             bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags) or status == "requested"

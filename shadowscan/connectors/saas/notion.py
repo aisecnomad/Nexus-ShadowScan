@@ -131,7 +131,7 @@ class NotionConnector(BaseConnector):
             account=bot.get("workspace_name"),
             owner=owner,
         )
-        assess_app(self.index, f, name=name, client_id=u.get("id"))
+        assess_app(self.index, f, name=name, client_id=u.get("id"), weak_names=True)
         if not (f.frameworks or f.model_providers or f.capabilities):
             return None
         f.add_evidence(

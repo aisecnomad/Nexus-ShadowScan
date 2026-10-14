@@ -54,7 +54,13 @@ from shadowscan.connectors.common import (
     finalize,
     scope_matches,
 )
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    assess_app,
+    has_ai_app_signal,
+    has_strong_ai_app_signal,
+    identity_kind_for,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.registries import (
     LISTING_SCOPES,
@@ -1316,12 +1322,13 @@ class EntraConnector(BaseConnector):
             # Sets iterate in hash order; sort so reports are reproducible across runs.
             scopes=sorted(delegated) + app_perms,
             client_id=sp.get("appId"),
+            weak_names=True,
         )
         if not retained and first_party and not f.frameworks and not self.include_first_party:
             return None
         if (
             not retained
-            and not f.frameworks
+            and not has_ai_app_signal(f)
             and not delegated
             and not app_perms
             and sp_type != "ManagedIdentity"
@@ -1372,6 +1379,8 @@ class EntraConnector(BaseConnector):
             f.metadata["registry_bound"] = True
         finalize(f, self.index)
         f.kind = kind
+        if not retained and not has_strong_ai_app_signal(f):
+            f.confidence = min(f.confidence, 0.15)
         return f
 
     @staticmethod
@@ -1452,13 +1461,14 @@ class EntraConnector(BaseConnector):
             description=" ".join(x for x in [app.get("notes"), app.get("description")] if x),
             urls=redirect_uris,
             client_id=app.get("appId"),
+            weak_names=True,
         )
         requested_classes = sorted({m.signature_id for m in scope_matches(self.index, requested)})
         secrets = app.get("passwordCredentials") or []
         certs = app.get("keyCredentials") or []
         if (
             not keep
-            and not f.frameworks
+            and not has_ai_app_signal(f)
             and not set(requested_classes)
             & {
                 "policy.llm-access-scopes",
@@ -1505,6 +1515,8 @@ class EntraConnector(BaseConnector):
             f.metadata["registry_bound"] = True
         finalize(f, self.index)
         f.kind = Kind.SERVICE_IDENTITY
+        if not keep and not has_strong_ai_app_signal(f):
+            f.confidence = min(f.confidence, 0.15)
         return f
 
     # ------------------------------------------------------ registry records

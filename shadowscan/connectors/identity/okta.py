@@ -19,7 +19,13 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import config_boolean, failure_summary, finalize
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    assess_app,
+    has_ai_app_signal,
+    has_strong_ai_app_signal,
+    identity_kind_for,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -172,6 +178,7 @@ class OktaConnector(BaseConnector):
             client_id=creds.get("client_id"),
             grant_types=grant_types,
             auth_method=creds.get("token_endpoint_auth_method"),
+            weak_names=True,
         )
         f.add_evidence(
             Evidence(
@@ -194,13 +201,15 @@ class OktaConnector(BaseConnector):
                     weight=0.2,
                 )
             )
-        if (
-            app.get("signOnMode") not in {"OPENID_CONNECT", "SAML_2_0", "SAML_1_1", "WS_FEDERATION"}
-            and not f.frameworks
-        ):
+        if app.get("signOnMode") not in {
+            "OPENID_CONNECT",
+            "SAML_2_0",
+            "SAML_1_1",
+            "WS_FEDERATION",
+        } and not has_ai_app_signal(f):
             # bookmark / SWA apps without AI signals are noise
             return None
-        if not f.frameworks and not machine and not scopes:
+        if not has_ai_app_signal(f) and not machine:
             return None
         f.metadata.update(
             {
@@ -217,6 +226,8 @@ class OktaConnector(BaseConnector):
         )
         finalize(f, self.index)
         f.kind = kind
+        if not has_strong_ai_app_signal(f):
+            f.confidence = min(f.confidence, 0.15)
         return f
 
     def _grants_and_tokens(self, app: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

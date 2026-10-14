@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import jwt
@@ -16,6 +17,7 @@ from shadowscan.signatures import SignatureIndex
 JWKS_URL = "https://keys.example/jwks"
 OKTA_ISSUER = "https://acme.okta.com/oauth2/default"
 PRIVILEGED = "policy.privileged-scopes"
+REPOSITORY = Path(__file__).resolve().parents[2]
 
 
 def _token(claims: dict) -> str:
@@ -84,6 +86,38 @@ def test_okta_app_with_only_offline_access_is_not_flagged_privileged(run_connect
     findings, ctx = run_connector("identity.okta", input=str(export), org_url="https://acme.okta.com")
     assert not ctx.stats.errors
     assert not [finding for finding in findings if PRIVILEGED in finding.tags]
+
+
+def test_okta_gemini_exchange_name_is_weak_evidence(run_connector):
+    findings, ctx = run_connector(
+        "identity.okta",
+        input=str(REPOSITORY / "benchmarks/shadowbench/estate/artifacts/identity/okta_apps.json"),
+        org_url="https://vantor.okta.com",
+    )
+    assert not ctx.stats.errors
+    candidates = [
+        finding
+        for finding in findings
+        if "0oa5gemfx77tr3d"
+        in "".join(char for char in finding.resource + finding.title if char.isalnum()).casefold()
+    ]
+    assert candidates and all(finding.confidence < 0.2 for finding in candidates)
+
+
+def test_auth0_mcp2515_unknown_machine_client_is_low_confidence(run_connector):
+    findings, ctx = run_connector(
+        "identity.auth0",
+        input=str(REPOSITORY / "benchmarks/shadowbench/estate/artifacts/identity/auth0_clients.json"),
+        domain="vantor.eu.auth0.com",
+    )
+    assert not ctx.stats.errors
+    candidates = [
+        finding
+        for finding in findings
+        if "mcp2515canbusbridge"
+        in "".join(char for char in finding.resource + finding.title if char.isalnum()).casefold()
+    ]
+    assert candidates and all(finding.confidence < 0.2 for finding in candidates)
 
 
 # --------------------------------------------------------- agent claim values

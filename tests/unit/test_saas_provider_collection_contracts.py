@@ -45,7 +45,7 @@ def test_provider_error_with_empty_collection_is_incomplete(
 
 
 @responses.activate
-def test_notion_later_error_page_keeps_previous_integrations(fixtures, run_connector):
+def test_notion_later_error_page_analyzes_prior_name_only_integrations(fixtures, run_connector):
     url = "https://api.notion.com/v1/users"
     records = json.loads((fixtures / "saas" / "notion_users.json").read_text())["results"]
     responses.get(url, json={"results": records, "has_more": True, "next_cursor": "next"})
@@ -54,7 +54,8 @@ def test_notion_later_error_page_keeps_previous_integrations(fixtures, run_conne
 
     findings, ctx = run_connector("saas.notion", token="example-token")
 
-    assert {f.resource for f in findings} == {"notion:bot:n2", "notion:bot:n3"}
+    assert findings == []
+    assert ctx.stats.objects_examined > 0
     assert ctx.stats.incomplete and not ctx.stats.errors
 
 

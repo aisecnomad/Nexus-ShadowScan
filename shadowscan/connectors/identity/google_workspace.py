@@ -29,7 +29,12 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
 from shadowscan.connectors.common import failure_summary, finalize
-from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    assess_app,
+    has_ai_app_signal,
+    has_strong_ai_app_signal,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.identity import google_customer_id
@@ -306,8 +311,8 @@ class GoogleWorkspaceConnector(BaseConnector):
             ),
             metadata={"identity_unresolved": True} if self._customer_id is None else {},
         )
-        assess_app(self.index, f, name=name, scopes=scopes, client_id=agg["clientId"])
-        interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags)
+        assess_app(self.index, f, name=name, scopes=scopes, client_id=agg["clientId"], weak_names=True)
+        interesting = has_ai_app_signal(f)
         if not interesting:
             return None
         users = agg["users"]
@@ -337,6 +342,8 @@ class GoogleWorkspaceConnector(BaseConnector):
         )
         finalize(f, self.index)
         f.kind = Kind.OAUTH_GRANT
+        if not has_strong_ai_app_signal(f):
+            f.confidence = min(f.confidence, 0.15)
         return f
 
 
