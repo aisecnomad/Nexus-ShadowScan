@@ -358,6 +358,17 @@ def test_a_value_a_later_sanitization_withholds_is_withheld_at_once(scheme: str)
     assert sanitize_text(cleaned) == cleaned
 
 
+@pytest.mark.parametrize("glued", ["--{t}", "=x{t}"])
+def test_the_scheme_pass_outside_a_reading_withholds_the_run_with_the_credential(glued: str) -> None:
+    # Outside sanitize_text and sanitize no reading is set. The scheme pass
+    # then left the run in the text for a step that only those two run, and
+    # a direct call of the passes showed the token's tail.
+    text = f"x Bearer {SECRET}" + glued.format(t=TAIL) + " y"
+    assert redaction._redact_authorization(text) == f"x Bearer {REDACTED} y"
+    for passes in (redaction._established_passes, redaction._sanitize_established):
+        assert TAIL[:9] not in redaction._redact_extended(passes(text))
+
+
 def _tokens(text: str) -> Counter[str]:
     counts = Counter(re.findall(r"[A-Za-z0-9]+", text))
     del counts["REDACTED"]

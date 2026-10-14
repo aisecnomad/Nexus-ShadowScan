@@ -187,7 +187,8 @@ class _SchemeReading:
         self.glued = False
 
 
-# The reading the passes in progress take part in; none outside sanitize_text and sanitize.
+# The reading the passes in progress take part in; none outside sanitize_text and
+# sanitize, where the scheme pass reads as the established rules did.
 _SCHEME_READING: contextvars.ContextVar[_SchemeReading | None] = contextvars.ContextVar(
     "_SCHEME_READING", default=None
 )
@@ -198,14 +199,16 @@ def _redact_authorization(text: str) -> str:
 
     The scheme's whitespace can span lines; keep them so excerpt lines stay aligned.
     The run a guard stop leaves after the credential stays in the text; the
-    established reading withholds it here instead (see ``_SchemeReading``).
+    established reading withholds it here instead (see ``_SchemeReading``),
+    and so does a call outside any reading, which no later step withholds
+    the run for.
     """
     reading = _SCHEME_READING.get()
-    if reading is not None and reading.established:
+    if reading is None or reading.established:
         return _redact_authorization_established(text)
 
     def withheld(match: re.Match[str]) -> str:
-        if reading is not None and _GLUED_RUN.match(match.string, match.end()):
+        if _GLUED_RUN.match(match.string, match.end()):
             reading.glued = True
         credential = match.group("credential")
         if (
