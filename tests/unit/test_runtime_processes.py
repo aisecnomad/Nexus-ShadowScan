@@ -723,3 +723,24 @@ def test_packaging_without_observed_source_is_incomplete(run_connector, tmp_path
     findings, ctx = run_connector("runtime.processes", input=str(_rows(tmp_path, [row])))
     assert len(findings) == 1 and ctx.stats.incomplete
     assert "runtime_inspection" not in findings[0].metadata
+
+
+@pytest.mark.parametrize("argv", [b"claude\0", b"python\0-c\0pass\0"])
+def test_large_maps_truncate_only_their_own_source(run_connector, monkeypatch, tmp_path, argv):
+    pid = _inspection_proc(tmp_path, monkeypatch, argv=argv)
+    # A PyTorch/CUDA-sized maps: thousands of mappings, well past the per-source byte cap.
+    (pid / "maps").write_text("1000-2000 r--p 0000 00:00 0 /private/path/libtorch.so\n" * 300)
+    findings, ctx = run_connector(
+        "runtime.processes",
+        inspect_maps=True,
+        inspect_fds=True,
+        inspect_env_keys=["OLLAMA_MODELS"],
+        max_inspection_bytes=4096,
+    )
+    assert len(findings) == 1 and ctx.stats.incomplete
+    inspection = findings[0].metadata["runtime_inspection"][0]
+    assert inspection["status"] == {"maps": "truncated", "fds": "ok", "environ": "ok"}
+    assert inspection["mapped_libraries"] == [] and inspection["open_model_formats"] == ["gguf"]
+    assert inspection["environment_keys"] == ["OLLAMA_MODELS"]
+    assert any("maps inspection truncated" in w for w in ctx.stats.warnings)
+    assert not any("inspection omitted" in w for w in ctx.stats.warnings)

@@ -143,6 +143,8 @@ _TIME_FIELDS = ("start_time", "Timestamp", "timestamp", "ts", "time", "ProcessCr
 _PID_FIELDS = ("pid", "ProcessId", "process_id", "TargetProcessId")
 _PROC = Path("/proc")
 _MAX_CMDLINE_BYTES = 64 * 1024
+# Reserved for each process identity read (``stat`` is a few hundred bytes), outside the inspection budgets.
+_IDENTITY_BYTES = 4096
 
 # Only these fixed labels leave collection. Paths and environment values never do.
 _LIBRARIES = {
@@ -179,7 +181,7 @@ class _InspectionBudget:
     total_bytes: int
     total_entries: int
     deadline: float
-    process_bytes: int = 0
+    source_bytes: int = 0  # what the source being read (maps, environ or descriptor links) may still use
 
     def check(self) -> None:
         self.ctx.check_deadline()
@@ -192,9 +194,10 @@ class _InspectionBudget:
             raise _InspectionLimit("inspection entry budget")
         self.total_entries -= 1
 
-    def read(self, directory: int, name: str, limit: int) -> bytes:
+    def read(self, directory: int, name: str, limit: int, *, reserved: bool = False) -> bytes:
+        """Up to ``limit`` bytes of a proc file; a reserved read is bounded by ``limit`` alone."""
         self.check()
-        size = min(limit, self.process_bytes, self.total_bytes)
+        size = limit if reserved else min(limit, self.source_bytes, self.total_bytes)
         if size <= 0:
             raise _InspectionLimit("inspection byte budget")
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
@@ -210,8 +213,9 @@ class _InspectionBudget:
                     return b"".join(chunks)
                 chunks.append(chunk)
                 remaining -= len(chunk)
-                self.process_bytes -= len(chunk)
-                self.total_bytes -= len(chunk)
+                if not reserved:
+                    self.source_bytes -= len(chunk)
+                    self.total_bytes -= len(chunk)
             # Reaching a cap is conservatively incomplete; do not read past a budget.
             raise _InspectionLimit("inspection byte budget")
         finally:
@@ -219,7 +223,7 @@ class _InspectionBudget:
 
 
 def _proc_identity(directory: int, budget: _InspectionBudget) -> dict[str, str]:
-    raw = budget.read(directory, "stat", 4096).decode("ascii", "replace")
+    raw = budget.read(directory, "stat", _IDENTITY_BYTES, reserved=True).decode("ascii", "replace")
     end = raw.rfind(")")
     fields = raw[end + 1 :].split() if end >= 0 else []
     if len(fields) < 20 or not fields[19].isascii() or not fields[19].isdecimal():
@@ -264,7 +268,7 @@ def _fd_indicators(
                     raise _InspectionLimit("descriptor count")
                 if not entry.name.isascii() or not entry.name.isdecimal():
                     raise ValueError("malformed descriptor name")
-                if min(budget.process_bytes, budget.total_bytes) < 4096:
+                if min(budget.source_bytes, budget.total_bytes) < 4096:
                     raise _InspectionLimit("descriptor link byte budget")
                 try:
                     target = os.readlink(entry.name, dir_fd=fd_directory)
@@ -274,9 +278,9 @@ def _fd_indicators(
                     )
                     continue  # A descriptor can close independently of the process.
                 count = len(target.encode("utf-8", "replace"))
-                budget.process_bytes -= count
+                budget.source_bytes -= count
                 budget.total_bytes -= count
-                if count > 4096 or budget.process_bytes < 0 or budget.total_bytes < 0:
+                if count > 4096 or budget.source_bytes < 0 or budget.total_bytes < 0:
                     raise _InspectionLimit("descriptor link byte budget")
                 path = target.removesuffix(" (deleted)")
                 suffix = path.rsplit(".", 1)[-1].lower()
@@ -490,7 +494,6 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                                 "command-line collection continues without inspection"
                             )
                     if self.inspection_enabled and not inspection_stopped:
-                        budget.process_bytes = self.max_inspection_bytes
                         before = self._inspection_identity(directory, budget)
                     fd = os.open("cmdline", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
                     try:
@@ -583,6 +586,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         ):
             if not enabled:
                 continue
+            budget.source_bytes = self.max_inspection_bytes  # each source has its own cap
             try:
                 if source == "maps":
                     libraries, packaging = _maps(
