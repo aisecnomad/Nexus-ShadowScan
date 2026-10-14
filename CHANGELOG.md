@@ -5,6 +5,32 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### README redesign (October 14)
+
+Documentation only; no scanner behaviour changes.
+
+- `README.md` is reorganized around the questions a first reader asks: an
+  at-a-glance table, the demo output, why the surfaces matter, how a scan
+  flows, surfaces and connectors, what the signatures recognize, benchmarks
+  and their limits, then install, quick start, a command reference, the
+  finding model, outputs, inventory, extension points, safety notes, project
+  status and the documentation map. Every passage the repository consistency
+  tests check (the surfaces sentence, the demo output, the signature,
+  connector and fixture counts, the CSV markers, the classifier and the
+  `Install` and `Risk policy` headings other documents deep-link) is kept.
+- Four images under `docs/assets/readme/`: the ShadowScan banner, the
+  scan data-flow diagram, the signature-architecture poster and the
+  head-to-head estate-recall chart. The chart reproduces the coverage table
+  of `tools/benchmark/results/REPORT.md` and is captioned with that
+  benchmark's conflict-of-interest caveat; the two diagrams predate the
+  endpoint, network and runtime connectors and say so in their captions.
+  Images are referenced by raw GitHub URL so that the package index renders
+  them too, and `tests/test_repository_consistency.py` now checks that every
+  such URL names a file in the checkout.
+- The benchmark section quotes only committed, dated results (the head-to-head
+  corpus, the code-surface discovery benchmark, both ShadowBench tracks and
+  the sampled real-world repositories), each beside what it does not show.
+
 ### Documentation aligned with the code (October 12)
 
 Documentation only; no scanner behaviour changes.

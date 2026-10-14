@@ -251,6 +251,24 @@ def test_absolute_repository_links_resolve_in_this_checkout(markdown: Path) -> N
     assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
 
 
+# A README image is fetched raw, because the package index renders no GitHub blob page;
+# the check above never sees that form, so the file it names is checked here.
+_RAW_FILE_LINK = re.compile(
+    r"https://raw\.githubusercontent\.com/aisecnomad/Project-Nexus/main/([^\s\"'<>)#?]+)"
+)
+
+
+@pytest.mark.parametrize("markdown", _markdown_files(), ids=_relative)
+def test_raw_repository_file_links_resolve_in_this_checkout(markdown: Path) -> None:
+    problems = [
+        f"line {number}: {match.group(0)} -> no file {match.group(1)} in this checkout"
+        for number, line in _prose_lines(_read(markdown))
+        for match in _RAW_FILE_LINK.finditer(line)
+        if not (ROOT / unquote(match.group(1))).is_file()
+    ]
+    assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
+
+
 def test_readme_links_work_on_the_package_index() -> None:
     """README.md is the PyPI project description, where a relative link resolves against pypi.org."""
     relative = [
