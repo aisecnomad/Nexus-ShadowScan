@@ -1160,6 +1160,97 @@ def test_run_one_reads_tool_output_that_no_other_process_can_relink_after_the_sw
     assert {e["key"] for e in row["entities"]} == {"app:tool-output"}
 
 
+OTHER_UID = 1000
+"""An account that is neither the runner nor the tools' uid, owning a file the tools' uid may link."""
+
+
+def _shared_file(scratch: Path) -> Path:
+    """Another account's file outside ``work/`` that uid 65534 can hard link (read and write for all)."""
+    shared = scratch / "shared.txt"
+    shared.write_text("another account's file", encoding="utf-8")
+    os.chown(shared, OTHER_UID, OTHER_UID)
+    shared.chmod(0o666)
+    return shared
+
+
+def _link_as_tool(source: Path, link: Path) -> None:
+    """Hard link ``source`` to ``link`` as uid 65534, as a tool or a process of its uid could."""
+    ln = shutil.which("ln", path=TOOL_PATH)
+    assert ln is not None
+    done = subprocess.run(
+        [ln, str(source), str(link)],
+        user=runner.TOOL_UID,
+        group=runner.TOOL_GID,
+        extra_groups=[],
+        env={"PATH": TOOL_PATH},
+        cwd="/",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        pytest.skip(f"uid 65534 cannot hard link another account's file here: {done.stderr.strip()}")
+
+
+needs_root_and_ln = pytest.mark.skipif(
+    os.geteuid() != 0 or shutil.which("ln", path=TOOL_PATH) is None,
+    reason="handing files to other uids and running ln as uid 65534 need root",
+)
+
+
+@needs_root_and_ln
+def test_reclaim_tree_removes_hard_links_without_handing_their_files_to_root(scratch: Path) -> None:
+    """A hard link the tool's uid left in work/ made the runner hand the file it names to root."""
+    shared = _shared_file(scratch)
+    work, _ = _dirs(scratch)
+    (work / "out").mkdir()
+    (work / "out" / "report.json").write_text("{}", encoding="utf-8")
+    os.symlink("out/report.json", work / "latest.json")
+    runner._chown_tree(work, runner.TOOL_UID, runner.TOOL_GID)
+    _link_as_tool(shared, work / "out" / "linked")
+    assert os.stat(shared).st_nlink == 2
+    removed = runner._reclaim_tree(work)
+    info = os.stat(shared)
+    assert (info.st_uid, info.st_gid, info.st_nlink) == (OTHER_UID, OTHER_UID, 1)
+    assert shared.read_text(encoding="utf-8") == "another account's file"
+    assert not os.path.lexists(work / "out" / "linked")
+    assert removed == 1
+    # What the tool wrote under a single link is the runner's now; a symlink inside work/ stays.
+    for path in (work, work / "out", work / "out" / "report.json", work / "latest.json"):
+        assert os.lstat(path).st_uid == os.geteuid()
+    assert os.readlink(work / "latest.json") == "out/report.json"
+
+
+@needs_root_and_ln
+def test_run_one_removes_a_hard_link_the_tool_left_before_the_adapter_reads(
+    scratch: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The adapter read, as root, another account's file through a hard link the tool planted."""
+    shared = _shared_file(scratch)
+
+    def stage_as_tool(spec: dict[str, Any], control: Path, repo: Path, timeout: float) -> dict[str, Any]:
+        work = Path(spec["work"])
+        (work / "out.txt").write_text("tool-output", encoding="utf-8")
+        os.chown(work / "out.txt", runner.TOOL_UID, runner.TOOL_GID)
+        _link_as_tool(shared, work / "linked")
+        return {"runs": [_run()], "processes": [], "error": None}
+
+    seen: dict[str, bool] = {}
+
+    def normalize(work: Path, runs: list[RunResult]) -> AdapterResult:
+        seen["linked"] = os.path.lexists(work / "linked")
+        text = (work / "out.txt").read_text(encoding="utf-8")
+        return AdapterResult("ok", [Entity("app", f"app:{text}", "agent")])
+
+    monkeypatch.setattr(runner, "_stage", stage_as_tool)
+    row = _run_one(FakeAdapter(normalize=normalize), scratch)
+    assert row["status"] == "ok", row
+    assert seen == {"linked": False}
+    assert "1 unsafe links or special files removed from work" in row["note"]
+    info = os.stat(shared)
+    assert (info.st_uid, info.st_gid, info.st_nlink) == (OTHER_UID, OTHER_UID, 1)
+
+
 @needs_namespaces
 @pytest.mark.skipif(
     shutil.which("ipcmk") is None or shutil.which("ipcs") is None, reason="needs ipcmk and ipcs"

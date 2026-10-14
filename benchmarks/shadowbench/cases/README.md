@@ -478,7 +478,10 @@ track:
   exits, the runner now takes `work/` back for root and removes group and
   other write from its directories before it removes escaping symlinks, so a
   process of the tools' uid outside the stage cannot plant one after that
-  check and have the adapter read a root-only file through it.
+  check and have the adapter read a root-only file through it. Hard links,
+  FIFOs, sockets and device nodes in `work/` are removed rather than handed
+  to root, so a hard link the tools' uid made to another account's file no
+  longer gives that file to root.
 * The runner now records in `manifest.json` the harness commit and whether
   anything under `tools/` differed from it, and the report names both. It
   records the `version` that `tools.json` gives any tool; before, the Numbat,
