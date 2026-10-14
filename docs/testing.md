@@ -2,7 +2,7 @@
 
 This page describes how to set up a reproducible development environment and
 run ShadowScan's test suites the way CI does. The gates themselves are defined
-in the [contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#quality-gates);
+in the [contributor guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#quality-gates);
 this page is the practical companion.
 
 ## Environment
@@ -162,7 +162,7 @@ reason the sweep's input cannot reach it.
 
 ## What CI runs
 
-The [CI workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/ci.yml)
+The [CI workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/ci.yml)
 runs the same commands on Linux for Python 3.11, 3.12 and 3.13 and on macOS for
 3.11 and 3.13, installs the hash-locked dependency sets, audits every lock and
 builds and validates the wheel outside the checkout. A separate
@@ -204,5 +204,5 @@ describes running the scanner itself inside a pipeline.
 
 Bug fixes need a regression test, and connector changes need offline fixtures
 and documentation, as the
-[pull request requirements](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#pull-requests)
+[pull request requirements](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#pull-requests)
 describe.

@@ -178,16 +178,17 @@ jobs:
           python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
             --annotations tools/evaluation/independent_annotations.json \
             --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"
-      - name: Build distributable wheel
+      - name: Build the sdist and the wheel from it
         run: |
-          # Re-assert the hash-locked backend so the wheel generator matches
-          # pyproject.toml [build-system] after the combined locked install.
+          # Re-assert the hash-locked backend and frontend so the distributions
+          # match pyproject.toml [build-system] after the combined locked install.
           python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
-          # Stamp the archive entries with the commit time, as release.yml does,
-          # so a rebuild of the same commit reproduces the same bytes.
+          # Stamp the wheel entries with the commit time, as release.yml does,
+          # so a rebuild of the same commit reproduces the same wheel bytes.
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           export SOURCE_DATE_EPOCH
-          python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+          python -m build --no-isolation --outdir dist .
+          python -m tools.release.distributions --directory dist
       - name: Validate installed wheel outside the checkout
         run: |
           python -m venv "$RUNNER_TEMP/shadowscan-wheel"

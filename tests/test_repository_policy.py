@@ -919,7 +919,10 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         ),
         pytest.param(
             ".github/workflows/release.yml",
-            _replace('          cp -- "${wheels[0]}" dist/\n', "          python -m twine upload dist/*\n"),
+            _replace(
+                '          cp -- "${wheels[0]}" "${sdists[0]}" dist/\n',
+                "          python -m twine upload dist/*\n",
+            ),
             "package upload",
             id="twine-upload-in-publish-job",
         ),
@@ -985,10 +988,10 @@ _SELF_SCAN = "run: shadowscan scan -c examples/shadowscan.offline.yaml --format 
         pytest.param(
             ".github/workflows/release.yml",
             _replace_last(
-                "      - name: Stage only the attested wheel\n",
+                "      - name: Stage only the attested wheel and sdist\n",
                 "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
                 "        with:\n          persist-credentials: false\n"
-                "      - name: Stage only the attested wheel\n",
+                "      - name: Stage only the attested wheel and sdist\n",
             ),
             "publish: must not check out source",
             id="checkout-in-publish-job",
@@ -1947,22 +1950,35 @@ _REVIEWED = "a" * 40
 
 
 @pytest.mark.parametrize(
-    "target,wheels,tagged,tamper,passes",
+    "target,wheels,sdists,tagged,tamper,passes",
     [
-        pytest.param("pypi", ["0.1.1"], _REVIEWED, False, True, id="pypi-tag-on-reviewed-commit"),
-        pytest.param("pypi", ["0.1.1"], "b" * 40, False, False, id="pypi-tag-elsewhere"),
-        pytest.param("pypi", ["0.1.1"], None, False, False, id="pypi-without-tag"),
-        pytest.param("testpypi", ["0.1.1"], None, False, True, id="testpypi-rehearsal-without-tag"),
-        pytest.param("pypi", ["0.2.0rc1"], _REVIEWED, False, True, id="pypi-release-candidate"),
-        pytest.param("testpypi", ["0.1.1.dev0"], None, False, False, id="development-version"),
-        pytest.param("testpypi", ["0.1.1+local"], None, False, False, id="local-version"),
-        pytest.param("testpypi", ["0.1.0", "0.1.1"], None, False, False, id="two-wheels"),
-        pytest.param("testpypi", [], None, False, False, id="no-wheel"),
-        pytest.param("pypi", ["0.1.1"], _REVIEWED, True, False, id="tampered-wheel"),
+        pytest.param("pypi", ["0.1.1"], ["0.1.1"], _REVIEWED, False, True, id="pypi-tag-on-reviewed-commit"),
+        pytest.param("pypi", ["0.1.1"], ["0.1.1"], "b" * 40, False, False, id="pypi-tag-elsewhere"),
+        pytest.param("pypi", ["0.1.1"], ["0.1.1"], None, False, False, id="pypi-without-tag"),
+        pytest.param(
+            "testpypi", ["0.1.1"], ["0.1.1"], None, False, True, id="testpypi-rehearsal-without-tag"
+        ),
+        pytest.param("pypi", ["0.2.0rc1"], ["0.2.0rc1"], _REVIEWED, False, True, id="pypi-release-candidate"),
+        pytest.param(
+            "testpypi", ["0.1.1.dev0"], ["0.1.1.dev0"], None, False, False, id="development-version"
+        ),
+        pytest.param("testpypi", ["0.1.1+local"], ["0.1.1+local"], None, False, False, id="local-version"),
+        pytest.param("testpypi", ["0.1.0", "0.1.1"], ["0.1.1"], None, False, False, id="two-wheels"),
+        pytest.param("testpypi", [], ["0.1.1"], None, False, False, id="no-wheel"),
+        pytest.param("testpypi", ["0.1.1"], [], None, False, False, id="no-sdist"),
+        pytest.param("testpypi", ["0.1.1"], ["0.1.0", "0.1.1"], None, False, False, id="two-sdists"),
+        pytest.param("pypi", ["0.1.1"], ["0.1.0"], _REVIEWED, False, False, id="sdist-version-skew"),
+        pytest.param("pypi", ["0.1.1"], ["0.1.1"], _REVIEWED, True, False, id="tampered-distributions"),
     ],
 )
 def test_publication_gate_executes_fail_closed(
-    tmp_path: Path, target: str, wheels: list[str], tagged: str | None, tamper: bool, passes: bool
+    tmp_path: Path,
+    target: str,
+    wheels: list[str],
+    sdists: list[str],
+    tagged: str | None,
+    tamper: bool,
+    passes: bool,
 ) -> None:
     """Execute the gate using the fully qualified tag ref verified against GitHub."""
     gate = _load(GITHUB / "workflows" / "release.yml")["jobs"]["publication-gate"]
@@ -1971,6 +1987,8 @@ def test_publication_gate_executes_fail_closed(
     candidate.mkdir()
     for version in wheels:
         (candidate / f"nexusshadowscan-{version}-py3-none-any.whl").write_bytes(version.encode())
+    for version in sdists:
+        (candidate / f"nexusshadowscan-{version}.tar.gz").write_bytes(b"sdist " + version.encode())
     sums = subprocess.run(
         ["sha256sum", *sorted(path.name for path in candidate.iterdir())],
         cwd=candidate,
@@ -1980,13 +1998,13 @@ def test_publication_gate_executes_fail_closed(
     ).stdout
     (candidate / "SHA256SUMS").write_text(sums, encoding="utf-8")
     if tamper:
-        for path in candidate.glob("*.whl"):
+        for path in [*candidate.glob("*.whl"), *candidate.glob("*.tar.gz")]:
             path.write_bytes(b"substituted after attestation")
     stub = tmp_path / "bin"
     stub.mkdir()
     (stub / "gh").write_text(
         "#!/bin/bash\n"
-        'expected="api repos/aisecnomad/Project-Nexus/commits/refs/tags/v$EXPECTED_VERSION --jq .sha"\n'
+        'expected="api repos/aisecnomad/Nexus-ShadowScan/commits/refs/tags/v$EXPECTED_VERSION --jq .sha"\n'
         '[ "$*" = "$expected" ] || { echo "unexpected gh call: $*" >&2; exit 64; }\n'
         '[ -n "$TAGGED" ] || { echo "HTTP 404: No commit found for SHA" >&2; exit 1; }\n'
         'printf "%s\\n" "$TAGGED"\n',
@@ -2000,7 +2018,7 @@ def test_publication_gate_executes_fail_closed(
             "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}",
             "GH_TOKEN": "not-a-real-token",
             "PUBLISH": target,
-            "GITHUB_REPOSITORY": "aisecnomad/Project-Nexus",
+            "GITHUB_REPOSITORY": "aisecnomad/Nexus-ShadowScan",
             "GITHUB_SHA": _REVIEWED,
             "EXPECTED_VERSION": wheels[-1] if wheels else "",
             "TAGGED": tagged or "",
@@ -2013,7 +2031,7 @@ def test_publication_gate_executes_fail_closed(
     assert "unexpected gh call" not in result.stderr
     if passes:
         assert f"to {target} from {_REVIEWED}" in result.stdout
-    elif target == "pypi" and len(wheels) == 1 and not tamper:
+    elif target == "pypi" and len(wheels) == 1 and sdists == wheels and not tamper:
         if tagged is None:
             assert f"tag v{wheels[0]} does not exist" in result.stderr
         else:
@@ -2025,8 +2043,14 @@ def test_publication_gate_executes_fail_closed(
 @pytest.mark.parametrize(
     "job,step", [("publication-input", "Verify the exact attested"), ("publish", "Stage only the attested")]
 )
-@pytest.mark.parametrize("count", [1, 2])
-def test_release_steps_require_exactly_one_wheel(tmp_path: Path, job: str, step: str, count: int) -> None:
+@pytest.mark.parametrize(
+    "wheels,sdists",
+    [(1, 1), (2, 1), (1, 2), (0, 1), (1, 0)],
+    ids=["one-each", "two-wheels", "two-sdists", "no-wheel", "no-sdist"],
+)
+def test_release_steps_require_exactly_one_wheel_and_one_sdist(
+    tmp_path: Path, job: str, step: str, wheels: int, sdists: int
+) -> None:
     """Regression: `[ n -eq 1 ] && [ -f w ]` let two wheels through, because `set -e` ignores `a` in `a && b`."""
     steps = _load(GITHUB / "workflows" / "release.yml")["jobs"][job]["steps"]
     script = next(entry["run"] for entry in steps if entry.get("name", "").startswith(step))
@@ -2034,10 +2058,13 @@ def test_release_steps_require_exactly_one_wheel(tmp_path: Path, job: str, step:
     (candidate / "attestations").mkdir(parents=True)
     for name in ("provenance.json", "sbom.json"):
         (candidate / "attestations" / name).write_text("{}", encoding="utf-8")
-    for version in ("0.1.1", "0.1.0")[:count]:
+    for version in ("0.1.1", "0.1.0")[:wheels]:
         (candidate / f"nexusshadowscan-{version}-py3-none-any.whl").write_bytes(version.encode())
+    for version in ("0.1.1", "0.1.0")[:sdists]:
+        (candidate / f"nexusshadowscan-{version}.tar.gz").write_bytes(b"sdist " + version.encode())
+    distributions = [*candidate.glob("*.whl"), *candidate.glob("*.tar.gz")]
     sums = subprocess.run(
-        ["sha256sum", *sorted(path.name for path in candidate.glob("*.whl"))],
+        ["sha256sum", *sorted(path.name for path in distributions)],
         cwd=candidate,
         capture_output=True,
         text=True,
@@ -2051,11 +2078,38 @@ def test_release_steps_require_exactly_one_wheel(tmp_path: Path, job: str, step:
         text=True,
         timeout=10,
     )
-    assert (result.returncode == 0) is (count == 1), result.stdout + result.stderr
-    if job == "publish" and count == 1:
-        assert [path.name for path in (tmp_path / "dist").iterdir()] == [
-            "nexusshadowscan-0.1.1-py3-none-any.whl"
+    assert (result.returncode == 0) is (wheels == sdists == 1), result.stdout + result.stderr
+    if job == "publish" and wheels == sdists == 1:
+        assert sorted(path.name for path in (tmp_path / "dist").iterdir()) == [
+            "nexusshadowscan-0.1.1-py3-none-any.whl",
+            "nexusshadowscan-0.1.1.tar.gz",
         ]
+
+
+def test_publication_input_rejects_an_sdist_of_another_version(tmp_path: Path) -> None:
+    steps = _load(GITHUB / "workflows" / "release.yml")["jobs"]["publication-input"]["steps"]
+    script = next(
+        entry["run"] for entry in steps if entry.get("name", "").startswith("Verify the exact attested")
+    )
+    candidate = tmp_path / "publication-input"
+    (candidate / "attestations").mkdir(parents=True)
+    for name in ("provenance.json", "sbom.json"):
+        (candidate / "attestations" / name).write_text("{}", encoding="utf-8")
+    (candidate / "nexusshadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel")
+    (candidate / "nexusshadowscan-0.1.0.tar.gz").write_bytes(b"sdist")
+    sums = subprocess.run(
+        ["sha256sum", "nexusshadowscan-0.1.0.tar.gz", "nexusshadowscan-0.1.1-py3-none-any.whl"],
+        cwd=candidate,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    (candidate / "SHA256SUMS").write_text(sums, encoding="utf-8")
+    result = subprocess.run(
+        ["bash", "-e", "-c", script], cwd=candidate, capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode != 0
+    assert "does not match wheel version 0.1.1" in result.stderr
 
 
 def test_pages_requires_explicit_manual_publication_from_main() -> None:

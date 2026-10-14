@@ -497,7 +497,7 @@ class BaseConnector(ABC):
         if missing:
             raise ConnectorError(
                 f"{self.name}: live mode needs python packages {missing}; install the matching extra "
-                f"(install '.[cloud]' from the reviewed Project Nexus checkout) or use offline input"
+                f"(install '.[cloud]' from the reviewed Nexus ShadowScan checkout) or use offline input"
             )
 
     @abstractmethod

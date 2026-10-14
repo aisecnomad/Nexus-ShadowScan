@@ -241,7 +241,7 @@ are regression evidence, not new independent annotation.
 It was written after observing
 the defects and is not a fresh holdout. The existing independent corpus and its
 annotation ledger remain frozen; adding regression cases does not refresh their
-independence. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires
+independence. The [acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md) requires
 separate declared human-reviewed holdout evidence for deployment decisions.
 
 `tools/evaluation/current_idioms_corpus.json` holds 28 short synthetic cases
@@ -514,7 +514,7 @@ versus ordinary local methods, Python comprehension reachability and
 multi-domain device identities. Device attribution requires its own labeled
 operational inputs.
 
-The automated [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) currently
+The automated [acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md) currently
 supports local-code, AWS and Slack scopes. Repository-level records from this
 manual protocol cannot be converted into a passing receipt without the verifier's
 actual required artifacts. Use authorized [tenant canaries](canaries.md) for the
@@ -593,7 +593,7 @@ sampling after seeing results requires a new blinded holdout and reviewed policy
 The standalone command requires declared human labels, rejects known-gap waivers
 and exact source reuse from the nine bundled evaluated corpora. It cannot find
 undisclosed private prior evaluations or near duplicates. For a production
-rollout, run [`tools.acceptance.verify`](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) with
+rollout, run [`tools.acceptance.verify`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md) with
 declared `prior_corpora` and the separately reviewed tenant canary evidence.
 
 This is a code-filesystem **case-level** gate. The sampled file units and

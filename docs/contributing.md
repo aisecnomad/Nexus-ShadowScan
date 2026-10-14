@@ -1,6 +1,6 @@
 # Contributing
 
-The [repository contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md)
+The [repository contributor guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md)
 is the canonical source for development setup, quality gates, review policy,
 commit sign-off and the pull request process. Keeping these requirements in one
 place avoids conflicting instructions between the website and the repository.
@@ -9,7 +9,7 @@ place avoids conflicting instructions between the website and the repository.
 
 1. Read the [community guide](community.md) and
    [security policy](security.md).
-2. Search [open issues](https://github.com/aisecnomad/Project-Nexus/issues) for
+2. Search [open issues](https://github.com/aisecnomad/Nexus-ShadowScan/issues) for
    related work. Documentation fixes and small synthetic reproductions are
    useful contributions.
 3. For significant changes, open an issue first to agree on scope and the
@@ -19,7 +19,7 @@ place avoids conflicting instructions between the website and the repository.
 ## Try one test
 
 The contributor guide's
-[Run one test section](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#run-one-test)
+[Run one test section](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#run-one-test)
 provides a credential-free first test, the existing Make targets, and the exact
 coverage-report command. Follow it after setting up your development environment.
 

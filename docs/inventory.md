@@ -22,7 +22,7 @@ other agents; ShadowScan discovers those cards in code
 each as a finding. A discovered A2A card, signed or not, never registers or
 approves a finding; bind it with a Capability Card like any other agent.
 
-The bundled example is [`agent-card.yaml`](https://github.com/aisecnomad/Project-Nexus/blob/main/agent-card.yaml). ShadowScan reads
+The bundled example is [`agent-card.yaml`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/agent-card.yaml). ShadowScan reads
 `schema_version`, `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
 `metadata.classification`, `autonomy_profile.level`, the optional
 [`governance:`](#declared-governance-facts) block, and a `discovery:` block required for automatic registration:
@@ -156,7 +156,7 @@ agents:
 
 The `agents:` mapping is optional: a file holding a bare list of the same
 entries, as in
-[`examples/inventory/sanctioned.yaml`](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/inventory/sanctioned.yaml),
+[`examples/inventory/sanctioned.yaml`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/inventory/sanctioned.yaml),
 is read the same way.
 
 ### CSV

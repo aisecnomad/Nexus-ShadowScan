@@ -18,7 +18,10 @@ permissions:
 jobs:
   merge-policy:
     name: Verify visible main controls (bypass assurance separate)
-    if: github.repository == 'aisecnomad/Project-Nexus' && github.ref == 'refs/heads/main'
+    # The numeric repository ID survives a rename or transfer; a name test would
+    # skip this job without failing once the repository is renamed. Forks have
+    # their own ID, so they still skip it.
+    if: github.repository_id == '1174915264' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

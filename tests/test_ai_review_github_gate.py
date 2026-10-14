@@ -420,7 +420,7 @@ def test_workflow_security_boundary() -> None:
 
 
 def test_transport_patch_and_fixed_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GITHUB_REPOSITORY", "aisecnomad/Project-Nexus")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "aisecnomad/Nexus-ShadowScan")
     monkeypatch.setenv("GH_TOKEN", "test-only-placeholder")
     opener = MagicMock()
     opener.open.return_value.__enter__.return_value = io.BytesIO(b'{"id":42}')
