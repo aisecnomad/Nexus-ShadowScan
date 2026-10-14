@@ -94,9 +94,13 @@ endpoint and IP-range source references. Live DNS enrichment stays deferred
   storage and attribution looks intervals up by bisection. A storage bound
   withholds DNS attribution only for the affected client/address, with a
   limitation on its findings and a warning that leaves the scan complete; the
-  Ollama port rule does not depend on DNS storage. A defective record
-  withholds flow attribution only for the client it names; a record limit or
-  a defect with no known client withholds it for the whole input. Zeek JA4
+  Ollama port rule does not depend on DNS storage. A record defect that could
+  hide DNS or TLS evidence (a malformed context outside VPC flow records, an
+  invalid JA4 value, an answer list over 32, a record without a usable client)
+  withholds flow attribution only for the client it names, or for the whole
+  input when no client is known or the record limit is reached; a malformed
+  TTL or timestamp keeps the record with that field unknown and withholds
+  nothing. Zeek JA4
   values are validated,
   non-scoring context. Offline scans make no DNS or fingerprint queries. In the
   bundled demo one finding is removed (a client borrowing another client's
