@@ -1,0 +1,22 @@
+# Dedicated Text Generation Inference (TGI) provider signature.
+# Merge into model_providers.yaml or load as an additional pack.
+
+signatures:
+  - id: provider.tgi
+    name: Text Generation Inference (TGI)
+    category: provider
+    vendor: Hugging Face
+    description: Self-hosted text-generation-inference server (OpenAI-compatible, typically port 8080).
+    signals:
+      - type: image
+        patterns: ['(?i)text-generation-inference', '(?i)huggingface/text-generation-inference', '(?i)ghcr\.io/huggingface/text-generation-inference']
+        weight: 0.9
+      - type: env
+        names: [TGI_MODEL_ID, HF_MODEL_ID, MODEL_ID]
+        weight: 0.7
+      - type: domain
+        values: ["re:.*:8080$"]
+        weight: 0.55
+      - type: code
+        patterns: ['text-generation-inference', 'text_generation_inference']
+        weight: 0.6
