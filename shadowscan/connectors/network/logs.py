@@ -59,6 +59,7 @@ _SUFFIXES = {".json", ".jsonl", ".ndjson", ".csv", ".log", ".txt", ".gz"}
 _MIN_HOST_WEIGHT = 0.3
 _MAX_CLIENTS = 50_000
 _MAX_PAIRS = 500_000
+_MAX_TIMESTAMPS_PER_CONNECTION = 100_000
 _MAX_HOSTS_PER_FINDING = 20
 _MAX_TIMES = 1_000
 _MAX_TOTAL_TIMES = 200_000
@@ -70,7 +71,7 @@ _JA4 = re.compile(r"^[tqd](?:1[0-3]|s[23]|d[123]|00)[di][0-9]{4}[a-zA-Z0-9]{2}_[
 _Context = tuple[str, str, str]
 _DNSKey = tuple[_Context, str, str]
 _TLSKey = tuple[_Context, str, str]
-_PairKey = tuple[_Context, str, str, int | None, str | None, float | None]
+_PairKey = tuple[_Context, str, str, int | None, str | None]
 _OLLAMA_PORT = 11434
 _VPC_DEFAULT_FIELDS = [
     "version",
@@ -154,9 +155,9 @@ class _DNSObservation:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class _Pair:
-    """Flows sharing client, server, port and connection UID (when available)."""
+    """Flows of one connection (client, server, port and UID when available) at one timestamp."""
 
     flows: int = 0
     bytes_out: int = 0
@@ -551,9 +552,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         contacts: dict[tuple[str, str], _Contact] = {}
         resolved: dict[_DNSKey, list[_DNSObservation]] = {}
         sni_by_uid: dict[_TLSKey, _TLSIdentity] = {}
-        pairs: dict[_PairKey, _Pair] = {}
+        pairs: dict[_PairKey, dict[float | None, _Pair]] = {}
         times_used = dns_used = 0
-        dropped_pairs = dropped_clients = dropped_tls = dropped_dns = dropped_ja4 = 0
+        dropped_pairs = dropped_times = dropped_clients = dropped_tls = dropped_dns = dropped_ja4 = 0
         clients: set[str] = set()
         for rec in records:
             self.ctx.examined()
@@ -629,15 +630,23 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 continue
             if kind == "flow":
                 uid = str(rec["uid"]) if rec.get("uid") else None
-                # Keep timestamps distinct: an aggregate spanning expiry must
-                # not transfer its stale bytes through one fresh observation.
-                key = (context, client, str(server), rec.get("port"), uid, ts)
-                pair = pairs.get(key)
-                if pair is None:
+                key = (context, client, str(server), rec.get("port"), uid)
+                groups = pairs.get(key)
+                if groups is None:
                     if len(pairs) >= _MAX_PAIRS:
                         dropped_pairs += 1
                         continue
-                    pair = pairs[key] = _Pair()
+                    groups = pairs[key] = {}
+                # Keep timestamps distinct within a connection: an aggregate
+                # spanning expiry must not transfer its stale bytes through one
+                # fresh observation. The bound counts a connection's timestamps,
+                # not the input's flow records.
+                pair = groups.get(ts)
+                if pair is None:
+                    if len(groups) >= _MAX_TIMESTAMPS_PER_CONNECTION:
+                        dropped_times += 1
+                        continue
+                    pair = groups[ts] = _Pair()
                 pair.flows += 1
                 pair.bytes_out += int(rec.get("bytes_out") or 0)
                 pair.bytes_in += int(rec.get("bytes_in") or 0)
@@ -657,6 +666,11 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             self.ctx.warn(
                 f"network.logs: {dropped_pairs:,} flow record(s) beyond {_MAX_PAIRS:,} connection groups "
                 "were not attributed"
+            )
+        if dropped_times:
+            self.ctx.warn(
+                f"network.logs: {dropped_times:,} flow record(s) beyond {_MAX_TIMESTAMPS_PER_CONNECTION:,} "
+                "timestamps on one connection were not attributed"
             )
         if dropped_tls:
             self.ctx.warn(
@@ -729,90 +743,94 @@ class NetworkLogConnector(BaseConnector, _NoDump):
     def _attribute_flows(
         self,
         contacts: dict[tuple[str, str], _Contact],
-        pairs: dict[_PairKey, _Pair],
+        pairs: dict[_PairKey, dict[float | None, _Pair]],
         sni_by_uid: dict[_TLSKey, _TLSIdentity],
         tls_limit_reached: bool,
         resolved: dict[_DNSKey, list[_DNSObservation]],
         dns_limit_reached: bool,
     ) -> int:
-        """Attribute each timestamp group only within observed validity windows."""
-        for context, client, server, port, uid, _ in pairs:
+        """Attribute each connection's timestamp groups only within observed validity windows."""
+        for context, client, server, port, uid in pairs:
             self.ctx.check_deadline()
             identity = sni_by_uid.get((context, client, uid)) if uid is not None else None
             if identity is not None:
                 identity.observe(server, port, identity.signature)
         ambiguous = 0
-        for (context, client, server, port, uid, ts), pair in pairs.items():
+        for (context, client, server, port, uid), groups in pairs.items():
             self.ctx.check_deadline()
-            signature: str | None = None
-            basis = ""
-            valid: list[_DNSObservation] = []
+            tls_signature: str | None = None
             identity = sni_by_uid.get((context, client, uid)) if uid is not None else None
             if identity is not None:
                 if identity.ambiguous or not identity.matches(server, port):
-                    ambiguous += pair.flows
+                    ambiguous += sum(pair.flows for pair in groups.values())
                     continue
                 if not identity.signature:
                     continue
-                signature, basis = identity.signature, "tls"
+                tls_signature = identity.signature
             elif (uid is not None and tls_limit_reached) or dns_limit_reached:
                 continue
-            else:
-                local = resolved.get((context, client, server), [])
-                if ts is None:
-                    for item in local:
-                        if item.signature:
-                            self._contact(contacts, client, item.signature, context).limitations.add(
-                                "Flow records without timestamps cannot be attributed through DNS"
-                            )
-                valid = [item for item in local if item.valid(ts, self.dns_max_ttl, self.dns_clock_skew)]
-                signatures = {item.signature for item in valid}
-                if valid:
-                    # An answer with unknown validity may be conflicting; it
-                    # cannot safely be assumed expired or outside this window.
-                    signatures.update(
-                        item.signature for item in local if item.observed_at is None or item.ttl is None
-                    )
-                if len(signatures) == 1 and "" not in signatures:
-                    signature, basis = next(iter(signatures)), "dns"
-                elif signatures - {""}:
-                    ambiguous += pair.flows
-                elif not local and port == _OLLAMA_PORT and self.index.get("provider.ollama") is not None:
-                    signature, basis = "provider.ollama", "port"
-            if signature is None:
-                continue
-            c = self._contact(contacts, client, signature, context)
-            if basis == "port":
-                c.hosts[f"{server}:{port}"] += pair.flows
-            elif basis == "dns":
-                for host in sorted({item.host for item in valid}):
-                    if len(c.hosts) < _MAX_HOSTS_PER_FINDING or host in c.hosts:
-                        c.hosts[host] += pair.flows
-                for item in sorted(valid, key=lambda item: (item.observed_at or 0, item.host)):
-                    provenance = {
-                        "host": item.host,
-                        "address": server,
-                        "observed_at": _iso(item.observed_at),
-                        "ttl_seconds": item.ttl,
-                        "flow_at": _iso(ts),
-                        "sensor": context[0],
-                        "network_id": context[1],
-                        "resolver": context[2],
-                    }
-                    if provenance not in c.dns_attributions:
-                        if len(c.dns_attributions) < _MAX_DNS_PROVENANCE:
-                            c.dns_attributions.append(provenance)
-                        else:
-                            c.limitations.add("DNS attribution provenance is sampled to 20 entries")
-            c.flows += pair.flows
-            c.flows_by_dns += pair.flows if basis == "dns" else 0
-            c.bytes_out += pair.bytes_out
-            c.bytes_in += pair.bytes_in
-            if basis != "tls":
-                room = _MAX_TIMES - len(c.times)
-                c.times.extend(pair.times[: max(0, room)])
-            _seen(c, pair.first)
-            _seen(c, pair.last)
+            local = resolved.get((context, client, server), [])
+            for ts, pair in groups.items():
+                signature: str | None = None
+                basis = ""
+                valid: list[_DNSObservation] = []
+                if tls_signature is not None:
+                    signature, basis = tls_signature, "tls"
+                else:
+                    if ts is None:
+                        for item in local:
+                            if item.signature:
+                                self._contact(contacts, client, item.signature, context).limitations.add(
+                                    "Flow records without timestamps cannot be attributed through DNS"
+                                )
+                    valid = [item for item in local if item.valid(ts, self.dns_max_ttl, self.dns_clock_skew)]
+                    signatures = {item.signature for item in valid}
+                    if valid:
+                        # An answer with unknown validity may be conflicting; it
+                        # cannot safely be assumed expired or outside this window.
+                        signatures.update(
+                            item.signature for item in local if item.observed_at is None or item.ttl is None
+                        )
+                    if len(signatures) == 1 and "" not in signatures:
+                        signature, basis = next(iter(signatures)), "dns"
+                    elif signatures - {""}:
+                        ambiguous += pair.flows
+                    elif not local and port == _OLLAMA_PORT and self.index.get("provider.ollama") is not None:
+                        signature, basis = "provider.ollama", "port"
+                if signature is None:
+                    continue
+                c = self._contact(contacts, client, signature, context)
+                if basis == "port":
+                    c.hosts[f"{server}:{port}"] += pair.flows
+                elif basis == "dns":
+                    for host in sorted({item.host for item in valid}):
+                        if len(c.hosts) < _MAX_HOSTS_PER_FINDING or host in c.hosts:
+                            c.hosts[host] += pair.flows
+                    for item in sorted(valid, key=lambda item: (item.observed_at or 0, item.host)):
+                        provenance = {
+                            "host": item.host,
+                            "address": server,
+                            "observed_at": _iso(item.observed_at),
+                            "ttl_seconds": item.ttl,
+                            "flow_at": _iso(ts),
+                            "sensor": context[0],
+                            "network_id": context[1],
+                            "resolver": context[2],
+                        }
+                        if provenance not in c.dns_attributions:
+                            if len(c.dns_attributions) < _MAX_DNS_PROVENANCE:
+                                c.dns_attributions.append(provenance)
+                            else:
+                                c.limitations.add("DNS attribution provenance is sampled to 20 entries")
+                c.flows += pair.flows
+                c.flows_by_dns += pair.flows if basis == "dns" else 0
+                c.bytes_out += pair.bytes_out
+                c.bytes_in += pair.bytes_in
+                if basis != "tls":
+                    room = _MAX_TIMES - len(c.times)
+                    c.times.extend(pair.times[: max(0, room)])
+                _seen(c, pair.first)
+                _seen(c, pair.last)
         return ambiguous
 
     def _finding(self, c: _Contact, ambiguous: int) -> Finding:

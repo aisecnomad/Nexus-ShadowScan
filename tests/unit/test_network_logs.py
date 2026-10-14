@@ -884,6 +884,33 @@ def test_dns_provenance_sample_is_bounded_and_disclosed(run_connector, tmp_path)
     assert "DNS attribution provenance is sampled to 20 entries" in finding.metadata["limitations"]
 
 
+def test_connection_bound_counts_endpoints_not_flow_timestamps(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_PAIRS", 1)
+    rows = _temporal_rows()
+    rows.extend({**rows[1], "ts": 1002 + index} for index in range(2))
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete and not stats.warnings
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 3 and finding.metadata["bytes_out"] == 300
+    assert {item["flow_at"] for item in finding.metadata["dns_attribution"]} == {
+        "1970-01-01T00:16:41+00:00",
+        "1970-01-01T00:16:42+00:00",
+        "1970-01-01T00:16:43+00:00",
+    }
+
+
+def test_timestamps_per_connection_are_bounded_and_reported(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_TIMESTAMPS_PER_CONNECTION", 2)
+    rows = _temporal_rows()
+    rows.extend({**rows[1], "ts": 1002 + index} for index in range(2))
+    rows.append(dict(rows[1]))  # repeats a kept timestamp: merged, not a new group
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    assert any("1 flow record(s) beyond 2 timestamps on one connection" in w for w in stats.warnings)
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 3 and finding.metadata["bytes_out"] == 300
+
+
 def test_record_limit_cannot_hide_a_contradictory_dns_answer(run_connector, tmp_path):
     rows = _temporal_rows()
     rows.append({**rows[0], "query": "docs.example.net"})
