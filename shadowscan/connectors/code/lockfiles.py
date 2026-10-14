@@ -38,7 +38,9 @@ _MALFORMED = "malformed lockfile content"
 class LockedPackage:
     ecosystem: str
     name: str
-    version: str
+    # None for a uv package without a locked version (a workspace member or a
+    # dynamic version).
+    version: str | None
     source: str = "unknown"
     relationship: str = "unknown"
     dependencies: list[tuple[str, str | None]] = field(default_factory=list)
@@ -100,6 +102,27 @@ def _version(value: Any) -> str:
     return value
 
 
+# A dependency source that is not a registry version: a URL or a scheme
+# (https:, git+ssh:, github:, file:...), an scp-style git remote, a
+# host-qualified path (pnpm v6 keys such as github.com/<owner>/<repo>/<commit>),
+# or a tarball file name.
+_NON_REGISTRY_SOURCE = re.compile(
+    r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|git@)|^(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}/|\.(?:tgz|tar\.gz)$"
+)
+
+
+def _non_registry(reference: str) -> bool:
+    """Whether a pnpm package key or reference names a git, tarball or URL source.
+
+    A registry version never contains ``/`` or ``:``, so the text after the
+    package name decides: ``name@https://...``, ``name@git+ssh://...``,
+    ``github.com/owner/repo/commit`` or ``@host/file.tgz``.
+    """
+    text = reference.lstrip("/").split("(", 1)[0]
+    _, separator, rest = text[1 if text.startswith("@") else 0 :].partition("@")
+    return bool(_NON_REGISTRY_SOURCE.search(rest if separator else text))
+
+
 def _source(value: Any) -> str:
     if isinstance(value, dict):
         for kind in ("registry", "git", "url", "path", "directory", "editable", "virtual"):
@@ -130,10 +153,12 @@ def _toml_inventory(name: str, data: dict[str, Any]) -> LockInventory:
     for entry in packages:
         item = _mapping(entry)
         source = item.get("source")
+        # uv records no version for a workspace member or a dynamic version.
+        versionless = name == "uv.lock" and "version" not in item
         package = LockedPackage(
             "cargo" if name == "cargo.lock" else "pypi",
             _name(item.get("name")),
-            _version(item.get("version")),
+            None if versionless else _version(item.get("version")),
             _source(source),
         )
         if name == "uv.lock":
@@ -160,6 +185,10 @@ def _toml_inventory(name: str, data: dict[str, Any]) -> LockInventory:
             raise LockfileError("lockfile edge limit exceeded")
         result.packages.append(package)
     result.roots_known = any(p.root for p in result.packages)
+    if any(p.version is None for p in result.packages):
+        result.limitations.append(
+            "Packages without a version (workspace members, dynamic versions) are inventoried without one."
+        )
     return result
 
 
@@ -181,9 +210,16 @@ def _pnpm_reference(name: str, reference: str) -> tuple[str, str] | None:
         return None
     if reference.startswith("npm:"):
         reference = reference[4:]
-    if "@" in reference or reference.startswith("/"):
-        return _pnpm_key(reference)
-    return _name(name), _version(reference)
+    try:
+        if "@" in reference or reference.startswith("/"):
+            return _pnpm_key(reference)
+        return _name(name), _version(reference)
+    except LockfileError:
+        # A git, tarball or URL source is not inventoried, so its edge has
+        # unknown reachability; anything else is still malformed.
+        if _non_registry(reference):
+            return None
+        raise
 
 
 def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
@@ -197,12 +233,27 @@ def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
         raise LockfileError("lockfile package limit exceeded")
     grouped_snapshots: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for key, value in snapshots.items():
-        identity = _pnpm_key(key)
         record = _mapping(value)
+        try:
+            identity = _pnpm_key(key)
+        except LockfileError:
+            if not _non_registry(key):
+                raise
+            continue  # its package entry is skipped and counted below
         if "(" not in key:
             grouped_snapshots.setdefault(identity, []).append(record)
+    skipped = 0
     for key, entry in entries.items():
-        package_name, package_version = _pnpm_key(key)
+        try:
+            package_name, package_version = _pnpm_key(key)
+        except LockfileError:
+            if not _non_registry(key):
+                raise
+            # Inventory the registry packages; a git, tarball or URL source
+            # has no registry identity to report.
+            _mapping(entry)
+            skipped += 1
+            continue
         item = _mapping(entry)
         package = LockedPackage("npm", package_name, package_version, "registry")
         # v9 snapshots contain resolved edges; peer variants can share one inventory identity.
@@ -241,12 +292,16 @@ def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
     if importers:
         result.packages.append(LockedPackage("npm", "workspace", "0", "local", dependencies=roots, root=True))
         result.roots_known = True
+    if skipped:
+        result.limitations.append(
+            f"{skipped} pnpm package(s) from git, tarball or URL sources were not inventoried."
+        )
     return result
 
 
 def _relationships(result: LockInventory) -> None:
     by_name: dict[str, list[int]] = {}
-    by_id: dict[tuple[str, str], list[int]] = {}
+    by_id: dict[tuple[str, str | None], list[int]] = {}
     for number, package in enumerate(result.packages):
         by_name.setdefault(package.name, []).append(number)
         by_id.setdefault((package.name, package.version), []).append(number)
@@ -284,7 +339,10 @@ def parse_lockfile(name: str, text: str) -> LockInventory:
     except YAMLResourceLimitError:
         raise LockfileError("lockfile YAML exceeds safety limits") from None
     except (yaml.YAMLError, ValueError, TypeError):
-        raise LockfileError("lockfile is not valid YAML") from None
+        if name == "pnpm-lock.yaml":
+            raise LockfileError("lockfile is not valid YAML") from None
+        # tomllib raises ValueError for an integer past Python's digit limit.
+        raise LockfileError("lockfile is not valid TOML") from None
     except RecursionError:
         raise LockfileError("lockfile structure limit exceeded") from None
     try:

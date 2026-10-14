@@ -1060,13 +1060,20 @@ explicit roots and unambiguous package/version references (uv root packages or
 pnpm importers). Cargo and Poetry without a root manifest remain `unknown`.
 Aliases resolve to their recorded package name; workspace links, peer-qualified
 variants, remote sources, ambiguous versions, optional conditions and environment markers are not resolved.
+A pnpm package from a git, tarball or URL source (`name@https://...`,
+`name@git+ssh://...`, a v6 `github.com/<owner>/<repo>/<commit>` key) has no
+registry identity: it is skipped and counted in a limitation, its edges have
+unknown reachability, and the rest of the lockfile is inventoried. A `uv.lock`
+package without a `version` (a workspace member or a dynamic version) is
+inventoried with `version: null`.
 Nothing installs dependencies or launches a package manager. Presence in a lock
 file does not establish installation, execution, agency or authorization.
 
 Parsing is limited to the smaller of `max_file_size` and 1,000,000 UTF-8 bytes,
 4,096 packages (pnpm counts `packages` and `snapshots` entries together),
 16,384 dependency edges and 50,000 structural nodes/depth 64. A supported
-lockfile that is not inventoried (malformed or non-registry content, an
+lockfile that is not inventoried (malformed content, including a TOML integer
+past Python's digit limit, reported as `lockfile is not valid TOML`; an
 unsupported format version such as `Cargo.lock` v1/v2 or `pnpm-lock.yaml` 5.x,
 an exceeded limit, a file over `max_file_size` or a symbolic link, which is
 never followed) is reported against that lockfile with a fixed reason, for

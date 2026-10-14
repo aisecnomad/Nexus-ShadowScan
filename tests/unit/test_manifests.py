@@ -714,6 +714,19 @@ def test_lockfile_parser_resource_limits(monkeypatch):
         ("pnpm-lock.yaml", "lockfileVersion: '9.0'\npackages: [unclosed", "lockfile is not valid YAML"),
         ("pnpm-lock.yaml", "a: &a [*a]", "lockfile YAML exceeds safety limits"),
         ("Cargo.lock", "version = 4\npackage = [" + "[" * 2000 + "]" * 2000 + "]", None),
+        # Regression (#220 verifier): an integer past Python's digit limit was "not valid YAML".
+        pytest.param(
+            "uv.lock",
+            "version = 1\nsize = " + "9" * 5000,
+            "lockfile is not valid TOML",
+            id="uv-integer-digits",
+        ),
+        pytest.param(
+            "poetry.lock", "size = " + "9" * 5000, "lockfile is not valid TOML", id="poetry-integer-digits"
+        ),
+        pytest.param(
+            "Cargo.lock", "version = " + "9" * 5000, "lockfile is not valid TOML", id="cargo-integer-digits"
+        ),
     ],
 )
 def test_lockfile_parser_errors_become_fixed_reasons(name, text, reason):
@@ -747,3 +760,117 @@ snapshots:
     inventory = parse_lockfile("pnpm-lock.yaml", text)
     graph = next(p for p in inventory.packages if p.name == "@langchain/langgraph")
     assert graph.relationship == "unknown"
+
+
+_PNPM_NON_REGISTRY = {
+    "v9-codeload": """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      is-positive:
+        specifier: github:kevva/is-positive
+        version: https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678
+      openai: {specifier: ^4.0.0, version: 4.0.0}
+packages:
+  is-positive@https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678:
+    resolution: {tarball: https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678}
+    version: 3.1.0
+  openai@4.0.0:
+    resolution: {integrity: sha512-x}
+snapshots:
+  is-positive@https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678: {}
+  openai@4.0.0: {}
+""",
+    "v9-git-ssh": """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      helper: {specifier: 'git+ssh://git@github.com/example/helper.git', version: 'git+ssh://git@github.com/example/helper.git#abc123'}
+      openai: {specifier: ^4.0.0, version: 4.0.0}
+packages:
+  helper@git+ssh://git@github.com/example/helper.git#abc123:
+    resolution: {commit: abc123, repo: 'git@github.com:example/helper.git', type: git}
+    version: 1.0.0
+  openai@4.0.0:
+    resolution: {integrity: sha512-x}
+snapshots:
+  helper@git+ssh://git@github.com/example/helper.git#abc123:
+    dependencies: {openai: 4.0.0}
+  openai@4.0.0: {}
+""",
+    "v9-tarball": """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      helper: {specifier: 'https://example.invalid/helper-1.0.0.tgz', version: 'https://example.invalid/helper-1.0.0.tgz'}
+      openai: {specifier: ^4.0.0, version: 4.0.0}
+packages:
+  helper@https://example.invalid/helper-1.0.0.tgz:
+    resolution: {tarball: 'https://example.invalid/helper-1.0.0.tgz'}
+    version: 1.0.0
+  openai@4.0.0:
+    resolution: {integrity: sha512-x}
+snapshots:
+  helper@https://example.invalid/helper-1.0.0.tgz: {}
+  openai@4.0.0: {}
+""",
+    "v6-git": """lockfileVersion: '6.0'
+dependencies:
+  is-positive:
+    specifier: github:kevva/is-positive
+    version: github.com/kevva/is-positive/97edff6f525f192a3f83cea1944765f769ae2678
+  openai: {specifier: ^4.0.0, version: 4.0.0}
+packages:
+  github.com/kevva/is-positive/97edff6f525f192a3f83cea1944765f769ae2678:
+    resolution: {tarball: https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678}
+    name: is-positive
+    version: 3.1.0
+    dependencies: {openai: 4.0.0}
+  /openai@4.0.0:
+    resolution: {integrity: sha512-x}
+""",
+}
+
+
+@pytest.mark.parametrize("case", sorted(_PNPM_NON_REGISTRY))
+def test_pnpm_git_and_tarball_entries_are_skipped_not_fatal(case):
+    """Regression (#220 verifier): one git or tarball dependency rejected the whole pnpm lockfile."""
+    from shadowscan.connectors.code.lockfiles import parse_lockfile
+
+    inventory = parse_lockfile("pnpm-lock.yaml", _PNPM_NON_REGISTRY[case])
+    packages = {(p.name, p.version): p for p in inventory.packages if not p.root}
+    assert set(packages) == {("openai", "4.0.0")}
+    assert packages[("openai", "4.0.0")].relationship == "direct"
+    assert any("1 pnpm package(s) from git, tarball or URL sources" in item for item in inventory.limitations)
+    assert "example.invalid" not in str(inventory) and "kevva" not in str(inventory)
+
+
+def test_pnpm_lockfile_with_a_git_dependency_is_inventoried_by_the_scan(tmp_path, run_connector):
+    (tmp_path / "pnpm-lock.yaml").write_text(_PNPM_NON_REGISTRY["v9-codeload"])
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    (finding,) = [f for f in findings if f.resource_type == "lockfile-inventory"]
+    assert [p["name"] for p in finding.metadata["lockfile_inventory"]["matched_packages"]] == ["openai"]
+
+
+def test_uv_package_without_a_version_is_inventoried_without_one():
+    """Regression (#220 verifier): a workspace member or dynamic version rejected the whole uv.lock."""
+    from shadowscan.connectors.code.lockfiles import LockfileError, parse_lockfile
+
+    text = """version = 1
+[[package]]
+name = "agent-app"
+source = { editable = "." }
+dependencies = [{ name = "openai" }]
+[[package]]
+name = "openai"
+version = "1.40.0"
+source = { registry = "https://pypi.org/simple" }
+"""
+    inventory = parse_lockfile("uv.lock", text)
+    packages = {p.name: p for p in inventory.packages}
+    assert packages["agent-app"].version is None and packages["agent-app"].root
+    assert packages["openai"].version == "1.40.0" and packages["openai"].relationship == "direct"
+    assert any("without a version" in item for item in inventory.limitations)
+    with pytest.raises(LockfileError, match="invalid locked package version"):
+        parse_lockfile("poetry.lock", '[metadata]\nlock-version="2.0"\n[[package]]\nname="openai"\n')

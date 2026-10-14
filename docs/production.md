@@ -92,7 +92,10 @@ where the previous revision completed:
   `pnpm-lock.yaml` 5.x), over a limit or a symbolic link, when no
   `pyproject.toml`, `package.json` or `Cargo.toml` sits beside it. Beside its
   manifest the same gap is a warning naming the lockfile and the reason, and
-  the scan stays complete; earlier revisions never read these files.
+  the scan stays complete; earlier revisions never read these files. A pnpm
+  git, tarball or URL package is skipped with a limitation rather than
+  rejecting the file, and a `uv.lock` package without a version is
+  inventoried with `version: null`.
 - A malformed or over-budget n8n, Flowise or Dify graph (dangling or invalid
   connections, duplicate node names). The workflow finding is kept with
   `workflow_graph.status: incomplete`. A `null` n8n output slot is valid. A

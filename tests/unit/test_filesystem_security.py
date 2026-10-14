@@ -1550,7 +1550,8 @@ def _lockfile_warning(ctx, name):
         ("pnpm-lock.yaml", "lockfileVersion: 5.4\n", "unsupported pnpm lockfile version"),
         (
             "pnpm-lock.yaml",
-            "lockfileVersion: '9.0'\npackages:\n  app@https://example.invalid/app.tgz: {}\n",
+            # A tarball or git source is skipped (see test_manifests); a malformed version is not.
+            "lockfileVersion: '9.0'\npackages:\n  app@1.0.0/unexpected: {}\n",
             "invalid locked package version",
         ),
         ("poetry.lock", '[metadata]\nlock-version = "99"\n', "unsupported Poetry lockfile version"),
