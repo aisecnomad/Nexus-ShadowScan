@@ -552,8 +552,10 @@ def test_isolation_problems_refuse_paths_under_the_temp_dirs_the_stage_replaces(
     problems = runner.isolation_problems(
         Path("/var/tmp/shadowbench-scratch"), ToolEnv(Path("/opt/nsb"), config)
     )
-    assert any("scratch directory /var/tmp/shadowbench-scratch lies under /var/tmp" in p for p in problems)
-    assert any("tools.vet.bin = /var/tmp/tools/vet" in p for p in problems)
+    # Compared resolved, as the runner does: on macOS /var/tmp is /private/var/tmp.
+    covered = Path("/var/tmp").resolve()
+    assert any(f"scratch directory /var/tmp/shadowbench-scratch lies under {covered}" in p for p in problems)
+    assert any(f"tools.vet.bin = /var/tmp/tools/vet lies under {covered}" in p for p in problems)
 
 
 @functools.cache
