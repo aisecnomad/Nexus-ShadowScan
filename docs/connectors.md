@@ -244,10 +244,16 @@ also provide bounded AI dependency inventory, with direct/transitive relationshi
 only when their roots and edges establish them. Locked packages do not establish
 installation, execution or agency. A lockfile that cannot be inventoried is
 reported against that lockfile with a fixed reason; it leaves the scan
-incomplete only when no manifest beside it declares its dependencies. `SKILL.md` adds a bounded static instruction
-review with fixed rule explanations and locations; quoted examples and ordinary
-URLs are not direct suspicious instructions. Optional `inspect_model_artifacts`
-adds read-only, format-specific model and packaged-binary metadata inspection.
+incomplete only when no manifest beside it declares its dependencies. A pnpm
+git, tarball or URL package is skipped with a limitation, and a `uv.lock`
+package without a version is kept without one. `SKILL.md` adds a bounded static
+instruction review of the body and the front matter `name` and `description`,
+with fixed rule explanations and locations; quoted examples and ordinary URLs
+are not direct suspicious instructions, and a line over 4,096 characters is
+audited at both ends and marks the audit `partial`. Optional
+`inspect_model_artifacts` adds read-only, format-specific model and
+packaged-binary metadata inspection; GGUF vocabularies are skipped under their
+own bounds.
 See the [source guide](connectors/code.md) for supported formats and limits.
 
 Supported Go SDK import aliases are resolved before source evidence is
@@ -1206,7 +1212,10 @@ A flow is attributed by its connection identity to an AI TLS server name, or
 through unambiguous DNS answers valid at the flow time for the same client and
 compatible sensor/resolver/network context. Missing timestamps or TTLs retain
 DNS observations with explicit attribution limitations. Future or expired
-answers do not explain flows. Conflicting identities and
+answers do not explain flows. Repeated DNS answers merge into validity
+intervals per client and address; a storage bound withholds DNS attribution
+only for the affected client/address, with a limitation and a warning that
+leaves the scan complete. Conflicting identities and
 explicit non-AI TLS evidence prevent fallback attribution. Coding-agent, MCP and hosted-agent services
 are tagged `agent-service`; runs of connections to a model API seconds apart
 are tagged `agent-loop`. Malformed or unrecognized records make the scan
@@ -1242,6 +1251,8 @@ coverage and whether activity is current, historical or unknown. Unobservable
 scope does not establish dormancy. Optional `inspect_maps`, `inspect_fds` and
 allowlisted `inspect_env_keys` inspect bounded Linux process metadata; they never
 read process memory, open descriptor targets or retain environment values.
+Kernel threads are not inspected, and `ESRCH` on an unchanged process is
+recorded as `not_applicable`.
 Generic libraries, model descriptors and packaging do not establish an agent.
 
 Options: `label` (host name for records without one), `max_processes` (live
