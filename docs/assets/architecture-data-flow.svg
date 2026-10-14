@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800" role="img" aria-labelledby="title desc" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">Data flow of one Nexus ShadowScan scan</title>
+  <desc id="desc">Trusted operator inputs (signature packs, configuration, the agent registry and mapping catalogs) and untrusted scan targets (provider APIs, offline exports, repository checkouts, host and process inventories) feed one connector per surface; the engine merges, correlates, reconciles and scores the findings; reporters and the JSON report commands publish the result.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#1f7a8c"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="800" fill="#fbfaf7"/>
+  <text x="24" y="34" font-size="22" font-weight="700" fill="#17212b">One scan, end to end: evidence in, scored and registry-reconciled findings out</text>
+  <text x="24" y="58" font-size="14" fill="#4a5661">Tinted: trusted operator inputs · dashed: untrusted scan targets · arrows: data flow of one scan</text>
+
+  <!-- Untrusted scan targets -->
+  <rect x="320" y="76" width="856" height="104" rx="12" fill="none" stroke="#8a94a0" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="336" y="100" font-size="15" font-weight="700" fill="#17212b">Untrusted scan targets</text>
+  <g font-size="13" fill="#17212b">
+    <rect x="336" y="110" width="196" height="56" rx="8" fill="#ffffff" stroke="#c4ccd4"/>
+    <text x="348" y="131" font-weight="700">Provider APIs</text>
+    <text x="348" y="151">HTTPS, read-only (collect)</text>
+    <rect x="546" y="110" width="196" height="56" rx="8" fill="#ffffff" stroke="#c4ccd4"/>
+    <text x="558" y="131" font-weight="700">Offline exports</text>
+    <text x="558" y="151">JSONL · CSV · logs (input)</text>
+    <rect x="756" y="110" width="196" height="56" rx="8" fill="#ffffff" stroke="#c4ccd4"/>
+    <text x="768" y="131" font-weight="700">Repository checkouts</text>
+    <text x="768" y="151">local or cloned, never executed</text>
+    <rect x="966" y="110" width="196" height="56" rx="8" fill="#ffffff" stroke="#c4ccd4"/>
+    <text x="978" y="131" font-weight="700">Hosts and processes</text>
+    <text x="978" y="151">home dirs, /proc, inventories</text>
+  </g>
+
+  <!-- Trusted operator inputs -->
+  <rect x="24" y="200" width="272" height="560" rx="12" fill="#e3eef9" stroke="#9db9d6"/>
+  <text x="40" y="226" font-size="15" font-weight="700" fill="#17212b">Trusted operator inputs</text>
+  <g font-size="13" fill="#17212b">
+    <rect x="40" y="240" width="240" height="92" rx="8" fill="#ffffff" stroke="#9db9d6"/>
+    <text x="52" y="261" font-weight="700">Signature packs</text>
+    <text x="52" y="281">YAML: frameworks, providers,</text>
+    <text x="52" y="299">protocols, agents, platforms,</text>
+    <text x="52" y="317">identity apps, permission policies</text>
+    <rect x="40" y="348" width="240" height="74" rx="8" fill="#ffffff" stroke="#9db9d6"/>
+    <text x="52" y="369" font-weight="700">Configuration</text>
+    <text x="52" y="389">shadowscan.yaml, credentials</text>
+    <text x="52" y="407">from the environment, risk policy</text>
+    <rect x="40" y="438" width="240" height="74" rx="8" fill="#ffffff" stroke="#9db9d6"/>
+    <text x="52" y="459" font-weight="700">Agent registry</text>
+    <text x="52" y="479">Agent Cards or CSV: the agents</text>
+    <text x="52" y="497">you approved, with their owners</text>
+    <rect x="40" y="528" width="240" height="74" rx="8" fill="#ffffff" stroke="#9db9d6"/>
+    <text x="52" y="549" font-weight="700">Mapping catalogs</text>
+    <text x="52" y="569">YAML threat and control references</text>
+    <text x="52" y="587">(OWASP, MITRE ATLAS, controls)</text>
+  </g>
+
+  <!-- Connectors -->
+  <rect x="320" y="200" width="856" height="236" rx="12" fill="#ffffff" stroke="#8a94a0" stroke-width="1.5"/>
+  <text x="336" y="226" font-size="15" font-weight="700" fill="#17212b">Connectors, one per surface (plus allow-listed plugins)</text>
+  <g font-size="13" fill="#17212b">
+    <rect x="336" y="240" width="270" height="44" rx="8" fill="#efe6fb" stroke="#c9b6e8"/>
+    <text x="348" y="258" font-weight="700">code</text><text x="348" y="276">repositories, manifests, configs, keys</text>
+    <rect x="616" y="240" width="270" height="44" rx="8" fill="#e4f5ea" stroke="#a9dcbd"/>
+    <text x="628" y="258" font-weight="700">identity</text><text x="628" y="276">OAuth apps, service principals, JWTs</text>
+    <rect x="896" y="240" width="266" height="44" rx="8" fill="#fde8e6" stroke="#f0b6b1"/>
+    <text x="908" y="258" font-weight="700">gateway</text><text x="908" y="276">LLM gateway logs, OTel GenAI spans</text>
+    <rect x="336" y="292" width="270" height="44" rx="8" fill="#e8f1e4" stroke="#b7d3ab"/>
+    <text x="348" y="310" font-weight="700">lowcode</text><text x="348" y="328">platform agents and AI flows</text>
+    <rect x="616" y="292" width="270" height="44" rx="8" fill="#ebe7fa" stroke="#c0b6ea"/>
+    <text x="628" y="310" font-weight="700">saas</text><text x="628" y="328">bots, apps, scopes, install requests</text>
+    <rect x="896" y="292" width="266" height="44" rx="8" fill="#fdf1dc" stroke="#ecd09a"/>
+    <text x="908" y="310" font-weight="700">cloud</text><text x="908" y="328">managed AI, IAM, workload exports</text>
+    <rect x="336" y="344" width="270" height="44" rx="8" fill="#e3eef9" stroke="#9db9d6"/>
+    <text x="348" y="362" font-weight="700">endpoint</text><text x="348" y="380">AI clients, MCP servers, model stores</text>
+    <rect x="616" y="344" width="270" height="44" rx="8" fill="#e9f4f6" stroke="#a9d1d9"/>
+    <text x="628" y="362" font-weight="700">network</text><text x="628" y="380">DNS, TLS and flow logs</text>
+    <rect x="896" y="344" width="266" height="44" rx="8" fill="#f3f3e6" stroke="#d2d2a6"/>
+    <text x="908" y="362" font-weight="700">runtime</text><text x="908" y="380">running processes</text>
+    <text x="336" y="416" font-size="13" fill="#4a5661">each: collect() live or load_offline() export → records → analyze() against the signature index → findings with evidence</text>
+  </g>
+
+  <!-- Engine -->
+  <rect x="320" y="470" width="856" height="150" rx="12" fill="#ffffff" stroke="#8a94a0" stroke-width="1.5"/>
+  <text x="336" y="496" font-size="15" font-weight="700" fill="#17212b">Engine</text>
+  <text x="400" y="496" font-size="13" fill="#4a5661">supervised jobs: bounded worker pool, a deadline per connector, isolated plugins, incremental cache</text>
+  <g font-size="13" fill="#17212b">
+    <rect x="336" y="512" width="150" height="56" rx="8" fill="#fdf1dc" stroke="#ecd09a"/>
+    <text x="348" y="533" font-weight="700">Merge</text><text x="348" y="553">stable identity</text>
+    <rect x="506" y="512" width="150" height="56" rx="8" fill="#fdf1dc" stroke="#ecd09a"/>
+    <text x="518" y="533" font-weight="700">Correlate</text><text x="518" y="553">across surfaces</text>
+    <rect x="676" y="512" width="150" height="56" rx="8" fill="#fdf1dc" stroke="#ecd09a"/>
+    <text x="688" y="533" font-weight="700">Reconcile</text><text x="688" y="553">registry: shadow?</text>
+    <rect x="846" y="512" width="150" height="56" rx="8" fill="#fdf1dc" stroke="#ecd09a"/>
+    <text x="858" y="533" font-weight="700">Assess</text><text x="858" y="553">autonomy tier</text>
+    <rect x="1016" y="512" width="146" height="56" rx="8" fill="#fdf1dc" stroke="#ecd09a"/>
+    <text x="1028" y="533" font-weight="700">Score</text><text x="1028" y="553">risk × confidence</text>
+    <g stroke="#1f7a8c" stroke-width="2" marker-end="url(#arrow)">
+      <line x1="486" y1="540" x2="504" y2="540"/><line x1="656" y1="540" x2="674" y2="540"/>
+      <line x1="826" y1="540" x2="844" y2="540"/><line x1="996" y1="540" x2="1014" y2="540"/>
+    </g>
+    <text x="336" y="600" font-size="13" fill="#4a5661">fail closed: an API error, a timeout, a limit or a malformed export marks the scan incomplete (exit 3) · LLM triage is opt-in and advisory</text>
+  </g>
+
+  <!-- Outputs -->
+  <rect x="320" y="654" width="856" height="106" rx="12" fill="#ffffff" stroke="#8a94a0" stroke-width="1.5"/>
+  <text x="336" y="680" font-size="15" font-weight="700" fill="#17212b">Outputs, written atomically with private file modes</text>
+  <g font-size="13" fill="#17212b">
+    <rect x="336" y="694" width="372" height="52" rx="8" fill="#f1f5f9" stroke="#c4ccd4"/>
+    <text x="348" y="714" font-weight="700">Reports</text>
+    <text x="348" y="734">table · json · sarif · csv · markdown · html · cyclonedx · ocsf</text>
+    <rect x="720" y="694" width="190" height="52" rx="8" fill="#f1f5f9" stroke="#c4ccd4"/>
+    <text x="732" y="714" font-weight="700">Record dumps</text>
+    <text x="732" y="734">sanitized, credentials redacted</text>
+    <rect x="922" y="694" width="240" height="52" rx="8" fill="#f1f5f9" stroke="#c4ccd4"/>
+    <text x="934" y="714" font-weight="700">JSON report commands</text>
+    <text x="934" y="734">diff · merge · dashboard · controls</text>
+  </g>
+
+  <!-- Flows -->
+  <g stroke="#1f7a8c" stroke-width="2.5" fill="none" marker-end="url(#arrow)">
+    <line x1="748" y1="180" x2="748" y2="198"/>
+    <line x1="748" y1="436" x2="748" y2="468"/>
+    <line x1="748" y1="620" x2="748" y2="652"/>
+    <line x1="280" y1="286" x2="318" y2="286"/>
+    <line x1="280" y1="385" x2="318" y2="385"/>
+    <path d="M280 475 L306 475 L306 540 L318 540"/>
+    <path d="M280 565 L300 565 L300 720 L318 720"/>
+  </g>
+  <g font-size="12" fill="#1f7a8c">
+    <text x="758" y="194">records</text>
+    <text x="758" y="456">findings with evidence</text>
+    <text x="758" y="640">ScanResult</text>
+    <text x="238" y="618">to reporters</text>
+  </g>
+</svg>

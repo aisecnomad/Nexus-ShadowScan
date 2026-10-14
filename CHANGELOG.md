@@ -5,6 +5,19 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### README banner and data-flow diagram (October 14)
+
+- The README opens with a banner and the "How it works" section carries a
+  data-flow diagram, both plain SVG source files under `docs/assets/` with
+  no version, count or repository slug in the pixels, referenced by absolute
+  URL so the package index renders them. Carried from #222, whose binary
+  assets are not: its diagrams described six surfaces and 27 connectors, its
+  banner the former repository name and a version, and its benchmark images
+  gave named third-party tools recall figures and letter grades that match
+  no committed result (#199 removed vendor grades deliberately). The
+  README's benchmark table, checked against the committed metrics, stays
+  the only benchmark statement.
+
 ### Bounded discovery evidence and attribution (October 14)
 
 - Low-code: shared exact node semantics and bounded, cycle-safe graph reachability
@@ -68,8 +81,11 @@ and #204, into one design. Rollout and migration notes are in the
   bound is stored in evidence weights, so merging duplicate observations
   reproduces it, and a generic AI-name hint stays separate so it never lowers a
   score. In the bundled demo, five findings change risk score, all within their
-  previous severity level; the demo stays at 133 findings (16 critical, 63
-  high, 54 medium).
+  previous severity level, and this change alone keeps the demo at 133
+  findings (16 critical, 63 high, 54 medium); the bounded-evidence change
+  above then removes the one flow finding that borrowed another client's
+  expired DNS answer, so the integrated demo reports 132 findings (16
+  critical, 62 high, 54 medium).
 - Correlation: `metadata.related` holds only exact identifier links, with
   `metadata.related_details` provenance (identifier type, fields, scope).
   Fully qualified ARNs, GCP resource names, Azure resource IDs and OCI OCIDs

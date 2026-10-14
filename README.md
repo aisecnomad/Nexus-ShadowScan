@@ -9,6 +9,8 @@
 [![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/docs)
 [![PyPI: NexusShadowScan](https://img.shields.io/pypi/v/NexusShadowScan.svg)](https://pypi.org/project/NexusShadowScan/)
 
+![Nexus ShadowScan: open-source discovery of AI agents across code, identity, gateways, low-code, SaaS, cloud, endpoints, network logs and running processes, reconciled against the agent registry you supply](https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/hero-banner.svg)
+
 **Nexus ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
 | GitHub repository | PyPI distribution | Command and Python package |
@@ -222,6 +224,13 @@ producing a smaller report that looks clean. Only the opt-in LLM triage is
 advisory; its failures are warnings. See
 [architecture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md)
 for the pipeline, the package layout and the connector contract.
+
+![Data flow of one scan: trusted signature packs, configuration, the agent registry and mapping catalogs on the left; untrusted provider APIs, offline exports, repository checkouts and host inventories feeding one connector per surface; the engine merging, correlating, reconciling, assessing and scoring; reports, sanitized record dumps and the JSON report commands](https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/architecture-data-flow.svg)
+
+The diagram is a source file,
+[`docs/assets/architecture-data-flow.svg`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/assets/architecture-data-flow.svg);
+it names surfaces and stages, never counts or versions, so it stays true as
+connectors and signatures are added. Edit it with the pipeline it describes.
 
 ## Surfaces & connectors
 

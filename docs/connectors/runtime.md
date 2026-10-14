@@ -116,7 +116,7 @@ PID is required. Statuses are `ok`, `not_requested`, `denied`, `unreadable` or
 `truncated`; indicators require `ok` for their respective source. Optional
 `observed_at` is an ISO timestamp. Offline replay does no live inspection and
 needs no inspection options. See the synthetic
-[inspection fixture](https://github.com/aisecnomad/Project-Nexus/blob/main/tests/fixtures/runtime/inspection.jsonl).
+[inspection fixture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tests/fixtures/runtime/inspection.jsonl).
 
 ### Lifecycle corroboration
 
