@@ -493,18 +493,52 @@ def test_cloudtrail_ambiguous_sessions_and_conflicting_event_ids_do_not_bind(ind
     assert findings[0].metadata["cloudtrail_lineage"]["observations"][0]["assumption"] is None
 
 
-def test_cloudtrail_lineage_limits_and_invalid_times_are_explicit(index, monkeypatch):
-    from shadowscan.connectors.cloud import aws_lineage
-
-    monkeypatch.setattr(aws_lineage, "MAX_LINEAGE_EVENTS", 1)
-    assumption, invocation, _ = _lineage_records()
-    findings, ctx = _lineage(index, [assumption, invocation])
-    assert findings and ctx.stats.incomplete
-    assert "event-limit" in findings[0].metadata["cloudtrail_lineage"]["limits"]
+def test_cloudtrail_lineage_invalid_times_are_explicit(index):
+    _, invocation, _ = _lineage_records()
     invocation["eventTime"] = "not-a-time"
     findings, ctx = _lineage(index, [invocation])
     assert ctx.stats.incomplete
     assert "invalid-timestamp" in findings[0].metadata["cloudtrail_lineage"]["limits"]
+
+
+def test_cloudtrail_event_limit_is_per_principal_and_bounds_ancestry_not_the_scan(index, monkeypatch):
+    from shadowscan.connectors.cloud import aws_lineage
+
+    monkeypatch.setattr(aws_lineage, "MAX_LINEAGE_EVENTS", 1)
+    assumption, invocation, _ = _lineage_records()
+    # One retained event per principal: the assumption and the invocation are different principals.
+    findings, ctx = _lineage(index, [assumption, invocation])
+    assert not ctx.stats.incomplete
+    assert findings[0].metadata["cloudtrail_lineage"]["coverage"] == "export-observations-only"
+    second = {**invocation, "eventID": "another-call", "eventTime": "2026-01-01T00:20:00Z"}
+    findings, ctx = _lineage(index, [assumption, invocation, second])
+    assert not ctx.stats.incomplete
+    assert any("events per principal" in warning for warning in ctx.stats.warnings)
+    finding = findings[0]
+    assert finding.metadata["events"] == 2  # the invocation tally is never bounded
+    lineage = finding.metadata["cloudtrail_lineage"]
+    assert lineage["coverage"] == "partial" and "event-limit" in lineage["limits"]
+    assert [o["assumption_status"] for o in lineage["observations"]] == ["linked"]
+    assert any("per-principal retention limit" in text for text in lineage["limitations"])
+
+
+def test_cloudtrail_event_limit_on_an_ancestor_marks_the_descendant_session_partial(index, monkeypatch):
+    from shadowscan.connectors.cloud import aws_lineage
+
+    monkeypatch.setattr(aws_lineage, "MAX_LINEAGE_EVENTS", 1)
+    path = Path(__file__).parents[1] / "fixtures/cloud/lineage/assumed_chain.jsonl"
+    root, assumption, invocation = (json.loads(line) for line in path.read_text().splitlines())
+    repeat = {**root, "eventID": "root-assumption-18", "eventTime": "2025-12-31T23:55:00Z"}
+    findings, ctx = _lineage(index, [root, repeat, assumption, invocation])
+    assert not ctx.stats.incomplete
+    lineage = findings[0].metadata["cloudtrail_lineage"]
+    (observation,) = lineage["observations"]
+    assert observation["chain_status"] == "observed-origin" and len(observation["assumption_chain"]) == 2
+    # The origin's dropped event could have changed the chain, so the descendant is partial too.
+    assert lineage["coverage"] == "partial" and "event-limit" in lineage["limits"]
+    findings, ctx = _lineage(index, [root, assumption, invocation])
+    lineage = findings[0].metadata["cloudtrail_lineage"]
+    assert lineage["coverage"] == "export-observations-only" and "event-limit" not in lineage["limits"]
 
 
 def test_cloudtrail_per_caller_limit_preserves_counts_but_reports_partial_provenance(index, monkeypatch):
