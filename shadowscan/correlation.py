@@ -98,6 +98,34 @@ _GCP_SERVICE_ACCOUNT_DOMAIN = ".gserviceaccount.com"
 _GCP_SERVICE_ACCOUNT = re.compile(
     r"[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+gserviceaccount\.com"
 )
+# Code evidence locations are repository paths ("projects/api/src/main.py:12").
+# A code finding's value is a GCP resource name only when it names a valid
+# project id or number, then a GCP collection, and carries no line suffix.
+_GCP_PROJECT = re.compile(
+    r"[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,19}|[a-z0-9.-]{1,63}:[a-z][a-z0-9-]{4,28}[a-z0-9]"
+)
+_GCP_COLLECTIONS = frozenset(
+    {
+        "agent",
+        "alertPolicies",
+        "databases",
+        "datasets",
+        "global",
+        "instances",
+        "locations",
+        "notificationChannels",
+        "regions",
+        "repos",
+        "secrets",
+        "serviceAccounts",
+        "sinks",
+        "snapshots",
+        "subscriptions",
+        "topics",
+        "zones",
+    }
+)
+_LINE_SUFFIX = re.compile(r":[0-9]+(?::[0-9]+)?$")
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 _PATTERN_CHARACTER = re.compile(r"[*?\[\]]")
 _SPACE_OR_PATTERN = re.compile(r"[\s*?\[\]]")
@@ -139,7 +167,9 @@ def _qualified_prefix(value: str) -> bool:
 
 
 @lru_cache(maxsize=65536)
-def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
+def _global_resource(
+    value: str, repository: bool = False
+) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
     """Recognize fully qualified resource references; return their type, comparison key and scope.
 
     The identifier itself is the scope: an ARN, a GCP resource name, an Azure
@@ -153,7 +183,9 @@ def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]]
     them case-insensitively and reports one resource in different casings (a
     lowercased role-assignment scope, an uppercased diagnostic-log resource
     id), so they are compared lowercased. Findings keep the spelling they
-    reported.
+    reported. A ``repository`` value comes from a code finding, whose locations
+    are file paths: there a ``projects/`` path is a GCP resource name only in
+    the strict form above.
     """
     if _SPACE_OR_PATTERN.search(value):
         return None
@@ -187,6 +219,12 @@ def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]]
             # The address identifies the account; "-" (any project) is a valid spelling.
             return account
         if components[1] in {"-", ".", ".."} or any(p in {".", ".."} for p in components):
+            return None
+        if repository and (
+            not _GCP_PROJECT.fullmatch(components[1])
+            or components[2] not in _GCP_COLLECTIONS
+            or _LINE_SUFFIX.search(value)
+        ):
             return None
         scope = {"provider": "gcp", "account": components[1]}
         if len(components) >= 6 and components[2] in {"locations", "regions"}:
@@ -271,6 +309,7 @@ def _correlation_keys(findings: list[Finding]) -> tuple[_Groups, _Groups]:
         declared = _declared_scope(finding)
         if declared is None:
             continue
+        repository = finding.surface == Surface.CODE
         identifiers: list[tuple[str, object]] = [("resource", finding.resource)]
         identifiers.extend((f"metadata.{key}", finding.metadata.get(key)) for key in _IDENTITY_KEYS)
         identifiers.extend(
@@ -282,7 +321,7 @@ def _correlation_keys(findings: list[Finding]) -> tuple[_Groups, _Groups]:
             value = _identity_text(raw)
             if value is None:
                 continue
-            qualified = _global_resource(value)
+            qualified = _global_resource(value, repository)
             if qualified is None and _qualified_prefix(value):
                 continue
             if qualified is not None:

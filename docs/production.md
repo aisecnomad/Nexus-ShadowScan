@@ -1298,7 +1298,12 @@ or in `projects/<project>/serviceAccounts/<address>`) is one global identifier
 too: a Vertex AI caller in one project links exactly to the service account
 another project defines, which a declared project conflict used to block
 entirely. Lookalike addresses outside `gserviceaccount.com`, or with upper-case
-letters, stay local identifiers in their project.
+letters, stay local identifiers in their project. Code findings report
+repository paths, so two monorepos that both hold `projects/api/src/main.py`
+no longer link as one GCP resource: from code, a `projects/` path is a GCP
+resource name only with a valid project id or number, a GCP collection after
+it (such as `locations`, `secrets` or `serviceAccounts`) and no `:<line>`
+suffix.
 Azure resource ids compare case-insensitively, as Azure Resource Manager
 treats them, so a role assignment whose scope ARM returns lowercased still
 links to the resource listing; the findings keep the spelling they reported.

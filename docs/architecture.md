@@ -107,7 +107,10 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       GCP resource name, an Azure resource id, an OCI OCID) carries its own
       account or project. A GCP service account address, bare or as
       `projects/<project>/serviceAccounts/<address>`, names one service
-      account wherever it is used, so it links across projects. Identifiers
+      account wherever it is used, so it links across projects. Code
+      findings report repository paths, so there a `projects/` path is a GCP
+      resource name only with a valid project id or number, a GCP collection
+      after it and no `:<line>` suffix. Identifiers
       are compared byte for byte, except Azure resource ids, which Azure
       Resource Manager treats case-insensitively and which are compared in
       ASCII lowercase. Shared AWS catalog ARNs (AWS-managed policies, Bedrock

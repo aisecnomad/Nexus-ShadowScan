@@ -16,6 +16,7 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 ROOT = Path(__file__).resolve().parents[2]
 
 ARN = "arn:aws:bedrock:us-east-1:123456789012:agent/Agent-A"
+SERVICE_ACCOUNT = "crew-runner@shared-ml-a.iam.gserviceaccount.com"
 
 
 def finding(**kwargs) -> Finding:
@@ -332,6 +333,58 @@ def test_global_iac_reference_links_without_code_account(resource, provider, acc
     assert details["matches"][0]["scope"]["provider"] == provider
 
 
+def _code(connector: str, resource: str, location: str) -> Finding:
+    return finding(
+        surface=Surface.CODE,
+        connector=connector,
+        kind=Kind.INFRA,
+        resource=resource,
+        resource_type="iac",
+        provider="github",
+        account=None,
+        region=None,
+        evidence=[Evidence("file:langchain", "Framework import", location=location)],
+    )
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "projects/api/src/main.py:12",
+        "projects/backend/src/main.py",
+        "projects/backend-api/locations/main.py:7",
+        "projects/api/locations/us/agents/a",
+    ],
+)
+def test_repository_paths_under_projects_are_not_gcp_resource_names(location):
+    """Two monorepos with the same projects/ layout share a file path, not a GCP resource."""
+    # A scan root named "projects" gives code resources the same shape.
+    left = _code("code.filesystem", "projects/api/src/main.py", location)
+    right = _code("code.github", "github:acme/other/projects/api/src/main.py", location)
+    correlate([left, right])
+    for item in (left, right):
+        assert not any(key.startswith("related") for key in item.metadata)
+
+
+def test_code_references_to_gcp_resource_names_still_link():
+    name = "projects/project-1/locations/europe-west1/agents/Agent-A"
+    live = finding(resource=name, provider="gcp", account="project-1", region="europe-west1")
+    for location in (
+        name,
+        f"projects/project-1/serviceAccounts/{SERVICE_ACCOUNT}",
+        "projects/123456/secrets/x",
+    ):
+        code = _code("code.filesystem", "github:acme/infra/main.tf", location)
+        live.resource = location
+        correlate([live, code])
+        assert live.metadata["related"] == [code.id]
+    # The strict form is for code: a non-code finding's GCP name parses as before.
+    synthetic = "projects/acme-ml/iam/serviceAccount:runner@acme-ml.iam.gserviceaccount.com"
+    left, right = finding(resource=synthetic), peer(resource=synthetic)
+    correlate([left, right])
+    assert left.metadata["related"] == [right.id]
+
+
 def test_arn_reference_can_link_principal_to_iam_identity_but_not_wrong_account():
     left = finding(resource="arn:aws:iam::123456789012:role/AgentRole", region=None)
     right = peer(resource="cloudtrail:caller", region=None, metadata={"principal": left.resource})
@@ -344,9 +397,6 @@ def test_arn_reference_can_link_principal_to_iam_identity_but_not_wrong_account(
     right.metadata["principal"] = "arn:aws:iam::999999999999:role/AgentRole"
     correlate([left, right])
     assert "related" not in left.metadata
-
-
-SERVICE_ACCOUNT = "crew-runner@shared-ml-a.iam.gserviceaccount.com"
 
 
 def test_gcp_service_account_links_to_its_caller_in_another_project(tmp_path, run_connector):
