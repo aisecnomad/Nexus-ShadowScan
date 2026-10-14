@@ -1104,6 +1104,9 @@ no longer grows with the number of reply URLs.
 with `metadata.related_details` describing the identifier type, matching
 fields and scope. A fully qualified ARN, GCP resource name, Azure resource id
 or OCI OCID links on its own: a cross-account caller ARN is the same principal.
+AWS-managed policy ARNs (`arn:aws:iam::aws:policy/...`) and Bedrock
+foundation-model ARNs are shared by every account and relate no findings,
+exactly or as candidates; accountless S3 bucket and Route 53 ARNs still link.
 An Entra application id links exactly across `app_id`, `client_id`, a Teams
 `bot_id` and an Azure Bot `msa_app_id` only when both findings declare the same
 Entra tenant; other local identifiers need a shared declared tenant, workspace,
