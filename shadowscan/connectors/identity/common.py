@@ -30,12 +30,18 @@ def assess_app(
     auth_method: str | None = None,
     aliases: Iterable[str] = (),
 ) -> None:
-    """Apply name / domain / scope / client-id signatures to an OAuth app finding.
+    """Apply identity-app signals, retaining display-name hits as weak evidence.
 
     ``aliases`` are other spellings of the name, such as an app slug with its
-    hyphens read as spaces; each signature still counts once.
+    hyphens read as spaces; each signature still counts once. A name, publisher
+    label, or description cannot establish a product without corroborating
+    domain, client-id, or scope evidence.
     """
-    apply_matches(finding, name_matches(index, name, *aliases, publisher, description))
+    apply_matches(
+        finding,
+        name_matches(index, name, *aliases, publisher, description),
+        establish=False,
+    )
     apply_matches(finding, domain_matches(index, *urls), weight_scale=0.8)
     if client_id:
         apply_matches(finding, index.match_client_id(client_id))

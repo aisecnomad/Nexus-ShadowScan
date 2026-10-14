@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -14,7 +15,12 @@ from shadowscan.connectors.saas.teams import TeamsConnector
 from shadowscan.engine import Engine
 from shadowscan.merge import merge
 
-SLACK_APP = {"_kind": "approved_app", "app": {"id": "A1", "name": "Claude"}, "scopes": []}
+REPOSITORY = Path(__file__).resolve().parents[2]
+SLACK_APP = {
+    "_kind": "approved_app",
+    "app": {"id": "A1", "name": "Claude", "app_homepage_url": "https://claude.ai"},
+    "scopes": [],
+}
 TEAMS_APP = {
     "_kind": "teamsApp",
     "id": "valid-app",
@@ -29,6 +35,38 @@ def scan(tmp_path, connector, records, **settings):
     return Engine(
         ScanConfig(connectors=[ConnectorSpec(connector, {"input": str(source), **settings})], parallel=1)
     ).run()
+
+
+def scan_path(connector: str, path: str, **settings):
+    source = REPOSITORY / "benchmarks" / "shadowbench" / "estate" / "artifacts" / path
+    return Engine(
+        ScanConfig(connectors=[ConnectorSpec(connector, {"input": str(source), **settings})], parallel=1)
+    ).run()
+
+
+def test_notion_non_ai_jira_sync_bot_is_not_reported():
+    result = scan_path("saas.notion", "saas/notion_users.json")
+    assert result.complete
+    assert not any(
+        "vantorjirasync" in "".join(char for char in finding.resource + finding.title if char.isalnum()).lower()
+        for finding in result.findings
+    )
+
+
+def test_generic_gemini_exchange_name_is_not_a_google_ai_signal():
+    result = scan_path("saas.generic", "saas/generic_apps.csv", platform="identity")
+    assert result.complete
+    assert not any(
+        "geminiexchangeportal"
+        in "".join(char for char in finding.resource + finding.title if char.isalnum()).lower()
+        for finding in result.findings
+    )
+
+
+def test_slack_wudpecker_catalogue_app_is_detected_by_immutable_id():
+    result = scan_path("saas.slack", "saas/slack.json")
+    assert result.complete
+    assert any(finding.resource == "slack:app:A0WD5WDPKR" for finding in result.findings)
 
 
 def test_slack_same_app_in_same_named_workspaces_stays_separate(tmp_path):

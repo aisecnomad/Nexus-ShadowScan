@@ -190,8 +190,9 @@ def apply_matches(
             # potential metadata while scoring only the matched code signal.
             for cap in m.capabilities() if signature_capabilities else m.signal.capabilities:
                 finding.add_capability(cap)
-        for t in sig.tags:
-            finding.add_tag(t)
+        if establish:
+            for t in sig.tags:
+                finding.add_tag(t)
         if establish and m.agent_indicator and (indicator_filter is None or indicator_filter(m)):
             indicators += 1
         key = f"{sig.id}|{m.signal.type}"

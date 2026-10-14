@@ -240,6 +240,9 @@ signatures:
       - type: domain
         values: [otter.ai, "*.otter.ai", fireflies.ai, "*.fireflies.ai", read.ai, "*.read.ai", fathom.video, "*.fathom.video", tldv.io, "*.tldv.io", gong.io, "*.gong.io", avoma.com, fellow.app, grain.com, "*.grain.com", krisp.ai, sembly.ai, supernormal.com, circleback.ai, granola.ai, meetgeek.ai, bluedothq.com]
         weight: 0.9
+      - type: client_id
+        names: [A0WD5WDPKR]
+        weight: 0.9
 
   - id: identity-app.writing-assistants
     name: AI writing assistants (Grammarly, Jasper, Writer, Copy.ai, QuillBot, Wordtune, DeepL Write, Notion AI, Gamma, Tome, Beautiful.ai)

@@ -20,7 +20,12 @@ def _slack_response(path: str, params=None):
     if path == "/users.list":
         return {"ok": True, "members": []}
     if path == "/admin.apps.approved.list":
-        return {"ok": True, "approved_apps": [{"app": {"id": "A1", "name": "Claude"}, "scopes": []}]}
+        return {
+            "ok": True,
+            "approved_apps": [
+                {"app": {"id": "A1", "name": "Claude", "app_homepage_url": "https://claude.ai"}, "scopes": []}
+            ],
+        }
     if path == "/admin.apps.restricted.list":
         return {"ok": True, "restricted_apps": []}
     if path == "/admin.apps.requests.list":
@@ -256,7 +261,7 @@ def test_slack_later_transport_or_parse_failure_preserves_collected_bot(index, m
                         "id": "U1",
                         "name": "Claude",
                         "is_bot": True,
-                        "profile": {"api_app_id": "A1", "real_name": "Claude"},
+                        "profile": {"api_app_id": "A0WD5WDPKR", "real_name": "Wudpecker"},
                     }
                 ],
             },
@@ -264,7 +269,7 @@ def test_slack_later_transport_or_parse_failure_preserves_collected_bot(index, m
         },
     )
     (finding,) = connector.run()
-    assert finding.resource == "slack:app:A1"
+    assert finding.resource == "slack:app:A0WD5WDPKR"
     assert "/admin.apps.restricted.list" in calls
     assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
     assert "sensitive-provider-message" not in str(connector.ctx.stats.warnings)
@@ -302,7 +307,7 @@ def test_slack_non_dict_list_entries_are_skipped_not_fatal(run_connector):
             "ok": True,
             "members": [
                 "garbage",
-                {"id": "U1", "is_bot": True, "profile": {"api_app_id": "A1", "real_name": "Otter.ai"}},
+                {"id": "U1", "is_bot": True, "profile": {"api_app_id": "A0WD5WDPKR", "real_name": "Wudpecker"}},
             ],
         },
     )
@@ -312,7 +317,10 @@ def test_slack_non_dict_list_entries_are_skipped_not_fatal(run_connector):
             "ok": True,
             "approved_apps": [
                 42,
-                {"app": {"id": "A2", "name": "ChatGPT"}, "scopes": [{"name": "chat:write"}]},
+                {
+                    "app": {"id": "A2", "name": "ChatGPT", "app_homepage_url": "https://chatgpt.com"},
+                    "scopes": [{"name": "chat:write"}],
+                },
             ],
         },
     )
@@ -322,7 +330,7 @@ def test_slack_non_dict_list_entries_are_skipped_not_fatal(run_connector):
         f"{api}/team.integrationLogs", json={"ok": True, "logs": ["garbage"], "paging": {"pages": 1}}
     )
     findings, ctx = run_connector("saas.slack", token="xoxb-synthetic-test-token-000000")
-    assert {f.title for f in findings} == {"Slack app (bot): Otter.ai", "Slack app: ChatGPT"}
+    assert {f.title for f in findings} == {"Slack app (bot): Wudpecker", "Slack app: ChatGPT"}
     assert not ctx.stats.errors and ctx.stats.incomplete
 
 
@@ -334,14 +342,14 @@ def test_record_of_another_workspace_is_skipped_not_scan_wide(run_connector, tmp
             "id": "U1",
             "is_bot": True,
             "team_id": "T0AAA",
-            "profile": {"api_app_id": "A1", "real_name": "OpenAI ChatGPT Bot"},
-            "name": "chatgpt",
+            "profile": {"api_app_id": "A0WD5WDPKR", "real_name": "Wudpecker"},
+            "name": "wudpecker",
         },
         {
             "id": "U2",
             "is_bot": True,
             "team_id": "T0ZZZ",
-            "profile": {"api_app_id": "A1", "real_name": "Some Connect Bot"},
+            "profile": {"api_app_id": "A0WD5WDPKR", "real_name": "Some Connect Bot"},
             "name": "connect",
         },
         {
@@ -355,7 +363,7 @@ def test_record_of_another_workspace_is_skipped_not_scan_wide(run_connector, tmp
     export = tmp_path / "slack.json"
     export.write_text(json.dumps(records))
     findings, ctx = run_connector("saas.slack", input=str(export))
-    assert [f.resource for f in findings] == ["slack:app:A1"]
+    assert [f.resource for f in findings] == ["slack:app:A0WD5WDPKR"]
     assert findings[0].metadata["workspace_name"] == "Acme"
     assert ctx.stats.incomplete and not ctx.stats.errors
     assert ctx.stats.warnings == [
