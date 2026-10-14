@@ -1067,7 +1067,8 @@ revision and a fresh baseline does not need them.
 ### October 14 detection precision, ambiguous app names and scoped correlation (unreleased)
 
 These changes can remove findings, lower confidence and risk, and add new
-findings. Rescan affected sources and rebuild comparison baselines under the
+findings. Finding ids do not change, except for `gateway.logs` sources that set
+the new `internal_model_hosts` option. Rescan affected sources and rebuild comparison baselines under the
 reviewed revision: scanner-source and signature fingerprints change. A finding
 or technology label that disappears after the upgrade does not establish that
 an agent was removed or stopped running.
@@ -1090,9 +1091,10 @@ is split, so an AI host listed second is still found.
 established AI product, provider, LLM-access permission, Entra agent identity
 or registry record now has its non-AI observations bounded at 0.35 as one
 group. Machine identities kept by policy remain in the report at that ceiling,
-so their confidence and risk fall; for example, two machine identities in the
-bundled demo drop from risk 69 to 61 and from 65 to 58, and one unattributed
-SaaS app from 47 to 41, all within their previous severity levels. Domain
+so their confidence and risk fall. In the bundled demo five findings change:
+three machine identities drop from risk 69 to 61, 65 to 58 and 40 to 37, and
+two unattributed SaaS apps from 47 to 41 and 53 to 50, all within their
+previous severity levels. Domain
 matches are counted once per app across all of its URLs, so `agent_indicators`
 no longer grows with the number of reply URLs.
 
