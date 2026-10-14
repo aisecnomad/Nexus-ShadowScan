@@ -29,12 +29,17 @@ _LIMITATIONS = (
 # Front matter fields a skill loader places in the agent's context every session.
 _AUDITED_FRONT_MATTER = ("name", "description")
 _OVERLONG = (
-    "Lines over 4,096 characters were audited only in their first and last 4,096 characters; "
-    "the rest of each such line was not inspected."
+    "Sentences over 4,096 characters were audited only in their first and last 4,096 characters; "
+    "the rest of each such sentence was not inspected."
 )
 _INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")
 _PREFIX = re.compile(r"^(?:[-+*]\s+|\d{1,6}[.)]\s+|<[^>\n]{1,80}>\s*)*")
-_QUOTED = re.compile(r"`[^`\n]*`|\"[^\"\n]*\"|(?<!\w)'[^'\n]*'|“[^”\n]*”|‘[^’\n]*’")
+# A quoted span runs from an opening mark to the next closing mark on the line:
+# `...`, "...", '...' (opened outside a word), “...” or ‘...’.
+_QUOTE_OPENER = re.compile(r"[`\"“‘]|(?<!\w)'")
+_QUOTE_CLOSER = {"`": "`", '"': '"', "'": "'", "“": "”", "‘": "’"}
+# Where an overlong line is split for auditing: after sentence punctuation.
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?;])\s+")
 _DIRECT = r"(?:^|[.!?;]\s+)(?:please\s+)?"
 _OVERRIDE = re.compile(
     _DIRECT + r"(?:ignore|disregard|override)\s+(?:all\s+|the\s+)?"
@@ -169,36 +174,84 @@ def audit_skill_text(text: str) -> InstructionAudit:
     return InstructionAudit(tuple(indicators), incomplete, tuple(limitations), partial)
 
 
+def _strip_quoted(line: str) -> str:
+    """Replace each quoted span of one line with a space, in linear time.
+
+    A span runs from an opening mark to the next closing mark: `...`, "...",
+    '...' opened outside a word, “...” or ‘...’; an opener without a closer
+    after it is left as text. The equivalent regex alternation retries every
+    unmatched opener against the rest of the line, which is quadratic for a
+    long run of “ without ”. A closing mark missing after one opener is
+    missing after every later one, so each kind is searched to the end of
+    the line at most once.
+    """
+    parts: list[str] = []
+    position = 0
+    missing: set[str] = set()
+    for match in _QUOTE_OPENER.finditer(line):
+        start = match.start()
+        closer = _QUOTE_CLOSER[match.group()]
+        if start < position or closer in missing:
+            continue
+        end = line.find(closer, start + 1)
+        if end < 0:
+            missing.add(closer)
+            continue
+        parts.append(line[position:start])
+        parts.append(" ")
+        position = end + 1
+    parts.append(line[position:])
+    return "".join(parts)
+
+
 def _audit_text_line(
     raw_line: str, line_number: int, indicators: list[InstructionIndicator], counts: dict[str, int]
 ) -> bool:
-    """Audit one line; return whether it was overlong, so only its two ends were audited.
+    """Audit one line; return whether part of it was outside the audited bounds.
 
-    Regex work per line stays bounded: a line over ``MAX_LINE_CHARACTERS`` is
-    audited in its first and last ``MAX_LINE_CHARACTERS`` characters.
+    A line up to ``MAX_LINE_CHARACTERS`` is audited whole. A longer line is
+    normalized once (quoted spans and invisible characters removed, both in
+    linear time) and audited sentence by sentence: a rule matches only at
+    the start of the line or after sentence punctuation and whitespace, and
+    no rule body contains that punctuation, so no match spans two sentences.
+    Auditing only the two ends of the line let an instruction in its middle
+    pass as a clean, complete scan. Only a single sentence over
+    ``MAX_LINE_CHARACTERS`` is audited in its first and last
+    ``MAX_LINE_CHARACTERS`` characters, which marks the audit partial.
     """
-    overlong = len(raw_line) > MAX_LINE_CHARACTERS
-    segments = [raw_line[:MAX_LINE_CHARACTERS], raw_line[-MAX_LINE_CHARACTERS:]] if overlong else [raw_line]
+    line = raw_line.strip()
+    obfuscated = _INVISIBLE.search(line) is not None
+    normalized = _PREFIX.sub("", _INVISIBLE.sub("", _strip_quoted(line))).strip()
     found: set[str] = set()
-    for segment in segments:
-        _audit_line(segment.strip(), line_number, found, indicators, counts)
-    return overlong
+    if len(raw_line) <= MAX_LINE_CHARACTERS:
+        _audit_line(normalized, obfuscated, line_number, found, indicators, counts)
+        return False
+    partial = False
+    for sentence in _SENTENCE_BREAK.split(normalized):
+        if len(sentence) > MAX_LINE_CHARACTERS:
+            partial = True
+            pieces = [sentence[:MAX_LINE_CHARACTERS], sentence[-MAX_LINE_CHARACTERS:].strip()]
+        else:
+            pieces = [sentence]
+        for piece in pieces:
+            _audit_line(piece, obfuscated, line_number, found, indicators, counts)
+    return partial
 
 
 def _audit_line(
-    line: str,
+    normalized: str,
+    obfuscated: bool,
     line_number: int,
     found: set[str],
     indicators: list[InstructionIndicator],
     counts: dict[str, int],
 ) -> None:
-    """Apply the instruction rules to one stripped line (or segment of one).
+    """Apply the instruction rules to one normalized line (or sentence of one).
 
-    ``found`` holds the rules already recorded for this line, so the two ends
-    of an overlong line report a rule once.
+    ``found`` holds the rules already recorded for this line, so the
+    sentences of an overlong line report a rule once. ``obfuscated``: the
+    line held invisible characters before they were removed.
     """
-    normalized = _INVISIBLE.sub("", _QUOTED.sub(" ", line))
-    normalized = _PREFIX.sub("", normalized).strip()
     hit = False
     for rule, pattern, description in _RULES:
         if pattern.search(normalized):
@@ -207,7 +260,7 @@ def _audit_line(
                 indicators.append(InstructionIndicator(rule, line_number, description))
                 counts[rule] = counts.get(rule, 0) + 1
             found.add(rule)
-    if hit and _INVISIBLE.search(line) and not counts.get("obfuscated-instruction"):
+    if hit and obfuscated and not counts.get("obfuscated-instruction"):
         indicators.append(
             InstructionIndicator(
                 "obfuscated-instruction", line_number, "Invisible controls occur in a direct instruction"

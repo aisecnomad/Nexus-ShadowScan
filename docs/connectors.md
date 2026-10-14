@@ -246,11 +246,12 @@ installation, execution or agency. A lockfile that cannot be inventoried is
 reported against that lockfile with a fixed reason; it leaves the scan
 incomplete only when no manifest beside it declares its dependencies. A pnpm
 git, tarball, URL or local package and a `uv.lock` package without a version
-are inventoried by name with `version: null` and a limitation. `SKILL.md` adds a bounded static
-instruction review of the body and the front matter `name` and `description`,
-with fixed rule explanations and locations; quoted examples and ordinary URLs
-are not direct suspicious instructions, and a line over 4,096 characters is
-audited at both ends and marks the audit `partial`. Optional
+are inventoried by name with `version: null` and a limitation. `SKILL.md` adds
+a bounded static instruction review of the body and the front matter `name`
+and `description`, with fixed rule explanations and locations; quoted examples
+and ordinary URLs are not direct suspicious instructions, and a line over 4,096
+characters is audited sentence by sentence; only a sentence over 4,096
+characters is audited at both ends and marks the audit `partial`. Optional
 `inspect_model_artifacts` adds read-only, format-specific model and
 packaged-binary metadata inspection; GGUF vocabularies are skipped under their
 own bounds.

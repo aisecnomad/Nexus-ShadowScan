@@ -195,7 +195,8 @@ excerpts. Quoted text, fenced code, YAML front matter other than `name` and
 audit. An audit indicator also raises the
 `tool-poisoning` tag; an audit that finds nothing never removes it.
 Descriptions exceeding 64 KiB, malformed front matter and unclosed fences
-mark coverage incomplete. A line over 4,096 characters is audited in its first
+mark coverage incomplete. A line over 4,096 characters is audited sentence by
+sentence; only a single sentence over 4,096 characters is audited in its first
 and last 4,096 characters and marks the audit `partial`, not the scan
 incomplete. Tool definitions are fingerprinted
 for downstream comparison, but baseline/rug-pull detection is not yet implemented. No tool is

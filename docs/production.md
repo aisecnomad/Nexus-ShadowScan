@@ -119,9 +119,14 @@ where the previous revision completed:
   `metadata.command_lines_truncated`.
 - `SKILL.md` and MCP description audits over 64 KiB, with malformed front
   matter or an unclosed fence. A line over 4,096 characters does not end the
-  scan incomplete: its first and last 4,096 characters are audited and the
-  audit is marked `partial` (`static_instruction_audit.partial`, status
-  `partial` when nothing was found).
+  scan incomplete: it is audited sentence by sentence, so an instruction in
+  its middle is reported. Only a single sentence over 4,096 characters is
+  audited in its first and last 4,096 characters and marks the audit
+  `partial` (`static_instruction_audit.partial`, status `partial` when
+  nothing was found). Earlier revisions audited only the two ends of the
+  line, so a long line that hid an instruction in its middle, and that the
+  audit marked `partial`, now reports `indicators-observed`, and a long line
+  of short sentences is no longer `partial`.
 - Network records with a malformed observation context, TTL, timestamp or JA4
   value, or over 32 DNS answers. Flow attribution is then withheld only for
   the client the record names, or for the whole input when the client is

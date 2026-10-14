@@ -922,9 +922,12 @@ line, with zero-weight evidence and no excerpts. The front matter `name` and
 session, are audited with the same rules and reported at their key's line;
 other front matter fields are not. Quoted examples, fenced and indented code,
 block quotes and explicit prohibitions are excluded. An audited line over
-4,096 characters is audited in its first and last 4,096 characters; its
-middle is not, so the audit is marked `partial: true` (status `partial` when
-nothing was found) and the scan stays complete. Text over 64 KiB, malformed
+4,096 characters is audited sentence by sentence (the rules match only at a
+line start or after sentence punctuation), so an instruction in its middle is
+reported. A single sentence over 4,096 characters is audited in its first and
+last 4,096 characters; its middle is not, so the audit is marked
+`partial: true` (status `partial` when nothing was found) and the scan stays
+complete. Text over 64 KiB, malformed
 or oversized YAML front matter and an unclosed fence make the audit and the
 scan incomplete.
 
