@@ -3223,6 +3223,22 @@ class FilesystemConnector(BaseConnector):
                 self._file_errors(rel, manifest.errors)
                 if manifest.lockfile is not None:
                     self._lockfile_inventory(scan, rel, manifest.lockfile)
+            if self.scan_secrets and not self.triage:
+                # A lockfile is a read file: the credential pass covers it
+                # like any other text. A pinned registry or source URL can
+                # embed a token that the dependency inventory never retains.
+                file = _SourceFile(
+                    rel=rel,
+                    path=path,
+                    proj_root=proj_root,
+                    proj=proj,
+                    text=text,
+                    lang=lang,
+                    file_matches=file_matches,
+                )
+                file.structure, file.structure_strict = self._structure_for(rel, text)
+                file.excerpts = _ExcerptSource(rel, path, text, file.structure)
+                self._detect_secrets(scan, file)
             return
         nul_text = None
         if "\x00" in text and path.suffix.lower() != ".ipynb":

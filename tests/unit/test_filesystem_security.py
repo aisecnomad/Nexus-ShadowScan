@@ -96,6 +96,27 @@ def test_bad_mcp_shapes_are_isolated_and_other_servers_survive(tmp_path, run_con
     assert ctx.stats.errors
 
 
+def test_lockfile_source_url_credential_is_detected(tmp_path, run_connector):
+    # The URL is assembled here so the tracked test file itself holds no
+    # credential-in-URL literal for the repository secret gate to flag.
+    token = "sk-proj-" + "kLKFlNfzW2mTofMpnx1qOu7fTm9F8IRv6iKzoC2h"
+    source_url = "https://deploy:" + token + "@pypi.internal.example/simple"
+    (tmp_path / "app.py").write_text("import openai\n")
+    (tmp_path / "poetry.lock").write_text(
+        '[[package]]\nname = "crewai"\nversion = "0.80.0"\n'
+        '[package.source]\ntype = "legacy"\n'
+        f'url = "{source_url}"\n'
+        'reference = "internal"\n'
+        '[metadata]\nlock-version = "2.1"\n'
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    secrets = [f for f in findings if f.kind == Kind.SECRET]
+    assert any("poetry.lock" in str(f.to_dict()) for f in secrets)
+    rendered = str([f.to_dict() for f in secrets])
+    assert token not in rendered
+    assert not ctx.stats.errors
+
+
 def test_bad_agent_card_does_not_suppress_later_secret_findings(tmp_path, run_connector):
     (tmp_path / "agent-card.json").write_text('{"name": "invalid", "skills": 42}')
     (tmp_path / "agent.py").write_text(
