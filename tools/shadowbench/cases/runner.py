@@ -266,11 +266,13 @@ def isolation_problems(scratch: Path, env: ToolEnv) -> list[str]:
 
     The stage also replaces ``/var/tmp`` and ``/dev/shm`` with an empty tmpfs, which hides them alike.
     """
-    hidden = [Path(p).resolve() for p in (*HIDDEN, *PRIVATE_TMP)]
+    # Compare resolved paths (macOS keeps /var/tmp as a link to /private/var/tmp),
+    # but name the hidden directory as the stage configures it.
+    hidden = [(Path(p), Path(p).resolve()) for p in (*HIDDEN, *PRIVATE_TMP)]
 
     def hidden_root(path: Path) -> Path | None:
         resolved = path.resolve()
-        return next((h for h in hidden if resolved.is_relative_to(h)), None)
+        return next((name for name, root in hidden if resolved.is_relative_to(root)), None)
 
     problems: list[str] = []
     covered = hidden_root(scratch)
