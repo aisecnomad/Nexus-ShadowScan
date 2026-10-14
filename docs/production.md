@@ -120,10 +120,11 @@ where the previous revision completed:
   audit is marked `partial` (`static_instruction_audit.partial`, status
   `partial` when nothing was found).
 - Network records with a malformed observation context, TTL, timestamp or JA4
-  value, or over 32 DNS answers. A malformed context or JA4 value in a DNS or
-  TLS record, or an answer list over 32, withholds flow attribution only for
-  the client the record names, or for the whole input when the client is
-  unknown; reaching `max_records` withholds it for the whole input. A
+  value, or over 32 DNS answers. A malformed context in any record other
+  than a VPC flow record, an invalid JA4 value, or an answer list over 32
+  withholds flow attribution only for the client the record names, or for the
+  whole input when the client is unknown; reaching `max_records` withholds it
+  for the whole input. A
   malformed TTL or timestamp keeps the record with that field unknown and
   does not withhold attribution for its client (see the network guide).
 - CloudTrail exports with invalid timestamps or conflicting event IDs.
