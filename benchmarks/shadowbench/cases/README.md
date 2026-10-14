@@ -192,13 +192,17 @@ Per tool, per surface and per modality, over the cases the tool ran
 
 The scorer also checks what it is given. The run manifest must name the
 SHA-256 of the corpus file being scored, because case ids are positional;
-every `<tool>.jsonl` must belong to a tool the manifest records as run; and
-the row statuses in each file must add up to the counts the manifest recorded.
-Each of these is refused unless `score --force` is given, and a forced score
-lists every override in `metrics.json` and at the top of the report. Malformed
-rows are refused even with `--force`: an unknown status, a second row for a
-case, a case the corpus does not have, a row whose tool, surface, modality,
-family, label or difficulty disagrees with its file or case, and an
+every `<tool>.jsonl` must belong to a tool the manifest records as run; the
+row statuses in each file must add up to the counts the manifest recorded; and
+each file's SHA-256 must be the one the manifest recorded for it. Each of these
+is refused unless `score --force` is given, and a forced score lists every
+override in `metrics.json` and at the top of the report. A manifest written
+before the runner recorded digests, the 2026-10-11 one included, binds its rows
+only by their status counts, which an edited or swapped file can keep; the
+report says so, and `metrics.json` lists those tools under `rows_unbound`.
+Malformed rows are refused even with `--force`: an unknown status, a second
+row for a case, a case the corpus does not have, a row whose tool, surface,
+modality, family, label or difficulty disagrees with its file or case, and an
 `unsupported` row beside `ok` or `error` rows on the same surface and modality.
 
 ## How the corpus is built, and how to check it
@@ -393,7 +397,8 @@ differ below the pinned tools.
 Committed runs live under `results/<date>/` with `manifest.json` (corpus path
 and hash, generator digest, platform, and per tool its version and row-status
 counts; from the current runner on, also the harness commit and whether
-anything under `tools/` differed from it, which the report then names), one
+anything under `tools/` differed from it, which the report then names, and
+each results file's SHA-256), one
 `<tool>.jsonl` of normalized rows, `metrics.json` and `REPORT.md`. The
 runner's raw output stays on the machine that ran it and is not committed.
 The newest `REPORT.md` holds the measured numbers; read them with the caveats

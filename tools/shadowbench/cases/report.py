@@ -130,6 +130,15 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         "results describe how each tool behaves on these inputs, not field precision or recall."
     )
     lines.append("")
+    unbound = metrics.get("rows_unbound") or []
+    if unbound:
+        whose = "any" if set(unbound) >= set(metrics["tools"]) else "the"
+        names = "" if whose == "any" else " of " + ", ".join(f"`{name}`" for name in unbound)
+        lines.append(
+            f"The manifest records no SHA-256 of {whose} results file{names}, so those rows are bound to the "
+            "run only by their per-status row counts, which an edited or swapped file can keep."
+        )
+        lines.append("")
     # every forced override is listed, the corpus digest mismatch among them
     forced = metrics.get("forced") or []
     if forced:

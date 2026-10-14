@@ -46,9 +46,10 @@ cannot build the static inert binary that live-runtime cases spawn.
 ``manifest.json`` records the corpus path and SHA-256, the generator digest,
 the platform, the harness commit (``harness_commit``, the checkout's ``HEAD``,
 null when git cannot name it) and whether ``tools/`` differs from that commit
-(``harness_dirty``, null when unknown), and per tool its version and row-status
-counts. A tool's version is the ``version`` string its ``tools.json`` entry
-gives, recorded as given, or else what its adapter's ``version()`` probes.
+(``harness_dirty``, null when unknown), and per tool its version, row-status
+counts and the SHA-256 of its ``<tool>.jsonl`` (``rows_sha256``). A tool's
+version is the ``version`` string its ``tools.json`` entry gives, recorded as
+given, or else what its adapter's ``version()`` probes.
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ from __future__ import annotations
 import argparse
 import errno
 import gzip
+import hashlib
 import json
 import os
 import platform
@@ -576,6 +578,7 @@ def run_tool(
         "version": tool_version(adapter, env),
         "seconds": round(time.time() - started, 1),
         "statuses": statuses,
+        "rows_sha256": hashlib.sha256(rows_path.read_bytes()).hexdigest(),
     }
 
 

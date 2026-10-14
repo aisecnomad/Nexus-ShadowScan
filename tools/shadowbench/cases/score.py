@@ -9,10 +9,15 @@ positional, so results recorded against another corpus (another seed, an
 edited rubric) would be scored against the wrong truth. Each ``<tool>.jsonl``
 must belong to a tool the manifest records as run (the runner never clears its
 output directory, and ``--only`` rewrites the manifest with the tools it ran,
-so files left from another run must not be scored), and the row statuses in
-the file must add up to the counts the manifest recorded for that tool (a
-truncated, swapped or missing file does not). Each of these is refused unless
-``--force`` is given, and a forced score records every override. A row with a
+so files left from another run must not be scored), the row statuses in the
+file must add up to the counts the manifest recorded for that tool (a
+truncated or missing file does not), and the file's SHA-256 must be the
+``rows_sha256`` the manifest recorded for it (an edited or swapped file is
+not). Each of these is refused unless ``--force`` is given, and a forced score
+records every override. A manifest written before the runner recorded digests,
+the committed 2026-10-11 run's among them, binds its rows only by their status
+counts, which another run of the same tool on the same corpus can match; such
+tools are listed in ``rows_unbound``. A row with a
 status other than ``ok``, ``error`` or ``unsupported``, a second row for the
 same case, a row for a case the corpus does not have, a row whose tool is not
 the file's, a row whose surface, modality, family, label or difficulty
@@ -91,6 +96,7 @@ incomplete row adds only the entities it did call agents to the universe.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -476,10 +482,12 @@ def load_rows(results: Path, corpus: Corpus) -> dict[str, dict[str, dict[str, An
 
 
 def _provenance(
-    rows: dict[str, dict[str, dict[str, Any]]], tool_runs: dict[str, Any]
-) -> tuple[set[str], list[str]]:
-    """The tools the manifest says ran, and every way the results files disagree with the manifest."""
+    rows: dict[str, dict[str, dict[str, Any]]], tool_runs: dict[str, Any], results: Path
+) -> tuple[set[str], list[str], list[str]]:
+    """The tools the manifest says ran, every way the results files disagree with it, and the
+    tools whose results file it records no digest of."""
     problems: list[str] = []
+    unbound: list[str] = []
     ran: set[str] = set()
     for name, run in tool_runs.items():
         if not isinstance(run, dict):
@@ -503,7 +511,13 @@ def _provenance(
                 f"{tool}.jsonl: row statuses {dict(sorted(found.items()))} differ from the "
                 f"{dict(sorted(recorded.items()))} the manifest recorded"
             )
-    return ran, problems
+        digest = run.get("rows_sha256")
+        path = results / f"{tool}.jsonl"
+        if digest is None:
+            unbound.append(tool)
+        elif not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            problems.append(f"{tool}.jsonl: its SHA-256 is not the one the manifest recorded ({digest})")
+    return ran, problems, unbound
 
 
 def score(
@@ -544,7 +558,7 @@ def score(
     tool_runs = manifest.get("tools", {})
     if not isinstance(tool_runs, dict):
         raise ResultsError(f"{manifest_path}: tools must be a JSON object")
-    ran, problems = _provenance(rows, tool_runs)
+    ran, problems, unbound = _provenance(rows, tool_runs, results)
     withheld, unloaded = withheld_decoys(sorted(set(rows) | ran))
     for problem in problems + unloaded:
         refuse_unless_forced(problem)
@@ -553,6 +567,7 @@ def score(
         "corpus_sha256_now": corpus_sha256,
         "corpus_mismatch_forced": recorded != corpus_sha256,
         "forced": forced,
+        "rows_unbound": unbound,
         "generator_digest": corpus.generator_digest,
         "manifest": {k: v for k, v in manifest.items() if k != "tools"},
         "tool_runs": tool_runs,
@@ -640,8 +655,8 @@ def main(argv: list[str] | None = None) -> int:
         "--force",
         action="store_true",
         help="score results the manifest does not vouch for: another corpus digest, a results file for "
-        "a tool it does not record as run, or row statuses that differ from its counts (recorded in the "
-        "metrics)",
+        "a tool it does not record as run, row statuses that differ from its counts, or a results file "
+        "whose SHA-256 differs from the one it recorded (recorded in the metrics)",
     )
     args = ap.parse_args(argv)
     corpus = load_corpus(args.corpus)

@@ -3,6 +3,17 @@
  "corpus_sha256_now": "5997346ad000a0639709718b66743bb794d5f53faff3c2f38e78dbcc8ba36663",
  "corpus_mismatch_forced": false,
  "forced": [],
+ "rows_unbound": [
+  "agentdiscover",
+  "agentmesh-discovery",
+  "ai-infra-guard",
+  "cisco-mcp-scanner",
+  "fleet-ai-tools",
+  "numbat",
+  "shadowscan",
+  "snyk-agent-scan",
+  "vet"
+ ],
  "generator_digest": "9a825de5273a7fa8e42c26f2c224e19ee5e86e7f88cf5b7f2bb5e5b47519241e",
  "manifest": {
   "started": "2026-10-11T18:10:09+00:00",

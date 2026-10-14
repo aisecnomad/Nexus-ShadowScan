@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -255,6 +256,14 @@ def test_run_tool_records_the_configured_version_else_the_probe(
     summary = runner.run_tool(adapter, [], env, out, 1, tmp_path, ROOT, tmp_path / "fakeproc", None)  # type: ignore[arg-type]
     assert summary["version"] == recorded
     assert adapter.probes == probes
+
+
+def test_run_tool_records_the_digest_of_the_rows_it_wrote(tmp_path: Path) -> None:
+    """The manifest vouched only for status counts, which an edited or swapped file can keep."""
+    env = ToolEnv(tmp_path, {"tools": {"probed": {"bin": "/opt/probed", "version": "1"}}})
+    out = tmp_path / "out"
+    summary = runner.run_tool(_Probed(), [], env, out, 1, tmp_path, ROOT, tmp_path / "fakeproc", None)  # type: ignore[arg-type]
+    assert summary["rows_sha256"] == hashlib.sha256((out / "probed.jsonl").read_bytes()).hexdigest()
 
 
 def _installed_tools_json(root: Path) -> dict[str, Any]:

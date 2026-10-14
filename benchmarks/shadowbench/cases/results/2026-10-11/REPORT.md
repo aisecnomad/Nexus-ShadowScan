@@ -4,6 +4,8 @@ Corpus: 346 cases on 9 surfaces carrying 738 expected entities and 735 decoys (S
 
 Ground truth is generated from written rubrics with per-entity evidence (see the README). It is author-written and synthetic, not independent human review and not a sample of any real estate; the results describe how each tool behaves on these inputs, not field precision or recall.
 
+The manifest records no SHA-256 of any results file, so those rows are bound to the run only by their per-status row counts, which an edited or swapped file can keep.
+
 ## Headline
 
 | Tool | Version | Surfaces | Estate recall | In-scope entity P / R / F1 | Specificity on decoys | Agent recall | Agent false alarms | Case-level balanced accuracy | Errors | Incomplete | Seconds median / p90 |

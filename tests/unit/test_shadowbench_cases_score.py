@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from collections.abc import Iterable
@@ -207,6 +208,49 @@ def test_a_results_file_truncated_after_the_run_is_refused_unless_forced(
     t = metrics["tools"]["t"]
     assert (t["in_scope"]["missing"], t["estate"]["recall"]) == (2, 0.5)
     assert len(metrics["forced"]) == 1
+
+
+def _bind(results: Path, tool: str) -> None:
+    """Record ``<tool>.jsonl``'s SHA-256 in the manifest, as the runner now does."""
+    manifest = json.loads((results / "manifest.json").read_text(encoding="utf-8"))
+    digest = hashlib.sha256((results / f"{tool}.jsonl").read_bytes()).hexdigest()
+    manifest["tools"][tool]["rows_sha256"] = digest
+    (results / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_rows_edited_after_the_run_are_refused_when_the_manifest_records_their_digest(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Clearing a row's false positives kept its status, so the status counts vouched for the edit."""
+    pos = _case("p1", expected=[("app:1", "agent")])
+    neg = _case("n1", decoys=["app:d1"])
+    rows = [_row(pos, keys=["app:1"]), _row(neg, keys=["app:d1"])]
+    corpus_path, results = _write(tmp_path, [pos, neg], {"t": rows})
+    _bind(results, "t")
+    assert _score(tmp_path, corpus_path, results)["rows_unbound"] == []
+    (tmp_path / "metrics.json").unlink()
+    edited = [rows[0], _row(neg)]
+    (results / "t.jsonl").write_text(
+        "".join(json.dumps({"tool": "t", **r}) + "\n" for r in edited), encoding="utf-8"
+    )
+    assert "t.jsonl: its SHA-256 is not the one the manifest recorded" in _refused(
+        tmp_path, corpus_path, results, capsys
+    )
+    metrics = _score(tmp_path, corpus_path, results, "--force")
+    assert len(metrics["forced"]) == 1
+
+
+def test_rows_of_a_manifest_without_digests_are_reported_as_unbound(tmp_path: Path) -> None:
+    case = _case("p1", expected=[("app:1", "agent")])
+    rows = [_row(case, keys=["app:1"])]
+    corpus_path, results = _write(tmp_path, [case], {"shadowscan": rows, "t": rows})
+    _bind(results, "shadowscan")
+    metrics = _score(tmp_path, corpus_path, results)
+    assert metrics["rows_unbound"] == ["t"]
+    text = report.render(metrics, corpus_path)
+    assert "The manifest records no SHA-256 of the results file of `t`" in text
+    _bind(results, "t")
+    assert "SHA-256 of the results" not in report.render(_score(tmp_path, corpus_path, results), corpus_path)
 
 
 def test_a_tool_the_manifest_ran_without_a_results_file_is_refused_unless_forced(
