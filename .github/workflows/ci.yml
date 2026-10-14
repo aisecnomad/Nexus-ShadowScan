@@ -56,7 +56,7 @@ jobs:
           # The runtime lock lists every published wheel hash, so the cloud SDKs
           # install from it here too and the suite exercises their code paths on
           # this platform as well.
-          python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements.lock
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
       - name: Check native file confinement and plugin worker lifecycle
