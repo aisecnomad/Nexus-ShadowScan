@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -205,14 +206,18 @@ def test_report_names_the_recorded_harness_revision(fields: dict[str, Any], sent
     assert "`HEAD`" not in text
 
 
-def test_report_of_the_committed_run_names_no_harness_commit() -> None:
-    """The committed manifest predates the fields; its re-rendered report must not change."""
+def test_report_of_the_committed_run_says_its_rows_predate_the_harness_fields() -> None:
+    """The committed manifest predates the fields, and its report carried only the generic caveat."""
     committed = json.loads((RUN / "metrics.json").read_text(encoding="utf-8"))
     assert "harness_commit" not in committed["manifest"]
     assert "harness_commit" not in json.loads((RUN / "manifest.json").read_text(encoding="utf-8"))
     text = report.render(committed, CASES / "corpus.json")
     assert text == (RUN / "REPORT.md").read_text(encoding="utf-8")
-    assert "harness commit" not in text
+    first = text.split("\n\n")[1]
+    assert first.startswith("Corpus: ")
+    for words in ("predates the harness fields", "earlier adapters", "as root", "revised after the run"):
+        assert words in first, words
+    assert "harness commit `" not in text
 
 
 # --- tool versions: a version in tools.json is recorded for every tool alike ----------------------
@@ -253,6 +258,14 @@ def test_run_tool_records_the_configured_version_else_the_probe(
     assert adapter.probes == probes
 
 
+def test_run_tool_records_the_digest_of_the_rows_it_wrote(tmp_path: Path) -> None:
+    """The manifest vouched only for status counts, which an edited or swapped file can keep."""
+    env = ToolEnv(tmp_path, {"tools": {"probed": {"bin": "/opt/probed", "version": "1"}}})
+    out = tmp_path / "out"
+    summary = runner.run_tool(_Probed(), [], env, out, 1, tmp_path, ROOT, tmp_path / "fakeproc", None)  # type: ignore[arg-type]
+    assert summary["rows_sha256"] == hashlib.sha256((out / "probed.jsonl").read_bytes()).hexdigest()
+
+
 def _installed_tools_json(root: Path) -> dict[str, Any]:
     """The tools.json ``install_tools.sh`` writes under ``root``, read from the script, never run."""
     script = INSTALL.read_text(encoding="utf-8")
@@ -282,3 +295,37 @@ def test_installed_versions_reach_the_manifest_without_a_probe(
         if name == "shadowscan":
             continue  # runs from the operator's checkout; install_tools.sh writes no entry for it
         assert runner.tool_version(adapters[name], env) == run["version"], name
+
+
+@needs_git
+def test_shadowscan_version_marks_a_scanner_with_uncommitted_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run of a locally modified shadowscan/ package, the reference tool, read exactly like the clean commit."""
+    from tools.shadowbench.cases.adapters import shadowscan
+
+    repo = tmp_path / "checkout"
+    (repo / "shadowscan").mkdir(parents=True)
+    (repo / "shadowscan" / "__init__.py").write_text("V = 1\n", encoding="utf-8")
+    (repo / "README.md").write_text("x\n", encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "fixture")
+    short = _git(repo, "rev-parse", "--short=12", "HEAD")
+    printed = subprocess.CompletedProcess([], 0, stdout="shadowscan 0.1.2\n", stderr="")
+    monkeypatch.setattr(shadowscan, "run_probe", lambda *args, **kwargs: printed)
+    env = ToolEnv(tmp_path, {"tools": {"shadowscan": {"bin": "/opt/nsb/venv/bin/python", "repo": str(repo)}}})
+    assert shadowscan.ADAPTER.version(env) == f"0.1.2+{short}"
+    (repo / "README.md").write_text("changed outside the scanner\n", encoding="utf-8")
+    assert shadowscan.ADAPTER.version(env) == f"0.1.2+{short}"
+    (repo / "shadowscan" / "extra.py").write_text("", encoding="utf-8")  # untracked, but importable
+    assert shadowscan.ADAPTER.version(env) == f"0.1.2+{short}-dirty"
+    (repo / "shadowscan" / "extra.py").unlink()
+    (repo / "shadowscan" / "__init__.py").write_text("V = 2\n", encoding="utf-8")
+    assert shadowscan.ADAPTER.version(env) == f"0.1.2+{short}-dirty"
+    # A probe that failed printed an error, whose last word is no version.
+    failed = subprocess.CompletedProcess(
+        [], 1, stdout="", stderr="ModuleNotFoundError: No module named 'rich'\n"
+    )
+    monkeypatch.setattr(shadowscan, "run_probe", lambda *args, **kwargs: failed)
+    assert shadowscan.ADAPTER.version(env) == "unknown"

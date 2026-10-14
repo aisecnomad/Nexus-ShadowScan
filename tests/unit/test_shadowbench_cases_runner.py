@@ -283,7 +283,9 @@ def test_stage_runs_in_its_own_process_group_and_dies_with_unshare(
 ) -> None:
     runner._stage({"work": str(tmp_path), "invocations": []}, tmp_path, ROOT, 30)
     (call,) = fake_popen.calls
-    assert {"--net", "--pid", "--fork", "--kill-child", "--mount", "--mount-proc"} <= set(call["args"])
+    assert {"--net", "--pid", "--fork", "--kill-child", "--mount", "--mount-proc", "--ipc"} <= set(
+        call["args"]
+    )
     assert call["start_new_session"] is True
 
 
@@ -450,6 +452,55 @@ def test_materialize_refuses_files_beside_a_checkout(tmp_path: Path) -> None:
     assert not (outside / "planted.txt").exists()
 
 
+def _gitlink(repo: Path, path: str) -> None:
+    """Commit a submodule entry at ``path`` and leave its directory empty, as a checkout does."""
+
+    def git(*args: str) -> None:
+        cmd = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        subprocess.run([*cmd, "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+
+    git("update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},{path}")
+    git("commit", "-q", "-m", "submodule")
+    (repo / path).mkdir(parents=True)
+
+
+@needs_git
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ("untracked", "differs from"),
+        ("ignored", "differs from"),
+        ("modified", "differs from"),
+        ("gitlink", "populated submodule"),
+    ],
+)
+def test_materialize_refuses_a_checkout_with_more_than_its_pinned_commit(
+    tmp_path: Path, change: str, problem: str
+) -> None:
+    """A checkout at the pinned HEAD was copied verbatim, with whatever else its directory held."""
+    checkouts = tmp_path / "checkouts"
+    repo = checkouts / "pinned"
+    _git_repo(repo, {"README.md": "x\n", ".gitignore": "build/\n"})
+    _gitlink(repo, "vendor/sub")
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    case = _case(surface="code", modality="checkout", checkout={"id": "pinned", "commit": commit})
+    mat = runner.materialize(case, tmp_path / "clean", checkouts)
+    assert (mat.inputs / "repo" / "README.md").read_text(encoding="utf-8") == "x\n"
+    planted = {
+        "untracked": repo / "injected.py",
+        "ignored": repo / "build" / "injected.py",
+        "modified": repo / "README.md",
+        "gitlink": repo / "vendor" / "sub" / "injected.py",
+    }[change]
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text("import langchain\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match=problem):
+        runner.materialize(case, tmp_path / "case", checkouts)
+    assert not (tmp_path / "case" / "inputs" / "repo").exists()
+
+
 def test_materialize_never_writes_through_a_symlink(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -492,6 +543,17 @@ def test_isolation_problems_refuse_hidden_paths() -> None:
     assert any("scratch directory /root/shadowbench-scratch" in p for p in problems)
     assert any("tools.shadowscan.repo = /home/op/Project-Nexus" in p for p in problems)
     assert not any("tools.shadowscan.bin" in p for p in problems)
+
+
+@pytest.mark.skipif(not os.path.isdir("/var/tmp"), reason="needs /var/tmp")
+def test_isolation_problems_refuse_paths_under_the_temp_dirs_the_stage_replaces() -> None:
+    """The stage mounts an empty tmpfs over /var/tmp and /dev/shm, which would hide a run's tree there."""
+    config = {"tools": {"vet": {"bin": "/var/tmp/tools/vet"}}}
+    problems = runner.isolation_problems(
+        Path("/var/tmp/shadowbench-scratch"), ToolEnv(Path("/opt/nsb"), config)
+    )
+    assert any("scratch directory /var/tmp/shadowbench-scratch lies under /var/tmp" in p for p in problems)
+    assert any("tools.vet.bin = /var/tmp/tools/vet" in p for p in problems)
 
 
 @functools.cache
@@ -1014,3 +1076,110 @@ def test_run_one_reads_tool_output_only_after_removing_planted_links(scratch: Pa
     assert seen == {"leak": False, "fifo": False}
     assert "2 unsafe" in row["note"]
     assert list(scratch.glob("fake-*")) == []
+
+
+PLANTER = r"""
+import os, sys
+fds = [os.open(path, os.O_RDONLY | os.O_DIRECTORY) for path in sys.argv[2:]]
+print("ready", flush=True)
+sys.stdin.readline()
+for fd in fds:
+    try:
+        os.symlink(sys.argv[1], "planted", dir_fd=fd)
+        os.rename("planted", "out.txt", src_dir_fd=fd, dst_dir_fd=fd)
+        print("planted", flush=True)
+    except OSError as exc:
+        print(exc.errno, flush=True)
+"""
+"""Holds directory fds into the work tree as uid 65534 and, when told, swaps ``out.txt`` for a symlink."""
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="running a process as uid 65534 needs root")
+@pytest.mark.skipif(shutil.which("python3", path="/usr/bin:/bin") is None, reason="needs a system python3")
+def test_run_one_reads_tool_output_that_no_other_process_can_relink_after_the_sweep(
+    scratch: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A uid-65534 process outside the stage planted a symlink after the sweep, and root read through it."""
+    secret = tmp_path / "root-only"  # tmp_path is 0700 root: uid 65534 can name it, never read it
+    secret.write_text("ROOT-ONLY-MARKER", encoding="utf-8")
+    secret.chmod(0o600)
+    python = shutil.which("python3", path="/usr/bin:/bin")
+    assert python is not None
+    planter: dict[str, subprocess.Popen[str]] = {}
+
+    def stage_as_tool(spec: dict[str, Any], control: Path, repo: Path, timeout: float) -> dict[str, Any]:
+        # What a tool leaves, and a process of the same uid that outlives the stage holding fds into it.
+        work = Path(spec["work"])
+        (work / "sub").mkdir(mode=0o777)
+        (work / "sub").chmod(0o777)
+        for path in (work / "out.txt", work / "sub" / "out.txt"):
+            path.write_text("tool-output", encoding="utf-8")
+        runner._chown_tree(work, runner.TOOL_UID, runner.TOOL_GID)
+        proc = subprocess.Popen(
+            [python, "-I", "-c", PLANTER, str(secret), str(work), str(work / "sub")],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            user=runner.TOOL_UID,
+            group=runner.TOOL_GID,
+            extra_groups=[],
+            env={"PATH": TOOL_PATH},
+            cwd="/",
+        )
+        assert proc.stdout is not None and proc.stdout.readline().strip() == "ready"
+        planter["proc"] = proc
+        return {"runs": [_run()], "processes": [], "error": None}
+
+    sweep = runner._drop_unsafe_entries
+    outcomes: list[str] = []
+
+    def sweep_then_plant(work: Path) -> int:
+        removed = sweep(work)
+        proc = planter["proc"]
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write("go\n")
+        proc.stdin.flush()
+        outcomes.extend(proc.stdout.readline().strip() for _ in range(2))
+        return removed
+
+    def normalize(work: Path, runs: list[RunResult]) -> AdapterResult:
+        texts = [(work / rel).read_text(encoding="utf-8") for rel in ("out.txt", "sub/out.txt")]
+        return AdapterResult("ok", [Entity("app", f"app:{text}", "agent") for text in texts])
+
+    monkeypatch.setattr(runner, "_stage", stage_as_tool)
+    monkeypatch.setattr(runner, "_drop_unsafe_entries", sweep_then_plant)
+    try:
+        row = _run_one(FakeAdapter(normalize=normalize), scratch)
+    finally:
+        if "proc" in planter:
+            planter["proc"].kill()
+            planter["proc"].wait()
+    assert outcomes and "planted" not in outcomes, outcomes
+    assert row["status"] == "ok", row
+    assert "ROOT-ONLY-MARKER" not in json.dumps(row)
+    assert {e["key"] for e in row["entities"]} == {"app:tool-output"}
+
+
+@needs_namespaces
+@pytest.mark.skipif(
+    shutil.which("ipcmk") is None or shutil.which("ipcs") is None, reason="needs ipcmk and ipcs"
+)
+def test_stage_gives_each_case_its_own_var_tmp_dev_shm_and_ipc(scratch: Path) -> None:
+    """What one tool left in /var/tmp, /dev/shm or System V IPC stayed on the host for the next case to read."""
+    mark = f"sb-left-{os.getpid()}"
+    leave = f"echo x > /var/tmp/{mark}; echo x > /dev/shm/{mark}; ipcmk -M 4096 >/dev/null; echo left"
+    look = f"ls /var/tmp/{mark} /dev/shm/{mark} 2>/dev/null | wc -l; ipcs -m | grep -c '^0x' || true"
+    try:
+        work, control = _dirs(scratch)
+        first = runner._stage(_spec(work, [_inv(work, leave)]), control, ROOT, 60)
+        assert first["error"] is None and first["runs"][0]["stdout"].strip() == "left", first
+        shutil.rmtree(work.parent)
+        work, control = _dirs(scratch)
+        second = runner._stage(_spec(work, [_inv(work, look)]), control, ROOT, 60)
+        assert second["error"] is None, second
+        assert second["runs"][0]["stdout"].split() == ["0", "0"]
+        assert not os.path.exists(f"/var/tmp/{mark}") and not os.path.exists(f"/dev/shm/{mark}")
+    finally:
+        for leftover in (f"/var/tmp/{mark}", f"/dev/shm/{mark}"):
+            if os.path.exists(leftover):
+                os.unlink(leftover)

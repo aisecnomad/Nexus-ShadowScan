@@ -44,13 +44,19 @@ def p_value(entry: dict[str, Any]) -> str:
 
 
 def harness(manifest: dict[str, Any]) -> str:
-    """The harness revision the run recorded, as a sentence to append; nothing when none was recorded.
+    """The harness revision the run recorded, as a sentence to append.
 
     Manifests written before the runner recorded it, the committed 2026-10-11 run's among them,
-    have no ``harness_commit`` key, and their reports stay as they were rendered.
+    have no ``harness_commit`` key; their reports say what that means for the rows instead.
     """
     if "harness_commit" not in manifest:
-        return ""
+        return (
+            " The manifest predates the harness fields, so the code that produced these rows is not"
+            " recorded: they come from earlier adapters, run under weaker isolation than the current"
+            " runner's (tools ran as root, with the host's home directories in view), and the scoring"
+            " rules were revised after the run, with its results in view. The benchmark README's"
+            " Integration changes describe both."
+        )
     commit = manifest["harness_commit"]
     if commit is None:
         return " The runner could not name the harness commit it ran from."
@@ -124,6 +130,15 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         "results describe how each tool behaves on these inputs, not field precision or recall."
     )
     lines.append("")
+    unbound = metrics.get("rows_unbound") or []
+    if unbound:
+        whose = "any" if set(unbound) >= set(metrics["tools"]) else "the"
+        names = "" if whose == "any" else " of " + ", ".join(f"`{name}`" for name in unbound)
+        lines.append(
+            f"The manifest records no SHA-256 of {whose} results file{names}, so those rows are bound to the "
+            "run only by their per-status row counts, which an edited or swapped file can keep."
+        )
+        lines.append("")
     # every forced override is listed, the corpus digest mismatch among them
     forced = metrics.get("forced") or []
     if forced:
@@ -172,7 +187,8 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         "decoy entities (records labeled none). Agent recall is the share of expected agents a tool reported as "  # noqa: E501
         "agents; agent false alarms are plain-AI entities and decoys it called agents. F1 intervals are 2,000-sample "  # noqa: E501
         "case bootstraps. At case level a positive case is found when the tool reports at least one "
-        "expected entity, and a negative case is a false alarm when it reports any false positive. An "
+        "expected entity, and a negative case is a false alarm when it reports any false positive or, on "
+        "the code surface, anything outside the fact taxonomy. An "
         "error, or a case with no result row (counted as missing), is never a correct outcome: its "
         "expected entities are missed, its decoys are not true negatives, and the case counts as missed "
         "or as a false alarm. A scan the tool marked incomplete keeps what it reported but never earns a "
@@ -215,16 +231,20 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
             lines.append("| (no tool ran on this surface) | | | | | | | | | | |")
         lines.append("")
         if surface == "code" and any_row:
-            counts = [
-                f"{name} {metrics['tools'][name]['by_surface'][surface].get('out_of_taxonomy', 0)}"
+            code = {
+                name: metrics["tools"][name]["by_surface"][surface]
                 for name in _tool_order(metrics)
                 if metrics["tools"][name]["by_surface"].get(surface)
-            ]
+            }
+            counts = [f"{name} {s.get('out_of_taxonomy', 0)}" for name, s in code.items()]
+            alarms = [f"{name} {s['case'].get('out_of_taxonomy_alarms', 0)}" for name, s in code.items()]
             lines.append(
-                "Reported keys outside the code fact taxonomy (for example file paths an adapter could not "
-                "map to a fact) are neither true nor false positives, for every tool: "
+                "Reports outside the code fact taxonomy (for example file paths an adapter could not map to "
+                "a fact, whether it passed them on or dropped and counted them) are neither true nor false "
+                "positives, for every tool: "
                 + ", ".join(counts)
-                + "."
+                + ". At case level such a report earns a positive case nothing and is a false alarm on a "
+                "negative one, which happened on " + ", ".join(alarms) + "."
             )
             lines.append("")
         # modality breakdown

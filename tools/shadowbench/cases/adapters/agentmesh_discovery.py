@@ -54,10 +54,12 @@ Detection rules:
   ``agent_type`` with ``taxonomy.facts_from_name`` (``crewai.yaml`` ->
   ``framework:crewai``, Compose ``langchain`` -> ``framework:langchain``),
   label ``agent``; a hit that maps to no fact
-  (``agentmesh.yaml`` -> ``agt``, ``copilot-setup-steps.yml``) is dropped and
-  listed as ``unmapped_files`` in the note: code truth holds only taxonomy
-  facts, so any other key could never match (the ShadowScan adapter drops its
-  unmappable findings the same way).
+  (``agentmesh.yaml`` -> ``agt``, ``copilot-setup-steps.yml``), or names no
+  file in the checkout, is dropped, counted in the row's ``out_of_taxonomy``
+  and, with its file, listed as ``unmapped_files`` in the note: code truth
+  holds only taxonomy facts, so any other key could never match, but the
+  scorer still counts the hit as an alarm on a negative case (the ShadowScan
+  adapter treats its unmappable findings the same way).
 * runtime/live: each process hit becomes ``process:<tags.pid>``, label
   ``agent``; the tool's own ``agent-discovery scan`` process is dropped.
 
@@ -206,10 +208,12 @@ class AgentMeshDiscovery:
     def _code_facts(records: list[dict[str, Any]], repo: Path, raw: dict[str, Any]) -> AdapterResult:
         found: dict[str, Entity] = {}
         unmapped: list[str] = []
+        unplaced = 0
         for agent in records:
             source = _source_path(agent)
             key = relative_artifact(source, repo) if source else None
             if key is None:
+                unplaced += 1
                 continue
             rel = key[len("artifact:") :]
             agent_type = str(agent.get("agent_type") or "")
@@ -225,7 +229,15 @@ class AgentMeshDiscovery:
         note = f"agents={len(records)} facts={sum(e.kind == 'fact' for e in found.values())}"
         if unmapped:
             note += f" unmapped_files={sorted(set(unmapped))[:10]}"
-        return AdapterResult("ok", entities=list(found.values()), note=note, raw=raw)
+        if unplaced:
+            note += f" outside_checkout={unplaced}"
+        return AdapterResult(
+            "ok",
+            entities=list(found.values()),
+            note=note,
+            raw=raw,
+            out_of_taxonomy=len(set(unmapped)) + unplaced,
+        )
 
     @staticmethod
     def _processes(records: list[dict[str, Any]], raw: dict[str, Any]) -> AdapterResult:

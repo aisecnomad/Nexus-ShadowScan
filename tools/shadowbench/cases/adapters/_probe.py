@@ -8,10 +8,14 @@ afterwards), ``LANG=C.UTF-8`` and nothing else from the caller's environment:
 no proxy, cloud, token or other credential variables. stdin is empty and a
 timeout bounds the run. The runner needs root for its own namespaces, so a
 probe started as root never runs the binary as root: it gets an empty network
-namespace and a private mount namespace with empty tmpfs mounts over ``/root``
-and ``/home``, and drops to uid/gid 65534 with no supplementary groups and
-``no_new_privs``, the identity the stage gives the tool. Its throwaway home
-then lives under ``/tmp`` and belongs to that identity. When ``unshare``,
+namespace, a fresh PID namespace with its own ``/proc`` and a private mount
+namespace with empty tmpfs mounts over ``/root`` and ``/home``, and drops to
+uid/gid 65534 with no supplementary groups and ``no_new_privs``, the identity
+the stage gives the tool. The root shell that drops privileges stays the PID
+namespace's init until the binary exits, and dies with ``unshare`` on a
+timeout, so every process the binary starts, ``setsid`` or not, ends with the
+probe, and it sees no host process. Its throwaway home then lives under
+``/tmp`` and belongs to that identity. When ``unshare``,
 ``setpriv``, ``mount`` or ``sh`` is missing a root probe does not run at all.
 A probe that cannot start, fails or times out reads as ``unknown``; it is
 never retried with the caller's environment or identity.
@@ -48,7 +52,7 @@ def probe_env(home: Path, extra: Mapping[str, str] | None = None) -> dict[str, s
     return env
 
 
-#: The identity a root probe drops to: the stage's (``runner.TOOL_UID``), so it reaches no more than the tool.
+#: The identity a root probe drops to: the stage's (``runner.TOOL_UID``), in namespaces like the stage's.
 PROBE_UID = PROBE_GID = 65534
 #: Where a dropped probe's home lives: ``/root`` and ``/home`` are hidden from it.
 PROBE_TMP = "/tmp"
@@ -66,19 +70,24 @@ def isolation() -> list[str] | None:
         return None
     hide = " && ".join(f"{shlex.quote(mount)} -t tmpfs -o mode=0755 tmpfs {d}" for d in ("/root", "/home"))
     drop = f"{shlex.quote(setpriv)} --reuid={PROBE_UID} --regid={PROBE_GID} --clear-groups --no-new-privs --"
-    # The probe's argv reaches the shell as positional parameters ("$@"), never as script text.
+    # The probe's argv reaches the shell as positional parameters ("$@"), never as script text. The
+    # shell stays the PID namespace's init as root instead of exec'ing the drop: --kill-child's
+    # parent-death signal would not survive setpriv's change of uid, so only a root init dies with
+    # unshare on a timeout. When the init exits, every process in the namespace dies with it.
     return [
         unshare,
         "--net",
+        "--pid",
         "--mount",
         "--propagation",
         "private",
+        "--mount-proc",
         "--fork",
         "--kill-child",
         "--",
         sh,
         "-c",
-        f'{hide} && exec {drop} "$@"',
+        f'{hide} && {drop} "$@"; exit $?',
         "probe",
     ]
 

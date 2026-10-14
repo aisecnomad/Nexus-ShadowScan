@@ -9,11 +9,13 @@ independent: the same maintainer wrote ShadowScan, the harness, the rubrics
 and every other tool's adapter.
 
 Third-party tools run as uid and gid 65534 with `no_new_privs`, inside fresh
-network, PID and mount namespaces, with an environment built from scratch and
-`/root` and `/home` hidden under empty tmpfs mounts (see Isolation below).
-That is still not a sandbox: a tool can read any world-readable file elsewhere
-on the host. Run the benchmark only on a disposable, externally isolated
-machine with no credentials.
+network, PID, mount and IPC namespaces, with an environment built from scratch,
+`/root` and `/home` hidden under empty tmpfs mounts and a fresh tmpfs over
+`/var/tmp` and `/dev/shm` for each case (see Isolation below). That is still
+not a sandbox: a tool can read any world-readable file elsewhere on the host,
+and the host's `/tmp`, which holds the default scratch directory, stays shared
+with the host and with other cases and tools. Run the benchmark only on a
+disposable, externally isolated machine with no credentials.
 
 ## Entry points
 
@@ -24,7 +26,7 @@ Every command is a subcommand of `python -m tools.shadowbench.cases`:
 | `generate` | `generate.py` | Build the corpus at a seed (`--seed`, `--per-surface`, `--output`). Each surface and modality draws from its own random stream, seeded from a SHA-256 of the seed, surface and modality; the header records this as `"stream_scheme": "sha256"`. `--stream-scheme legacy` only rebuilds the committed 2026-10-11 cases: under it the seed has no effect and four pairs of modalities share a stream (see the benchmark README's Random streams). Export, runtime and active-network cases compose entity drafts into one platform-native input; endpoint and passive-network cases reuse the pre-registered families of `tools/benchmark`; code cases pin repositories from `benchmarks/shadow-ai-discovery/corpus.json`, and generation refuses to run without that file. |
 | `verify` | `verify.py` | Load and validate a corpus, print its recorded generator digest beside the current sources' digest, and always rebuild the cases at the recorded seed, per-surface count and stream scheme (`legacy`, with the modalities it makes share a stream, when the header names none) and compare the parsed case lists (header and `created` stamp ignored); a matching digest alone never passes a corpus. Identical cases exit 0 even when the digest differs, and verify says so; any difference exits 1 and names the first differing case or, when one list is a prefix of the other, the two case counts. `--regenerate` is accepted and changes nothing. The committed corpus's digest predates both the move to `cases/` and the digest's inclusion of the code corpus, so verify reports changed sources that build the same cases. |
 | `run` | `runner.py` | Materialize each case, execute every adapter's invocations through `stage.py` in isolation, write one JSONL row per (tool, case) and `manifest.json` (with the harness commit), and keep each run's raw output locally under `<out>/raw/<tool>/`. Needs root and a `gcc` that can link a static binary. |
-| `score` | `score.py` | Entity-level and case-level metrics per tool, surface and modality; estate recall; agent tier; paired McNemar against a reference tool. Leaves the decoys an adapter declares it withholds from its tool (`withheld_decoys`) out of that tool's specificity, unless the tool reports one anyway. Refuses results the run manifest does not vouch for (another corpus digest, a results file for a tool the manifest does not record as run, row statuses that differ from its counts) or an adapter module that does not load unless `--force`, which records each override; refuses malformed rows and malformed `withheld_decoys` even with `--force`. |
+| `score` | `score.py` | Entity-level and case-level metrics per tool, surface and modality; estate recall; agent tier; paired McNemar against a reference tool. Leaves the decoys an adapter declares it withholds from its tool (`withheld_decoys`) out of that tool's specificity, unless the tool reports one anyway. Refuses results the run manifest does not vouch for (another corpus digest, a results file for a tool the manifest does not record as run, row statuses that differ from its counts, a results file whose SHA-256 is not the one it recorded) or an adapter module that does not load unless `--force`, which records each override; refuses malformed rows and malformed `withheld_decoys` even with `--force`. |
 | `report` | `report.py` | Render `metrics.json` as Markdown, with any `--force` override listed at the top and, when the manifest has the harness fields, the harness commit and its state beside the corpus and platform. |
 
 `contract.py` defines the surfaces, modalities, case layout, entity keys and
@@ -45,14 +47,15 @@ For each (tool, case) the runner creates `<scratch>/<tool>-<case>-XXXX/`
 and the tool's output and is handed to uid 65534 for the run, and `control/`,
 which only root can enter and which holds the stage's spec and result. It then
 starts `stage.py` as root under `unshare --net --pid --fork --kill-child
---mount --propagation private --mount-proc`, from `/` and with a fixed
+--mount --propagation private --mount-proc --ipc`, from `/` and with a fixed
 `PATH`.
 
 Before anything from the case runs, the stage checks that it is the init of a
 fresh PID namespace and not in the runner's mount namespace, sets
 `no_new_privs`, brings loopback up, mounts an empty tmpfs over `/root` and
-`/home`, and moves to `/`, so no process it starts inherits a working directory
-under a hidden path. It then serves the case's mock services on `127.0.0.1`,
+`/home` and a fresh, world-writable one over `/var/tmp` and `/dev/shm`, and
+moves to `/`, so no process it starts inherits a working directory under a
+hidden path. It then serves the case's mock services on `127.0.0.1`,
 starts the case's inert processes as uid 65534 with `work/` as their working
 directory, and runs the adapter's invocations as uid 65534 with no
 supplementary groups and exactly the environment each invocation declares.
@@ -73,17 +76,20 @@ unless:
   a listable scratch directory would let one tool reach a concurrent run's
   tree;
 * the scratch directory, `tool_root` (by default the directory holding
-  `tools.json`) and every absolute path in `tools.json` lie outside `/root`
-  and `/home`, which the stage hides, and uid 65534 can traverse to the
-  scratch directory;
+  `tools.json`) and every absolute path in `tools.json` lie outside `/root`,
+  `/home`, `/var/tmp` and `/dev/shm`, which the stage hides or replaces, and
+  uid 65534 can traverse to the scratch directory;
 * `gcc` can compile and statically link the inert process binary, which needs
   gcc and the C library's static archive (`glibc-static` or `libc6-dev`,
   depending on the distribution). A missing compiler or a failed link is
   reported with gcc's exit code and the end of its output.
 
-The tools must also be readable and executable by uid 65534. After a tool
-exits, any symlink it left that leads out of `work/`, and any FIFO, socket or
-device node, is removed before the adapter reads the output as root.
+The tools must also be readable and executable by uid 65534. After the stage
+exits, `work/` is handed back to root and its directories lose group and other
+write, so no process running as uid 65534 outside the stage (one that held a
+directory open while the tool ran, say) can add or swap an entry in it any
+more. Then any symlink the tool left that leads out of `work/`, and any FIFO,
+socket or device node, is removed before the adapter reads the output as root.
 
 The manifest records a version for each tool that ran. When the tool's entry
 in `tools.json` has a `version` string (see Tool configuration), the runner
@@ -93,17 +99,22 @@ the runner's user. An adapter that runs the tool's binary for it does so only
 through `adapters/_probe.py`: the probe gets a fixed `PATH`, a throwaway
 `HOME` that is also its working directory, no other inherited environment, an
 empty stdin and a timeout. A probe started as root (the runner always is)
-never runs the binary as root: it gets an empty network namespace and a
-private mount namespace with `/root` and `/home` hidden, and drops to uid/gid
-65534 with no supplementary groups and `no_new_privs`, the identity the stage
-gives the tool, with its home under `/tmp`. Without `unshare`, `setpriv`,
+never runs the binary as root: it gets an empty network namespace, a fresh
+PID namespace with its own `/proc` and a private mount namespace with `/root`
+and `/home` hidden, and drops to uid/gid 65534 with no supplementary groups
+and `no_new_privs`, the identity the stage gives the tool, with its home under
+`/tmp`. Every process the binary starts, detached or not, ends when the probe
+returns or times out, so none is left running as that uid to reach a later
+case's `work/`. Without `unshare`, `setpriv`,
 `mount` and `sh` a root probe does not run. A probe that cannot start, cannot
 drop privileges or times out records `unknown`. Otherwise the adapter reads the version from what the probe
 printed, whatever its exit code; only the installed-package lookup (Snyk,
-Cisco, `agent-discovery`) requires exit 0. Fleet records the printed text as
-it is, ShadowScan its last word plus the checkout's commit, and Numbat the
-printed text when its version pattern does not match; the other adapters
-record `unknown` when theirs does not.
+Cisco, `agent-discovery`) and ShadowScan require exit 0. Fleet records the
+printed text as it is, ShadowScan its last word plus the checkout's commit,
+with `-dirty` appended when anything under `shadowscan/` or `pyproject.toml`,
+untracked files included, differs from that commit, and Numbat the printed
+text when its version pattern does not match; the other adapters record
+`unknown` when theirs does not.
 
 ## Tool configuration
 
@@ -171,13 +182,24 @@ python -m tools.shadowbench.cases report --corpus benchmarks/shadowbench/cases/c
 `fetch_code` fetches the 26 pinned code-surface repositories with its own
 hardened `git` calls: `https` remotes only, hooks off, submodules never
 fetched, the caller's `GIT_*` variables dropped except the TLS CA settings,
-TLS verification on, no symlinked destination, and `rev-parse HEAD` checked
-against the pinned commit. The runner checks each checkout's HEAD again before
-copying it into a case.
+none of the operator's system or global git configuration read and no filter
+driver run (so a repository's `.gitattributes` cannot start git-lfs or any
+other driver on checkout), TLS verification on, no symlinked destination, the
+fetched commit checked against the pin before checkout, and `rev-parse HEAD`
+checked after it. A proxy or CA bundle therefore comes from `HTTPS_PROXY` and
+`GIT_SSL_CAINFO`, not from `~/.gitconfig`. An existing checkout is kept only
+when this fetcher made it, its origin is the pinned URL and it holds the
+pinned commit's tree and nothing else; otherwise it is fetched again. The
+runner checks the same before copying a checkout into a case, and refuses one
+whose HEAD differs from the pin, whose `git status` lists anything (untracked
+and ignored files included) or that has a populated submodule directory.
+These checks run git as the fetch does, without the system or global git
+configuration, so a `safe.directory` entry there does not apply: the
+checkouts must belong to root or, under `sudo`, to the user who ran it.
 
 `run` records in `manifest.json` the corpus path and SHA-256, the generator
-digest, the platform, each tool's version and row-status counts, and the
-harness the run came from: `harness_commit` is the checkout's `HEAD` (null
+digest, the platform, each tool's version, row-status counts and the SHA-256
+of its `<tool>.jsonl` (`rows_sha256`), and the harness the run came from: `harness_commit` is the checkout's `HEAD` (null
 when git cannot name it, for example when it refuses a checkout that another
 user owns), and `harness_dirty` says whether anything under `tools/`,
 untracked files included, differed from it (null when unknown). Untracked
@@ -189,7 +211,9 @@ scorer's own commit is not recorded, so the code that produced `metrics.json`
 must still be identified from the repository history. The committed
 2026-10-11 manifest predates the harness fields; its report names no harness
 commit, and the code that produced its rows can only be inferred from that
-history.
+history. A report of such a manifest says so, and that its rows come from
+earlier adapters under weaker isolation and were scored by rules revised after
+the run.
 
 ## Adding a tool
 
@@ -201,8 +225,10 @@ invocations; `normalize` maps the tool's own output onto entity keys and never
 interprets beyond it. Follow the rules in `adapters/__init__.py`: fail closed
 (a crash, timeout, missing report, empty or unparsable output is an `error`,
 never an empty `ok`), set `raw["incomplete"]` when the tool says it did not
-read everything, emit only taxonomy facts on the code surface, and run the
-tool's binary in `version()` only through `_probe.run_probe`. When the
+read everything, emit only taxonomy facts on the code surface and count every
+hit that maps to none in `AdapterResult.out_of_taxonomy` (the scorer treats it
+as an alarm on a negative case), and run the tool's binary in `version()` only
+through `_probe.run_probe`. When the
 adapter converts a case's input and drops records a decoy comes from, declare
 those decoys' key prefixes per (surface, modality) in a `withheld_decoys`
 attribute, as the ShadowScan adapter does for AWS IAM roles, so the scorer

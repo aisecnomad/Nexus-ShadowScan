@@ -5,8 +5,8 @@
 
 For each (tool, case) the runner materializes the case under a scratch
 directory, asks the adapter for its invocations, and executes them through
-``stage.py`` inside fresh network, PID and mount namespaces (``unshare``), with
-the case's mock services and inert processes present. The adapter then
+``stage.py`` inside fresh network, PID, mount and IPC namespaces (``unshare``),
+with the case's mock services and inert processes present. The adapter then
 normalizes the output into entities. One JSONL row per (tool, case) goes to
 ``<out>/<tool>.jsonl``; verbatim tool output goes to ``<out>/raw/<tool>/``.
 
@@ -16,13 +16,15 @@ the tool's tree, which belongs to uid/gid 65534 for the run, and ``control/``
 tool's reach. Tools run as 65534 with ``/root`` and ``/home`` hidden (see
 ``stage.py``), so the scratch directory, ``tool_root`` (by default the
 directory holding ``tools.json``) and every path in ``tools.json`` must lie
-outside those and be reachable by that uid. Every run's ``work/`` belongs to
+outside those, and outside ``/var/tmp`` and ``/dev/shm``, which the stage
+replaces with an empty tmpfs, and be reachable by that uid. Every run's ``work/`` belongs to
 the same uid, so the scratch directory must also belong to the runner and give
 group and other nothing but search (0711, as the runner creates it), or a tool
 could list it and reach a concurrent run's tree. The runner refuses to start
-otherwise. Before the adapter reads the tool's output as root, any symlink the
-tool left that leads out of ``work/`` and any FIFO, socket or device node in it
-is removed.
+otherwise. Before the adapter reads the tool's output as root, ``work/`` is
+handed back to root with group and other write removed, so no process of the
+tool's uid can change it any more, and then any symlink the tool left that
+leads out of ``work/`` and any FIFO, socket or device node in it is removed.
 
 A crash, timeout or unreadable output is recorded as ``error`` and never as a
 clean negative. A run that exits outside the adapter's accepted codes but still
@@ -34,7 +36,8 @@ translated to the corpus's ``proc:<index>`` keys before scoring.
 
 Case and checkout ids from the corpus name directories, so they must match
 ``[A-Za-z0-9._-]+``. A code case may not also carry files, and no input file
-is written through a symlink.
+is written through a symlink. A checkout is copied into a case only when it
+holds its pinned commit's tree and nothing else (``fetch_code.checkout_problem``).
 
 Before any tool runs, the runner refuses to start, with exit 2 and a message,
 when it is not root, ``unshare`` is missing, a case or checkout id is unsafe,
@@ -44,9 +47,10 @@ cannot build the static inert binary that live-runtime cases spawn.
 ``manifest.json`` records the corpus path and SHA-256, the generator digest,
 the platform, the harness commit (``harness_commit``, the checkout's ``HEAD``,
 null when git cannot name it) and whether ``tools/`` differs from that commit
-(``harness_dirty``, null when unknown), and per tool its version and row-status
-counts. A tool's version is the ``version`` string its ``tools.json`` entry
-gives, recorded as given, or else what its adapter's ``version()`` probes.
+(``harness_dirty``, null when unknown), and per tool its version, row-status
+counts and the SHA-256 of its ``<tool>.jsonl`` (``rows_sha256``). A tool's
+version is the ``version`` string its ``tools.json`` entry gives, recorded as
+given, or else what its adapter's ``version()`` probes.
 """
 
 from __future__ import annotations
@@ -54,6 +58,7 @@ from __future__ import annotations
 import argparse
 import errno
 import gzip
+import hashlib
 import json
 import os
 import platform
@@ -83,7 +88,8 @@ from tools.shadowbench.cases.contract import (
     supports,
 )
 from tools.shadowbench.cases.corpus import Case, Corpus, corpus_digest, load_corpus
-from tools.shadowbench.cases.stage import HIDDEN, build_fakeproc
+from tools.shadowbench.cases.fetch_code import checkout_problem
+from tools.shadowbench.cases.stage import HIDDEN, PRIVATE_TMP, build_fakeproc
 
 STAGE_TIMEOUT_GRACE = 120
 KILL_GRACE = 10.0
@@ -146,11 +152,10 @@ def materialize(case: Case, root: Path, checkouts: Path | None = None) -> Materi
         src = (base / name).resolve()
         if src == base or not src.is_relative_to(base):
             raise ValueError(f"checkout {name} resolves to {src}, outside {base}")
-        head = subprocess.run(
-            ["git", "-C", str(src), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
-        )
-        if head.stdout.strip() != case.checkout["commit"]:
-            raise RuntimeError(f"checkout {src} is not at {case.checkout['commit']}")
+        # The whole directory is copied, so it must hold the pinned commit's tree and nothing else.
+        problem = checkout_problem(src, str(case.checkout["commit"]))
+        if problem:
+            raise RuntimeError(f"checkout {src} {problem}")
         shutil.copytree(src, inputs / "repo", symlinks=True)
     for rel, content in case.files.items():
         _write_input(inputs, rel, content)
@@ -178,6 +183,39 @@ def _chown_tree(path: Path, uid: int, gid: int) -> None:
     os.lchown(path, uid, gid)
     for top, dirs, files in os.walk(path):
         for name in (*dirs, *files):
+            os.lchown(os.path.join(top, name), uid, gid)
+
+
+def _reclaim_tree(work: Path) -> None:
+    """Take the tool's tree back for the runner, so no other process can change it while it is read.
+
+    A process of the tool's uid that runs outside the stage (any host process running as 65534) can
+    hold a directory fd into ``work`` and, while ``work`` still belongs to that uid, plant a symlink
+    after ``_drop_unsafe_entries`` checked the tree. Each directory is handed to the runner (root)
+    and loses group and other write before it is listed, so once listed only the runner can add,
+    rename or remove an entry in it; no symlink is followed, and an open fd grants no write.
+    Everything else is handed to the runner too.
+    """
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    uid, gid = os.geteuid(), os.getegid()
+
+    def seal(path: str) -> None:
+        fd = os.open(path, flags)
+        try:
+            os.fchown(fd, uid, gid)
+            os.fchmod(fd, stat.S_IMODE(os.fstat(fd).st_mode) & ~0o022)
+        finally:
+            os.close(fd)
+
+    seal(str(work))
+    for top, dirs, files in os.walk(work):  # top-down: a directory is sealed before it is listed
+        for name in dirs:
+            path = os.path.join(top, name)
+            if os.path.islink(path):
+                os.lchown(path, uid, gid)
+            else:
+                seal(path)
+        for name in files:
             os.lchown(os.path.join(top, name), uid, gid)
 
 
@@ -224,8 +262,11 @@ def prepare_scratch(scratch: Path | None) -> Path:
 
 
 def isolation_problems(scratch: Path, env: ToolEnv) -> list[str]:
-    """Why tools running as uid 65534 with ``/root`` and ``/home`` hidden could not run from here."""
-    hidden = [Path(p).resolve() for p in HIDDEN]
+    """Why tools running as uid 65534 with ``/root`` and ``/home`` hidden could not run from here.
+
+    The stage also replaces ``/var/tmp`` and ``/dev/shm`` with an empty tmpfs, which hides them alike.
+    """
+    hidden = [Path(p).resolve() for p in (*HIDDEN, *PRIVATE_TMP)]
 
     def hidden_root(path: Path) -> Path | None:
         resolved = path.resolve()
@@ -266,7 +307,7 @@ def isolation_problems(scratch: Path, env: ToolEnv) -> list[str]:
 
 
 def stage_command(spec_path: Path, out_path: Path) -> list[str]:
-    """The stage's command line: no network, its own PID and mount namespaces, gone when unshare dies.
+    """The stage's command line: no network, its own PID, mount and IPC namespaces, gone when unshare dies.
 
     ``-P`` keeps the working directory off ``sys.path``; the stage is found through ``PYTHONPATH``.
     """
@@ -280,6 +321,7 @@ def stage_command(spec_path: Path, out_path: Path) -> list[str]:
         "--propagation",
         "private",
         "--mount-proc",
+        "--ipc",
         "--",
         sys.executable,
         "-P",
@@ -403,6 +445,7 @@ def run_one(
         total_timeout = sum(inv.timeout for inv in invocations) + STAGE_TIMEOUT_GRACE
         _chown_tree(work, TOOL_UID, TOOL_GID)
         staged = _stage(spec, control, repo, total_timeout)
+        _reclaim_tree(work)
         unsafe = _drop_unsafe_entries(work)
         runs = [
             RunResult(
@@ -540,6 +583,7 @@ def run_tool(
         "version": tool_version(adapter, env),
         "seconds": round(time.time() - started, 1),
         "statuses": statuses,
+        "rows_sha256": hashlib.sha256(rows_path.read_bytes()).hexdigest(),
     }
 
 

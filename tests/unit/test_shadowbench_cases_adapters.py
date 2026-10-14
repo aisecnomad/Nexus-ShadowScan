@@ -10,7 +10,9 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -405,6 +407,8 @@ def test_agentdiscover_drops_unmappable_code_hits(tmp_path: Path) -> None:
     _only_facts(result)
     assert {e.key for e in result.entities} == {"framework:crewai"}
     assert "unmapped" in result.note and ".mcp/config.json" in result.note
+    # .mcp/config.json, package.json (left-pad) and gen.py: dropped, but counted for the scorer
+    assert result.to_json()["out_of_taxonomy"] == 3
 
 
 def test_agentmesh_discovery_drops_unmappable_code_hits(tmp_path: Path) -> None:
@@ -414,12 +418,14 @@ def test_agentmesh_discovery_drops_unmappable_code_hits(tmp_path: Path) -> None:
     records = [
         {"agent_type": "agt", "name": "mesh", "evidence": [{"source": str(repo / "agentmesh.yaml")}]},
         {"agent_type": "crewai", "name": "crew", "evidence": [{"source": str(repo / "crewai.yaml")}]},
+        {"agent_type": "crewai", "name": "elsewhere", "evidence": [{"source": "/srv/other/crewai.yaml"}]},
     ]
-    stdout = "Agent Discovery Scan\nFound 2 agents\n" + json.dumps(records) + "\nInventory saved to x\n"
+    stdout = "Agent Discovery Scan\nFound 3 agents\n" + json.dumps(records) + "\nInventory saved to x\n"
     result = ADAPTERS["agentmesh-discovery"].normalize(case, work, [RunResult(0, stdout, "", 1.0)])
     _only_facts(result)
     assert {e.key for e in result.entities} == {"framework:crewai"}
-    assert "agentmesh.yaml" in result.note
+    assert "agentmesh.yaml" in result.note and "outside_checkout=1" in result.note
+    assert result.to_json()["out_of_taxonomy"] == 2  # dropped, but counted for the scorer
 
 
 def test_vet_drops_unmappable_code_hits(tmp_path: Path) -> None:
@@ -434,6 +440,28 @@ def test_vet_drops_unmappable_code_hits(tmp_path: Path) -> None:
     result = ADAPTERS["vet"].normalize(case, work, [RunResult(0, "", "", 1.0)])
     _only_facts(result)
     assert {e.key for e in result.entities} == {"mcp-client-config:cursor"}
+    assert result.to_json()["out_of_taxonomy"] == 1  # the agent CLI: dropped, but counted for the scorer
+
+
+def test_shadowscan_counts_the_code_findings_that_map_to_no_fact(tmp_path: Path) -> None:
+    """Unmappable code findings were dropped without a trace, so a negative case read as a clean scan."""
+    case = _case(tmp_path, "code", "checkout")
+    work = _work(tmp_path)
+    findings = [
+        {"kind": "agent-config", "resource": "CLAUDE.md", "evidence": [{"location": "CLAUDE.md"}]},
+        {"kind": "secret", "resource": "tests/fixture.py", "evidence": [{"location": "tests/fixture.py"}]},
+        {"kind": "ai-app", "resource": "client.py", "frameworks": ["protocol.openai"]},
+    ]
+    report = {"summary": {"complete": True}, "findings": findings, "stats": []}
+    (work / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    result = ADAPTERS["shadowscan"].normalize(case, work, [RunResult(0, "", "", 1.0)])
+    _only_facts(result)
+    assert {e.key for e in result.entities} == {"agent-config:claude-md"}
+    assert result.to_json()["out_of_taxonomy"] == 2
+    clean = {"summary": {"complete": True}, "findings": findings[:1], "stats": []}
+    (work / "report.json").write_text(json.dumps(clean), encoding="utf-8")
+    result = ADAPTERS["shadowscan"].normalize(case, work, [RunResult(0, "", "", 1.0)])
+    assert "out_of_taxonomy" not in result.to_json()
 
 
 # --- version probes: scrubbed environment, throwaway home, timeout ---------------------------------
@@ -530,7 +558,7 @@ def test_version_probe_runs_scrubbed_and_bounded(
     for call in probes:
         argv, probe_env = call["argv"], call.get("env")
         if argv[0].endswith("unshare"):  # a root probe: see the privilege-drop tests below
-            assert argv[1:3] == ["--net", "--mount"] and "--no-new-privs" in " ".join(argv)
+            assert argv[1:4] == ["--net", "--pid", "--mount"] and "--no-new-privs" in " ".join(argv)
         assert probe_env is not None, f"{tool}: {argv} inherited the caller's environment"
         assert set(probe_env) <= PROBE_ENV_KEYS, sorted(set(probe_env) - PROBE_ENV_KEYS)
         assert not set(SECRETS.values()) & set(probe_env.values())
@@ -556,14 +584,16 @@ def test_a_root_probe_drops_to_the_stage_identity_with_the_homes_hidden(
     assert prefix is not None
     unshare_argv, (shell, flag, script, name) = prefix[:-4], prefix[-4:]
     assert unshare_argv == [
-        "/usr/bin/unshare", "--net", "--mount", "--propagation", "private", "--fork", "--kill-child", "--"
+        "/usr/bin/unshare", "--net", "--pid", "--mount", "--propagation", "private", "--mount-proc",
+        "--fork", "--kill-child", "--",
     ]  # fmt: skip
     assert (shell, flag, name) == ("/usr/bin/sh", "-c", "probe")
     assert "/usr/bin/mount -t tmpfs -o mode=0755 tmpfs /root" in script
     assert "/usr/bin/mount -t tmpfs -o mode=0755 tmpfs /home" in script
     assert script.endswith(
-        f'exec /usr/bin/setpriv --reuid={TOOL_UID} --regid={TOOL_GID} --clear-groups --no-new-privs -- "$@"'
+        f'/usr/bin/setpriv --reuid={TOOL_UID} --regid={TOOL_GID} --clear-groups --no-new-privs -- "$@"; exit $?'
     )
+    assert "exec" not in script  # the root shell stays the namespace's init
     monkeypatch.setattr(_probe.os, "geteuid", lambda: 1000)
     assert _probe.isolation() == []
 
@@ -613,6 +643,55 @@ def test_a_root_probe_really_runs_unprivileged_and_sees_no_home() -> None:
     assert (uid, gid) == (str(_probe.PROBE_UID), str(_probe.PROBE_GID))
     assert (root_entries, home_entries) == ("0", "0")
     assert cwd.startswith(_probe.PROBE_TMP + "/shadowbench-probe-")
+
+
+def _processes_with_args(*argv: str) -> list[int]:
+    """Host pids whose command line is exactly ``argv``."""
+    found = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            cmdline = Path(f"/proc/{entry}/cmdline").read_bytes()
+        except OSError:
+            continue
+        if cmdline.split(b"\0")[:-1] == [a.encode() for a in argv]:
+            found.append(int(entry))
+    return found
+
+
+def _assert_gone(*argv: str) -> None:
+    deadline = time.monotonic() + 5
+    while _processes_with_args(*argv) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _processes_with_args(*argv) == [], f"{argv} outlived the probe"
+
+
+@pytest.mark.skipif(not _probe_can_drop(), reason="needs root with unshare, setpriv and mount namespaces")
+def test_a_root_probe_leaves_no_process_behind_and_sees_no_host_process() -> None:
+    """A probe ran in the host PID namespace: a setsid child outlived it as uid 65534 and saw every host pid."""
+    from tools.shadowbench.cases.adapters import _probe
+
+    marker = str(10_000_000 + os.getpid())  # an argument no other sleep on the host carries
+    leave = f"ls /proc | grep -c '^[0-9]'; (setsid sleep {marker} </dev/null >/dev/null 2>&1 &); echo v1.2.3"
+    try:
+        proc = _probe.run_probe(["sh", "-c", leave])
+        assert proc is not None and proc.returncode == 0, proc
+        visible, version = proc.stdout.split()
+        assert version == "v1.2.3"
+        assert int(visible) <= 5, f"the probe saw {visible} pids"
+        _assert_gone("sleep", marker)
+        # On a timeout the probed binary itself is still running, and has detached a child.
+        hang = f"(setsid sleep {marker} </dev/null >/dev/null 2>&1 &); exec sleep {marker}1"
+        assert _probe.run_probe(["sh", "-c", hang], timeout=2) is None
+        _assert_gone("sleep", marker)
+        _assert_gone("sleep", f"{marker}1")
+    finally:
+        for pid in _processes_with_args("sleep", marker) + _processes_with_args("sleep", f"{marker}1"):
+            try:
+                os.kill(pid, signal.SIGKILL)  # a namespace's init ignores anything less
+            except ProcessLookupError:
+                pass
 
 
 def test_failed_probe_is_unknown_and_never_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -754,8 +833,10 @@ def test_fetch_disables_hooks_and_submodules(tmp_path: Path, monkeypatch: pytest
 
 
 def test_fetch_rejects_a_head_other_than_the_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    code, _ = _fetch_main(tmp_path, monkeypatch, "https://github.com/demo/repo.git", "f" * 40)
+    code, fake = _fetch_main(tmp_path, monkeypatch, "https://github.com/demo/repo.git", "f" * 40)
     assert code == 1
+    # A default branch that moved past the pin used to be checked out before the HEAD check refused it.
+    assert not [argv for argv in fake.calls if "checkout" in argv]
 
 
 def test_fetch_never_follows_a_symlinked_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -812,7 +893,14 @@ GIT_REDIRECTS = {
     "GIT_CONFIG_VALUE_0": "/operator/hooks",
     "GIT_SSL_NO_VERIFY": "1",
 }
-GIT_ENV_ALLOWED = {"GIT_SSL_CAINFO", "GIT_TERMINAL_PROMPT", "GIT_CEILING_DIRECTORIES"}
+GIT_ENV_ALLOWED = {
+    "GIT_SSL_CAINFO",
+    "GIT_TERMINAL_PROMPT",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_ATTR_NOSYSTEM",
+}
 
 
 def test_fetch_runs_git_without_the_callers_git_variables(
@@ -832,6 +920,11 @@ def test_fetch_runs_git_without_the_callers_git_variables(
         assert {key for key in env if key.startswith("GIT_")} <= GIT_ENV_ALLOWED, argv
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         assert env["GIT_CEILING_DIRECTORIES"] == str(checkout.parent)
+        assert (env["GIT_CONFIG_NOSYSTEM"], env["GIT_CONFIG_GLOBAL"], env["GIT_ATTR_NOSYSTEM"]) == (
+            "1",
+            os.devnull,
+            "1",
+        )
         assert env["GIT_SSL_CAINFO"] == "/etc/ssl/proxy-ca.pem"  # an operator's proxy CA still applies
         assert env["HTTPS_PROXY"] == "http://proxy.invalid:3128"
         assert ("-c", "http.sslVerify=true") in set(zip(argv, argv[1:], strict=False))
@@ -866,3 +959,71 @@ def test_fetch_leaves_the_repository_in_git_dir_alone(
     assert Path(_git("rev-parse", "--absolute-git-dir", cwd=dest)).resolve() == (dest / ".git").resolve()
     assert _git("rev-parse", "HEAD", cwd=dest) == pinned
     assert (dest / "README").read_text(encoding="utf-8") == "pinned\n"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_fetch_runs_no_filter_driver_from_the_operator_or_the_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repository's .gitattributes selected a filter driver from the operator's git config, and it ran."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git("init", "-q", "-b", "main", cwd=src)
+    (src / ".gitattributes").write_text("*.txt filter=demo\n", encoding="utf-8")
+    (src / "a.txt").write_text("blob\n", encoding="utf-8")
+    _git("add", ".gitattributes", "a.txt", cwd=src)
+    _git("commit", "-q", "-m", "pinned", cwd=src)
+    pinned = _git("rev-parse", "HEAD", cwd=src)
+    ran = tmp_path / "smudge-ran"
+    home = tmp_path / "operator-home"
+    home.mkdir()
+    (home / ".gitconfig").write_text(
+        f'[filter "demo"]\n\tsmudge = touch {ran} && sed s/blob/smudged/\n\trequired = true\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setattr(fetch_code, "https_remote", lambda remote: remote)
+    monkeypatch.setattr(fetch_code, "GIT_CONFIG", (*fetch_code.GIT_CONFIG, "protocol.file.allow=always"))
+    dest = tmp_path / "dest" / "repo"
+    assert fetch_code.fetch_pinned(f"file://{src}", pinned, "main", dest) == pinned
+    assert not ran.exists(), "the operator's filter driver ran on the fetched repository"
+    assert (dest / "a.txt").read_text(encoding="utf-8") == "blob\n"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_fetch_refetches_a_checkout_it_cannot_vouch_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout at the pinned HEAD was kept with untracked files, a foreign remote or no filter override."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git("init", "-q", "-b", "main", cwd=src)
+    (src / "README").write_text("pinned\n", encoding="utf-8")
+    _git("add", "README", cwd=src)
+    _git("commit", "-q", "-m", "pinned", cwd=src)
+    pinned = _git("rev-parse", "HEAD", cwd=src)
+    url = f"file://{src}"
+    monkeypatch.setattr(fetch_code, "https_remote", lambda remote: remote)
+    monkeypatch.setattr(fetch_code, "GIT_CONFIG", (*fetch_code.GIT_CONFIG, "protocol.file.allow=always"))
+    dest = tmp_path / "dest" / "repo"
+    assert fetch_code.fetch_pinned(url, pinned, "main", dest) == pinned
+    kept = dest / ".git" / "kept-marker"  # outside the work tree; survives only a kept checkout
+
+    def kept_after(change: Any) -> bool:
+        kept.write_text("", encoding="utf-8")
+        change()
+        assert fetch_code.fetch_pinned(url, pinned, "main", dest) == pinned
+        return kept.exists()
+
+    assert kept_after(lambda: None)
+    assert not kept_after(lambda: (dest / "injected.py").write_text("import langchain\n", encoding="utf-8"))
+    assert not (dest / "injected.py").exists()
+    assert not kept_after(lambda: (dest / "README").write_text("edited\n", encoding="utf-8"))
+    assert (dest / "README").read_text(encoding="utf-8") == "pinned\n"
+    foreign = "https://attacker.example/other.git"
+    assert not kept_after(lambda: _git("remote", "set-url", "origin", foreign, cwd=dest))
+    assert _git("remote", "get-url", "origin", cwd=dest) == url
+    # A checkout from the fetcher before filter drivers were turned off has no override.
+    assert not kept_after(lambda: (dest / ".git" / "info" / "attributes").unlink())
+    assert (dest / ".git" / "info" / "attributes").read_text(encoding="utf-8") == "* !filter\n"

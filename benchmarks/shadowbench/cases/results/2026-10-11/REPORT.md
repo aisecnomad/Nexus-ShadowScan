@@ -1,15 +1,17 @@
 # ShadowBench: nine-surface shadow AI agent discovery benchmark
 
-Corpus: 346 cases on 9 surfaces carrying 738 expected entities and 735 decoys (SHA-256 `5997346ad000a0639709718b66743bb794d5f53faff3c2f38e78dbcc8ba36663`, generator `9a825de5273a7fa8e42c26f2c224e19ee5e86e7f88cf5b7f2bb5e5b47519241e`). Run started 2026-10-11T18:10:09+00:00 and finished 2026-10-11T18:18:56+00:00 on Linux-6.18.44-fc-v114-x86_64-with-glibc2.39 with 3 parallel workers; timings include contention.
+Corpus: 346 cases on 9 surfaces carrying 738 expected entities and 735 decoys (SHA-256 `5997346ad000a0639709718b66743bb794d5f53faff3c2f38e78dbcc8ba36663`, generator `9a825de5273a7fa8e42c26f2c224e19ee5e86e7f88cf5b7f2bb5e5b47519241e`). Run started 2026-10-11T18:10:09+00:00 and finished 2026-10-11T18:18:56+00:00 on Linux-6.18.44-fc-v114-x86_64-with-glibc2.39 with 3 parallel workers; timings include contention. The manifest predates the harness fields, so the code that produced these rows is not recorded: they come from earlier adapters, run under weaker isolation than the current runner's (tools ran as root, with the host's home directories in view), and the scoring rules were revised after the run, with its results in view. The benchmark README's Integration changes describe both.
 
 Ground truth is generated from written rubrics with per-entity evidence (see the README). It is author-written and synthetic, not independent human review and not a sample of any real estate; the results describe how each tool behaves on these inputs, not field precision or recall.
+
+The manifest records no SHA-256 of any results file, so those rows are bound to the run only by their per-status row counts, which an edited or swapped file can keep.
 
 ## Headline
 
 | Tool | Version | Surfaces | Estate recall | In-scope entity P / R / F1 | Specificity on decoys | Agent recall | Agent false alarms | Case-level balanced accuracy | Errors | Incomplete | Seconds median / p90 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | shadowscan | 0.1.2+2d43f508fc95 | 9/9: cloud, code, endpoint, gateway, identity, lowcode, network, runtime, saas | 84% (619/738) | 78% / 88% / 82% (80–85) | 63% | 76% (269/356) | 18% (164/907) | 76% | 0 | 27 | 1.8 / 3.0 |
-| agentdiscover | 2.9.5 | 2/9: code, endpoint | 4% (26/738) | 96% / 20% / 32% (20–42) | n/a | 10% (8/83) | 0% (0/50) | 64% | 0 | 0 | 1.3 / 3.8 |
+| agentdiscover | 2.9.5 | 2/9: code, endpoint | 4% (26/738) | 96% / 20% / 32% (20–42) | n/a | 10% (8/83) | 0% (0/50) | 62% | 0 | 0 | 1.3 / 3.8 |
 | ai-infra-guard | v4.6.5 | 1/9: network | 4% (26/738) | 100% / 81% / 90% (84–96) | 100% | 65% (11/17) | 17% (11/65) | 100% | 0 | 0 | 1.2 / 4.9 |
 | vet | v1.20.0 | 2/9: code, endpoint | 2% (17/738) | 30% / 13% / 18% (10–27) | n/a | 20% (17/83) | 0% (0/50) | 37% | 0 | 0 | 0.2 / 0.2 |
 | agentmesh-discovery | agentmesh-discovery 5.0.0 | 3/9: code, endpoint, runtime | 2% (15/738) | 88% / 8% / 15% (8–23) | 100% | 14% (15/108) | 0% (0/154) | 60% | 0 | 0 | 0.3 / 0.3 |
@@ -18,7 +20,7 @@ Ground truth is generated from written rubrics with per-entity evidence (see the
 | cisco-mcp-scanner | cisco-ai-mcp-scanner 4.8.6 | 1/9: endpoint | 0% (1/738) | 100% / 4% / 8% (0–25) | n/a | 6% (1/18) | 0% (0/6) | 52% | 0 | 0 | 4.1 / 5.0 |
 | numbat | dev+77ece3a76dce | 1/9: endpoint | 0% (1/738) | 100% / 4% / 8% (0–24) | n/a | 6% (1/18) | 0% (0/6) | 52% | 0 | 0 | 0.0 / 0.0 |
 
-Estate recall counts every expected entity in the corpus, charging a tool for the surfaces it does not cover. In-scope metrics count only the surfaces and modalities a tool ran on. Specificity is measured on decoy entities (records labeled none). Agent recall is the share of expected agents a tool reported as agents; agent false alarms are plain-AI entities and decoys it called agents. F1 intervals are 2,000-sample case bootstraps. At case level a positive case is found when the tool reports at least one expected entity, and a negative case is a false alarm when it reports any false positive. An error, or a case with no result row (counted as missing), is never a correct outcome: its expected entities are missed, its decoys are not true negatives, and the case counts as missed or as a false alarm. A scan the tool marked incomplete keeps what it reported but never earns a true negative: its unflagged decoys are not true negatives, a negative case it scanned incompletely counts as a false alarm, and only the entities it called agents enter the agent false-alarm denominator.
+Estate recall counts every expected entity in the corpus, charging a tool for the surfaces it does not cover. In-scope metrics count only the surfaces and modalities a tool ran on. Specificity is measured on decoy entities (records labeled none). Agent recall is the share of expected agents a tool reported as agents; agent false alarms are plain-AI entities and decoys it called agents. F1 intervals are 2,000-sample case bootstraps. At case level a positive case is found when the tool reports at least one expected entity, and a negative case is a false alarm when it reports any false positive or, on the code surface, anything outside the fact taxonomy. An error, or a case with no result row (counted as missing), is never a correct outcome: its expected entities are missed, its decoys are not true negatives, and the case counts as missed or as a false alarm. A scan the tool marked incomplete keeps what it reported but never earns a true negative: its unflagged decoys are not true negatives, a negative case it scanned incompletely counts as a false alarm, and only the entities it called agents enter the agent false-alarm denominator.
 
 Decoys whose records a tool's adapter never passes to it, as the adapter declares, are left out of that tool's specificity and agent false-alarm denominators unless the tool reports one anyway, and a negative case whose every decoy was withheld is left out of its case-level results and the paired comparison: shadowscan, 17 decoys (cloud/aws-export, keys starting `resource:arn:aws:iam::`).
 
@@ -29,11 +31,11 @@ Decoys whose records a tool's adapter never passes to it, as the adapter declare
 | Tool | Modalities | P / R / F1 | TP / FP / FN / TN | Specificity | Agent recall | Agent false alarms | Case recall / specificity | Errors | Incomplete | Seconds median |
 |---|---|---|---|---|---|---|---|---|---|---|
 | shadowscan | checkout | 97% / 91% / 94% (90–96) | 99 / 3 / 10 / 0 | n/a | 95% | 0% | 100% / 90% | 0 | 7 | 2.8 |
-| agentdiscover | checkout | 96% / 23% / 37% (25–47) | 25 / 1 / 84 / 0 | n/a | 11% | 0% | 62% / 100% | 0 | 0 | 1.4 |
+| agentdiscover | checkout | 96% / 23% / 37% (25–47) | 25 / 1 / 84 / 0 | n/a | 11% | 0% | 62% / 90% | 0 | 0 | 1.4 |
 | vet | checkout | 100% / 8% / 15% (6–26) | 9 / 0 / 100 / 0 | n/a | 14% | 0% | 38% / 100% | 0 | 0 | 0.1 |
 | agentmesh-discovery | checkout | 100% / 5% / 9% (0–20) | 5 / 0 / 104 / 0 | n/a | 8% | 0% | 19% / 100% | 0 | 0 | 0.3 |
 
-Reported keys outside the code fact taxonomy (for example file paths an adapter could not map to a fact) are neither true nor false positives, for every tool: shadowscan 0, agentdiscover 246, vet 0, agentmesh-discovery 1.
+Reports outside the code fact taxonomy (for example file paths an adapter could not map to a fact, whether it passed them on or dropped and counted them) are neither true nor false positives, for every tool: shadowscan 0, agentdiscover 246, vet 0, agentmesh-discovery 1. At case level such a report earns a positive case nothing and is a false alarm on a negative one, which happened on shadowscan 0, agentdiscover 1, vet 0, agentmesh-discovery 0.
 
 ### identity (40 cases, 24 positive; 96 expected entities, 159 decoys; modalities entra-export, okta-export)
 
@@ -130,7 +132,7 @@ Exact McNemar test on case-level correctness against the reference tool, over ca
 
 | Tool | Reference | Shared cases | Tool right, reference wrong | Reference right, tool wrong | p |
 |---|---|---|---|---|---|
-| agentdiscover | shadowscan | 66 | 1 | 22 | 0.000 |
+| agentdiscover | shadowscan | 66 | 1 | 23 | 0.000 |
 | ai-infra-guard | shadowscan | 0 | 0 | 0 | n/a |
 | vet | shadowscan | 66 | 1 | 35 | 0.000 |
 | agentmesh-discovery | shadowscan | 86 | 9 | 34 | 0.000 |

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from collections.abc import Iterable
@@ -209,6 +210,49 @@ def test_a_results_file_truncated_after_the_run_is_refused_unless_forced(
     assert len(metrics["forced"]) == 1
 
 
+def _bind(results: Path, tool: str) -> None:
+    """Record ``<tool>.jsonl``'s SHA-256 in the manifest, as the runner now does."""
+    manifest = json.loads((results / "manifest.json").read_text(encoding="utf-8"))
+    digest = hashlib.sha256((results / f"{tool}.jsonl").read_bytes()).hexdigest()
+    manifest["tools"][tool]["rows_sha256"] = digest
+    (results / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def test_rows_edited_after_the_run_are_refused_when_the_manifest_records_their_digest(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Clearing a row's false positives kept its status, so the status counts vouched for the edit."""
+    pos = _case("p1", expected=[("app:1", "agent")])
+    neg = _case("n1", decoys=["app:d1"])
+    rows = [_row(pos, keys=["app:1"]), _row(neg, keys=["app:d1"])]
+    corpus_path, results = _write(tmp_path, [pos, neg], {"t": rows})
+    _bind(results, "t")
+    assert _score(tmp_path, corpus_path, results)["rows_unbound"] == []
+    (tmp_path / "metrics.json").unlink()
+    edited = [rows[0], _row(neg)]
+    (results / "t.jsonl").write_text(
+        "".join(json.dumps({"tool": "t", **r}) + "\n" for r in edited), encoding="utf-8"
+    )
+    assert "t.jsonl: its SHA-256 is not the one the manifest recorded" in _refused(
+        tmp_path, corpus_path, results, capsys
+    )
+    metrics = _score(tmp_path, corpus_path, results, "--force")
+    assert len(metrics["forced"]) == 1
+
+
+def test_rows_of_a_manifest_without_digests_are_reported_as_unbound(tmp_path: Path) -> None:
+    case = _case("p1", expected=[("app:1", "agent")])
+    rows = [_row(case, keys=["app:1"])]
+    corpus_path, results = _write(tmp_path, [case], {"shadowscan": rows, "t": rows})
+    _bind(results, "shadowscan")
+    metrics = _score(tmp_path, corpus_path, results)
+    assert metrics["rows_unbound"] == ["t"]
+    text = report.render(metrics, corpus_path)
+    assert "The manifest records no SHA-256 of the results file of `t`" in text
+    _bind(results, "t")
+    assert "SHA-256 of the results" not in report.render(_score(tmp_path, corpus_path, results), corpus_path)
+
+
 def test_a_tool_the_manifest_ran_without_a_results_file_is_refused_unless_forced(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -403,11 +447,15 @@ def test_a_negative_case_with_only_tolerated_reports_is_not_a_false_alarm(tmp_pa
     assert (c["tn"], c["fp"]) == (1, 0)
 
 
-# --- code keys outside the fact taxonomy are ignored for every tool (S5) --------------------------
+# --- code keys outside the fact taxonomy: no entity outcome, never a correct negative (S5) --------
 
 
 def test_code_keys_outside_the_taxonomy_are_neither_true_nor_false_positives(tmp_path: Path) -> None:
-    """An adapter that passed unmappable file paths through used to collect a false positive for each."""
+    """An adapter that passed unmappable file paths through used to collect a false positive for each.
+
+    At case level they used to earn the negative case a true negative: the tool alarmed on a
+    repository with nothing to find and was credited with leaving it alone.
+    """
     pos = _case("c1", surface="code", modality="checkout", expected=[("framework:langchain", "agent")])
     neg = _case("c2", surface="code", modality="checkout")
     corpus_path, results = _write(
@@ -424,10 +472,49 @@ def test_code_keys_outside_the_taxonomy_are_neither_true_nor_false_positives(tmp
     i = metrics["tools"]["t"]["in_scope"]
     # only provider:openai, a taxonomy fact the truth does not list, is a false positive
     assert (i["tp"], i["fp"]) == (1, 1)
-    assert (i["case"]["tn"], i["case"]["fp"]) == (1, 0)
+    assert (i["case"]["tn"], i["case"]["fp"], i["case"]["out_of_taxonomy_alarms"]) == (0, 1, 1)
     assert i["out_of_taxonomy"] == 2
     assert metrics["tools"]["t"]["by_surface"]["code"]["out_of_taxonomy"] == 2
-    assert "outside the code fact taxonomy" in report.render(metrics, corpus_path)
+    text = report.render(metrics, corpus_path)
+    assert "outside the code fact taxonomy" in text
+    assert "a false alarm on a negative one, which happened on t 1." in text
+
+
+def test_code_hits_an_adapter_dropped_as_out_of_taxonomy_count_like_keys_passed_on(tmp_path: Path) -> None:
+    """Adapters drop unmappable code hits; a negative case where a tool alarmed only that way was a true negative."""
+    pos = _case("c1", surface="code", modality="checkout", expected=[("framework:langchain", "agent")])
+    neg = _case("c2", surface="code", modality="checkout")
+    clean = _case("c3", surface="code", modality="checkout")
+    rows = {
+        "shadowscan": [_row(pos, keys=["framework:langchain"]), _row(neg), _row(clean)],
+        "t": [{**_row(pos), "out_of_taxonomy": 4}, {**_row(neg), "out_of_taxonomy": 3}, _row(clean)],
+    }
+    corpus_path, results = _write(tmp_path, [pos, neg, clean], rows)
+    metrics = _score(tmp_path, corpus_path, results)
+    i = metrics["tools"]["t"]["in_scope"]
+    assert (i["tp"], i["fp"], i["out_of_taxonomy"]) == (0, 0, 7)
+    # no credit on the positive case, a false alarm on the negative one, the clean scan a true negative
+    assert (i["case"]["tp"], i["case"]["fn"], i["case"]["fp"], i["case"]["tn"]) == (0, 1, 1, 1)
+    assert i["case"]["out_of_taxonomy_alarms"] == 1
+    v = metrics["tools"]["t"]["vs_reference"]
+    assert (v["shared"], v["tool_only_correct"], v["reference_only_correct"]) == (3, 0, 2)
+
+
+@pytest.mark.parametrize(
+    ("surface", "modality", "value", "message"),
+    [
+        ("code", "checkout", -1, "out_of_taxonomy must be a count"),
+        ("code", "checkout", True, "out_of_taxonomy must be a count"),
+        ("code", "checkout", "2", "out_of_taxonomy must be a count"),
+        ("identity", "okta-export", 1, "out_of_taxonomy is for code rows only"),
+    ],
+)
+def test_a_malformed_out_of_taxonomy_count_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], surface: str, modality: str, value: Any, message: str
+) -> None:
+    case = _case("c1", surface=surface, modality=modality)
+    corpus_path, results = _write(tmp_path, [case], {"t": [{**_row(case), "out_of_taxonomy": value}]})
+    assert message in _refused(tmp_path, corpus_path, results, capsys)
 
 
 def test_artifact_keys_outside_the_code_surface_are_still_scored(tmp_path: Path) -> None:

@@ -1,10 +1,10 @@
-# ShadowBench: the nine-surface shadow AI agent discovery benchmark
+# ShadowBench: a nine-surface shadow AI agent discovery benchmark
 
-A standardized, tool-neutral benchmark that asks one question on every surface
-where shadow AI agents leave evidence: *given what an operator can actually
-collect from this surface, which AI agents and which plain AI uses are present,
-and can a discovery tool find them without flagging the things that merely
-sound like AI?*
+An author-written benchmark, with tool-neutral entity keys, that asks one
+question on every surface where shadow AI agents leave evidence: *given what
+an operator can actually collect from this surface, which AI agents and which
+plain AI uses are present, and can a discovery tool find them without flagging
+the things that merely sound like AI?*
 
 It covers nine surfaces: code repositories, identity providers, LLM gateways,
 low-code platforms, SaaS workspaces, cloud accounts (including Kubernetes),
@@ -137,8 +137,12 @@ Per tool, per surface and per modality, over the cases the tool ran
 * **Code surface.** Truth there is `<category>:<value>` facts from
   `tools.discovery_benchmark.taxonomy`. A reported code key that is not such a
   fact (for example a file path an adapter could not map) is out of taxonomy:
-  neither a true nor a false positive. The rule is the same for every tool,
-  and the count is reported per tool.
+  neither a true nor a false positive. An adapter that drops such hits counts
+  them in the row's `out_of_taxonomy`, and they count as if passed on. The
+  rule is the same for every tool, and the count is reported per tool. At
+  case level an out-of-taxonomy report finds no positive case and makes a
+  negative case a false alarm: the tool alarmed on a repository with nothing
+  to find.
 * **Agent tier.** Recall on expected `agent` entities counting only reports
   labeled `agent`; the false-alarm rate on expected `llm` entities and decoys
   that a tool labeled `agent`. A tool that cannot tell agents from plain AI
@@ -148,8 +152,9 @@ Per tool, per surface and per modality, over the cases the tool ran
 * **Case level.** A positive case is found only when the tool reports at least
   one expected entity (a true positive); a false positive alone does not find
   it. A negative case is a false alarm when the tool reports any false
-  positive, and is correct only on a complete `ok` run. Case recall,
-  specificity, balanced accuracy, MCC and the McNemar test use these outcomes.
+  positive or, on the code surface, anything out of taxonomy, and is correct
+  only on a complete `ok` run. Case recall, specificity, balanced accuracy,
+  MCC and the McNemar test use these outcomes.
 * **Errors, missing rows and incomplete runs.** A crash, timeout or unreadable
   output is an `error` row, and a case with no row counts as an error and is
   also reported as missing. An error is never a correct outcome: every expected
@@ -187,13 +192,17 @@ Per tool, per surface and per modality, over the cases the tool ran
 
 The scorer also checks what it is given. The run manifest must name the
 SHA-256 of the corpus file being scored, because case ids are positional;
-every `<tool>.jsonl` must belong to a tool the manifest records as run; and
-the row statuses in each file must add up to the counts the manifest recorded.
-Each of these is refused unless `score --force` is given, and a forced score
-lists every override in `metrics.json` and at the top of the report. Malformed
-rows are refused even with `--force`: an unknown status, a second row for a
-case, a case the corpus does not have, a row whose tool, surface, modality,
-family, label or difficulty disagrees with its file or case, and an
+every `<tool>.jsonl` must belong to a tool the manifest records as run; the
+row statuses in each file must add up to the counts the manifest recorded; and
+each file's SHA-256 must be the one the manifest recorded for it. Each of these
+is refused unless `score --force` is given, and a forced score lists every
+override in `metrics.json` and at the top of the report. A manifest written
+before the runner recorded digests, the 2026-10-11 one included, binds its rows
+only by their status counts, which an edited or swapped file can keep; the
+report says so, and `metrics.json` lists those tools under `rows_unbound`.
+Malformed rows are refused even with `--force`: an unknown status, a second
+row for a case, a case the corpus does not have, a row whose tool, surface,
+modality, family, label or difficulty disagrees with its file or case, and an
 `unsupported` row beside `ok` or `error` rows on the same surface and modality.
 
 ## How the corpus is built, and how to check it
@@ -292,23 +301,26 @@ recorded in the header); never use `legacy` for a new corpus.
 * The published metrics do not come from that original scorer. Its rules were
   revised after the run, during integration review and with the run's results
   in view: one-way artifact matching, a true positive needed to find a case,
-  no true negative from an error, a missing row or an incomplete run, and
-  out-of-taxonomy code keys counted apart. The revised rules were re-applied
-  to the unchanged rows (see Integration changes under Results). The adapters
-  were also changed after the run; the committed rows come from the earlier
-  adapters.
+  no true negative from an error, a missing row or an incomplete run,
+  out-of-taxonomy code keys counted apart, and later no case-level true
+  negative for a code case where a tool reported only such keys. The revised
+  rules were re-applied to the unchanged rows (see Integration changes under
+  Results). The adapters were also changed after the run; the committed rows
+  come from the earlier adapters.
 * Decoys are drawn from the confusions real tools make: service identities
   without AI, infrastructure *agents*, *Bedrock* game servers, *MCP* (Minecraft
   Coder Pack, Microsoft Cloud Partner), *copilot* seat reports, *Gemini*
   exchange clients, embedding batches that look like agent loops, classic
   chatbots, flows and workflows whose names mention AI.
 * Every tool runs as uid and gid 65534 with `no_new_privs`, in fresh network,
-  PID and mount namespaces: no network beyond loopback (where active-network
-  cases serve their mocks), no view of host processes (live-runtime cases show
-  only the case's inert processes), `/root` and `/home` hidden under empty
-  tmpfs mounts, and an environment built from scratch with a case-local `HOME`
-  and no inherited credentials. This is not a sandbox: a tool can still read
-  world-readable files elsewhere on the host. The
+  PID, mount and IPC namespaces: no network beyond loopback (where
+  active-network cases serve their mocks), no view of host processes
+  (live-runtime cases show only the case's inert processes), `/root` and
+  `/home` hidden under empty tmpfs mounts, a fresh `/var/tmp` and `/dev/shm`
+  for each case, and an environment built from scratch with a case-local
+  `HOME` and no inherited credentials. This is not a sandbox: a tool can still
+  read world-readable files elsewhere on the host, and what it writes to the
+  host's `/tmp` stays there for later cases and tools to read. The
   [harness README](../../../tools/shadowbench/cases/README.md) gives the
   details. This is the current harness: the 2026-10-11 rows were recorded
   under weaker isolation, described under Integration changes. No tool is
@@ -387,7 +399,8 @@ differ below the pinned tools.
 Committed runs live under `results/<date>/` with `manifest.json` (corpus path
 and hash, generator digest, platform, and per tool its version and row-status
 counts; from the current runner on, also the harness commit and whether
-anything under `tools/` differed from it, which the report then names), one
+anything under `tools/` differed from it, which the report then names, and
+each results file's SHA-256), one
 `<tool>.jsonl` of normalized rows, `metrics.json` and `REPORT.md`. The
 runner's raw output stays on the machine that ran it and is not committed.
 The newest `REPORT.md` holds the measured numbers; read them with the caveats
@@ -435,6 +448,18 @@ track:
   131 of 133). Its agent false-alarm rate is 18% of 907 entities (was of
   924), 12% on cloud (was 11%). No case-level outcome changed, since every
   negative aws-export case also holds decoys ShadowScan is given.
+* Out-of-taxonomy code keys were neither credited nor charged at entity
+  level, but a negative code case where a tool reported only such keys still
+  earned a case-level true negative. On the encode/httpx control
+  (`code-checkout-017`) AgentDiscover reported 16 files as "Direct HTTP LLM
+  client detected (Shadow AI)", none mappable to a fact, and was credited
+  with a correct negative. Such a case is now a false alarm, and the
+  code-surface adapters, which drop unmappable hits, count them in each row's
+  `out_of_taxonomy` so that future rows keep the evidence. Re-scored from the
+  unchanged rows, AgentDiscover's code case specificity is 90% (9 of 10; was
+  100%), its in-scope case specificity 96% (25 of 26; was 100%) and its
+  balanced accuracy 62% (was 64%); the paired comparison with ShadowScan is
+  23 against 1 (was 22 against 1). No other tool's numbers changed.
 * `verify --regenerate` had inferred a per-surface count of 38 for the
   committed corpus, rebuilt a smaller corpus and reported a difference,
   although the code still builds the committed cases. It now infers 40 and
@@ -449,7 +474,11 @@ track:
   root, in fresh network and PID namespaces with their own `/proc` but the
   host's file system otherwise in view, `/root` and `/home` included. Fleet's
   table, which also reads `/home/*` and `/root`, therefore saw the host's
-  homes; its adapter kept only rows under the case home.
+  homes; its adapter kept only rows under the case home. After a stage
+  exits, the runner now takes `work/` back for root and removes group and
+  other write from its directories before it removes escaping symlinks, so a
+  process of the tools' uid outside the stage cannot plant one after that
+  check and have the adapter read a root-only file through it.
 * The runner now records in `manifest.json` the harness commit and whether
   anything under `tools/` differed from it, and the report names both. It
   records the `version` that `tools.json` gives any tool; before, the Numbat,
@@ -457,12 +486,15 @@ track:
   ignored the version `install_tools.sh` wrote for them. It also refuses to
   start, with a message, when `gcc` cannot build the inert process binary,
   where it used to stop with a traceback. The 2026-10-11 manifest predates
-  the harness fields, so its report names no harness commit and re-renders
-  unchanged.
+  the harness fields, so its report names no harness commit. It says instead
+  that the rows come from the earlier adapters under weaker isolation and
+  that the scoring rules were revised after the run.
 * Version probes the runner starts as root now drop to uid/gid 65534 with
   `/root` and `/home` hidden, as the tools themselves do in the stage, and do
-  not run when that drop is impossible. In the 2026-10-11 run each tool's
-  version probe ran as root on the host, outside the stage.
+  not run when that drop is impossible. They also get their own PID namespace
+  and `/proc`, so a process a probed binary detaches dies with the probe
+  instead of staying on the host as that uid. In the 2026-10-11 run each
+  tool's version probe ran as root on the host, outside the stage.
 
 ### The 2026-10-11 run, in brief
 
@@ -530,9 +562,10 @@ product.
   246 file-path keys and `agent-discovery`'s one; they are outside the fact
   taxonomy and are counted apart, not as false positives. The earlier brief's
   247 AgentDiscover false positives were these 246 keys and the one fact
-  above.
+  above. At case level 16 of those keys fell on the encode/httpx control,
+  AgentDiscover's one code false alarm (case specificity 90%, 9 of 10).
 * **Paired comparison** with ShadowScan on shared cases (cases only ShadowScan
-  got right, against cases only the other tool got right): AgentDiscover 22
+  got right, against cases only the other tool got right): AgentDiscover 23
   against 1 (66 cases), vet 35 against 1 (66), `agent-discovery` 34 against 9
   (86), Cisco MCP Scanner and Numbat 16 against 0 (40 each), all p < 0.001;
   Snyk Agent Scan 10 against 0 (40), p = 0.002; Fleet's table 22 against 11

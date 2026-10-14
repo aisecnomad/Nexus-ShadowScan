@@ -44,9 +44,11 @@ or project-config item without a matching rule yields ``agent-config:generic``.
 Facts are entities of kind ``fact`` labelled ``agent`` for the
 ``mcp-client-config``, ``agent-config`` and ``a2a`` categories and ``llm`` otherwise.
 An item that maps to no fact (an extension, agent CLI, plugin or skill whose
-paths match no rule) is dropped: code truth holds only taxonomy facts, so any
-other key could never match, and the ShadowScan adapter drops its unmappable
-findings the same way. The ``generic`` fallbacks above are the ones the
+paths match no rule) is dropped and counted in the row's ``out_of_taxonomy``:
+code truth holds only taxonomy facts, so any other key could never match, but
+the scorer still counts the item as an alarm on a negative case, and the
+ShadowScan adapter treats its unmappable findings the same way. The
+``generic`` fallbacks above are the ones the
 code-surface benchmark's own vet adapter (``tools.discovery_benchmark``) emits.
 
 Fail closed: ``null`` or ``[]`` in the report is an empty result; a missing,
@@ -154,11 +156,14 @@ class VetAdapter:
         items, error = _load_items(work / REPORT)
         if error:
             return AdapterResult(status="error", note=error)
+        unmapped = 0
         if case.surface == "code":
-            entities = _code_entities(items, case.inputs / "repo")
+            entities, unmapped = _code_entities(items, case.inputs / "repo")
         else:
             entities = _home_entities(items, case.home or work)
-        return AdapterResult(status="ok", entities=entities, raw={"items": items[:400]})
+        return AdapterResult(
+            status="ok", entities=entities, raw={"items": items[:400]}, out_of_taxonomy=unmapped
+        )
 
 
 def _load_items(report: Path) -> tuple[list[dict[str, Any]], str]:
@@ -239,8 +244,10 @@ def _home_entities(items: list[dict[str, Any]], home: Path) -> list[Entity]:
     return list(entities.values())
 
 
-def _code_entities(items: list[dict[str, Any]], repo: Path) -> list[Entity]:
+def _code_entities(items: list[dict[str, Any]], repo: Path) -> tuple[list[Entity], int]:
+    """The facts the items map to, and how many items mapped to none."""
     entities: dict[str, Entity] = {}
+    unmapped = 0
     for item in items:
         kind = _kind(item)
         if kind in SKIP_KINDS:
@@ -252,6 +259,8 @@ def _code_entities(items: list[dict[str, Any]], repo: Path) -> list[Entity]:
             facts.add("mcp-client-config:generic")
         elif kind in {2, 5} and not any(f.startswith("agent-config:") for f in facts):
             facts.add("agent-config:generic")
+        if not facts:
+            unmapped += 1
         for fact in facts:
             label = "agent" if taxonomy.category(fact) in AGENT_FACT_CATEGORIES else "llm"
             if _stronger(entities.get(fact), label):
@@ -261,7 +270,7 @@ def _code_entities(items: list[dict[str, Any]], repo: Path) -> list[Entity]:
                     label=label,
                     attributes={"vet_kind": kind, "app": str(item.get("App") or item.get("app") or "")},
                 )
-    return list(entities.values())
+    return list(entities.values()), unmapped
 
 
 def _repo_relative(path: str, repo: Path) -> str:
