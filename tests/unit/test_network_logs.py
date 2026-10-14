@@ -588,6 +588,8 @@ def test_temporal_dns_fixture_attributes_only_fresh_same_client_context(
             "host": "api.openai.com",
             "address": "203.0.113.8",
             "observed_at": "1970-01-01T00:16:40+00:00",
+            "refreshed_at": "1970-01-01T00:16:40+00:00",
+            "expires_at": "1970-01-01T00:17:40+00:00",
             "ttl_seconds": 60,
             "flow_at": "1970-01-01T00:16:41+00:00",
             "sensor": "sensor-a",
@@ -909,6 +911,99 @@ def test_timestamps_per_connection_are_bounded_and_reported(run_connector, tmp_p
     assert any("1 flow record(s) beyond 2 timestamps on one connection" in w for w in stats.warnings)
     finding = found[("192.0.2.10", "provider.openai")]
     assert finding.metadata["flows"] == 3 and finding.metadata["bytes_out"] == 300
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("limit", ["_MAX_DNS_OBSERVATIONS", "_MAX_DNS_PER_ADDRESS"])
+def test_repeated_answers_extend_one_window_instead_of_filling_storage(
+    run_connector, tmp_path, monkeypatch, limit, reverse
+):
+    monkeypatch.setattr(network_logs, limit, 1)
+    rows = _temporal_rows(flow_time=1209)
+    # Each answer arrives before the previous one expires: one window 1000..1210.
+    rows.extend({**rows[0], "ts": ts} for ts in (1050, 1100, 1150))
+    rows.extend({**rows[1], "ts": ts} for ts in (1001, 1120, 1210))
+    if reverse:
+        rows.reverse()
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete and not stats.warnings
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 3 and finding.metadata["dns_queries"] == 4
+    windows = {
+        (item["observed_at"], item["refreshed_at"], item["ttl_seconds"])
+        for item in finding.metadata["dns_attribution"]
+    }
+    assert windows == {("1970-01-01T00:16:40+00:00", "1970-01-01T00:19:10+00:00", 60)}
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_answers_separated_by_expiry_keep_separate_windows(run_connector, tmp_path, reverse):
+    # Windows 1000..1060 and 1100..1160: the flow at 1070 falls in the gap.
+    rows = _temporal_rows(flow_time=1070)
+    answer = rows[0]
+    rows.append({**answer, "ts": 1100})
+    rows.append({**rows[1], "ts": 1101})
+    if reverse:
+        rows.reverse()
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete and not stats.warnings
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 1
+    assert [item["flow_at"] for item in finding.metadata["dns_attribution"]] == ["1970-01-01T00:18:21+00:00"]
+    # An answer observed at 1050 overlaps both windows and bridges them.
+    rows.append({**answer, "ts": 1050})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 2
+    assert {(item["observed_at"], item["refreshed_at"]) for item in finding.metadata["dns_attribution"]} == {
+        ("1970-01-01T00:16:40+00:00", "1970-01-01T00:18:20+00:00")
+    }
+
+
+def test_answers_with_decremented_ttls_share_one_window(run_connector, tmp_path, monkeypatch):
+    # A caching resolver reports the remaining TTL: 60 at 1000, then 30 at 1040.
+    monkeypatch.setattr(network_logs, "_MAX_DNS_PER_ADDRESS", 1)
+    rows = _temporal_rows(flow_time=1065)
+    rows.append({**rows[0], "ts": 1040, "TTLs": [30]})
+    rows.append({**rows[1], "ts": 1070})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete and not stats.warnings
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 1
+    assert finding.metadata["dns_attribution"] == [
+        {
+            "host": "api.openai.com",
+            "address": "203.0.113.8",
+            "observed_at": "1970-01-01T00:16:40+00:00",
+            "refreshed_at": "1970-01-01T00:17:20+00:00",
+            "expires_at": "1970-01-01T00:17:50+00:00",
+            "ttl_seconds": 60,
+            "flow_at": "1970-01-01T00:17:45+00:00",
+            "sensor": "",
+            "network_id": "",
+            "resolver": "",
+        }
+    ]
+
+
+def test_per_address_dns_bound_is_scoped_to_that_address(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_DNS_PER_ADDRESS", 1)
+    rows = _temporal_rows()
+    rows.append({**rows[0], "query": "cdn.example.net"})
+    rows.append({**rows[0], "query": "api.anthropic.com", "answers": ["203.0.113.9"]})
+    rows.append({**rows[1], "dst_ip": "203.0.113.9"})
+    rows.extend({**row, "client": "192.0.2.11"} for row in _temporal_rows())
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    assert stats.warnings == [
+        "network.logs: 1 DNS observation(s) exceeded the 1 per-address bound; DNS and service-port flow "
+        "attribution disabled for 1 address(es) because discarded answers may conflict"
+    ]
+    openai = found[("192.0.2.10", "provider.openai")]
+    assert openai.metadata["flows"] == 0
+    assert any("answers exceeded storage bounds" in item for item in openai.metadata["limitations"])
+    assert found[("192.0.2.10", "provider.anthropic")].metadata["flows"] == 1
+    assert found[("192.0.2.11", "provider.openai")].metadata["flows"] == 1
 
 
 def test_record_limit_cannot_hide_a_contradictory_dns_answer(run_connector, tmp_path):

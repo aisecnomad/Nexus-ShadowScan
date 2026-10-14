@@ -24,6 +24,7 @@ Malformed lines and unrecognised records make the scan incomplete.
 
 from __future__ import annotations
 
+import bisect
 import ipaddress
 import json
 import math
@@ -64,7 +65,7 @@ _MAX_HOSTS_PER_FINDING = 20
 _MAX_TIMES = 1_000
 _MAX_TOTAL_TIMES = 200_000
 _MAX_DNS_OBSERVATIONS = 500_000
-_MAX_DNS_PER_ADDRESS = 256
+_MAX_DNS_PER_ADDRESS = 4_096
 _MAX_JA4_PER_CONTACT = 32
 _MAX_DNS_PROVENANCE = 20
 _JA4 = re.compile(r"^[tqd](?:1[0-3]|s[23]|d[123]|00)[di][0-9]{4}[a-zA-Z0-9]{2}_[a-f0-9]{12}_[a-f0-9]{12}$")
@@ -136,23 +137,106 @@ class _Contact:
     limitations: set[str] = field(default_factory=set)
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True)
 class _DNSObservation:
+    """A client's answers naming one host for one address, merged into one validity window.
+
+    An answer that arrives before the previous window ends extends it, whatever
+    TTL a caching resolver reported, so a day of 60-second TTLs is one window
+    rather than thousands of entries. ``expires_at`` is None without a window:
+    a zero TTL, or no timestamp or TTL (unknown validity). ``ttl`` is the
+    longest TTL merged into the window.
+    """
+
     signature: str
     host: str
     observed_at: float | None
     ttl: float | None
+    refreshed_at: float | None = None
+    expires_at: float | None = None
 
-    def valid(self, when: float | None, max_ttl: int, skew: int) -> bool:
-        # Never explain an older flow using a newer DNS answer. Skew only
-        # relaxes expiration; zero-TTL records must not create a cache interval.
+    @property
+    def unknown(self) -> bool:
+        return self.observed_at is None or self.ttl is None
+
+    def valid(self, when: float | None) -> bool:
+        # Never explain an older flow using a newer DNS answer.
         return (
             when is not None
             and self.observed_at is not None
-            and self.ttl is not None
-            and self.ttl > 0
-            and self.observed_at <= when < self.observed_at + min(self.ttl, max_ttl) + skew
+            and self.expires_at is not None
+            and self.observed_at <= when < self.expires_at
         )
+
+    def extend(self, other: _DNSObservation) -> None:
+        """Absorb an overlapping or touching window of the same host."""
+        if self.observed_at is not None and other.observed_at is not None:
+            self.observed_at = min(self.observed_at, other.observed_at)
+        if self.refreshed_at is not None and other.refreshed_at is not None:
+            self.refreshed_at = max(self.refreshed_at, other.refreshed_at)
+        if self.expires_at is not None and other.expires_at is not None:
+            self.expires_at = max(self.expires_at, other.expires_at)
+        if self.ttl is not None and other.ttl is not None:
+            self.ttl = max(self.ttl, other.ttl)
+
+
+@dataclass(slots=True)
+class _DNSAnswers:
+    """What one client resolved to one address: disjoint windows per host, sorted by start."""
+
+    windows: dict[tuple[str, str], list[_DNSObservation]] = field(default_factory=dict)
+    others: list[_DNSObservation] = field(default_factory=list)  # answers without a window
+    size: int = 0
+
+    def entries(self) -> Iterator[_DNSObservation]:
+        yield from self.others
+        for windows in self.windows.values():
+            yield from windows
+
+    def absorb(self, observation: _DNSObservation) -> bool:
+        """Merge the answer into what is kept; False when it needs an entry of its own."""
+        start, end = observation.observed_at, observation.expires_at
+        if start is None or end is None:
+            return any(
+                item.signature == observation.signature
+                and item.host == observation.host
+                and item.unknown == observation.unknown
+                for item in self.others
+            )
+        windows = self.windows.get((observation.signature, observation.host), [])
+        index = bisect.bisect_right(windows, start, key=_start)
+        merged: _DNSObservation | None = None
+        left = windows[index - 1] if index else None
+        if left is not None and left.expires_at is not None and left.expires_at >= start:
+            left.extend(observation)
+            merged = left
+        right = windows[index] if index < len(windows) else None
+        if right is not None and right.observed_at is not None and right.observed_at <= end:
+            if merged is None:
+                right.extend(observation)
+                merged = right
+            else:
+                merged.extend(windows.pop(index))  # the answer bridged two windows
+        return merged is not None
+
+    def append(self, observation: _DNSObservation) -> None:
+        start = observation.observed_at
+        if start is None or observation.expires_at is None:
+            self.others.append(observation)
+        else:
+            windows = self.windows.setdefault((observation.signature, observation.host), [])
+            windows.insert(bisect.bisect_right(windows, start, key=_start), observation)
+        self.size += 1
+
+    def valid_at(self, when: float | None) -> list[_DNSObservation]:
+        """The windows covering ``when``: at most one per host, found by bisection."""
+        valid = []
+        if when is not None:
+            for windows in self.windows.values():
+                index = bisect.bisect_right(windows, when, key=_start)
+                if index and windows[index - 1].valid(when):
+                    valid.append(windows[index - 1])
+        return valid
 
 
 @dataclass(slots=True)
@@ -550,10 +634,11 @@ class NetworkLogConnector(BaseConnector, _NoDump):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         contacts: dict[tuple[str, str], _Contact] = {}
-        resolved: dict[_DNSKey, list[_DNSObservation]] = {}
+        resolved: dict[_DNSKey, _DNSAnswers] = {}
         sni_by_uid: dict[_TLSKey, _TLSIdentity] = {}
         pairs: dict[_PairKey, dict[float | None, _Pair]] = {}
-        times_used = dns_used = 0
+        dns_overflow: set[_DNSKey] = set()
+        times_used = dns_used = dropped_address_dns = 0
         dropped_pairs = dropped_times = dropped_clients = dropped_tls = dropped_dns = dropped_ja4 = 0
         clients: set[str] = set()
         for rec in records:
@@ -573,16 +658,31 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 match = self._service(host)
                 signature = match.signature.id if match else ""
                 if kind == "dns":
-                    observation = _DNSObservation(signature, host if match else "", ts, rec.get("ttl"))
+                    ttl = rec.get("ttl")
+                    # Skew only relaxes expiration; zero-TTL records must not create a cache interval.
+                    expires = (
+                        ts + min(ttl, self.dns_max_ttl) + self.dns_clock_skew
+                        if ts is not None and ttl
+                        else None
+                    )
                     for address in rec.get("answers") or []:
                         key_dns = (context, client, address)
-                        prior = resolved.get(key_dns, [])
-                        if observation in prior:
+                        answers = resolved.get(key_dns)
+                        observation = _DNSObservation(signature, host if match else "", ts, ttl, ts, expires)
+                        if answers is not None and answers.absorb(observation):
                             continue
-                        if dns_used >= _MAX_DNS_OBSERVATIONS or len(prior) >= _MAX_DNS_PER_ADDRESS:
+                        if dns_used >= _MAX_DNS_OBSERVATIONS:
                             dropped_dns += 1
                             continue
-                        resolved.setdefault(key_dns, []).append(observation)
+                        if answers is not None and answers.size >= _MAX_DNS_PER_ADDRESS:
+                            # A discarded answer could contradict this address's
+                            # retained ones; the doubt stays with the address.
+                            dropped_address_dns += 1
+                            dns_overflow.add(key_dns)
+                            continue
+                        if answers is None:
+                            answers = resolved[key_dns] = _DNSAnswers()
+                        answers.append(observation)
                         dns_used += 1
                 elif rec.get("uid"):
                     # Scope UIDs to the observation vantage as well as client.
@@ -682,6 +782,12 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 f"network.logs: {dropped_dns:,} DNS observation(s) exceeded storage bounds; "
                 "DNS and service-port flow attribution disabled because discarded answers may conflict"
             )
+        if dropped_address_dns:
+            self.ctx.warn(
+                f"network.logs: {dropped_address_dns:,} DNS observation(s) exceeded the "
+                f"{_MAX_DNS_PER_ADDRESS} per-address bound; DNS and service-port flow attribution "
+                f"disabled for {len(dns_overflow):,} address(es) because discarded answers may conflict"
+            )
         if dropped_ja4:
             self.ctx.warn(
                 f"network.logs: {dropped_ja4:,} JA4 observation(s) exceeded per-contact storage bound"
@@ -694,7 +800,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 contact.limitations.add("Flow attribution disabled because input was incomplete")
         else:
             ambiguous = self._attribute_flows(
-                contacts, pairs, sni_by_uid, bool(dropped_tls), resolved, bool(dropped_dns)
+                contacts, pairs, sni_by_uid, bool(dropped_tls), resolved, bool(dropped_dns), dns_overflow
             )
         if ambiguous:
             self.ctx.warn(
@@ -746,8 +852,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         pairs: dict[_PairKey, dict[float | None, _Pair]],
         sni_by_uid: dict[_TLSKey, _TLSIdentity],
         tls_limit_reached: bool,
-        resolved: dict[_DNSKey, list[_DNSObservation]],
+        resolved: dict[_DNSKey, _DNSAnswers],
         dns_limit_reached: bool,
+        dns_overflow: set[_DNSKey],
     ) -> int:
         """Attribute each connection's timestamp groups only within observed validity windows."""
         for context, client, server, port, uid in pairs:
@@ -769,7 +876,17 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 tls_signature = identity.signature
             elif (uid is not None and tls_limit_reached) or dns_limit_reached:
                 continue
-            local = resolved.get((context, client, server), [])
+            local = resolved.get((context, client, server))
+            local_signatures = (
+                {item.signature for item in local.entries() if item.signature} if local else set()
+            )
+            if tls_signature is None and (context, client, server) in dns_overflow:
+                for name in local_signatures:
+                    self._contact(contacts, client, name, context).limitations.add(
+                        "DNS and service-port attribution disabled for an address whose answers "
+                        "exceeded storage bounds"
+                    )
+                continue
             for ts, pair in groups.items():
                 signature: str | None = None
                 basis = ""
@@ -778,24 +895,25 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     signature, basis = tls_signature, "tls"
                 else:
                     if ts is None:
-                        for item in local:
-                            if item.signature:
-                                self._contact(contacts, client, item.signature, context).limitations.add(
-                                    "Flow records without timestamps cannot be attributed through DNS"
-                                )
-                    valid = [item for item in local if item.valid(ts, self.dns_max_ttl, self.dns_clock_skew)]
+                        for name in local_signatures:
+                            self._contact(contacts, client, name, context).limitations.add(
+                                "Flow records without timestamps cannot be attributed through DNS"
+                            )
+                    valid = local.valid_at(ts) if local else []
                     signatures = {item.signature for item in valid}
-                    if valid:
+                    if valid and local:
                         # An answer with unknown validity may be conflicting; it
                         # cannot safely be assumed expired or outside this window.
-                        signatures.update(
-                            item.signature for item in local if item.observed_at is None or item.ttl is None
-                        )
+                        signatures.update(item.signature for item in local.others if item.unknown)
                     if len(signatures) == 1 and "" not in signatures:
                         signature, basis = next(iter(signatures)), "dns"
                     elif signatures - {""}:
                         ambiguous += pair.flows
-                    elif not local and port == _OLLAMA_PORT and self.index.get("provider.ollama") is not None:
+                    elif (
+                        local is None
+                        and port == _OLLAMA_PORT
+                        and self.index.get("provider.ollama") is not None
+                    ):
                         signature, basis = "provider.ollama", "port"
                 if signature is None:
                     continue
@@ -811,6 +929,8 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                             "host": item.host,
                             "address": server,
                             "observed_at": _iso(item.observed_at),
+                            "refreshed_at": _iso(item.refreshed_at),
+                            "expires_at": _iso(item.expires_at),
                             "ttl_seconds": item.ttl,
                             "flow_at": _iso(ts),
                             "sensor": context[0],
@@ -1038,6 +1158,11 @@ def _iso(value: float | None) -> str | None:
         return None
     moment = parse_timestamp(value)
     return moment.isoformat() if moment else None
+
+
+def _start(item: _DNSObservation) -> float:
+    """Bisection key of a window: only windowed answers are kept in sorted lists."""
+    return item.observed_at if item.observed_at is not None else 0.0
 
 
 def _seen(c: _Contact, ts: float | None) -> None:
