@@ -145,6 +145,29 @@ def _vet_record(item: object) -> bool:
     return named or (isinstance(item.get("MCPServer"), dict) and bool(item["MCPServer"]))
 
 
+def _code_report_error(path: Path) -> str | None:
+    """Why a code repository's `vet.json` is not an inventory, or None.
+
+    The code-surface adapter reads a non-list report as one item and skips
+    items it cannot map, so an error object would read as nothing found.
+    No report, an empty one, `null` and `[]` are left to it.
+    """
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8", errors="replace").strip()
+    if text in {"", "null", "[]"}:
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        return f"vet.json unparseable: {exc}"
+    if not isinstance(data, list):
+        return "vet.json is not a list"
+    if not any(_vet_record(item) for item in data):
+        return "vet.json holds no vet record"
+    return None
+
+
 class VetEstateAdapter(_WrappedCodeAdapter):
     """vet on code repositories plus `vet ai discover` on home trees.
 
@@ -152,7 +175,9 @@ class VetEstateAdapter(_WrappedCodeAdapter):
     nothing found: the code-surface adapter records that vet writes either
     when it finds nothing. Any other top level, or a list holding items but no
     vet record, is an adapter error, never an empty inventory. Other items
-    beside a record are skipped.
+    beside a record are skipped. A code repository's `vet.json` is held to
+    the same shape before the code-surface adapter reads it; a missing one
+    still reads as nothing found, as that adapter records.
     """
 
     def __init__(self) -> None:
@@ -193,6 +218,9 @@ class VetEstateAdapter(_WrappedCodeAdapter):
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:
         if unit.startswith("code:"):
+            error = _code_report_error(out_dir / "vet.json")
+            if error is not None:
+                return Normalized(error=error)
             return super().normalize(unit, out_dir)
         path = out_dir / "ai.json"
         if not path.exists() or not path.stat().st_size:

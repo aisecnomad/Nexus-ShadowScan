@@ -119,10 +119,16 @@ tracked.
 
 **Erratum (integration, 2026-10-12).** The original pull request named the
 fictional organization *Vantor*, which is also the name a real company
-adopted in 2025, and gave it tenant hostnames on real SaaS domains. Every
-occurrence, in file contents, directory names, the three JWT payloads that
-carried it, `corpus.json` and the recorded predictions in `runs.json`, was
-replaced with the same-length, case-preserving name *Adatum*. The scorer of
+adopted in 2025. Every occurrence, in file contents, directory names, the
+three JWT payloads that carried it, `corpus.json` and the recorded
+predictions in `runs.json`, was replaced with the same-length,
+case-preserving name *Adatum*. The rename kept the tenant hostnames on real
+SaaS parent domains: the artifacts name Adatum tenants on Okta (also a JWT
+issuer), Dynamics, Azure AI and OpenAI, Blob storage and a GCP service
+account, and the ShadowScan harness configuration names Salesforce,
+ServiceNow, Atlassian and Auth0 tenants. They are offline data that no
+harness contacts, but Adatum is a widely used fictitious name, so tenants
+by those names may exist. The scorer of
 that time gave a prediction to the entity with the longest matching anchor,
 and a same-length name keeps every anchor's length, so re-scoring the
 renamed `runs.json` with that scorer gave exactly the renamed
@@ -303,7 +309,10 @@ run vet's code commands started in the run directory instead; their argv
 named the repository with `-D` either way. Those normalizers read a
 missing report as nothing found: vet's when `vet.json` is missing, empty,
 `null` or `[]`, Agentic Radar's for each framework whose report is missing
-or unparseable, and AgentDiscover's when `scan.sarif` is missing. A run
+or unparseable, and AgentDiscover's when `scan.sarif` is missing. The vet
+wrapper first holds any other `vet.json` to the home-tree rules below: one
+that is unparseable, not a list, or a list without a vet record (such as
+`{"error": ...}`) is an adapter error, not an empty inventory. A run
 whose commands all exited with accepted codes therefore counts as complete
 without a report, unless every command exited non-zero (see
 [Run completeness](#run-completeness)). The estate scorer differs from the
@@ -314,6 +323,7 @@ On the endpoint surface, the Cisco MCP Scanner and AgentSight wrapper
 scripts run every step and exit with the status of the first step that
 failed, and the Snyk Agent Scan script exits with the scanner's own
 status. Numbat's script exits with the status of `numbat agents` when that
+status is neither 0 nor 1, even if the step printed a report, or when the
 step leaves no report, and with 0 otherwise (the adapter reads its exit 1
 on an empty inventory as a valid result); its `scan` step only adds
 evidence paths to the prediction text, and its exit status is not checked.
@@ -343,7 +353,11 @@ These rules are stricter than the 2026-10-11 adapters were, but they would
 not have changed that run's rows: every committed Snyk Agent Scan, Numbat
 and vet home prediction names its client or server as text, so it was read
 from such a record, and the one Numbat row without predictions
-(`home:win-laptop-03`) recorded `raw_count` 0, an empty list.
+(`home:win-laptop-03`) recorded `raw_count` 0, an empty list. For vet's
+code rows, eight recorded `raw_count` 0 (no report, or an empty, `null`
+or `[]` one, which the check leaves alone), and in the other two every
+item the report held mapped to a named entry with an app. Scoring reads
+the recorded rows, so re-scoring that run is unaffected either way.
 
 ## Scoring
 
@@ -639,7 +653,11 @@ entity. A run that records a freeze is checked against `--freeze` (default
 [Execution and isolation](#execution-and-isolation); `score` exits 2 when
 that check fails unless `--allow-freeze-mismatch` is given, and a malformed
 `harness_commit`, `harness_dirty` or `freeze` record stops it with a
-`corpus error` and exit 2 either way. To re-score the committed run, pass
+`corpus error` and exit 2 either way. So does a result row without a tool
+or a valid unit (`estate`, `sim`, `code:<name>` or `home:<name>`): a row
+missing its unit is not read as a whole-estate run. A second row for the
+same tool and unit is refused the same way, because its unattributed
+predictions would count twice. To re-score the committed run, pass
 `--runs benchmarks/shadowbench/estate/results/2026-10-11/runs.json`.
 
 `tools.json` maps tool ids to installed binaries:
