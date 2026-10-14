@@ -1456,6 +1456,18 @@ def test_readme_benchmark_table_quotes_the_committed_results() -> None:
     code_metrics = json.loads((_BENCHMARKS / code_run / "metrics.json").read_text(encoding="utf-8"))
     corpus, tool = code_metrics["corpus"], code_metrics["tools"]["shadowscan"]
     repos = tool["repo_level"]
+    # An incomplete run left content unread, so its clean control or near-miss
+    # is not a clean result and the README has to say how many there were.
+    labels = {
+        entry["id"]: entry["class"]
+        for entry in json.loads(
+            (_BENCHMARKS / "shadow-ai-discovery" / "corpus.json").read_text(encoding="utf-8")
+        )["repos"]
+    }
+    incomplete_negatives = sum(
+        labels[repo] in {"control", "nearmiss"} for repo in tool["incomplete_runs"]["repos"]
+    )
+    assert incomplete_negatives
     code = [
         f"blob/main/benchmarks/{code_run}/REPORT.md",
         f"(2026-10-09, {tool['version']})",
@@ -1465,8 +1477,10 @@ def test_readme_benchmark_table_quotes_the_committed_results() -> None:
         f"Fact precision / recall / F1 {_percentages(tool['value_level']['in_scope'])}",
         f"{repos['positives_detected']} of {repos['positives']} positive repositories flagged",
         f"{repos['controls_flagged'] + repos['nearmiss_flagged']} of "
-        f"{repos['controls'] + repos['nearmiss']} controls and near-misses flagged",
+        f"{repos['controls'] + repos['nearmiss']} controls and near-misses flagged "
+        f"({incomplete_negatives} of those {repos['controls'] + repos['nearmiss']} runs incomplete)",
         f"{tool['incomplete_runs']['count']} of {corpus['repos']} runs were incomplete (exit 3)",
+        "an incomplete clean run is not a clean result",
     ]
     missing = [claim for claim in estate + code if claim not in section]
     assert not missing, "README benchmark table no longer matches the committed metrics: " + repr(missing)
