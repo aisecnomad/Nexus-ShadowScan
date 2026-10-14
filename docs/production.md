@@ -1036,11 +1036,9 @@ as the earlier rules withheld it with the credential, and shows on each line
 only what both readings show; such a token's tail is withheld with it.
 Sanitized evidence around these credentials therefore withholds more: where
 one reading's line shows nothing the other's does not, that line is kept, and
-otherwise the whole line is withheld. Where a name is glued after a
-credential on the line after its scheme, the readings' lines no longer pair
-up: the lines the same in both, counted from the start or from the end, are
-kept, and the lines between them are withheld, keeping their line breaks. In
-a text with a glued run, a run that starts the line after a scheme credential
+otherwise the whole line is withheld; a text with a name glued after a
+credential on the line after its scheme is withheld whole, keeping its line
+breaks. In such a text a run that starts the line after a scheme credential
 (`--verbose`, `---`), or a later line after only blank lines or other such
 runs, is withheld as well, with a marker in its place where the rest of the
 line is unchanged. A text with no glued run reads as the earlier rules read
