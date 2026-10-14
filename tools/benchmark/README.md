@@ -1,4 +1,4 @@
-# Shadow-AI discovery head-to-head benchmark
+# Synthetic head-to-head benchmark
 
 This harness runs ShadowScan and ten other open-source shadow-AI or
 agent-discovery tools on the same seeded, randomly generated cases and scores
