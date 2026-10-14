@@ -77,6 +77,28 @@ a second verification; each has a regression test.
   results. #217's literal seed hosts are not carried: each is already matched
   by its signature's pattern, and a second literal produced duplicate domain
   evidence. Signature and signal counts are unchanged.
+- Instruction review: `endpoint.mcp` keeps its tool-poisoning rules (a URL,
+  an OpenAI, Anthropic or Google API host, `use`/`call`/`invoke the <tool>`,
+  an invisible control character, `<IMPORTANT>`, an `ignore previous
+  instructions` or `send`/`forward`/`exfiltrate the data`/`secret`/
+  `credential`/`prompt` phrase, quoted or not) as the floor for the
+  `tool-poisoning` tag; the bounded sentence audit adds
+  `metadata.static_instruction_audit` and zero-weight `instruction:<rule>`
+  evidence on top and never removes the tag. YAML front matter values of
+  `SKILL.md` files and MCP descriptions are audited line by line with their
+  line numbers. One line over 4,096 characters is skipped and listed under
+  `limitations` instead of marking the scan incomplete, and a text that opens
+  with `---` followed by prose is body text, not unclosed front matter.
+- MCP: `tool-name-shadowing` (a tool name another server in the same export
+  also serves) now weighs 10 and maps to OWASP LLM01, ASI01 and ATLAS
+  AML.T0051.001, from #217. A tool definition's declared `capabilities`,
+  `permissions` or `scopes` naming the whole filesystem, a drive root or a
+  home directory add `mcp-broad-filesystem`; `shell`, `command`, `execute`,
+  `code-exec` or `terminal` add `mcp-shell-command`; a path scoped below a
+  root adds nothing; a declaration that is not a string or list of strings
+  marks the scan incomplete. #217's well-known-name shadowing is not carried:
+  a filesystem server's own `read_file` is not a collision. Rescan: affected
+  MCP tool findings score higher than before; finding ids are unchanged.
 - Model artifacts: GGUF inspection seeks past fixed-size metadata arrays and
   walks string arrays up to 1,024 elements by their length prefixes; a longer
   string array (a tokenizer vocabulary) ends metadata parsing with

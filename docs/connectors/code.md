@@ -913,6 +913,14 @@ risk tags `hidden-instructions`, `remote-code-fetch` or `invisible-text`
 rules and files. The checks are bounded regexes; nothing is executed. They do
 not judge whether an instruction is malicious: a hidden comment may be a
 template note, and a documented installer may pipe to a shell. Read the file.
+Each discovered `SKILL.md` is also audited statically for direct instruction
+candidates: `static-instruction:<rule>` evidence with the file line number, the
+`suspicious-instruction` tag and `metadata.static_instruction_audit`, with no
+excerpt retained. Its YAML front matter values (the `description`, an
+`instructions` block, list items) are read line by line like the body; an
+overlong line is skipped and recorded as a limitation rather than marking the
+scan incomplete, and a `---` that no `key:` line follows is a Markdown rule, not
+unclosed front matter. No skill is executed.
 
 ### Coding-agent settings: posture and approval
 

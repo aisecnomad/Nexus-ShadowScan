@@ -76,7 +76,12 @@ proof that an agent stopped running or that a tool became safe.
   makes coverage incomplete; do not grant root merely to erase that limitation.
 - Static MCP/skill instruction heuristics distinguish direct candidate commands
   from links and quoted guidance. They cannot certify arbitrary instructions as
-  safe. The scanner never executes a discovered MCP server, skill or model.
+  safe. The scanner never executes a discovered MCP server, skill or model. The
+  `tool-poisoning` tag keeps its earlier rules as the floor; the audit only adds
+  evidence. Re-scan before comparing risk with earlier reports: MCP tool
+  findings gain `tool-name-shadowing` (+10) for a name another server in the
+  same export also serves, and declared grants add `mcp-broad-filesystem`
+  (+10) or `mcp-shell-command` (+5); finding ids are unchanged.
 
 Use the unchanged frozen estate for reproducible regression comparison and new
 synthetic fixtures for these additional contracts. Use the same reviewed scorer,

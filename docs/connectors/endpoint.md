@@ -168,17 +168,30 @@ particular, MCP tool fingerprints are not compared with a rug-pull baseline.
 | `endpoint.ebpf` | Tetragon, Falco, Tracee, or Hubble event records |
 | `gateway.otel` | OTLP span records with GenAI semantic-convention attributes |
 
-MCP tool definitions are analyzed for risky capability names, direct instruction
-override or sensitive-value disclosure candidates, missing declared authentication,
-and duplicate tool names across servers. A documentation URL, ordinary reference
-to another tool, quoted example, explicit prohibition, or invisible character alone
-does not establish tool poisoning. The bounded static audit reports rule identifiers
-and line numbers in `metadata.static_instruction_audit`, with zero-weight explanatory
-evidence and explicit limitations; it retains no description excerpts. The existing
-`tool-poisoning` tag describes a review candidate, not verified intent or execution.
-Quoted text, fenced code and YAML front matter are excluded from this narrow English
-instruction audit. Descriptions exceeding 64 KiB, overlong lines, malformed front
-matter and unclosed fences mark coverage incomplete. Tool definitions are fingerprinted
+MCP tool definitions are analyzed for risky capability names, missing declared
+authentication, duplicate tool names across servers (`tool-name-shadowing`) and
+declared grants: a `capabilities`, `permissions` or `scopes` value naming the
+whole filesystem, a drive root or a home directory (`*`, `filesystem:*`,
+`filesystem:/`, `filesystem:~`, `filesystem:/home/<user>/**`) adds
+`mcp-broad-filesystem`, and `shell`, `command`, `execute`, `code-exec` or
+`terminal` adds `mcp-shell-command`; a path scoped below a root
+(`filesystem:/srv/app/data`) adds nothing, and a declaration that is not a
+string or a list of strings marks the scan incomplete. The `tool-poisoning` tag
+follows fixed rules on the first 4 KiB of a description: a URL, an OpenAI,
+Anthropic or Google API host, `use`/`call`/`invoke the <tool>`, an invisible
+control character, `<IMPORTANT>`, `ignore previous instructions` or
+`send`/`forward`/`exfiltrate the data`/`secret`/`credential`/`prompt`, whether
+or not the phrase is quoted or negated. On top of that floor, a bounded static
+audit of the whole description reports direct instruction-override or
+sensitive-value-disclosure candidates with rule identifiers and line numbers in
+`metadata.static_instruction_audit` and as zero-weight `instruction:<rule>`
+evidence; it retains no excerpt. The tag describes a review candidate, not
+verified intent or execution. Quoted text and fenced code are excluded from the
+audit; YAML front matter values are read line by line. Descriptions over 64 KiB,
+malformed or oversized front matter, an unclosed fence and a description that is
+not text mark coverage incomplete; a single line over 4,096 characters is
+skipped and listed under `limitations`, and a description that opens with `---`
+followed by prose is read as body text. Tool definitions are fingerprinted
 for downstream comparison, but baseline/rug-pull detection is not yet implemented. No tool is
 invoked. With `options.mcp_registries`, a tool finding whose server is an
 HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL
