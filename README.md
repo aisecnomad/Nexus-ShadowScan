@@ -23,7 +23,7 @@
 
 **ShadowScan** is an open-source security tool that discovers evidence of AI agents and related integrations across your entire technology estate, then reconciles every finding against your approved agent registry.
 
-It inspects **nine surfaces** — code repositories, identity providers, LLM gateway logs, low-code platforms, SaaS apps, cloud accounts, endpoints (developer workstations and host/runtime inventories), network logs, and running processes. It fingerprints frameworks and model providers, classifies autonomy, scores risk, and reconciles discoveries against your sanctioned inventory of [Agent Cards](https://github.com/aisecnomad/Project-Nexus/blob/main/agent-card.yaml).
+It inspects nine surfaces: code repositories, identity providers, LLM gateway logs, low-code platforms, SaaS apps, cloud accounts, endpoints (developer workstations and host/runtime inventories), network logs, and running processes. It fingerprints frameworks and model providers, classifies autonomy, scores risk, and reconciles discoveries against your sanctioned inventory of [Agent Cards](https://github.com/aisecnomad/Project-Nexus/blob/main/agent-card.yaml).
 
 ```
 $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
@@ -48,7 +48,6 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 - [Architecture](#architecture)
 - [Surfaces & Connectors](#surfaces--connectors)
 - [Frameworks & Products Recognized](#frameworks--products-recognized)
-- [Benchmark Results](#benchmark-results)
 - [Install](#install)
 - [Quick Start](#quick-start)
 - [Configuration](#configuration)
@@ -113,7 +112,7 @@ for the pipeline, the package layout and the connector contract.
   <img src="docs/assets/architecture-data-flow.jpg" alt="ShadowScan Architecture — Data Flow" width="95%">
 </p>
 
-<p align="center"><em>Six surfaces in, one scored and registry-reconciled finding list out. Tinted: trusted operator inputs. Dashed: untrusted scan targets. Arrows: data flow of one scan.</em></p>
+<p align="center"><em>Nine surfaces in, one scored and registry-reconciled finding list out. Tinted: trusted operator inputs. Dashed: untrusted scan targets. Arrows: data flow of one scan.</em></p>
 
 <details>
 <summary><strong>Detailed architecture diagram</strong></summary>
@@ -169,25 +168,6 @@ name, never parsed) and `runtime.processes` reads `/proc` on Linux.
 
 `shadowscan signatures list` shows everything; `shadowscan signatures test <value>`
 tells you what a package, host, user agent, model ID, scope, or file path maps to.
-
-<br>
-
-## Benchmark Results
-
-<p align="center">
-  <img src="docs/assets/cross-tool-comparison.webp" alt="Cross-Tool Estate Recall Comparison" width="95%">
-</p>
-
-<p align="center"><em>Cross-tool estate recall comparison across repo, endpoint, and network surfaces. Unsupported surfaces count as misses.</em></p>
-
-<details>
-<summary><strong>Shadow AI Discovery Tool Scorecard</strong></summary>
-<br>
-<p align="center">
-  <img src="docs/assets/discovery-tool-scorecard.png" alt="Shadow AI Discovery Tool Scorecard — SA-RealRepo-450 Benchmark" width="85%">
-</p>
-<p align="center"><em>Interactive ranking derived from the SA-RealRepo-450 benchmark across 11 open-source discovery tools. Composite score weights specialist depth (F1), 9-surface breadth coverage, and false-positive resilience.</em></p>
-</details>
 
 <br>
 
