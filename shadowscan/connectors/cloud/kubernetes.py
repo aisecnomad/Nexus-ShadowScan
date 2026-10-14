@@ -87,12 +87,48 @@ def _name(obj: dict[str, Any]) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _namespace(obj: dict[str, Any]) -> str:
+_MAX_NAMESPACE = 63
+
+
+def _namespace(obj: dict[str, Any]) -> str | None:
+    """Return the full namespace, or None when it cannot be a distinct identity.
+
+    Namespaces are DNS labels of at most 63 characters. A non-string or
+    oversized value is malformed; shortening or defaulting it would merge
+    distinct objects into one resource identity.
+    """
     metadata = obj.get("metadata")
     if not isinstance(metadata, dict):
+        return None
+    if "namespace" not in metadata:
         return "default"
-    value = metadata.get("namespace", "default")
-    return value[:160] if isinstance(value, str) else "default"
+    value = metadata["namespace"]
+    if not isinstance(value, str) or len(value) > _MAX_NAMESPACE:
+        return None
+    return value
+
+
+def _list_pagination_issue(data: dict[str, Any]) -> str | None:
+    """Detect a chunked Kubernetes List page (``metadata.continue``).
+
+    The API server returns ``continue`` and ``remainingItemCount`` on every
+    page but the last when a client lists with ``limit``. Such a page is a
+    partial collection and must never be reported as complete.
+    """
+    metadata = data.get("metadata")
+    if metadata is None:
+        return None
+    if not isinstance(metadata, dict):
+        return "offline export has invalid pagination metadata"
+    token = metadata.get("continue")
+    remaining = metadata.get("remainingItemCount")
+    if token is not None and not isinstance(token, str):
+        return "offline export has invalid pagination metadata"
+    if remaining is not None and (type(remaining) is not int or remaining < 0):
+        return "offline export has invalid pagination metadata"
+    if token or (remaining is not None and remaining > 0):
+        return "offline export contains an uncollected next page"
+    return None
 
 
 def _kind(obj: dict[str, Any]) -> str:
@@ -132,6 +168,10 @@ class KubernetesConnector(BaseConnector):
         super().__init__(ctx)
         self.cluster = ctx.get("cluster")
 
+    @staticmethod
+    def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
+        return BaseConnector._offline_pagination_issue(data) or _list_pagination_issue(data)
+
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError(
             "cloud.kubernetes: live API collection is unavailable; provide an offline kubectl export"
@@ -145,6 +185,12 @@ class KubernetesConnector(BaseConnector):
         egress_policies: set[str] = set()
         for record in records:
             if "items" in record:
+                # A List envelope inside an array or JSONL export is not
+                # unwrapped by the shared loader, so check its continuation
+                # here. Observed items are still analyzed.
+                pagination_issue = self._offline_pagination_issue(record)
+                if pagination_issue:
+                    self.ctx.warn(f"{self.name}: {pagination_issue}")
                 items = record["items"]
                 if not isinstance(items, list):
                     self.ctx.warn(f"{self.name}: malformed object list")
@@ -172,7 +218,9 @@ class KubernetesConnector(BaseConnector):
                 if isinstance(spec, dict) and (
                     (isinstance(policy_types, list) and "Egress" in policy_types) or "egress" in spec
                 ):
-                    egress_policies.add(_namespace(obj))
+                    policy_namespace = _namespace(obj)
+                    if policy_namespace is not None:
+                        egress_policies.add(policy_namespace)
         for obj in accepted:
             kind = _kind(obj)
             if kind not in _RECOGNIZED | (_OPENSHIFT if self.name == "cloud.openshift" else set()):
@@ -189,6 +237,9 @@ class KubernetesConnector(BaseConnector):
                 self.ctx.warn(f"{self.name}: object has oversized metadata.name")
                 continue
             namespace = _namespace(obj)
+            if namespace is None:
+                self.ctx.warn(f"{self.name}: object has malformed metadata.namespace")
+                continue
             spec_value = obj.get("spec")
             if spec_value is not None and not isinstance(spec_value, dict):
                 self.ctx.warn(f"{self.name}: object has malformed spec")

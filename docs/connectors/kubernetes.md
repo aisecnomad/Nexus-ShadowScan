@@ -17,6 +17,18 @@ The 10,000-object analysis limit counts objects across the export; exhausting
 an export exactly at the limit is complete, while any unread objects make it
 incomplete. Empty trailing `List` envelopes do not count as unread objects.
 
+Collect every page of a chunked API list (`?limit=` or a client library's
+`limit`). A `List` whose `metadata.continue` is non-empty or whose
+`metadata.remainingItemCount` is above zero is a partial page: its objects are
+analyzed, but coverage is incomplete (exit 3). This applies to a single `List`
+and to `List` envelopes in a JSON array or JSONL. Malformed values of either
+field are also incomplete.
+
+Namespaces are kept in full in resource identities. A `metadata.namespace`
+that is not a string or is longer than 63 characters (the DNS-label bound)
+is rejected with incomplete coverage instead of being shortened or replaced
+by `default`. Objects without a namespace key keep the `default` namespace.
+
 Workload analysis includes Deployments, StatefulSets, DaemonSets, Jobs and Pods.
 CronJobs use `spec.jobTemplate.spec.template.spec` for image and posture
 analysis. Missing or malformed nested templates leave coverage incomplete.

@@ -13,9 +13,10 @@ Rescan Kubernetes and OpenShift exports after upgrading. Earlier observations
 could omit an unread export suffix at the object limit, collapse different long
 object names into one identity, or reject a valid CronJob. The corrected scan
 retains full valid names and analyzes the nested CronJob pod template. A limit
-that leaves objects unread, an overlong name or a malformed template marks
-coverage incomplete; inspect retained findings without treating the report as
-complete estate coverage.
+that leaves objects unread, a chunked `List` page (`metadata.continue` or
+`remainingItemCount`), an overlong name, a non-string or overlong namespace or
+a malformed template marks coverage incomplete; inspect retained findings
+without treating the report as complete estate coverage.
 
 Kubernetes resources with names longer than 160 characters now have their full
 name in `k8s:<cluster>/<namespace>/<kind>/<name>`. Regenerate and review cards

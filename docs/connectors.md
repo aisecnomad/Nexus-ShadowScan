@@ -1085,8 +1085,10 @@ converted is skipped with a warning and makes the scan incomplete.
 ### `cloud.kubernetes` and `cloud.openshift`
 Analyze offline Kubernetes and OpenShift workload exports (images, exposure,
 GPU, privilege and egress-policy indicators), including nested CronJob pod
-templates. Resource identities preserve full valid object names; object-limit
-truncation leaves coverage incomplete. Live collection is not
+templates. Resource identities preserve full valid object names and
+namespaces; object-limit truncation, a chunked `List` page with
+`metadata.continue` or `remainingItemCount`, and a malformed namespace leave
+coverage incomplete. Live collection is not
 implemented and the connectors use no credentials; their findings carry no
 device name, so lifecycle links do not apply to them. See the
 [Kubernetes and OpenShift guide](connectors/kubernetes.md).

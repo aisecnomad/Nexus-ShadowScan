@@ -626,6 +626,141 @@ def test_kubernetes_oversized_names_are_rejected_without_colliding(tmp_path, con
     assert any("metadata.name" in warning for warning in ctx.stats.warnings)
 
 
+def _write_kubernetes_layout(tmp_path, layout, envelope):
+    if layout == "single":
+        source = tmp_path / "inventory.json"
+        source.write_text(json.dumps(envelope))
+    elif layout == "array":
+        source = tmp_path / "inventory.json"
+        source.write_text(json.dumps([envelope]))
+    else:
+        source = tmp_path / "inventory.jsonl"
+        source.write_text(json.dumps(envelope) + "\n")
+    return source
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize("layout", ["single", "array", "jsonl"])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"continue": "synthetic-next-chunk", "remainingItemCount": 4500},
+        {"continue": "synthetic-next-chunk"},
+        {"remainingItemCount": 1},
+        {"continue": 7},
+        {"remainingItemCount": "many"},
+        {"remainingItemCount": True},
+        {"remainingItemCount": -1},
+        "not-an-object",
+    ],
+)
+def test_kubernetes_chunked_list_page_is_incomplete(tmp_path, connector_type, layout, metadata):
+    envelope = json.loads((FIXTURES / "kubernetes/chunked_list.json").read_text())
+    envelope["metadata"] = metadata
+    source = _write_kubernetes_layout(tmp_path, layout, envelope)
+
+    cli = CliRunner().invoke(
+        main,
+        [
+            "run",
+            connector_type.name,
+            "--input",
+            str(source),
+            "--set",
+            "cluster=synthetic",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert cli.exit_code == 3, cli.output
+    output = json.loads(cli.stdout)
+    assert output["summary"]["complete"] is False
+    # Observed objects from the partial page are retained, not discarded.
+    assert [finding["resource"] for finding in output["findings"]] == ["k8s:synthetic/ai/Pod/local-model"]
+    assert "synthetic-next-chunk" not in cli.output
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize("layout", ["single", "array", "jsonl"])
+@pytest.mark.parametrize(
+    "metadata", [{"resourceVersion": "1"}, {"continue": "", "remainingItemCount": 0}, {"continue": None}]
+)
+def test_kubernetes_final_list_page_stays_complete(tmp_path, connector_type, layout, metadata):
+    envelope = json.loads((FIXTURES / "kubernetes/chunked_list.json").read_text())
+    envelope["metadata"] = metadata
+    source = _write_kubernetes_layout(tmp_path, layout, envelope)
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and not ctx.stats.incomplete, ctx.stats.warnings
+    assert [finding.resource for finding in findings] == ["k8s:synthetic/ai/Pod/local-model"]
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_long_namespaces_are_rejected_without_colliding(tmp_path, connector_type):
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    records = []
+    for suffix in ("-team-a", "-team-b"):
+        record = deepcopy(workload)
+        record["metadata"]["namespace"] = "n" * 160 + suffix
+        records.append(record)
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps(records))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert findings == []
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("metadata.namespace" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize("namespace", [None, 7, ["ai"], {"name": "ai"}, "n" * 64])
+def test_kubernetes_malformed_namespace_is_not_defaulted(tmp_path, connector_type, namespace):
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    workload["metadata"]["namespace"] = namespace
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps([workload]))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert findings == []
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("metadata.namespace" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_full_namespace_identity_and_egress_policy_match(tmp_path, connector_type):
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    namespaces = ["a" * 62 + "x", "a" * 62 + "y"]
+    records = []
+    for namespace in namespaces:
+        record = deepcopy(workload)
+        record["metadata"]["namespace"] = namespace
+        records.append(record)
+    records.append(
+        {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "NetworkPolicy",
+            "metadata": {"name": "egress", "namespace": namespaces[0]},
+            "spec": {"policyTypes": ["Egress"]},
+        }
+    )
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps({"items": records}))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and not ctx.stats.incomplete
+    by_resource = {finding.resource: finding for finding in findings}
+    first, second = (f"k8s:synthetic/{namespace}/Pod/local-model" for namespace in namespaces)
+    assert set(by_resource) == {first, second}
+    assert len({finding.id for finding in findings}) == 2
+    assert "no-egress-policy" not in by_resource[first].tags
+    assert "no-egress-policy" in by_resource[second].tags
+
+
 @pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
 def test_kubernetes_cronjob_fixture_uses_nested_images_and_security_posture(connector_type):
     findings, ctx = _run_offline(
