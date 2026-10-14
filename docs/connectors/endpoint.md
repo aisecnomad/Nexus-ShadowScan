@@ -168,17 +168,25 @@ particular, MCP tool fingerprints are not compared with a rug-pull baseline.
 | `endpoint.ebpf` | Tetragon, Falco, Tracee, or Hubble event records |
 | `gateway.otel` | OTLP span records with GenAI semantic-convention attributes |
 
-MCP tool definitions are analyzed for risky capability names, direct instruction
-override or sensitive-value disclosure candidates, missing declared authentication,
-and duplicate tool names across servers. A documentation URL, ordinary reference
-to another tool, quoted example, explicit prohibition, or invisible character alone
-does not establish tool poisoning. The bounded static audit reports rule identifiers
-and line numbers in `metadata.static_instruction_audit`, with zero-weight explanatory
-evidence and explicit limitations; it retains no description excerpts. The existing
-`tool-poisoning` tag describes a review candidate, not verified intent or execution.
-Quoted text, fenced code and YAML front matter are excluded from this narrow English
-instruction audit. Descriptions exceeding 64 KiB, overlong lines, malformed front
-matter and unclosed fences mark coverage incomplete. Tool definitions are fingerprinted
+MCP tool definitions are analyzed for risky capability names, prompt-injection
+or exfiltration indicators, missing declared authentication, and duplicate tool
+names across servers. The `tool-poisoning` tag keeps its description rules: an
+`<IMPORTANT>` tag, "ignore previous instructions" wording, sending or forwarding
+data, secrets, credentials or prompts, an invisible or bidirectional control
+character, a URL, a "use/call/invoke the ..." tool reference, or a model
+provider host name, anywhere in the first 4,096 characters. These rules also
+match documentation links, quoted examples and prohibitions, so the tag
+describes a review candidate, not verified intent or execution.
+
+A bounded static sentence audit adds explanation on top of those rules. It
+reports direct instruction-override and sensitive-value disclosure candidates
+by rule identifier and line number in `metadata.static_instruction_audit`,
+with zero-weight evidence and explicit limitations, and retains no description
+excerpts. Quoted text, fenced code, YAML front matter and explicit prohibitions
+are excluded from this narrow English audit. An audit indicator also raises the
+`tool-poisoning` tag; an audit that finds nothing never removes it.
+Descriptions exceeding 64 KiB, overlong lines, malformed front matter and
+unclosed fences mark coverage incomplete. Tool definitions are fingerprinted
 for downstream comparison, but baseline/rug-pull detection is not yet implemented. No tool is
 invoked. With `options.mcp_registries`, a tool finding whose server is an
 HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL

@@ -1179,9 +1179,11 @@ replay never probes. Model metadata is not parsed from GGUF/safetensors files,
 and MCP fingerprints have no rug-pull baseline.
 
 The separate opt-in filesystem artifact pass can inspect bounded raw model
-metadata. MCP description review remains static: direct suspicious instructions
-carry heuristic explanations, while a documentation URL or ordinary tool
-reference alone does not establish poisoning. No MCP server is launched.
+metadata. MCP description review remains static. The `tool-poisoning` tag keeps
+its description rules, which also match documentation URLs and tool references,
+so it marks a review candidate. A bounded sentence audit adds zero-weight
+explanations of direct suspicious instructions and excludes quoted examples and
+prohibitions. No MCP server is launched.
 
 ## Network
 
