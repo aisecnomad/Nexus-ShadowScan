@@ -303,7 +303,10 @@ run vet's code commands started in the run directory instead; their argv
 named the repository with `-D` either way. Those normalizers read a
 missing report as nothing found: vet's when `vet.json` is missing, empty,
 `null` or `[]`, Agentic Radar's for each framework whose report is missing
-or unparseable, and AgentDiscover's when `scan.sarif` is missing. A run
+or unparseable, and AgentDiscover's when `scan.sarif` is missing. The vet
+wrapper first holds any other `vet.json` to the home-tree rules below: one
+that is unparseable, not a list, or a list without a vet record (such as
+`{"error": ...}`) is an adapter error, not an empty inventory. A run
 whose commands all exited with accepted codes therefore counts as complete
 without a report, unless every command exited non-zero (see
 [Run completeness](#run-completeness)). The estate scorer differs from the
@@ -344,7 +347,11 @@ These rules are stricter than the 2026-10-11 adapters were, but they would
 not have changed that run's rows: every committed Snyk Agent Scan, Numbat
 and vet home prediction names its client or server as text, so it was read
 from such a record, and the one Numbat row without predictions
-(`home:win-laptop-03`) recorded `raw_count` 0, an empty list.
+(`home:win-laptop-03`) recorded `raw_count` 0, an empty list. For vet's
+code rows, eight recorded `raw_count` 0 (no report, or an empty, `null`
+or `[]` one, which the check leaves alone), and in the other two every
+item the report held mapped to a named entry with an app. Scoring reads
+the recorded rows, so re-scoring that run is unaffected either way.
 
 ## Scoring
 

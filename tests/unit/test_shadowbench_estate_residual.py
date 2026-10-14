@@ -404,6 +404,64 @@ def test_vet_home_report_with_records_normalizes(tmp_path: Path, text: str, fact
     assert [p.fact for p in normalized.predictions] == facts
 
 
+@pytest.mark.parametrize(
+    ("text", "error"),
+    [
+        ('{"error": "api down"}', "vet.json is not a list"),
+        ('{"status": "failed", "items": []}', "vet.json is not a list"),
+        ('"oops"', "vet.json is not a list"),
+        ("42", "vet.json is not a list"),
+        ('[{"error": "Traceback: boom"}]', "vet.json holds no vet record"),
+        ("[1, null]", "vet.json holds no vet record"),
+    ],
+    ids=["error-object", "status-object", "string", "number", "error-row", "non-records"],
+)
+def test_vet_code_report_of_the_wrong_shape_is_an_error(tmp_path: Path, text: str, error: str) -> None:
+    """On a code unit an error report is an adapter error, not an empty, complete inventory."""
+    (tmp_path / "vet.json").write_text(text, encoding="utf-8")
+
+    normalized = VetEstateAdapter().normalize("code:repo-x", tmp_path)
+
+    assert normalized.error == error
+    assert normalized.predictions == []
+
+
+def test_vet_code_report_unparseable_is_an_error(tmp_path: Path) -> None:
+    (tmp_path / "vet.json").write_text('[{"Name": "fs"', encoding="utf-8")
+
+    normalized = VetEstateAdapter().normalize("code:repo-x", tmp_path)
+
+    assert normalized.error is not None
+    assert normalized.error.startswith("vet.json")
+
+
+@pytest.mark.parametrize(
+    ("text", "facts"),
+    [
+        (None, []),
+        ("", []),
+        ("null", []),
+        ("[]", []),
+        (
+            '[{"Name": "fs", "MCPServer": {"Transport": "stdio"}, "ConfigPath": "/r/.vscode/mcp.json"},'
+            ' {"error": "partial"}]',
+            ["mcp-client-config:vscode"],
+        ),
+    ],
+    ids=["missing", "empty", "null", "empty-list", "record-beside-junk"],
+)
+def test_vet_code_report_nothing_found_or_records_normalizes(
+    tmp_path: Path, text: str | None, facts: list[str]
+) -> None:
+    if text is not None:
+        (tmp_path / "vet.json").write_text(text, encoding="utf-8")
+
+    normalized = VetEstateAdapter().normalize("code:repo-x", tmp_path)
+
+    assert normalized.error is None
+    assert [p.fact for p in normalized.predictions] == facts
+
+
 # --- E3: the tie-breaks can hand a flag on a negative to a positive --------------------------------
 
 
