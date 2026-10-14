@@ -1127,8 +1127,10 @@ reported. Requests logged without a parsed host (`localhost:11434`) are still
 callers. If an internal Ollama or text-generation-inference server sits behind
 a reverse proxy with its own hostname, list that hostname in the new
 `gateway.logs` option `internal_model_hosts` before upgrading, or its callers
-disappear. A bare `/generate` route counts only on a declared or known model
-host. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
+disappear. Such excluded requests are reported in an advisory warning (not an
+incomplete scan) with their count and up to five host names; read it after
+the first scan and declare the hosts that are model servers. A bare
+`/generate` route counts only on a declared or known model host. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
 setting it changes that source's ids by design, so rebaseline that source.
 
 **Kubernetes.** Workloads that set `nvidia.com/gpu` only in `limits` are now
