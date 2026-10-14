@@ -18,6 +18,12 @@ Collection status describes connector runs, not visibility into every device
 or continuous coverage of that window. Process creation timestamps do not
 substitute for an explicit observation time. Samples are capped at 50, with a
 truncation flag and full count; recency considers all available observations.
+When the confidence threshold or an output cap omits a process finding, the
+engine clears its `finding_id` from the samples in
+`metadata.lifecycle_observation` (and the copy in
+`metadata.lifecycle.observation`) and drops it from
+`metadata.lifecycle.related`, as it prunes `metadata.related`; the sample's
+`observed_at` stays because the recorded observation established it.
 
 An old process export may retain the legacy `observed-running` tag and the
 historically observed `running` state, but its assessment reads `historical`.

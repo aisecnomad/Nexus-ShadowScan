@@ -37,7 +37,11 @@ MCP package name are kept.
 - **Live** (no `input`, Linux only): reads `/proc/<pid>/cmdline` without
   following the `exe` link. Processes of other users are visible only to an
   account allowed to read them; unreadable processes are reported and make the
-  scan incomplete. Some views do not list other processes at all, and then
+  scan incomplete. A command line longer than 64 KiB is classified from the
+  arguments read in full and the finding reports `truncated_command_lines`;
+  when the arguments that would name a launcher's package lie past the limit,
+  the process is not classified and the scan is marked incomplete. Command
+  lines are never kept. Some views do not list other processes at all, and then
   the scan is marked incomplete with a warning that says why: a `/proc` that
   belongs to a container's own PID namespace (detected from the namespace's
   inode, not from `NSpid`, which shows one entry inside a container as on the
@@ -87,7 +91,11 @@ Python imports or memory-only agents. Snapshots cannot establish activity
 outside their observation time.
 
 Process namespace and start ticks are checked before and after inspection;
-changed or exited processes are omitted with a race warning. These identities
+those identity reads use a reserved 4 KiB allowance outside the inspection
+budgets. Kernel threads have no user-space mappings, descriptors or
+environment; they are skipped without marking the scan incomplete and the
+skipped count is listed in `inspection_limitations`. Changed or exited
+processes are omitted with a race warning. These identities
 lack a boot ID, so they must not be used for joins across host restarts.
 Permission denial, malformed input and exhausted budgets mark coverage
 incomplete. No root privileges are requested; restricted non-root visibility
@@ -98,7 +106,7 @@ process exit or changed namespace/start identity omits that process observation.
 
 | Limit | Default |
 |---|---:|
-| `max_inspection_bytes` per process | 262,144 bytes |
+| `max_inspection_bytes` per source (`maps`, `environ`, descriptor links) per process | 262,144 bytes |
 | `max_inspection_total_bytes` per scan | 16,777,216 bytes |
 | `max_inspection_entries` per scan (mappings, FDs, environment entries) | 100,000 |
 | `max_mappings` per process | 4,096 |

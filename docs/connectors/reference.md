@@ -805,7 +805,7 @@ Offline input: JSON / JSONL / CSV process inventories (osquery, Defender, CrowdS
 | `inspect_maps` | live only: inspect bounded mapped-library names (default false) |
 | `inspect_fds` | live only: inspect descriptor links, never targets (default false) |
 | `inspect_env_keys` | live only: allowlisted environment key names to inspect (default empty) |
-| `max_inspection_bytes` | maximum inspection bytes per process (default 262,144) |
+| `max_inspection_bytes` | maximum bytes read from each of maps, environ and the descriptor links per process (default 262,144) |
 | `max_inspection_total_bytes` | maximum inspection bytes across the scan (default 16,777,216) |
 | `max_inspection_entries` | maximum mappings, descriptors and environment entries per scan (100,000) |
 | `max_mappings` | maximum mappings per process (default 4,096) |

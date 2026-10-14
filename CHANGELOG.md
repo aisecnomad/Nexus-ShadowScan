@@ -18,6 +18,75 @@ summarizes each release for people who install and operate ShadowScan.
   README's benchmark table, checked against the committed metrics, stays
   the only benchmark statement.
 
+### Bounded evidence: review fixes (October 14)
+
+Fixes applied while carrying #220, from an agent-run review of its code and
+a second verification; each has a regression test.
+
+- Runtime: live `/proc` collection no longer drops a process whose command
+  line reaches the 64 KiB read limit. It is classified from the arguments
+  read in full and the finding carries `metadata.truncated_command_lines`; a
+  launcher whose package argument may lie past the limit still marks the scan
+  incomplete. Command lines are still never kept.
+- Runtime: process identity reads use a reserved allowance outside the
+  inspection budgets, and `max_inspection_bytes` now caps each of `maps`,
+  `environ` and the descriptor scan separately. A large `maps` (PyTorch,
+  CUDA, vLLM) truncates only `maps`; the inspection keeps its per-source
+  `truncated` status and marks the scan incomplete instead of being
+  discarded.
+- Runtime: kernel threads (`PF_KTHREAD`) are skipped by live inspection
+  without marking the scan incomplete; findings with inspection metadata
+  record the skipped count in `inspection_limitations`.
+- AWS: the CloudTrail lineage event limit is 10,000 per principal instead of
+  2,000 per connector run. Reaching it bounds only that principal's STS
+  ancestry (`cloudtrail_lineage.coverage: partial`, `event-limit` in
+  `limits`, a limitation sentence) and warns once without marking the scan
+  incomplete; invocation tallies stay complete. The 100-observation sample per
+  caller is disclosed the same way (`observations_truncated`,
+  `caller-observation-limit`) instead of marking the scan incomplete.
+- AWS: offline raw CloudTrail exports again count every Bedrock, SageMaker
+  and Amazon Q event (for example `InvokeModelWithBidirectionalStream`,
+  `Retrieve`, `ApplyGuardrail`, `InvokeEndpointAsync`) toward its caller's
+  event, operation and region tallies, as every `cloudtrail-event` record did
+  before lineage. Only the listed operations carry a session trace; events
+  counted without one are reported in a single warning that does not mark
+  the scan incomplete.
+- AWS: STS `credentials.expiration` values in CloudTrail's display format
+  (`Jan 20, 2024, 3:16:07 PM`) parse as UTC, so those sessions link instead
+  of silently staying unlinked; a value no format accepts records
+  `invalid-timestamp`.
+- Engine: lifecycle links to findings omitted by the confidence threshold or
+  output caps are pruned from the `metadata.lifecycle_observation` samples
+  and `metadata.lifecycle.related`, as `metadata.related` already was; the
+  samples keep their `observed_at`.
+- Low-code: the n8n graph registry gives the egress role to Send Email nodes
+  (`emailSend`) and to Postgres, MySQL (`mySql`), MongoDB, Slack and Gmail
+  nodes whose declared operation writes or sends (`insert`, `update`,
+  `upsert`, `deleteTable`, `executeQuery`; MongoDB `delete`,
+  `findOneAndReplace`, `findOneAndUpdate`; Slack `post`/`sendAndWait`; Gmail
+  `send`/`reply`/`sendAndWait`). Read-only operations and omitted or
+  expression-valued operations give no role. Carried from #217 with the
+  node and operation names n8n registers (`sendEmail`, `mysql`,
+  `imapTrigger`, `postMessage` and `sendMessage` do not exist; the IMAP
+  trigger is `emailReadImap`, already an untrusted input). Roles remain
+  non-scoring graph metadata.
+- Signatures: `provider.google-vertex-ai`, `provider.aws-bedrock` and
+  `provider.azure-openai` carry `references` to the provider's endpoint
+  documentation and IP-range publications, from #217. IP ranges are
+  documentation only; attribution still uses hostname-to-address DNS
+  results. #217's literal seed hosts are not carried: each is already matched
+  by its signature's pattern, and a second literal produced duplicate domain
+  evidence. Signature and signal counts are unchanged.
+- Model artifacts: GGUF inspection seeks past fixed-size metadata arrays and
+  walks string arrays up to 1,024 elements by their length prefixes; a longer
+  string array (a tokenizer vocabulary) ends metadata parsing with
+  `metadata_truncated: true` and a stated limitation instead of reporting a
+  real model as an invalid header. Extensionless candidates are probed by
+  their first 64 bytes and only binaries get the PyInstaller tail read, so
+  `LICENSE`, `Makefile` and `bin/*` no longer exhaust the per-root metadata
+  budget. A Git LFS pointer named like an artifact reports the existing LFS
+  pointer coverage gap instead of an invalid header or nothing.
+
 ### Bounded discovery evidence and attribution (October 14)
 
 - Low-code: bounded, cycle-safe graph reachability for supported n8n, Flowise

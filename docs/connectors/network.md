@@ -91,6 +91,12 @@ agent loop. That cadence is a heuristic: a batch script has the same shape, and 
 that reuses one connection for many requests shows none. Consumer AI sites
 such as `chatgpt.com` are AI use, not agent indicators.
 
+Hosted-provider signatures for Vertex AI, Bedrock and Azure OpenAI cite the
+provider's endpoint documentation and published IP ranges in their
+`references`. Those ranges are documentation only: attribution uses
+hostname-to-address DNS and TLS evidence, never broad shared-provider or CDN
+address ranges.
+
 **JA4 context.** Existing Zeek JSON/TSV `ja4` and generic `tls.ja4` fields
 are validated against the hashed [JA4 client format](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md)
 and retained as bounded `tls_fingerprints` metadata on the directly observed

@@ -130,8 +130,15 @@ does not connect paths. Literal HTTP URLs are parsed into hostnames, so
 `api.openai.com.example.invalid` does not establish an OpenAI destination.
 Expressions and environment-variable references are not resolved. Flowise
 Agent Flows use their declared `startInputType` and HTTP node `inputs.url`;
-scheduled starts are not treated as untrusted inputs. A malformed or
-over-budget graph marks coverage incomplete and the finding records
+scheduled starts are not treated as untrusted inputs. n8n message and
+database sinks take their role from the operation the node declares: Send
+Email (`emailSend`) always sends; Slack `post`/`sendAndWait`, Gmail
+`send`/`reply`/`sendAndWait`, and Postgres, MySQL (`mySql`) and MongoDB write
+operations (`insert`, `update`, `upsert`, `deleteTable` or `delete`,
+`findOneAndReplace`, `findOneAndUpdate`, and `executeQuery`, whose SQL is not
+parsed) are egress; `select`, `find`, `aggregate`, searches, and an omitted or
+expression-valued operation give no role. A malformed or over-budget graph
+marks coverage incomplete and the finding records
 `workflow_graph.status: incomplete`; it is never dropped.
 
 Directed traversal handles cycles and joins. n8n `main` edges establish declared
@@ -151,7 +158,9 @@ instead of retaining prompts, node names or destination URLs; example paths are
 capped at 32 nodes and explicitly disclose truncation.
 
 The fixtures in `tests/fixtures/lowcode/graph_cases.json` cover connected,
-disconnected, cyclic, reversed, disabled, non-AI and type-prefix decoy workflows.
+disconnected, cyclic, reversed, disabled, non-AI and type-prefix decoy workflows,
+plus email, database-write, database-read, raw-query and IMAP-trigger sinks and
+sources.
 They are synthetic regressions, not measured production precision. Registry
 extensions should cite the provider's actual node declaration and add positive
 and negative fixtures, including version differences where relevant. Provider

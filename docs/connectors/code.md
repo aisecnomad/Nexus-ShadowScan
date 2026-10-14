@@ -1064,10 +1064,19 @@ selected include/exclude scope. This is off by default. `code.github` and
 `max_file_size`: the reader seeks across payloads and reads only bounded metadata.
 `model_metadata_bytes` controls the cumulative per-file read budget (default
 65,536, allowed 128–1,048,576); each root also has a 32 MiB aggregate metadata-read
-budget, the ordinary entry/deadline budgets and an 8,192-field limit.
+budget, the ordinary entry/deadline budgets and an 8,192-field limit. An
+extensionless candidate is first probed by its first 64 bytes, charged at that
+size; only a file with a NUL byte among them (an ELF, PE or Mach-O bootloader)
+gets the bounded PyInstaller tail read, and text goes on to ordinary source
+analysis.
 
-- GGUF v2/v3: literal magic, header counts, bounded metadata and tensor descriptors;
-  tensor payloads and quantization semantics are not validated.
+- GGUF v2/v3: literal magic, header counts, bounded metadata and tensor
+  descriptors. Arrays of fixed-size elements are seeked past and string arrays
+  are walked up to 1,024 elements by their length prefixes, never loaded; a
+  longer string array (a tokenizer vocabulary) ends metadata parsing, and the
+  finding carries `metadata_truncated: true` with a limitation that later keys
+  and the tensor descriptors were not read or validated. Tensor payloads and
+  quantization semantics are not validated.
 - safetensors: bounded length-prefixed strict JSON, shape/dtype sizes and contiguous
   payload offsets; metadata values and tensor names are not included in output.
 - ONNX: a bounded protobuf-envelope check of supported IR versions 1–13, graph and
@@ -1081,7 +1090,9 @@ Findings use `local-model` or `infra` for packaging, carry
 `artifact-inventory-only`, and explicitly leave execution and agency unobserved.
 An empty GGUF header is not a usable model; PyInstaller alone is not AI evidence.
 Unreadable or malformed selected formats, unsupported headers, truncated reads,
-changed files and budget exhaustion mark coverage incomplete. All reads use
+changed files and budget exhaustion mark coverage incomplete. A Git LFS pointer
+in an artifact's place is reported as the pointer coverage gap (a warning, or
+an error under `strict_coverage`), not as an invalid header. All reads use
 confined regular-file handles; symlinks, FIFOs and device files are never opened
 as model payloads. Headers are an inventory aid, not a guarantee that an artifact
 is safe to load. No deserializer, inference engine or scanned executable runs.

@@ -75,6 +75,13 @@ failed or denied `LookupEvents` call does mark it incomplete.
 CloudTrail exports can include normalized `cloudtrail-event` records or raw
 CloudTrail event objects with `_kind: cloudtrail-event`. Model invocation events
 (including `ConverseStream`) and STS assumption events may be replayed together.
+Every event from a `bedrock`, `sagemaker` or Amazon Q event source counts
+toward its caller's invocation, operation and region tallies; events of other
+services in a full trail export are not LLM callers. Only the operations in
+`CLOUDTRAIL_EVENTS` carry a session trace: events counted without one are
+reported in a single warning (`N CloudTrail AI event(s) outside the lineage
+operation list counted for callers without session lineage`) that does not
+mark the scan incomplete.
 `metadata.cloudtrail_lineage` retains bounded event IDs, recipient account,
 region, timestamp, caller ARN, session issuer ARN and source identity. Request
 bodies and credential identifiers/values are never retained. STS records supply
@@ -96,11 +103,24 @@ ending at an observed origin does not prove effective access or completeness of
 the provider's audit record. Missing assumption events, session times or data
 events leave the relationship unlinked, never absent.
 
-Lineage retains at most 2,000 events per connector run and 100 observations per
-caller. Reaching a limit, malformed metadata, or invalid event timestamps marks
-coverage incomplete; valid invocation evidence is preserved. The synthetic
+Lineage retains at most 10,000 events per principal and 100 observations per
+caller. A principal over the event limit keeps its complete invocation tally;
+only its STS ancestry stops growing. That principal, the session a dropped
+assumption created, and any caller whose chain passes through them report
+`coverage: partial` with `event-limit` in `limits` and a limitation sentence;
+the connector warns once without marking the scan incomplete. The per-caller
+observation sample is likewise disclosed provenance: a caller with more
+invocation events than the cap keeps its complete tally, lists the first 100
+with `observations_truncated: true`, `caller-observation-limit` in `limits`
+and a limitation sentence, and the connector warns once without marking the
+scan incomplete. Malformed metadata or invalid event timestamps still mark
+coverage incomplete; valid invocation evidence is preserved. STS
+`credentials.expiration` values in CloudTrail's display format
+(`Jan 20, 2024, 3:16:07 PM`, UTC) are parsed before the generic timestamp
+formats; a value no format accepts records `invalid-timestamp`. The synthetic
 fixture `tests/fixtures/cloud/lineage/assumed_session.jsonl` exercises a
-cross-account assumption, cross-region `ConverseStream`, and a non-AI control.
+cross-account assumption, cross-region `ConverseStream`, and a non-AI control;
+`assumed_session_display_time.jsonl` exercises the display-format expiration.
 
 Lambda `Environment.Error` is unknown environment coverage, not an empty set of
 variables. The `environment_coverage` marker survives sanitized exports and replay;
