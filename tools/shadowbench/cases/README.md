@@ -199,7 +199,9 @@ scorer's own commit is not recorded, so the code that produced `metrics.json`
 must still be identified from the repository history. The committed
 2026-10-11 manifest predates the harness fields; its report names no harness
 commit, and the code that produced its rows can only be inferred from that
-history.
+history. A report of such a manifest says so, and that its rows come from
+earlier adapters under weaker isolation and were scored by rules revised after
+the run.
 
 ## Adding a tool
 

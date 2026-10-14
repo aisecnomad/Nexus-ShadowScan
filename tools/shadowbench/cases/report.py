@@ -44,13 +44,19 @@ def p_value(entry: dict[str, Any]) -> str:
 
 
 def harness(manifest: dict[str, Any]) -> str:
-    """The harness revision the run recorded, as a sentence to append; nothing when none was recorded.
+    """The harness revision the run recorded, as a sentence to append.
 
     Manifests written before the runner recorded it, the committed 2026-10-11 run's among them,
-    have no ``harness_commit`` key, and their reports stay as they were rendered.
+    have no ``harness_commit`` key; their reports say what that means for the rows instead.
     """
     if "harness_commit" not in manifest:
-        return ""
+        return (
+            " The manifest predates the harness fields, so the code that produced these rows is not"
+            " recorded: they come from earlier adapters, run under weaker isolation than the current"
+            " runner's (tools ran as root, with the host's home directories in view), and the scoring"
+            " rules were revised after the run, with its results in view. The benchmark README's"
+            " Integration changes describe both."
+        )
     commit = manifest["harness_commit"]
     if commit is None:
         return " The runner could not name the harness commit it ran from."

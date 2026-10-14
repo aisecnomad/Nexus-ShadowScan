@@ -1,6 +1,6 @@
 # ShadowBench: nine-surface shadow AI agent discovery benchmark
 
-Corpus: 346 cases on 9 surfaces carrying 738 expected entities and 735 decoys (SHA-256 `5997346ad000a0639709718b66743bb794d5f53faff3c2f38e78dbcc8ba36663`, generator `9a825de5273a7fa8e42c26f2c224e19ee5e86e7f88cf5b7f2bb5e5b47519241e`). Run started 2026-10-11T18:10:09+00:00 and finished 2026-10-11T18:18:56+00:00 on Linux-6.18.44-fc-v114-x86_64-with-glibc2.39 with 3 parallel workers; timings include contention.
+Corpus: 346 cases on 9 surfaces carrying 738 expected entities and 735 decoys (SHA-256 `5997346ad000a0639709718b66743bb794d5f53faff3c2f38e78dbcc8ba36663`, generator `9a825de5273a7fa8e42c26f2c224e19ee5e86e7f88cf5b7f2bb5e5b47519241e`). Run started 2026-10-11T18:10:09+00:00 and finished 2026-10-11T18:18:56+00:00 on Linux-6.18.44-fc-v114-x86_64-with-glibc2.39 with 3 parallel workers; timings include contention. The manifest predates the harness fields, so the code that produced these rows is not recorded: they come from earlier adapters, run under weaker isolation than the current runner's (tools ran as root, with the host's home directories in view), and the scoring rules were revised after the run, with its results in view. The benchmark README's Integration changes describe both.
 
 Ground truth is generated from written rubrics with per-entity evidence (see the README). It is author-written and synthetic, not independent human review and not a sample of any real estate; the results describe how each tool behaves on these inputs, not field precision or recall.
 

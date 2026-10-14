@@ -205,14 +205,18 @@ def test_report_names_the_recorded_harness_revision(fields: dict[str, Any], sent
     assert "`HEAD`" not in text
 
 
-def test_report_of_the_committed_run_names_no_harness_commit() -> None:
-    """The committed manifest predates the fields; its re-rendered report must not change."""
+def test_report_of_the_committed_run_says_its_rows_predate_the_harness_fields() -> None:
+    """The committed manifest predates the fields, and its report carried only the generic caveat."""
     committed = json.loads((RUN / "metrics.json").read_text(encoding="utf-8"))
     assert "harness_commit" not in committed["manifest"]
     assert "harness_commit" not in json.loads((RUN / "manifest.json").read_text(encoding="utf-8"))
     text = report.render(committed, CASES / "corpus.json")
     assert text == (RUN / "REPORT.md").read_text(encoding="utf-8")
-    assert "harness commit" not in text
+    first = text.split("\n\n")[1]
+    assert first.startswith("Corpus: ")
+    for words in ("predates the harness fields", "earlier adapters", "as root", "revised after the run"):
+        assert words in first, words
+    assert "harness commit `" not in text
 
 
 # --- tool versions: a version in tools.json is recorded for every tool alike ----------------------

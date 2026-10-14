@@ -461,8 +461,9 @@ track:
   ignored the version `install_tools.sh` wrote for them. It also refuses to
   start, with a message, when `gcc` cannot build the inert process binary,
   where it used to stop with a traceback. The 2026-10-11 manifest predates
-  the harness fields, so its report names no harness commit and re-renders
-  unchanged.
+  the harness fields, so its report names no harness commit. It says instead
+  that the rows come from the earlier adapters under weaker isolation and
+  that the scoring rules were revised after the run.
 * Version probes the runner starts as root now drop to uid/gid 65534 with
   `/root` and `/home` hidden, as the tools themselves do in the stage, and do
   not run when that drop is impossible. They also get their own PID namespace
