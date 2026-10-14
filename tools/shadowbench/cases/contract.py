@@ -186,13 +186,18 @@ class AdapterResult:
     note: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
     """Verbatim tool output kept beside the normalized entities (never scored)."""
+    out_of_taxonomy: int = 0
+    """Code-surface hits the adapter dropped because they map to no taxonomy fact; scored as reports."""
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "status": self.status,
             "entities": [e.to_json() for e in self.entities],
             "note": self.note,
         }
+        if self.out_of_taxonomy:
+            out["out_of_taxonomy"] = self.out_of_taxonomy
+        return out
 
 
 @dataclass

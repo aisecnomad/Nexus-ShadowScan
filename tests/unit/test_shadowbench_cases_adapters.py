@@ -407,6 +407,8 @@ def test_agentdiscover_drops_unmappable_code_hits(tmp_path: Path) -> None:
     _only_facts(result)
     assert {e.key for e in result.entities} == {"framework:crewai"}
     assert "unmapped" in result.note and ".mcp/config.json" in result.note
+    # .mcp/config.json, package.json (left-pad) and gen.py: dropped, but counted for the scorer
+    assert result.to_json()["out_of_taxonomy"] == 3
 
 
 def test_agentmesh_discovery_drops_unmappable_code_hits(tmp_path: Path) -> None:
@@ -416,12 +418,14 @@ def test_agentmesh_discovery_drops_unmappable_code_hits(tmp_path: Path) -> None:
     records = [
         {"agent_type": "agt", "name": "mesh", "evidence": [{"source": str(repo / "agentmesh.yaml")}]},
         {"agent_type": "crewai", "name": "crew", "evidence": [{"source": str(repo / "crewai.yaml")}]},
+        {"agent_type": "crewai", "name": "elsewhere", "evidence": [{"source": "/srv/other/crewai.yaml"}]},
     ]
-    stdout = "Agent Discovery Scan\nFound 2 agents\n" + json.dumps(records) + "\nInventory saved to x\n"
+    stdout = "Agent Discovery Scan\nFound 3 agents\n" + json.dumps(records) + "\nInventory saved to x\n"
     result = ADAPTERS["agentmesh-discovery"].normalize(case, work, [RunResult(0, stdout, "", 1.0)])
     _only_facts(result)
     assert {e.key for e in result.entities} == {"framework:crewai"}
-    assert "agentmesh.yaml" in result.note
+    assert "agentmesh.yaml" in result.note and "outside_checkout=1" in result.note
+    assert result.to_json()["out_of_taxonomy"] == 2  # dropped, but counted for the scorer
 
 
 def test_vet_drops_unmappable_code_hits(tmp_path: Path) -> None:
@@ -436,6 +440,28 @@ def test_vet_drops_unmappable_code_hits(tmp_path: Path) -> None:
     result = ADAPTERS["vet"].normalize(case, work, [RunResult(0, "", "", 1.0)])
     _only_facts(result)
     assert {e.key for e in result.entities} == {"mcp-client-config:cursor"}
+    assert result.to_json()["out_of_taxonomy"] == 1  # the agent CLI: dropped, but counted for the scorer
+
+
+def test_shadowscan_counts_the_code_findings_that_map_to_no_fact(tmp_path: Path) -> None:
+    """Unmappable code findings were dropped without a trace, so a negative case read as a clean scan."""
+    case = _case(tmp_path, "code", "checkout")
+    work = _work(tmp_path)
+    findings = [
+        {"kind": "agent-config", "resource": "CLAUDE.md", "evidence": [{"location": "CLAUDE.md"}]},
+        {"kind": "secret", "resource": "tests/fixture.py", "evidence": [{"location": "tests/fixture.py"}]},
+        {"kind": "ai-app", "resource": "client.py", "frameworks": ["protocol.openai"]},
+    ]
+    report = {"summary": {"complete": True}, "findings": findings, "stats": []}
+    (work / "report.json").write_text(json.dumps(report), encoding="utf-8")
+    result = ADAPTERS["shadowscan"].normalize(case, work, [RunResult(0, "", "", 1.0)])
+    _only_facts(result)
+    assert {e.key for e in result.entities} == {"agent-config:claude-md"}
+    assert result.to_json()["out_of_taxonomy"] == 2
+    clean = {"summary": {"complete": True}, "findings": findings[:1], "stats": []}
+    (work / "report.json").write_text(json.dumps(clean), encoding="utf-8")
+    result = ADAPTERS["shadowscan"].normalize(case, work, [RunResult(0, "", "", 1.0)])
+    assert "out_of_taxonomy" not in result.to_json()
 
 
 # --- version probes: scrubbed environment, throwaway home, timeout ---------------------------------

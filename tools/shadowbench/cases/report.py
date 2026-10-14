@@ -178,7 +178,8 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
         "decoy entities (records labeled none). Agent recall is the share of expected agents a tool reported as "  # noqa: E501
         "agents; agent false alarms are plain-AI entities and decoys it called agents. F1 intervals are 2,000-sample "  # noqa: E501
         "case bootstraps. At case level a positive case is found when the tool reports at least one "
-        "expected entity, and a negative case is a false alarm when it reports any false positive. An "
+        "expected entity, and a negative case is a false alarm when it reports any false positive or, on "
+        "the code surface, anything outside the fact taxonomy. An "
         "error, or a case with no result row (counted as missing), is never a correct outcome: its "
         "expected entities are missed, its decoys are not true negatives, and the case counts as missed "
         "or as a false alarm. A scan the tool marked incomplete keeps what it reported but never earns a "
@@ -221,16 +222,20 @@ def render(metrics: dict[str, Any], corpus_path: Path) -> str:
             lines.append("| (no tool ran on this surface) | | | | | | | | | | |")
         lines.append("")
         if surface == "code" and any_row:
-            counts = [
-                f"{name} {metrics['tools'][name]['by_surface'][surface].get('out_of_taxonomy', 0)}"
+            code = {
+                name: metrics["tools"][name]["by_surface"][surface]
                 for name in _tool_order(metrics)
                 if metrics["tools"][name]["by_surface"].get(surface)
-            ]
+            }
+            counts = [f"{name} {s.get('out_of_taxonomy', 0)}" for name, s in code.items()]
+            alarms = [f"{name} {s['case'].get('out_of_taxonomy_alarms', 0)}" for name, s in code.items()]
             lines.append(
-                "Reported keys outside the code fact taxonomy (for example file paths an adapter could not "
-                "map to a fact) are neither true nor false positives, for every tool: "
+                "Reports outside the code fact taxonomy (for example file paths an adapter could not map to "
+                "a fact, whether it passed them on or dropped and counted them) are neither true nor false "
+                "positives, for every tool: "
                 + ", ".join(counts)
-                + "."
+                + ". At case level such a report earns a positive case nothing and is a false alarm on a "
+                "negative one, which happened on " + ", ".join(alarms) + "."
             )
             lines.append("")
         # modality breakdown

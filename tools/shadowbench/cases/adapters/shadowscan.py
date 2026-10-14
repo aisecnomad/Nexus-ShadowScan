@@ -39,7 +39,10 @@ carries a non-empty ``agent_indicators`` list; otherwise ``llm``. Findings
 whose resource cannot be mapped are kept in the raw output and ignored. On the
 code surface the report goes through the code-surface benchmark's own
 ShadowScan adapter, which maps findings onto taxonomy facts and drops the ones
-that map to none, the rule every adapter follows there. An incomplete scan
+that map to none, the rule every adapter follows there; the dropped findings,
+LLM-provider credential findings included, are counted in the row's
+``out_of_taxonomy``, which the scorer treats as an alarm on a negative case.
+An incomplete scan
 (exit 3) is still normalized and flagged ``incomplete``; a missing report or
 one that is not a JSON object with a ``findings`` list is an error.
 
@@ -447,7 +450,11 @@ class ShadowScanAdapter:
             "; incomplete scan" if incomplete else ""
         )
         return AdapterResult(
-            "ok", entities, note=note, raw={"incomplete": incomplete, "stderr": tail(run.stderr, 2000)}
+            "ok",
+            entities,
+            note=note,
+            raw={"incomplete": incomplete, "stderr": tail(run.stderr, 2000)},
+            out_of_taxonomy=int(normalized.detail.get("unmapped") or 0),
         )
 
     def normalize(self, case: MaterializedCase, work: Path, runs: list[RunResult]) -> AdapterResult:

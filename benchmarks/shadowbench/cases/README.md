@@ -137,8 +137,12 @@ Per tool, per surface and per modality, over the cases the tool ran
 * **Code surface.** Truth there is `<category>:<value>` facts from
   `tools.discovery_benchmark.taxonomy`. A reported code key that is not such a
   fact (for example a file path an adapter could not map) is out of taxonomy:
-  neither a true nor a false positive. The rule is the same for every tool,
-  and the count is reported per tool.
+  neither a true nor a false positive. An adapter that drops such hits counts
+  them in the row's `out_of_taxonomy`, and they count as if passed on. The
+  rule is the same for every tool, and the count is reported per tool. At
+  case level an out-of-taxonomy report finds no positive case and makes a
+  negative case a false alarm: the tool alarmed on a repository with nothing
+  to find.
 * **Agent tier.** Recall on expected `agent` entities counting only reports
   labeled `agent`; the false-alarm rate on expected `llm` entities and decoys
   that a tool labeled `agent`. A tool that cannot tell agents from plain AI
@@ -148,8 +152,9 @@ Per tool, per surface and per modality, over the cases the tool ran
 * **Case level.** A positive case is found only when the tool reports at least
   one expected entity (a true positive); a false positive alone does not find
   it. A negative case is a false alarm when the tool reports any false
-  positive, and is correct only on a complete `ok` run. Case recall,
-  specificity, balanced accuracy, MCC and the McNemar test use these outcomes.
+  positive or, on the code surface, anything out of taxonomy, and is correct
+  only on a complete `ok` run. Case recall, specificity, balanced accuracy,
+  MCC and the McNemar test use these outcomes.
 * **Errors, missing rows and incomplete runs.** A crash, timeout or unreadable
   output is an `error` row, and a case with no row counts as an error and is
   also reported as missing. An error is never a correct outcome: every expected
@@ -292,11 +297,12 @@ recorded in the header); never use `legacy` for a new corpus.
 * The published metrics do not come from that original scorer. Its rules were
   revised after the run, during integration review and with the run's results
   in view: one-way artifact matching, a true positive needed to find a case,
-  no true negative from an error, a missing row or an incomplete run, and
-  out-of-taxonomy code keys counted apart. The revised rules were re-applied
-  to the unchanged rows (see Integration changes under Results). The adapters
-  were also changed after the run; the committed rows come from the earlier
-  adapters.
+  no true negative from an error, a missing row or an incomplete run,
+  out-of-taxonomy code keys counted apart, and later no case-level true
+  negative for a code case where a tool reported only such keys. The revised
+  rules were re-applied to the unchanged rows (see Integration changes under
+  Results). The adapters were also changed after the run; the committed rows
+  come from the earlier adapters.
 * Decoys are drawn from the confusions real tools make: service identities
   without AI, infrastructure *agents*, *Bedrock* game servers, *MCP* (Minecraft
   Coder Pack, Microsoft Cloud Partner), *copilot* seat reports, *Gemini*
@@ -435,6 +441,18 @@ track:
   131 of 133). Its agent false-alarm rate is 18% of 907 entities (was of
   924), 12% on cloud (was 11%). No case-level outcome changed, since every
   negative aws-export case also holds decoys ShadowScan is given.
+* Out-of-taxonomy code keys were neither credited nor charged at entity
+  level, but a negative code case where a tool reported only such keys still
+  earned a case-level true negative. On the encode/httpx control
+  (`code-checkout-017`) AgentDiscover reported 16 files as "Direct HTTP LLM
+  client detected (Shadow AI)", none mappable to a fact, and was credited
+  with a correct negative. Such a case is now a false alarm, and the
+  code-surface adapters, which drop unmappable hits, count them in each row's
+  `out_of_taxonomy` so that future rows keep the evidence. Re-scored from the
+  unchanged rows, AgentDiscover's code case specificity is 90% (9 of 10; was
+  100%), its in-scope case specificity 96% (25 of 26; was 100%) and its
+  balanced accuracy 62% (was 64%); the paired comparison with ShadowScan is
+  23 against 1 (was 22 against 1). No other tool's numbers changed.
 * `verify --regenerate` had inferred a per-surface count of 38 for the
   committed corpus, rebuilt a smaller corpus and reported a difference,
   although the code still builds the committed cases. It now infers 40 and
@@ -537,9 +555,10 @@ product.
   246 file-path keys and `agent-discovery`'s one; they are outside the fact
   taxonomy and are counted apart, not as false positives. The earlier brief's
   247 AgentDiscover false positives were these 246 keys and the one fact
-  above.
+  above. At case level 16 of those keys fell on the encode/httpx control,
+  AgentDiscover's one code false alarm (case specificity 90%, 9 of 10).
 * **Paired comparison** with ShadowScan on shared cases (cases only ShadowScan
-  got right, against cases only the other tool got right): AgentDiscover 22
+  got right, against cases only the other tool got right): AgentDiscover 23
   against 1 (66 cases), vet 35 against 1 (66), `agent-discovery` 34 against 9
   (86), Cisco MCP Scanner and Numbat 16 against 0 (40 each), all p < 0.001;
   Snyk Agent Scan 10 against 0 (40), p = 0.002; Fleet's table 22 against 11

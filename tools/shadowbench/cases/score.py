@@ -16,10 +16,12 @@ truncated, swapped or missing file does not). Each of these is refused unless
 status other than ``ok``, ``error`` or ``unsupported``, a second row for the
 same case, a row for a case the corpus does not have, a row whose tool is not
 the file's, a row whose surface, modality, family, label or difficulty
-disagrees with its case, and an ``unsupported`` row on a (surface, modality)
-where the same tool has ``ok`` or ``error`` rows (the runner decides support
-per surface and modality) are refused, ``--force`` or not. A case with no row
-counts as an ``error`` and is also reported as missing.
+disagrees with its case, an ``out_of_taxonomy`` count that is not a
+non-negative integer or sits on a row outside the code surface, and an
+``unsupported`` row on a (surface, modality) where the same tool has ``ok`` or
+``error`` rows (the runner decides support per surface and modality) are
+refused, ``--force`` or not. A case with no row counts as an ``error`` and is
+also reported as missing.
 
 Matching. A reported key equal to a tolerated key is neither credited nor
 penalized. Otherwise it matches an expected or decoy key when they are equal,
@@ -34,8 +36,12 @@ also counts against specificity.
 Code surface. Truth there is ``<category>:<value>`` facts from
 ``tools.discovery_benchmark.taxonomy``. A reported code key that is not such a
 fact (for example a file path an adapter could not map) is out of taxonomy:
-neither a true nor a false positive, and counted per tool. The rule is the
-same for every tool, whether its adapter drops such hits or passes them on.
+neither a true nor a false positive, and counted per tool. An adapter that
+drops such hits instead records how many in the row's ``out_of_taxonomy``,
+and they count exactly as keys passed on would. At case level an
+out-of-taxonomy report earns a positive case nothing and makes a negative case
+a false alarm, since the tool alarmed on a repository with nothing to find.
+The rule is the same for every tool.
 
 Rules. An ``error`` row (crash, timeout, unreadable output, missing row) is
 never a correct outcome: every expected entity counts as missed, its decoys
@@ -58,7 +64,8 @@ specificity and agent false-alarm denominators, whatever the row's status,
 unless the tool reports it anyway, which then counts against the tool like
 any other decoy hit; the count left out is reported as ``decoys_withheld``. A
 complete ``ok`` row on a negative case whose every decoy was withheld, and
-that reports no false positive, was shown nothing it could reject: it is
+that reports no false positive and nothing out of taxonomy, was shown nothing
+it could reject: it is
 left out of the tool's case-level negatives (``case.negatives_withheld``)
 and of the paired comparison. The declarations come from the adapter
 registry; an adapter module that does not load is refused unless ``--force``,
@@ -67,9 +74,11 @@ nothing.
 
 Case level. A positive case is found when the tool reports at least one
 expected entity; a negative case is a false alarm when the tool reports at
-least one false positive, and is correct only on a complete ``ok`` run. Case
-recall, specificity, balanced accuracy, MCC and the paired McNemar test all use
-these outcomes.
+least one false positive or anything out of taxonomy, and is correct only on a
+complete ``ok`` run. Case recall, specificity, balanced accuracy, MCC and the
+paired McNemar test all use these outcomes; ``case.out_of_taxonomy_alarms``
+counts the negative cases that are false alarms only through out-of-taxonomy
+reports.
 
 Agent tier. Among expected ``agent`` entities, agent recall is the share found
 by a report labeled ``agent``. The agent false-alarm rate is the share of
@@ -200,11 +209,14 @@ class CaseScore:
         self.decoy_hits: set[str] = set()
         self.agent_false_alarms: set[str] = set()
         self.out_of_taxonomy: set[str] = set()
+        self.dropped_out_of_taxonomy = 0
         self.extra = 0
         # decoys the tool was never shown; one it reports anyway is a hit, and leaves this set below
         self.withheld: set[str] = {d for d in case.decoys if withheld and d.startswith(withheld)}
         if self.status != "ok":
             return
+        # code hits the adapter could not map to a fact and dropped, counted in the row
+        self.dropped_out_of_taxonomy = int(row.get("out_of_taxonomy") or 0)
         seen: set[str] = set()
         for ent in row["entities"]:
             key = str(ent["key"])
@@ -245,6 +257,11 @@ class CaseScore:
         return len(self.decoy_hits) + self.extra
 
     @property
+    def out_of_taxonomy_reports(self) -> int:
+        """Code reports outside the fact taxonomy: keys passed on plus hits the adapter dropped."""
+        return len(self.out_of_taxonomy) + self.dropped_out_of_taxonomy
+
+    @property
     def decoy_universe(self) -> int:
         """The decoys this row is scored on: the case's, less those withheld from the tool."""
         return len(self.case.decoys) - len(self.withheld)
@@ -266,6 +283,7 @@ class CaseScore:
             and bool(self.case.decoys)
             and self.decoy_universe == 0
             and self.fp == 0
+            and not self.out_of_taxonomy_reports
         )
 
     @property
@@ -277,14 +295,17 @@ class CaseScore:
 
     @property
     def correct(self) -> bool:
-        """Case-level outcome: a positive case needs a true positive, a negative one no false positive.
+        """Case-level outcome: a positive case needs a true positive, a negative one no alarm at all.
 
         An ``error`` (or missing) row is never correct, whatever the case label, and an incomplete
-        run is never a correct negative.
+        run is never a correct negative. On a negative case an out-of-taxonomy report is an alarm
+        like a false positive, though at entity level it is neither.
         """
         if self.status != "ok":
             return False
-        return bool(self.tp) if self.case.positive else self.fp == 0 and not self.incomplete
+        if self.case.positive:
+            return bool(self.tp)
+        return self.fp == 0 and not self.out_of_taxonomy_reports and not self.incomplete
 
 
 def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict[str, Any]:
@@ -344,7 +365,7 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
         "fp": fp,
         "fn": fn,
         "tn": tn,
-        "out_of_taxonomy": sum(len(s.out_of_taxonomy) for s in ok),
+        "out_of_taxonomy": sum(s.out_of_taxonomy_reports for s in ok),
         "precision": precision[0],
         "precision_ci": precision[1:],
         "recall": recall[0],
@@ -365,6 +386,9 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
             "positives": len(pos),
             "negatives": len(neg),
             "negatives_withheld": sum(1 for s in scored if s.blind),
+            "out_of_taxonomy_alarms": sum(
+                1 for s in neg if s.complete and s.fp == 0 and s.out_of_taxonomy_reports
+            ),
             "tp": ctp,
             "fn": cfn,
             "fp": cfp,
@@ -401,6 +425,12 @@ def _check_row(row: Any, where: str, cases: dict[str, Case], tool: str) -> dict[
             )
     if not isinstance(row.get("incomplete", False), bool):
         raise ResultsError(f"{where}: {cid}: incomplete must be true or false")
+    if "out_of_taxonomy" in row:
+        dropped = row["out_of_taxonomy"]
+        if not isinstance(dropped, int) or isinstance(dropped, bool) or dropped < 0:
+            raise ResultsError(f"{where}: {cid}: out_of_taxonomy must be a count, not {dropped!r}")
+        if case.surface != "code":
+            raise ResultsError(f"{where}: {cid}: out_of_taxonomy is for code rows only")
     entities = row.get("entities")
     if not isinstance(entities, list):
         raise ResultsError(f"{where}: {cid}: entities must be a list")

@@ -62,9 +62,11 @@ Detection rules:
   ``taxonomy.facts_from_name`` ("CrewAI Agent detected" -> ``framework:crewai``,
   "Unmanaged OpenAI client detected" -> ``provider:openai``). ``provider:*``
   facts are labeled ``llm``, everything else ``agent``. A hit that maps to no
-  fact is dropped and listed as ``unmapped`` in the note: code truth holds
-  only taxonomy facts, so any other key could never match (the ShadowScan
-  adapter drops its unmappable findings the same way).
+  fact is dropped, counted in the row's ``out_of_taxonomy`` and listed as
+  ``unmapped`` in the note: code truth holds only taxonomy facts, so any other
+  key could never match, but the scorer still counts the hit as an alarm on a
+  negative case (the ShadowScan adapter treats its unmappable findings the
+  same way).
 
 ``version()`` runs ``agentdiscover --version`` through ``_probe`` (scrubbed
 environment, throwaway home, timeout) unless ``tools.json`` pins a version.
@@ -414,7 +416,9 @@ class AgentDiscover:
         note += f" facts={sum(e.kind == 'fact' for e in out.entities())}"
         if unmapped:
             note += f" unmapped={sorted(set(unmapped))[:10]}"
-        return AdapterResult("ok", entities=out.entities(), note=note, raw=raw)
+        return AdapterResult(
+            "ok", entities=out.entities(), note=note, raw=raw, out_of_taxonomy=len(set(unmapped))
+        )
 
 
 ADAPTER = AgentDiscover()

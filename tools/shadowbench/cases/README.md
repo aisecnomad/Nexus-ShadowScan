@@ -213,8 +213,10 @@ invocations; `normalize` maps the tool's own output onto entity keys and never
 interprets beyond it. Follow the rules in `adapters/__init__.py`: fail closed
 (a crash, timeout, missing report, empty or unparsable output is an `error`,
 never an empty `ok`), set `raw["incomplete"]` when the tool says it did not
-read everything, emit only taxonomy facts on the code surface, and run the
-tool's binary in `version()` only through `_probe.run_probe`. When the
+read everything, emit only taxonomy facts on the code surface and count every
+hit that maps to none in `AdapterResult.out_of_taxonomy` (the scorer treats it
+as an alarm on a negative case), and run the tool's binary in `version()` only
+through `_probe.run_probe`. When the
 adapter converts a case's input and drops records a decoy comes from, declare
 those decoys' key prefixes per (surface, modality) in a `withheld_decoys`
 attribute, as the ShadowScan adapter does for AWS IAM roles, so the scorer
