@@ -192,7 +192,12 @@ def apply_matches(
                 finding.add_capability(cap)
         for t in sig.tags:
             finding.add_tag(t)
-        if establish and m.agent_indicator and (indicator_filter is None or indicator_filter(m)):
+        if (
+            establish
+            and m.signal.type != "name"
+            and m.agent_indicator
+            and (indicator_filter is None or indicator_filter(m))
+        ):
             indicators += 1
         key = f"{sig.id}|{m.signal.type}"
         counts[key] = counts.get(key, 0) + 1
@@ -206,15 +211,20 @@ def apply_matches(
         loc = location
         if loc and m.line:
             loc = f"{loc}:{m.line}"
+        attributes = {"category": sig.category, "value": value}
+        evidence_weight = max(0.0, min(1.0, m.weight * weight_scale))
+        if m.signal.type == "name":
+            attributes["confidence_group"] = "name-only"
+            evidence_weight = min(evidence_weight, 0.2)
         finding.add_evidence(
             Evidence(
                 signal=f"{m.signal.type}:{sig.id}",
                 description=describe_match(m).replace(m.value, value) if m.value else describe_match(m),
                 location=loc,
                 snippet=excerpt,
-                weight=max(0.0, min(1.0, m.weight * weight_scale)),
+                weight=evidence_weight,
                 signature=sig.id,
-                attributes={"category": sig.category, "value": value},
+                attributes=attributes,
             )
         )
     finding.metadata["agent_indicators"] = finding.metadata.get("agent_indicators", 0) + indicators
@@ -243,14 +253,19 @@ def finalize(finding: Finding, index: SignatureIndex | None = None) -> Finding:
     return finding
 
 
-def name_matches(index: SignatureIndex, *texts: str | None) -> list[Match]:
+def name_matches(index: SignatureIndex, *texts: str | None, context: str | None = None) -> list[Match]:
     """Run display-name signatures over several strings (name, publisher, description)."""
     out: list[Match] = []
     seen: set[str] = set()
+    negative_context = context.casefold() if context else ""
     for t in texts:
         if not t:
             continue
         for m in index.match_name(t):
+            if negative_context and any(
+                item.casefold() in negative_context for item in m.signal.negative_context
+            ):
+                continue
             if m.signature_id in seen:
                 continue
             seen.add(m.signature_id)

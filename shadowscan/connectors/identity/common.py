@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from urllib.parse import urlsplit
 
 from shadowscan.connectors.common import apply_matches, classify_permissions, domain_matches, name_matches
 from shadowscan.models import Evidence, Finding, Kind
@@ -35,7 +36,17 @@ def assess_app(
     ``aliases`` are other spellings of the name, such as an app slug with its
     hyphens read as spaces; each signature still counts once.
     """
-    apply_matches(finding, name_matches(index, name, *aliases, publisher, description))
+    urls = list(urls)
+    url_context = " ".join(
+        parsed.hostname or ""
+        for value in urls
+        if isinstance(value, str)
+        if (parsed := urlsplit(value if "://" in value else f"//{value}"))
+    )
+    apply_matches(
+        finding,
+        name_matches(index, name, *aliases, publisher, description, context=url_context),
+    )
     apply_matches(finding, domain_matches(index, *urls), weight_scale=0.8)
     if client_id:
         apply_matches(finding, index.match_client_id(client_id))

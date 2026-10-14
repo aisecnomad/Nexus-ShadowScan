@@ -1271,7 +1271,22 @@ class SignatureIndex:
                         continue
                 elif not _hints_present(rest, text, present):
                     continue
-            for m in _finditer(rx, text, sig.id, max_per_signal - hits, excluded if starts else None):
+            def positive_context(match: Any) -> bool:
+                if signal_type != "name" or not s.negative_context:
+                    return True
+                line_start = text.rfind("\n", 0, match.start()) + 1
+                line_end = text.find("\n", match.end())
+                line = text[line_start : len(text) if line_end < 0 else line_end].casefold()
+                return not any(context.casefold() in line for context in s.negative_context)
+
+            for m in _finditer(
+                rx,
+                text,
+                sig.id,
+                max_per_signal - hits,
+                excluded if starts else None,
+                positive_context,
+            ):
                 if newlines is None:
                     newlines = [newline.start() for newline in re.finditer("\n", text)]
                 line = bisect_left(newlines, m.start()) + 1

@@ -58,6 +58,7 @@ signatures:
       - type: name
         patterns: ['(?i)\bgemini\b', '(?i)\bgoogle ai studio\b', '(?i)\bnotebooklm\b', '(?i)\bgoogle ai\b', '(?i)\bproject mariner\b']
         weight: 0.85
+        negative_context: [exchange, gemini.com, settlement, trading]
       - type: domain
         values: [gemini.google.com, aistudio.google.com, notebooklm.google.com, makersuite.google.com, bard.google.com]
         weight: 0.9
@@ -223,7 +224,7 @@ signatures:
         weight: 0.9
 
   - id: identity-app.meeting-notetakers
-    name: AI meeting note-takers (Otter, Fireflies, Read.ai, Fathom, tl;dv, Gong, Avoma, Fellow, Grain, Krisp, Zoom AI Companion, Sembly, Supernormal, Circleback, Granola)
+    name: AI meeting note-takers (Otter, Fireflies, Read.ai, Fathom, tl;dv, Gong, Avoma, Fellow, Grain, Krisp, Zoom AI Companion, Sembly, Supernormal, Circleback, Granola, Wudpecker, Tactiq)
     category: identity-app
     vendor: null
     tags: [meeting-bot]
@@ -235,11 +236,15 @@ signatures:
         # Otter, Gong, Grain, Fathom, Fellow, Granola, Bluedot and Jamie are
         # words / names: the bare word counts as the whole display name (Jamie
         # excepted) or with meeting context on the same line.
-        patterns: ['(?i)\botter\.?ai\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\botter\b|^[^\S\r\n]*otter[^\S\r\n]*$', '(?i)\bfireflies(?:\.ai)?\b', '(?i)\bread\.?ai\b', '(?i)\bfathom\.video\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bfathom\b|^[^\S\r\n]*fathom[^\S\r\n]*$', '(?i)\btl;?dv\b', '(?i)\bgong\.io\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?|revenue|sales)\b).*\bgong\b|^[^\S\r\n]*gong[^\S\r\n]*$', '(?i)\bavoma\b', '(?i)\bfellow\.app\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bfellow\b|^[^\S\r\n]*fellow[^\S\r\n]*$', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bgrain\b|^[^\S\r\n]*grain[^\S\r\n]*$', '(?i)\bkrisp\b', '(?i)\bai companion\b', '(?i)\bsembly\b', '(?i)\bsupernormal\b', '(?i)\bcircleback\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bgranola\b|^[^\S\r\n]*granola[^\S\r\n]*$', '(?i)\bnotetaker\b', '(?i)\bnote[- ]?taker\b', '(?i)\bmeetgeek\b', '(?i)\bbluedothq\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bbluedot\b|^[^\S\r\n]*bluedot[^\S\r\n]*$', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bjamie\b']
+        patterns: ['(?i)\botter\.?ai\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\botter\b|^[^\S\r\n]*otter[^\S\r\n]*$', '(?i)\bfireflies(?:\.ai)?\b', '(?i)\bread\.?ai\b', '(?i)\bfathom\.video\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bfathom\b|^[^\S\r\n]*fathom[^\S\r\n]*$', '(?i)\btl;?dv\b', '(?i)\bgong\.io\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?|revenue|sales)\b).*\bgong\b|^[^\S\r\n]*gong[^\S\r\n]*$', '(?i)\bavoma\b', '(?i)\bfellow\.app\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bfellow\b|^[^\S\r\n]*fellow[^\S\r\n]*$', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bgrain\b|^[^\S\r\n]*grain[^\S\r\n]*$', '(?i)\bkrisp\b', '(?i)\bai companion\b', '(?i)\bsembly\b', '(?i)\bsupernormal\b', '(?i)\bcircleback\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bgranola\b|^[^\S\r\n]*granola[^\S\r\n]*$', '(?i)\bnotetaker\b', '(?i)\bnote[- ]?taker\b', '(?i)\bmeetgeek\b', '(?i)\bbluedothq\b', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bbluedot\b|^[^\S\r\n]*bluedot[^\S\r\n]*$', '(?i)^(?=.*\b(?:ai|meetings?|notes?|note[- ]?taker|transcri\w*|record\w*|zoom|teams|meet|calendar|assistant|bot|calls?|conversations?)\b).*\bjamie\b', '(?i)\bwudpecker\b', '(?i)\btactiq\b']
         weight: 0.85
       - type: domain
-        values: [otter.ai, "*.otter.ai", fireflies.ai, "*.fireflies.ai", read.ai, "*.read.ai", fathom.video, "*.fathom.video", tldv.io, "*.tldv.io", gong.io, "*.gong.io", avoma.com, fellow.app, grain.com, "*.grain.com", krisp.ai, sembly.ai, supernormal.com, circleback.ai, granola.ai, meetgeek.ai, bluedothq.com]
+        values: [otter.ai, "*.otter.ai", fireflies.ai, "*.fireflies.ai", read.ai, "*.read.ai", fathom.video, "*.fathom.video", tldv.io, "*.tldv.io", gong.io, "*.gong.io", avoma.com, fellow.app, grain.com, "*.grain.com", krisp.ai, sembly.ai, supernormal.com, circleback.ai, granola.ai, meetgeek.ai, bluedothq.com, wudpecker.io, "*.wudpecker.io", tactiq.io, "*.tactiq.io"]
         weight: 0.9
+      - type: client_id
+        names: [A0WD5WDPKR]
+        weight: 0.95
+        description: Wudpecker Slack app id
 
   - id: identity-app.writing-assistants
     name: AI writing assistants (Grammarly, Jasper, Writer, Copy.ai, QuillBot, Wordtune, DeepL Write, Notion AI, Gamma, Tome, Beautiful.ai)
@@ -368,3 +373,4 @@ signatures:
         # package names such as copilot-css.
         patterns: ['(?i)\bai[- ]?(?:agent|assistant|bot|copilot|helper|companion)\b', '(?i)\b(?:llm|gpt|genai|gen-ai|generative ai)\b', '(?i)\bagents?\b', '(?i)\bassistant\b', '(?i)\bcopilot\b(?![-_](?:css|scss|less|themes?|kit|ui|icons?|fonts?|styles?)\b)', '(?i)\bchat ?bot\b', '(?i)\b(?:auto|autonomous)[- ]?(?:agent|pilot)\b', '(?i)\brag\b', '(?i)\b(?:svc|service)[-_ ]?(?:agent|ai|llm)\b', '(?i)\bbot\b']
         weight: 0.35
+        negative_context: [cleanup, decommission, integration, remove, sync, uninstall]

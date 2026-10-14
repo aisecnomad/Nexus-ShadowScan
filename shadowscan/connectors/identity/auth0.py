@@ -260,7 +260,7 @@ class Auth0Connector(BaseConnector):
             apply_matches(
                 f, name_matches(self.index, " ".join(f"{k}={v}" for k, v in meta.items())), weight_scale=0.6
             )
-        if not f.frameworks and not machine:
+        if not f.frameworks and not f.model_providers:
             return None
         f.add_evidence(
             Evidence(

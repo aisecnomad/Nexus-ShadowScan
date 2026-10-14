@@ -86,6 +86,7 @@ class Signal:
     # dependency: exact names and name prefixes that a prefix must not claim
     exclude_names: list[str] = field(default_factory=list)
     exclude_prefixes: list[str] = field(default_factory=list)
+    negative_context: list[str] = field(default_factory=list)  # name matches suppressed by nearby context
     patterns: list[str] = field(default_factory=list)  # regexes
     globs: list[str] = field(default_factory=list)  # file
     values: list[str] = field(default_factory=list)  # domain / scope / iac
@@ -179,6 +180,7 @@ def _signal_from_dict(d: dict[str, Any]) -> Signal:
         prefixes=[str(x) for x in d.get("prefixes", []) or []],
         exclude_names=[str(x) for x in d.get("exclude_names", []) or []],
         exclude_prefixes=[str(x) for x in d.get("exclude_prefixes", []) or []],
+        negative_context=[str(x) for x in d.get("negative_context", []) or []],
         patterns=[str(x) for x in d.get("patterns", []) or []],
         globs=[str(x) for x in d.get("globs", []) or []],
         values=[str(x) for x in d.get("values", []) or []],
