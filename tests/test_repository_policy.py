@@ -2206,6 +2206,26 @@ def test_label_sync_only_mutates_labels_from_main() -> None:
         assert index > install and '"$RUNNER_TEMP/labels-venv/bin/python" - <<' in scripts[index]
 
 
+def test_automation_only_applies_or_exempts_labels_from_the_taxonomy() -> None:
+    """A label missing from labels.yml is never synced: Dependabot drops it, stale exempts nothing."""
+    defined = {label["name"] for label in _load(GITHUB / "labels.yml")}
+    used: dict[str, set[str]] = {}
+    for update in _load(GITHUB / "dependabot.yml")["updates"]:
+        used[f"dependabot.yml {update['package-ecosystem']}"] = set(update.get("labels", []))
+    stale = _load(GITHUB / "workflows" / "stale.yml")
+    for job in stale["jobs"].values():
+        for step in job.get("steps", []):
+            if not step.get("uses", "").startswith("actions/stale@"):
+                continue
+            options = step["with"]
+            for key in ("exempt-issue-labels", "exempt-pr-labels", "stale-issue-label", "stale-pr-label"):
+                used[f"stale.yml {key}"] = {
+                    name.strip() for name in str(options.get(key, "")).split(",") if name.strip()
+                }
+    undefined = {source: sorted(names - defined) for source, names in used.items() if names - defined}
+    assert used and not undefined, f"labels not in .github/labels.yml: {undefined}"
+
+
 # Consumer examples are copied verbatim into other repositories and clusters, so
 # the weekly drift templates follow the same rules as this repository's workflows.
 DRIFT_WORKFLOW = ROOT / "examples" / "github-action-drift.yml"

@@ -1,4 +1,4 @@
-name: Checkmarx Scan
+name: Checkmarx One
 
 # Optional third-party SAST, SCA and KICS scan through Checkmarx One
 # (https://github.com/Checkmarx/ast-github-action), pinned by full commit SHA.
@@ -25,6 +25,7 @@ concurrency:
 
 jobs:
   build:
+    name: Scan
     if: >-
       vars.CX_BASE_URI != '' &&
       github.actor != 'dependabot[bot]' &&

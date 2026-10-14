@@ -1,4 +1,4 @@
-name: CI Black Duck security scan
+name: Black Duck
 
 # Optional third-party SAST/SCA through Black Duck SCA, Coverity, Polaris or
 # Software Risk Manager (https://github.com/blackduck-inc/black-duck-security-scan),
@@ -33,6 +33,7 @@ concurrency:
 
 jobs:
   build:
+    name: Scan
     if: >-
       (vars.BLACKDUCKSCA_URL != '' || vars.COVERITY_URL != '' ||
        vars.POLARIS_SERVER_URL != '' || vars.SRM_URL != '') &&
