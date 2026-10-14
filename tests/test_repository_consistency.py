@@ -229,8 +229,10 @@ def test_relative_markdown_links_and_anchors_resolve(markdown: Path) -> None:
     assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
 
 
+# The repository was renamed from Project-Nexus to Nexus-ShadowScan; GitHub redirects the
+# old name, so links under either name must still resolve.
 _REPOSITORY_LINK = re.compile(
-    r"https://github\.com/aisecnomad/Project-Nexus/(blob|tree)/main/([^#?]+)(?:#(.+))?"
+    r"https://github\.com/aisecnomad/(?:Project-Nexus|Nexus-ShadowScan)/(blob|tree)/main/([^#?]+)(?:#(.+))?"
 )
 
 
@@ -260,6 +262,23 @@ def test_readme_links_work_on_the_package_index() -> None:
     ]
     assert not relative, "link the repository URL instead:\n  " + "\n  ".join(relative)
     assert _pyproject()["project"]["readme"] == "README.md"
+
+
+_HTML_SOURCE = re.compile(r"""\bsrc\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
+_RAW_REPOSITORY_FILE = re.compile(
+    r"https://raw\.githubusercontent\.com/aisecnomad/(?:Project-Nexus|Nexus-ShadowScan)/main/([^\s\"'<>()?#]+)"
+)
+
+
+def test_readme_images_load_on_the_package_index_and_exist_in_this_checkout() -> None:
+    """An HTML image escapes the link check above, yet PyPI resolves a relative source against pypi.org too."""
+    readme = _read(ROOT / "README.md")
+    relative = [source for source in _HTML_SOURCE.findall(readme) if not source.startswith("https://")]
+    assert not relative, f"load README images from an https URL: {relative}"
+    missing = sorted(
+        {path for path in _RAW_REPOSITORY_FILE.findall(readme) if not (ROOT / unquote(path)).is_file()}
+    )
+    assert not missing, f"README loads files that are not in this checkout: {missing}"
 
 
 # Root documents the site includes as snippets (CHANGELOG.md, RELEASE_NOTES.md, SECURITY.md,

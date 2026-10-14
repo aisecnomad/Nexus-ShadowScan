@@ -5,6 +5,36 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### README redesign for the renamed repository (October 14)
+
+Documentation and repository tests only; no scanner behaviour changes.
+
+- The README opens with a banner, badges and section links, then why
+  ShadowScan exists, a 60-second offline demo (seven rows of the bundled
+  demo), the quick start, how a scan works, a security model with the trust
+  boundaries and default controls (including what opt-in LLM triage sends),
+  coverage, how to read a finding, outputs, and an evidence section. Long
+  reference material (the recognized product list, CSV formula markers, the
+  coverage policy, incremental scans) moves into collapsed sections.
+- The evidence section shows the synthetic head-to-head estate recall chart
+  with its caveat that estate recall rewards breadth, and summarizes four
+  committed benchmarks with ShadowScan's weak spots next to its results. It
+  states that none of them is independent and none estimates field precision
+  or recall.
+- Repository links use the current name, `aisecnomad/Nexus-ShadowScan`.
+  The 0.1.2 attestation command keeps `--repo aisecnomad/Project-Nexus`: its
+  signing certificate and PyPI trusted publisher name the former repository.
+- Four images under `docs/assets/`, loaded by absolute raw URL because the
+  README is the PyPI project description. The supplied artwork was corrected
+  before it was added: the trust-boundary diagram's counts (27 connectors, 215
+  signatures and 1,001 signals become 38, 233 and 1,133) and its "six
+  surfaces" title, the pipeline diagram's "Collecte across Surfaces" (now
+  "Correlate across Surfaces"), the banner footer that named the former
+  repository and a version, and the benchmark chart's truncated table.
+- `tests/test_repository_consistency.py` checks absolute repository links under
+  either name, requires README image sources to be HTTPS URLs, and requires
+  every raw repository file the README loads to exist in the checkout.
+
 ### Documentation aligned with the code (October 12)
 
 Documentation only; no scanner behaviour changes.
