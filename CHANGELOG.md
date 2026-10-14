@@ -346,9 +346,9 @@ That review is not independent human review.
   control (`code-checkout-017`) are now its one code false alarm: code case
   specificity 90% (9 of 10; was 100%), in-scope case specificity 25 of 26
   (was 26 of 26), case-level balanced accuracy 62% (was 64%), and the McNemar
-  comparison with ShadowScan 23 against 1 (was 22 against 1). This replaces
-  the earlier statement that out-of-taxonomy code keys are neither credited
-  nor charged at case level.
+  comparison with ShadowScan 23 against 1 (was 22 against 1). The October 12
+  entry below now limits the statement that out-of-taxonomy code keys are
+  neither true nor false positives to entity level.
 - The run manifest now records each `<tool>.jsonl`'s SHA-256
   (`rows_sha256`), and `score` refuses a results file whose digest differs
   unless `--force`; before, only per-status row counts were checked, so an
