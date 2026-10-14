@@ -134,6 +134,74 @@ _SCALARS = (bool, int, float, datetime.date, datetime.time, datetime.timedelta, 
 _PLAIN_TYPES = (str, Mapping, list, tuple, *_SCALARS)
 
 
+class _Copy(dict[str, Any]):
+    """A mapping a ``sanitize`` reading copied, with a copy of every member of its source.
+
+    Two keys can read alike once withheld ('SSWS a--auth' and 'SSWS b' are
+    both 'SSWS [REDACTED]' in one reading, and not in the other). As a dict,
+    the copy is what the reading always made: each step that copies it keeps
+    one member per key, at the place of the first and with the value of the
+    last, as a dict built from the members the step before kept does.
+    ``view`` holds the members it keeps, in that order. ``members`` also
+    holds the others, copied by every step as well, one for each member of
+    the source mapping in its order: the two readings then pair up member by
+    member wherever their keys read alike (see ``_merge_mappings``). Copies
+    are equal only when all their members and views are. ``sanitize``
+    returns plain dicts (see ``_dicts``).
+    """
+
+    __slots__ = ("members", "view")
+
+    def __init__(self, members: list[tuple[str, Any]], view: list[int]) -> None:
+        super().__init__(members[index] for index in view)
+        self.members = members
+        self.view = view
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _Copy):
+            return self.view == other.view and self.members == other.members
+        return dict.__eq__(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
+    __hash__ = None
+
+
+def _all_members(item: Mapping) -> list[tuple[Any, Any]]:
+    """The members of ``item``: of a copy, one for each member of its source (see ``_Copy``)."""
+    return item.members if isinstance(item, _Copy) else list(item.items())
+
+
+def _copied(source: Mapping, members: list[tuple[str, Any]]) -> _Copy:
+    """``members``, a copy of each of ``_all_members(source)`` in its order, as a copy of ``source``.
+
+    As a dict it keeps what a dict built from the members ``source`` shows
+    as a dict keeps (see ``_Copy``).
+    """
+    view: list[int] = []
+    places: dict[str, int] = {}
+    for index in source.view if isinstance(source, _Copy) else range(len(members)):
+        key = members[index][0]
+        place = places.get(key)
+        if place is None:
+            places[key] = len(view)
+            view.append(index)
+        else:
+            view[place] = index
+    return _Copy(members, view)
+
+
+def _dicts(item: Any) -> Any:
+    """``item``, a copy ``sanitize`` made, with plain dicts in place of its copies (see ``_Copy``)."""
+    if isinstance(item, Mapping):
+        return {key: _dicts(child) for key, child in item.items()}
+    if isinstance(item, (list, tuple)):
+        members = [_dicts(child) for child in item]
+        return tuple(members) if isinstance(item, tuple) else members
+    return item
+
+
 def _member_order(member: Any) -> tuple[str, str]:
     try:
         return type(member).__name__, repr(member)
@@ -837,8 +905,8 @@ class _Sanitizer:
         return item
 
     def clean_mapping(self, item: Mapping, depth: int, *, auth: bool = False) -> dict[str, Any]:
-        mapping_out: dict[str, Any] = {}
-        for key, child in item.items():
+        mapping_out: list[tuple[str, Any]] = []
+        for key, child in _all_members(item):
             name = str(key)
             result: Any
             if (
@@ -850,7 +918,8 @@ class _Sanitizer:
             ):
                 result = _redact_value(child)
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
-                result = {self.text(str(k)): _redact_value(v) for k, v in child.items()}
+                members = [(self.text(str(k)), _redact_value(v)) for k, v in _all_members(child)]
+                result = _copied(child, members)
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, list):
                 result = [self.clean_environment_entry(entry, depth) for entry in child]
             elif (auth or name.lower() in _AUTH_CONTAINER_KEYS) and isinstance(child, (Mapping, list, tuple)):
@@ -861,17 +930,18 @@ class _Sanitizer:
                 result = self.clean(child, depth + 1, auth=True)
             else:
                 result = self.clean(child, depth + 1)
-            mapping_out[self.text(name)] = result
-        return mapping_out
+            mapping_out.append((self.text(name), result))
+        return _copied(item, mapping_out)
 
     def clean_environment_entry(self, entry: Any, depth: int) -> Any:
         """One entry of an environment list: a record's value is withheld whatever its name."""
         if not isinstance(entry, Mapping):
             return _redact_value(entry)
-        return {
-            self.text(str(k)): _redact_value(v) if str(k).lower() == "value" else self.clean(v, depth + 1)
-            for k, v in entry.items()
-        }
+        members = [
+            (self.text(str(k)), _redact_value(v) if str(k).lower() == "value" else self.clean(v, depth + 1))
+            for k, v in _all_members(entry)
+        ]
+        return _copied(entry, members)
 
 
 class _NestedSanitizer(_Sanitizer):
@@ -1058,6 +1128,11 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     keeps the established rules' copy, as ``sanitize_text`` keeps their
     reading, unless removing the runs that start later lines lets the
     passes withhold more.
+
+    A container stays a container of its type: the two readings of a
+    mapping pair up member by member even where two of its keys read alike
+    in one reading and not in the other (see ``_Copy``). A key two members
+    share keeps one value, as a dict does.
     """
     _check_sanitization_structure(value)
     reading = _SchemeReading(established=False)
@@ -1066,7 +1141,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     )
     shown = _in_reading(reading, lambda: _without_scheme_tails(first))
     if not reading.glued:
-        return first if shown == _without_scheme_tails(first, _without_later_line_runs) else shown
+        return _dicts(first if shown == _without_scheme_tails(first, _without_later_line_runs) else shown)
     plain = _settled(
         shown,
         lambda again: _in_reading(
@@ -1083,7 +1158,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
             lambda again: _sanitize_reading(again, redact_short_secrets, env_values_are_secrets),
         ),
     )
-    return _merge_copies(plain, established)
+    return _dicts(_merge_copies(plain, established))
 
 
 def _sanitize_reading(value: Any, redact_short_secrets: bool, env_values_are_secrets: bool) -> Any:
@@ -1114,24 +1189,50 @@ def _merge_copies(first: Any, second: Any) -> Any:
     """Two readings of one value merged, each text as withheld as both withhold it (see ``_merge_readings``).
 
     Both copies come from the same value through the same structural rules,
-    so they pair up member by member. A part that does not pair up is withheld.
+    so they pair up member by member: a mapping by the members of its source
+    (see ``_merge_mappings``), a list or tuple by position. A container stays
+    a container of its type; only where one reading withholds a value whole
+    (as a sensitive key's) is it withheld. Containers that do not pair up
+    cannot come from one value, and fail closed.
     """
     if first == second:
         return first
     if isinstance(first, str) and isinstance(second, str):
         return _merge_readings(first, second)
-    if isinstance(first, Mapping) and isinstance(second, Mapping) and len(first) == len(second):
-        return {
-            _merge_copies(key, other_key): _merge_copies(child, other_child)
-            for (key, child), (other_key, other_child) in zip(first.items(), second.items(), strict=True)
-        }
-    if isinstance(first, (list, tuple)) and type(first) is type(second) and len(first) == len(second):
+    if isinstance(first, Mapping) and isinstance(second, Mapping):
+        return _merge_mappings(first, second)
+    if isinstance(first, (list, tuple)) and type(first) is type(second):
+        if len(first) != len(second):
+            raise SanitizationLimitError("sanitization readings of one value do not pair up")
         members = [_merge_copies(one, other) for one, other in zip(first, second, strict=True)]
         return tuple(members) if isinstance(first, tuple) else members
     if type(first) is type(second) and not isinstance(first, _CONTAINERS):
         # A leaf no text pass reads, the same in both readings ('nan' is not equal to itself).
         return first
     return REDACTED
+
+
+def _merge_mappings(first: Mapping, second: Mapping) -> dict[str, Any]:
+    """Two readings of one mapping, merged member by member (see ``_merge_copies``).
+
+    Each reading holds a copy of every member of the source mapping, in its
+    order (see ``_Copy``), so the members pair up by their place in it,
+    whatever their keys read in either. The result holds the members that
+    both readings keep as dicts where keys read alike, in the order of the
+    established reading (``second``), which keeps them as the established
+    rules did: it shows no member either dropped. A key two of them share
+    once merged keeps the later one's value, as a dict built from them does.
+    """
+    one, other = _all_members(first), _all_members(second)
+    if len(one) != len(other):
+        raise SanitizationLimitError("sanitization readings of one value do not pair up")
+    kept = set(first.view) if isinstance(first, _Copy) else range(len(one))
+    merged: dict[str, Any] = {}
+    for index in second.view if isinstance(second, _Copy) else range(len(other)):
+        if index in kept:
+            (key, child), (other_key, other_child) = one[index], other[index]
+            merged[_merge_copies(key, other_key)] = _merge_copies(child, other_child)
+    return merged
 
 
 def _without_scheme_tails(item: Any, without: Callable[[str], str] = _without_glued_runs) -> Any:
@@ -1143,15 +1244,19 @@ def _without_scheme_tails(item: Any, without: Callable[[str], str] = _without_gl
     The copy holds only what ``clean`` returns: new mappings with text keys,
     lists and tuples, nested no deeper than ``clean`` goes, and texts and
     other leaves it keeps as they are (``_plain`` has turned bytes into text
-    and sets into lists).
+    and sets into lists). A mapping keeps every member, also where two keys
+    read alike once their runs go (see ``_Copy``).
     """
     if isinstance(item, str):
         return without(item)
     if isinstance(item, Mapping):
-        return {
-            _without_scheme_tails(key, without): _without_scheme_tails(child, without)
-            for key, child in item.items()
-        }
+        return _copied(
+            item,
+            [
+                (_without_scheme_tails(key, without), _without_scheme_tails(child, without))
+                for key, child in _all_members(item)
+            ],
+        )
     if isinstance(item, (list, tuple)):
         members = [_without_scheme_tails(child, without) for child in item]
         return tuple(members) if isinstance(item, tuple) else members
