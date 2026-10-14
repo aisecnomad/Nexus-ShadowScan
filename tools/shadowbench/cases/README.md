@@ -184,8 +184,15 @@ driver run (so a repository's `.gitattributes` cannot start git-lfs or any
 other driver on checkout), TLS verification on, no symlinked destination, the
 fetched commit checked against the pin before checkout, and `rev-parse HEAD`
 checked after it. A proxy or CA bundle therefore comes from `HTTPS_PROXY` and
-`GIT_SSL_CAINFO`, not from `~/.gitconfig`. The runner checks each checkout's
-HEAD again before copying it into a case.
+`GIT_SSL_CAINFO`, not from `~/.gitconfig`. An existing checkout is kept only
+when this fetcher made it, its origin is the pinned URL and it holds the
+pinned commit's tree and nothing else; otherwise it is fetched again. The
+runner checks the same before copying a checkout into a case, and refuses one
+whose HEAD differs from the pin, whose `git status` lists anything (untracked
+and ignored files included) or that has a populated submodule directory.
+These checks run git as the fetch does, without the system or global git
+configuration, so a `safe.directory` entry there does not apply: the
+checkouts must belong to root or, under `sudo`, to the user who ran it.
 
 `run` records in `manifest.json` the corpus path and SHA-256, the generator
 digest, the platform, each tool's version and row-status counts, and the

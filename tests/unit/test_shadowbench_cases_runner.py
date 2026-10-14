@@ -450,6 +450,55 @@ def test_materialize_refuses_files_beside_a_checkout(tmp_path: Path) -> None:
     assert not (outside / "planted.txt").exists()
 
 
+def _gitlink(repo: Path, path: str) -> None:
+    """Commit a submodule entry at ``path`` and leave its directory empty, as a checkout does."""
+
+    def git(*args: str) -> None:
+        cmd = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        subprocess.run([*cmd, "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+
+    git("update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},{path}")
+    git("commit", "-q", "-m", "submodule")
+    (repo / path).mkdir(parents=True)
+
+
+@needs_git
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ("untracked", "differs from"),
+        ("ignored", "differs from"),
+        ("modified", "differs from"),
+        ("gitlink", "populated submodule"),
+    ],
+)
+def test_materialize_refuses_a_checkout_with_more_than_its_pinned_commit(
+    tmp_path: Path, change: str, problem: str
+) -> None:
+    """A checkout at the pinned HEAD was copied verbatim, with whatever else its directory held."""
+    checkouts = tmp_path / "checkouts"
+    repo = checkouts / "pinned"
+    _git_repo(repo, {"README.md": "x\n", ".gitignore": "build/\n"})
+    _gitlink(repo, "vendor/sub")
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    case = _case(surface="code", modality="checkout", checkout={"id": "pinned", "commit": commit})
+    mat = runner.materialize(case, tmp_path / "clean", checkouts)
+    assert (mat.inputs / "repo" / "README.md").read_text(encoding="utf-8") == "x\n"
+    planted = {
+        "untracked": repo / "injected.py",
+        "ignored": repo / "build" / "injected.py",
+        "modified": repo / "README.md",
+        "gitlink": repo / "vendor" / "sub" / "injected.py",
+    }[change]
+    planted.parent.mkdir(parents=True, exist_ok=True)
+    planted.write_text("import langchain\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match=problem):
+        runner.materialize(case, tmp_path / "case", checkouts)
+    assert not (tmp_path / "case" / "inputs" / "repo").exists()
+
+
 def test_materialize_never_writes_through_a_symlink(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()

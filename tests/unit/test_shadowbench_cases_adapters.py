@@ -989,3 +989,41 @@ def test_fetch_runs_no_filter_driver_from_the_operator_or_the_repository(
     assert fetch_code.fetch_pinned(f"file://{src}", pinned, "main", dest) == pinned
     assert not ran.exists(), "the operator's filter driver ran on the fetched repository"
     assert (dest / "a.txt").read_text(encoding="utf-8") == "blob\n"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_fetch_refetches_a_checkout_it_cannot_vouch_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout at the pinned HEAD was kept with untracked files, a foreign remote or no filter override."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git("init", "-q", "-b", "main", cwd=src)
+    (src / "README").write_text("pinned\n", encoding="utf-8")
+    _git("add", "README", cwd=src)
+    _git("commit", "-q", "-m", "pinned", cwd=src)
+    pinned = _git("rev-parse", "HEAD", cwd=src)
+    url = f"file://{src}"
+    monkeypatch.setattr(fetch_code, "https_remote", lambda remote: remote)
+    monkeypatch.setattr(fetch_code, "GIT_CONFIG", (*fetch_code.GIT_CONFIG, "protocol.file.allow=always"))
+    dest = tmp_path / "dest" / "repo"
+    assert fetch_code.fetch_pinned(url, pinned, "main", dest) == pinned
+    kept = dest / ".git" / "kept-marker"  # outside the work tree; survives only a kept checkout
+
+    def kept_after(change: Any) -> bool:
+        kept.write_text("", encoding="utf-8")
+        change()
+        assert fetch_code.fetch_pinned(url, pinned, "main", dest) == pinned
+        return kept.exists()
+
+    assert kept_after(lambda: None)
+    assert not kept_after(lambda: (dest / "injected.py").write_text("import langchain\n", encoding="utf-8"))
+    assert not (dest / "injected.py").exists()
+    assert not kept_after(lambda: (dest / "README").write_text("edited\n", encoding="utf-8"))
+    assert (dest / "README").read_text(encoding="utf-8") == "pinned\n"
+    foreign = "https://attacker.example/other.git"
+    assert not kept_after(lambda: _git("remote", "set-url", "origin", foreign, cwd=dest))
+    assert _git("remote", "get-url", "origin", cwd=dest) == url
+    # A checkout from the fetcher before filter drivers were turned off has no override.
+    assert not kept_after(lambda: (dest / ".git" / "info" / "attributes").unlink())
+    assert (dest / ".git" / "info" / "attributes").read_text(encoding="utf-8") == "* !filter\n"

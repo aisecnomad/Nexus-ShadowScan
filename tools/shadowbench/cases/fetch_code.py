@@ -21,7 +21,10 @@ and the repositories are untrusted input, so every call is hardened:
   when its tip is that commit; the fetched commit is checked before anything is checked
   out, and ``rev-parse HEAD`` must equal the pinned SHA afterwards;
 * ``DEST/<repo id>`` must not be a symbolic link: an existing link is refused, never
-  followed, and a stale checkout is replaced only when it is a real directory;
+  followed, and a stale checkout is replaced only when it is a real directory; an existing
+  checkout is kept only when this fetcher made it (its ``.git/info/attributes`` override),
+  its origin is the pinned URL, its HEAD is the pin and nothing else is in its directory (no
+  untracked, ignored or modified file, no populated submodule directory);
 * git gets the caller's environment without its ``GIT_*`` variables (only the TLS trust
   anchors ``GIT_SSL_CAINFO`` and ``GIT_SSL_CAPATH`` pass), so a ``GIT_DIR``,
   ``GIT_WORK_TREE``, ``GIT_INDEX_FILE`` or object directory set by a git hook or
@@ -58,6 +61,8 @@ GIT_CONFIG: tuple[str, ...] = (
 # The only GIT_* variables git inherits: CA settings an operator needs behind a TLS-inspecting proxy.
 GIT_ENV_KEEP = frozenset({"GIT_SSL_CAINFO", "GIT_SSL_CAPATH"})
 FETCH_TIMEOUT = 900
+NO_FILTERS = "* !filter\n"
+"""``.git/info/attributes`` of every checkout this fetcher makes; one without it predates the fetcher."""
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _BRANCH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*\Z")
 
@@ -117,6 +122,45 @@ def _head(checkout: Path) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
+def checkout_problem(checkout: Path, commit: str) -> str | None:
+    """Why ``checkout`` holds more or less than ``commit``'s tree; None when it holds exactly that.
+
+    Its HEAD must be ``commit``, ``git status`` (ignored and untracked files included) must list
+    nothing, and no submodule directory may hold anything, since status does not look inside one
+    that was never initialised. Git runs hardened, as for the fetch, without taking an index lock.
+    """
+    if _head(checkout) != commit:
+        return f"is not at {commit}"
+    status = _git(
+        ["--no-optional-locks", "status", "--porcelain", "--ignored", "--untracked-files=all"], checkout
+    )
+    if status.returncode != 0 or status.stdout.strip():
+        return f"differs from {commit}: {(status.stdout or status.stderr).strip()[:200]}"
+    index = _git(["ls-files", "--stage", "-z"], checkout)
+    if index.returncode != 0:
+        return f"has an unreadable index: {index.stderr.strip()[:200]}"
+    for entry in index.stdout.split("\0"):
+        mode, _, path = entry.partition("\t")
+        sub = checkout / path
+        if mode.startswith("160000 ") and sub.is_dir() and not sub.is_symlink() and any(sub.iterdir()):
+            return f"has a populated submodule directory {path}"
+    return None
+
+
+def _reusable(checkout: Path, url: str, commit: str) -> bool:
+    """Whether an existing checkout is one this fetcher left at ``commit`` from ``url``, unchanged since."""
+    git_dir = checkout / ".git"
+    attributes = git_dir / "info" / "attributes"
+    if not git_dir.is_dir() or git_dir.is_symlink() or attributes.is_symlink() or not attributes.is_file():
+        return False
+    if attributes.read_text(encoding="utf-8") != NO_FILTERS:
+        return False  # fetched before filter drivers were turned off, or changed since
+    origin = _git(["config", "--get", "remote.origin.url"], checkout)
+    if origin.returncode != 0 or origin.stdout.strip() != url:
+        return False
+    return checkout_problem(checkout, commit) is None
+
+
 def fetch_pinned(url: str, commit: str, branch: str, dest: Path) -> str:
     """Fetch ``url`` at ``commit`` into ``dest`` (detached) and return the verified HEAD."""
     https_remote(url)
@@ -127,15 +171,14 @@ def fetch_pinned(url: str, commit: str, branch: str, dest: Path) -> str:
     if dest.exists():
         if not dest.is_dir():
             raise FetchError(f"{dest} exists and is not a directory")
-        git_dir = dest / ".git"
-        if git_dir.is_dir() and not git_dir.is_symlink() and _head(dest) == commit:
+        if _reusable(dest, url, commit):
             return commit
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     _check(_git(["init", "-q"], dest), "git init")
     # info/attributes overrides every .gitattributes in the tree: no path selects a filter driver.
     (dest / ".git" / "info").mkdir(parents=True, exist_ok=True)
-    (dest / ".git" / "info" / "attributes").write_text("* !filter\n", encoding="utf-8")
+    (dest / ".git" / "info" / "attributes").write_text(NO_FILTERS, encoding="utf-8")
     _check(_git(["remote", "add", "origin", url], dest), "git remote add")
     fetch = ["fetch", "-q", "--depth", "1", "--no-tags", "--no-recurse-submodules", "origin"]
     fetched = _git([*fetch, commit], dest, FETCH_TIMEOUT)

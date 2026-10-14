@@ -35,7 +35,8 @@ translated to the corpus's ``proc:<index>`` keys before scoring.
 
 Case and checkout ids from the corpus name directories, so they must match
 ``[A-Za-z0-9._-]+``. A code case may not also carry files, and no input file
-is written through a symlink.
+is written through a symlink. A checkout is copied into a case only when it
+holds its pinned commit's tree and nothing else (``fetch_code.checkout_problem``).
 
 Before any tool runs, the runner refuses to start, with exit 2 and a message,
 when it is not root, ``unshare`` is missing, a case or checkout id is unsafe,
@@ -84,6 +85,7 @@ from tools.shadowbench.cases.contract import (
     supports,
 )
 from tools.shadowbench.cases.corpus import Case, Corpus, corpus_digest, load_corpus
+from tools.shadowbench.cases.fetch_code import checkout_problem
 from tools.shadowbench.cases.stage import HIDDEN, build_fakeproc
 
 STAGE_TIMEOUT_GRACE = 120
@@ -147,11 +149,10 @@ def materialize(case: Case, root: Path, checkouts: Path | None = None) -> Materi
         src = (base / name).resolve()
         if src == base or not src.is_relative_to(base):
             raise ValueError(f"checkout {name} resolves to {src}, outside {base}")
-        head = subprocess.run(
-            ["git", "-C", str(src), "rev-parse", "HEAD"], capture_output=True, text=True, check=False
-        )
-        if head.stdout.strip() != case.checkout["commit"]:
-            raise RuntimeError(f"checkout {src} is not at {case.checkout['commit']}")
+        # The whole directory is copied, so it must hold the pinned commit's tree and nothing else.
+        problem = checkout_problem(src, str(case.checkout["commit"]))
+        if problem:
+            raise RuntimeError(f"checkout {src} {problem}")
         shutil.copytree(src, inputs / "repo", symlinks=True)
     for rel, content in case.files.items():
         _write_input(inputs, rel, content)
