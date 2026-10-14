@@ -106,10 +106,12 @@ case's `work/`. Without `unshare`, `setpriv`,
 `mount` and `sh` a root probe does not run. A probe that cannot start, cannot
 drop privileges or times out records `unknown`. Otherwise the adapter reads the version from what the probe
 printed, whatever its exit code; only the installed-package lookup (Snyk,
-Cisco, `agent-discovery`) requires exit 0. Fleet records the printed text as
-it is, ShadowScan its last word plus the checkout's commit, and Numbat the
-printed text when its version pattern does not match; the other adapters
-record `unknown` when theirs does not.
+Cisco, `agent-discovery`) and ShadowScan require exit 0. Fleet records the
+printed text as it is, ShadowScan its last word plus the checkout's commit,
+with `-dirty` appended when anything under `shadowscan/` or `pyproject.toml`,
+untracked files included, differs from that commit, and Numbat the printed
+text when its version pattern does not match; the other adapters record
+`unknown` when theirs does not.
 
 ## Tool configuration
 

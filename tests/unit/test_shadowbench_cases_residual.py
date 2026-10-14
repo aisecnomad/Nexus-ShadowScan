@@ -286,3 +286,37 @@ def test_installed_versions_reach_the_manifest_without_a_probe(
         if name == "shadowscan":
             continue  # runs from the operator's checkout; install_tools.sh writes no entry for it
         assert runner.tool_version(adapters[name], env) == run["version"], name
+
+
+@needs_git
+def test_shadowscan_version_marks_a_scanner_with_uncommitted_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run of a locally modified shadowscan/ package, the reference tool, read exactly like the clean commit."""
+    from tools.shadowbench.cases.adapters import shadowscan
+
+    repo = tmp_path / "checkout"
+    (repo / "shadowscan").mkdir(parents=True)
+    (repo / "shadowscan" / "__init__.py").write_text("V = 1\n", encoding="utf-8")
+    (repo / "README.md").write_text("x\n", encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "fixture")
+    short = _git(repo, "rev-parse", "--short=12", "HEAD")
+    printed = subprocess.CompletedProcess([], 0, stdout="shadowscan 0.1.2\n", stderr="")
+    monkeypatch.setattr(shadowscan, "run_probe", lambda *args, **kwargs: printed)
+    env = ToolEnv(tmp_path, {"tools": {"shadowscan": {"bin": "/opt/nsb/venv/bin/python", "repo": str(repo)}}})
+    assert shadowscan.ADAPTER.version(env) == f"0.1.2+{short}"
+    (repo / "README.md").write_text("changed outside the scanner\n", encoding="utf-8")
+    assert shadowscan.ADAPTER.version(env) == f"0.1.2+{short}"
+    (repo / "shadowscan" / "extra.py").write_text("", encoding="utf-8")  # untracked, but importable
+    assert shadowscan.ADAPTER.version(env) == f"0.1.2+{short}-dirty"
+    (repo / "shadowscan" / "extra.py").unlink()
+    (repo / "shadowscan" / "__init__.py").write_text("V = 2\n", encoding="utf-8")
+    assert shadowscan.ADAPTER.version(env) == f"0.1.2+{short}-dirty"
+    # A probe that failed printed an error, whose last word is no version.
+    failed = subprocess.CompletedProcess(
+        [], 1, stdout="", stderr="ModuleNotFoundError: No module named 'rich'\n"
+    )
+    monkeypatch.setattr(shadowscan, "run_probe", lambda *args, **kwargs: failed)
+    assert shadowscan.ADAPTER.version(env) == "unknown"
