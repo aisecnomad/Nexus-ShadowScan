@@ -1559,6 +1559,10 @@ class AwsConnector(BaseConnector):
                         for field in _CLOUDTRAIL_TEXT_FIELDS:
                             if rec.get(field) is not None and not isinstance(rec[field], str):
                                 raise ValueError("event field")
+                        # Only a named operation outside the collected set is
+                        # ignored; an event without its name is malformed.
+                        if not rec.get("eventName"):
+                            raise ValueError("event field")
                         if rec.get("eventName") not in {*CLOUDTRAIL_EVENTS, *ASSUME_OPERATIONS}:
                             continue
                         if not lineage.add(rec) or rec.get("eventName") in ASSUME_OPERATIONS:

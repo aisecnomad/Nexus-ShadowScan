@@ -412,6 +412,47 @@ def test_cloudtrail_export_preserves_scoped_session_lineage_and_ignores_ordinary
     assert _lineage(index, _lineage_records()[:1])[0] == []
 
 
+_UNNAMED_EVENT = {
+    "_kind": "cloudtrail-event",
+    "_region": "us-east-1",
+    "eventTime": "2025-09-10T14:00:00Z",
+    "principal": "arn:aws:iam::123456789012:user/bob",
+    "identityType": "IAMUser",
+    "modelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+}
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        _UNNAMED_EVENT,
+        {**_UNNAMED_EVENT, "eventName": None},
+        {**_UNNAMED_EVENT, "eventName": ""},
+        # A raw CloudTrail object without its eventName.
+        {
+            "_kind": "cloudtrail-event",
+            "_region": "us-east-1",
+            "eventTime": "2025-09-10T14:00:00Z",
+            "eventSource": "bedrock.amazonaws.com",
+            "userIdentity": {"type": "IAMUser", "arn": "arn:aws:iam::123456789012:user/bob"},
+            "requestParameters": {"modelId": "anthropic.claude-3-5-sonnet-20241022-v2:0"},
+        },
+    ],
+)
+def test_cloudtrail_event_without_an_event_name_is_incomplete_not_ignored(index, event):
+    """Regression (C220-1): an unnamed event is malformed, not a known non-AI operation."""
+    account = {"_kind": "account", "account": "123456789012", "regions": ["us-east-1"]}
+    findings, ctx = _lineage(index, [account, event])
+    assert findings == []
+    assert ctx.stats.incomplete
+    assert any("record has invalid fields for its _kind" in w for w in ctx.stats.warnings)
+    # A named operation outside the collected set is still ignored, and complete.
+    findings, ctx = _lineage(index, [account, {**_UNNAMED_EVENT, "eventName": "DescribeInstances"}])
+    assert findings == [] and not ctx.stats.incomplete
+    findings, ctx = _lineage(index, [account, {**_UNNAMED_EVENT, "eventName": "InvokeModel"}])
+    assert len(findings) == 1 and not ctx.stats.incomplete
+
+
 def test_cloudtrail_normalization_never_exports_credentials_or_request_bodies():
     assumption, invocation, _ = _lineage_records()
     assumption["responseElements"]["credentials"].update(

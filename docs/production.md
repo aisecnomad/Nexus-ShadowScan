@@ -156,7 +156,10 @@ where the previous revision completed:
 - `cloud.aws` CloudTrail callers no longer count exact duplicate event IDs
   twice, and offline `cloudtrail-event` records whose `eventName` is neither a
   collected invocation operation nor an STS assumption are ignored instead of
-  reported as LLM callers.
+  reported as LLM callers. A record with no `eventName` (absent, `null` or
+  empty) is not ignored: it is skipped as malformed and the scan is incomplete
+  (exit 3). Regenerate such exports with the event name before relying on exit
+  codes.
 - MCP tools keep the `tool-poisoning` rules of the previous revision; a
   bounded sentence audit adds zero-weight `instruction:*` evidence and
   `metadata.static_instruction_audit`, and can also raise the tag. The
