@@ -119,7 +119,10 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       declared shared scope: the Entra tenant for an Entra application id
       (reported as `app_id`, `client_id`, a Teams `bot_id` or an Azure Bot
       `msa_app_id`), or a shared tenant, workspace, cloud account,
-      subscription or project. Vendor names and gateway labels are not scope.
+      subscription or project. Vendor names and gateway labels are not scope,
+      and neither is an `account` its connector marks as not attributed to
+      the records (`metadata.account_attributed: false`, an Entra export of
+      another tenant).
       Normalised names, and equal local identifiers whose shared scope cannot
       be verified, produce only `metadata.related_candidates`, with candidate
       assurance and a limitation; they never enter the exact-link list. A

@@ -235,6 +235,20 @@ def test_one_entra_application_id_links_across_fields_in_the_same_tenant(connect
     assert not any(key.startswith("related") for key in app.metadata)
 
 
+def test_an_account_not_attributed_to_its_records_is_not_tenant_scope():
+    """An Entra export of another tenant keeps tenant_id as account, but not as the records' tenant."""
+    app = _microsoft("identity.entra", Surface.IDENTITY, "app_id", "tenant-a", account_attributed=False)
+    bot = _microsoft("saas.microsoft-teams", Surface.SAAS, "bot_id", "tenant-a")
+    correlate([app, bot])
+    assert "related" not in app.metadata and "related" not in bot.metadata
+    candidate = app.metadata["related_candidates"][0]
+    assert candidate["finding_id"] == bot.id
+    assert "entra-application-id" in {match["key_type"] for match in candidate["matches"]}
+    app.metadata["account_attributed"] = True
+    correlate([app, bot])
+    assert app.metadata["related"] == [bot.id]
+
+
 def test_entra_application_id_without_a_declared_tenant_is_only_a_candidate():
     """Azure reports a subscription, not a tenant, for a bot's msaAppId."""
     app = _microsoft("identity.entra", Surface.IDENTITY, "app_id", "tenant-a")

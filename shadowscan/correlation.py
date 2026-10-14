@@ -261,12 +261,19 @@ def _declared_scope(finding: Finding) -> tuple[dict[str, str], bool] | None:
     out, and the finding gets no identifier link, exact or candidate. Its name
     similarity is still a review candidate, as for a finding that declares no
     such scope. Two different values for one scope (``tenant`` and
-    ``tenant_id``) refuse every link: ``None``.
+    ``tenant_id``) refuse every link: ``None``. A finding whose connector
+    marks its ``account`` as not attributed to its records
+    (``metadata.account_attributed: false``, an Entra export of another
+    tenant) declares no account scope.
     """
     scope: dict[str, str] = {}
     comparable = True
     account_key = _ACCOUNT_SCOPE.get(finding.connector)
-    if account_key is not None and finding.account is not None:
+    if (
+        account_key is not None
+        and finding.account is not None
+        and finding.metadata.get("account_attributed") is not False
+    ):
         usable = _identity_text(finding.account)
         if usable is None:
             comparable = False
