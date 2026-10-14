@@ -358,6 +358,52 @@ def test_a_value_a_later_sanitization_withholds_is_withheld_at_once(scheme: str)
     assert sanitize_text(cleaned) == cleaned
 
 
+def _established(text: str) -> str:
+    """The text as the established rules read it: the passes outside any reading."""
+    return redaction._redact_extended(redaction._sanitize_established(text))
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # No credential stopped at a run, so the established rules' reading is
+        # kept, and the option on the line after the scheme's stays.
+        (
+            f"Bearer {SECRET}\n--insecure --location https://example.test/x",
+            f"Bearer {REDACTED}\n--insecure --location https://example.test/x",
+        ),
+        (f"auth: Bearer {SECRET}\n---\nnext: doc", f"auth: Bearer {REDACTED}\n---\nnext: doc"),
+        ("## Basic usage\n\n--verbose prints more", f"## Basic {REDACTED}\n\n--verbose prints more"),
+        # After a glued run, a run that starts a later line is withheld, with a
+        # marker where it was.
+        (
+            f"Bearer {SECRET}--x9\n--insecure --location https://example.test/x",
+            f"Bearer {REDACTED}\n{REDACTED} --location https://example.test/x",
+        ),
+        (f"Bearer {SECRET}=x9\n\n--verbose run", f"Bearer {REDACTED}\n\n{REDACTED} run"),
+    ],
+)
+def test_a_run_that_starts_a_later_line_is_not_removed_silently(text: str, expected: str) -> None:
+    # The step that withholds a glued run also took a run at the start of
+    # any line after a scheme credential, with no marker, so an excerpt lost
+    # an option or a separator and did not show that anything was withheld.
+    assert sanitize_text(text) == expected
+    assert sanitize({"note": text})["note"] == expected
+    if "--x9" not in text and "=x9" not in text:
+        assert expected == _established(text)
+
+
+@pytest.mark.parametrize("lead", ["", "--r0\n", "--r0\n\n"])
+@pytest.mark.parametrize("credential", [SECRET, SECRET + "--x9"])
+def test_a_value_read_once_the_later_line_runs_go_stays_withheld(credential: str, lead: str) -> None:
+    # A run that starts a later line stays only where removing it changes
+    # nothing else. Removed, it can let the passes read the value after it
+    # (see _without_glued_runs), and that reading is kept. The value does not
+    # look opaque, so no other rule withholds it.
+    text = f"Bearer {credential}\n{lead}=abc.def = password: hunter2pass"
+    assert not _shown(text, "hunter2pass")
+
+
 @pytest.mark.parametrize("glued", ["--{t}", "=x{t}"])
 def test_the_scheme_pass_outside_a_reading_withholds_the_run_with_the_credential(glued: str) -> None:
     # Outside sanitize_text and sanitize no reading is set. The scheme pass
@@ -486,7 +532,9 @@ def test_a_glued_run_ending_in_a_scheme_leaves_that_scheme_to_the_scan(
         (f"Basic \n {SECRET}=password: {VALUE}", f"{REDACTED}\n"),
         (f"SSWS\n\n{SECRET}--token {VALUE}", f"{REDACTED}\n\n"),
         (f"Bearer\n{SECRET}--{TAIL} x", f"Bearer {REDACTED}\n x"),
-        (f"Bearer token\n{SECRET}=x{TAIL}\n", f"Bearer {REDACTED}\n\n"),
+        # The established rules kept the tail after the 'token' word at the
+        # start of the credential's line; a marker shows where it was.
+        (f"Bearer token\n{SECRET}=x{TAIL}\n", f"Bearer {REDACTED}\n{REDACTED}\n"),
     ],
 )
 def test_a_glued_run_keeps_the_line_breaks_after_the_scheme(text: str, expected: str) -> None:

@@ -61,6 +61,7 @@ from shadowscan.utils.redaction_commands import (
 )
 from shadowscan.utils.redaction_formats import (
     _ADDED_PEM,
+    _GLUED_RUN,
     _PEM,
     _SCHEME_READING,
     _URL,
@@ -200,12 +201,19 @@ def sanitize_text(text: str) -> str:
     it stays the same (see ``_settled``), since evidence is sanitized more
     than once; each line then shows only what both settled readings show (see
     ``_merge_readings``).
+
+    A text where no credential stops at such a run is read as the established
+    rules read it. The step that withholds the runs then finds only runs that
+    start a line after their scheme's ('Bearer v\\n--verbose'), and they stay
+    unless removing them lets the passes withhold more (see
+    ``_without_later_line_runs``).
     """
     text = _checked_text(text)
     reading = _SchemeReading(established=False)
-    shown = _in_reading(reading, lambda: _without_glued_runs(_redact_extended(_sanitize_established(text))))
+    first = _in_reading(reading, lambda: _redact_extended(_sanitize_established(text)))
+    shown = _in_reading(reading, lambda: _without_glued_runs(first))
     if not reading.glued:
-        return shown
+        return first if shown == _without_later_line_runs(first) else shown
     plain = _settled(
         shown,
         lambda again: _in_reading(
@@ -277,9 +285,14 @@ def _merged_line(one: str, other: str) -> str:
     """One line of two readings, showing nothing either withholds (see ``_merge_readings``).
 
     Where one line shows only what the other shows (see ``_shows_within``),
-    that one is kept; otherwise the whole line is withheld.
+    that one is kept; otherwise the whole line is withheld. Where the first
+    reading removed the run that starts the second's line ('--verbose x'
+    after a scheme credential's line), a marker shows where it was.
     """
     if one == other or _shows_within(other, one):
+        run = other[: len(other) - len(one)]
+        if run and other.endswith(one) and _GLUED_RUN.fullmatch(run):
+            return REDACTED + one
         return one
     if _shows_within(one, other):
         return other
@@ -325,6 +338,23 @@ def _without_glued_runs(text: str) -> str:
             return text
         text = _redact_extended(_established_passes(cut))
     return _withhold_scheme_tails(text)
+
+
+def _without_later_line_runs(text: str) -> str:
+    """``text`` without the runs that ``_without_glued_runs`` removes from the start of a later line.
+
+    Where no credential stopped at a run, the established rules read the
+    text as its first reading does and showed the runs that start the lines
+    after a scheme credential's. If ``_without_glued_runs`` only removed
+    such runs and no pass then withheld more, it gives this text, and the
+    first reading, which shows those runs besides, is kept.
+    """
+    for _ in range(_GLUED_RUN_READINGS + 1):
+        cut = _withhold_scheme_tails(text, later_lines=True)
+        if cut == text:
+            break
+        text = cut
+    return text
 
 
 def _checked_text(text: str) -> str:
@@ -1019,16 +1049,19 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     As ``sanitize_text`` does, a value whose texts hold such a run is read
     twice, so and as the established rules read it, each reading again until
     it settles, and each text of the copy shows only what both readings show
-    (see ``_merge_copies``).
+    (see ``_merge_copies``). A value where no credential stops at such a run
+    keeps the established rules' copy, as ``sanitize_text`` keeps their
+    reading, unless removing the runs that start later lines lets the
+    passes withhold more.
     """
     _check_sanitization_structure(value)
     reading = _SchemeReading(established=False)
-    shown = _in_reading(
-        reading,
-        lambda: _without_scheme_tails(_sanitize_reading(value, redact_short_secrets, env_values_are_secrets)),
+    first = _in_reading(
+        reading, lambda: _sanitize_reading(value, redact_short_secrets, env_values_are_secrets)
     )
+    shown = _in_reading(reading, lambda: _without_scheme_tails(first))
     if not reading.glued:
-        return shown
+        return first if shown == _without_scheme_tails(first, _without_later_line_runs) else shown
     plain = _settled(
         shown,
         lambda again: _in_reading(
@@ -1101,25 +1134,31 @@ def _merge_copies(first: Any, second: Any) -> Any:
     return REDACTED
 
 
-def _without_scheme_tails(item: Any) -> Any:
-    """``item``, a copy ``sanitize`` made, with ``_without_glued_runs`` applied to each text and key.
+def _without_scheme_tails(item: Any, without: Callable[[str], str] = _without_glued_runs) -> Any:
+    """``item``, a copy ``sanitize`` made, with ``without`` applied to each text and key.
+
+    ``without`` is ``_without_glued_runs`` unless ``sanitize`` compares the
+    copy (see ``_without_later_line_runs``).
 
     The copy holds only what ``clean`` returns: new mappings, sequences and
     sets, nested no deeper than ``clean`` goes, and texts, bytes and other
     leaves it keeps as they are.
     """
     if isinstance(item, str):
-        return _without_glued_runs(item)
+        return without(item)
     if isinstance(item, Mapping):
-        return {_without_scheme_tails(key): _without_scheme_tails(child) for key, child in item.items()}
+        return {
+            _without_scheme_tails(key, without): _without_scheme_tails(child, without)
+            for key, child in item.items()
+        }
     if isinstance(item, (list, tuple)):
-        members = [_without_scheme_tails(child) for child in item]
+        members = [_without_scheme_tails(child, without) for child in item]
         return tuple(members) if isinstance(item, tuple) else members
     if isinstance(item, (set, frozenset)):
-        return type(item)(_without_scheme_tails(child) for child in item)
+        return type(item)(_without_scheme_tails(child, without) for child in item)
     if isinstance(item, (bytes, bytearray)):
         decoded = bytes(item).decode("utf-8", errors="replace")
-        cleaned = _without_glued_runs(decoded)
+        cleaned = without(decoded)
         if cleaned == decoded:
             return item
         return type(item)(cleaned.encode())

@@ -317,7 +317,7 @@ def _glued_name_kept(glued: str, text: str, end: int) -> bool:
     return bool(named and _ASSIGNED.match(text, end))
 
 
-def _withhold_scheme_tails(text: str) -> str:
+def _withhold_scheme_tails(text: str, *, later_lines: bool = False) -> str:
     """Withhold the run glued after a scheme credential's marker, unless it is one name a pass reads.
 
     The credential stops before glued text ('Bearer v--tail', 'Bearer v=x'),
@@ -333,10 +333,14 @@ def _withhold_scheme_tails(text: str) -> str:
     ``redaction._without_glued_runs``). This step only removes text, so
     whatever the passes withhold stays withheld. Only a run that is one name
     a pass reads (see ``_glued_name_kept``) stays, beside the value it withheld.
+    ``later_lines`` withholds only a run that starts a line after its
+    marker's (see ``redaction._without_later_line_runs``).
     """
 
     def withheld(match: re.Match[str]) -> str:
-        if _glued_name_kept(match.group("glued"), text, match.end()):
+        if _glued_name_kept(match.group("glued"), text, match.end()) or (
+            later_lines and "\n" not in match.group("head")
+        ):
             return match.group()
         if _NEXT_SCHEME_MARKER.match(text, match.end()):
             # The separators before the next scheme stay ('-Bearer [REDACTED]').
