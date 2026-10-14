@@ -5,6 +5,24 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Kubernetes discovery and Atlassian approval scope (October 14)
+
+- Kubernetes and OpenShift object limits now distinguish an exhausted export
+  from unread objects, including arrays of `List` envelopes. An unread suffix
+  marks collection incomplete instead of producing a complete partial report.
+- Kubernetes resource identities retain the full object name. Names exceeding
+  the 253-character resource-name bound are rejected with incomplete coverage;
+  distinct valid names no longer merge because they share a shortened prefix.
+- CronJob analysis reads `spec.jobTemplate.spec.template.spec`, including image,
+  privilege, environment, GPU and volume evidence. Malformed nested templates
+  remain incomplete and cannot substitute an unrelated top-level template.
+- Atlassian app approvals require an explicit site/account constraint. Discovery
+  without a usable site retains its evidence with incomplete coverage and
+  produces an unbound inventory stub. Existing unscoped cards need a reviewed
+  `discovery.accounts` binding before they can register app installations.
+- Added offline regression fixtures and boundary, identity and approval tests.
+  These establish implementation behavior, not live tenant acceptance.
+
 ### Documentation aligned with the code (October 12)
 
 Documentation only; no scanner behaviour changes.

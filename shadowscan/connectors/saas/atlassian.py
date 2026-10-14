@@ -9,7 +9,10 @@ Offline export: UPM ``plugins`` array (or a list of app objects with name / key 
 
 from __future__ import annotations
 
+import hashlib
+import secrets
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any, ClassVar
 
 from requests import RequestException
@@ -19,6 +22,7 @@ from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.identity import atlassian_site_origin
 from shadowscan.utils.text import get_path
 
 
@@ -31,7 +35,10 @@ class AtlassianConnector(BaseConnector):
         "automation bots)."
     )
     config_keys: ClassVar[dict[str, str]] = {
-        "site": "https://<org>.atlassian.net (env ATLASSIAN_SITE)",
+        "site": (
+            "concrete HTTPS site origin, e.g. https://<org>.atlassian.net "
+            "(env ATLASSIAN_SITE; required for complete offline scans)"
+        ),
         "email": "site admin email (env ATLASSIAN_EMAIL)",
         "api_token": "API token (env ATLASSIAN_API_TOKEN)",
         "products": "list of jira|confluence to query (default both)",
@@ -40,7 +47,20 @@ class AtlassianConnector(BaseConnector):
 
     def __init__(self, ctx: ConnectorContext):
         super().__init__(ctx)
-        self.site = str(ctx.get("site", env="ATLASSIAN_SITE") or "").rstrip("/")
+        site = ctx.get("site", env="ATLASSIAN_SITE")
+        self.site = atlassian_site_origin(site)
+        if site not in (None, "") and self.site is None:
+            raise ConnectorError("saas.atlassian: site must be a concrete HTTPS site origin without a path")
+        # The same public plugin key in two unscoped exports must not merge
+        # into one installation. Repeat scans of one input retain its IDs.
+        source = self.ctx.input_path
+        self._unresolved_scope = (
+            hashlib.sha256(f"{self.name}\0{Path(str(source)).expanduser().absolute()}".encode()).hexdigest()[
+                :32
+            ]
+            if source
+            else secrets.token_hex(16)
+        )
         products = ctx.get("products") or ["jira", "confluence"]
         if isinstance(products, str):
             # A bare string would otherwise be iterated character by character.
@@ -86,6 +106,11 @@ class AtlassianConnector(BaseConnector):
                 yield p
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
+        if self.site is None:
+            self.ctx.warn(
+                "saas.atlassian: site identity is unresolved; set verified site for offline input; "
+                "coverage incomplete"
+            )
         for p in records:
             if not self._valid_provider_record(p):
                 self.ctx.warn("saas.atlassian: unsupported or malformed app record; coverage incomplete")
@@ -133,7 +158,11 @@ class AtlassianConnector(BaseConnector):
             resource=f"atlassian:{product}:app:{p.get('key') or name}",
             resource_type="atlassian-app",
             provider="atlassian",
-            account=self.site or None,
+            account=self.site,
+            identity_discriminator=(
+                "atlassian-app" if self.site else f"atlassian-app:unresolved:{self._unresolved_scope}"
+            ),
+            metadata={"identity_unresolved": True} if self.site is None else {},
         )
         assess_app(
             self.index,

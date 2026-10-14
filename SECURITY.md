@@ -359,6 +359,10 @@ coverage, even when a response includes an empty collection field.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.
+  Atlassian app keys require a concrete configured HTTPS site and an explicit
+  account constraint on the approval. Unknown site identity leaves the scan
+  incomplete and generated cards unbound; site fields in untrusted exports
+  cannot supply or override that trusted scope.
 * Configuration rejects missing or empty required environment substitutions,
   duplicate YAML keys, unknown top-level/options fields and invalid gate levels.
   Explicit `${VAR:-default}` fallbacks remain an operator policy decision.
