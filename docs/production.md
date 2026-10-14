@@ -1356,7 +1356,8 @@ now reported as AI workflows, including HTTP Request v1 and v2 nodes (method
 in `requestMethod`) and expression-mode URLs whose host is literal; a host
 written as an expression is never classified. On a host that is not a known
 model host,
-`/v1/messages`, `/v1/responses` and `/api/chat` count only with an
+`/v1/messages`, `/v1/responses`, `/api/chat` and a bare `/chat/completions`
+count only with an
 `anthropic-version` header or a body with `model` and `messages`, `prompt` or
 `input`, so WhatsApp Business and help-desk chat calls are not AI steps; a
 self-hosted model called without either is missed. `mcp` in a node type

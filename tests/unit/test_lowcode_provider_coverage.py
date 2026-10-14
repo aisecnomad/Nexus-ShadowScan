@@ -751,6 +751,18 @@ _WHATSAPP_BODY = '={"messaging_product": "whatsapp", "to": "{{ $json.phone }}", 
             "https://ollama.internal.example/api/chat",
             jsonBody="={{ JSON.stringify({ model: 'llama3', prompt: $json.text }) }}",
         ),
+        # Regression (F18): an unversioned /chat/completions with a model request.
+        _http_node(
+            "https://llm.internal.example/chat/completions",
+            sendBody=True,
+            jsonBody='{"model": "chat-7b", "messages": [{"role": "user", "content": "hi"}]}',
+        ),
+        _http_node(
+            "https://gateway.internal.example/chat/completions/",
+            bodyParameters={
+                "parameters": [{"name": "model", "value": "m"}, {"name": "messages", "value": "x"}]
+            },
+        ),
     ],
 )
 def test_n8n_ambiguous_generation_route_counts_with_model_request_corroboration(index, node):
@@ -769,6 +781,10 @@ def test_n8n_ambiguous_generation_route_counts_with_model_request_corroboration(
         _http_node("https://forms.internal.example/v1/responses", jsonBody='{"form": "nps", "input": 9}'),
         # A model key alone, or a model request the node does not send.
         _http_node("https://catalog.example/api/chat", jsonBody='{"model": "Model S"}'),
+        _http_node("https://llm.internal.example/chat/completions"),
+        _http_node("https://courses.example/chat/completions", jsonBody='{"model": "Model S"}'),
+        # A bare /completions still never counts, even with a model request.
+        _http_node("https://llm.internal.example/completions", jsonBody='{"model": "m", "prompt": "x"}'),
         _http_node(
             "https://llm.internal.example/v1/messages",
             sendBody=False,

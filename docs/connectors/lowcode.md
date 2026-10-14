@@ -96,9 +96,10 @@ model host, or the route is versioned or namespaced (`/v1/chat/completions`,
 `/v1/completions`, `/api/generate`) on a host that is not a known SMS or
 messaging API (Vonage, MessageBird, Twilio, Sinch, Plivo, Telnyx).
 `/v1/messages`, `/v1/responses` and `/api/chat` are also WhatsApp Business,
-messaging and help-desk chat routes, so on an unknown host they count only
-when the node sends an `anthropic-version` header, or a JSON or key-value
-body with a `model` key and a `messages`, `prompt` or `input` key. A bare
+messaging and help-desk chat routes, and a bare `/chat/completions` is
+unversioned, so on an unknown host they count only when the node sends an
+`anthropic-version` header, or a JSON or key-value body with a `model` key and
+a `messages`, `prompt` or `input` key. A bare
 `/messages`, `/responses` or `/completions` on an unknown host, a GET, and a
 request body on any other route never count. The method is read from `method`
 (HTTP Request v3 and later) or `requestMethod` (v1 and v2); a node with
