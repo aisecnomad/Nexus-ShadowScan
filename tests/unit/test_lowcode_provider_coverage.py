@@ -1096,3 +1096,58 @@ def test_n8n_graph_ordinals_and_counts_use_the_inventoried_node_list(index):
     # Ordinals index the inventoried nodes in export order: Input, AI, HTTP.
     assert graph["path_node_indices"] == [0, 1, 2]
     assert connector.ctx.stats.incomplete  # the invalid node itself is still a coverage gap
+
+
+def _ai_workflow(number):
+    return {
+        "id": f"wf{number}",
+        "name": f"Agent {number}",
+        "nodes": [
+            {"name": "Webhook", "type": "n8n-nodes-base.webhook", "parameters": {}},
+            {"name": "AI Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}},
+        ],
+        "connections": {"Webhook": {"main": [[{"node": "AI Agent", "type": "main", "index": 0}]]}},
+    }
+
+
+def test_n8n_workflow_with_dify_like_fields_keeps_every_workflow(index):
+    """Regression (#220 verifier): an n8n record shaped like a Dify app crashed the whole export."""
+    odd = {
+        "id": "wf0",
+        "name": "Odd",
+        "kind": "app",
+        "workflow": {},
+        "nodes": [{"name": "AI Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}],
+        "connections": {},
+    }
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([odd, *(_ai_workflow(n) for n in range(1, 5))]))
+    findings = connector.run()
+    assert not connector.ctx.stats.errors and not connector.ctx.stats.incomplete
+    assert {f.metadata["workflow_graph"]["provider"] for f in findings} == {"n8n"}
+    assert sorted(f.resource for f in findings) == [f"n8n:workflow:wf{n}" for n in range(5)]
+
+
+@pytest.mark.parametrize("failure", ["none", "raises"])
+def test_n8n_graph_failure_is_contained_to_its_workflow(index, monkeypatch, failure):
+    original = automation.analyze_workflow_graph
+
+    def flaky(data, *, provider=None):
+        if data.get("id") == "wf1":
+            if failure == "none":
+                return None
+            raise RuntimeError("unexpected graph defect")
+        return original(data, provider=provider)
+
+    monkeypatch.setattr(automation, "analyze_workflow_graph", flaky)
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([_ai_workflow(n) for n in range(1, 5)]))
+    findings = connector.run()
+    assert len(findings) == 4 and not connector.ctx.stats.errors
+    assert connector.ctx.stats.incomplete
+    assert any("graph coverage incomplete" in warning for warning in connector.ctx.stats.warnings)
+    statuses = {f.resource: f.metadata["workflow_graph"]["status"] for f in findings}
+    assert statuses == {
+        "n8n:workflow:wf1": "incomplete",
+        **{f"n8n:workflow:wf{n}": "analyzed" for n in range(2, 5)},
+    }

@@ -157,6 +157,12 @@ def _identifier(value: Any) -> bool:
 
 
 def _shape(data: dict[str, Any], provider: str | None) -> tuple[str, Any, Any] | None:
+    # A caller that names its provider gets that provider's shape: an n8n
+    # export can carry fields that look like a Dify app.
+    if provider == "n8n":
+        return "n8n", data.get("nodes"), data.get("connections", _ADJACENCY_ABSENT)
+    if provider == "flowise":
+        return "flowise", data.get("nodes"), data.get("edges", _ADJACENCY_ABSENT)
     workflow = data.get("workflow")
     if provider == "dify" or (data.get("kind") == "app" and isinstance(workflow, dict)):
         graph = workflow.get("graph") if isinstance(workflow, dict) else None
@@ -168,25 +174,19 @@ def _shape(data: dict[str, Any], provider: str | None) -> tuple[str, Any, Any] |
     nodes = data.get("nodes")
     if isinstance(nodes, list) and len(nodes) > MAX_GRAPH_NODES:
         return provider or "unidentified", nodes, _ADJACENCY_ABSENT
-    if provider == "n8n" or (
-        isinstance(nodes, list)
-        and any(
-            isinstance(n, dict)
-            and isinstance(n.get("type"), str)
-            and n["type"].startswith(("n8n-nodes-base.", _N8N_PREFIX))
-            for n in nodes[:MAX_GRAPH_NODES]
-        )
+    if isinstance(nodes, list) and any(
+        isinstance(n, dict)
+        and isinstance(n.get("type"), str)
+        and n["type"].startswith(("n8n-nodes-base.", _N8N_PREFIX))
+        for n in nodes[:MAX_GRAPH_NODES]
     ):
         return "n8n", nodes, data.get("connections", _ADJACENCY_ABSENT)
-    if provider == "flowise" or (
-        isinstance(nodes, list)
-        and any(
-            isinstance(n, dict)
-            and isinstance(n.get("data"), dict)
-            and isinstance(n["data"].get("name"), str)
-            and n["data"]["name"] in _FLOWISE_AI_TYPES
-            for n in nodes[:MAX_GRAPH_NODES]
-        )
+    if isinstance(nodes, list) and any(
+        isinstance(n, dict)
+        and isinstance(n.get("data"), dict)
+        and isinstance(n["data"].get("name"), str)
+        and n["data"]["name"] in _FLOWISE_AI_TYPES
+        for n in nodes[:MAX_GRAPH_NODES]
     ):
         return "flowise", nodes, data.get("edges", _ADJACENCY_ABSENT)
     return None

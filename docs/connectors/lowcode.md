@@ -121,7 +121,8 @@ serialized parameter searches, to assign graph roles; disabled nodes do not
 connect paths. The registry decides roles only, never inventory: `lowcode.n8n`
 keeps its own AI-node rule (any `n8n-nodes-langchain` type, provider nodes such
 as `openAi`, `anthropic`, `gemini`, `mistral`, `ollama` or `huggingFace`, a
-`\bmcp\b` type, and HTTP Request nodes that POST to a model-generation route)
+type with `mcp` as its own token, and HTTP Request nodes that make a model
+call as described above)
 and its signature match over node types and parameters, and the export reader
 still projects every n8n node type, Flowise agent-category node and Dify
 agent/LLM/tool node for the signature packs to judge. A workflow outside the
@@ -149,7 +150,11 @@ inspections, with node identifiers capped at 512 characters. A malformed supplie
 graph, dangling edge, duplicate identifier or exhausted budget marks coverage
 incomplete and sets the graph's `status` to `incomplete` with a `null` path, but
 the workflow finding (or the export's projected signals) is kept: graph metadata
-never decides whether a workflow is reported. Documents past the 16-graph budget
+never decides whether a workflow is reported. In `lowcode.n8n`, a workflow whose
+graph cannot be analysed at all (an unexpected failure) gets the same
+`incomplete` status and a warning, and the other workflows of the export are
+still analysed; an n8n workflow that also carries Dify-like `kind` or
+`workflow` fields is still read as n8n. Documents past the 16-graph budget
 are still projected, without graph metadata. n8n exports an unconnected output
 slot (an If or Switch branch) as `null`; that is an empty branch, not a defect.
 An inventory omitting adjacency can still establish AI node presence,

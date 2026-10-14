@@ -86,7 +86,9 @@ where the previous revision completed:
   the scan stays complete; earlier revisions never read these files.
 - A malformed or over-budget n8n, Flowise or Dify graph (dangling or invalid
   connections, duplicate node names). The workflow finding is kept with
-  `workflow_graph.status: incomplete`. A `null` n8n output slot is valid.
+  `workflow_graph.status: incomplete`. A `null` n8n output slot is valid. A
+  graph that fails unexpectedly affects only its own n8n workflow; the rest
+  of the export is still reported.
 - A live process command line over 65,536 bytes. The process is still
   classified from its leading complete arguments, with
   `metadata.command_lines_truncated`.
