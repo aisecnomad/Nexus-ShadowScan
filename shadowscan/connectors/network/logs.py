@@ -32,6 +32,7 @@ import re
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -976,6 +977,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                         if len(c.hosts) < _MAX_HOSTS_PER_FINDING or host in c.hosts:
                             c.hosts[host] += pair.flows
                     for item in sorted(valid, key=lambda item: (item.observed_at or 0, item.host)):
+                        if len(c.dns_attributions) >= _MAX_DNS_PROVENANCE:
+                            c.limitations.add("DNS attribution provenance is sampled to 20 entries")
+                            break
                         provenance = {
                             "host": item.host,
                             "address": server,
@@ -989,10 +993,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                             "resolver": context[2],
                         }
                         if provenance not in c.dns_attributions:
-                            if len(c.dns_attributions) < _MAX_DNS_PROVENANCE:
-                                c.dns_attributions.append(provenance)
-                            else:
-                                c.limitations.add("DNS attribution provenance is sampled to 20 entries")
+                            c.dns_attributions.append(provenance)
                 c.flows += pair.flows
                 c.flows_by_dns += pair.flows if basis == "dns" else 0
                 c.bytes_out += pair.bytes_out
@@ -1166,12 +1167,21 @@ def _host(value: Any) -> str | None:
     return host if _HOST.match(host) and not _ip(host) else None
 
 
-def _ip(value: Any) -> bool:
+@lru_cache(maxsize=100_000)
+def _canonical(text: str) -> str | None:
+    """The canonical form of an IP address literal, or None for other text.
+
+    Cached: a log repeats a few thousand addresses hundreds of thousands of
+    times, and parsing dominated analysis otherwise. Inputs are bounded text.
+    """
     try:
-        ipaddress.ip_address(str(value))
+        return str(ipaddress.ip_address(text))
     except ValueError:
-        return False
-    return True
+        return None
+
+
+def _ip(value: Any) -> bool:
+    return _canonical(str(value)) is not None
 
 
 def _int(value: Any) -> int | None:
@@ -1186,7 +1196,7 @@ def _int(value: Any) -> int | None:
 
 def _address(value: Any) -> str:
     text = str(value)
-    return str(ipaddress.ip_address(text)) if _ip(text) else text
+    return _canonical(text) or text
 
 
 def _ttl(value: Any) -> float | None:

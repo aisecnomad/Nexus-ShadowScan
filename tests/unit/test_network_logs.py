@@ -11,8 +11,8 @@ from click.testing import CliRunner
 from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.network import logs as network_logs
-from shadowscan.connectors.network.logs import NetworkLogConnector, _host, _int, _zeek_escape
-from shadowscan.models import Kind, Surface
+from shadowscan.connectors.network.logs import NetworkLogConnector, _address, _host, _int, _ip, _zeek_escape
+from shadowscan.models import Kind, ScanStats, Surface
 from shadowscan.signatures import get_index
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "network"
@@ -548,6 +548,13 @@ def test_host_normalisation(value, expected):
 def test_small_helpers():
     assert _zeek_escape("\\x09") == "\t"
     assert (_int("12"), _int(True), _int("-1"), _int("x")) == (12, None, None, None)
+    # Address literals are canonical (an IPv6 client's resource id is case- and zero-insensitive).
+    assert (_address("2001:0DB8:0:0:0:0:0:1"), _address("010.0.0.1"), _address(None)) == (
+        "2001:db8::1",
+        "010.0.0.1",
+        "None",
+    )
+    assert (_ip("::FFFF:10.0.0.1"), _ip("10.0.0.1"), _ip("10.0.0"), _ip({})) == (True, True, False, False)
 
 
 def _scan_network_rows(run_connector, tmp_path, rows, **config):
@@ -1024,6 +1031,37 @@ def test_dns_defect_storage_bound_falls_back_to_the_input_wide_gate(run_connecto
     finding = found[("192.0.2.10", "provider.openai")]
     assert stats.incomplete and finding.metadata["flows"] == 0
     assert "Flow attribution disabled because input was incomplete" in finding.metadata["limitations"]
+
+
+def test_day_long_log_attributes_within_bounds(monkeypatch):
+    # 100 clients re-resolve an AI host every 60 s at a 60 s TTL for 200 minutes
+    # and open a flow every two minutes for a day. Only the connection bound
+    # is lowered, to the number of connections: it must count endpoints, not
+    # timestamps, and 200 repeated answers must stay one window per client.
+    monkeypatch.setattr(network_logs, "_MAX_PAIRS", 100)
+    base, context = 1_759_000_000.0, ("", "", "")
+
+    def records():
+        for index in range(100):
+            client = f"10.0.{index // 256}.{index % 256}"
+            for step in range(200):
+                yield {"kind": "dns", "ts": base + 60 * step, "client": client, "query": "api.openai.com",
+                       "answers": ["203.0.113.8"], "ttl": 60.0, "context": context}  # fmt: skip
+            for step in range(720):
+                yield {"kind": "flow", "ts": base + 120 * step + 1, "client": client, "server": "203.0.113.8",
+                       "port": 443, "bytes_out": 100, "bytes_in": 0, "uid": None, "context": context}  # fmt: skip
+
+    ctx = ConnectorContext(config={"input": "unused", "label": "hq"}, index=get_index())
+    connector = NetworkLogConnector(ctx)
+    ctx.stats = ScanStats(connector="network.logs", started_at="now")
+    findings = list(connector.analyze(records()))
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+    assert len(findings) == 100
+    for finding in findings:
+        # The window closes 60 s after the last answer: flows at 1, 121, ... 11881 s are inside.
+        assert finding.metadata["flows"] == 100 and finding.metadata["dns_queries"] == 200
+        assert finding.metadata["dns_attribution"][0]["refreshed_at"] == "2025-09-27T22:25:40+00:00"
+        assert "DNS attribution provenance is sampled to 20 entries" in finding.metadata["limitations"]
 
 
 def test_per_address_dns_bound_is_scoped_to_that_address(run_connector, tmp_path, monkeypatch):
