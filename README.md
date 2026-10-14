@@ -350,8 +350,9 @@ it fails until the variable is set.
 
 ```bash
 # 1. Scan a checkout (or your whole ~/src) — no credentials needed
-shadowscan code . --inventory agent-card.yaml
+shadowscan code ~/src/your-service
 shadowscan code . --diff-base origin/main     # pull request scope (Git 2.45+): committed changes only; never resolves findings in diff
+shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml   # in a ShadowScan checkout: completes in seconds
 
 # 2. Try every fixture-backed connector offline (demo; 36 of 38 connectors ship fixtures)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
@@ -383,9 +384,10 @@ shadowscan scan -c shadowscan.yaml --format cyclonedx -o ai-bom.json   # Cyclone
 shadowscan controls today.json --format csv -o controls.csv      # findings per NIST AI RMF / ISO 42001 / EU AI Act / AIUC-1 control
 ```
 
-Steps 1 and 2 need a repository checkout: `agent-card.yaml`, `examples/` and
-the sample exports under `tests/fixtures/` are not shipped in the wheel. Steps
-5 and 7 use your own logs, token, and an earlier JSON report
+The `tests/fixtures/` scan in step 1, and step 2, need a repository checkout:
+`agent-card.yaml`, `examples/` and the sample exports under `tests/fixtures/`
+are not shipped in the wheel. Steps 5 and 7 use your own logs, token, and an
+earlier JSON report
 (`--format json -o report.json`); step 6 writes the per-machine reports that
 `merge` and `dashboard` read. Sample gateway logs live under
 `tests/fixtures/gateway/` in a checkout. Scanning the ShadowScan checkout

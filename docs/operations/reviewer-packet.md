@@ -45,7 +45,7 @@ From a POSIX checkout, Python 3.11 to 3.13:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-python -m pip install -e ".[all]"
+make install          # the hash-locked toolchain CI uses
 make check
 python -m shadowscan.signatures.validate
 python -m shadowscan.mappings.validate

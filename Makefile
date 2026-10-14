@@ -18,6 +18,14 @@ install-dev: ## Install with dev extras and the build frontend only (no cloud SD
 install-hooks: install-dev ## Install pinned pre-commit hooks
 	pre-commit install
 
+# Fail fast on an interpreter pyproject.toml does not support, before the
+# hash-locked installs run (a consistency test keeps these bounds equal to
+# requires-python).
+.PHONY: ensure-python
+ensure-python:
+	@python -c 'import sys; sys.exit(None if (3, 11) <= sys.version_info[:2] < (3, 14) else "ShadowScan development needs CPython 3.11 to 3.13; this python is " + sys.version.split()[0] + ". Create a virtual environment with a supported interpreter, for example: python3.12 -m venv .venv")'
+install install-dev: ensure-python
+
 # --- Quality ---------------------------------------------------------------
 
 .PHONY: lint
@@ -77,22 +85,32 @@ audit: ## Audit the environment and every hash-locked dependency set, as CI does
 	done
 
 .PHONY: evaluate
-evaluate: ## Run the bundled detection regression corpora
-	python -m tools.evaluation.evaluate
-	python -m tools.evaluation.evaluate --corpus tools/evaluation/public_corpus.json
-	python -m tools.evaluation.evaluate --corpus tools/evaluation/realistic_corpus.json
-	python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json
-	python -m tools.evaluation.evaluate --corpus tools/evaluation/field_review_corpus.json
-	python -m tools.evaluation.evaluate --corpus tools/evaluation/attribution_corpus.json
-	python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json
-	python -m tools.evaluation.evaluate --corpus tools/evaluation/benchmark_followup_corpus.json
+evaluate: ## Run the bundled detection regression corpora (reports go to a temporary directory)
+	@set -euo pipefail; \
+	out="$$(mktemp -d "$${TMPDIR:-/tmp}/shadowscan-evaluation.XXXXXX")"; \
+	python -m tools.evaluation.evaluate --output "$$out/synthetic.json"; \
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/public_corpus.json --output "$$out/public.json"; \
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/realistic_corpus.json --output "$$out/realistic.json"; \
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/review_corpus.json --output "$$out/review.json"; \
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/field_review_corpus.json --output "$$out/field-review.json"; \
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/attribution_corpus.json --output "$$out/attribution.json"; \
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/current_idioms_corpus.json --output "$$out/current-idioms.json"; \
+	python -m tools.evaluation.evaluate --corpus tools/evaluation/benchmark_followup_corpus.json --output "$$out/benchmark-followup.json"; \
 	python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
-		--annotations tools/evaluation/independent_annotations.json
+		--annotations tools/evaluation/independent_annotations.json --output "$$out/independent.json"; \
+	echo "Evaluation reports: $$out"
 
 .PHONY: check
 .NOTPARALLEL: check
 check: lint format-check typecheck signatures mappings secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
+
+.PHONY: policy
+policy: ## Check repository policy: action pins, permissions, links, anchors, Makefile/CI parity
+	python -m pytest -q tests/test_repository_policy.py tests/test_repository_consistency.py
+
+.PHONY: check-fast
+check-fast: lint format-check typecheck signatures mappings secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
 
 # --- Build -----------------------------------------------------------------
 
@@ -174,10 +192,6 @@ readme-matrix: ## Regenerate the README detection matrix from the signature pack
 mapping-reference: ## Regenerate docs/concepts/mappings-reference.md from the mapping catalogs
 	python -m tools.mapping_reference
 
-.PHONY: policy
-policy: ## Check workflow and issue-form safety policies
-	python -m pytest -q tests/test_repository_policy.py tests/test_repository_consistency.py
-
 # --- Cleanup ---------------------------------------------------------------
 
 .PHONY: clean
@@ -190,5 +204,4 @@ clean: ## Remove build artifacts and caches
 
 .PHONY: help
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@awk 'BEGIN { FS = ":.*## "; if (system("test -t 1") == 0) { b = "\033[1m"; c = "\033[36m"; r = "\033[0m" } } /^# --- / { t = $$0; gsub(/^# --- | -+$$/, "", t); printf "\n%s%s%s\n", b, t, r; next } /^[a-zA-Z_-]+:.*## / { printf "  %s%-20s%s %s\n", c, $$1, r, $$2 }' $(MAKEFILE_LIST)

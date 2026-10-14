@@ -15,9 +15,12 @@
 
 ### Required for all changes
 
+Shortcut: `make check` runs the lint, format, type, test, coverage, evaluation,
+audit, validator and secrets gates below in one command.
+
 - [ ] `make lint` and `make format-check` pass
 - [ ] `make typecheck` passes
-- [ ] `pytest -q --cov=shadowscan --cov-fail-under=80` passes
+- [ ] `make test` passes (full suite, 80% aggregate coverage)
 - [ ] `make coverage-gate` passes after that coverage run (per-connector floor)
 - [ ] `make evaluate` passes (all bundled corpora; explain any intended corpus change)
 - [ ] `make audit` (`pip-audit`) reports no known vulnerabilities
@@ -25,6 +28,7 @@
 - [ ] `python -m shadowscan.mappings.validate` passes
 - [ ] `make secrets` finds no hardcoded credentials
 - [ ] `make policy` passes (when `.github/`, a top-level document or a docs page changed)
+- [ ] `make docs` passes (when `docs/`, `mkdocs.yml` or a document the site includes changed)
 - [ ] Every commit carries a `Signed-off-by` trailer (`git commit -s`; see the DCO in `CONTRIBUTING.md`)
 - [ ] No raw credentials, JWTs, or unsanitized configuration in logs or reports
 - [ ] `CHANGELOG.md` updated under Unreleased (if user-facing)
@@ -40,13 +44,11 @@
 
 ### Required for signature changes
 
-- [ ] `python -m shadowscan.signatures.validate` passes
 - [ ] Evaluation corpus updated for the new or changed signature
 - [ ] No false positives introduced on existing negative corpus entries
 
 ### Required for mapping changes
 
-- [ ] `python -m shadowscan.mappings.validate` passes
 - [ ] `docs/concepts/mappings-reference.md` regenerated (`make mapping-reference`)
 - [ ] Each changed rule has a test in `tests/unit/test_mappings.py`
 

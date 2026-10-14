@@ -107,10 +107,12 @@ ignore = ["SIM108", "SIM102", "SIM103", "C408", "SIM105", "UP042"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Unknown markers fail collection: a misspelt opt-out marker such as
-# production_budgets would otherwise be ignored without a warning.
 pythonpath = ["."]
-addopts = "-q --strict-markers"
+# Unknown markers and ini keys fail collection: a misspelt opt-out marker such
+# as production_budgets would otherwise be ignored without a warning. No `-q`
+# here: every documented command already passes one, and a second hides the
+# pass/skip summary line.
+addopts = "--strict-markers --strict-config"
 
 [tool.ruff.format]
 quote-style = "double"

@@ -110,7 +110,7 @@ _FROZEN_MARKDOWN = ROOT / "benchmarks" / "shadowbench" / "estate" / "artifacts"
 
 def _markdown_files() -> list[Path]:
     files = sorted(ROOT.glob("*.md"))
-    for folder in (".github", "benchmarks", "docs", "examples", "tools"):
+    for folder in (".github", "archive", "benchmarks", "docs", "examples", "tools"):
         files.extend(sorted((ROOT / folder).rglob("*.md")))
     return [path for path in files if not path.is_relative_to(_FROZEN_MARKDOWN)]
 
@@ -204,9 +204,29 @@ def _mkdocs_slug(heading: str) -> str:
     return re.sub(r"[-\s]+", "-", re.sub(r"[^\w\s-]", "", heading).strip().lower())
 
 
+_SNIPPET = re.compile(r'^--8<-- "([^"]+)"$', re.MULTILINE)
+
+
+@functools.cache
+def _site_pages() -> frozenset[Path]:
+    """Top-level documents the docs site includes as snippets; docs/ itself is rendered too."""
+    return frozenset(
+        (ROOT / name).resolve()
+        for page in (ROOT / "docs").rglob("*.md")
+        for name in _SNIPPET.findall(_read(page))
+    )
+
+
 @functools.cache
 def _anchors(path: Path) -> frozenset[str]:
-    """Heading anchors GitHub or MkDocs would generate for a Markdown file."""
+    """Heading anchors that every renderer of a Markdown file generates.
+
+    GitHub renders every file. docs/ pages and the snippets the site includes are
+    also rendered by MkDocs, so a linked anchor there must be one both generate:
+    GitHub keeps "--" where MkDocs collapses it, they number repeated headings
+    differently, and `{#id}` works on the site only (GitHub shows it as text).
+    """
+    on_site = path.resolve().is_relative_to((ROOT / "docs").resolve()) or path.resolve() in _site_pages()
     anchors: set[str] = set()
     seen: dict[str, int] = {}
     for _, line in _prose_lines(_read(path)):
@@ -216,15 +236,16 @@ def _anchors(path: Path) -> frozenset[str]:
         heading = match.group(1)
         explicit = _ATTR_ID.search(heading)
         if explicit is not None:
-            anchors.add(explicit.group(1).lower())
             heading = heading[: explicit.start()]
         heading = _MARKDOWN_LINK_TEXT.sub(r"\1", heading)
         heading = heading.replace("`", "").replace("*", "").strip()
         slug = _github_slug(heading)
         count = seen.get(slug, 0)
         seen[slug] = count + 1
-        anchors.add(slug if count == 0 else f"{slug}-{count}")
-        anchors.add(_mkdocs_slug(heading))
+        if not on_site:
+            anchors.add(slug if count == 0 else f"{slug}-{count}")
+        elif count == 0 and _mkdocs_slug(heading) == slug:
+            anchors.add(slug)
     return frozenset(anchors)
 
 
@@ -1649,3 +1670,82 @@ def test_docs_name_the_registry_operation_the_aws_connector_calls() -> None:
         if re.search(r"(?<!Batch)GetDiscoverableRegistryRecord", path.read_text(encoding="utf-8"))
     ]
     assert not stale, stale
+
+
+def test_make_install_rejects_the_interpreters_pyproject_rejects() -> None:
+    """`make install` fails before the locked installs on a Python that `pip install -e .` would refuse."""
+    makefile = _read(ROOT / "Makefile")
+    bounds = re.search(r"\(3, (\d+)\) <= sys\.version_info\[:2\] < \(3, (\d+)\)", makefile)
+    assert bounds is not None, "make ensure-python no longer checks the interpreter"
+    requires = _pyproject()["project"]["requires-python"]
+    assert requires == f">=3.{bounds.group(1)},<3.{bounds.group(2)}", (
+        f"ensure-python allows 3.{bounds.group(1)} to below 3.{bounds.group(2)}; pyproject says {requires}"
+    )
+    assert re.search(r"^install install-dev: ensure-python$", makefile, re.M)
+
+
+def _pre_commit_hook(hook_id: str) -> dict[str, Any]:
+    for repo in _load_yaml(ROOT / ".pre-commit-config.yaml")["repos"]:
+        for hook in repo["hooks"]:
+            if hook["id"] == hook_id:
+                return dict(hook)
+    raise AssertionError(f"no {hook_id} hook in .pre-commit-config.yaml")
+
+
+def _strip_trailing_whitespace(line: bytes, markdown: bool) -> bytes:
+    """What pre-commit's trailing-whitespace hook (`--markdown-linebreak-ext=md`) writes for one line."""
+    body = line.rstrip(b"\r\n")
+    eol = line[len(body) :]
+    if markdown and not body.isspace() and body.endswith(b"  "):
+        return body[:-2].rstrip() + b"  " + eol
+    return body.rstrip() + eol
+
+
+def test_tracked_text_files_already_pass_the_whitespace_hooks() -> None:
+    """`pre-commit run --all-files` on a clean checkout must not rewrite anything; CI runs no hooks."""
+    end_of_file = re.compile(_pre_commit_hook("end-of-file-fixer").get("exclude", "(?!)"))
+    whitespace = re.compile(_pre_commit_hook("trailing-whitespace").get("exclude", "(?!)"))
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
+    problems = []
+    for name in filter(None, listed.decode().split("\0")):
+        path = ROOT / name
+        if not path.is_file() or path.is_symlink():
+            continue
+        data = path.read_bytes()
+        if b"\0" in data[:8192]:  # binary, which the hooks skip
+            continue
+        if (
+            data
+            and not end_of_file.search(name)
+            and (not data.endswith(b"\n") or not data.rstrip(b"\r\n") or data.endswith((b"\n\n", b"\n\r\n")))
+        ):
+            problems.append(f"{name}: must end with exactly one newline")
+        if not whitespace.search(name):
+            markdown = name.endswith(".md")
+            if any(
+                _strip_trailing_whitespace(line, markdown) != line for line in data.splitlines(keepends=True)
+            ):
+                problems.append(f"{name}: trailing whitespace")
+    assert not problems, "fix these or add them to the hook's exclude:\n  " + "\n  ".join(problems)
+
+
+def test_mypy_hook_excludes_what_pyproject_excludes() -> None:
+    """pre-commit passes file names explicitly, which mypy's own `exclude` setting does not filter."""
+    hook = _pre_commit_hook("mypy")
+    scope = re.compile(hook["files"])
+    exclude = re.compile(hook.get("exclude", "(?!)"))
+    missed = [
+        path
+        for path in _pyproject()["tool"]["mypy"]["exclude"]
+        if scope.search(path) and not exclude.search(path)
+    ]
+    assert not missed, f"add {missed} to the mypy hook's exclude in .pre-commit-config.yaml"
+
+
+def test_workflow_readme_lists_every_workflow() -> None:
+    readme = _read(GITHUB / "workflows" / "README.md")
+    linked = set(re.findall(r"\]\(([\w.-]+\.ya?ml)\)", readme))
+    assert linked == {path.name for path in WORKFLOWS}, (
+        f"update .github/workflows/README.md: missing {sorted({p.name for p in WORKFLOWS} - linked)}, "
+        f"stale {sorted(linked - {p.name for p in WORKFLOWS})}"
+    )
