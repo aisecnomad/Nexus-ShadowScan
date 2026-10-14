@@ -6,9 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from tools.shadowbench.estate import report, score, taxonomy
 from tools.shadowbench.estate.__main__ import main
-from tools.shadowbench.estate.corpus import EstateCorpus, corpus_from_dict, load_corpus
+from tools.shadowbench.estate.corpus import CorpusError, EstateCorpus, corpus_from_dict, load_corpus
 
 ROOT = Path(__file__).resolve().parents[2]
 TRACK = ROOT / "benchmarks" / "shadowbench" / "estate"
@@ -327,6 +329,62 @@ def test_declared_surface_without_any_run_is_missing() -> None:
     ]
     assert result["per_entity"]["endpoint.ublock-h2"]["unscored"] is True
     assert result["entity_level"]["tn"] == 1
+
+
+def test_row_without_a_unit_is_not_a_whole_estate_run() -> None:
+    """A row missing `unit` reaches nothing: no true negatives, and the home units stay missing."""
+    row = _row("estate")
+    del row["unit"]
+    result = _score([row])
+    assert result["complete"] is False
+    assert result["entity_level"]["tn"] == 0
+    assert {"unit": "home:h1", "reason": score.MISSING_RUN} in result["incomplete_units"]
+    assert {"unit": "home:h2", "reason": score.MISSING_RUN} in result["incomplete_units"]
+
+
+@pytest.mark.parametrize("unit", [None, "", "bogus", "code:", "home:H1", "estate ", 3], ids=repr)
+def test_score_all_refuses_a_row_without_a_valid_unit(unit: object) -> None:
+    rows = [_row("home:h1"), _row("home:h2")]
+    if unit is None:
+        del rows[1]["unit"]
+    else:
+        rows[1]["unit"] = unit
+    with pytest.raises(CorpusError, match="row 1 has no valid unit"):
+        score.score_all(_corpus(), {"results": rows}, {"inv": {"name": "Inv", "surfaces": ["endpoint"]}})
+
+
+@pytest.mark.parametrize("tool", [None, "", 7], ids=repr)
+def test_score_all_refuses_a_row_without_a_tool(tool: object) -> None:
+    rows = [_row("home:h1", tool=tool)]  # type: ignore[arg-type]
+    with pytest.raises(CorpusError, match="row 0 has no tool"):
+        score.score_all(_corpus(), {"results": rows}, {"inv": {"name": "Inv", "surfaces": ["endpoint"]}})
+
+
+def test_score_all_refuses_duplicate_tool_unit_rows() -> None:
+    """A repeated row would count its unattributed predictions twice."""
+    stray = _pred("ai-client:cursor", "zzz-not-an-anchor")
+    once = score.score_tool(_corpus(), "inv", ENDPOINT, [_row("estate", (stray,))])
+    assert once["predictions"]["unattributed"] == 1
+    rows = [_row("estate", (stray,)), _row("home:h1"), _row("estate", (stray,))]
+    with pytest.raises(CorpusError, match="row 2 repeats 'inv' on estate"):
+        score.score_all(_corpus(), {"results": rows}, {"inv": {"name": "Inv", "surfaces": ["endpoint"]}})
+    # The same unit under another tool is not a repeat.
+    other = [_row("estate"), _row("estate", tool="other")]
+    score.score_all(_corpus(), {"results": other}, {"inv": {"name": "Inv", "surfaces": ["endpoint"]}})
+
+
+def test_score_command_refuses_a_row_without_a_unit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    manifest = json.loads((RESULTS / "runs.json").read_text(encoding="utf-8"))
+    del manifest["results"][0]["unit"]
+    runs = tmp_path / "runs.json"
+    runs.write_text(json.dumps(manifest), encoding="utf-8")
+    metrics = tmp_path / "metrics.json"
+    corpus = str(TRACK / "corpus.json")
+    assert main(["score", "--corpus", corpus, "--runs", str(runs), "--out", str(metrics)]) == 2
+    assert "runs.json: row 0 has no valid unit" in capsys.readouterr().err
+    assert not metrics.exists()
 
 
 def test_report_shows_status_counts_and_marks_incomplete_tools() -> None:

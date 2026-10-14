@@ -639,7 +639,11 @@ entity. A run that records a freeze is checked against `--freeze` (default
 [Execution and isolation](#execution-and-isolation); `score` exits 2 when
 that check fails unless `--allow-freeze-mismatch` is given, and a malformed
 `harness_commit`, `harness_dirty` or `freeze` record stops it with a
-`corpus error` and exit 2 either way. To re-score the committed run, pass
+`corpus error` and exit 2 either way. So does a result row without a tool
+or a valid unit (`estate`, `sim`, `code:<name>` or `home:<name>`): a row
+missing its unit is not read as a whole-estate run. A second row for the
+same tool and unit is refused the same way, because its unattributed
+predictions would count twice. To re-score the committed run, pass
 `--runs benchmarks/shadowbench/estate/results/2026-10-11/runs.json`.
 
 `tools.json` maps tool ids to installed binaries:
