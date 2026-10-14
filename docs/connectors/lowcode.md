@@ -85,7 +85,7 @@ and makes the scan incomplete. A CSV row whose cells are all blank is skipped
 without a diagnostic.
 
 An n8n step counts as AI when its node type is a LangChain, model-provider,
-agent or MCP node (`mcp` matched as a whole token, so `mcp2515` hardware
+agent or MCP node (`mcp` matched as a whole token, so `mcp9808` sensor
 nodes do not count), or when it is an HTTP Request node that calls a model
 API. The HTTP rule: the node POSTs to a generation route (OpenAI, Anthropic,
 Azure OpenAI, Bedrock, Vertex or Ollama style) and either the host is a known

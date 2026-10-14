@@ -102,7 +102,7 @@ def test_auth0_keeps_clients_attributed_by_provider_or_product(tmp_path, run_con
     records = [
         _auth0_client("c-provider", "Ticket drafts", allowed_origins=["https://api.cohere.com"]),
         _auth0_client(
-            "c-product", "mcp2518fd uploader", description="Uploads CAN frames with OpenAI GPT summaries"
+            "c-product", "tmp117 sensor bridge", description="Uploads sensor readings with OpenAI GPT summaries"
         ),
         _auth0_client("c-plain", "Customer portal", callbacks=["https://portal.example/cb"]),
     ]
