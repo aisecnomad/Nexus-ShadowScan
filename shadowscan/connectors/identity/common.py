@@ -37,12 +37,14 @@ def assess_app(
     hyphens read as spaces; each signature still counts once.
     """
     urls = list(urls)
-    url_context = " ".join(
-        parsed.hostname or ""
-        for value in urls
-        if isinstance(value, str)
-        if (parsed := urlsplit(value if "://" in value else f"//{value}"))
-    )
+    url_hosts = []
+    for value in urls:
+        if isinstance(value, str):
+            try:
+                url_hosts.append(urlsplit(value if "://" in value else f"//{value}").hostname or "")
+            except ValueError:
+                continue
+    url_context = " ".join(url_hosts)
     apply_matches(
         finding,
         name_matches(index, name, *aliases, publisher, description, context=url_context),

@@ -1,0 +1,21 @@
+[
+  {
+    "_kind": "team",
+    "id": "TWDPECKER1",
+    "name": "regression-workspace",
+    "domain": "regression"
+  },
+  {
+    "_kind": "approved_app",
+    "app": {
+      "id": "A0WD5WDPKR",
+      "name": "Wudpecker",
+      "app_homepage_url": "https://www.wudpecker.io",
+      "is_app_directory_approved": true
+    },
+    "scopes": [
+      {"name": "commands"},
+      {"name": "incoming-webhook"}
+    ]
+  }
+]

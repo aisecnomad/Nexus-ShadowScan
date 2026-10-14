@@ -1,0 +1,4 @@
+10.20.4.11 - - [08/Sep/2025:07:00:00 +0000] "POST /v1/chat/completions HTTP/1.1" 200 1420 "-" "vantor-quote-crew-j9f/1.3 crewai/0.80.0 python-requests/2.32.3" host=api.openai.com
+10.213.77.46 - - [08/Sep/2025:07:02:00 +0000] "POST /generate HTTP/1.1" 200 980 "-" "vantor-yard-planner-q6w/0.9 python-httpx/0.27.2" host=tgi-yard.vantor.example
+10.30.2.7 - - [08/Sep/2025:07:03:00 +0000] "POST /api/chat HTTP/1.1" 200 311 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0 Safari/537.36" host=helpdesk-chat-w8s.vantor.example
+10.40.6.3 - - [08/Sep/2025:07:05:00 +0000] "GET /v1/threads/thread_8842/runs HTTP/1.1" 200 2210 "-" "vantor-run-audit-z3m/1.4" host=api.openai.com

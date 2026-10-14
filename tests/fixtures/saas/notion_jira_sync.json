@@ -1,0 +1,17 @@
+{
+  "results": [
+    {
+      "object": "user",
+      "id": "jira-sync",
+      "type": "bot",
+      "name": "Notion Jira Sync Bot",
+      "bot": {
+        "owner": {
+          "type": "workspace",
+          "workspace": true
+        },
+        "workspace_name": "Operations"
+      }
+    }
+  ]
+}

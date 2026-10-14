@@ -38,7 +38,7 @@ from shadowscan.registries import (
     prune_reconciliation_links,
     reconcile_registries,
 )
-from shadowscan.registry import Inventory, InventoryEntry, clear_match_state
+from shadowscan.registry import Inventory, InventoryEntry, InventoryValidationError, clear_match_state
 from shadowscan.risk import RiskPolicy, assess, provider_ids
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.signatures.loader import signature_source_digest
@@ -957,7 +957,14 @@ class Engine:
         # Validate eagerly so setup errors fail at construction. A run still
         # reloads the inventory: approval can change after construction and a
         # stale first-run snapshot must never authorize a finding.
-        self.inventory: Inventory | None = Inventory.load(config.inventory) if config.inventory else None
+        self._not_ai_inventory_error: str | None = None
+        try:
+            self.inventory: Inventory | None = Inventory.load(config.inventory) if config.inventory else None
+        except InventoryValidationError as exc:
+            if ".not_ai" not in str(exc):
+                raise
+            self.inventory = None
+            self._not_ai_inventory_error = str(exc)
         # Pinned MCP Registry snapshots, read again by every run (see _prepare_run).
         self._mcp_registries: LoadedRegistries | None = None
 
@@ -1014,7 +1021,14 @@ class Engine:
         # Registry approval can change independently of source inputs or an Engine
         # instance's lifetime. It is never persisted in connector cache entries.
         paths = list(self.config.inventory)
-        self.inventory = Inventory.load(paths) if paths else None
+        self._not_ai_inventory_error = None
+        try:
+            self.inventory = Inventory.load(paths) if paths else None
+        except InventoryValidationError as exc:
+            if ".not_ai" not in str(exc):
+                raise
+            self.inventory = None
+            self._not_ai_inventory_error = str(exc)
 
     def _prepare_run(self) -> None:
         if any(not future.done() for future in self._abandoned_futures):
@@ -1093,6 +1107,16 @@ class Engine:
 
     def _inventory_stats(self, specs: list[ConnectorSpec], started_at: str) -> list[ScanStats]:
         """Record inventory placement and wildcard approvals as warnings in every report format."""
+        if self._not_ai_inventory_error:
+            return [
+                ScanStats(
+                    connector="engine.inventory",
+                    started_at=started_at,
+                    finished_at=now_iso(),
+                    incomplete=True,
+                    errors=[self._not_ai_inventory_error],
+                )
+            ]
         warnings = _inventory_warnings(self.config.inventory, self.inventory, specs)
         if not warnings:
             return []
@@ -1255,6 +1279,21 @@ class Engine:
         # Individually bounded findings can exceed the output budget when
         # merged. Reject only that aggregate before correlation touches it.
         findings, omitted = _retain_sanitizable(merge(findings))
+        outcome = registries if registries is not None else _RegistryOutcome()
+        if self.inventory is not None and self.inventory.not_ai:
+            retained = []
+            suppressed: dict[str, int] = {}
+            for finding in findings:
+                rule_id = self.inventory.name_only_suppression(finding)
+                if rule_id is None:
+                    retained.append(finding)
+                else:
+                    suppressed[rule_id] = suppressed.get(rule_id, 0) + 1
+            findings = retained
+            outcome.inventory_warnings.extend(
+                f"not_ai rule {rule_id}: suppressed {count} name-only finding(s)"
+                for rule_id, count in sorted(suppressed.items())
+            )
         correlate(findings)
         errors = []
         try:
@@ -1262,7 +1301,6 @@ class Engine:
         except SanitizationLimitError:
             errors.append("runtime correlation incomplete: sanitization safety limit exceeded")
         correlate_lifecycle(findings)
-        outcome = registries if registries is not None else _RegistryOutcome()
         if self._mcp_registries is None:
             self._mcp_registries = load_registries(self.config.mcp_registries)
         outcome.mcp_registry_errors += [

@@ -1,0 +1,44 @@
+[
+  {
+    "id": "0oa-gemini-exchange",
+    "name": "oidc_client",
+    "label": "Gemini Trading Desk",
+    "status": "ACTIVE",
+    "signOnMode": "OPENID_CONNECT",
+    "settings": {
+      "oauthClient": {
+        "application_type": "web",
+        "grant_types": ["authorization_code"],
+        "redirect_uris": ["https://exchange.gemini.com/oauth/callback"]
+      }
+    },
+    "credentials": {
+      "oauthClient": {
+        "client_id": "gemini-exchange-client"
+      }
+    },
+    "_grants": [],
+    "_tokens": []
+  },
+  {
+    "id": "0oa-fireflies-regression",
+    "name": "oidc_client",
+    "label": "Fireflies.ai Notetaker",
+    "status": "ACTIVE",
+    "signOnMode": "OPENID_CONNECT",
+    "settings": {
+      "oauthClient": {
+        "application_type": "web",
+        "grant_types": ["authorization_code"],
+        "redirect_uris": ["https://app.fireflies.ai/okta/callback"]
+      }
+    },
+    "credentials": {
+      "oauthClient": {
+        "client_id": "fireflies-regression-client"
+      }
+    },
+    "_grants": [],
+    "_tokens": []
+  }
+]

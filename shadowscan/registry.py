@@ -87,6 +87,7 @@ NAME_FIELDS = (
     "agent_definitions",
 )
 _MAX_NAME_PATTERNS = 4096
+_NOT_AI_FIELDS = {"id", "client_id", "app_id", "name", "resource_ids"}
 
 
 def _has_valid_account_scope(finding: Finding) -> bool:
@@ -230,9 +231,40 @@ class InventoryEntry:
         return [n.strip().lower() for n in out if n and n.strip()]
 
 
+@dataclass(frozen=True, slots=True)
+class NotAIEntry:
+    rule_id: str
+    client_id: str | None = None
+    app_id: str | None = None
+    name: str | None = None
+    resource_ids: tuple[str, ...] = ()
+
+    def matches(self, finding: Finding) -> bool:
+        metadata = finding.metadata
+        identifiers = {
+            "client_id": metadata.get("client_id"),
+            "app_id": metadata.get("app_id"),
+        }
+        if self.client_id and identifiers["client_id"] == self.client_id:
+            return True
+        if self.app_id and identifiers["app_id"] == self.app_id:
+            return True
+        if finding.resource in self.resource_ids:
+            return True
+        if self.name:
+            candidates = [finding.title.partition(": ")[2], *_metadata_names(finding)]
+            return self.name.casefold() in {value.strip().casefold() for value in candidates if value}
+        return False
+
+
 class Inventory:
-    def __init__(self, entries: list[InventoryEntry] | None = None):
+    def __init__(
+        self,
+        entries: list[InventoryEntry] | None = None,
+        not_ai: list[NotAIEntry] | None = None,
+    ):
         self.entries: list[InventoryEntry] = entries or []
+        self.not_ai: list[NotAIEntry] = not_ai or []
         self.sources: list[str] = []
         # Symbolic links a directory or glob passed over; links are never followed.
         self.skipped_links: list[str] = []
@@ -287,12 +319,12 @@ class Inventory:
                     )
                 )
             for f in files:
-                inv.entries.extend(cls._load_file(f))
+                inv.entries.extend(cls._load_file(f, inv.not_ai))
                 inv.sources.append(str(f))
         return inv
 
     @classmethod
-    def _load_file(cls, path: Path) -> list[InventoryEntry]:
+    def _load_file(cls, path: Path, not_ai: list[NotAIEntry] | None = None) -> list[InventoryEntry]:
         try:
             text = read_policy_text(path)
         except (OSError, UnicodeError, ValueError):
@@ -315,11 +347,25 @@ class Inventory:
         out: list[InventoryEntry] = []
         for number, doc in enumerate(docs, 1):
             location = f"document {number}"
-            if isinstance(doc, dict) and "agents" in doc:
-                _check_fields(doc, {"agents"}, path, location)
-                if not isinstance(doc["agents"], list):
+            if isinstance(doc, dict) and ("agents" in doc or "not_ai" in doc):
+                _check_fields(doc, {"agents", "not_ai"}, path, location)
+                items = doc.get("agents", [])
+                if not isinstance(items, list):
                     raise _invalid(path, f"{location}.agents", "expected a list of inventory entries")
-                items = doc["agents"]
+                rules = doc.get("not_ai", [])
+                if not isinstance(rules, list):
+                    raise _invalid(path, f"{location}.not_ai", "expected a list of not_ai rules")
+                if not_ai is not None:
+                    parsed_rules = [
+                        cls._not_ai_from_dict(rule, path, f"{location}.not_ai rule {number}")
+                        for number, rule in enumerate(rules, 1)
+                    ]
+                    existing_ids = {rule.rule_id for rule in not_ai}
+                    if any(rule.rule_id in existing_ids for rule in parsed_rules) or len(
+                        {rule.rule_id for rule in parsed_rules}
+                    ) != len(parsed_rules):
+                        raise _invalid(path, f"{location}.not_ai", "duplicate rule id")
+                    not_ai.extend(parsed_rules)
             elif isinstance(doc, list):
                 items = doc
             elif isinstance(doc, dict):
@@ -333,6 +379,40 @@ class Inventory:
                 parser = cls._entry_from_card if "metadata" in item else cls._entry_from_simple
                 out.append(parser(item, path, entry_location))
         return out
+
+    @staticmethod
+    def _not_ai_from_dict(item: Any, path: Path, location: str) -> NotAIEntry:
+        if not isinstance(item, dict):
+            raise _invalid(path, location, "expected a not_ai mapping")
+        _check_fields(item, _NOT_AI_FIELDS, path, location)
+        for name in _NOT_AI_FIELDS - {"resource_ids"}:
+            _optional_string(item, name, path, location)
+        rule_id = item.get("id")
+        if not rule_id or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", rule_id):
+            raise _invalid(path, f"{location}.id", "expected a lowercase rule id")
+        resource_ids = _string_list(item, "resource_ids", path, location)
+        if not any(item.get(name) for name in ("client_id", "app_id", "name")) and not resource_ids:
+            raise _invalid(path, location, "at least one identifier is required")
+        return NotAIEntry(
+            rule_id=rule_id,
+            client_id=item.get("client_id"),
+            app_id=item.get("app_id"),
+            name=item.get("name"),
+            resource_ids=tuple(resource_ids),
+        )
+
+    def name_only_suppression(self, finding: Finding) -> str | None:
+        """Return the exact operator rule suppressing a name-only AI finding."""
+        if not any(e.signal.startswith("name:") for e in finding.evidence):
+            return None
+        if any(e.signature and not e.signal.startswith("name:") for e in finding.evidence):
+            return None
+        if any(
+            e.signal.startswith(("gateway:agent-", "gateway:tool-", "code:", "kubernetes:"))
+            for e in finding.evidence
+        ):
+            return None
+        return next((rule.rule_id for rule in self.not_ai if rule.matches(finding)), None)
 
     @classmethod
     def _load_csv(cls, text: str, path: Path) -> list[InventoryEntry]:

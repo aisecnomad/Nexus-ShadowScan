@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 
@@ -19,6 +20,8 @@ from shadowscan.connectors.identity.common import assess_app, identity_kind_for,
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
+
+_NON_AI_MCP_HARDWARE = re.compile(r"\bmcp(?:2515|2518)\b", re.I)
 
 
 class Auth0Connector(BaseConnector):
@@ -198,6 +201,9 @@ class Auth0Connector(BaseConnector):
 
     def _client_finding(self, c: dict[str, Any], grants: list[dict[str, Any]]) -> Finding | None:
         name = c.get("name") or c.get("client_id")
+        context = " ".join(str(c.get(key) or "") for key in ("name", "description"))
+        if _NON_AI_MCP_HARDWARE.search(context):
+            return None
         grant_types = c.get("grant_types") or []
         machine = (
             c.get("app_type") == "non_interactive" or "client_credentials" in grant_types or bool(grants)
@@ -260,7 +266,7 @@ class Auth0Connector(BaseConnector):
             apply_matches(
                 f, name_matches(self.index, " ".join(f"{k}={v}" for k, v in meta.items())), weight_scale=0.6
             )
-        if not f.frameworks and not f.model_providers:
+        if not f.frameworks and not f.model_providers and not machine:
             return None
         f.add_evidence(
             Evidence(

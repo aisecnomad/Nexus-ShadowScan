@@ -1,0 +1,21 @@
+[
+  {
+    "_kind": "servicePrincipal",
+    "id": "sp-chatgpt-regression",
+    "appId": "app-chatgpt-ext",
+    "displayName": "ChatGPT",
+    "publisherName": "OpenAI",
+    "servicePrincipalType": "Application",
+    "accountEnabled": true,
+    "homepage": "https://chatgpt.com",
+    "replyUrls": ["https://chatgpt.com/connector/callback"]
+  },
+  {
+    "_kind": "oauth2PermissionGrant",
+    "clientId": "sp-chatgpt-regression",
+    "consentType": "Principal",
+    "principalId": "user-regression",
+    "resourceId": "graph",
+    "scope": "Files.Read.All Sites.Read.All User.Read offline_access"
+  }
+]

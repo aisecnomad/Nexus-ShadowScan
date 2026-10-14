@@ -1,0 +1,34 @@
+[
+  {
+    "id": "wf-dockqa-regression",
+    "name": "Dock manifest QA",
+    "active": true,
+    "nodes": [
+      {
+        "type": "n8n-nodes-base.httpRequest",
+        "name": "Manifest consistency check",
+        "parameters": {
+          "method": "POST",
+          "url": "https://model.internal.example/v1/chat/completions",
+          "jsonBody": "{\"model\":\"qwen2.5-72b-instruct\",\"messages\":[{\"role\":\"user\",\"content\":\"check manifest\"}]}"
+        }
+      }
+    ]
+  },
+  {
+    "id": "wf-backup-sheets",
+    "name": "Backup rate sheets",
+    "active": true,
+    "nodes": [
+      {
+        "type": "n8n-nodes-base.httpRequest",
+        "name": "Upload backup",
+        "parameters": {
+          "method": "POST",
+          "url": "https://storage.internal.example/v1/files",
+          "jsonBody": "{\"filename\":\"rates.csv\"}"
+        }
+      }
+    ]
+  }
+]

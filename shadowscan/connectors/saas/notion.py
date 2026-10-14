@@ -132,6 +132,8 @@ class NotionConnector(BaseConnector):
             owner=owner,
         )
         assess_app(self.index, f, name=name)
+        if not f.frameworks and not f.model_providers:
+            return None
         f.add_evidence(
             Evidence(
                 signal="notion:bot",

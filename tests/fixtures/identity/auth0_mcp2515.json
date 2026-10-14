@@ -1,0 +1,17 @@
+[
+  {
+    "_kind": "client",
+    "client_id": "mcp2515-brdg-t44qe",
+    "name": "mcp2515-canbus-bridge",
+    "app_type": "non_interactive",
+    "grant_types": ["client_credentials"],
+    "description": "Uploads MCP2515 CAN-bus telemetry frames",
+    "is_first_party": true
+  },
+  {
+    "_kind": "client_grant",
+    "client_id": "mcp2515-brdg-t44qe",
+    "audience": "https://telemetry.example/",
+    "scope": ["write:canbus-frames"]
+  }
+]

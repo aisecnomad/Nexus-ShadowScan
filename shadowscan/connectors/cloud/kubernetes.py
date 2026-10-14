@@ -15,10 +15,6 @@ from shadowscan.utils.redaction import sanitize_text
 _AI_IMAGE_MARKERS = (
     "ollama/ollama",
     "vllm/vllm-openai",
-    "ggerganov/llama.cpp",
-    "text-generation-inference",
-    "localai",
-    "lmstudio",
     "litellm",
     "langgraph",
     "flowise",
@@ -27,6 +23,20 @@ _AI_IMAGE_MARKERS = (
     "mcp/",
     "mcp-server",
     "kagent",
+)
+_SELF_HOSTED_IMAGE_MARKERS = (
+    "vllm",
+    "lmstudio",
+    "text-generation-inference",
+    "/tgi",
+    "tritonserver",
+    "llama.cpp",
+    "llama-cpp",
+    "localai",
+    "lmdeploy",
+    "sglang",
+    "openllm",
+    "ray-serve",
 )
 _AI_RESOURCE_NAME = re.compile(r"(?:llm|model|agent|mcp|inference|ollama|vllm)", re.IGNORECASE)
 _ENV_MARKERS = ("API_KEY", "TOKEN", "BASE_URL", "ENDPOINT", "MODEL")
@@ -208,6 +218,9 @@ class KubernetesConnector(BaseConnector):
             selected = [
                 image for image in images if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
             ]
+            serving_images = [
+                image for image in images if any(marker in image.lower() for marker in _SELF_HOSTED_IMAGE_MARKERS)
+            ]
             tags: list[str] = []
             capabilities: list[str] = []
             if selected:
@@ -233,6 +246,12 @@ class KubernetesConnector(BaseConnector):
             if isinstance(pod_security, dict) and pod_security.get("privileged") is True:
                 tags.append("privileged-pod")
             containers = pod_spec.get("containers", [])
+            model_argument = False
+            gpu_workload = False
+            model_argument_pattern = re.compile(
+                r"(?:^|\s)--model(?:-id)?(?:=|\s+)[\"']?[\w.-]+/[\w.-]+",
+                re.IGNORECASE,
+            )
             if isinstance(containers, list):
                 if len(containers) > 100:
                     self.ctx.warn(f"{self.name}: container limit reached")
@@ -242,6 +261,13 @@ class KubernetesConnector(BaseConnector):
                         continue
                     if "image" in container and not isinstance(container["image"], str):
                         self.ctx.warn(f"{self.name}: container has malformed image")
+                    for field in ("args", "command"):
+                        arguments = container.get(field, [])
+                        if not isinstance(arguments, list) or any(not isinstance(arg, str) for arg in arguments):
+                            self.ctx.warn(f"{self.name}: workload has malformed command arguments")
+                            continue
+                        argument_text = " ".join(arguments)
+                        model_argument = model_argument or bool(model_argument_pattern.search(argument_text))
                     security = container.get("securityContext")
                     if isinstance(security, dict) and security.get("privileged") is True:
                         tags.append("privileged-pod")
@@ -256,12 +282,30 @@ class KubernetesConnector(BaseConnector):
                             self.ctx.warn(f"{self.name}: workload has malformed environment entry")
                             continue
                         key = env.get("name")
-                        if isinstance(key, str) and any(marker in key.upper() for marker in _ENV_MARKERS):
+                        if isinstance(key, str) and (
+                            any(marker in key.upper() for marker in _ENV_MARKERS)
+                            or key.upper() in {"HF_HOME", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}
+                            or key.upper().startswith(("VLLM_", "TGI_"))
+                        ):
                             tags.append("provider-config-present")
                     resources = container.get("resources")
                     requests = resources.get("requests") if isinstance(resources, dict) else {}
-                    if isinstance(requests, dict) and requests.get("nvidia.com/gpu"):
+                    limits = resources.get("limits") if isinstance(resources, dict) else {}
+                    if (
+                        isinstance(requests, dict)
+                        and requests.get("nvidia.com/gpu")
+                        or isinstance(limits, dict)
+                        and limits.get("nvidia.com/gpu")
+                    ):
                         tags.append("gpu-workload")
+                        gpu_workload = True
+            serving_confirmed = bool(model_argument and (serving_images or gpu_workload))
+            if serving_confirmed:
+                selected.extend(image for image in serving_images if image not in selected)
+                tags.append("self-hosted-model-serving")
+                tags.append("model-argument-present")
+                if gpu_workload:
+                    tags.append("gpu-workload")
             volumes = pod_spec.get("volumes", [])
             if not isinstance(volumes, list):
                 self.ctx.warn(f"{self.name}: workload has malformed volumes")
@@ -324,7 +368,11 @@ class KubernetesConnector(BaseConnector):
             finding = Finding(
                 surface=Surface.CLOUD,
                 connector=self.name,
-                kind=Kind.AGENT if selected or kind in _AI_RESOURCE_KINDS else Kind.CLOUD_RESOURCE,
+                kind=(
+                    Kind.AGENT
+                    if selected or serving_confirmed or kind in _AI_RESOURCE_KINDS
+                    else Kind.CLOUD_RESOURCE
+                ),
                 title=f"Kubernetes {kind} {resource_name}",
                 resource=resource,
                 resource_type=f"kubernetes/{kind}",
@@ -344,6 +392,22 @@ class KubernetesConnector(BaseConnector):
             )
             image_matches = [match for image in selected for match in self.index.match_image(image)]
             apply_matches(finding, image_matches, weight_scale=0.75)
+            if model_argument:
+                finding.add_evidence(
+                    Evidence(
+                        signal="kubernetes:model-argument",
+                        description="Container command includes a Hugging Face-style model identifier",
+                        weight=0.35 if not serving_confirmed else 0.7,
+                    )
+                )
+            if gpu_workload:
+                finding.add_evidence(
+                    Evidence(
+                        signal="kubernetes:gpu-resource",
+                        description="Container requests or limits an NVIDIA GPU",
+                        weight=0.25 if not serving_confirmed else 0.45,
+                    )
+                )
             self.ctx.examined()
             yield finalize(finding, self.index)
 

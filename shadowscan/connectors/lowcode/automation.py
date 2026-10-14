@@ -20,7 +20,7 @@ import json
 import re
 from collections.abc import Callable, Collection, Iterable, Iterator
 from typing import Any, ClassVar
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from requests import RequestException
 
@@ -59,6 +59,36 @@ _EVENT_NAMES = re.compile(r"webhook|trigger|event|poll", re.I)
 _N8N_HUMAN_TRIGGERS = re.compile(
     r"\.(manualTrigger|chatTrigger|manualChatTrigger|formTrigger|evaluationTrigger)$", re.I
 )
+_LLM_HTTP_PATH = re.compile(
+    r"^/(?:v1/(?:chat/completions|completions|messages|embeddings)|api/(?:generate|chat)|generate|chat)(?:/|$)",
+    re.I,
+)
+_LLM_BODY_KEYS = {"messages", "prompt", "model", "max_tokens"}
+
+
+def _http_node_calls_llm(node: dict[str, Any]) -> bool:
+    if "httprequest" not in str(node.get("type", "")).casefold():
+        return False
+    parameters = node.get("parameters")
+    if not isinstance(parameters, dict):
+        return False
+    url = parameters.get("url")
+    if isinstance(url, str):
+        try:
+            if _LLM_HTTP_PATH.search(urlsplit(url).path):
+                return True
+        except ValueError:
+            pass
+    for key in ("jsonBody", "body", "bodyParameters", "bodyContent"):
+        body = parameters.get(key)
+        if isinstance(body, str):
+            try:
+                body = strict_json_loads(body)
+            except (ValueError, RecursionError):
+                continue
+        if isinstance(body, dict) and {str(name).casefold() for name in body} & _LLM_BODY_KEYS:
+            return True
+    return False
 _N8N_SCHEDULE_TRIGGERS = re.compile(r"\.(scheduleTrigger|cron|interval)$", re.I)
 # Make ``scheduling.type``: an on-demand scenario waits for the Run once button or a call (the
 # API, another scenario, an AI agent or an MCP client), so it records no initiation either way; an
@@ -274,11 +304,16 @@ class N8nConnector(_AutomationBase):
             for n in nodes
             if re.search(
                 r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
-                r"|\.agent$|mcp",
+                r"|\.agent$|\bmcp\b",
                 str(n.get("type", "")),
                 re.I,
             )
         ]
+        ai_steps.extend(
+            f"{node.get('name')} (HTTP Request LLM API)"
+            for node in nodes
+            if _http_node_calls_llm(node)
+        )
         # 'Respond to Webhook' is the reply step of a chat or form workflow, not a
         # trigger: counting it would read a person-operated workflow as event-run.
         triggers = [

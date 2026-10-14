@@ -75,6 +75,7 @@ signatures:
         # keeps it as a hint); Microsoft attribution needs Microsoft context.
         patterns: ['(?i)\bmicrosoft (?:365 )?copilot\b', '(?i)\bm365 copilot\b', '(?i)\bcopilot for (?:microsoft 365|sales|service|finance|security)\b', '(?i)\bcopilot (?:chat|pro|pages|notebooks)\b', '(?i)\bbing chat\b', '(?i)^(?=.*\b(?:microsoft|m365|office|365|teams|outlook|word|excel|powerpoint|dynamics|bing|edge|windows|azure)\b).*\bcopilot\b(?![-_](?:css|scss|less|themes?|kit|ui|icons?|fonts?|styles?)\b)']
         weight: 0.8
+        negative_context: [cleanup, decommission, remove, uninstall]
       - type: domain
         values: [copilot.microsoft.com, m365.cloud.microsoft, copilot.cloud.microsoft, "*.copilot.microsoft.com", substrate.office.com]
         weight: 0.9

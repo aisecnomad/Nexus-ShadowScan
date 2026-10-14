@@ -387,6 +387,7 @@ _SUFFIXED_INFERENCE_OPERATION = re.compile(
     r"\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)$",
     re.I,
 )
+_AUDIT_API_REQUEST = re.compile(r"^/v1/(?:threads/[^/]+/runs|assistants|files|models)(?:/|$)", re.I)
 # Access-log trailer keys that name the requested host, and the host a value starts with.
 _TRAILER_HOST_KEYS = frozenset({"host", "authority", "upstream_host", "server_name"})
 _HOST_VALUE = re.compile(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -1077,6 +1078,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         ),
         "min_events": "ignore callers with fewer events, a positive integer (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
+        "internal_model_hosts": "exact internal model-server hostnames to recognize (default [])",
         "max_records": "stop after N records (default 5,000,000)",
         "label": (
             "gateway name recorded as the finding provider and as the account of unscoped callers (defaults "
@@ -1103,6 +1105,18 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         self.format = ctx.get("format")
         self.min_events = _positive_limit(ctx.get("min_events", 1), "min_events")
         self.llm_hosts_only = config_boolean(ctx.get("llm_hosts_only", True), "llm_hosts_only")
+        internal_hosts = ctx.get("internal_model_hosts", [])
+        if not isinstance(internal_hosts, list) or any(
+            not isinstance(host, str)
+            or len(host) > 253
+            or not re.fullmatch(
+                r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*",
+                host.strip().lower(),
+            )
+            for host in internal_hosts
+        ):
+            raise ConnectorError("gateway.logs: internal_model_hosts must be a list of hostnames")
+        self.internal_model_hosts = {host.strip().lower().rstrip(".") for host in internal_hosts}
         self.max_records = _positive_limit(ctx.get("max_records", 5_000_000), "max_records")
         self.label = ctx.get("label") or ctx.get("gateway_name")
         if self.format not in _FORMATS:
@@ -1137,6 +1151,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 self.format,
                 self.min_events,
                 self.llm_hosts_only,
+                sorted(self.internal_model_hosts),
                 self.max_records,
                 sorted(self.correlation_bindings, key=lambda b: json.dumps(b, sort_keys=True)),
             ],
@@ -1664,13 +1679,21 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         # as the endpoint (_is_static_or_probe).
         if _is_static_or_probe(ev.path):
             return False
+        if (
+            ev.schema == "access-log"
+            and ev.method
+            and ev.method.upper() in {"GET", "HEAD"}
+            and ev.path
+            and _AUDIT_API_REQUEST.search(ev.path.partition("?")[0].partition("#")[0])
+        ):
+            return False
         text = " ".join(x for x in (ev.host, ev.path) if x)
         if ev.path and re.search(
             r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads"
             r"|runs|audio|images|files|batches|realtime)"
             r"|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent"
             r"|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b"
-            r"|/api/(?:chat|generate|tags)\b"
+            r"|/(?:api/)?(?:chat|generate|tags)\b"
             # Cloudflare Workers AI inference on the general api.cloudflare.com REST API.
             r"|/accounts/[^/\s?#]+/ai/(?:run|v1)/",
             text,
@@ -1697,7 +1720,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
     def _is_llm_host(self, host: str | None) -> bool:
         # Generic vendor hosts (a general REST API, a dataset site) carry hint weights below
         # the threshold and do not identify inference traffic by themselves.
-        return bool(host) and any(
+        normalized = host.lower().rstrip(".") if host else ""
+        return normalized in self.internal_model_hosts or bool(host) and any(
             m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host or "")
         )
 
@@ -1764,6 +1788,20 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             first_seen=to_iso(c.first),
             last_seen=to_iso(c.last),
         )
+        if c.browser_requests >= c.events:
+            f.kind = Kind.AI_APP
+            f.title = "Human AI web usage"
+            f.add_evidence(
+                Evidence(
+                    signal="gateway:human-web-usage",
+                    description=f"{c.events} browser request(s) to an AI-compatible endpoint",
+                    weight=0.18,
+                )
+            )
+            f.metadata.update(self._finding_metadata(c, source_id))
+            f.metadata["usage_class"] = "human-web-usage"
+            f.id = "ss-" + hashlib.sha256(f"{f.compute_id()}|{source_id}".encode()).hexdigest()[:16]
+            return finalize(f, self.index)
         top_models, framework_user_agent = self._match_signatures(f, c)
         f.add_evidence(
             Evidence(

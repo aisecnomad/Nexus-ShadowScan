@@ -1,0 +1,14 @@
+[
+  {
+    "table": "sys_hub_flow",
+    "result": [
+      {
+        "sys_id": "copilot-cleanup",
+        "name": "Copilot license cleanup",
+        "description": "Reclaims unused Microsoft 365 Copilot seats and notifies managers",
+        "active": "true",
+        "type": "flow"
+      }
+    ]
+  }
+]
