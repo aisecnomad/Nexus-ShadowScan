@@ -175,6 +175,14 @@ class _InspectionLimit(Exception):
     """A fixed, non-sensitive limit reason."""
 
 
+# include/linux/sched.h: PF_KTHREAD, set in the ``flags`` field of a kernel thread's ``stat``.
+_PF_KTHREAD = 0x00200000
+
+
+class _KernelThread(Exception):
+    """A kernel thread: no user-space mappings, descriptors or environment to inspect."""
+
+
 @dataclass
 class _InspectionBudget:
     ctx: ConnectorContext
@@ -226,8 +234,12 @@ def _proc_identity(directory: int, budget: _InspectionBudget) -> dict[str, str]:
     raw = budget.read(directory, "stat", _IDENTITY_BYTES, reserved=True).decode("ascii", "replace")
     end = raw.rfind(")")
     fields = raw[end + 1 :].split() if end >= 0 else []
-    if len(fields) < 20 or not fields[19].isascii() or not fields[19].isdecimal():
+    if len(fields) < 20 or not all(f.isascii() and f.isdecimal() for f in (fields[6], fields[19])):
         raise ValueError("malformed process stat")
+    if int(fields[6]) & _PF_KTHREAD:
+        # Decided from the world-readable flags: the exe link and environ of a kernel
+        # thread are ENOENT or empty to root and EACCES to every other account.
+        raise _KernelThread
     namespace = os.open("ns", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
     try:
         inode = os.stat("pid", dir_fd=namespace).st_ino
@@ -443,6 +455,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         self.inspection_timeout_seconds = _positive_limit(
             ctx.get("inspection_timeout_seconds", 30), "inspection_timeout_seconds"
         )
+        self.kernel_threads = 0  # skipped by live inspection; recorded in the inspection limitations
 
     # ------------------------------------------------------------------ live
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -558,6 +571,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         """Unavailable enrichment never erases readable, independent command-line evidence."""
         try:
             return _proc_identity(directory, budget)
+        except _KernelThread:
+            self.kernel_threads += 1  # Not inspectable, and no scope was lost: no warning.
         except FileNotFoundError:
             # A namespace/stat file can be unavailable on a still-readable PID. Only
             # classify this as process disappearance if its command line also vanished.
@@ -767,15 +782,21 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         return result
 
     def _inspection_metadata(self, inspections: list[dict[str, Any]]) -> dict[str, Any]:
+        limitations = [
+            "Library names and descriptor extensions do not validate file content or agency.",
+            "Mappings do not expose arbitrary Python imports or memory-only code.",
+            "Process identities lack a boot identifier and are not stable across host restarts.",
+            "A process snapshot does not establish activity outside its observation time.",
+        ]
+        if self.kernel_threads:
+            limitations.append(
+                f"{self.kernel_threads} kernel thread(s) were skipped: they have no user-space mappings, "
+                "descriptors or environment to inspect."
+            )
         return {
             "runtime_inspection": inspections,
             "process_identities": [{"pid": item["pid"], **item["identity"]} for item in inspections],
-            "inspection_limitations": [
-                "Library names and descriptor extensions do not validate file content or agency.",
-                "Mappings do not expose arbitrary Python imports or memory-only code.",
-                "Process identities lack a boot identifier and are not stable across host restarts.",
-                "A process snapshot does not establish activity outside its observation time.",
-            ],
+            "inspection_limitations": limitations,
         }
 
     def _inspection_finding(self, rec: dict[str, Any]) -> Finding:

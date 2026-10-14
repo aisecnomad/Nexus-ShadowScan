@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -744,3 +745,37 @@ def test_large_maps_truncate_only_their_own_source(run_connector, monkeypatch, t
     assert inspection["environment_keys"] == ["OLLAMA_MODELS"]
     assert any("maps inspection truncated" in w for w in ctx.stats.warnings)
     assert not any("inspection omitted" in w for w in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("view", ["root", "non-root"])
+@pytest.mark.parametrize(
+    "options", [{"inspect_env_keys": ["OLLAMA_MODELS"]}, {"inspect_maps": True}, {"inspect_fds": True}]
+)
+def test_kernel_threads_are_skipped_without_marking_the_scan_incomplete(
+    run_connector, monkeypatch, tmp_path, view, options
+):
+    pid = _inspection_proc(tmp_path, monkeypatch, argv=b"claude\0")
+    kthread = pid.parent / "2"
+    (kthread / "ns").mkdir(parents=True)
+    (kthread / "ns" / "pid").write_text("namespace")
+    # PF_KTHREAD in the stat flags; no exe link, an empty command line and no user-space state.
+    (kthread / "stat").write_text("2 (kthreadd) S 0 0 0 0 -1 2129984 " + " ".join(["0"] * 12) + " 2 0")
+    (kthread / "cmdline").write_bytes(b"")
+    (kthread / "maps").write_bytes(b"")
+    (kthread / "fd").mkdir()
+    (kthread / "environ").write_bytes(b"")
+    if view == "non-root":  # every per-process source of a kernel thread is EACCES to other accounts
+        original = runtime_processes.os.open
+        inode = kthread.stat().st_ino
+
+        def denied(path, flags, *args, **kwargs):
+            dir_fd = kwargs.get("dir_fd")
+            if path in {"maps", "fd", "environ"} and dir_fd is not None and os.fstat(dir_fd).st_ino == inode:
+                raise PermissionError("private sentinel")
+            return original(path, flags, *args, **kwargs)
+
+        monkeypatch.setattr(runtime_processes.os, "open", denied)
+    findings, ctx = run_connector("runtime.processes", label="box", **options)
+    assert len(findings) == 1 and not ctx.stats.incomplete
+    assert findings[0].metadata["pids"] == [12]
+    assert any("1 kernel thread" in line for line in findings[0].metadata["inspection_limitations"])
