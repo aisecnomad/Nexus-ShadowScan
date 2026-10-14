@@ -1,0 +1,18 @@
+{
+  "plugins": [
+    {
+      "key": "com.example.Claude",
+      "name": "Claude",
+      "vendor": {"name": "Anthropic"},
+      "description": "AI assistant",
+      "enabled": true,
+      "userInstalled": true
+    },
+    {
+      "key": "com.example.timesheets",
+      "name": "Timesheets",
+      "enabled": true,
+      "userInstalled": true
+    }
+  ]
+}

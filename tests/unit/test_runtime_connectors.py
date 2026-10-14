@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import main
+from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud import kubernetes as kubernetes_module
@@ -22,7 +24,9 @@ from shadowscan.connectors.endpoint.runtime import (
     _attrs,
     _records,
 )
+from shadowscan.engine import Engine
 from shadowscan.models import ScanResult, ScanStats, Surface
+from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
@@ -502,6 +506,380 @@ def test_kubernetes_nested_object_limit_marks_scan_incomplete(monkeypatch):
     assert len(findings) == 1
     assert connector.ctx.stats.incomplete
     assert any("object limit" in warning for warning in connector.ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize("layout", ["records", "list", "lists", "jsonl-lists"])
+@pytest.mark.parametrize("excess", [False, True], ids=["exact-limit", "over-limit"])
+def test_kubernetes_object_limit_reports_engine_and_cli_completeness(
+    tmp_path, monkeypatch, connector_type, layout, excess
+):
+    monkeypatch.setattr(kubernetes_module, "_MAX_OBJECTS", 2)
+    envelopes = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())
+    if not excess:
+        # An empty trailing List does not hide any unexamined object.
+        envelopes[1]["items"] = []
+    records = [item for envelope in envelopes for item in envelope["items"]]
+    source = tmp_path / ("inventory.jsonl" if layout == "jsonl-lists" else "inventory.json")
+    if layout == "jsonl-lists":
+        source.write_text("\n".join(json.dumps(envelope) for envelope in envelopes) + "\n")
+    else:
+        data = records if layout == "records" else {"items": records} if layout == "list" else envelopes
+        source.write_text(json.dumps(data))
+    config = {"input": str(source), "cluster": "synthetic"}
+
+    report = Engine(ScanConfig(connectors=[ConnectorSpec(connector_type.name, config=config)])).run()
+    cli = CliRunner().invoke(
+        main,
+        [
+            "run",
+            connector_type.name,
+            "--input",
+            str(source),
+            "--set",
+            "cluster=synthetic",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert report.findings == []
+    assert report.complete is not excess
+    stats = next(stat for stat in report.stats if stat.connector == connector_type.name)
+    assert stats.incomplete is excess
+    assert any("object limit" in warning for warning in stats.warnings) is excess
+    assert cli.exit_code == (3 if excess else 0), cli.output
+    output = json.loads(cli.stdout)
+    assert output["summary"]["complete"] is not excess
+    assert output["findings"] == []
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_default_object_limit_does_not_hide_later_list(tmp_path, connector_type):
+    envelopes = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())
+    envelopes[0]["items"] = [{"kind": "ConfigMap", "metadata": {"name": "ordinary"}}] * 10_000
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps(envelopes))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert findings == []
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("object limit" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_full_length_names_have_distinct_findings_and_registry_bindings(tmp_path, connector_type):
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    prefix = ".".join(letter * 63 for letter in ("a", "b", "c")) + "." + "d" * 60
+    names = [prefix + "a", prefix + "b"]
+    assert all(len(name) == 253 for name in names)
+    assert names[0][:160] == names[1][:160]
+    records = []
+    for name in names:
+        record = deepcopy(workload)
+        record["metadata"]["name"] = name
+        records.append(record)
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps({"items": records}))
+    config = {"input": str(source), "cluster": "synthetic"}
+
+    report = Engine(ScanConfig(connectors=[ConnectorSpec(connector_type.name, config=config)])).run()
+
+    assert report.complete
+    assert len(report.findings) == 2
+    assert len({finding.id for finding in report.findings}) == 2
+    assert {finding.resource for finding in report.findings} == {
+        f"k8s:synthetic/ai/Pod/{name}" for name in names
+    }
+    approved = report.findings[0]
+    sibling = report.findings[1]
+    card_path = tmp_path / "approved-card.json"
+    card = card_stub_for(approved)
+    card_path.write_text(json.dumps(card))
+    inventory = Inventory.load([card_path])
+    assert inventory.match(approved) is not None
+    assert inventory.match(sibling) is None
+
+    registered = Engine(
+        ScanConfig(connectors=[ConnectorSpec(connector_type.name, config=config)], inventory=[str(card_path)])
+    ).run()
+
+    assert registered.complete
+    by_resource = {finding.resource: finding for finding in registered.findings}
+    assert len(by_resource) == 2
+    assert by_resource[approved.resource].shadow is False
+    assert by_resource[sibling.resource].shadow is True
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_oversized_names_are_rejected_without_colliding(tmp_path, connector_type):
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    workload["metadata"]["name"] = "a" * 254
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps([workload]))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert findings == []
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("metadata.name" in warning for warning in ctx.stats.warnings)
+
+
+def _write_kubernetes_layout(tmp_path, layout, envelope):
+    if layout == "single":
+        source = tmp_path / "inventory.json"
+        source.write_text(json.dumps(envelope))
+    elif layout == "array":
+        source = tmp_path / "inventory.json"
+        source.write_text(json.dumps([envelope]))
+    else:
+        source = tmp_path / "inventory.jsonl"
+        source.write_text(json.dumps(envelope) + "\n")
+    return source
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize("layout", ["single", "array", "jsonl"])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"continue": "synthetic-next-chunk", "remainingItemCount": 4500},
+        {"continue": "synthetic-next-chunk"},
+        {"remainingItemCount": 1},
+        {"continue": 7},
+        {"remainingItemCount": "many"},
+        {"remainingItemCount": True},
+        {"remainingItemCount": -1},
+        "not-an-object",
+    ],
+)
+def test_kubernetes_chunked_list_page_is_incomplete(tmp_path, connector_type, layout, metadata):
+    envelope = json.loads((FIXTURES / "kubernetes/chunked_list.json").read_text())
+    envelope["metadata"] = metadata
+    source = _write_kubernetes_layout(tmp_path, layout, envelope)
+
+    cli = CliRunner().invoke(
+        main,
+        [
+            "run",
+            connector_type.name,
+            "--input",
+            str(source),
+            "--set",
+            "cluster=synthetic",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert cli.exit_code == 3, cli.output
+    output = json.loads(cli.stdout)
+    assert output["summary"]["complete"] is False
+    # Observed objects from the partial page are retained, not discarded.
+    assert [finding["resource"] for finding in output["findings"]] == ["k8s:synthetic/ai/Pod/local-model"]
+    assert "synthetic-next-chunk" not in cli.output
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize("layout", ["single", "array", "jsonl"])
+@pytest.mark.parametrize(
+    "metadata", [{"resourceVersion": "1"}, {"continue": "", "remainingItemCount": 0}, {"continue": None}]
+)
+def test_kubernetes_final_list_page_stays_complete(tmp_path, connector_type, layout, metadata):
+    envelope = json.loads((FIXTURES / "kubernetes/chunked_list.json").read_text())
+    envelope["metadata"] = metadata
+    source = _write_kubernetes_layout(tmp_path, layout, envelope)
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and not ctx.stats.incomplete, ctx.stats.warnings
+    assert [finding.resource for finding in findings] == ["k8s:synthetic/ai/Pod/local-model"]
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_long_namespaces_are_rejected_without_colliding(tmp_path, connector_type):
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    records = []
+    for suffix in ("-team-a", "-team-b"):
+        record = deepcopy(workload)
+        record["metadata"]["namespace"] = "n" * 160 + suffix
+        records.append(record)
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps(records))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert findings == []
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("metadata.namespace" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize(
+    "namespace", [None, 7, ["ai"], {"name": "ai"}, "n" * 64, "", "Team-A", "x/Pod/y", "-ai"]
+)
+def test_kubernetes_malformed_namespace_is_not_defaulted(tmp_path, connector_type, namespace):
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    workload["metadata"]["namespace"] = namespace
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps([workload]))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert findings == []
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("metadata.namespace" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_slash_in_namespace_cannot_merge_with_a_slashed_name(tmp_path, connector_type):
+    """Regression: namespace "x/Pod/y" with name "z" read as the same identity as namespace "x", name "y/Pod/z"."""
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    first, second = deepcopy(workload), deepcopy(workload)
+    first["metadata"].update(namespace="x", name="y/Pod/z")
+    second["metadata"].update(namespace="x/Pod/y", name="z")
+    first["kind"] = second["kind"] = "Pod"
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps([first, second]))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("metadata.namespace" in warning for warning in ctx.stats.warnings)
+    assert len({finding.resource for finding in findings}) == len(findings) <= 1
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_full_namespace_identity_and_egress_policy_match(tmp_path, connector_type):
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    namespaces = ["a" * 62 + "x", "a" * 62 + "y"]
+    records = []
+    for namespace in namespaces:
+        record = deepcopy(workload)
+        record["metadata"]["namespace"] = namespace
+        records.append(record)
+    records.append(
+        {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "NetworkPolicy",
+            "metadata": {"name": "egress", "namespace": namespaces[0]},
+            "spec": {"policyTypes": ["Egress"]},
+        }
+    )
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps({"items": records}))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and not ctx.stats.incomplete
+    by_resource = {finding.resource: finding for finding in findings}
+    first, second = (f"k8s:synthetic/{namespace}/Pod/local-model" for namespace in namespaces)
+    assert set(by_resource) == {first, second}
+    assert len({finding.id for finding in findings}) == 2
+    assert "no-egress-policy" not in by_resource[first].tags
+    assert "no-egress-policy" in by_resource[second].tags
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_cronjob_fixture_uses_nested_images_and_security_posture(connector_type):
+    findings, ctx = _run_offline(
+        connector_type, {"cluster": "synthetic"}, FIXTURES / "kubernetes/cronjobs.json"
+    )
+
+    assert ctx.stats is not None and not ctx.stats.incomplete
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.resource == "k8s:synthetic/ai/CronJob/scheduled-model"
+    assert finding.metadata["images"] == ["ollama/ollama:example"]
+    assert {
+        "ai-workload",
+        "provider-config-present",
+        "gpu-workload",
+        "privileged-pod",
+        "no-egress-policy",
+    } <= set(finding.tags)
+    assert "omitted" not in str(finding.to_dict())
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize(
+    "posture", ["hostNetwork", "pod-security", "container-security", "hostPath", "egress-policy"]
+)
+def test_kubernetes_cronjob_security_checks_use_the_real_pod_spec(tmp_path, connector_type, posture):
+    record = json.loads((FIXTURES / "kubernetes/cronjobs.json").read_text())["items"][0]
+    pod_spec = record["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+    pod_spec.pop("hostNetwork")
+    pod_spec.pop("volumes")
+    pod_spec["containers"][0].pop("securityContext")
+    records = [record]
+    if posture == "hostNetwork":
+        pod_spec["hostNetwork"] = True
+    elif posture == "pod-security":
+        pod_spec["securityContext"] = {"privileged": True}
+    elif posture == "container-security":
+        pod_spec["containers"][0]["securityContext"] = {"privileged": True}
+    elif posture == "hostPath":
+        pod_spec["volumes"] = [{"name": "host", "hostPath": {"path": "/synthetic-host"}}]
+    else:
+        records.append(
+            {
+                "kind": "NetworkPolicy",
+                "metadata": {"name": "egress", "namespace": "ai"},
+                "spec": {"policyTypes": ["Egress"]},
+            }
+        )
+    source = tmp_path / "cronjob.json"
+    source.write_text(json.dumps({"items": records}))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and not ctx.stats.incomplete
+    assert len(findings) == 1
+    assert ("privileged-pod" in findings[0].tags) is (posture != "egress-policy")
+    assert ("no-egress-policy" in findings[0].tags) is (posture != "egress-policy")
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize(
+    ("path", "bad_value"),
+    [
+        (("jobTemplate",), None),
+        (("jobTemplate",), []),
+        (("jobTemplate",), {}),
+        (("jobTemplate", "spec"), None),
+        (("jobTemplate", "spec"), []),
+        (("jobTemplate", "spec"), {}),
+        (("jobTemplate", "spec", "template"), None),
+        (("jobTemplate", "spec", "template"), []),
+        (("jobTemplate", "spec", "template"), {}),
+        (("jobTemplate", "spec", "template", "spec"), None),
+        (("jobTemplate", "spec", "template", "spec"), []),
+        (("jobTemplate", "spec", "template", "spec", "containers"), {}),
+        (("jobTemplate", "spec", "template", "spec", "imagePullSecrets"), {}),
+        (("jobTemplate", "spec", "template", "spec", "volumes"), {}),
+    ],
+)
+def test_kubernetes_malformed_cronjobs_retain_valid_findings_and_fail_closed(
+    tmp_path, connector_type, path, bad_value
+):
+    valid = json.loads((FIXTURES / "kubernetes/cronjobs.json").read_text())["items"][0]
+    malformed = deepcopy(valid)
+    malformed["metadata"]["name"] = "broken-model"
+    # A decoy at the old path cannot rescue a malformed native CronJob.
+    malformed["spec"]["template"] = deepcopy(valid["spec"]["jobTemplate"]["spec"]["template"])
+    parent = malformed["spec"]
+    for component in path[:-1]:
+        parent = parent[component]
+    parent[path[-1]] = bad_value
+    source = tmp_path / "cronjobs.json"
+    source.write_text(json.dumps({"items": [valid, malformed]}))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert [finding.resource for finding in findings] == ["k8s:synthetic/ai/CronJob/scheduled-model"]
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("malformed" in warning for warning in ctx.stats.warnings)
 
 
 def test_otlp_prompt_completion_and_message_events_never_reach_findings():

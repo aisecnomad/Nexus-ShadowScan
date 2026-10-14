@@ -855,6 +855,12 @@ offline exports. Options: `site`
 `api_token` (env `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`), and `products`
 (`jira`, `confluence`; default both).
 
+Set the concrete HTTPS site origin for offline exports too. A missing site
+leaves discovery incomplete, and generated stubs remain unbound until it is
+known. App keys are shared across sites; inventory approvals require an
+explicit `accounts` site binding. URL host case, a default HTTPS port and a
+trailing slash are normalized without folding app resource IDs.
+
 ### `saas.notion`
 Notion bot users. A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete. Provider error
@@ -1078,7 +1084,11 @@ converted is skipped with a warning and makes the scan incomplete.
 
 ### `cloud.kubernetes` and `cloud.openshift`
 Analyze offline Kubernetes and OpenShift workload exports (images, exposure,
-GPU, privilege and egress-policy indicators). Live collection is not
+GPU, privilege and egress-policy indicators), including nested CronJob pod
+templates. Resource identities preserve full valid object names and
+namespaces; object-limit truncation, a chunked `List` page with
+`metadata.continue` or `remainingItemCount`, and a malformed namespace leave
+coverage incomplete. Live collection is not
 implemented and the connectors use no credentials; their findings carry no
 device name, so lifecycle links do not apply to them. See the
 [Kubernetes and OpenShift guide](connectors/kubernetes.md).

@@ -7,6 +7,51 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## Unreleased Kubernetes and Atlassian migration
+
+Rescan Kubernetes and OpenShift exports after upgrading. Earlier observations
+could omit an unread export suffix at the object limit, collapse different long
+object names into one identity, or reject a valid CronJob. The corrected scan
+retains full valid names and analyzes the nested CronJob pod template. A limit
+that leaves objects unread, a chunked `List` page (`metadata.continue` or
+`remainingItemCount`), an overlong name, a non-string or overlong namespace or
+a malformed template marks coverage incomplete; inspect retained findings
+without treating the report as complete estate coverage.
+
+Kubernetes resources with names longer than 160 characters now have their full
+name in `k8s:<cluster>/<namespace>/<kind>/<name>`. Regenerate and review cards
+for affected resources; an old shortened exact binding does not identify the
+full resource. Preserve previous reports as historical evidence and establish
+a fresh baseline under the reviewed revision. Collection fingerprints change
+with scanner code, so cross-revision differences do not establish resolution.
+
+Atlassian app keys identify a product across sites, rather than one site's
+installation. Configure `site` for offline exports as well as live collection,
+and bind approvals with `discovery.accounts: ["https://your-site.atlassian.net"]`.
+Existing cards without explicit accounts remain unregistered until their site
+scope is reviewed and added. Use separate bindings for unrelated sites.
+Discovery without a usable site remains incomplete and its generated stub
+leaves `discovery.resources` empty pending identity review. Merely adding that
+stub to an inventory cannot approve the installation. Configure the verified
+site, rescan and regenerate the card before reviewing its exact binding.
+
+Atlassian finding IDs change on upgrade. Exports scanned without a configured
+`site` get a new identity discriminator bound to the resolved path of each
+export file, so renaming or moving the file changes its IDs; two files in one
+directory input stay separate findings even when they share an app key. A
+configured site is canonicalized, so an operator whose `site` used an
+uppercase host or an explicit `:443` also sees new IDs (a trailing slash was
+already ignored). A `site` that is not a plain HTTPS origin now stops the
+connector with an error and exit 3 instead of scanning: a value without
+`https://`, `http://`, a path (including a Data Center context path such as
+`/jira` or `/wiki`), user information, a query or fragment, a trailing dot or a
+non-ASCII host. Configure the canonical `site` as `https://<host>`, keep one
+site's exports per scan input, rescan and establish a fresh baseline; earlier
+Atlassian IDs do not carry over.
+
+The new tests use offline exports. Live connector acceptance and independently
+labeled field accuracy still require the existing rollout acceptance procedure.
+
 ## Unreleased attribution migration
 
 This section covers the Python re-export and governance observation changes.
