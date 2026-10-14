@@ -100,6 +100,32 @@ def test_access_log_filters_non_llm_hosts(run_connector, fixtures):
     assert "framework.crewai" in crew.frameworks and "provider.openai" in crew.model_providers
 
 
+def test_egress_logs_require_interactive_or_generation_api_distinction(index):
+    connector = GatewayLogConnector(ConnectorContext(index=index))
+
+    def event(path, method, user_agent, host):
+        return normalise(
+            {
+                "remote_addr": "192.0.2.1",
+                "request_uri": path,
+                "request_method": method,
+                "http_user_agent": user_agent,
+                "host": host,
+            },
+            "access-log",
+        )
+
+    browser_chat = event(
+        "/api/chat", "POST", "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0", "helpdesk.example"
+    )
+    thread_audit = event("/v1/threads/thread_8842/runs", "GET", "python-httpx/1.0", "api.openai.com")
+    self_hosted_generation = event("/generate", "POST", "python-httpx/1.0", "tgi-yard.vantor.example")
+
+    assert not connector._is_llm_traffic(browser_chat)
+    assert not connector._is_llm_traffic(thread_audit)
+    assert connector._is_llm_traffic(self_hosted_generation)
+
+
 def context(index, **config):
     ctx = ConnectorContext(index=index, config=config)
     ctx.stats = ScanStats(connector="test", started_at="now")

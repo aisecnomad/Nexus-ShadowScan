@@ -288,7 +288,6 @@ def test_gateway_hosted_operation_fixture(run_connector):
     }
     negatives = {
         "inventory-job",
-        "run-list",
         "run-read",
         "assistant-delete",
         "assistant-create",
@@ -311,7 +310,7 @@ def test_gateway_hosted_operation_fixture(run_connector):
             evidence = next(e for e in finding.evidence if e.signal == "gateway:agent-runtime-api")
             assert "does not establish successful execution or tool use" in evidence.description
     # Three distinct calls must keep their own path/host/method provenance.
-    assert by["mixed-provenance"].metadata["events"] == 3
+    assert by["mixed-provenance"].metadata["events"] == 2
     assert by["inventory-job"].metadata["events"] == 5
     # An attempted invocation denied by the provider remains an error.
     assert by["azure-run"].metadata["errors"] == 1

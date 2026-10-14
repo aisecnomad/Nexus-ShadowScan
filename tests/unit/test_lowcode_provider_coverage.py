@@ -13,7 +13,7 @@ from shadowscan.connectors.lowcode import automation, salesforce, servicenow
 from shadowscan.connectors.lowcode.automation import MakeConnector, N8nConnector
 from shadowscan.connectors.lowcode.salesforce import SalesforceConnector
 from shadowscan.connectors.lowcode.servicenow import ServiceNowConnector
-from shadowscan.models import ScanStats
+from shadowscan.models import Kind, ScanStats
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpError
 
@@ -275,6 +275,27 @@ def test_servicenow_flow_name_timeout_preserves_accumulated_native_agents(
     assert "opaque input" not in " ".join(ctx.stats.warnings)
 
 
+def test_servicenow_copilot_license_cleanup_is_not_ai_from_name_alone(tmp_path, run_connector):
+    source = tmp_path / "servicenow.json"
+    source.write_text(
+        json.dumps(
+            [
+                {
+                    "_table": "sys_hub_flow",
+                    "sys_id": "flow-cleanup",
+                    "name": "Copilot license cleanup",
+                    "description": "Remove Microsoft 365 Copilot licenses from inactive users.",
+                }
+            ]
+        )
+    )
+
+    findings, ctx = run_connector("lowcode.servicenow", input=str(source))
+
+    assert findings == []
+    assert not ctx.stats.incomplete
+
+
 def test_servicenow_oauth_timeout_preserves_accumulated_native_agents(tmp_path, run_connector, monkeypatch):
     monkeypatch.setattr(servicenow, "name_matches", Mock(return_value=[]))
     match_app = Mock(side_effect=MatchTimeoutError("opaque input must not be logged"))
@@ -489,6 +510,62 @@ def test_n8n_missing_or_invalid_graph_preserves_next_workflow(index, graph):
     (finding,) = connector.run()
     assert finding.resource == "n8n:workflow:good"
     assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
+
+
+def test_n8n_self_hosted_model_http_node_is_ai_workflow(index):
+    connector = N8nConnector(ConnectorContext(index=index))
+    workflow = {
+        "id": "dock-manifest-qa",
+        "name": "Dock manifest QA",
+        "nodes": [
+            {
+                "type": "n8n-nodes-base.httpRequest",
+                "name": "Manifest consistency check",
+                "parameters": {
+                    "method": "POST",
+                    "url": "https://vllm.vantor.example/v1/chat/completions",
+                },
+            }
+        ],
+    }
+
+    finding = connector._n8n_finding(workflow)
+
+    assert finding is not None
+    assert finding.kind == Kind.WORKFLOW
+    assert any("httpRequest" in step for step in finding.metadata["ai_steps"])
+
+
+def test_n8n_agent_requires_a_graph_path_to_an_action_node(index):
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.ctx.stats = ScanStats(connector=connector.name, started_at="now")
+    agent = {"type": "@n8n/n8n-nodes-langchain.agent", "name": "Agent"}
+    action = {"type": "n8n-nodes-base.slack", "name": "Send result"}
+    connected = {
+        "id": "connected-agent",
+        "name": "Connected agent",
+        "nodes": [agent, action],
+        "connections": {"Agent": {"main": [[{"node": "Send result", "type": "main", "index": 0}]]}},
+    }
+    orphaned = {"id": "orphaned-agent", "name": "Orphaned agent", "nodes": [agent]}
+    cyclic = {
+        "id": "cyclic-agent",
+        "name": "Cyclic agent",
+        "nodes": [agent, {"type": "n8n-nodes-base.if", "name": "Branch"}],
+        "connections": {
+            "Agent": {"main": [[{"node": "Branch", "type": "main", "index": 0}]]},
+            "Branch": {"main": [[{"node": "Agent", "type": "main", "index": 0}]]},
+        },
+    }
+
+    connected_finding = connector._n8n_finding(connected)
+    orphaned_finding = connector._n8n_finding(orphaned)
+    cyclic_finding = connector._n8n_finding(cyclic)
+
+    assert connected_finding is not None and connected_finding.kind == Kind.AGENT
+    assert orphaned_finding is not None and orphaned_finding.kind == Kind.WORKFLOW
+    assert cyclic_finding is not None and cyclic_finding.kind == Kind.WORKFLOW
+    assert connector.ctx.stats.incomplete
 
 
 def test_n8n_empty_graph_is_known_empty(index):

@@ -20,10 +20,11 @@ import json
 import re
 from collections.abc import Callable, Collection, Iterable, Iterator
 from typing import Any, ClassVar
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from requests import RequestException
 
+from shadowscan.connectors.agent_behavior import is_generation
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import (
     apply_matches,
@@ -60,6 +61,35 @@ _N8N_HUMAN_TRIGGERS = re.compile(
     r"\.(manualTrigger|chatTrigger|manualChatTrigger|formTrigger|evaluationTrigger)$", re.I
 )
 _N8N_SCHEDULE_TRIGGERS = re.compile(r"\.(scheduleTrigger|cron|interval)$", re.I)
+_N8N_LANGCHAIN_NODE_TYPE = re.compile(r"(?:^|/)n8n-nodes-langchain\.[^/]+$", re.I)
+_N8N_AI_NODE_SUFFIXES = frozenset(
+    {"openai", "anthropic", "gemini", "googlegemini", "mistral", "ollama", "huggingface", "agent", "mcp"}
+)
+_N8N_NON_ACTION_NODE_SUFFIXES = frozenset(
+    {
+        "agent",
+        "code",
+        "executeworkflowtrigger",
+        "filter",
+        "if",
+        "loopoveritems",
+        "manualtrigger",
+        "merge",
+        "noop",
+        "respondtowebhook",
+        "scheduletrigger",
+        "set",
+        "sort",
+        "splitinbatches",
+        "start",
+        "sticky",
+        "stickynote",
+        "switch",
+        "wait",
+        "webhook",
+    }
+)
+_N8N_MAX_GRAPH_NODES = 10_000
 # Make ``scheduling.type``: an on-demand scenario waits for the Run once button or a call (the
 # API, another scenario, an AI agent or an MCP client), so it records no initiation either way; an
 # instant trigger runs immediately on its webhook, and every other type is a schedule.
@@ -74,6 +104,79 @@ _WORKATO_HUMAN_PROVIDERS = re.compile(r"workbot", re.I)
 _WORKBOT_HUMAN_TRIGGERS = re.compile(r"command|menu|modal|button|action|shortcut", re.I)
 # Zapier apps a person operates: the Chrome extension's push, an Interfaces form and a chatbot.
 _ZAPIER_HUMAN_APPS = re.compile(r"zapier (?:chrome extension|interfaces|chatbots)|\bmanual\b", re.I)
+
+
+def _n8n_is_llm_or_agent_node(node_type: str) -> bool:
+    suffix = node_type.rsplit(".", 1)[-1].casefold()
+    if _N8N_LANGCHAIN_NODE_TYPE.fullmatch(node_type):
+        return not re.fullmatch(r"(?:tool[a-z0-9]*|[a-z0-9]*tool)", suffix)
+    return suffix in _N8N_AI_NODE_SUFFIXES
+
+
+def _n8n_http_model_node(node: dict[str, Any]) -> bool:
+    if node.get("type") != "n8n-nodes-base.httpRequest":
+        return False
+    params = node.get("parameters")
+    if not isinstance(params, dict):
+        return False
+    method = params.get("method")
+    url = params.get("url")
+    if not isinstance(method, str) or method.upper() != "POST" or not isinstance(url, str):
+        return False
+    return is_generation(urlsplit(url).path, method="POST")
+
+
+def _n8n_has_agent_action_path(
+    nodes: list[dict[str, Any]], connections: Any, ai_nodes: set[str]
+) -> tuple[bool, bool]:
+    """Return whether an AI node reaches an action, and whether the graph was incomplete."""
+    if not ai_nodes:
+        return False, False
+    if len(nodes) > _N8N_MAX_GRAPH_NODES or not isinstance(connections, dict):
+        return False, True
+    node_types: dict[str, str] = {}
+    incomplete = False
+    for node in nodes:
+        name, node_type = node.get("name"), node.get("type")
+        if isinstance(name, str) and name and isinstance(node_type, str):
+            node_types[name] = node_type
+        else:
+            incomplete = True
+    edges: dict[str, set[str]] = {}
+    for source, outputs in connections.items():
+        if not isinstance(source, str) or source not in node_types or not isinstance(outputs, dict):
+            incomplete = True
+            continue
+        for channels in outputs.values():
+            if not isinstance(channels, list):
+                incomplete = True
+                continue
+            for channel in channels:
+                if not isinstance(channel, list):
+                    incomplete = True
+                    continue
+                for link in channel:
+                    target = link.get("node") if isinstance(link, dict) else None
+                    if not isinstance(target, str) or target not in node_types:
+                        incomplete = True
+                        continue
+                    edges.setdefault(source, set()).add(target)
+    pending = list(ai_nodes & node_types.keys())
+    visited: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        if len(visited) >= _N8N_MAX_GRAPH_NODES:
+            return False, True
+        visited.add(current)
+        for target in edges.get(current, ()):
+            target_type = node_types[target]
+            suffix = target_type.rsplit(".", 1)[-1].casefold()
+            if not _n8n_is_llm_or_agent_node(target_type) and suffix not in _N8N_NON_ACTION_NODE_SUFFIXES:
+                return True, incomplete
+            pending.append(target)
+    return False, incomplete
 
 
 class _AutomationBase(BaseConnector):
@@ -269,16 +372,19 @@ class N8nConnector(_AutomationBase):
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
         types = [str(n.get("type", "")) for n in nodes]
-        ai_steps = [
-            f"{n.get('name')} ({n.get('type')})"
-            for n in nodes
-            if re.search(
-                r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
-                r"|\.agent$|mcp",
-                str(n.get("type", "")),
-                re.I,
-            )
-        ]
+        ai_node_names: set[str] = set()
+        ai_steps: list[str] = []
+        for node in nodes:
+            node_type = str(node.get("type", ""))
+            node_name = node.get("name")
+            if _n8n_is_llm_or_agent_node(node_type):
+                ai_steps.append(f"{node_name} ({node_type})")
+                if isinstance(node_name, str) and node_name:
+                    ai_node_names.add(node_name)
+            elif _n8n_http_model_node(node):
+                ai_steps.append(f"{node_name} ({node_type}, model API)")
+                if isinstance(node_name, str) and node_name:
+                    ai_node_names.add(node_name)
         # 'Respond to Webhook' is the reply step of a chat or form workflow, not a
         # trigger: counting it would read a person-operated workflow as event-run.
         triggers = [
@@ -300,6 +406,9 @@ class N8nConnector(_AutomationBase):
             for n in nodes
             if get_path(n, "parameters.model", "parameters.modelId")
         ]
+        is_agent, graph_incomplete = _n8n_has_agent_action_path(nodes, w.get("connections"), ai_node_names)
+        if graph_incomplete:
+            self.ctx.warn("lowcode.n8n: AI workflow graph is incomplete or exceeds the analysis bound")
         f = self._workflow_finding(
             wid=str(workflow_id),
             name=w.get("name") or "Unnamed workflow",
@@ -314,11 +423,7 @@ class N8nConnector(_AutomationBase):
             updated=w.get("updatedAt"),
             triggers=triggers,
             ai_steps=ai_steps,
-            kind=(
-                Kind.AGENT
-                if any(t.endswith(".agent") or t.endswith("agentTool") for t in types)
-                else Kind.WORKFLOW
-            ),
+            kind=Kind.AGENT if is_agent else Kind.WORKFLOW,
             resource_type="workflow" if identified else "unresolved-workflow",
             extra={
                 "node_count": len(nodes),

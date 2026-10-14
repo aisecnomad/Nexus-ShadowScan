@@ -1664,6 +1664,13 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         # as the endpoint (_is_static_or_probe).
         if _is_static_or_probe(ev.path):
             return False
+        bare = str(ev.path or "").split("?", 1)[0].rstrip("/")
+        if bare == "/api/chat" and is_browser_user_agent(ev.user_agent):
+            return False
+        if ev.method == "GET" and re.fullmatch(r"/v1/threads/[^/]+/runs", bare):
+            return False
+        if ev.path and is_generation(ev.path, ev.model, ev.method):
+            return True
         text = " ".join(x for x in (ev.host, ev.path) if x)
         if ev.path and re.search(
             r"/v1/(?:chat/completions|completions|responses|messages|embeddings|models|assistants|threads"

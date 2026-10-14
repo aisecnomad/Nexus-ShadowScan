@@ -185,7 +185,7 @@ def is_generation(path: str | None, model: str | None = None, method: str | None
         return method == "POST" and bool(
             re.fullmatch(
                 r"(?:/v1|/openai/deployments/[^/]+)?/(?:chat/completions|completions|messages|responses)"
-                r"|/api/(?:chat|generate)|/model/[^/]+/(?:invoke|invoke-with-response-stream|converse|converse-stream)"
+                r"|/api/(?:chat|generate)|/generate|/model/[^/]+/(?:invoke|invoke-with-response-stream|converse|converse-stream)"
                 r"|/v1(?:beta1)?/projects/[^/]+/locations/[^/]+/publishers/[^/]+/models/[^/:]+:"
                 r"(?:generateContent|streamGenerateContent)",
                 bare.rstrip("/"),

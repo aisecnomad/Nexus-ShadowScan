@@ -565,7 +565,7 @@ class ServiceNowConnector(BaseConnector):
         text = f"{name} {_val(rec.get('description')) or ''} {_val(rec.get('sys_scope')) or ''}"
         matches = self._optional_name_matches(text)
         low = text.lower()
-        if not matches and not any(
+        if not any(
             k in low
             for k in (
                 "now assist",
