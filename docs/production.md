@@ -1135,6 +1135,13 @@ engine token (`registry.example/ml/vllm-serving`) are now agent workloads, so
 new findings can appear. A model argument with a GPU but without an AI image or
 AI resource kind is not promoted.
 
+**Low-code.** ServiceNow flows named only with the generic AI hint (for example
+"Copilot" licence administration) and no ServiceNow AI marker are no longer
+reported; flows named for an AI product or provider, or with a marker, are.
+n8n workflows whose only AI step is an HTTP Request POST to a model API are
+now reported as AI workflows, and node types that merely contain `mcp` inside
+another word are no longer AI steps.
+
 Permission and machine-identity observations are not proof of agent execution,
 and observations in an offline export are not authenticated publisher evidence.
 

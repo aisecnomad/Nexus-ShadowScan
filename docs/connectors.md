@@ -764,7 +764,9 @@ query, at most 1000).
 
 ### `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
-`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer.
+`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer. A flow needs
+a ServiceNow AI marker or an AI product or provider name; the generic AI-name
+hint alone does not qualify it.
 
 Options: `instance` (env `SNOW_INSTANCE`), `username` and `password` (env
 `SNOW_USERNAME`, `SNOW_PASSWORD`) or `token` (env `SNOW_TOKEN`) for a bearer
@@ -776,7 +778,9 @@ as unresolved observations, make coverage incomplete and cannot inherit
 registry approval from an unrelated parent.
 
 ### `lowcode.n8n`
-n8n workflows with AI or agent steps, including LangChain nodes; triggers
+n8n workflows with AI or agent steps, including LangChain nodes and HTTP
+Request POSTs to a model API (a known model host, or a versioned generation
+route on a host that is not a messaging API); triggers
 (schedule → `scheduled`, webhook or app event → `event-triggered`, both with
 `autonomous`; a manual, chat, form or evaluation trigger adds neither), code
 steps (→ code-exec) and models. Live

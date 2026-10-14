@@ -565,7 +565,16 @@ class ServiceNowConnector(BaseConnector):
         text = f"{name} {_val(rec.get('description')) or ''} {_val(rec.get('sys_scope')) or ''}"
         matches = self._optional_name_matches(text)
         low = text.lower()
-        if not matches and not any(
+        # A flow qualifies through a ServiceNow AI marker or a name that
+        # establishes an AI product or provider. The generic AI-name hint
+        # ("Copilot", "assistant") and ambiguous product names do not: a
+        # "Copilot seat reclamation" flow administers licences.
+        product_named = any(
+            m.signature.id != "identity-app.generic-ai-name"
+            and not (m.signal.type == "name" and m.signal.ambiguous)
+            for m in matches
+        )
+        if not product_named and not any(
             k in low
             for k in (
                 "now assist",

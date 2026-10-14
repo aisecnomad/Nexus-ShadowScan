@@ -20,10 +20,11 @@ import json
 import re
 from collections.abc import Callable, Collection, Iterable, Iterator
 from typing import Any, ClassVar
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from requests import RequestException
 
+from shadowscan.connectors.agent_behavior import is_generation
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import (
     apply_matches,
@@ -73,6 +74,28 @@ _WORKATO_SCHEDULE_PROVIDERS = re.compile(r"^(?:clock|scheduler)\b|schedul", re.I
 _WORKATO_HUMAN_PROVIDERS = re.compile(r"workbot", re.I)
 _WORKBOT_HUMAN_TRIGGERS = re.compile(r"command|menu|modal|button|action|shortcut", re.I)
 # Zapier apps a person operates: the Chrome extension's push, an Interfaces form and a chatbot.
+# n8n HTTP Request nodes that POST to a model API. A path alone is weak: SMS
+# and messaging APIs also take POST /v1/messages or /messages. A node counts as
+# a model step when it POSTs to a generation route (agent_behavior's
+# is_generation) and either (a) the host is a known model host, or (b) the
+# route is versioned or namespaced (/v1/chat/completions, /v1/messages,
+# /v1/responses, /openai/deployments/.../chat/completions, /api/generate,
+# /api/chat) and the host is not a known messaging API. A bare /messages,
+# /responses or /completions on an unknown host never counts.
+_N8N_HTTP_NODE = "n8n-nodes-base.httpRequest"
+_UNQUALIFIED_GENERATION_ROUTE = re.compile(r"/(?:messages|responses|completions|chat/completions)/?", re.I)
+_NON_AI_MESSAGE_APIS = (
+    "nexmo.com",
+    "vonage.com",
+    "messagebird.com",
+    "bird.com",
+    "twilio.com",
+    "sinch.com",
+    "plivo.com",
+    "telnyx.com",
+)
+# Domain signals weighted below this are hints, not model hosts (as in gateway.logs).
+_MIN_MODEL_HOST_WEIGHT = 0.3
 _ZAPIER_HUMAN_APPS = re.compile(r"zapier (?:chrome extension|interfaces|chatbots)|\bmanual\b", re.I)
 
 
@@ -206,6 +229,30 @@ class N8nConnector(_AutomationBase):
         "input": "offline: workflow list JSON or directory of exported workflows",
     }
 
+    def _http_model_node(self, node: dict[str, Any]) -> bool:
+        """An HTTP Request node that POSTs to a model-generation route (see _N8N_HTTP_NODE)."""
+        params = node.get("parameters")
+        if node.get("type") != _N8N_HTTP_NODE or not isinstance(params, dict):
+            return False
+        method, url = params.get("method"), params.get("url")
+        if not isinstance(method, str) or method.upper() != "POST" or not isinstance(url, str):
+            return False
+        try:
+            parsed = urlsplit(url.strip())
+            host = parsed.hostname
+        except ValueError:
+            return False
+        if parsed.scheme not in {"http", "https"} or not host:
+            return False
+        path = parsed.path.rstrip("/") or "/"
+        if not is_generation(path, method="POST"):
+            return False
+        if any(m.weight >= _MIN_MODEL_HOST_WEIGHT for m in self.index.match_domain(host)):
+            return True
+        if any(host == api or host.endswith(f".{api}") for api in _NON_AI_MESSAGE_APIS):
+            return False
+        return not _UNQUALIFIED_GENERATION_ROUTE.fullmatch(path)
+
     def collect(self) -> Iterable[dict[str, Any]]:
         base = str(self.ctx.get("api_url", env="N8N_API_URL") or "").rstrip("/")
         key = self.ctx.get("api_key", env="N8N_API_KEY")
@@ -274,11 +321,14 @@ class N8nConnector(_AutomationBase):
             for n in nodes
             if re.search(
                 r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
-                r"|\.agent$|mcp",
+                r"|\.agent$|\bmcp\b",
                 str(n.get("type", "")),
                 re.I,
             )
         ]
+        ai_steps.extend(
+            f"{n.get('name')} ({n.get('type')}, model API)" for n in nodes if self._http_model_node(n)
+        )
         # 'Respond to Webhook' is the reply step of a chat or form workflow, not a
         # trigger: counting it would read a person-operated workflow as event-run.
         triggers = [
