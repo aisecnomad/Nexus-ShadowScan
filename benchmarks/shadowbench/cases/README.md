@@ -449,7 +449,11 @@ track:
   root, in fresh network and PID namespaces with their own `/proc` but the
   host's file system otherwise in view, `/root` and `/home` included. Fleet's
   table, which also reads `/home/*` and `/root`, therefore saw the host's
-  homes; its adapter kept only rows under the case home.
+  homes; its adapter kept only rows under the case home. After a stage
+  exits, the runner now takes `work/` back for root and removes group and
+  other write from its directories before it removes escaping symlinks, so a
+  process of the tools' uid outside the stage cannot plant one after that
+  check and have the adapter read a root-only file through it.
 * The runner now records in `manifest.json` the harness commit and whether
   anything under `tools/` differed from it, and the report names both. It
   records the `version` that `tools.json` gives any tool; before, the Numbat,

@@ -81,9 +81,12 @@ unless:
   depending on the distribution). A missing compiler or a failed link is
   reported with gcc's exit code and the end of its output.
 
-The tools must also be readable and executable by uid 65534. After a tool
-exits, any symlink it left that leads out of `work/`, and any FIFO, socket or
-device node, is removed before the adapter reads the output as root.
+The tools must also be readable and executable by uid 65534. After the stage
+exits, `work/` is handed back to root and its directories lose group and other
+write, so no process running as uid 65534 outside the stage (one that held a
+directory open while the tool ran, say) can add or swap an entry in it any
+more. Then any symlink the tool left that leads out of `work/`, and any FIFO,
+socket or device node, is removed before the adapter reads the output as root.
 
 The manifest records a version for each tool that ran. When the tool's entry
 in `tools.json` has a `version` string (see Tool configuration), the runner

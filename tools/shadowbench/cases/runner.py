@@ -20,9 +20,10 @@ outside those and be reachable by that uid. Every run's ``work/`` belongs to
 the same uid, so the scratch directory must also belong to the runner and give
 group and other nothing but search (0711, as the runner creates it), or a tool
 could list it and reach a concurrent run's tree. The runner refuses to start
-otherwise. Before the adapter reads the tool's output as root, any symlink the
-tool left that leads out of ``work/`` and any FIFO, socket or device node in it
-is removed.
+otherwise. Before the adapter reads the tool's output as root, ``work/`` is
+handed back to root with group and other write removed, so no process of the
+tool's uid can change it any more, and then any symlink the tool left that
+leads out of ``work/`` and any FIFO, socket or device node in it is removed.
 
 A crash, timeout or unreadable output is recorded as ``error`` and never as a
 clean negative. A run that exits outside the adapter's accepted codes but still
@@ -178,6 +179,39 @@ def _chown_tree(path: Path, uid: int, gid: int) -> None:
     os.lchown(path, uid, gid)
     for top, dirs, files in os.walk(path):
         for name in (*dirs, *files):
+            os.lchown(os.path.join(top, name), uid, gid)
+
+
+def _reclaim_tree(work: Path) -> None:
+    """Take the tool's tree back for the runner, so no other process can change it while it is read.
+
+    A process of the tool's uid that runs outside the stage (any host process running as 65534) can
+    hold a directory fd into ``work`` and, while ``work`` still belongs to that uid, plant a symlink
+    after ``_drop_unsafe_entries`` checked the tree. Each directory is handed to the runner (root)
+    and loses group and other write before it is listed, so once listed only the runner can add,
+    rename or remove an entry in it; no symlink is followed, and an open fd grants no write.
+    Everything else is handed to the runner too.
+    """
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    uid, gid = os.geteuid(), os.getegid()
+
+    def seal(path: str) -> None:
+        fd = os.open(path, flags)
+        try:
+            os.fchown(fd, uid, gid)
+            os.fchmod(fd, stat.S_IMODE(os.fstat(fd).st_mode) & ~0o022)
+        finally:
+            os.close(fd)
+
+    seal(str(work))
+    for top, dirs, files in os.walk(work):  # top-down: a directory is sealed before it is listed
+        for name in dirs:
+            path = os.path.join(top, name)
+            if os.path.islink(path):
+                os.lchown(path, uid, gid)
+            else:
+                seal(path)
+        for name in files:
             os.lchown(os.path.join(top, name), uid, gid)
 
 
@@ -403,6 +437,7 @@ def run_one(
         total_timeout = sum(inv.timeout for inv in invocations) + STAGE_TIMEOUT_GRACE
         _chown_tree(work, TOOL_UID, TOOL_GID)
         staged = _stage(spec, control, repo, total_timeout)
+        _reclaim_tree(work)
         unsafe = _drop_unsafe_entries(work)
         runs = [
             RunResult(

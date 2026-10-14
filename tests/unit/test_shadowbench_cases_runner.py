@@ -1014,3 +1014,85 @@ def test_run_one_reads_tool_output_only_after_removing_planted_links(scratch: Pa
     assert seen == {"leak": False, "fifo": False}
     assert "2 unsafe" in row["note"]
     assert list(scratch.glob("fake-*")) == []
+
+
+PLANTER = r"""
+import os, sys
+fds = [os.open(path, os.O_RDONLY | os.O_DIRECTORY) for path in sys.argv[2:]]
+print("ready", flush=True)
+sys.stdin.readline()
+for fd in fds:
+    try:
+        os.symlink(sys.argv[1], "planted", dir_fd=fd)
+        os.rename("planted", "out.txt", src_dir_fd=fd, dst_dir_fd=fd)
+        print("planted", flush=True)
+    except OSError as exc:
+        print(exc.errno, flush=True)
+"""
+"""Holds directory fds into the work tree as uid 65534 and, when told, swaps ``out.txt`` for a symlink."""
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="running a process as uid 65534 needs root")
+@pytest.mark.skipif(shutil.which("python3", path="/usr/bin:/bin") is None, reason="needs a system python3")
+def test_run_one_reads_tool_output_that_no_other_process_can_relink_after_the_sweep(
+    scratch: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A uid-65534 process outside the stage planted a symlink after the sweep, and root read through it."""
+    secret = tmp_path / "root-only"  # tmp_path is 0700 root: uid 65534 can name it, never read it
+    secret.write_text("ROOT-ONLY-MARKER", encoding="utf-8")
+    secret.chmod(0o600)
+    python = shutil.which("python3", path="/usr/bin:/bin")
+    assert python is not None
+    planter: dict[str, subprocess.Popen[str]] = {}
+
+    def stage_as_tool(spec: dict[str, Any], control: Path, repo: Path, timeout: float) -> dict[str, Any]:
+        # What a tool leaves, and a process of the same uid that outlives the stage holding fds into it.
+        work = Path(spec["work"])
+        (work / "sub").mkdir(mode=0o777)
+        (work / "sub").chmod(0o777)
+        for path in (work / "out.txt", work / "sub" / "out.txt"):
+            path.write_text("tool-output", encoding="utf-8")
+        runner._chown_tree(work, runner.TOOL_UID, runner.TOOL_GID)
+        proc = subprocess.Popen(
+            [python, "-I", "-c", PLANTER, str(secret), str(work), str(work / "sub")],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            user=runner.TOOL_UID,
+            group=runner.TOOL_GID,
+            extra_groups=[],
+            env={"PATH": TOOL_PATH},
+            cwd="/",
+        )
+        assert proc.stdout is not None and proc.stdout.readline().strip() == "ready"
+        planter["proc"] = proc
+        return {"runs": [_run()], "processes": [], "error": None}
+
+    sweep = runner._drop_unsafe_entries
+    outcomes: list[str] = []
+
+    def sweep_then_plant(work: Path) -> int:
+        removed = sweep(work)
+        proc = planter["proc"]
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write("go\n")
+        proc.stdin.flush()
+        outcomes.extend(proc.stdout.readline().strip() for _ in range(2))
+        return removed
+
+    def normalize(work: Path, runs: list[RunResult]) -> AdapterResult:
+        texts = [(work / rel).read_text(encoding="utf-8") for rel in ("out.txt", "sub/out.txt")]
+        return AdapterResult("ok", [Entity("app", f"app:{text}", "agent") for text in texts])
+
+    monkeypatch.setattr(runner, "_stage", stage_as_tool)
+    monkeypatch.setattr(runner, "_drop_unsafe_entries", sweep_then_plant)
+    try:
+        row = _run_one(FakeAdapter(normalize=normalize), scratch)
+    finally:
+        if "proc" in planter:
+            planter["proc"].kill()
+            planter["proc"].wait()
+    assert outcomes and "planted" not in outcomes, outcomes
+    assert row["status"] == "ok", row
+    assert "ROOT-ONLY-MARKER" not in json.dumps(row)
+    assert {e["key"] for e in row["entities"]} == {"app:tool-output"}
