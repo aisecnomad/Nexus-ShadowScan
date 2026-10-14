@@ -1143,7 +1143,12 @@ inspected as artifacts: an extensionless file still gets the normal text
 analysis, and one warning per root counts the uninspected files and marks
 coverage incomplete. All reads use
 confined regular-file handles; symlinks, FIFOs and device files are never opened
-as model payloads. Headers are an inventory aid, not a guarantee that an artifact
+as model payloads. A link with an artifact suffix to a scanned artifact with the
+same suffix in the same project and test classification (`latest.gguf` to
+`model-q4.gguf`) loses nothing, since the target is inventoried at its real
+path, and leaves coverage complete; a link to an artifact outside the root, in
+an excluded directory, under a test path or with another suffix is an unscanned
+symbolic link (coverage incomplete). Headers are an inventory aid, not a guarantee that an artifact
 is safe to load. No deserializer, inference engine or scanned executable runs.
 
 Known limitation: a Hugging Face cache (`snapshots/<revision>/model.safetensors`

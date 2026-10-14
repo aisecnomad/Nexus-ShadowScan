@@ -2473,9 +2473,17 @@ class FilesystemConnector(BaseConnector):
             return _project_root(root, rel, budget=budget) == _project_root(
                 root, target_rel, budget=budget
             ) and _is_test_path(rel) == _is_test_path(target_rel)
-        # Only source aliases are equivalent without opening the link: config
-        # and document parsing can depend on the file name and directory.
-        if link_ext not in SOURCE_EXTENSIONS or Path(target.name).suffix.lower() != link_ext:
+        # Only source and model-artifact aliases are equivalent without opening
+        # the link: config and document parsing can depend on the file name and
+        # directory. A model artifact with an artifact suffix is inspected by
+        # that suffix and its content alone, so an alias such as latest.gguf to
+        # a scanned model-q4.gguf hides nothing.
+        same_kind = link_ext in SOURCE_EXTENSIONS or (
+            link_ext in ARTIFACT_SUFFIXES
+            and self._model_artifact_name(link_name)
+            and not _analyzed_by_name(link_name)
+        )
+        if not same_kind or Path(target.name).suffix.lower() != link_ext:
             return False
         # The real path must keep the alias's project ownership and evidence
         # weight; another project or a test directory would change both.

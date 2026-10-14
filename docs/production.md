@@ -774,8 +774,10 @@ the interpreter lock indefinitely.
 
 Code scans follow a documented coverage policy. Links whose own names are never
 read, source-file links whose real targets are analyzed in the same project
-with the same test classification, and coding-agent instruction-document links
-to another instruction document under the same condition, are skipped because
+with the same test classification, coding-agent instruction-document links
+to another instruction document under the same condition, and (with
+`inspect_model_artifacts`) model-artifact links to a scanned artifact with the
+same suffix under the same condition, are skipped because
 nothing at the alias path is lost (see [scan semantics](scanning.md) for the
 exact rule). Directory
 links, configuration aliases, links into excluded or unread content, links

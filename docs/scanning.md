@@ -15,7 +15,13 @@ that are never silent:
   `copilot-instructions.md`) that links to another instruction document in the
   same project with the same test classification is also covered: the target is
   scanned at its real path, so the alias is not a second agent definition and
-  its alias-only file name is not reported separately. Every other link makes
+  its alias-only file name is not reported separately. With
+  `inspect_model_artifacts`, a model or packaged-binary artifact link with an
+  artifact suffix (`.gguf`, `.safetensors`, `.onnx`, `.exe`, `.bin`, `.pkg`)
+  to a scanned artifact with the same suffix, in the same project and test
+  classification (`latest.gguf` linking to `model-q4.gguf`), is covered the
+  same way: artifacts are inspected by suffix and content, and the target is
+  inventoried at its real path. Every other link makes
   the scan incomplete (exit code 3): directory links, whose alias paths are not
   inspected; other configuration and document aliases, whose parsing can depend
   on their path; aliases into another project or test directory; links into
