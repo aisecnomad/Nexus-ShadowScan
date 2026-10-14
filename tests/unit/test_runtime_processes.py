@@ -108,6 +108,22 @@ def test_osquery_defender_and_generic_rows(run_connector, tmp_path):
     assert ollama.model_providers == ["provider.ollama"] and ollama.account == "WIN-22.corp.example"
 
 
+def test_offline_process_inventory_never_reads_proc(run_connector, monkeypatch, tmp_path):
+    def forbidden_proc_access():
+        raise AssertionError("offline process scans must not access /proc")
+
+    class ForbiddenProc:
+        def is_dir(self):
+            forbidden_proc_access()
+
+    path = _rows(tmp_path, [{"host": "box", "cmdline": "claude"}])
+    monkeypatch.setattr(runtime_processes, "_PROC", ForbiddenProc())
+
+    findings, ctx = run_connector("runtime.processes", input=str(path))
+
+    assert findings and not ctx.stats.incomplete
+
+
 ROOT_STATUS = "Gid:\t0\t0\t0\t0\nGroups:\t\n"
 HOST_GIDS = "         0          0 4294967295\n"
 
@@ -148,6 +164,59 @@ def test_live_mode_reads_proc(run_connector, monkeypatch, tmp_path):
     assert not ctx.stats.warnings
     assert [f.title.split(" running on ")[0] for f in findings] == ["Claude Code"]
     assert findings[0].account == "box"
+
+
+def test_live_mode_finds_mapped_sdk_libraries_and_open_model_files(run_connector, monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    pid = proc / "12"
+    (pid / "fd").mkdir(parents=True)
+    (pid / "cmdline").write_bytes(b"python\0worker.py\0")
+    (pid / "maps").write_text(
+        "7f000000-7f001000 r--p 00000000 08:01 1 /usr/lib/libggml.so\n"
+        "7f001000-7f002000 r--p 00000000 08:01 2 "
+        "/opt/venv/lib/python3.12/site-packages/vllm/engine.py\n"
+    )
+    (pid / "fd" / "3").symlink_to("/models/model.gguf")
+    (pid / "fd" / "4").symlink_to("/tmp/_MEI1234567/data.bin")
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+
+    findings, ctx = run_connector("runtime.processes", label="box")
+
+    artifacts = [finding for finding in findings if finding.metadata.get("runtime_artifacts")]
+    assert {artifact for finding in artifacts for artifact in finding.metadata["runtime_artifacts"]} == {
+        "GGML native library",
+        "vLLM",
+        "open GGUF model file",
+        "PyInstaller _MEI temporary mount",
+    }
+    assert not ctx.stats.incomplete
+    assert "/models/model.gguf" not in json.dumps([finding.to_dict() for finding in findings])
+    assert "/tmp/_MEI1234567" not in json.dumps([finding.to_dict() for finding in findings])
+
+
+def test_live_mode_reports_unreadable_proc_artifacts_incomplete(run_connector, monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    pid = proc / "12"
+    pid.mkdir()
+    (pid / "cmdline").write_bytes(b"python\0worker.py\0")
+    real_open = runtime_processes.os.open
+
+    def deny_maps(path, flags, *args, **kwargs):
+        if Path(path) == pid / "maps":
+            raise PermissionError("synthetic denied maps")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(runtime_processes.os, "open", deny_maps)
+
+    _, ctx = run_connector("runtime.processes", label="box")
+
+    assert ctx.stats.incomplete
+    assert any("artifacts from" in warning for warning in ctx.stats.warnings)
 
 
 def test_live_mode_outside_linux_is_refused(run_connector, monkeypatch):

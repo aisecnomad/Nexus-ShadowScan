@@ -40,6 +40,7 @@ from shadowscan.connectors.base import (
 )
 from shadowscan.connectors.common import finalize
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures.loader import normalise_package_name
 from shadowscan.utils.text import parse_timestamp
 
 
@@ -48,7 +49,7 @@ class ProcessRule:
     tool: str  # stable id used in resources
     product: str
     signature: str | None
-    role: str  # agent | app | mcp-server | model-server | framework
+    role: str  # agent | app | mcp-server | model-server | framework | runtime-artifact
 
 
 # Executable base names (lower case, without ``.exe``) that are the tool itself.
@@ -139,6 +140,21 @@ _TIME_FIELDS = ("start_time", "Timestamp", "timestamp", "ts", "time", "ProcessCr
 _PID_FIELDS = ("pid", "ProcessId", "process_id", "TargetProcessId")
 _PROC = Path("/proc")
 _MAX_CMDLINE_BYTES = 64 * 1024
+_MAX_PROC_MAP_BYTES = 256 * 1024
+_MAX_PROC_MAP_BYTES_TOTAL = 64 * 1024 * 1024
+_MAX_PROC_FDS = 128
+_MAX_PROC_FDS_TOTAL = 100_000
+_MAX_PROC_ARTIFACTS = 64
+_NATIVE_AI_LIBRARIES = {
+    "libggml": "GGML native library",
+    "libtorch": "PyTorch native library",
+    "onnxruntime": "ONNX Runtime native library",
+    "libllama": "llama.cpp native library",
+    "tokenizers": "Tokenizers native library",
+    "vllm": "vLLM native library",
+}
+_MODEL_FILE_SUFFIXES = frozenset({".gguf", ".safetensors", ".onnx"})
+_NATIVE_LIBRARY_SUFFIX = re.compile(r"\.so(?:\.\d+)*(?: \(deleted\))?$")
 
 
 def classify(executable: str | None, argv: list[str]) -> tuple[ProcessRule, str | None] | None:
@@ -207,8 +223,127 @@ class _Run:
     pids: list[int] = field(default_factory=list)
     executables: Counter = field(default_factory=Counter)
     packages: Counter = field(default_factory=Counter)
+    artifacts: Counter = field(default_factory=Counter)
     first: str | None = None
     last: str | None = None
+
+
+def _registered_site_packages(index: Any) -> dict[str, tuple[str, str]]:
+    """Map exact Python distribution names to the AI signatures that register them."""
+    packages: dict[str, tuple[str, str]] = {}
+    for signature in index.signatures.values():
+        if signature.category not in {"coding-agent", "framework", "platform", "provider", "protocol"}:
+            continue
+        for signal in signature.signals:
+            if signal.type != "dependency" or signal.ecosystem not in {"pypi", "any"}:
+                continue
+            for name in signal.names:
+                packages.setdefault(normalise_package_name(name), (signature.id, signature.name))
+    return packages
+
+
+def _inspect_proc_artifacts(
+    pid_dir: Path,
+    registered_packages: dict[str, tuple[str, str]],
+    map_budget: int,
+    fd_budget: int,
+) -> tuple[list[dict[str, str | None]], int, int, bool, bool]:
+    """Read bounded maps and fd metadata only; never follow an fd target or read process memory."""
+    artifacts: dict[str, dict[str, str | None]] = {}
+    map_bytes = 0
+    fds_read = 0
+    unreadable = False
+    limited = False
+    map_limit = min(_MAX_PROC_MAP_BYTES, map_budget)
+
+    if map_limit:
+        try:
+            descriptor = os.open(pid_dir / "maps", os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                raw_maps = os.read(descriptor, map_limit + 1)
+            finally:
+                os.close(descriptor)
+            if len(raw_maps) > map_limit:
+                raw_maps = raw_maps[:map_limit]
+                limited = True
+            map_bytes = len(raw_maps)
+            for line in raw_maps.decode("utf-8", "replace").splitlines():
+                fields = line.split(maxsplit=5)
+                if len(fields) < 6:
+                    continue
+                mapped = fields[5]
+                basename = mapped.rsplit("/", 1)[-1].casefold()
+                if _NATIVE_LIBRARY_SUFFIX.search(basename):
+                    for library, label in _NATIVE_AI_LIBRARIES.items():
+                        if re.search(rf"(?<![a-z0-9]){re.escape(library)}(?![a-z0-9])", basename):
+                            key = f"native:{library}"
+                            artifacts[key] = {"id": key, "label": label, "signature": None}
+                components = mapped.replace(r"\040", " ").split("/")
+                for position, component in enumerate(components[:-1]):
+                    if component.casefold() != "site-packages":
+                        continue
+                    package = components[position + 1].casefold()
+                    package = re.sub(r"\.(?:dist|egg)-info$", "", package)
+                    registered = registered_packages.get(normalise_package_name(package))
+                    if registered:
+                        signature, name = registered
+                        key = f"sdk:{signature}"
+                        artifacts[key] = {"id": key, "label": name, "signature": signature}
+        except FileNotFoundError:
+            pass
+        except PermissionError:
+            unreadable = True
+        except OSError:
+            unreadable = True
+    else:
+        limited = True
+
+    fd_limit = min(_MAX_PROC_FDS, fd_budget)
+    if fd_limit:
+        try:
+            with os.scandir(pid_dir / "fd") as entries:
+                for position, entry in enumerate(entries):
+                    if position >= fd_limit:
+                        limited = True
+                        break
+                    fds_read += 1
+                    try:
+                        target = os.readlink(entry.path)
+                    except FileNotFoundError:
+                        continue
+                    except PermissionError:
+                        unreadable = True
+                        continue
+                    except OSError:
+                        unreadable = True
+                        continue
+                    lowered = target.casefold()
+                    suffix = Path(lowered).suffix
+                    if suffix in _MODEL_FILE_SUFFIXES:
+                        key = f"fd:model:{suffix[1:]}"
+                        label = f"open {suffix[1:].upper()} model file"
+                        artifacts[key] = {"id": key, "label": label, "signature": None}
+                    if re.search(r"(?:^|/)_MEI[^/]*(?:/|$)", target):
+                        key = "fd:pyinstaller-mei"
+                        artifacts[key] = {
+                            "id": key,
+                            "label": "PyInstaller _MEI temporary mount",
+                            "signature": None,
+                        }
+        except FileNotFoundError:
+            pass
+        except PermissionError:
+            unreadable = True
+        except OSError:
+            unreadable = True
+    else:
+        limited = True
+
+    ordered = sorted(artifacts.values(), key=lambda item: str(item["id"]))
+    if len(ordered) > _MAX_PROC_ARTIFACTS:
+        ordered = ordered[:_MAX_PROC_ARTIFACTS]
+        limited = True
+    return ordered, map_bytes, fds_read, unreadable, limited
 
 
 class RuntimeProcessConnector(BaseConnector, _NoDump):
@@ -218,7 +353,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
     surface: ClassVar[Surface] = Surface.RUNTIME
     provider: ClassVar[str | None] = "runtime"
     description: ClassVar[str] = (
-        "AI agents, desktop apps, MCP servers and model servers running on hosts, from process inventories "
+        "AI agents, desktop apps, MCP servers, model servers and mapped AI artifacts, from process "
+        "inventories "
         "(osquery, EDR exports) or the local /proc."
     )
     config_keys: ClassVar[dict[str, str]] = {
@@ -235,6 +371,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         super().__init__(ctx)
         self.label = str(ctx.get("label") or socket.gethostname() or "host")
         self.max_processes = _positive_limit(ctx.get("max_processes", 100_000), "max_processes")
+        self._site_packages = _registered_site_packages(self.index)
 
     # ------------------------------------------------------------------ live
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -250,6 +387,10 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             self.ctx.warn(f"runtime.processes: not every process is visible: {restricted}")
         seen = 0
         unreadable = 0
+        artifact_unreadable = 0
+        artifact_limited = False
+        map_budget = _MAX_PROC_MAP_BYTES_TOTAL
+        fd_budget = _MAX_PROC_FDS_TOTAL
         users: dict[int, str] = {}
         for entry in os.scandir(proc):
             if not entry.name.isdigit():
@@ -260,26 +401,57 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 )
                 break
             seen += 1
+            pid_dir = proc / entry.name
             try:
-                fd = os.open(proc / entry.name / "cmdline", os.O_RDONLY | os.O_NOFOLLOW)
+                fd = os.open(pid_dir / "cmdline", os.O_RDONLY | os.O_NOFOLLOW)
                 try:
                     raw = os.read(fd, _MAX_CMDLINE_BYTES)
                 finally:
                     os.close(fd)
-                uid = os.stat(proc / entry.name, follow_symlinks=False).st_uid
             except FileNotFoundError:
                 continue  # exited while listing
+            except PermissionError:
+                unreadable += 1
+                raw = b""
             except OSError:
                 unreadable += 1
+                raw = b""
+            try:
+                uid = os.stat(pid_dir, follow_symlinks=False).st_uid
+            except FileNotFoundError:
                 continue
+            except OSError:
+                unreadable += 1
+                uid = None
             argv = [a.decode("utf-8", "replace") for a in raw.split(b"\0") if a]
-            if not argv or classify(None, argv) is None:
-                continue
-            if uid not in users:
+            artifacts, used_maps, used_fds, denied, limited = _inspect_proc_artifacts(
+                pid_dir, self._site_packages, map_budget, fd_budget
+            )
+            map_budget -= used_maps
+            fd_budget -= used_fds
+            artifact_unreadable += int(denied)
+            artifact_limited = artifact_limited or limited
+            if uid is not None and uid not in users:
                 users[uid] = _user_name(uid)
-            yield {"host": self.label, "user": users[uid], "pid": int(entry.name), "argv": argv}
+            if classify(None, argv) is None and not artifacts:
+                continue
+            yield {
+                "host": self.label,
+                "user": users.get(uid, "unknown") if uid is not None else "unknown",
+                "pid": int(entry.name),
+                "argv": argv,
+                "proc_artifacts": artifacts,
+            }
         if unreadable:
             self.ctx.warn(f"runtime.processes: {unreadable} process(es) could not be read")
+        if artifact_unreadable:
+            self.ctx.warn(
+                f"runtime.processes: artifacts from {artifact_unreadable} process(es) could not be read"
+            )
+        if artifact_limited:
+            self.ctx.warn(
+                "runtime.processes: maps or file-descriptor artifact inspection reached its safety limit"
+            )
 
     # --------------------------------------------------------------- analyse
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -290,26 +462,47 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             if rec is None:
                 continue
             match = classify(rec["exe"], rec["argv"])
-            if match is None:
+            if match is not None:
+                rule, package = match
+                key = (rec["host"], rec["user"], rule.tool)
+                run = runs.get(key)
+                if run is None:
+                    run = runs[key] = _Run(rec["host"], rec["user"], rule)
+                run.processes += 1
+                if isinstance(rec["pid"], int) and len(run.pids) < 10:
+                    run.pids.append(rec["pid"])
+                exe = (
+                    (rec["exe"] or (rec["argv"][0] if rec["argv"] else ""))
+                    .replace("\\", "/")
+                    .rsplit("/", 1)[-1]
+                )
+                run.executables[exe[:80]] += 1
+                if package:
+                    run.packages[package[:120]] += 1
+                when = rec["started"]
+                if when:
+                    run.first = when if run.first is None or when < run.first else run.first
+                    run.last = when if run.last is None or when > run.last else run.last
+            for artifact in rec["proc_artifacts"]:
+                signature = artifact["signature"]
+                tool = artifact["id"]
+                rule = ProcessRule(
+                    tool=f"artifact:{tool}",
+                    product=artifact["label"],
+                    signature=signature,
+                    role="runtime-artifact",
+                )
+                key = (rec["host"], rec["user"], rule.tool)
+                run = runs.get(key)
+                if run is None:
+                    run = runs[key] = _Run(rec["host"], rec["user"], rule)
+                run.processes += 1
+                run.artifacts[artifact["label"]] += 1
+                if isinstance(rec["pid"], int) and len(run.pids) < 10:
+                    run.pids.append(rec["pid"])
+                run.executables["/proc metadata"] += 1
+            if match is None and not rec["proc_artifacts"]:
                 continue
-            rule, package = match
-            key = (rec["host"], rec["user"], rule.tool)
-            run = runs.get(key)
-            if run is None:
-                run = runs[key] = _Run(rec["host"], rec["user"], rule)
-            run.processes += 1
-            if isinstance(rec["pid"], int) and len(run.pids) < 10:
-                run.pids.append(rec["pid"])
-            exe = (
-                (rec["exe"] or (rec["argv"][0] if rec["argv"] else "")).replace("\\", "/").rsplit("/", 1)[-1]
-            )
-            run.executables[exe[:80]] += 1
-            if package:
-                run.packages[package[:120]] += 1
-            when = rec["started"]
-            if when:
-                run.first = when if run.first is None or when < run.first else run.first
-                run.last = when if run.last is None or when > run.last else run.last
         for run in sorted(runs.values(), key=lambda r: (r.host, r.user, r.rule.tool)):
             yield self._finding(run)
 
@@ -333,8 +526,30 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             # Defender FolderPath is a directory; FileName is the executable.
             exe = f"{exe.rstrip('/').rstrip(chr(92))}/{name}"
         if not argv and not exe:
-            self.ctx.warn("runtime.processes: record has no command line or executable")
-            return None
+            proc_artifacts = raw.get("proc_artifacts", []) if not self.offline else []
+            if not isinstance(proc_artifacts, list) or not proc_artifacts:
+                self.ctx.warn("runtime.processes: record has no command line or executable")
+                return None
+        else:
+            proc_artifacts = raw.get("proc_artifacts", []) if not self.offline else []
+        clean_artifacts: list[dict[str, str | None]] = []
+        if isinstance(proc_artifacts, list):
+            if len(proc_artifacts) > _MAX_PROC_ARTIFACTS:
+                self.ctx.warn("runtime.processes: process artifact limit reached")
+            for artifact in proc_artifacts[:_MAX_PROC_ARTIFACTS]:
+                if (
+                    isinstance(artifact, dict)
+                    and isinstance(artifact.get("id"), str)
+                    and isinstance(artifact.get("label"), str)
+                    and (artifact.get("signature") is None or isinstance(artifact.get("signature"), str))
+                ):
+                    clean_artifacts.append(
+                        {
+                            "id": artifact["id"][:120],
+                            "label": artifact["label"][:120],
+                            "signature": artifact.get("signature"),
+                        }
+                    )
         host = _first(raw, ("hostIdentifier", "host_identifier")) or _first(row, _HOST_FIELDS) or self.label
         user = _first(row, _USER_FIELDS)
         if user is None and row.get("uid") not in (None, ""):
@@ -348,6 +563,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             "exe": exe,
             "pid": _pid(pid),
             "started": started.isoformat() if started else None,
+            "proc_artifacts": clean_artifacts,
         }
 
     def _finding(self, run: _Run) -> Finding:
@@ -381,14 +597,20 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             provider = "provider.ollama" if rule.tool == "ollama" else "provider.lm-studio"
             if self.index.get(provider) is not None:
                 f.add_model_provider(provider)
+        artifacts = sorted(run.artifacts)
         f.add_evidence(
             Evidence(
-                signal=f"runtime:process:{rule.role}",
+                signal="runtime:proc-artifact" if artifacts else f"runtime:process:{rule.role}",
                 description=(
-                    f"{run.processes} running process(es) of {what} ({', '.join(sorted(run.executables))})"
+                    f"Mapped runtime artifacts: {', '.join(artifacts)}"
+                    if artifacts
+                    else (
+                        f"{run.processes} running process(es) of {what} "
+                        f"({', '.join(sorted(run.executables))})"
+                    )
                 ),
                 location=f"{run.host}",
-                weight=0.85,
+                weight=0.75 if artifacts else 0.85,
                 signature=rule.signature,
             )
         )
@@ -406,6 +628,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 "mcp_packages": dict(run.packages.most_common(10)),
             }
         )
+        if artifacts:
+            f.metadata["runtime_artifacts"] = artifacts[:20]
         return finalize(f, self.index)
 
 
