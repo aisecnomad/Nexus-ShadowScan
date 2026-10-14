@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "wms-core"
 version = "4.2.0"
-description = "Warehouse management core service for Vantor Logistics"
+description = "Warehouse management core service for Adatum Logistics"
 requires-python = ">=3.11"
 dependencies = [
   "flask>=3.0",

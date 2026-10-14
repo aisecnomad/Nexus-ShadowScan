@@ -81,8 +81,8 @@ exclude = [
   "tests/fixtures",
   "examples",
   "archive",
-  # Estate benchmark corpus artifacts: authored sample repositories and
-  # exports under test, not project code.
+  # ShadowBench estate artifacts: authored sample repositories and exports
+  # that discovery tools are scored on, not project code.
   "benchmarks/shadowbench/estate/artifacts",
 ]
 
@@ -118,7 +118,7 @@ indent-style = "space"
 
 [tool.mypy]
 python_version = "3.11"
-# Estate benchmark corpus artifacts are inputs under test, not project code.
+# ShadowBench estate artifacts are inputs under test, not project code.
 exclude = ["benchmarks/shadowbench/estate/artifacts/"]
 warn_unused_ignores = true
 warn_return_any = true
@@ -137,8 +137,6 @@ ignore_missing_imports = false
 [[tool.mypy.overrides]]
 module = [
     "regex",
-    "reportlab",
-    "reportlab.*",
     "boto3",
     "boto3.*",
     "botocore",

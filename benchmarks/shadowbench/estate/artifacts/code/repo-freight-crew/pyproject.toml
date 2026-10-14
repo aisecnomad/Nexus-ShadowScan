@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "freight-crew"
 version = "0.3.1"
-description = "Carrier quote triage crew for the Vantor Logistics freight desk"
+description = "Carrier quote triage crew for the Adatum Logistics freight desk"
 requires-python = ">=3.11"
 dependencies = [
   "crewai>=0.80,<1",

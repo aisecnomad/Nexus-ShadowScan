@@ -1,6 +1,6 @@
 [
   {
-    "server": "https://freight-docs-mcp-g2p.vantor.example/mcp",
+    "server": "https://freight-docs-mcp-g2p.adatum.example/mcp",
     "auth_mode": "none",
     "tools": [
       {
@@ -14,7 +14,7 @@
     ]
   },
   {
-    "server": "vantor-freight-mcp",
+    "server": "adatum-freight-mcp",
     "auth_mode": "oauth",
     "tools": [
       {

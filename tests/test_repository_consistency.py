@@ -98,11 +98,25 @@ def _relative(path: Path) -> str:
 # --- Markdown -----------------------------------------------------------------
 
 
+# The ShadowBench estate's authored files: the fictional organization's repositories and home
+# directories, each frozen by digest in FREEZE.json. Their Markdown is scan input written as that
+# organization's own files, not this repository's documentation (repo-site's index.md links the
+# shipping-faq.html its site generator would emit, which does not exist here), and correcting it
+# would change a frozen file. Everything else under benchmarks/ is checked. That includes the run
+# reports under results/, which are generated and committed with their run: they pass, so a failure
+# there would mean that something a report links or names has moved.
+_FROZEN_MARKDOWN = ROOT / "benchmarks" / "shadowbench" / "estate" / "artifacts"
+
+
 def _markdown_files() -> list[Path]:
     files = sorted(ROOT.glob("*.md"))
-    for folder in (".github", "docs", "examples", "tools"):
+    for folder in (".github", "benchmarks", "docs", "examples", "tools"):
         files.extend(sorted((ROOT / folder).rglob("*.md")))
-    return files
+    return [path for path in files if not path.is_relative_to(_FROZEN_MARKDOWN)]
+
+
+def _benchmark_documents() -> list[Path]:
+    return [path for path in _markdown_files() if path.is_relative_to(ROOT / "benchmarks")]
 
 
 _FENCE = re.compile(r"^(`{3,}|~{3,})")
@@ -229,6 +243,21 @@ def test_relative_markdown_links_and_anchors_resolve(markdown: Path) -> None:
     assert not problems, f"{_relative(markdown)}:\n  " + "\n  ".join(problems)
 
 
+def test_markdown_checks_cover_benchmarks_but_not_the_frozen_estate() -> None:
+    """Benchmark READMEs and run reports are documentation; the estate's authored files are scan input."""
+    checked = {path.relative_to(ROOT).as_posix() for path in _markdown_files()}
+    assert {
+        "benchmarks/README.md",
+        "benchmarks/shadowbench/README.md",
+        "benchmarks/shadowbench/cases/README.md",
+        "benchmarks/shadowbench/estate/README.md",
+        "benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md",
+    } <= checked
+    frozen = {path.relative_to(ROOT).as_posix() for path in _FROZEN_MARKDOWN.rglob("*.md")}
+    assert frozen, "the estate's authored Markdown moved; point _FROZEN_MARKDOWN at it"
+    assert not frozen & checked
+
+
 _REPOSITORY_LINK = re.compile(
     r"https://github\.com/aisecnomad/Project-Nexus/(blob|tree)/main/([^#?]+)(?:#(.+))?"
 )
@@ -291,7 +320,9 @@ def test_accidental_heading_check_ignores_code_blocks_and_real_headings() -> Non
     assert _accidental_headings(text) == [3]
 
 
-@pytest.mark.parametrize("markdown", _site_documents(), ids=_relative)
+# The benchmark READMEs and run reports are not on the site, but GitHub renders them, and the
+# ShadowBench READMEs cite pull requests by number.
+@pytest.mark.parametrize("markdown", [*_site_documents(), *_benchmark_documents()], ids=_relative)
 def test_no_prose_line_starts_with_an_issue_number(markdown: Path) -> None:
     """A wrapped line that starts with ``#132`` renders as a heading on the docs site and on GitHub."""
     lines = _accidental_headings(_read(markdown))
@@ -990,7 +1021,9 @@ def test_signature_count_claims_are_recognised(text: str, claims: list[tuple[int
 # Root documents that describe the current tree. The site includes RELEASE_NOTES.md, SECURITY.md and
 # GOVERNANCE.md as snippets, so a stale number there is published too. CHANGELOG.md is a dated log
 # that quotes earlier counts and is left out, as are the released sections of RELEASE_NOTES.md,
-# which quote the counts of their own version (see ``_current_text``).
+# which quote the counts of their own version (see ``_current_text``). benchmarks/ is left out for
+# the same reason: its READMEs and run reports describe runs made at a recorded commit, so a total
+# stated there belongs to that commit.
 _CURRENT_ROOT_DOCS = ("README.md", "RELEASE_NOTES.md", "SECURITY.md", "GOVERNANCE.md", "CONTRIBUTING.md")
 # The first heading of a released section in RELEASE_NOTES.md: ``## 0.1.1 — 2026-10-08``.
 _RELEASED_HEADING = re.compile(r"^## \d+\.\d+", re.MULTILINE)
@@ -1346,7 +1379,7 @@ def test_documented_commands_name_real_subcommands() -> None:
 # up to the ellipsis.
 _PYTHON_OPTION = r"(?:-[WX]\s+[^\s-]\S*|-[^\s\-cm]\S*)"
 _PYTHON_MODULE = re.compile(rf"\bpython(?:3(?:\.\d+)?)?(?:\s+{_PYTHON_OPTION})*\s+-m\s+([^\s`'\";&|()<>]+)")
-_FIRST_PARTY = frozenset({"shadowscan", "tools"})
+_FIRST_PARTY = frozenset({"benchmarks", "shadowscan", "tools"})
 
 
 def _code(text: str) -> Iterator[tuple[int, str]]:
@@ -1396,6 +1429,7 @@ def test_documented_python_modules_are_read_from_code_only() -> None:
         python -m shadowscan. signatures.validate && python -m tools.no_such_tool
         python -I -m shadowscan.signatures.validate && python3 -X dev -m pip check
         python3.12 -OO -Werror -m shadowscan.signatures.validat
+        python -m benchmarks.sab_realworld && python -m benchmarks.sab_realworl
         python -u script.py -m not_a_module
         ```
         """)
@@ -1409,11 +1443,14 @@ def test_documented_python_modules_are_read_from_code_only() -> None:
         (7, "shadowscan.signatures.validate"),
         (7, "pip"),
         (8, "shadowscan.signatures.validat"),
+        (9, "benchmarks.sab_realworld"),
+        (9, "benchmarks.sab_realworl"),
     ]
     assert [module for _, module in modules if _module_problem(module)] == [
         "shadowscan.",
         "tools.no_such_tool",
         "shadowscan.signatures.validat",
+        "benchmarks.sab_realworl",
     ]
 
 

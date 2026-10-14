@@ -3,7 +3,7 @@
 LangGraph service that replans linehaul ETAs when trailer telemetry drifts
 from the plan: fetch telemetry, draft a revised ETA, notify dispatch.
 
-Internal clone: `git@git.vantor.example:platform/repo-eta-graph.git`
+Internal clone: `git@git.adatum.example:platform/repo-eta-graph.git`
 
 ## Run
 

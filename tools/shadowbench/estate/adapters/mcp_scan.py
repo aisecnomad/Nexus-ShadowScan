@@ -3,7 +3,19 @@
 `inspect` mode only — the default `scan` sends tool descriptions to a
 verification API. stdin is /dev/null so the per-server consent prompt
 auto-denies: no configured MCP server command is executed and no remote MCP
-URL is contacted, yet every server is still inventoried.
+URL is contacted, yet every server is still inventoried. Refusing launcher
+shims (`npx`, `uvx`, `docker`, ...) come first on PATH as well, so a consent
+change in a later release still cannot start a server configured with one of
+those launchers; other command names and absolute paths are not intercepted
+(see `common.refuse_launchers`).
+
+The adapter reads `inspect.json` as an object keyed by client directory or
+config path whose values are client records: objects with a `servers` list,
+or with a `client` name and no `servers`. An empty object is an empty
+inventory. A report that holds entries but no client record (an error
+object such as `{"error": ...}`, or a shape this adapter does not know) is
+an adapter error, never an empty inventory. Other entries beside a record
+are skipped, and a `client` that is not a string names no client.
 """
 
 from __future__ import annotations
@@ -22,7 +34,12 @@ from tools.shadowbench.estate.adapters import (
     python_package_version,
     unit_path,
 )
-from tools.shadowbench.estate.adapters.common import client_slug
+from tools.shadowbench.estate.adapters.common import (
+    client_slug,
+    refuse_launchers,
+    sh_command,
+    write_script,
+)
 from tools.shadowbench.estate.corpus import EstateCorpus
 
 SPEC = ToolSpec(
@@ -33,6 +50,23 @@ SPEC = ToolSpec(
     categories=frozenset({"ai-client", "mcp"}),
     notes="inspect --json with consent auto-denied; no MCP server is executed or contacted",
 )
+
+
+def _client_name(entry: dict[str, Any]) -> str:
+    """The entry's `client` name; a null or non-string client is no name."""
+    client = entry.get("client")
+    return client if isinstance(client, str) else ""
+
+
+def _client_record(entry: object) -> bool:
+    """Whether an `inspect.json` value is a client record: a `servers` list, or a client and no servers."""
+    if not isinstance(entry, dict):
+        return False
+    servers = entry.get("servers")
+    if isinstance(servers, list):
+        return True
+    # A null or empty `servers` value reads as no servers, as `servers or []` below reads it.
+    return not servers and bool(_client_name(entry))
 
 
 class McpScanAdapter:
@@ -51,13 +85,13 @@ class McpScanAdapter:
 
     def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
         home = unit_path(unit, estate)
-        script = out_dir / "run.sh"
-        script.write_text(
-            "#!/bin/sh\n"
-            f'exec "{cfg.binary("mcp_scan")}" inspect --json < /dev/null > "{out_dir}/inspect.json"\n',
-            encoding="utf-8",
-        )
-        script.chmod(0o755)
+        out = out_dir.absolute()
+        argv = (cfg.binary("mcp_scan") or "snyk-agent-scan", "inspect", "--json")
+        lines = [
+            *refuse_launchers(out / "shims"),
+            "exec " + sh_command(argv, stdin="/dev/null", stdout=out / "inspect.json"),
+        ]
+        script = write_script(out / "run.sh", lines)
         return [Command(argv=("/bin/sh", str(script)), env={"HOME": str(home)})]
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:
@@ -70,14 +104,14 @@ class McpScanAdapter:
             return Normalized(error=f"inspect.json unparseable: {exc}")
         if not isinstance(data, dict):
             return Normalized(error="inspect.json is not an object")
+        if data and not any(_client_record(entry) for entry in data.values()):
+            return Normalized(error="inspect.json holds no client record")
         result = Normalized(raw_count=0)
         for key, entry in data.items():
-            if not isinstance(entry, dict):
+            if not _client_record(entry):
                 continue
-            client = str(entry.get("client", ""))
+            client = _client_name(entry)
             servers = entry.get("servers") or []
-            if not isinstance(servers, list):
-                continue
             result.raw_count += len(servers)
             if client:
                 result.predictions.append(

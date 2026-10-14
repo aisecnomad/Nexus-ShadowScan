@@ -1,6 +1,6 @@
-# Shipping with Vantor Logistics
+# Shipping with Adatum Logistics
 
-Vantor Logistics moves palletised freight across the Rotterdam, Katowice
+Adatum Logistics moves palletised freight across the Rotterdam, Katowice
 and Vilnius corridors. Book before the lane cut-off and your freight rolls
 on the next scheduled departure.
 

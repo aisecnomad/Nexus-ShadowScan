@@ -5,6 +5,113 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### ShadowBench, the nine-surface discovery benchmark (October 12)
+
+- `benchmarks/shadowbench/` and `tools/shadowbench/`: two benchmark tracks
+  that measure shadow AI agent discovery across all nine surfaces, from #193
+  and #194 (`python -m tools.shadowbench {cases|estate} <command>`). #195
+  landed them as `synthetic` and `estate`; the track it called `synthetic`
+  is `cases` here, since both tracks are synthetic, and this entry describes
+  both tracks after the review fixes below. The *cases* track generates
+  platform-native inputs from written rubrics (346 cases: 738 expected
+  entities, 735 decoys, 26 pinned public repositories on the code surface),
+  with loopback mock
+  services and inert live processes for tools that only work live. The
+  *estate* track is one authored fictional organization, Adatum Logistics,
+  whose 139 frozen files span the nine surfaces with 137 labeled entities
+  (87 positive, 27 control, 23 near-miss). Both are author-written: neither
+  is independent review, field precision or a verdict on another vendor.
+- Integration: each track keeps its own harness under `cases/` or
+  `estate/`; the estate's authored files sit under `estate/artifacts/` with
+  every frozen digest unchanged. The vendor letter grades (`grades.json`,
+  `GRADES.md`) and the two PDFs are not carried: the grades were a judgment
+  over author-written corpora, and neither PDF could be rebuilt from the
+  repository. The estate's fictional organization is renamed from Vantor,
+  since 2025 a real company's name, to Adatum in every file, token and
+  recorded prediction; the replacement has the same length, so re-scoring
+  gave identical results.
+- Data errata: the estate artifact
+  `home/dev-laptop-02/marcus/.vscode/extensions/github.copilot-1.388.0/package.json`
+  was frozen and scored but never committed, because `.gitignore` excludes
+  `.vscode/`. It is replaced by a minimal manifest (the label rests on the
+  directory name), `.gitignore` re-includes estate `.vscode/` trees, and a
+  test fails when any frozen file is untracked. `services.json` names the
+  live-sim host by its real path.
+- Cases scoring fails closed: an error, a missing row or a run the tool marks
+  incomplete never earns a true negative; a results file the run manifest
+  does not vouch for, or a corpus digest mismatch, is refused unless
+  `--force` is given, and an unknown status, a duplicate row or an unknown
+  case is always refused. A
+  reported directory no longer earns credit for the files under it, a
+  positive case counts as found only with a true positive, code keys
+  outside the fact taxonomy are neither credited nor charged (246 of
+  AgentDiscover's 247 code "false positives" were such keys), and McNemar
+  with no shared case reads n/a. Decoys an adapter declares it never passes
+  to the tool (AWS IAM roles for ShadowScan) earn that tool no true
+  negative. `verify` always rebuilds the corpus and compares the cases (it
+  derived 38 cases per surface instead of 40, and plain `verify` compared
+  only the header digest), the generator digest covers the code corpus, and
+  case inputs are validated before the runner stages them. The generator's
+  `--seed` had no effect: each stream's seed kept only the end of its
+  modality name, and four pairs of modalities shared a stream. New corpora
+  record a hash-based stream scheme; the committed corpus keeps the legacy
+  one, so it still rebuilds exactly, and its README states the
+  consequences.
+- Cases runner: tools run as uid 65534 with `no_new_privs` in fresh
+  network, PID and mount namespaces with `/root` and `/home` hidden; a
+  timeout kills the whole namespace; scratch directories must be private;
+  mock services bind loopback only, on unprivileged ports; adapters fail
+  closed on empty or malformed output, run version probes with a scrubbed
+  environment and a timeout (as root, dropped to uid 65534 with `/root` and
+  `/home` hidden, or not at all), and fetch pinned repositories without hooks,
+  submodules or non-HTTPS remotes. `install_tools.sh` states that installs
+  are version-pinned, not hash-locked. The run manifest records the harness
+  commit and a dirty flag and each tool's `tools.json` version, and a
+  failed static build of the inert process binary refuses the run (exit 2).
+- Estate scoring: in-scope entity metrics count only the entities on a
+  tool's declared surfaces, with estate-wide detection a separate column;
+  a unit whose run failed, timed out, was incomplete, exited with a code
+  its adapter does not accept, or was never reached earns no true
+  negatives; attribution is restricted to the prediction's surface and
+  unit and prefers the entity that expects the fact; the report counts
+  every multi-candidate attribution and lists up to 15 per tool
+  (`metrics.json` keeps up to 50); a surplus generic fact no longer adds a
+  true positive. The live-sim run reaches only the hosts `services.json`
+  mirrors, so AI-Infra-Guard earns no true negative for runtime entities it
+  was never shown; `score` exits 2 without `services.json` unless
+  `--allow-missing-services` is given, and a malformed scan target makes its
+  run incomplete. `score` refuses a run whose recorded freeze drifted or
+  differs from the current `FREEZE.json` unless `--allow-freeze-mismatch`
+  is given; F1 is computed from counts, not rounded precision and recall;
+  per-surface value tables include unattributed false positives; and the
+  report's provenance sentence follows the README protocol (labels before
+  any tool ran, one audit pass of every runnable tool, then the freeze).
+- Estate runner and adapters: each unit runs on a private copy of the
+  estate, a drifted freeze refuses the run, and `runs.json` records the
+  harness commit and freeze digest; Snyk Agent Scan, Numbat and vet
+  reports of the wrong shape are adapter errors, not empty inventories;
+  freeze and validate reject symlinks;
+  validate reports anchor collisions (`--strict` fails on them); wrapper
+  scripts quote every corpus-derived value and propagate exit codes; the
+  Cisco and Snyk wrappers refuse common MCP server launchers; `run` resolves
+  its paths before any command starts. AI-Infra-Guard predictions no longer
+  carry text taken from the answer key: the adapter records which loopback
+  target each came from, and the scorer attributes it through
+  `services.json` as a harness attribution the report counts and discloses.
+- Re-scored runs (raw rows unchanged): on the cases track ShadowScan's
+  estate recall is 619 of 738 (was 622) and in-scope F1 82% (was 83%), and
+  AgentDiscover's code precision is 96% (was 9%); on the estate track
+  single-surface tools are scored on their own surfaces (AgentDiscover 5 of
+  6 positives in scope, not 5 of 87), vet's in-scope value precision is
+  100% (was 86%), and Agentic Radar's units whose commands all exited 1
+  without output are incomplete. Each track's `REPORT.md` has the numbers.
+- Repository: pre-commit's whitespace and end-of-file fixers skip
+  ShadowBench data and the mypy hook skips the estate's sample
+  repositories; `.gitattributes` reaches nested benchmark results;
+  `AGENTS.md` lists benchmark corpora and artifacts as untrusted;
+  `tools/README.md` indexes the repository tooling, and the README links
+  the benchmarks with their limits.
+
 ### Documentation aligned with the code (October 12)
 
 Documentation only; no scanner behaviour changes.
@@ -52,19 +159,36 @@ Documentation only; no scanner behaviour changes.
 
 ### Post-merge review fixes (October 11)
 
-- A plain `Bearer`, `Basic` or `SSWS` credential containing `--` or `=` plus a
-  letter is again withheld whole. The October 11 integration applied the
+- A plain `Bearer`, `Basic` or `SSWS` credential containing `--` or `=` plus
+  a letter is again withheld whole, and one after the `token` word, whose
+  tail was shown, now is too. The October 11 integration applied the
   token-word rule's glued-text guard to every scheme credential, so such a
-  token's tail after the glue was left in sanitized text. The run a guard stop
-  leaves is now kept only when it names a credential a later rule reads
-  (`=password: v`, `--token v`, whose values those rules withhold) and is
-  withheld with the credential otherwise, with regression tests over all three
-  schemes for both shapes.
+  token's tail after the glue was left in sanitized text. A text with such a
+  run is now read twice. In one reading every rule reads the run, as in the
+  October 11 rules, so a name in it withholds the value after it
+  (`=x--password v`, `--auth v`, `--pat v`, which the October 12 rules
+  showed); the run is withheld only after every rule, and in `sanitize`
+  after the values nested in credential fields are removed from the other
+  fields too, and a text that changes is read once more. In the other the
+  scheme pass withholds the run with its credential, as the October 12
+  rules did. Each reading is read again, as a later sanitization would read
+  it, until it stays the same, since evidence is sanitized more than once.
+  Each line then shows only what both readings show: where one line
+  shows nothing the other does not, that one is kept, and otherwise the
+  whole line is withheld. Where the October 12 rules joined the credential's
+  line to the scheme's (a name kept after a credential on the line after
+  its scheme), the readings' lines no longer pair up and the whole text is
+  withheld, keeping its line breaks. A run stays only when it is one name of
+  plain words that a rule reads (`--password v`, `=password: v`), beside the
+  value it withheld. The regression tests over all three schemes are drawn
+  from differential runs and fuzzing against both earlier rule sets.
 - `shadowscan run --set credentials_file=<value>` (and the other credential-file
   keys) warns again when the value is an opaque credential rather than a file
   location. Judging those keys by value had delegated to rules that recognize
   only known token formats, so a bare hexadecimal or generic opaque token
-  pasted in place of the path drew no command-line warning.
+  pasted in place of the path drew no command-line warning. A value shaped
+  like a location stays quiet even when its file name is random (a mounted
+  `/run/secrets/<hex>`, a downloaded `<project>-<hex>.json` key).
 - A Workato recipe whose Workbot trigger line carries no trigger name records
   no initiation instead of reading as event-triggered: the name is what
   separates a command a person operates from an event trigger, and the
@@ -77,48 +201,6 @@ Documentation only; no scanner behaviour changes.
   (`${TMPDIR:-/tmp}`), so it runs on a stock Linux shell, and the low-code
   connector guide states that Workato classifies by provider and trigger name.
 
-### ShadowBench, the nine-surface discovery benchmark (October 11)
-
-- `benchmarks/shadowbench/` and `tools/shadowbench/`: a standardized,
-  tool-neutral benchmark across all nine discovery surfaces, in two tracks
-  that share one harness (`python -m tools.shadowbench <track> <command>`).
-- The `synthetic` track: a seeded generator writes platform-native inputs
-  (Okta and Graph exports, LiteLLM and Bedrock invocation logs, Power
-  Platform and n8n exports, Slack and GitHub App admin exports, AWS CLI
-  outputs and Kubernetes workload lists, developer home directories, Zeek
-  logs, osquery process tables) with entity-level ground truth, tolerated
-  keys and decoys; active-network cases serve mock products on loopback and
-  live-runtime cases spawn inert processes, so active scanners and process
-  scanners run offline. Code cases reuse 26 pinned repositories of the
-  code-surface corpus. The runner executes every adapter in fresh network
-  and PID namespaces and keeps the verbatim output; the scorer reports
-  entity and case-level precision, recall, F1, specificity, agent-tier
-  recall and false alarms, estate recall and paired McNemar tests with
-  intervals. Adapters cover ShadowScan, Snyk Agent Scan, Cisco MCP Scanner,
-  Microsoft's `agent-discovery`, AgentDiscover, Numbat, SafeDep vet,
-  AI-Infra-Guard and Fleet's `ai_tools` table.
-- The `estate` track: the authored artifacts of one fictional organization,
-  Vantor Logistics, across the nine surfaces, frozen by SHA-256 with 137
-  labeled entities (positive, control, near-miss) anchored to unique tokens
-  inside the artifacts, so a tool's predictions are attributed to entities
-  and unattributed in-scope predictions count as false positives. Its
-  adapters cover ShadowScan, Snyk Agent Scan, Numbat, AgentSight, Cisco MCP
-  Scanner, AI-Infra-Guard and the code-surface wrappers; the label-
-  completeness audit and errata are recorded in its corpus.
-- The corpora, rubrics, labels and results of both tracks are author-written
-  and not independent review; each track's README states the limits.
-- Carried from the two source pull requests with these corrections: the
-  synthetic track's `verify --regenerate` derived the per-surface count as
-  the case total over nine surfaces (38) instead of the generator's 40, so it
-  never reproduced the committed corpus; it now reads the count from a
-  generated surface, and a regeneration that matches passes even when the
-  generator sources moved. The estate's
-  `github.copilot-1.388.0/package.json` artifact was listed in its freeze and
-  corpus but never committed (the repository ignores `.vscode/`); the
-  extension manifest was reconstructed from the entity's definition
-  (publisher, name and version), the ignore rule exempts the estate's home
-  trees, and the freeze was regenerated over the 139 artifacts.
-
 ### Command-line and documentation corrections (October 11)
 
 - `signatures list --category`, `signatures test --ecosystem` and
@@ -128,8 +210,19 @@ Documentation only; no scanner behaviour changes.
   directory and `merge -f` shows its default; eight options gained help text
   and `run` and `signatures test` readable one-line summaries.
 - AI review gate: the publication sanitizer withholds a private key quoted
-  without its footer on one line or with escaped line breaks; before, only
-  real line breaks were recognized and the base64 body was published.
+  without its footer on one line, with escaped line breaks (LF or CRLF), in a
+  Markdown blockquote, or encrypted with Proc-Type and DEK-Info headers;
+  before, only real line breaks were recognized and the base64 body was
+  published. Every rule now also matches the original text, so a key body
+  can no longer hide a URL password or account key that follows it. The
+  rules still also run in turn, each earlier match replaced by the marker,
+  with the current key rule and with each earlier one, each set again until
+  it matches nothing more, as repeated redaction would: a long token between
+  a key's header and its footer still brings the footer within the key
+  rule's 8 KiB search, and a URL whose password holds an Azure key or other
+  URLs, however deep, is withheld on the first pass after a quoted key
+  header, whose wider run would take the URL's scheme. A long blank run
+  after a key header is scanned in linear time; it was quadratic.
 - Documentation: least-privilege rows for the five live low-code connectors;
   `cloud.azure` and `cloud.gcp` need no SDK extra with a pre-issued token and
   `cloud.kubernetes` and `cloud.openshift` are offline only (the sentence said

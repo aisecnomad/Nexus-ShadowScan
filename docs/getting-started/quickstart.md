@@ -9,9 +9,10 @@ shadowscan code .
 ```
 
 Scanning the ShadowScan checkout itself reports an incomplete scan (exit 3):
-its redaction test fixtures intentionally exceed the sanitizer's limits, and
-the scanner fails closed rather than skip them silently. Scan one of your own
-projects, or start with the offline demo below.
+some redaction rules and tests intentionally exceed the sanitizer's limits,
+and some committed benchmark corpora and results exceed the default
+`max_file_size`. The scanner fails closed rather than skip them silently.
+Scan one of your own projects, or start with the offline demo below.
 
 To mark which agents are sanctioned, add `--inventory <path>` with an existing
 card file or directory (for example the bundled `agent-card.yaml`); the path must

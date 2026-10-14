@@ -28,9 +28,14 @@ docs/concepts/mappings-reference.md linguist-generated
 
 # Benchmark corpora, labels and stored runs are data, not source (see
 # benchmarks/README.md): keep them out of language statistics and collapse
-# them in diffs.
-benchmarks/*/results/** linguist-generated
-benchmarks/*/corpus.json linguist-generated
+# them in diffs. `**/` also reaches ShadowBench's nested tracks.
+benchmarks/**/results/** linguist-generated
+benchmarks/**/corpus.json linguist-generated
+benchmarks/shadowbench/estate/FREEZE.json linguist-generated
+# ShadowBench's estate artifacts are an authored organization's repositories,
+# home directories and exports, frozen by SHA-256 in FREEZE.json: keep their
+# bytes exactly as committed and out of language statistics.
+benchmarks/shadowbench/estate/artifacts/** -text linguist-vendored
 tools/benchmark/results*/** linguist-generated
 tools/benchmark/realworld/results*/** linguist-generated
 tools/benchmark/realworld/*.jsonl linguist-generated

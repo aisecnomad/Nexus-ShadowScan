@@ -1183,7 +1183,7 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | ServiceNow | basic or bearer credentials with read access to the `sn_aia_*`, `sys_hub_flow` and `oauth_entity` tables through the Table API |
 | Salesforce | connected app (client-credentials flow) whose integration user has read access to the objects the REST `query` and Tooling `query` endpoints return; verify the object permissions in your org |
 | n8n | API key; the connector reads `/api/v1/workflows` only |
-| Make | API token with read access to scenarios (including blueprints) and AI agents (`/api/v2/scenarios`, `/api/v2/ai-agents`); verify the scope names in your organization |
+| Make | API token with read access to scenarios (including blueprints) and AI agents (`/api/v2/scenarios`, `/api/v2/scenarios/{id}/blueprint`, `/api/v2/ai-agents/v1/agents`), plus teams (`/api/v2/teams`) when `organization_id` is set instead of `team_id`; verify the scope names in your organization |
 | Zapier | OAuth bearer token with the `zap` scope for `https://api.zapier.com/v2/zaps` |
 | Workato | API client with read access to recipes (`/api/recipes`); verify the privilege name in your workspace |
 | Notion | internal integration token with the *read user information* capability (`GET /v1/users`) |

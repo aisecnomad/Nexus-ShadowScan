@@ -47,22 +47,26 @@ in REPORT.md, never as clean negatives.
 
 ## ShadowBench: nine surfaces against other tools
 
-`benchmarks/shadowbench/` extends the comparison to every discovery surface in
-two tracks that share one harness, `tools/shadowbench/`
-(`python -m tools.shadowbench <track> <command>`). The **synthetic** track
-generates identity, gateway, low-code, SaaS, cloud, endpoint, network and
-runtime inputs from written rubrics in the platforms' native shapes, with
-entity-level truth, tolerated keys and decoys, and reuses 26 pinned
-repositories of the code-surface corpus; active-network cases serve mock
-products on loopback and live-runtime cases spawn inert processes inside the
-tool's namespaces, so scanners that only work live can be measured offline.
-The **estate** track scores the same tools against the authored, SHA-256-frozen
-artifacts of one fictional organization, with 137 labeled entities anchored to
-unique tokens inside them, so every true positive, false positive, true
-negative and false negative is countable. Both corpora are author-written, so
-each is a behaviour check on known inputs, not field precision or recall; see
-each track's README for the rubrics or protocol, the bias controls and the
-limits, and its newest `REPORT.md` for the measured numbers.
+`benchmarks/shadowbench/` extends that comparison to every discovery surface
+in two tracks, each with its own harness under `tools/shadowbench/`
+(`python -m tools.shadowbench`). The *cases* track generates platform-native
+inputs at a recorded seed from written rubrics: identity, gateway, low-code,
+SaaS and cloud exports, developer home directories, network logs, process
+tables, loopback mock services and inert live processes. Each input has
+entity-level truth, tolerated keys and decoys, and the code surface reuses 26
+pinned repositories of the code-surface corpus. The *estate* track is one
+authored fictional organization whose artifacts span all nine surfaces at
+once. It is frozen by SHA-256 and scored entity by entity, including whether a
+tool tells registered agents from shadow ones. Both tracks are synthetic and
+author-written, apart from the cases track's code repositories, and the same
+maintainer wrote ShadowScan, the harnesses, the labels and every other tool's
+adapter. They check behaviour on known inputs; they do not measure field
+precision or recall and are not a verdict on any vendor's product. Both
+scorers fail closed: a run that errored, timed out, was incomplete or is
+missing never earns a true negative. See
+[`benchmarks/shadowbench/README.md`](https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/shadowbench/README.md)
+for how the tracks differ, and each track's README and newest `REPORT.md` for
+the method, the limits and the measured numbers.
 
 ## Run the reproducible corpora
 

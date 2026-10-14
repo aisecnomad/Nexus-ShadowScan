@@ -1,3 +1,3 @@
-"""Freight quote triage crew (internal Vantor Logistics tool)."""
+"""Freight quote triage crew (internal Adatum Logistics tool)."""
 
 __version__ = "0.3.1"

@@ -1,9 +1,9 @@
 [
  {
   "_kind": "team",
-  "id": "T0VANTOR1",
-  "name": "vantor",
-  "domain": "vantor"
+  "id": "T0ADATUM1",
+  "name": "adatum",
+  "domain": "adatum"
  },
  {
   "_kind": "bot_user",
@@ -46,7 +46,7 @@
    "name": "Read.ai"
   },
   "user": {
-   "email": "priya@vantor.example"
+   "email": "priya@adatum.example"
   },
   "message": "need meeting summaries for ops standups",
   "scopes": [

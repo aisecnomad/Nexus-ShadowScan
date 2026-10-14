@@ -37,8 +37,12 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
-# The estate benchmark's authored home trees include an editor extension directory.
-!benchmarks/shadowbench/estate/artifacts/home/*/*/.vscode/
+# ShadowBench estate artifacts are developer home directories and repositories
+# that hold editor state on purpose; tests/unit/test_shadowbench_estate.py
+# fails if a frozen estate file is not tracked.
+!/benchmarks/shadowbench/estate/artifacts/**/.vscode/
 
 .shadowscan-state/
+# Worktrees that coding-agent sessions create inside the checkout.
+/.claude/worktrees/
 /site/

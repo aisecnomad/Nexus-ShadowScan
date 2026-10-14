@@ -1,4 +1,4 @@
-"""Quote triage crew for the Vantor Logistics freight desk."""
+"""Quote triage crew for the Adatum Logistics freight desk."""
 
 import os
 from pathlib import Path

@@ -1,15 +1,15 @@
 resource "azurerm_resource_group" "dock_ai" {
-  name     = "rg-vantor-dock"
+  name     = "rg-adatum-dock"
   location = "westeurope"
 }
 
 resource "azurerm_cognitive_account" "dock_openai" {
-  name                  = "vantor-dock-aoai"
+  name                  = "adatum-dock-aoai"
   location              = azurerm_resource_group.dock_ai.location
   resource_group_name   = azurerm_resource_group.dock_ai.name
   kind                  = "OpenAI"
   sku_name              = "S0"
-  custom_subdomain_name = "vantor-dock-aoai"
+  custom_subdomain_name = "adatum-dock-aoai"
 
   tags = {
     environment = var.environment

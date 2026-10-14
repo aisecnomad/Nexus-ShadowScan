@@ -11,7 +11,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
-	"git.vantor.example/platform/repo-ops-scripts/internal/report"
+	"git.adatum.example/platform/repo-ops-scripts/internal/report"
 )
 
 func main() {

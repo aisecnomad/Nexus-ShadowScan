@@ -1,0 +1,474 @@
+"""Unit tests for the ShadowBench cases corpus: generation, verification and case validation."""
+
+from __future__ import annotations
+
+import copy
+import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tools.shadowbench.cases import generate, verify
+from tools.shadowbench.cases.corpus import Case, Corpus, load_corpus
+
+ROOT = Path(__file__).resolve().parents[2]
+CORPUS = ROOT / "benchmarks" / "shadowbench" / "cases" / "corpus.json"
+CODE_CORPUS = ROOT / "benchmarks" / "shadow-ai-discovery" / "corpus.json"
+
+
+@pytest.fixture(scope="module")
+def stored() -> dict[str, Any]:
+    data: dict[str, Any] = json.loads(CORPUS.read_text(encoding="utf-8"))
+    return data
+
+
+def _case(stored: dict[str, Any], case_id: str) -> dict[str, Any]:
+    case: dict[str, Any] = copy.deepcopy(next(c for c in stored["cases"] if c["id"] == case_id))
+    return case
+
+
+def _small_corpus(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Path:
+    out = tmp_path / "corpus.json"
+    assert generate.main(["--seed", "1", "--per-surface", "4", "--output", str(out)]) == 0
+    capsys.readouterr()
+    return out
+
+
+# --- the committed corpus -------------------------------------------------------------------------
+
+
+def test_build_reproduces_the_committed_cases(stored: dict[str, Any]) -> None:
+    rebuilt = json.loads(
+        json.dumps([c.to_json() for c in generate.build(20261011, 40, stream_scheme="legacy")])
+    )
+    assert rebuilt == stored["cases"]
+
+
+def test_committed_corpus_records_no_stream_scheme_and_verifies_as_legacy(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    corpus = load_corpus(CORPUS)
+    assert corpus.stream_scheme is None
+    assert corpus.streams == "legacy"
+    assert "stream_scheme" not in corpus.to_json()
+    assert verify.main(["--corpus", str(CORPUS)]) == 0
+    out = capsys.readouterr().out
+    assert "stream scheme legacy (the header names none)" in out
+    assert "the legacy stream scheme ignores the seed" in out
+    assert "identity/okta-export and identity/entra-export share one random stream" in out
+    assert "regenerated cases are identical (per-surface 40)" in out
+
+
+def test_committed_corpus_verifies_with_regenerate(capsys: pytest.CaptureFixture[str]) -> None:
+    """The committed corpus holds 40 cases per generated surface plus 26 code cases.
+
+    verify guessed ``len(cases) // len(surfaces)`` = 346 // 9 = 38 per surface, rebuilt a
+    different corpus and reported DIFFERS; and the digest recorded before the generator moved
+    to ``tools/shadowbench/cases`` failed it even though the rebuilt cases were identical.
+    """
+    assert verify.main(["--corpus", str(CORPUS), "--regenerate"]) == 0
+    out = capsys.readouterr().out
+    assert "regenerated cases are identical (per-surface 40)" in out
+    assert "produce the same cases" in out
+
+
+def test_committed_corpus_per_surface_is_inferred() -> None:
+    corpus = load_corpus(CORPUS)
+    assert corpus.per_surface is None
+    assert verify.per_surface(corpus) == 40
+
+
+def test_committed_corpus_verifies_without_regenerate(capsys: pytest.CaptureFixture[str]) -> None:
+    """verify always rebuilds the cases, so the committed corpus passes on its cases, not its digest."""
+    corpus = load_corpus(CORPUS)
+    assert corpus.generator_digest != generate.generator_digest()
+    assert verify.main(["--corpus", str(CORPUS)]) == 0
+    out = capsys.readouterr().out
+    assert "generator sources changed since this corpus was written" in out
+    assert "regenerated cases are identical (per-surface 40)" in out
+
+
+def test_every_committed_case_validates(stored: dict[str, Any]) -> None:
+    corpus = load_corpus(CORPUS)
+    assert len(corpus.cases) == len(stored["cases"]) == 346
+    assert sum(1 for c in corpus.cases if c.checkout) == 26
+
+
+# --- generation and the corpus header -------------------------------------------------------------
+
+
+def test_new_corpora_record_per_surface_and_verify(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _small_corpus(tmp_path, capsys)
+    header = json.loads(path.read_text(encoding="utf-8"))
+    assert list(header)[:6] == [
+        "benchmark",
+        "version",
+        "seed",
+        "per_surface",
+        "stream_scheme",
+        "generator_digest",
+    ]
+    assert header["per_surface"] == 4
+    assert header["stream_scheme"] == generate.STREAM_SCHEME == "sha256"
+    assert load_corpus(path).per_surface == 4
+    assert verify.main(["--corpus", str(path)]) == 0
+    assert verify.main(["--corpus", str(path), "--regenerate"]) == 0
+    assert "regenerated cases are identical (per-surface 4)" in capsys.readouterr().out
+
+
+def test_old_corpora_without_per_surface_still_load_and_verify(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["per_surface"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    corpus = load_corpus(path)
+    assert corpus.per_surface is None
+    assert "per_surface" not in corpus.to_json()
+    assert verify.main(["--corpus", str(path), "--regenerate"]) == 0
+
+
+@pytest.mark.parametrize("value", [-1, "4", True, 2.5])
+def test_load_rejects_a_malformed_per_surface(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], value: object
+) -> None:
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["per_surface"] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="per_surface"):
+        load_corpus(path)
+
+
+@pytest.mark.parametrize("flags", [[], ["--regenerate"]])
+def test_verify_fails_when_a_case_was_edited(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flags: list[str]
+) -> None:
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["cases"][3]["rationale"] += " (edited)"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert verify.main(["--corpus", str(path), *flags]) == 1
+    out = capsys.readouterr().out
+    assert "DIFFER" in out
+    assert data["cases"][3]["id"] in out
+
+
+def test_plain_verify_compares_the_cases_when_the_digest_matches(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Plain verify returned 0 on a matching digest without looking at the cases.
+
+    Moving an expected entity into the decoys, with the case label fixed up so the corpus still
+    loads, passed as an integrity check; only ``--regenerate`` caught it.
+    """
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["generator_digest"] == generate.generator_digest()
+    case = next(c for c in data["cases"] if c["surface"] == "identity" and c["truth"]["expected"])
+    moved = case["truth"]["expected"].pop(0)
+    case["truth"]["decoys"] = sorted([*case["truth"]["decoys"], moved["key"]])
+    case["label"] = Case.from_json({k: v for k, v in case.items() if k != "label"}).label
+    path.write_text(json.dumps(data), encoding="utf-8")
+    load_corpus(path)  # the edit is self-consistent: only rebuilding the cases can catch it
+    assert verify.main(["--corpus", str(path)]) == 1
+    out = capsys.readouterr().out
+    assert "regenerated cases DIFFER" in out
+    assert case["id"] in out
+
+
+def test_verify_passes_a_moved_generator_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["generator_digest"] = "0" * 64
+    path.write_text(json.dumps(data), encoding="utf-8")
+    for flags in ([], ["--regenerate"]):
+        assert verify.main(["--corpus", str(path), *flags]) == 0
+        out = capsys.readouterr().out
+        assert "sources changed since the corpus was written but produce the same cases" in out
+
+
+def test_generator_digest_covers_the_code_corpus(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Path] = []
+    real = generate.digest_files
+
+    def capture(paths: list[Path], root: Path) -> str:
+        seen.extend(paths)
+        return real(paths, root)
+
+    monkeypatch.setattr(generate, "digest_files", capture)
+    generate.generator_digest()
+    assert CODE_CORPUS.resolve() in {p.resolve() for p in seen}
+
+
+def test_build_and_digest_refuse_without_the_code_corpus(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing code corpus silently dropped all 26 code cases; it must stop the build instead."""
+    monkeypatch.setattr(generate, "CODE_CORPUS", tmp_path / "missing.json")
+    with pytest.raises(FileNotFoundError, match="code-surface corpus"):
+        generate.build(1, 1)
+    with pytest.raises(FileNotFoundError, match="code-surface corpus"):
+        generate.generator_digest()
+
+
+def test_code_cases_reject_a_pinned_repository_missing_from_the_code_corpus(tmp_path: Path) -> None:
+    data = json.loads(CODE_CORPUS.read_text(encoding="utf-8"))
+    data["repos"] = [r for r in data["repos"] if r["id"] != generate.CODE_REPOS[0]]
+    path = tmp_path / "code.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match=generate.CODE_REPOS[0]):
+        generate.code_cases(path)
+
+
+def test_build_rejects_a_negative_per_surface() -> None:
+    with pytest.raises(ValueError, match="non-negative"):
+        generate.build(1, -1)
+
+
+def test_corpus_header_round_trips_per_surface() -> None:
+    assert "per_surface" not in Corpus([], 1, "d", "now").to_json()
+    assert Corpus([], 1, "d", "now", per_surface=7).to_json()["per_surface"] == 7
+
+
+def test_corpus_header_round_trips_the_stream_scheme() -> None:
+    assert "stream_scheme" not in Corpus([], 1, "d", "now").to_json()
+    assert Corpus([], 1, "d", "now", stream_scheme="sha256").to_json()["stream_scheme"] == "sha256"
+    assert Corpus([], 1, "d", "now").streams == "legacy"
+
+
+# --- random streams -------------------------------------------------------------------------------
+
+
+def _labels_by_modality(cases: list[Case]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for case in cases:
+        out.setdefault(f"{case.surface}/{case.modality}", []).append(case.label)
+    return out
+
+
+def test_two_seeds_build_different_corpora() -> None:
+    """The stream seed kept only the key's last 62 bits, all inside the modality name.
+
+    So ``--seed`` had no effect: every seed built the committed corpus's cases, and a rerun or
+    calibration "at another seed" silently reused them.
+    """
+    one = [c.to_json() for c in generate.build(1, 4)]
+    two = [c.to_json() for c in generate.build(2, 4)]
+    assert one != two
+    assert [c.to_json() for c in generate.build(generate.DEFAULT_SEED, 4)] != one
+    for surface, modality in generate.PLAN:
+        assert generate.stream_seed(1, surface, modality, "sha256") != generate.stream_seed(
+            2, surface, modality, "sha256"
+        )
+
+
+def test_no_two_modalities_share_a_stream() -> None:
+    """Okta and Entra (and three other pairs) drew from one stream and had identical case labels."""
+    for seed in (1, 2, generate.DEFAULT_SEED):
+        assert generate.shared_streams(seed, "sha256") == []
+    labels = _labels_by_modality(generate.build(generate.DEFAULT_SEED, 40))
+    for first, second in (
+        ("identity/okta-export", "identity/entra-export"),
+        ("cloud/aws-export", "cloud/k8s-export"),
+    ):
+        assert labels[first] != labels[second]
+
+
+def test_the_legacy_scheme_is_kept_as_it_was() -> None:
+    """Only so the committed corpus rebuilds: its seed has no effect and four pairs share streams."""
+    assert generate.shared_streams(generate.DEFAULT_SEED, "legacy") == [
+        ["identity/okta-export", "identity/entra-export"],
+        ["gateway/litellm-export", "lowcode/powerplatform-export"],
+        ["gateway/bedrock-export", "saas/slack-export"],
+        ["cloud/aws-export", "cloud/k8s-export"],
+    ]
+    one = [c.to_json() for c in generate.build(1, 4, stream_scheme="legacy")]
+    assert one == [c.to_json() for c in generate.build(generate.DEFAULT_SEED, 4, stream_scheme="legacy")]
+    labels = _labels_by_modality(generate.build(generate.DEFAULT_SEED, 40, stream_scheme="legacy"))
+    assert labels["identity/okta-export"] == labels["identity/entra-export"]
+
+
+def test_generate_records_the_legacy_scheme_and_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "legacy.json"
+    argv = ["--seed", "1", "--per-surface", "4", "--stream-scheme", "legacy", "--output", str(path)]
+    assert generate.main(argv) == 0
+    out = capsys.readouterr().out
+    assert "stream scheme legacy" in out
+    assert "the seed has no effect" in out
+    assert "cloud/aws-export and cloud/k8s-export share one random stream" in out
+    assert json.loads(path.read_text(encoding="utf-8"))["stream_scheme"] == "legacy"
+    assert verify.main(["--corpus", str(path)]) == 0
+    assert "stream scheme legacy (recorded)" in capsys.readouterr().out
+
+
+def test_a_corpus_verifies_only_under_its_own_stream_scheme(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Dropping the field makes verify rebuild with the legacy streams, which build other cases."""
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["stream_scheme"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert verify.main(["--corpus", str(path)]) == 1
+    assert "regenerated cases DIFFER" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("value", ["md5", "", 1, ["sha256"]])
+def test_load_rejects_an_unknown_stream_scheme(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], value: object
+) -> None:
+    path = _small_corpus(tmp_path, capsys)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["stream_scheme"] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="stream_scheme"):
+        load_corpus(path)
+
+
+def test_build_rejects_an_unknown_stream_scheme() -> None:
+    with pytest.raises(ValueError, match="stream scheme"):
+        generate.build(1, 1, stream_scheme="md5")
+    with pytest.raises(ValueError, match="stream scheme"):
+        generate.stream_seed(1, "identity", "okta-export", "md5")
+
+
+# --- case validation ------------------------------------------------------------------------------
+
+Mutation = Callable[[dict[str, Any]], None]
+
+
+def _set(path: tuple[Any, ...], value: object) -> Mutation:
+    def apply(case: dict[str, Any]) -> None:
+        target: Any = case
+        for part in path[:-1]:
+            target = target[part]
+        target[path[-1]] = value
+
+    return apply
+
+
+def _rename_file(new: str) -> Mutation:
+    def apply(case: dict[str, Any]) -> None:
+        old = next(iter(case["files"]))
+        case["files"][new] = case["files"].pop(old)
+
+    return apply
+
+
+def _duplicate_port(case: dict[str, Any]) -> None:
+    case["services"][1]["port"] = case["services"][0]["port"]
+
+
+def _duplicate_index(case: dict[str, Any]) -> None:
+    case["processes"][1]["index"] = case["processes"][0]["index"]
+
+
+def _drop(key: str) -> Mutation:
+    def apply(case: dict[str, Any]) -> None:
+        del case[key]
+
+    return apply
+
+
+def _add_files(case: dict[str, Any]) -> None:
+    case["files"] = {"repo/README.md": "planted\n"}
+
+
+def _borrow(source: str, key: str) -> Callable[[dict[str, Any], dict[str, Any]], None]:
+    def apply(case: dict[str, Any], stored: dict[str, Any]) -> None:
+        case[key] = _case(stored, source)[key]
+
+    return apply
+
+
+ACTIVE, CODE, LIVE, HOME = "network-active-001", "code-checkout-001", "runtime-live-001", "endpoint-home-001"
+
+REJECTED: list[tuple[str, str, Mutation]] = [
+    # services: loopback only, a real port, a named product, one service per port
+    ("service-any-address", ACTIVE, _set(("services", 0, "ip"), "0.0.0.0")),
+    ("service-remote-address", ACTIVE, _set(("services", 0, "ip"), "10.0.0.5")),
+    ("service-no-address", ACTIVE, _set(("services", 0, "ip"), None)),
+    ("service-port-zero", ACTIVE, _set(("services", 0, "port"), 0)),
+    ("service-port-too-high", ACTIVE, _set(("services", 0, "port"), 65536)),
+    ("service-port-string", ACTIVE, _set(("services", 0, "port"), "8080")),
+    ("service-port-bool", ACTIVE, _set(("services", 0, "port"), True)),
+    ("service-port-duplicate", ACTIVE, _duplicate_port),
+    ("service-empty-product", ACTIVE, _set(("services", 0, "product"), "")),
+    ("service-product-not-string", ACTIVE, _set(("services", 0, "product"), 7)),
+    ("service-not-object", ACTIVE, _set(("services", 0), "127.0.0.1:8080")),
+    ("services-not-array", ACTIVE, _set(("services",), {"ip": "127.0.0.1", "port": 80, "product": "x"})),
+    ("active-without-services", ACTIVE, _drop("services")),
+    # checkout: a safe directory name under --checkouts, a full commit, code cases only, no files
+    ("checkout-id-traversal", CODE, _set(("checkout", "id"), "../../etc")),
+    ("checkout-id-dot", CODE, _set(("checkout", "id"), ".")),
+    ("checkout-id-dotdot", CODE, _set(("checkout", "id"), "..")),
+    ("checkout-id-slash", CODE, _set(("checkout", "id"), "owner/repo")),
+    ("checkout-id-absolute", CODE, _set(("checkout", "id"), "/srv/repo")),
+    ("checkout-id-empty", CODE, _set(("checkout", "id"), "")),
+    ("checkout-id-newline", CODE, _set(("checkout", "id"), "repo\n")),
+    ("checkout-id-not-string", CODE, _set(("checkout", "id"), 7)),
+    ("checkout-commit-short", CODE, _set(("checkout", "commit"), "f7529348")),
+    ("checkout-not-object", CODE, _set(("checkout",), "../../etc")),
+    ("code-without-checkout", CODE, _drop("checkout")),
+    ("checkout-and-files", CODE, _add_files),
+    # files: canonical relative POSIX paths only
+    ("path-absolute", HOME, _rename_file("/etc/passwd")),
+    ("path-parent", HOME, _rename_file("../outside")),
+    ("path-inner-parent", HOME, _rename_file("home/../../outside")),
+    ("path-dot-prefix", HOME, _rename_file("./home/.bashrc")),
+    ("path-inner-dot", HOME, _rename_file("home/./x")),
+    ("path-double-slash", HOME, _rename_file("home//x")),
+    ("path-trailing-slash", HOME, _rename_file("home/x/")),
+    ("path-dot", HOME, _rename_file(".")),
+    ("path-empty", HOME, _rename_file("")),
+    ("path-backslash", HOME, _rename_file("home\\..\\x")),
+    ("path-nul", HOME, _rename_file("home/x\0")),
+    ("files-not-object", HOME, _set(("files",), ["home/.bashrc"])),
+    # processes: a unique index, a plain executable name, a non-empty argv, a user; live only
+    ("process-name-dotdot", LIVE, _set(("processes", 0, "name"), "..")),
+    ("process-name-slash", LIVE, _set(("processes", 0, "name"), "bin/node")),
+    ("process-name-empty", LIVE, _set(("processes", 0, "name"), "")),
+    ("process-argv-empty", LIVE, _set(("processes", 0, "argv"), [])),
+    ("process-argv-string", LIVE, _set(("processes", 0, "argv"), "node index.js")),
+    ("process-argv-nul", LIVE, _set(("processes", 0, "argv"), ["node\0x"])),
+    ("process-index-duplicate", LIVE, _duplicate_index),
+    ("process-index-bool", LIVE, _set(("processes", 0, "index"), False)),
+    ("process-no-username", LIVE, _set(("processes", 0, "username"), "")),
+    ("live-without-processes", LIVE, _drop("processes")),
+]
+
+
+@pytest.mark.parametrize(("case_id", "mutate"), [r[1:] for r in REJECTED], ids=[r[0] for r in REJECTED])
+def test_malformed_case_inputs_are_rejected(stored: dict[str, Any], case_id: str, mutate: Mutation) -> None:
+    case = _case(stored, case_id)
+    Case.from_json(copy.deepcopy(case))  # the unmodified case is valid
+    mutate(case)
+    with pytest.raises(ValueError):
+        Case.from_json(case)
+
+
+BORROWED: list[tuple[str, str, Callable[[dict[str, Any], dict[str, Any]], None]]] = [
+    ("services-on-passive", "network-passive-001", _borrow(ACTIVE, "services")),
+    ("processes-on-snapshot", "runtime-snapshot-001", _borrow(LIVE, "processes")),
+    ("checkout-on-endpoint", HOME, _borrow(CODE, "checkout")),
+]
+
+
+@pytest.mark.parametrize(("case_id", "mutate"), [r[1:] for r in BORROWED], ids=[r[0] for r in BORROWED])
+def test_inputs_of_another_modality_are_rejected(
+    stored: dict[str, Any], case_id: str, mutate: Callable[[dict[str, Any], dict[str, Any]], None]
+) -> None:
+    case = _case(stored, case_id)
+    mutate(case, stored)
+    with pytest.raises(ValueError):
+        Case.from_json(case)

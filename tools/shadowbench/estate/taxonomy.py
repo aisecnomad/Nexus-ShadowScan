@@ -63,6 +63,29 @@ ESTATE_CATEGORIES: tuple[str, ...] = (
 
 CATEGORIES: tuple[str, ...] = CODE_CATEGORIES + ESTATE_CATEGORIES
 
+#: The surfaces each category's facts can live on. The scorer places a
+#: prediction that carries no usable surface of its own on these, and only
+#: entities on them can own it.
+CATEGORY_SURFACES: dict[str, frozenset[str]] = {
+    **{name: frozenset({"code"}) for name in CODE_CATEGORIES},
+    "mcp": frozenset({"code", "endpoint"}),
+    "mcp-client-config": frozenset({"code", "endpoint"}),
+    "agent-config": frozenset({"code", "endpoint"}),
+    # A SaaS marketplace grant is an OAuth app too.
+    "oauth-app": frozenset({"identity", "saas"}),
+    "service-identity": frozenset({"identity"}),
+    "token": frozenset({"identity"}),
+    "bot-app": frozenset({"saas"}),
+    "lowcode-agent": frozenset({"lowcode"}),
+    "cloud-ai": frozenset({"cloud"}),
+    "ai-client": frozenset({"endpoint"}),
+    "model-store": frozenset({"endpoint"}),
+    "gateway-caller": frozenset({"gateway"}),
+    "ai-service-contact": frozenset({"network"}),
+    # Endpoint telemetry (eBPF process events) reports agent processes too.
+    "agent-process": frozenset({"runtime", "endpoint"}),
+}
+
 _FACT = re.compile(r"[a-z][a-z0-9-]*:[a-z0-9][a-z0-9.-]*\Z")
 
 
@@ -76,6 +99,11 @@ def is_fact(value: str) -> bool:
 def category(fact: str) -> str:
     """The category of a well-formed fact."""
     return fact.split(":", 1)[0]
+
+
+def category_surfaces(name: str) -> frozenset[str]:
+    """The surfaces a category's facts live on; empty for an unknown category."""
+    return CATEGORY_SURFACES.get(name, frozenset())
 
 
 #: `<category>:generic` matches one expected fact of its category, exactly as

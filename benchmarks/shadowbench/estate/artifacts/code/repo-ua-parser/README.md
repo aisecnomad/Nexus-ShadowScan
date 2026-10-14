@@ -3,7 +3,7 @@
 Tiny user-agent parser used by the edge log pipeline: browser family, OS
 family and robot classification. Zero runtime dependencies.
 
-Internal clone: `git@git.vantor.example:platform/repo-ua-parser.git`
+Internal clone: `git@git.adatum.example:platform/repo-ua-parser.git`
 
 ## Robot coverage
 
@@ -27,7 +27,7 @@ log *subjects* that the parser must label correctly.
 
 ## Usage
 
-    import { parse } from "@vantor/ua-robot-parser";
+    import { parse } from "@adatum/ua-robot-parser";
 
     parse(request.headers["user-agent"]);
     // { browser: "chrome", os: "windows", robot: false, robotName: null }

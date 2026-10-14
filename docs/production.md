@@ -1030,12 +1030,29 @@ or opaque credentials that redaction does not recognize. The scan is still
 incomplete (exit 3). Alerting keyed on SDK exception text should key on the
 connector name and exception type.
 
+Redaction reads a text with a run glued after a `Bearer`, `Basic` or `SSWS`
+credential (`<token>--x`, `<token>=x`) twice, as every rule reads the run and
+as the earlier rules withheld it with the credential, and shows on each line
+only what both readings show; such a token's tail is withheld with it.
+Sanitized evidence around these credentials therefore withholds more: a line
+the readings differ on in more than one place is withheld whole, and a text
+with a name glued after a credential on the line after its scheme is
+withheld whole, keeping its line breaks. Finding identity does not use
+evidence text. Regenerate retained reports, as after any change that
+withholds more.
+
 Plugin approvals can pin the import target and the providing release
 (`--allow-plugin name=module:Class@distribution==version`); a pin is checked
 against installed metadata, not file hashes, so keep installing plugins from
 reviewed, hash-pinned requirements. Give JWTs
 and connector credentials through files, stdin or `${ENV_VAR}` references:
-the CLI warns, but still runs, when they arrive as arguments. Incremental
+the CLI warns, but still runs, when they arrive as arguments. A credential-file
+key (`credentials_file`, `service_account_file`, `token_file`) set with
+`--set` warns only when its value looks like an opaque credential rather than
+a location: a value with a path or a file-name shape around a random name
+(`/run/secrets/<hex>`, `acme-prod-123456-1a2b3c4d5e6f.json`) is a location,
+while a bare opaque token, or one under a directory that is itself an opaque
+run, still warns, and `tokens` always does. Incremental
 cache entries are authenticated only when a stable identity key is
 configured; without one, keep the state directory writable only by the
 scanner account.

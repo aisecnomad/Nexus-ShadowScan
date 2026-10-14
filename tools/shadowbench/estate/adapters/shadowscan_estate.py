@@ -160,18 +160,18 @@ def build_config(estate: Path) -> dict[str, Any]:
         {
             "name": "identity.okta",
             "input": str(identity / "okta_apps.json"),
-            "org_url": "https://vantor.okta.com",
+            "org_url": "https://adatum.okta.com",
         },
-        {"name": "identity.entra", "input": str(identity / "entra_graph.json"), "tenant_id": "vantor-tenant"},
+        {"name": "identity.entra", "input": str(identity / "entra_graph.json"), "tenant_id": "adatum-tenant"},
         {
             "name": "identity.google-workspace",
             "input": str(identity / "google_tokens.json"),
-            "customer": "C0vantor99",
+            "customer": "C0adatum99",
         },
         {
             "name": "identity.auth0",
             "input": str(identity / "auth0_clients.json"),
-            "domain": "vantor.eu.auth0.com",
+            "domain": "adatum.eu.auth0.com",
         },
         {"name": "identity.jwt", "input": str(identity / "tokens.txt")},
     ]
@@ -181,12 +181,12 @@ def build_config(estate: Path) -> dict[str, Any]:
         {
             "name": "lowcode.salesforce",
             "input": str(lowcode / "salesforce.json"),
-            "instance_url": "https://vantor.my.salesforce.com",
+            "instance_url": "https://adatum.my.salesforce.com",
         },
         {
             "name": "lowcode.servicenow",
             "input": str(lowcode / "servicenow.json"),
-            "instance": "https://vantor.service-now.com",
+            "instance": "https://adatum.service-now.com",
         },
         {"name": "lowcode.n8n", "input": str(lowcode / "n8n_workflows.json")},
         {"name": "lowcode.make", "input": str(lowcode / "make_scenarios.json")},
@@ -199,17 +199,17 @@ def build_config(estate: Path) -> dict[str, Any]:
         {
             "name": "saas.microsoft-teams",
             "input": str(saas / "teams_apps.json"),
-            "tenant_id": "vantor-tenant",
+            "tenant_id": "adatum-tenant",
         },
         {
             "name": "saas.github-apps",
             "input": str(saas / "github_installations.json"),
-            "org": "vantor-logistics",
+            "org": "adatum-logistics",
         },
         {
             "name": "saas.atlassian",
             "input": str(saas / "atlassian_plugins.json"),
-            "site": "https://vantor.atlassian.net",
+            "site": "https://adatum.atlassian.net",
         },
         {"name": "saas.notion", "input": str(saas / "notion_users.json")},
         {"name": "saas.zoom", "input": str(saas / "zoom_apps.json")},
@@ -227,7 +227,7 @@ def build_config(estate: Path) -> dict[str, Any]:
         {"name": "cloud.azure", "input": str(cloud / "azure_records.jsonl")},
         {
             "name": "cloud.kubernetes",
-            "cluster": "vantor-prod",
+            "cluster": "adatum-prod",
             "input": str(cloud / "kubernetes_workloads.json"),
         },
     ]
@@ -254,10 +254,10 @@ def build_config(estate: Path) -> dict[str, Any]:
     network_entries: list[dict[str, Any]] = []
     zeek = estate / "network" / "zeek"
     if zeek.is_dir():
-        network_entries.append({"name": "network.logs", "label": "vantor-zeek", "input": str(zeek)})
+        network_entries.append({"name": "network.logs", "label": "adatum-zeek", "input": str(zeek)})
     generic_dns = estate / "network" / "generic_dns.csv"
     if generic_dns.exists():
-        network_entries.append({"name": "network.logs", "label": "vantor-dns", "input": str(generic_dns)})
+        network_entries.append({"name": "network.logs", "label": "adatum-dns", "input": str(generic_dns)})
     runtime_entries: list[dict[str, Any]] = []
     processes = estate / "runtime" / "processes.jsonl"
     if processes.exists():

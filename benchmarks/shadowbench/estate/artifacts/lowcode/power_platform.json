@@ -1,11 +1,11 @@
 [
  {
   "_kind": "environment",
-  "name": "Default-vantor",
+  "name": "Default-adatum",
   "properties": {
-   "displayName": "Vantor (default)",
+   "displayName": "Adatum (default)",
    "linkedEnvironmentMetadata": {
-    "instanceUrl": "https://vantor.crm.dynamics.com/"
+    "instanceUrl": "https://adatum.crm.dynamics.com/"
    }
   }
  },
@@ -19,8 +19,8 @@
   "modifiedon": "2025-09-22T11:30:00Z",
   "publishedon": "2025-09-22T11:30:00Z",
   "authenticationmode": 0,
-  "_environment": "Vantor (default)",
-  "_ownerid_value": "dana@vantor.example"
+  "_environment": "Adatum (default)",
+  "_ownerid_value": "dana@adatum.example"
  },
  {
   "_kind": "botcomponent",
@@ -41,14 +41,14 @@
  {
   "_kind": "flow",
   "name": "flow-claimsum-8kd3t",
-  "_environment": "Vantor (default)",
+  "_environment": "Adatum (default)",
   "properties": {
    "displayName": "Summarise damage claims with Azure OpenAI",
    "state": "Started",
    "createdTime": "2025-05-02T08:00:00Z",
    "lastModifiedTime": "2025-09-15T10:00:00Z",
    "creator": {
-    "userPrincipalName": "marcus@vantor.example"
+    "userPrincipalName": "marcus@adatum.example"
    },
    "definitionSummary": {
     "triggers": [
@@ -80,14 +80,14 @@
  {
   "_kind": "flow",
   "name": "flow-nightlycopy-2mq9",
-  "_environment": "Vantor (default)",
+  "_environment": "Adatum (default)",
   "properties": {
    "displayName": "Copy signed PODs to SharePoint nightly",
    "state": "Started",
    "createdTime": "2025-01-20T07:00:00Z",
    "lastModifiedTime": "2025-01-20T07:00:00Z",
    "creator": {
-    "userPrincipalName": "tom@vantor.example"
+    "userPrincipalName": "tom@adatum.example"
    },
    "definitionSummary": {
     "triggers": [

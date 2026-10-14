@@ -42,7 +42,7 @@
             "containers": [
               {
                 "name": "server",
-                "image": "registry.vantor.example/ml/vllm-serving:0.6.3",
+                "image": "registry.adatum.example/ml/vllm-serving:0.6.3",
                 "args": ["--model", "Qwen/Qwen2.5-7B-Instruct", "--port", "8000"],
                 "env": [{"name": "HF_HOME", "value": "/cache/hf"}],
                 "ports": [{"containerPort": 8000}],
@@ -96,7 +96,7 @@
                 "command": ["python", "-m", "exporter"],
                 "env": [
                   {"name": "AWS_REGION", "value": "us-east-1"},
-                  {"name": "EXPORT_BUCKET", "value": "vantor-finops-reports"}
+                  {"name": "EXPORT_BUCKET", "value": "adatum-finops-reports"}
                 ]
               }
             ]
