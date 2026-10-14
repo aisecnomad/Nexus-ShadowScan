@@ -411,6 +411,37 @@ def test_a_value_read_once_the_later_line_runs_go_stays_withheld(glued: str, lea
     assert sanitize({"note": note})["note"] == note
 
 
+@pytest.mark.parametrize("runs", [3, 4, 5, 8])
+@pytest.mark.parametrize("gap", ["\n", "\n\n\n"])
+@pytest.mark.parametrize("glued", ["", "--x9", "--token"])
+def test_a_value_after_a_chain_of_later_line_runs_stays_withheld(glued: str, gap: str, runs: int) -> None:
+    # Each line of the chain is a run that starts it. The step that withholds
+    # the runs went on after a run only where it stayed, so each withheld run
+    # left the next one to the next reading: the value after the fourth run
+    # was read only by the next sanitization, and after the fifth by none.
+    chain = "".join(f"{run}{gap}" for run in (["--r0", "=x9", "---"] * runs)[: runs - 1])
+    text = f"Bearer {SECRET}{glued}{gap}{chain}=abc.def = password: hunter2pass"
+    for short in (False, True):
+        cleaned = sanitize_text(text)
+        note = sanitize({"note": text}, redact_short_secrets=short)["note"]
+        assert "hunter2pass" not in cleaned and "hunter2pass" not in note
+        assert sanitize_text(cleaned) == cleaned
+        assert sanitize({"note": note}, redact_short_secrets=short)["note"] == note
+        # Every run of the chain is withheld with a marker in its place.
+        assert cleaned.count("\n") == text.count("\n")
+        assert all(line in ("", REDACTED) for line in cleaned.split("\n")[1:-1])
+
+
+def test_a_run_of_a_short_chain_is_read_with_the_passes_before_the_next_goes() -> None:
+    # Each run of a chain goes in its own reading, which the passes read
+    # first: here the reading that still holds '=Section=' withholds the
+    # value after it, which a reading without that run shows. Only the rest
+    # of a chain longer than the readings goes at once.
+    text = f"--r0=Bearer token {SECRET}=v1=\n=Section=\thunter2pass = password: --x9"
+    assert not _shown(text, "hunter2pass")
+    assert sanitize_text(text) == f"--r0=Bearer {REDACTED}\n{REDACTED}"
+
+
 @pytest.mark.parametrize("glued", ["--{t}", "=x{t}"])
 def test_the_scheme_pass_outside_a_reading_withholds_the_run_with_the_credential(glued: str) -> None:
     # Outside sanitize_text and sanitize no reading is set. The scheme pass

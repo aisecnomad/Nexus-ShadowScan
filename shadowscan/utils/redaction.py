@@ -405,15 +405,25 @@ def _without_glued_runs(text: str) -> str:
     the step changes is read once more by every pass, as the next
     sanitization would read it, and its runs go again. Each reading only
     adds markers and each step only removes text, so the result withholds
-    whatever any reading withholds. A text still changing after
-    ``_GLUED_RUN_READINGS`` readings keeps the last one, without its runs.
+    whatever any reading withholds.
+
+    A chain of lines that each start with a run loses one run per reading
+    (see ``_withhold_scheme_tails``). A text still changing after
+    ``_GLUED_RUN_READINGS`` readings loses the rest of each chain at once and
+    is read once more, then its runs go again: kept as the last reading left
+    it, without one run more, it showed the value the last run had hidden
+    ('Bearer v\\n--r0\\n--r0\\n--r0\\n=abc.def = password: w'), or, after a fifth
+    run, every value of the chain.
     """
     for _ in range(_GLUED_RUN_READINGS):
         cut = _withhold_scheme_tails(text)
         if cut == text:
             return text
         text = _redact_extended(_established_passes(cut))
-    return _withhold_scheme_tails(text)
+    cut = _withhold_scheme_tails(text, chains=True)
+    if cut == text:
+        return text
+    return _withhold_scheme_tails(_redact_extended(_established_passes(cut)), chains=True)
 
 
 def _without_later_line_runs(text: str) -> str:
@@ -423,10 +433,11 @@ def _without_later_line_runs(text: str) -> str:
     text as its first reading does and showed the runs that start the lines
     after a scheme credential's. If ``_without_glued_runs`` only removed
     such runs and no pass then withheld more, it gives this text, and the
-    first reading, which shows those runs besides, is kept.
+    first reading, which shows those runs besides, is kept. No pass reads
+    this text, so each chain of such runs goes in one scan, however long.
     """
     for _ in range(_GLUED_RUN_READINGS + 1):
-        cut = _withhold_scheme_tails(text, later_lines=True)
+        cut = _withhold_scheme_tails(text, later_lines=True, chains=True)
         if cut == text:
             break
         text = cut

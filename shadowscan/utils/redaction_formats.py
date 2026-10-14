@@ -285,8 +285,8 @@ _SCHEME_TAIL = re.compile(
     + _SCHEME_MARKER
     + r")[A-Za-z0-9+/_.=-])*+)"
 )
-# A run that starts a line after a run that stays ('Bearer [REDACTED]--token\n=x
-# ...'), read as a run that starts a line after the marker.
+# A run that starts a line after another run ('Bearer [REDACTED]--token\n=x ...'),
+# read as a run that starts a line after the marker.
 _LATER_RUN = re.compile(
     r"(?i)(?P<head>\n+)(?P<glued>(?:--|=(?=[A-Za-z]))(?:(?!" + _SCHEME_MARKER + r")[A-Za-z0-9+/_.=-])*+)"
 )
@@ -330,7 +330,7 @@ def _glued_name_kept(glued: str, text: str, end: int) -> bool:
     return bool(named and _ASSIGNED.match(text, end))
 
 
-def _withhold_scheme_tails(text: str, *, later_lines: bool = False) -> str:
+def _withhold_scheme_tails(text: str, *, later_lines: bool = False, chains: bool = False) -> str:
     """Withhold the run glued after a scheme credential's marker, unless it is one name a pass reads.
 
     The credential stops before glued text ('Bearer v--tail', 'Bearer v=x'),
@@ -350,8 +350,13 @@ def _withhold_scheme_tails(text: str, *, later_lines: bool = False) -> str:
     starts a line after the marker: kept, the name hid it from this step,
     and the value a pass reads once it goes ('Bearer v--token\\n=abc.def =
     password: w') was shown, and withheld only on the next sanitization.
-    ``later_lines`` withholds only a run that starts a line after its
-    marker's (see ``redaction._without_later_line_runs``).
+    After a run this step withholds, the run that starts the next line is
+    left to the next reading, which the passes read first: one run of such a
+    chain goes per reading. ``chains`` reads it in the same scan instead,
+    for the rest of a chain longer than the readings make (see
+    ``redaction._without_glued_runs``). ``later_lines`` withholds only a run
+    that starts a line after its marker's (see
+    ``redaction._without_later_line_runs``).
     """
     if REDACTED not in text:
         return text
@@ -375,7 +380,7 @@ def _withhold_scheme_tails(text: str, *, later_lines: bool = False) -> str:
         kept = withheld(match)
         pieces.extend((text[cursor : match.start()], kept))
         cursor = match.end()
-        following = _LATER_RUN.match(text, cursor) if kept == match.group() else None
+        following = _LATER_RUN.match(text, cursor) if chains or kept == match.group() else None
         match = following or _SCHEME_TAIL.search(text, cursor)
     pieces.append(text[cursor:])
     return "".join(pieces)
@@ -386,7 +391,8 @@ def _later_line_runs(text: str) -> dict[int, str]:
 
     Keyed by the line each starts: a run after the marker and its line
     breaks, or after line breaks that follow such a run or the run glued
-    to the marker. One scan, as the step's own.
+    to the marker, kept or withheld. One scan, as the step's own with
+    ``chains``: each such run goes, in one reading or another.
     """
     runs: dict[int, str] = {}
     if REDACTED not in text:
