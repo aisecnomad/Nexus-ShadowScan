@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -138,6 +139,50 @@ def test_exact_identifiers_preserve_case_and_punctuation(left_resource, right_re
     left, right = finding(resource=left_resource), peer(resource=right_resource)
     correlate([left, right])
     assert "related" not in left.metadata
+
+
+AZURE_OPENAI = (
+    "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/acme-openai"
+)
+ROLE_ASSIGNMENT = "/subscriptions/s1/providers/Microsoft.Authorization/roleAssignments/ra1"
+
+
+def test_azure_resource_ids_link_in_any_letter_case(tmp_path, run_connector):
+    """ARM reports a role assignment's scope lowercased; it still names the listed resource."""
+    records = [
+        json.loads(line)
+        for line in (ROOT / "tests" / "fixtures" / "cloud" / "azure_records.jsonl").read_text().splitlines()
+    ]
+    for record in records:
+        if record.get("_kind") == "role-assignment":
+            record["scope"] = AZURE_OPENAI.lower()
+    source = tmp_path / "azure.jsonl"
+    source.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    findings, _ = run_connector("cloud.azure", input=str(source))
+    correlate(findings)
+    by = {f.resource: f for f in findings}
+    assignment, account = by[ROLE_ASSIGNMENT], by[AZURE_OPENAI]
+    assert assignment.metadata["related"] == [account.id]
+    [match] = assignment.metadata["related_details"][0]["matches"]
+    assert match["key_type"] == "resource:azure-id"
+    assert "resource" in match["target_fields"]
+    assert all(field.startswith("evidence[") for field in match["source_fields"])
+    assert match["scope"] == {"account": "s1", "provider": "azure"}
+    # Correlation compares; it does not rewrite what each finding reported.
+    assert AZURE_OPENAI.lower() in {e.location for e in assignment.evidence}
+    assert account.resource == AZURE_OPENAI
+
+
+@pytest.mark.parametrize("spelling", [AZURE_OPENAI.upper(), AZURE_OPENAI.lower()])
+def test_azure_resource_id_casings_link_but_other_resources_do_not(spelling):
+    live = finding(resource=AZURE_OPENAI, provider="azure", account="s1", region=None)
+    caller = peer(resource="gateway:caller", provider=None, account=None, region=None)
+    caller.metadata["resource_id"] = spelling
+    correlate([live, caller])
+    assert live.metadata["related"] == [caller.id]
+    caller.metadata["resource_id"] = spelling.replace("ACME-OPENAI", "OTHER").replace("acme-openai", "other")
+    correlate([live, caller])
+    assert not any(key.startswith("related") for key in live.metadata)
 
 
 def test_metadata_identifier_types_do_not_share_a_namespace():

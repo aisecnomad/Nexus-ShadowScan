@@ -1293,6 +1293,9 @@ no longer grows with the number of reply URLs.
 with `metadata.related_details` describing the identifier type, matching
 fields and scope. A fully qualified ARN, GCP resource name, Azure resource id
 or OCI OCID links on its own: a cross-account caller ARN is the same principal.
+Azure resource ids compare case-insensitively, as Azure Resource Manager
+treats them, so a role assignment whose scope ARM returns lowercased still
+links to the resource listing; the findings keep the spelling they reported.
 AWS-managed policy ARNs (`arn:aws:iam::aws:policy/...`) and Bedrock
 foundation-model ARNs are shared by every account and relate no findings,
 exactly or as candidates; accountless S3 bucket and Route 53 ARNs still link.

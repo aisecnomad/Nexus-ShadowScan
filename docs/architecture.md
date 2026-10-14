@@ -105,8 +105,11 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       with `metadata.related_details` records of the identifier type, the
       matching fields and the scope. A fully qualified reference (an ARN, a
       GCP resource name, an Azure resource id, an OCI OCID) carries its own
-      account or project; shared AWS catalog ARNs (AWS-managed policies,
-      Bedrock foundation models) identify no workload and are not compared.
+      account or project. Identifiers are compared byte for byte, except
+      Azure resource ids, which Azure Resource Manager treats
+      case-insensitively and which are compared in ASCII lowercase. Shared
+      AWS catalog ARNs (AWS-managed policies, Bedrock foundation models)
+      identify no workload and are not compared.
       A local identifier links exactly only within a
       declared shared scope: the Entra tenant for an Entra application id
       (reported as `app_id`, `client_id`, a Teams `bot_id` or an Azure Bot
