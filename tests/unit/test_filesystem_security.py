@@ -1890,3 +1890,65 @@ def test_remote_code_connectors_forward_artifact_options(provider):
 def test_large_artifact_reserves_metadata_scan_time():
     connector = FilesystemConnector(ConnectorContext(config={"inspect_model_artifacts": True}))
     assert connector._reserved_budget("model.gguf", Path("model.gguf"), 2**40, 10.0) == 2.0
+
+
+_AGENT_SCRIPT = (
+    "#!/bin/sh\n"
+    + "# padding line for size\n" * 4000
+    + 'export OPENAI_API_KEY="$KEY"\npython3 -m openai api chat.completions.create -m gpt-4o\n'
+)
+
+
+def test_extensionless_text_does_not_spend_the_artifact_budget(tmp_path, run_connector):
+    """Regression (#220 verifier): text files without a suffix used up the artifact budget.
+
+    Each was tail-searched for a PyInstaller cookie (32 KiB of a 32 MiB root
+    budget), so later files, the agent script among them, failed analysis.
+    """
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    body = b"plain release notes text line\n" * 1150
+    for number in range(1030):
+        (notes / f"NOTE{number:04d}").write_bytes(body)
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "run-agent").write_text(_AGENT_SCRIPT)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    assert any("provider.openai" in f.model_providers for f in findings)
+
+
+def test_extensionless_files_need_an_executable_header_before_a_tail_search(tmp_path):
+    import struct
+
+    from shadowscan.connectors.code.model_artifacts import PYINSTALLER_MAGIC, inspect_artifact
+
+    payload = b"harmless opaque bytes"
+    toc = struct.pack("!iIIIBc", 23, 0, len(payload), 99999999, 1, b"m") + b"main\0"
+    cookie = struct.pack(
+        "!8sIIII64s", PYINSTALLER_MAGIC, len(payload) + len(toc) + 88, len(payload), len(toc), 311, b"py"
+    )
+    charged = []
+    text = tmp_path / "NOTES"
+    text.write_bytes(b"plain text " * 4000 + payload + toc + cookie)
+    assert inspect_artifact(text, charge=charged.append) is None
+    assert sum(charged) == 4
+    binary = tmp_path / "agent"
+    binary.write_bytes(b"\x7fELF" + b"\0" * 4000 + payload + toc + cookie)
+    result = inspect_artifact(binary)
+    assert result is not None and result.format == "pyinstaller"
+
+
+def test_exhausted_artifact_budget_falls_back_to_text_analysis(tmp_path, run_connector, monkeypatch):
+    from shadowscan.connectors.code import filesystem
+
+    monkeypatch.setattr(filesystem, "_ARTIFACT_SCAN_BYTES", 0)
+    (tmp_path / "model.gguf").write_bytes(
+        Path("tests/fixtures/model_artifacts/header-only.gguf").read_bytes()
+    )
+    (tmp_path / "run-agent").write_text(_AGENT_SCRIPT)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert any("provider.openai" in f.model_providers for f in findings)
+    assert not any(f.resource_type == "binary-artifact" for f in findings)
+    assert not ctx.stats.errors and ctx.stats.incomplete
+    (warning,) = [w for w in ctx.stats.warnings if "artifact metadata budget" in w]
+    assert "2 selected file(s)" in warning

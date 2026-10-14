@@ -20,6 +20,26 @@ MAX_FIELDS = 8192
 MAX_TENSORS = 2048
 PYINSTALLER_MAGIC = b"MEI\x0c\x0b\x0a\x0b\x0e"
 ARTIFACT_SUFFIXES = frozenset({".gguf", ".safetensors", ".onnx", ".exe", ".bin", ".pkg"})
+# ELF, PE (MZ) and Mach-O (32/64-bit, both byte orders, universal) headers. An
+# extensionless file is searched for a PyInstaller cookie only when it starts
+# with one of them, so ordinary text costs its four-byte prefix, not a tail.
+_EXECUTABLE_MAGIC = (
+    b"\x7fELF",
+    b"MZ",
+    b"\xfe\xed\xfa\xce",
+    b"\xfe\xed\xfa\xcf",
+    b"\xce\xfa\xed\xfe",
+    b"\xcf\xfa\xed\xfe",
+    b"\xca\xfe\xba\xbe",
+)
+
+
+class ArtifactBudgetExhausted(ValueError):
+    """The caller's scan-wide artifact byte budget cannot cover a read.
+
+    Callers raise it from ``charge`` and may then analyse the file another
+    way: it says nothing about the file itself.
+    """
 
 
 @dataclass
@@ -381,8 +401,10 @@ def inspect_artifact(
             result = _safetensors(reader)
         elif suffix == ".onnx":
             result = _onnx(reader)
-        else:
+        elif suffix in ARTIFACT_SUFFIXES or prefix.startswith(_EXECUTABLE_MAGIC):
             result = _pyinstaller(reader)
+        else:
+            result = None
         if changed_since(before, stream.fileno()):
             raise ValueError("artifact changed while reading")
         if result is not None:

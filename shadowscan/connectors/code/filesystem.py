@@ -117,7 +117,11 @@ from shadowscan.connectors.code.manifests import (
 )
 from shadowscan.connectors.code.mcp_config import _mcp_client_for, _parse_mcp_servers
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_capabilities, mcp_tool_names
-from shadowscan.connectors.code.model_artifacts import ARTIFACT_SUFFIXES, inspect_artifact
+from shadowscan.connectors.code.model_artifacts import (
+    ARTIFACT_SUFFIXES,
+    ArtifactBudgetExhausted,
+    inspect_artifact,
+)
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
@@ -382,6 +386,8 @@ VCS_METADATA_EXCLUDES = frozenset({".git", ".hg", ".svn"})
 
 # Non-regular entries named individually per root, before the rest are summarized.
 _MAX_NON_REGULAR_NOTES = 10
+# Artifact metadata bytes (inspect_model_artifacts) read per scanned root.
+_ARTIFACT_SCAN_BYTES = 32 * 1024 * 1024
 
 LOCK_FILES = {
     "package-lock.json",
@@ -848,7 +854,9 @@ class _ScanState:
     base: Path | None = None  # that directory (the scan root, or a single-file root's parent)
     projects: dict[str, _Project] = field(default_factory=lambda: {".": _Project(".")})
     inventory_findings: list[Finding] = field(default_factory=list)
-    artifact_bytes_remaining: int = 32 * 1024 * 1024
+    artifact_bytes_remaining: int = field(default_factory=lambda: _ARTIFACT_SCAN_BYTES)
+    # Selected files the exhausted artifact budget left uninspected.
+    artifacts_uninspected: int = 0
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
     # relpath, parsed servers
     mcp_files: list[tuple[str, list[dict[str, Any]]]] = field(default_factory=list)
@@ -2852,6 +2860,14 @@ class FilesystemConnector(BaseConnector):
                 scan.diff_base_ref = self.diff_base
                 scan.diff_files = self._resolve_diff(root)
             self._walk(scan)
+            if scan.artifacts_uninspected:
+                self.ctx.warn(
+                    f"code.filesystem: {scan.label}: artifact metadata budget "
+                    f"({_ARTIFACT_SCAN_BYTES:,} bytes per root) exhausted; "
+                    f"{scan.artifacts_uninspected} selected file(s) were not inspected as artifacts "
+                    "(extensionless ones were still analysed as text); artifact inventory incomplete",
+                    incomplete=True,
+                )
             self._resolve_reexport_sources(scan)
             for f in self._emit_findings(scan):
                 if scan.diff_files is not None:
@@ -3129,16 +3145,22 @@ class FilesystemConnector(BaseConnector):
 
             def charge(size: int) -> None:
                 if size > scan.artifact_bytes_remaining:
-                    raise ValueError("artifact scan-wide metadata byte limit exceeded")
+                    raise ArtifactBudgetExhausted("artifact scan-wide metadata byte limit exceeded")
                 scan.artifact_bytes_remaining -= size
 
-            result = inspect_artifact(
-                on_disk,
-                dir_fd=scan.root_fd,
-                max_bytes=self.model_metadata_bytes,
-                check=self.ctx.check_deadline,
-                charge=charge,
-            )
+            try:
+                result = inspect_artifact(
+                    on_disk,
+                    dir_fd=scan.root_fd,
+                    max_bytes=self.model_metadata_bytes,
+                    check=self.ctx.check_deadline,
+                    charge=charge,
+                )
+            except ArtifactBudgetExhausted:
+                # The root's budget is spent: count the file once (reported
+                # after the walk) and still give it the text analysis below.
+                scan.artifacts_uninspected += 1
+                result = None
             if result is not None:
                 kind = Kind.INFRA if result.format == "pyinstaller" else Kind.LOCAL_MODEL
                 finding = self._base(

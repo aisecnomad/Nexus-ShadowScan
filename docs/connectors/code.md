@@ -1092,15 +1092,22 @@ budget, the ordinary entry/deadline budgets and an 8,192-field limit.
 - ONNX: a bounded protobuf-envelope check of supported IR versions 1–13, graph and
   opset presence. ONNX has no fixed magic. This is candidate format evidence,
   not semantic model validation. Tensor/external-data paths are never followed.
-- PyInstaller: bounded tail-cookie and TOC checks for modern Python 3 archives.
-  Legacy cookies and cookies beyond the bounded tail search are unsupported.
-  Entries are never extracted, decompressed, imported or executed.
+- PyInstaller: bounded tail-cookie and TOC checks for modern Python 3 archives
+  in `.exe`, `.bin` and `.pkg` files, and in extensionless files that start
+  with an ELF, PE (`MZ`) or Mach-O header. Any other extensionless file costs
+  only its four-byte prefix and is analysed as text as usual. Legacy cookies
+  and cookies beyond the bounded tail search are unsupported. Entries are
+  never extracted, decompressed, imported or executed.
 
 Findings use `local-model` or `infra` for packaging, carry
 `artifact-inventory-only`, and explicitly leave execution and agency unobserved.
 An empty GGUF header is not a usable model; PyInstaller alone is not AI evidence.
 Unreadable or malformed selected formats, unsupported headers, truncated reads,
-changed files and budget exhaustion mark coverage incomplete. All reads use
+changed files and per-file budget exhaustion mark coverage incomplete. When a
+root's 32 MiB aggregate budget is spent, the remaining selected files are not
+inspected as artifacts: an extensionless file still gets the normal text
+analysis, and one warning per root counts the uninspected files and marks
+coverage incomplete. All reads use
 confined regular-file handles; symlinks, FIFOs and device files are never opened
 as model payloads. Headers are an inventory aid, not a guarantee that an artifact
 is safe to load. No deserializer, inference engine or scanned executable runs.

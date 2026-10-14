@@ -63,7 +63,11 @@ stopped running.
 
 - `code.filesystem` (and `code.github` / `code.gitlab` checkouts):
   `inspect_model_artifacts` and `model_metadata_bytes` (default 65,536) for
-  bounded GGUF, safetensors, ONNX and PyInstaller metadata inventory.
+  bounded GGUF, safetensors, ONNX and PyInstaller metadata inventory. An
+  extensionless file is searched for a PyInstaller cookie only when it starts
+  with an ELF, PE or Mach-O header. When a root's 32 MiB artifact budget is
+  spent, the remaining selected files are counted in one warning that marks
+  coverage incomplete; extensionless files still get normal text analysis.
 - `runtime.processes` (live Linux only): `inspect_maps`, `inspect_fds`,
   `inspect_env_keys`, with `max_inspection_bytes`,
   `max_inspection_total_bytes`, `max_inspection_entries`, `max_mappings` and
