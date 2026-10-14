@@ -1548,6 +1548,19 @@ def test_readme_benchmark_table_quotes_the_committed_results() -> None:
     assert "not** independent review" in section and "not** measured production precision" in section
 
 
+def test_readme_estate_row_says_when_the_labels_were_frozen() -> None:
+    """The estate's labels were frozen after every runnable tool ran once, not before any tool ran.
+
+    The README's benchmark table said the labels were "frozen before any tool ran", but the
+    estate protocol froze them after a label-completeness audit in which every runnable tool
+    ran once (the run report already says so).
+    """
+    readme = _read(ROOT / "README.md")
+    section = " ".join(readme[readme.index("## Benchmarks") : readme.index("## The Why")].split())
+    assert "frozen before any tool ran" not in section
+    assert "label-completeness pass in which every runnable tool ran once" in section
+
+
 _PIP_COMMANDS = frozenset(
     {
         "cache", "check", "completion", "config", "debug", "download", "freeze", "hash", "help",
