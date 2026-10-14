@@ -69,7 +69,9 @@ proof that an agent stopped running or that a tool became safe.
   and old observations remain historical even when they name the same tool.
 - Supported lockfiles add dependency inventory, which may increase inventory
   totals without establishing active agents. Unknown dependency relationships
-  remain unknown. No package manager or dependency installer runs.
+  remain unknown. No package manager or dependency installer runs. A rejected
+  lockfile names its reason per file and keeps the scan incomplete; it is never
+  silently empty.
 - Raw model/binary inspection and Linux maps/descriptor inspection require
   explicit connector options. Review the source/runtime guides for byte, entry
   and time bounds before enabling them. Denied or truncated selected inspection

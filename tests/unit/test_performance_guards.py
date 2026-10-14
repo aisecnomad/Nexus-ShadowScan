@@ -300,7 +300,11 @@ def test_malformed_selected_lockfile_marks_scan_incomplete(tmp_path, index, name
     (tmp_path / name).write_text("small")
     result = Engine(_engine_config(tmp_path), index).run()
     assert not result.complete and result.findings
-    assert any(name in error and "manifest parsing failed" in error for error in result.stats[0].errors)
+    # A rejected lockfile names its reason per file: malformed content is an
+    # input defect (a warning that keeps the scan incomplete), a shape error an error.
+    stats = result.stats[0]
+    reason = "lockfile object expected" if name == "pnpm-lock.yaml" else "input defect: invalid TOML"
+    assert any(f"{name}: {reason}" in message for message in stats.errors + stats.warnings)
 
 
 def test_oversize_source_file_marks_coverage_incomplete_by_default(tmp_path, index):

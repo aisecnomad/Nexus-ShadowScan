@@ -99,6 +99,27 @@ a second verification; each has a regression test.
   marks the scan incomplete. #217's well-known-name shadowing is not carried:
   a filesystem server's own `read_file` is not a collision. Rescan: affected
   MCP tool findings score higher than before; finding ids are unchanged.
+- Source inventory: a rejected `uv.lock`, `poetry.lock`, `pnpm-lock.yaml` or
+  `Cargo.lock` is reported per file with a fixed reason that never quotes the
+  file. Malformed content is an input defect like a malformed `package.json`
+  (`code.filesystem: uv.lock: input defect: invalid TOML`; a warning that
+  keeps the scan incomplete, an error under `strict_coverage`); a limit,
+  unsupported version or shape error is an error naming itself (`lockfile
+  package limit exceeded`, `unsupported pnpm lockfile version (supported: 6
+  and 9)`, `lockfile object expected`). Was `manifest parsing failed
+  (ValueError)` for every case. Lockfile parsing is bounded by
+  `max_file_size` like other manifests (the parser's own ceiling is the
+  strict YAML loader's 64 MiB), 65,536 packages with pnpm packages and
+  snapshots counted separately (was 4,096 for their sum, about 2,048 real
+  packages), 262,144 dependency edges and 1,000,000 structural nodes.
+- Source inventory: pnpm git and tarball dependencies (v6
+  `github.com/org/repo/<commit>` and `@host/pkg.tgz` keys, v9
+  `name@https://…` and `name@git+…#<commit>` keys and the references to them)
+  and `uv.lock` entries without a `version` (virtual root, dynamic-version
+  workspace member) are inventoried instead of rejecting the whole lockfile
+  as malformed. A git or tarball package records its name, the version its
+  entry records (`null` when none), `source_type` `git` or `url` and
+  relationship `unknown`; no URL or commit is retained.
 - Model artifacts: GGUF inspection seeks past fixed-size metadata arrays and
   walks string arrays up to 1,024 elements by their length prefixes; a longer
   string array (a tokenizer vocabulary) ends metadata parsing with

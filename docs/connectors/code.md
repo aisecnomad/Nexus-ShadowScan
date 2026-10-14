@@ -1056,10 +1056,23 @@ Aliases resolve to their recorded package name; workspace links, peer-qualified
 variants, remote sources, ambiguous versions, optional conditions and environment markers are not resolved.
 Nothing installs dependencies or launches a package manager. Presence in a lock
 file does not establish installation, execution, agency or authorization.
+pnpm git and tarball dependencies are inventoried from the entry's recorded name
+and version with `source_type` `git` or `url`; references to them are remote
+sources, so their relationship is `unknown`. A `uv.lock` entry without a
+`version` (a virtual root or a dynamic-version workspace member) is listed with
+`version: null` and matched by name only.
 
-Parsing is limited to the smaller of `max_file_size` and 1,000,000 UTF-8 bytes,
-4,096 packages, 16,384 dependency edges and 50,000 structural nodes/depth 64.
-Malformed inputs, unsupported format versions and exceeded limits are incomplete.
+Parsing is bounded by `max_file_size` like any other manifest (the parser's own
+ceiling is the strict YAML loader's 64 MiB input bound, which also caps a
+`pnpm-lock.yaml` at 100,000 YAML nodes), 65,536 packages (pnpm packages and
+snapshots counted separately), 262,144 dependency edges and 1,000,000
+structural nodes at depth 64. A lockfile that cannot be inventoried is reported
+with a fixed reason scoped to the file and the scan is incomplete: malformed
+content is an input defect (`input defect: invalid TOML`, `invalid YAML`), the
+same path a malformed `package.json` takes; an exceeded limit, an unsupported
+format version or an unexpected shape is an error naming itself. Nothing from
+the file is quoted. The supported lockfiles still do not bypass analysis through
+oversize skip globs; other lockfile formats retain the documented exclusions.
 The supported lockfiles no longer bypass analysis through oversize skip globs;
 other lockfile formats retain the documented exclusions.
 
