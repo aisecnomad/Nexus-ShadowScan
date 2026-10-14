@@ -968,8 +968,10 @@ per region), `max_registry_records`, `registry_arns`.
 CloudTrail exports retain bounded event and assumed-role provenance. Lineage
 requires exact scoped session identifiers and compatible creation/lifetime
 timestamps; missing or ambiguous predecessors remain unknown. This metadata
-does not add confidence. Live `LookupEvents` is not invocation data-event
-coverage; see the [cloud guide](connectors/cloud.md).
+does not add confidence, and its sampling bounds report partial lineage
+without marking the scan incomplete. Live `LookupEvents` retrieves no STS
+events, so live lineage is always unlinked, and it is not invocation
+data-event coverage; see the [cloud guide](connectors/cloud.md).
 
 Opt-in registry records (`services` including `registry`): AWS Agent Registry
 and AgentCore registry records of every status, from the control-plane APIs,

@@ -94,13 +94,29 @@ an observed non-session origin, partial exports, ambiguity, cycles and depth
 limits. A missing predecessor never becomes an inferred edge. Even a chain
 ending at an observed origin does not prove effective access or completeness of
 the provider's audit record. Missing assumption events, session times or data
-events leave the relationship unlinked, never absent.
+events leave the relationship unlinked, never absent. A chain whose last
+observed hop is `AssumeRoleWithWebIdentity` or `AssumeRoleWithSAML` ends
+`partial`: the identity provider's subject is not an AWS principal the export
+can trace. Session tags are not used to join sessions.
 
-Lineage retains at most 2,000 events per connector run and 100 observations per
-caller. Reaching a limit, malformed metadata, or invalid event timestamps marks
-coverage incomplete; valid invocation evidence is preserved. The synthetic
-fixture `tests/fixtures/cloud/lineage/assumed_session.jsonl` exercises a
-cross-account assumption, cross-region `ConverseStream`, and a non-AI control.
+Lineage is export replay only. Live collection runs `LookupEvents` for the
+invocation operations alone and never retrieves STS `AssumeRole*` events, so
+every live observation is `unlinked`; replay an export that includes the STS
+events to link sessions.
+
+Lineage is non-scoring metadata, so its bounds never decide detection: every
+invocation is still counted in its caller finding. It traces at most 100
+invocations per caller and 2,000 invocations and 2,000 STS assumptions per
+connector run. A sampled caller reports `observation_count` and
+`observations_truncated`; a run past a bound, a cycle or the eight-hop limit
+records the reason in `limits` with `coverage: partial` and a warning that
+leaves the scan complete. Malformed metadata, invalid event timestamps and
+conflicting event IDs mark coverage incomplete (`coverage: incomplete`); valid
+invocation evidence is preserved. Offline `cloudtrail-event` records whose
+`eventName` is neither a collected invocation operation nor an STS assumption
+are ignored rather than reported as LLM callers. The synthetic fixture
+`tests/fixtures/cloud/lineage/assumed_session.jsonl` exercises a cross-account
+assumption, cross-region `ConverseStream`, and a non-AI control.
 
 Lambda `Environment.Error` is unknown environment coverage, not an empty set of
 variables. The `environment_coverage` marker survives sanitized exports and replay;

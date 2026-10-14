@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from unittest import mock
 from unittest.mock import Mock
@@ -493,18 +494,24 @@ def test_cloudtrail_ambiguous_sessions_and_conflicting_event_ids_do_not_bind(ind
     assert findings[0].metadata["cloudtrail_lineage"]["observations"][0]["assumption"] is None
 
 
-def test_cloudtrail_lineage_limits_and_invalid_times_are_explicit(index, monkeypatch):
+def test_cloudtrail_lineage_limits_are_partial_and_invalid_times_incomplete(index, monkeypatch):
     from shadowscan.connectors.cloud import aws_lineage
 
     monkeypatch.setattr(aws_lineage, "MAX_LINEAGE_EVENTS", 1)
     assumption, invocation, _ = _lineage_records()
-    findings, ctx = _lineage(index, [assumption, invocation])
-    assert findings and ctx.stats.incomplete
-    assert "event-limit" in findings[0].metadata["cloudtrail_lineage"]["limits"]
+    other = deepcopy(assumption)
+    other["eventID"] = "another-assumption"
+    findings, ctx = _lineage(index, [other, assumption, invocation])
+    # Lineage is non-scoring: a bounded sample is disclosed, detection is complete.
+    assert findings and not ctx.stats.incomplete
+    lineage = findings[0].metadata["cloudtrail_lineage"]
+    assert lineage["limits"] == ["assumption-limit"] and lineage["coverage"] == "partial"
+    assert any("lineage partial" in warning for warning in ctx.stats.warnings)
     invocation["eventTime"] = "not-a-time"
     findings, ctx = _lineage(index, [invocation])
     assert ctx.stats.incomplete
     assert "invalid-timestamp" in findings[0].metadata["cloudtrail_lineage"]["limits"]
+    assert findings[0].metadata["cloudtrail_lineage"]["coverage"] == "incomplete"
 
 
 def test_cloudtrail_per_caller_limit_preserves_counts_but_reports_partial_provenance(index, monkeypatch):
@@ -513,9 +520,10 @@ def test_cloudtrail_per_caller_limit_preserves_counts_but_reports_partial_proven
     monkeypatch.setattr(aws_lineage, "MAX_CALLER_OBSERVATIONS", 1)
     assumption, invocation, _ = _lineage_records()
     findings, ctx = _lineage(index, [assumption, invocation, {**invocation, "eventID": "another-call"}])
-    assert ctx.stats.incomplete and findings[0].metadata["events"] == 2
+    assert not ctx.stats.incomplete and findings[0].metadata["events"] == 2
     lineage = findings[0].metadata["cloudtrail_lineage"]
-    assert len(lineage["observations"]) == 1 and "caller-observation-limit" in lineage["limits"]
+    assert len(lineage["observations"]) == 1 and lineage["observation_count"] == 2
+    assert lineage["observations_truncated"] and lineage["coverage"] == "partial"
 
 
 def test_cloudtrail_two_hop_cross_account_chain_preserves_exact_ancestry(index):
@@ -590,12 +598,13 @@ def _normalized_chain(length):
     return assumptions, invocation
 
 
-def test_cloudtrail_chain_hop_budget_and_cycles_fail_incomplete(index):
+def test_cloudtrail_chain_hop_budget_and_cycles_are_partial_lineage(index):
     assumptions, invocation = _normalized_chain(9)
     findings, ctx = _lineage(index, [*assumptions, invocation])
     observation = findings[0].metadata["cloudtrail_lineage"]["observations"][0]
     assert observation["chain_status"] == "depth-limit" and len(observation["assumption_chain"]) == 8
-    assert ctx.stats.incomplete
+    assert not ctx.stats.incomplete
+    assert findings[0].metadata["cloudtrail_lineage"]["coverage"] == "partial"
     assumptions, invocation = _normalized_chain(1)
     assumptions[0].update(
         principal=invocation["principal"],
@@ -604,7 +613,40 @@ def test_cloudtrail_chain_hop_budget_and_cycles_fail_incomplete(index):
     )
     findings, ctx = _lineage(index, [*assumptions, invocation])
     observation = findings[0].metadata["cloudtrail_lineage"]["observations"][0]
-    assert observation["chain_status"] == "cycle" and ctx.stats.incomplete
+    assert observation["chain_status"] == "cycle" and not ctx.stats.incomplete
+    assert "lineage-cycle" in findings[0].metadata["cloudtrail_lineage"]["limits"]
+
+
+def _invocations(count, users):
+    return [
+        {
+            "_kind": "cloudtrail-event",
+            "eventID": f"e{n}",
+            "eventName": "InvokeModel",
+            "eventSource": "bedrock.amazonaws.com",
+            "eventTime": "2026-01-01T00:10:00Z",
+            "_region": "us-west-2",
+            "recipientAccountId": "222222222222",
+            "principal": f"arn:aws:iam::222222222222:user/u{n % users}",
+            "identityType": "IAMUser",
+            "modelId": "anthropic.claude-v2",
+        }
+        for n in range(count)
+    ]
+
+
+@pytest.mark.parametrize(("count", "users"), [(101, 1), (2100, 5)])
+def test_busy_cloudtrail_export_stays_complete_when_lineage_is_sampled(index, count, users):
+    """Regression (#220 graph review F3): lineage bounds must not make every busy account exit 3."""
+    ctx = _context(index, input="synthetic-cloudtrail.jsonl", account_id="222222222222")
+    findings = list(AwsConnector(ctx).analyze(_invocations(count, users)))
+    assert len(findings) == users and not ctx.stats.incomplete
+    assert sum(finding.metadata["events"] for finding in findings) == count
+    for finding in findings:
+        lineage = finding.metadata["cloudtrail_lineage"]
+        assert lineage["observation_count"] == finding.metadata["events"]
+        assert len(lineage["observations"]) == 100 and lineage["observations_truncated"]
+        assert lineage["coverage"] == "partial"
 
 
 @pytest.mark.parametrize(

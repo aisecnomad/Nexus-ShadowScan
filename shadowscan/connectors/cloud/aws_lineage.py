@@ -6,6 +6,7 @@ bodies and response credentials are never part of a lineage observation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable
@@ -18,6 +19,8 @@ from shadowscan.utils.text import parse_timestamp, to_iso
 
 MAX_LINEAGE_EVENTS = 2000
 MAX_CALLER_OBSERVATIONS = 100
+# Exact-duplicate detection keeps one fixed-size entry per event identity.
+MAX_DEDUPLICATED_EVENTS = 100_000
 MAX_ASSUMPTION_HOPS = 8
 ASSUME_OPERATIONS = frozenset({"AssumeRole", "AssumeRoleWithSAML", "AssumeRoleWithWebIdentity"})
 _FIELDS = (
@@ -92,55 +95,95 @@ def _usable(value: Any) -> TypeGuard[str]:
 
 
 class CloudTrailLineage:
-    """Retain event provenance and link only an unambiguous, unexpired exact session."""
+    """Retain event provenance and link only an unambiguous, unexpired exact session.
 
-    def __init__(self, warn: Callable[[str], None]) -> None:
+    Lineage is non-scoring metadata: caller detection never depends on it.
+    Sampling and resource limits therefore make lineage *partial* (disclosed
+    in metadata and a warning that leaves the scan complete); only a
+    malformed export (an invalid timestamp or a conflicting event ID) makes
+    coverage incomplete.
+    """
+
+    # Reasons that only bound the provenance sample; the export itself is sound.
+    _PARTIAL = frozenset({"assumption-limit", "observation-limit", "lineage-cycle", "chain-depth-limit"})
+
+    def __init__(self, warn: Callable[..., None]) -> None:
         self.warn = warn
-        self.events: list[dict[str, Any]] = []
-        self.seen: dict[tuple[str, str, str], str] = {}
+        # SHA-256 of each event identity -> SHA-256 of its retained fields.
+        self.seen: dict[bytes, bytes] = {}
         self.limits: set[str] = set()
+        # STS assumptions, indexed by the session ARN they returned (the only
+        # field an invocation can match on), and invocations per caller.
+        self.assumptions = 0
+        self.by_session: dict[str, list[dict[str, Any]]] = {}
+        self.invocations: dict[str, list[dict[str, Any]]] = {}
+        self.retained = 0
+        self.observed: dict[str, int] = {}
 
     def _gap(self, reason: str) -> None:
         if reason not in self.limits:
             self.limits.add(reason)
-            self.warn(f"cloud.aws: CloudTrail lineage {reason}; coverage incomplete")
+            if reason in self._PARTIAL:
+                self.warn(f"cloud.aws: CloudTrail lineage {reason}; lineage partial", incomplete=False)
+            else:
+                self.warn(f"cloud.aws: CloudTrail lineage {reason}; coverage incomplete")
 
     def add(self, record: dict[str, Any]) -> bool:
         """Return false for exact duplicates; resource limits affect provenance, not detection."""
-        observation = {}
+        observation: dict[str, str] = {}
         for name in _FIELDS:
             value = record.get(name)
             if value is not None:
                 if not isinstance(value, str) or len(value) > 2048:
                     raise ValueError("invalid CloudTrail lineage field")
-                observation[name] = text(value, 2048)
+                observation[name] = value
         for name in ("eventTime", "sessionCreatedAt", "sessionExpiresAt"):
             if observation.get(name):
                 stamp = parse_timestamp(observation[name])
-                if stamp is None:
+                iso = to_iso(stamp) if stamp is not None else None
+                if iso is None:
                     self._gap("invalid-timestamp")
                     observation.pop(name)
                 else:
-                    observation[name] = to_iso(stamp)
+                    observation[name] = iso
         if all(_usable(observation.get(k)) for k in ("eventID", "recipientAccountId", "_region")):
-            key = (
-                str(observation["recipientAccountId"]),
-                str(observation["_region"]),
-                str(observation["eventID"]),
-            )
-            encoded = json.dumps(observation, sort_keys=True)
+            identity = [observation["recipientAccountId"], observation["_region"], observation["eventID"]]
+            key = hashlib.sha256(json.dumps(identity).encode()).digest()
+            encoded = hashlib.sha256(json.dumps(observation, sort_keys=True).encode()).digest()
             previous = self.seen.get(key)
             if previous == encoded:
                 return False
             if previous is not None:
                 self._gap("conflicting-event-id")
-            elif len(self.seen) < MAX_LINEAGE_EVENTS:
+            elif len(self.seen) < MAX_DEDUPLICATED_EVENTS:
                 self.seen[key] = encoded
-        if len(self.events) >= MAX_LINEAGE_EVENTS:
-            self._gap("event-limit")
-        else:
-            self.events.append(observation)
+        if observation.get("eventName") in ASSUME_OPERATIONS:
+            if self.assumptions >= MAX_LINEAGE_EVENTS:
+                # A dropped assumption could be any caller's missing hop.
+                self._gap("assumption-limit")
+            else:
+                self.assumptions += 1
+                retained = self._retained(observation)
+                session = retained.get("assumedRoleArn")
+                if _usable(session):
+                    self.by_session.setdefault(session, []).append(retained)
+            return True
+        # Keyed exactly like the connector's caller aggregation.
+        principal = observation.get("principal") or "unknown"
+        self.observed[principal] = self.observed.get(principal, 0) + 1
+        sample = self.invocations.setdefault(principal, [])
+        if len(sample) < MAX_CALLER_OBSERVATIONS:
+            if self.retained >= MAX_LINEAGE_EVENTS:
+                self._gap("observation-limit")
+            else:
+                sample.append(self._retained(observation))
+                self.retained += 1
         return True
+
+    @staticmethod
+    def _retained(observation: dict[str, str]) -> dict[str, Any]:
+        """Sanitize only what is kept: events past the sample bounds are never stored."""
+        return {name: text(value, 2048) for name, value in observation.items()}
 
     @staticmethod
     def _matches(invocation: dict[str, Any], assumption: dict[str, Any]) -> bool:
@@ -192,18 +235,21 @@ class CloudTrailLineage:
         return not source or (_usable(source) and source == assumption.get("sourceIdentity"))
 
     def for_principal(self, principal: str) -> dict[str, Any]:
-        assumptions = [e for e in self.events if e.get("eventName") in ASSUME_OPERATIONS]
-        observations: list[dict[str, Any]] = []
-        for event in self.events:
-            if event.get("principal") != principal or event.get("eventName") in ASSUME_OPERATIONS:
-                continue
-            if len(observations) >= MAX_CALLER_OBSERVATIONS:
-                self._gap("caller-observation-limit")
-                break
-            observations.append({**event, **self._trace(event, assumptions)})
+        sample = self.invocations.get(principal, [])
+        observations = [{**event, **self._trace(event)} for event in sample]
+        observed = self.observed.get(principal, 0)
+        partial = bool(self.limits & self._PARTIAL) or len(observations) < observed
         return {
             "observations": observations,
-            "coverage": "incomplete" if self.limits else "export-observations-only",
+            "observation_count": observed,
+            "observations_truncated": len(observations) < observed,
+            "coverage": (
+                "incomplete"
+                if self.limits - self._PARTIAL
+                else "partial"
+                if partial
+                else "export-observations-only"
+            ),
             "limits": sorted(self.limits),
             "identity_basis": "exact-session-arn-issuer-creation-time-and-lifetime",
             "limitations": [
@@ -211,17 +257,21 @@ class CloudTrailLineage:
                 "An API call or role session does not establish agent execution or effective access.",
                 "STS region may differ from invocation region; recipient and region scopes are retained.",
                 "No credential identifiers or values are retained; sourceIdentity is a provider assertion.",
+                f"At most {MAX_CALLER_OBSERVATIONS} invocations per caller and {MAX_LINEAGE_EVENTS:,} "
+                "invocations and STS assumptions per run are traced; a partial sample is disclosed, "
+                "not inferred.",
             ],
         }
 
-    def _trace(self, event: dict[str, Any], assumptions: list[dict[str, Any]]) -> dict[str, Any]:
+    def _trace(self, event: dict[str, Any]) -> dict[str, Any]:
         """Walk observed STS ancestry without inferring missing hops or following cycles."""
         current = event
         chain: list[dict[str, Any]] = []
         seen = {id(event)}
         status = "partial"
         while True:
-            matches = [e for e in assumptions if self._matches(current, e)]
+            candidates = self.by_session.get(str(current.get("principal")), [])
+            matches = [e for e in candidates if self._matches(current, e)]
             if not matches:
                 if current.get("identityType") in {"IAMUser", "Root", "AWSService"}:
                     status = "observed-origin"
