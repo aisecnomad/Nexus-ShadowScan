@@ -167,8 +167,11 @@ More generally, a match that does not establish its signature (an ambiguous
 name, or a caller's `establish=False` mention) adds none of the signature's
 tags; it is recorded only under `metadata.potential_*`. OAuth reply and homepage
 URLs corroborate a domain signal by their parsed `http(s)` hostname only. A URL
-field holding several URLs separated by commas, semicolons or whitespace is
-split and each host is checked once. Tokens with userinfo, a backslash or a
+field holding several URLs is split and each host is checked once: whitespace
+always separates, and a comma or semicolon separates only where a new
+`http(s)://` URL starts and before the current URL's query or fragment, so
+`https://portal.example/cb?next=a,https://chatgpt.com/` names only
+`portal.example`. Tokens with userinfo, a backslash or a
 control character are skipped, because Python and browsers can disagree about
 their host.
 

@@ -1084,8 +1084,10 @@ full weight. OAuth reply and homepage URLs corroborate a product by their
 parsed `http(s)` hostname only: a product domain in another site's path, query,
 fragment or userinfo no longer counts, and URL tokens with userinfo, a
 backslash or a control character are skipped. A field with several URLs
-(comma, semicolon or whitespace separated, as in a ServiceNow `redirect_url`)
-is split, so an AI host listed second is still found.
+(whitespace separated, or comma or semicolon separated before a new `http(s)://`
+URL, as in a ServiceNow `redirect_url`) is split, so an AI host listed second
+is still found; a separator inside a URL's query or fragment
+(`?next=a,https://chatgpt.com/`) does not split it.
 
 **Unattributed apps.** An app assessed by an identity or SaaS connector with no
 established AI product, provider, LLM-access permission, Entra agent identity
