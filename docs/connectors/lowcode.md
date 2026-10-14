@@ -86,10 +86,12 @@ without a diagnostic.
 
 An n8n step counts as AI when its node type is a LangChain, model-provider,
 agent or MCP node (`mcp` matched as its own token: custom `mcpClient`,
-`MCPServer` and `mcp_bridge` node types count, `mcp9808` sensor and `smcp`
-decoder nodes do not), or when it is an HTTP Request node that calls a model
-API. The HTTP rule: the node POSTs to a generation route (OpenAI, Anthropic,
-Azure OpenAI, Bedrock, Vertex or Ollama style) and either the host is a known
+`MCPServer` and `mcp_bridge` node types count, and so do camelCase types that
+put `Mcp` or `MCP` after another word, such as `githubMcpClient` or
+`zapierMcp`; `mcp9808` sensor and `smcp` decoder nodes do not), or when it is
+an HTTP Request node that calls a model API. The HTTP rule: the node POSTs to
+a generation route (OpenAI, Anthropic, Azure OpenAI, Bedrock, Vertex or Ollama
+style) and either the host is a known
 model host, or the route is versioned or namespaced (`/v1/chat/completions`,
 `/v1/completions`, `/api/generate`) on a host that is not a known SMS or
 messaging API (Vonage, MessageBird, Twilio, Sinch, Plivo, Telnyx).

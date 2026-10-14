@@ -89,11 +89,13 @@ _WORKBOT_HUMAN_TRIGGERS = re.compile(r"command|menu|modal|button|action|shortcut
 _N8N_AI_NODE = re.compile(
     r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace|\.agent$", re.I
 )
-# ``mcp`` as its own token in a node type: mcpClient, MCPServer, mcp_bridge, but
-# not a word or part number that contains it (smcpDecoder, mcp9808Sensor). The
-# token ends at a capital letter, a separator or the end, never a lower-case
-# letter or a digit, so the match is case-sensitive after the token.
-_N8N_MCP_NODE = re.compile(r"(?<![A-Za-z0-9])[Mm][Cc][Pp](?![a-z0-9])")
+# ``mcp`` as its own token in a node type: mcpClient, MCPServer, mcp_bridge, and
+# a camelCase word after another word (githubMcpClient, acmeMCPTool, zapierMcp),
+# but not a word or part number that contains it (smcpDecoder, mcp9808Sensor).
+# The token starts after a non-alphanumeric character, or as ``Mcp``/``MCP``
+# after a lower-case letter, and ends at a capital letter, a separator or the
+# end, never a lower-case letter or a digit.
+_N8N_MCP_NODE = re.compile(r"(?:(?<![A-Za-z0-9])[Mm][Cc][Pp]|(?<=[a-z])(?:Mcp|MCP))(?![a-z0-9])")
 _N8N_HTTP_NODE = "n8n-nodes-base.httpRequest"
 _UNQUALIFIED_GENERATION_ROUTE = re.compile(r"/(?:messages|responses|completions|chat/completions)/?", re.I)
 _CORROBORATED_GENERATION_ROUTE = re.compile(r"/v1/(?:messages|responses)|/api/chat", re.I)

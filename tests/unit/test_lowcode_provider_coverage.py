@@ -743,6 +743,11 @@ def test_n8n_ambiguous_generation_route_without_corroboration_is_not_an_ai_step(
         "n8n-nodes-base.mcpClient",
         "CUSTOM.MCPServer",
         "acme.mcp_bridge",
+        # Regression (F7): camelCase MCP nodes after another word.
+        "CUSTOM.githubMcpClient",
+        "n8n-nodes-acme.acmeMcpTool",
+        "CUSTOM.zapierMcp",
+        "CUSTOM.acmeMCPClient",
     ],
 )
 def test_n8n_named_ai_and_mcp_nodes_are_still_detected(index, node_type):
@@ -750,7 +755,17 @@ def test_n8n_named_ai_and_mcp_nodes_are_still_detected(index, node_type):
     assert len(findings) == 1
 
 
-@pytest.mark.parametrize("node_type", ["n8n-nodes-base.mcp9808Sensor", "n8n-nodes-community.smcpDecoder"])
+@pytest.mark.parametrize(
+    "node_type",
+    [
+        "n8n-nodes-base.mcp9808Sensor",
+        "n8n-nodes-community.smcpDecoder",
+        "CUSTOM.Mcp9808",
+        "CUSTOM.acmeMcp9808",
+        "CUSTOM.SMCPDecoder",
+        "CUSTOM.trackMcpherson",
+    ],
+)
 def test_n8n_mcp_is_matched_as_a_token(index, node_type):
     findings, _ = _n8n_run(index, _WEBHOOK, {"name": "Step", "type": node_type, "parameters": {}})
     assert findings == []

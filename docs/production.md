@@ -1357,9 +1357,10 @@ now reported as AI workflows. On a host that is not a known model host,
 `anthropic-version` header or a body with `model` and `messages`, `prompt` or
 `input`, so WhatsApp Business and help-desk chat calls are not AI steps; a
 self-hosted model called without either is missed. `mcp` in a node type
-counts as its own token: custom `mcpClient` or `MCPServer` nodes are AI
-steps, and node types that merely contain `mcp` inside another word or part
-number are not.
+counts as its own token: custom `mcpClient` or `MCPServer` nodes, and
+camelCase types with `Mcp` or `MCP` after another word (`githubMcpClient`,
+`zapierMcp`), are AI steps, and node types that merely contain `mcp` inside
+another word or part number are not.
 
 **SaaS, identity and cloud inventory.** Notion bots are inventoried only with
 an established AI product or provider, or an AI-name hint in their name (a
