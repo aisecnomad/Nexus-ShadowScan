@@ -5,6 +5,24 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### README visual redesign (October 14)
+
+Documentation only; no scanner behaviour changes.
+
+- README: a hero banner, an end-to-end data-flow figure with an annotated
+  architecture sketch behind a disclosure, and a "How it compares" section
+  whose charts render the committed cross-tool benchmark results, each
+  captioned with its provenance and the program's standing limits
+  (author-written corpora and labels, no independent review, no field
+  precision or recall). "Evidence and assurance limits" moves next to it
+  from "Development". A quick-navigation line follows the badges, which
+  gain the PyPI version; "The Why" is retitled "Why ShadowScan" and the
+  documentation map links the benchmark index. Section content is
+  otherwise unchanged. The five images live under `docs/assets/readme/`
+  and are referenced by absolute raw URL so the README renders on the
+  package index; figure captions note where a diagram predates the
+  current surface and connector counts.
+
 ### Documentation aligned with the code (October 12)
 
 Documentation only; no scanner behaviour changes.

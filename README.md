@@ -1,12 +1,30 @@
 # Project Nexus · ShadowScan
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/shadowscan-hero.webp" alt="ShadowScan — Project Nexus, open-source AI agent discovery. Finds the AI agents nobody registered: then tells you who owns them, what they can do, and whether anyone approved them." width="920">
+</p>
+
+<div align="center">
+
 [![CI](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml/badge.svg)](https://github.com/aisecnomad/Project-Nexus/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/aisecnomad/Project-Nexus/badge)](https://scorecard.dev/viewer/?uri=github.com/aisecnomad/Project-Nexus)
+[![PyPI](https://img.shields.io/pypi/v/NexusShadowScan.svg)](https://pypi.org/project/NexusShadowScan/)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/aisecnomad/Project-Nexus/blob/main/LICENSE)
 [![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue.svg)](https://www.python.org/downloads/)
 [![Coverage ≥80%](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#quality-gates)
 [![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Project-Nexus/tree/main/docs)
+
+**[Why](#why-shadowscan) ·
+[How it works](#how-it-works) ·
+[Connectors](#surfaces--connectors) ·
+[Benchmarks](#how-it-compares) ·
+[Install](#install) ·
+[Quick start](#quick-start) ·
+[Docs](#documentation) ·
+[Contributing](#community-and-contributing)**
+
+</div>
 
 **ShadowScan is an open-source tool that discovers evidence of AI agents and related integrations, then reconciles it against your approved agent registry.**
 
@@ -34,7 +52,7 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
  CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
 ```
 
-## The Why
+## Why ShadowScan
 
 Agents are no longer only Python scripts.
 They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
@@ -71,6 +89,28 @@ producing a smaller report that looks clean. Only the opt-in LLM triage is
 advisory; its failures are warnings. See
 [architecture](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/architecture.md)
 for the pipeline, the package layout and the connector contract.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/architecture-dataflow.jpg" alt="Data-flow diagram of one scan: untrusted scan targets (provider APIs over HTTPS, offline exports, repository checkouts) feed records into connectors; trusted inputs (YAML signature packs, configuration, the approved-agent inventory) steer the engine, which merges findings by stable identity, correlates them across surfaces, reconciles them against the inventory and scores risk; reports, sanitized record dumps and scan state are written atomically with private file modes." width="880">
+</p>
+<p align="center"><sub><b>One scan, end to end.</b> Untrusted scan targets enter only through
+connectors; trusted operator inputs — signature packs, configuration, the approved-agent
+inventory — steer the engine's merge, correlate, reconcile and score stages; every output is
+written atomically with private file modes. The figure is from an earlier release and shows six
+of today's nine surfaces; the flow is unchanged, and the tables below carry the current
+counts.</sub></p>
+
+<details>
+<summary><b>Prefer the whiteboard view?</b> The same pipeline as an annotated sketch.</summary>
+<br>
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/architecture-sketch.jpg" alt="Annotated sketch of the ShadowScan architecture: YAML signature packs are compiled by a signature indexer into dependency, import, code, file, env, domain, user-agent, image, IaC, name, scope, model, secret and client-ID matchers; multi-surface connectors collect live data or load offline files into records and analyze them into findings; the engine merges, correlates, reconciles with the inventory and scores risk; reporters emit table, JSON, SARIF, CSV, Markdown and HTML." width="880">
+</p>
+<p align="center"><sub>Signature packs are plain YAML; the signature indexer compiles them into
+the matchers every connector's <code>analyze()</code> consults, which is why adding a product is
+a data change. Sketch from an earlier release; the current signature schema is documented in
+<a href="https://github.com/aisecnomad/Project-Nexus/blob/main/docs/signatures.md">docs/signatures.md</a>.</sub></p>
+</details>
 
 ## Surfaces & connectors
 
@@ -114,6 +154,78 @@ name, never parsed) and `runtime.processes` reads `/proc` on Linux.
 `shadowscan signatures list` shows everything; `shadowscan signatures test <value>`
 tells you what a package, host, user agent, model ID, scope, or file path maps to.
 
+## How it compares
+
+ShadowScan carries a cross-tool benchmark program: the same inputs are given to
+ShadowScan and to every other open-source discovery tool that could be
+installed and run offline, every tool's output is normalized into one
+vocabulary, and all of them are scored against the same labels. The corpora,
+harnesses, protocols and committed results live in
+[benchmarks](https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/README.md).
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/benchmark-estate-recall.webp" alt="Bar chart of estate recall per tool, with a surface-coverage matrix underneath. ShadowScan covers the repo, endpoint and network surfaces of this track; most other tools cover one surface, which caps their estate recall." width="880">
+</p>
+<p align="center"><sub><b>Estate recall</b> — the share of all expected facts a tool surfaces
+when the surfaces it does not support count as misses — across the three-surface synthetic
+head-to-head (900 author-written cases; the chart renders the coverage table committed in
+<a href="https://github.com/aisecnomad/Project-Nexus/blob/main/tools/benchmark/results/REPORT.md">tools/benchmark/results/REPORT.md</a>).
+Most discovery tools inspect a single surface. Shadow-agent discovery is an estate problem
+before it is a per-surface precision problem — that is the gap ShadowScan is built to
+close.</sub></p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/benchmark-surface-leaderboard.png" alt="Benchmark dashboard: a nine-surface cross-tool leaderboard with per-surface filter chips, listing F1, recall, precision and MCC per tool, with a multi-tool reference ensemble at the top." width="760">
+</p>
+<p align="center"><sub>A nine-surface iteration of the same program, rendered as a filterable
+dashboard; the top row is a reference ensemble of four single-surface tools combined, not a
+single product. Figures shown are from that earlier author-run iteration — the current
+committed nine-surface runs are the ShadowBench
+<a href="https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/shadowbench/synthetic/README.md">synthetic</a>
+and
+<a href="https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/shadowbench/estate/README.md">estate</a>
+tracks.</sub></p>
+
+**Read every number with its provenance.** The same maintainer wrote the
+scanner, the corpora and the labels — a conflict of interest by construction.
+No benchmark here is independent review, and none measures field precision or
+recall; each committed report states the protocol, the tool versions and the
+limits of that run. Start with
+[benchmarks/README.md](https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/README.md)
+and [docs/evaluation.md](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/evaluation.md).
+Only the code-surface discovery benchmark runs in automation, as a weekly
+regression gate against its newest committed baseline; the other harnesses run
+locally and their results are point-in-time snapshots of the tool versions
+they name.
+
+### Evidence and assurance limits
+
+- **Evaluation corpora:** These are author-written regression cases, including
+  multi-file cases with documented misses; they do not estimate field precision
+  or recall. Confidence is a heuristic evidence score, not a measured probability,
+  and detection quality depends on repositories, providers, tenant permissions,
+  and log provenance. See [evaluation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/evaluation.md) and
+  [rollout acceptance](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#rollout-acceptance) before using a risk
+  threshold as a production gate.
+- **Assurance results:** The baseline and later results use a frozen corpus of
+  42 public files (30 negatives), labeled by two AI reviewers before evaluation.
+  The labelers share model capabilities, so these are not independent human
+  ground truth; the corpus has since informed implementation, and only the
+  baseline is out of sample.
+- **Canaries:** [Read-only AWS and Slack canaries](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/canaries.md) validate
+  named tenant controls when approved credentials are supplied; offline replay
+  does not establish live tenant acceptance.
+- **Acceptance verifier:** The offline
+  [verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires current source and signature
+  identities, declared human-reviewed holdout evidence, and live tenant receipts
+  for supported live deployment scopes. It validates supplied evidence but
+  cannot authenticate reviewer independence or manufacture tenant acceptance.
+- **Release-evidence workflow:** The
+  [workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml) builds a candidate wheel and retains
+  hashes, a runtime dependency SBOM, and provenance after the selected commit
+  passes CI and CodeQL. This does not establish deployment acceptance. It
+  uploads to PyPI only when the maintainer dispatches it with `publish` set and
+  approves the protected environment; it never creates a GitHub release.
 
 ## Install
 
@@ -494,7 +606,7 @@ directory of the revision you run is the source of truth.
 | Connectors | [Connector guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors.md), [configuration key reference](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors/reference.md) |
 | Assessment | [Inventory](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/inventory.md), [risk scoring](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/concepts/risk.md), [autonomy tiers](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/concepts/autonomy.md), [threat and control mappings](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/concepts/mappings.md), [severity](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/severity.md) |
 | Operations | [CI integration](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ci.md), [scheduled drift](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/drift.md), [fleet dashboard](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/dashboard.md), [control evidence report](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/controls.md), [AI-BOM](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ai-bom.md), [OCSF](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/ocsf.md), [LLM triage](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/llm-triage.md) |
-| Deployment and assurance | [Production deployment](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md), [evaluation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/evaluation.md), [tenant canaries](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/canaries.md), [external reviewer packet](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/reviewer-packet.md) |
+| Deployment and assurance | [Production deployment](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md), [evaluation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/evaluation.md), [benchmarks](https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/README.md), [tenant canaries](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/canaries.md), [external reviewer packet](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/reviewer-packet.md) |
 
 ## Development
 
@@ -511,36 +623,6 @@ every connector. `make check` runs local copies of the CI quality gates (CI
 also validates packaging and containers); `make help` lists the individual
 targets. See
 [CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#getting-started).
-
-
-### Evidence and assurance limits
-
-- **Evaluation corpora:** These are author-written regression cases, including
-  multi-file cases with documented misses; they do not estimate field precision
-  or recall. Confidence is a heuristic evidence score, not a measured probability,
-  and detection quality depends on repositories, providers, tenant permissions,
-  and log provenance. See [evaluation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/evaluation.md) and
-  [rollout acceptance](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#rollout-acceptance) before using a risk
-  threshold as a production gate.
-- **Assurance results:** The baseline and later results use a frozen corpus of
-  42 public files (30 negatives), labeled by two AI reviewers before evaluation.
-  The labelers share model capabilities, so these are not independent human
-  ground truth; the corpus has since informed implementation, and only the
-  baseline is out of sample.
-- **Canaries:** [Read-only AWS and Slack canaries](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/canaries.md) validate
-  named tenant controls when approved credentials are supplied; offline replay
-  does not establish live tenant acceptance.
-- **Acceptance verifier:** The offline
-  [verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) requires current source and signature
-  identities, declared human-reviewed holdout evidence, and live tenant receipts
-  for supported live deployment scopes. It validates supplied evidence but
-  cannot authenticate reviewer independence or manufacture tenant acceptance.
-- **Release-evidence workflow:** The
-  [workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml) builds a candidate wheel and retains
-  hashes, a runtime dependency SBOM, and provenance after the selected commit
-  passes CI and CodeQL. This does not establish deployment acceptance. It
-  uploads to PyPI only when the maintainer dispatches it with `publish` set and
-  approves the protected environment; it never creates a GitHub release.
 
 ## Project status
 
