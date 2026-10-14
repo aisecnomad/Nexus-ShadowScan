@@ -40,7 +40,7 @@ SIGNAL_FIELDS = {
     "user_agent": {"patterns"},
     "image": {"patterns"},
     "iac": {"values"},
-    "name": {"patterns"},
+    "name": {"patterns", "ambiguous"},
     "scope": {"values"},
     "model": {"patterns"},
     "secret": {"patterns"},

@@ -494,6 +494,8 @@ class SlackConnector(BaseConnector):
                 get_path(app, "app_directory_url"),
             ],
             scopes=scope_names,
+            # Slack app ids are what a rule pack's client_id signal binds.
+            client_id=app_id,
         )
         interesting = (
             bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags) or status == "requested"

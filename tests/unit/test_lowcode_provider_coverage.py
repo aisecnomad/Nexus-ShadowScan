@@ -13,7 +13,7 @@ from shadowscan.connectors.lowcode import automation, salesforce, servicenow
 from shadowscan.connectors.lowcode.automation import MakeConnector, N8nConnector
 from shadowscan.connectors.lowcode.salesforce import SalesforceConnector
 from shadowscan.connectors.lowcode.servicenow import ServiceNowConnector
-from shadowscan.models import ScanStats
+from shadowscan.models import Kind, ScanStats
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpError
 
@@ -595,3 +595,204 @@ def test_automation_page_limits_must_be_positive_integers(index, max_pages):
     assert connector.run() == []
     assert connector.ctx.stats.skipped and connector.ctx.stats.incomplete
     assert "max_pages must be a positive integer" in (connector.ctx.stats.skip_reason or "")
+
+
+def _n8n_run(index, *nodes, connections=None):
+    workflow = {"id": "wf-1", "name": "Ticket routing", "nodes": list(nodes)}
+    if connections is not None:
+        workflow["connections"] = connections
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    findings = connector.run()
+    return findings, connector.ctx.stats
+
+
+def _http_node(url, method="POST", name="Call", **parameters):
+    return {
+        "name": name,
+        "type": "n8n-nodes-base.httpRequest",
+        "parameters": {"method": method, "url": url, **parameters},
+    }
+
+
+_WEBHOOK = {"name": "Hook", "type": "n8n-nodes-base.webhook", "parameters": {}}
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://llm.internal.example/v1/chat/completions",
+        "https://llm.internal.example/v1/completions",
+        "http://ollama.internal.example:11434/api/generate",
+        "https://api.openai.com/v1/chat/completions",
+        "https://api.anthropic.com/v1/messages",
+    ],
+)
+def test_n8n_http_request_to_a_model_generation_route_is_an_ai_step(index, url):
+    findings, stats = _n8n_run(index, _WEBHOOK, _http_node(url))
+    assert len(findings) == 1 and not stats.incomplete
+    assert findings[0].kind == Kind.WORKFLOW
+    assert any("model API" in step for step in findings[0].metadata["ai_steps"])
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        # SMS and messaging APIs share generation-like paths.
+        _http_node("https://api.nexmo.com/v1/messages"),
+        _http_node("https://rest.messagebird.com/messages"),
+        _http_node("https://sms.example/messages"),
+        _http_node("https://forms.example/responses"),
+        _http_node("https://docgen.example.com/generate"),
+        _http_node("https://helpdesk.example/chat"),
+        # A body with model or messages keys is not a model API.
+        _http_node("https://inventory.example/cars", jsonBody='{"model": "Model S"}'),
+        _http_node("https://sms.example/batch", jsonBody='{"messages": [{"to": "+10000000000"}]}'),
+        # Not a POST, or not an HTTP(S) URL.
+        _http_node("https://llm.internal.example/v1/chat/completions", method="GET"),
+        _http_node("ftp://llm.internal.example/v1/chat/completions"),
+        _http_node("https://[invalid/v1/chat/completions"),
+        {"name": "Call", "type": "n8n-nodes-base.httpRequest", "parameters": {"method": "POST"}},
+    ],
+)
+def test_n8n_http_request_to_other_apis_is_not_an_ai_step(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert findings == [] and not stats.incomplete
+
+
+_ANTHROPIC_HEADER = {"parameters": [{"name": "anthropic-version", "value": "2023-06-01"}]}
+_WHATSAPP_BODY = '={"messaging_product": "whatsapp", "to": "{{ $json.phone }}", "type": "text"}'
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        _http_node(
+            "https://llm.internal.example/v1/messages", sendHeaders=True, headerParameters=_ANTHROPIC_HEADER
+        ),
+        _http_node(
+            "https://llm.internal.example/v1/messages",
+            headerParametersUi={"parameter": [{"name": "Anthropic-Version", "value": "2023-06-01"}]},
+        ),
+        _http_node(
+            "https://gateway.internal.example/v1/responses",
+            sendBody=True,
+            specifyBody="json",
+            jsonBody='={"model": "gpt-4.1", "input": "{{ $json.text }}"}',
+        ),
+        _http_node(
+            "https://ollama.internal.example/api/chat",
+            sendBody=True,
+            bodyParameters={
+                "parameters": [
+                    {"name": "model", "value": "llama3"},
+                    {"name": "messages", "value": "={{ $json.m }}"},
+                ]
+            },
+        ),
+        # Templates that are not plain JSON: an expression outside a string, JSON.stringify.
+        _http_node(
+            "https://llm.internal.example/v1/messages",
+            jsonParameters=True,
+            bodyParametersJson='{"model": "chat-7b", "messages": {{ JSON.stringify($json.m) }} }',
+        ),
+        _http_node(
+            "https://ollama.internal.example/api/chat",
+            jsonBody="={{ JSON.stringify({ model: 'llama3', prompt: $json.text }) }}",
+        ),
+    ],
+)
+def test_n8n_ambiguous_generation_route_counts_with_model_request_corroboration(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert len(findings) == 1 and not stats.incomplete
+    assert any("model API" in step for step in findings[0].metadata["ai_steps"])
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        # WhatsApp Business API (a hosted provider and an on-premises client) and a help-desk chat.
+        _http_node("https://waba.360dialog.io/v1/messages", sendBody=True, jsonBody=_WHATSAPP_BODY),
+        _http_node("https://whatsapp.corp.example/v1/messages", sendBody=True, jsonBody=_WHATSAPP_BODY),
+        _http_node("https://helpdesk.example/api/chat"),
+        _http_node("https://forms.internal.example/v1/responses", jsonBody='{"form": "nps", "input": 9}'),
+        # A model key alone, or a model request the node does not send.
+        _http_node("https://catalog.example/api/chat", jsonBody='{"model": "Model S"}'),
+        _http_node(
+            "https://llm.internal.example/v1/messages",
+            sendBody=False,
+            jsonBody='{"model": "chat-7b", "messages": []}',
+            sendHeaders=False,
+            headerParameters=_ANTHROPIC_HEADER,
+        ),
+    ],
+)
+def test_n8n_ambiguous_generation_route_without_corroboration_is_not_an_ai_step(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert findings == [] and not stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "node_type",
+    [
+        "n8n-nodes-base.mistralAi",
+        "n8n-nodes-mcp.mcpClient",
+        "@n8n/n8n-nodes-langchain.mcpClientTool",
+        # Custom and community MCP nodes: the token is followed by a capital or a separator.
+        "CUSTOM.mcpClient",
+        "n8n-nodes-base.mcpClient",
+        "CUSTOM.MCPServer",
+        "acme.mcp_bridge",
+    ],
+)
+def test_n8n_named_ai_and_mcp_nodes_are_still_detected(index, node_type):
+    findings, _ = _n8n_run(index, {"name": "Step", "type": node_type, "parameters": {}})
+    assert len(findings) == 1
+
+
+@pytest.mark.parametrize("node_type", ["n8n-nodes-base.mcp9808Sensor", "n8n-nodes-community.smcpDecoder"])
+def test_n8n_mcp_is_matched_as_a_token(index, node_type):
+    findings, _ = _n8n_run(index, _WEBHOOK, {"name": "Step", "type": node_type, "parameters": {}})
+    assert findings == []
+
+
+def test_n8n_chat_agent_with_tools_stays_an_agent_and_missing_connections_is_complete(index):
+    agent = {"name": "Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}
+    tool = {"name": "Lookup", "type": "@n8n/n8n-nodes-langchain.toolHttpRequest", "parameters": {}}
+    findings, stats = _n8n_run(index, agent, tool)
+    assert [f.kind for f in findings] == [Kind.AGENT] and not stats.incomplete
+
+
+def _servicenow_flows(tmp_path, run_connector, *flows):
+    source = tmp_path / "servicenow.json"
+    source.write_text(
+        json.dumps(
+            [{"_table": "sys_hub_flow", "sys_id": f"flow-{n}", **flow} for n, flow in enumerate(flows)]
+        )
+    )
+    findings, ctx = run_connector("lowcode.servicenow", input=str(source))
+    assert not ctx.stats.incomplete
+    return {finding.resource: finding for finding in findings}
+
+
+def test_servicenow_copilot_license_flow_is_not_ai_from_its_name_alone(tmp_path, run_connector):
+    findings = _servicenow_flows(
+        tmp_path,
+        run_connector,
+        {"name": "Copilot seat reclamation", "description": "Reclaim unused licences monthly"},
+        {"name": "Gemini account sync", "description": "Sync settlement accounts"},
+    )
+    assert findings == {}
+
+
+def test_servicenow_provider_named_and_marked_flows_are_kept(tmp_path, run_connector):
+    findings = _servicenow_flows(
+        tmp_path,
+        run_connector,
+        {"name": "Claude ticket summary", "description": "Summarise incident notes"},
+        {"name": "OpenAI incident triage", "description": "Route incidents"},
+        {"name": "Now Assist summarise ticket", "description": "Summarise the ticket"},
+    )
+    assert set(findings) == {f"servicenow:sys_hub_flow:flow-{n}" for n in range(3)}
+    assert "identity-app.anthropic-claude" in findings["servicenow:sys_hub_flow:flow-0"].frameworks
+    assert "platform.servicenow-now-assist" in findings["servicenow:sys_hub_flow:flow-2"].frameworks

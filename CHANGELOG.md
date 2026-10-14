@@ -5,6 +5,164 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Detection precision, ambiguous app names and scoped correlation (October 14)
+
+Integrates the reviewed parts of three draft pull requests, #216, #203
+and #204, into one design. Rollout and migration notes are in the
+[deployment guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#october-14-detection-precision-ambiguous-app-names-and-scoped-correlation-unreleased).
+
+- Name signals can be marked `ambiguous: true`. The Google Gemini identity
+  signature uses it: a Gemini display name, publisher or description stays a
+  possible-product hint (`metadata.potential_frameworks`, tag `ai-name-hint`)
+  until a same-product domain, client ID or other non-name signal corroborates
+  it. A hint adds none of the signature's tags, capabilities or agent
+  indicator, and more generally no match that does not establish its
+  signature adds tags, so tag-based risk weights and rules can stop matching
+  findings whose technologies are only potential. The generic AI-name hint is
+  never listed as a potential product. A corroborated name keeps its full
+  weight. Every bundled ambiguous name signal must have a corroborating signal
+  type (`tests/unit/test_field_precision.py`).
+- OAuth reply and homepage URLs corroborate a product by their parsed
+  `http(s)` hostname only. Path, query, fragment and userinfo mentions and
+  lookalike hosts no longer count. URL tokens with userinfo, a backslash or a
+  control character are skipped (Python and browsers disagree about their
+  host). A field holding several URLs, such as a ServiceNow `redirect_url`,
+  is split on whitespace, and on a comma or semicolon only where a new
+  `http(s)://` URL starts and before the current URL's query or fragment, so
+  `?next=a,https://chatgpt.com/` is not a host. Domain matches are counted
+  once per app across all of its URLs.
+- An app assessed by an identity or SaaS connector with no established AI
+  product, provider, LLM-access permission, Entra agent identity or registry
+  record has its non-AI observations bounded as one correlated group at 0.35
+  (`UNATTRIBUTED_APP_MAX_WEIGHT`, `confidence_group: unattributed-app`). The
+  bound is stored in evidence weights, so merging duplicate observations
+  reproduces it, and a generic AI-name hint stays separate so it never lowers a
+  score. In the bundled demo, five findings change risk score, all within their
+  previous severity level; the demo stays at 133 findings (16 critical, 63
+  high, 54 medium).
+- Correlation: `metadata.related` holds only exact identifier links, with
+  `metadata.related_details` provenance (identifier type, fields, scope).
+  Fully qualified ARNs, GCP resource names, Azure resource IDs and OCI OCIDs
+  carry their own scope; AWS-managed policy ARNs and Bedrock foundation-model
+  ARNs, which every account shares, are not compared at all, while accountless
+  S3 bucket and Route 53 ARNs still link. An Entra application ID reported as
+  `app_id`, `client_id`, a Teams `bot_id` or an Azure Bot `msa_app_id` is one
+  identifier type that links exactly within one declared Entra tenant. Other
+  local identifiers need a shared declared tenant, workspace, cloud account,
+  subscription or project; vendor names and gateway labels are not scope.
+  Name similarity, and equal identifiers whose shared scope cannot be
+  verified, go to `metadata.related_candidates` as review hints with a
+  limitation. A declared scope conflict blocks both. Correlation is rebuilt on
+  every run, and confidence filtering prunes all three fields. In the bundled
+  demo, the three identifier links stay exact, three new same-ARN links
+  appear, and the three name or caller-label links become candidates. HTML and
+  Markdown reports show candidates on their own line, and the HTML metadata
+  dump no longer includes the provenance records.
+- `gateway.logs` has a new `internal_model_hosts` option: exact, validated
+  hostnames of internal model servers, matched with or without a logged port
+  and with no DNS lookup. It is part of the source identity only when set, so
+  default-configuration finding IDs do not change. Ollama-style (`/api/chat`,
+  `/api/generate`, `/api/tags`) and bare text-generation-inference
+  (`/generate`) routes count as model traffic only with a model field, on a
+  known or declared model host, or, for the Ollama-style routes, when no host
+  was parsed. A help-desk chat widget or a registry on a parsed non-model host
+  is no longer a caller. Requests excluded this way are reported in one
+  advisory warning (the scan stays complete) with their count and up to five
+  of the busiest hosts, pointing to `internal_model_hosts`. User agents never
+  exclude a request.
+- `cloud.kubernetes` and `cloud.openshift` recognise serving-engine names
+  (`vllm`, `ollama`, `sglang`, `llama.cpp`, `text-generation-inference`) that
+  start an image's name, its last path component without tag or digest
+  (`registry.example/ml/vllm-serving`, also digest-pinned). An engine name
+  elsewhere in the path or followed by an exporter, operator, metrics or
+  monitor role does not count, and NVIDIA Triton counts only with a
+  TensorRT-LLM or vLLM backend tag. GPUs are read from `limits` as well as
+  `requests`, and `--model org/name` arguments are recorded without their
+  values. A model argument corroborates an AI image or AI resource kind
+  (`self-hosted-model-serving` tag and evidence); with only a GPU it never
+  makes a workload an agent. A `command` or `args` field that is not a list of
+  strings makes the scan incomplete; a `null` one is unset.
+- `lowcode.n8n` treats an HTTP Request node as a model step when it POSTs to a
+  generation route on a known model host, or to a versioned or namespaced
+  route (`/v1/chat/completions`, `/v1/completions`, `/api/generate`) on a host
+  that is not a known SMS or messaging API. On such a host `/v1/messages`,
+  `/v1/responses` and `/api/chat`, which are also WhatsApp Business and
+  help-desk chat routes, count only with an `anthropic-version` header or a
+  body with `model` and `messages`, `prompt` or `input`. A bare `/messages` or
+  `/responses`, GETs and bodies on other routes never count. `mcp` in a node
+  type counts as its own token: custom `mcpClient`, `MCPServer` and
+  `mcp_bridge` nodes are AI steps, part numbers and words containing it are
+  not.
+- `lowcode.servicenow` reports a flow only with a ServiceNow AI marker or a
+  name that establishes an AI product or provider; the generic AI-name hint
+  ("Copilot" licence administration) or an ambiguous product name (a Gemini
+  account sync) no longer qualifies a flow.
+- `saas.notion` inventories a bot with an established AI product or provider,
+  or an AI-name hint in its name (a generic AI word such as "LLM Agent" or
+  "Support GPT", or an ambiguous Gemini name kept as a potential product); a
+  name whose only hint is the word "bot" does not count, since every Notion
+  integration is a bot user, and a bot's id is not matched as a name.
+  `saas.slack` matches the app ID as the app's client ID, so a rule pack can
+  bind a reviewed Slack app. Wudpecker and Tactiq are recognised as meeting
+  note-takers by name and domain. `identity.auth0` keeps a client attributed
+  only by a model provider. A GCP Cloud Run service or Cloud Function name or
+  description establishes an unambiguous product (a function described as
+  using Anthropic Claude); an ambiguous Gemini name there stays a hint.
+- Finding ids do not change, except for `gateway.logs` sources that set
+  `internal_model_hosts`.
+- Not carried from the draft pull requests, with reasons in the integration
+  commits: a global name-weight cap, signature `negative_context`, the
+  `not_ai` inventory exceptions, Okta weight cuts, per-connector confidence
+  clamps, User-Agent and audit-read gateway exclusions, the browser-only
+  AI-app recast, Kubernetes agent-named environment and model-mount
+  heuristics, the n8n graph-reachability agent rule, the Lambda Bedrock agent
+  change, a benchmark-derived Slack client ID, and Slack `assistant:write` as
+  an LLM-access scope (it designates an assistant app and grants no model
+  access).
+- The bundled evaluation corpora and the ShadowBench estate replay are
+  author-written offline inputs. They show the intended behaviour on known
+  cases; they are not measured production precision, independent review or
+  live tenant acceptance. Rescan and rebuild comparison baselines after
+  upgrading: signature and scanner fingerprints change.
+
+### Kubernetes discovery and Atlassian approval scope (October 14)
+
+- Kubernetes and OpenShift object limits now distinguish an exhausted export
+  from unread objects, including arrays of `List` envelopes. An unread suffix
+  marks collection incomplete instead of producing a complete partial report.
+- Kubernetes resource identities retain the full object name. Names exceeding
+  the 253-character resource-name bound are rejected with incomplete coverage;
+  distinct valid names no longer merge because they share a shortened prefix.
+- CronJob analysis reads `spec.jobTemplate.spec.template.spec`, including image,
+  privilege, environment, GPU and volume evidence. Malformed nested templates
+  remain incomplete and cannot substitute an unrelated top-level template.
+- Atlassian app approvals require an explicit site/account constraint. Discovery
+  without a usable site retains its evidence with incomplete coverage and
+  produces an unbound inventory stub. Existing unscoped cards need a reviewed
+  `discovery.accounts` binding before they can register app installations.
+- Added offline regression fixtures and boundary, identity and approval tests.
+  These establish implementation behavior, not live tenant acceptance.
+- A Kubernetes `List` page with a non-empty `metadata.continue` or a
+  `metadata.remainingItemCount` above zero (a chunked API page) now marks the
+  scan incomplete (exit 3), for a single `List` and for `List` envelopes in a
+  JSON array or JSONL. Its observed objects are still reported. Malformed
+  values of either field are also incomplete.
+- Kubernetes namespaces are no longer shortened to 160 characters, and a
+  non-string namespace is no longer replaced by `default`. A namespace that is
+  not an RFC 1123 DNS label (lowercase letters, digits and inner hyphens, at
+  most 63 characters) is rejected with incomplete coverage, so distinct objects
+  cannot merge into one resource identity, including through a `/` in the
+  namespace.
+- Atlassian finding IDs change on upgrade for exports scanned without a
+  configured `site` and for a `site` with an uppercase host or an explicit
+  `:443` (a trailing slash was already ignored). A `site` that is not a plain
+  HTTPS origin, such as a Data Center context path, now stops the connector
+  with exit 3. Without a site, IDs are bound to each export file's
+  resolved path, so two sites' exports in one directory input stay separate
+  findings. Configure the canonical site, keep one site per input, rescan and
+  establish a fresh baseline.
+  Carried from #218.
+
 ### Redaction review fixes (October 14)
 
 - A run at the start of the line after a `Bearer`, `Basic` or `SSWS`

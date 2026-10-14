@@ -11,6 +11,11 @@ See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
+Display-name recognition follows the same
+[ambiguous-product-name rules](identity.md#ambiguous-product-names) as identity
+connectors. An app's existence or permissions do not corroborate an ambiguous
+AI product name.
+
 ## `saas.slack`
 `users.list` (bots), `admin.apps.approved.list` / `restricted` / `requests`
 (scopes, pending requests), `team.integrationLogs` (who installed what).
@@ -20,6 +25,10 @@ collection arrays and malformed pagination are incomplete coverage. Later
 network failures retain already collected observations; provider error text is
 not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.
+The Slack app id is passed to signature matching as the app's client id, so a
+rule pack's `client_id` signal can bind a reviewed Slack app. AI meeting
+note-takers include Wudpecker and Tactiq by name and by their `wudpecker.io`
+and `tactiq.io` homepage domains.
 
 ## `saas.microsoft-teams`
 Graph app catalog (custom apps with bot definitions and RSC permissions) and
@@ -54,7 +63,16 @@ context path, user information, a query, a fragment, a trailing dot or a
 non-ASCII host stops the connector with exit 3.
 
 ## `saas.notion`
-Notion bot users. A missing or repeated pagination cursor, or reaching the live
+Notion bot users. A bot is inventoried when its name or other evidence
+establishes an AI product or provider, or when its name is an AI-name hint, as
+for GitHub Apps: a generic AI word ("Internal LLM Agent", "Acme AI Assistant",
+"Support GPT") or an ambiguous product name such as Gemini. Every Notion
+integration is a bot user, so the word "bot" alone ("Jira Bot") is not a hint
+here. A hint never attributes a product: the bot's own observation is bounded
+at possible confidence and an ambiguous product stays under
+`metadata.potential_frameworks`. A nameless bot (its id is never matched as a
+name) or an ordinary sync integration is not reported, because a bot's
+existence and owner do not identify AI. A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete.
 
 ## `saas.zoom`
