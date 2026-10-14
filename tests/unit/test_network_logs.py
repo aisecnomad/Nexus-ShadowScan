@@ -699,24 +699,28 @@ def test_ip_reuse_after_expiry_does_not_link_previous_provider(run_connector, tm
     assert found[("192.0.2.10", "provider.anthropic")].metadata["flows"] == 1
 
 
-@pytest.mark.parametrize("limit", ["_MAX_DNS_OBSERVATIONS", "_MAX_DNS_PER_ADDRESS"])
-def test_dns_budget_exhaustion_disables_fallback_even_when_conflict_dropped(
+@pytest.mark.parametrize("limit", ["_MAX_DNS_SPANS", "_MAX_OTHER_SPANS_PER_ADDRESS"])
+def test_dns_budget_exhaustion_never_drops_a_conflicting_answer_silently(
     run_connector, tmp_path, monkeypatch, limit
 ):
-    monkeypatch.setattr(network_logs, limit, 1)
+    # The AI answer fills the budget; the conflicting answer for the same
+    # address cannot be stored, so the address attributes nothing.
+    monkeypatch.setattr(network_logs, limit, 2 if limit == "_MAX_DNS_SPANS" else 0)
     rows = _temporal_rows()
     rows.append({**rows[0], "query": "cdn.example.net"})
     found, stats = _scan_network_rows(run_connector, tmp_path, rows)
-    assert stats.incomplete and any("DNS observation(s) exceeded" in warning for warning in stats.warnings)
-    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+    assert not stats.incomplete and any("exceeded storage bounds" in warning for warning in stats.warnings)
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 0
+    assert any("exceeded storage bounds" in item for item in finding.metadata["limitations"])
 
 
 def test_duplicate_dns_observation_does_not_consume_budget(run_connector, tmp_path, monkeypatch):
-    monkeypatch.setattr(network_logs, "_MAX_DNS_OBSERVATIONS", 1)
+    monkeypatch.setattr(network_logs, "_MAX_DNS_SPANS", 2)
     rows = _temporal_rows()
     rows.append(dict(rows[0]))
     found, stats = _scan_network_rows(run_connector, tmp_path, rows)
-    assert not stats.incomplete
+    assert not stats.incomplete and not stats.warnings
     assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 1
 
 
@@ -1061,3 +1065,233 @@ def test_record_without_a_client_still_disables_all_attribution(run_connector, t
     finding = found[("10.0.0.5", "provider.openai")]
     assert finding.metadata["flows"] == 0
     assert "Flow attribution disabled because input was incomplete" in finding.metadata["limitations"]
+
+
+# Regression (#220 verifier): repeated or ordinary DNS lookups must not exhaust
+# DNS storage for the whole input, drop Ollama port findings or make the scan
+# incomplete; overflow is scoped to the client/address it affects.
+
+
+def _busy_rows(lookups=360):
+    rows = [
+        {
+            "ts": 1759132800 + 60 * index,
+            "client": "10.1.1.5",
+            "query": "telemetry.example.com",
+            "answers": ["93.184.216.34"],
+            "ttl": 60,
+        }
+        for index in range(lookups)
+    ]
+    rows.append(
+        {
+            "ts": 1759132900,
+            "client": "10.1.1.5",
+            "query": "api.openai.com",
+            "answers": ["104.18.7.192"],
+            "ttl": 300,
+        }
+    )
+    rows += [
+        {
+            "ts": 1759132910 + index,
+            "client": "10.1.1.5",
+            "dst_ip": "104.18.7.192",
+            "dst_port": 443,
+            "bytes_out": 1000,
+        }
+        for index in range(20)
+    ]
+    return rows
+
+
+def test_repeated_lookups_of_one_address_keep_other_attribution(run_connector, tmp_path):
+    found, stats = _scan_network_rows(run_connector, tmp_path, _busy_rows())
+    assert not stats.incomplete and not stats.warnings
+    finding = found[("10.1.1.5", "provider.openai")]
+    assert finding.metadata["flows"] == 20 and finding.metadata["bytes_out"] == 20000
+    assert not finding.metadata.get("limitations")
+
+
+def _offline_events(monkeypatch, events):
+    """Feed already-normalized events to ``analyze`` without writing a large export."""
+    monkeypatch.setattr(NetworkLogConnector, "load_offline", lambda self, path: iter(events()))
+
+
+def test_ordinary_lookups_past_the_storage_budget_keep_the_ollama_port_path(
+    run_connector, tmp_path, monkeypatch
+):
+    context = ("", "", "")
+
+    def events():
+        for step in range(108):
+            for client in range(5000):
+                yield {
+                    "kind": "dns", "ts": 1759132800.0 + 30 * step, "client": f"10.{client // 250}.{client % 250}.1",
+                    "query": "www.example.com", "answers": ["93.184.216.34"], "ttl": 30.0, "context": context,
+                }  # fmt: skip
+        for index in range(5):
+            yield {
+                "kind": "flow", "ts": 1759132900.0 + index, "client": "10.200.0.1", "server": "10.9.0.5",
+                "port": 11434, "bytes_out": 100, "bytes_in": 0, "uid": None, "context": context,
+            }  # fmt: skip
+
+    _offline_events(monkeypatch, events)
+    found, stats = scan(run_connector, tmp_path)
+    assert not stats.incomplete and not stats.warnings
+    ollama = found[("10.200.0.1", "provider.ollama")]
+    assert ollama.metadata["flows"] == 5 and ollama.metadata["hosts"] == {"10.9.0.5:11434": 5}
+
+
+def test_dns_overflow_marks_only_that_client_address_unattributable(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_DNS_SPANS_PER_ADDRESS", 2)
+    rows = []
+    for client in ("192.0.2.10", "192.0.2.11"):
+        # Three disjoint answers for the first client; one for the second.
+        for start in (1000, 2000, 3000) if client == "192.0.2.10" else (1000,):
+            rows.append(
+                {
+                    "client": client,
+                    "query": "api.openai.com",
+                    "answers": ["203.0.113.8"],
+                    "ts": start,
+                    "ttl": 60,
+                }
+            )
+        rows += _uidless_flows(5, client=client)
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert any("exceeded storage bounds" in warning for warning in stats.warnings)
+    overflowed = found[("192.0.2.10", "provider.openai")]
+    assert overflowed.metadata["flows"] == 0 and overflowed.metadata["dns_queries"] == 3
+    assert any("exceeded storage bounds" in item for item in overflowed.metadata["limitations"])
+    other = found[("192.0.2.11", "provider.openai")]
+    assert other.metadata["flows"] == 5 and not other.metadata.get("limitations")
+
+
+def test_dns_budget_overflow_keeps_retained_answers_and_port_attribution(
+    run_connector, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(network_logs, "_MAX_DNS_SPANS", 3)
+    rows = _temporal_rows()[:1] + _uidless_flows(2)
+    # Ordinary answers for another client fill the budget.
+    rows += [
+        {
+            "client": "192.0.2.20",
+            "query": "www.example.com",
+            "answers": [f"198.51.100.{i}"],
+            "ts": 1000,
+            "ttl": 60,
+        }
+        for i in range(3)
+    ]
+    # A later AI answer for that client cannot be retained; nor can its flows be attributed.
+    rows.append(
+        {"client": "192.0.2.20", "query": "api.openai.com", "answers": ["203.0.113.9"], "ts": 1000, "ttl": 60}
+    )
+    rows += _uidless_flows(2, client="192.0.2.20", server="203.0.113.9")
+    rows.append({"client": "192.0.2.20", "dst_ip": "10.9.0.5", "dst_port": 11434, "ts": 1001, "bytes_out": 1})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 2
+    dropped = found[("192.0.2.20", "provider.openai")]
+    assert dropped.metadata["flows"] == 0
+    assert any("exceeded storage bounds" in item for item in dropped.metadata["limitations"])
+    ollama = found[("192.0.2.20", "provider.ollama")]
+    assert ollama.metadata["flows"] == 1
+    assert any("not retained" in item for item in ollama.metadata["limitations"])
+
+
+def test_coarsened_non_ai_answers_still_block_shared_address_attribution(
+    run_connector, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(network_logs, "_MAX_OTHER_SPANS_PER_ADDRESS", 1)
+    rows = _temporal_rows(flow_time=1500, ttl=600)
+    # Two non-AI answers outside the AI flow's time merge into one interval
+    # that covers it: the merged negative evidence can only block attribution.
+    for start in (900, 2000):
+        rows.append({**rows[0], "query": "cdn.example.net", "ts": start, "TTLs": [10]})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+    assert any("ambiguous service attribution" in warning for warning in stats.warnings)
+
+
+def test_merged_answers_attribute_continuously_with_disclosed_validity(run_connector, tmp_path):
+    rows = _temporal_rows(flow_time=1100)
+    rows.insert(1, {**rows[0], "ts": 1050})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 1
+    (provenance,) = finding.metadata["dns_attribution"]
+    assert provenance["observed_at"] == "1970-01-01T00:16:40+00:00" and provenance["ttl_seconds"] == 60
+    assert provenance["valid_until"] == "1970-01-01T00:18:30+00:00"
+
+
+def test_dns_attribution_cost_does_not_scale_with_repeated_lookups(run_connector, tmp_path, monkeypatch):
+    calls = []
+    original = network_logs._span_at
+
+    def counting(spans, when):
+        calls.append(len(spans))
+        return original(spans, when)
+
+    monkeypatch.setattr(network_logs, "_span_at", counting)
+    rows = [
+        {
+            "client": "192.0.2.10",
+            "query": "api.openai.com",
+            "answers": ["203.0.113.8"],
+            "ts": 1000 + index,
+            "ttl": 600,
+        }
+        for index in range(5000)
+    ]
+    rows += _uidless_flows(64, start=1100)
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete and found[("192.0.2.10", "provider.openai")].metadata["flows"] == 64
+    # One merged interval, looked up once per bucket and stored host.
+    assert calls and max(calls) == 1 and len(calls) <= 2 * 64
+
+
+def test_merged_dns_intervals_match_the_union_of_answer_windows():
+    import random
+
+    generator = random.Random(220)
+    for _ in range(200):
+        spans: list = []
+        windows = []
+        for _ in range(generator.randint(1, 30)):
+            start = float(generator.randint(0, 400))
+            end = start + generator.randint(1, 60)
+            windows.append((start, end))
+            network_logs._insert_span(spans, start, end, end - start)
+        assert all(left.end < right.start for left, right in zip(spans, spans[1:], strict=False))
+        for when in range(0, 470):
+            inside = any(start <= when < end for start, end in windows)
+            assert (network_logs._span_at(spans, float(when)) is not None) == inside
+        for span in spans:
+            # Each interval starts at an answer and its first answer's window is its own.
+            assert (span.start, span.own_end) in windows
+
+
+def test_dns_store_accounting_stays_exact_under_overflow(monkeypatch):
+    import random
+
+    monkeypatch.setattr(network_logs, "_MAX_DNS_SPANS", 40)
+    monkeypatch.setattr(network_logs, "_MAX_DNS_SPANS_PER_ADDRESS", 4)
+    monkeypatch.setattr(network_logs, "_MAX_OTHER_SPANS_PER_ADDRESS", 3)
+    generator = random.Random(7)
+    store = network_logs._DNSStore()
+    for _ in range(2000):
+        key = (("", "", ""), f"c{generator.randint(0, 6)}", f"a{generator.randint(0, 6)}")
+        start = float(generator.randint(0, 5000))
+        signature = generator.choice(["", "provider.openai", "provider.anthropic"])
+        store.add(key, signature, "host" if signature else "", (start, start + 30), 30.0)
+        stored = sum(state.stored() for state in store.addresses.values())
+        assert store.used == len(store.addresses) + stored <= network_logs._MAX_DNS_SPANS
+        for state in store.addresses.values():
+            assert not (state.lossy and state.spans)
+            assert all(len(spans) <= 3 for (sig, _), spans in state.spans.items() if not sig)
+            assert state.ai_spans == sum(len(spans) for (sig, _), spans in state.spans.items() if sig) <= 4

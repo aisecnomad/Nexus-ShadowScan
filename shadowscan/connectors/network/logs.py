@@ -14,6 +14,10 @@ address, the AI services it contacted:
   of another service (a shared CDN address) attributes nothing through DNS.
   Known non-AI or conflicting TLS evidence never falls back to DNS.
 
+DNS answers are kept per context, client and address as merged validity
+intervals per service host, so repeated lookups cost nothing extra. Storage
+overflow disables DNS attribution only for the client/address it affects.
+
 Host names are matched exactly or by a signature's declared wildcard, never by
 substring, so ``www.anthropologie.com`` is not Anthropic. Only names that
 match an AI signature are kept; other queries are counted, never stored.
@@ -24,6 +28,7 @@ Malformed lines and unrecognised records make the scan incomplete.
 
 from __future__ import annotations
 
+import bisect
 import functools
 import ipaddress
 import json
@@ -69,8 +74,21 @@ _MAX_TOTAL_BUCKETS = 500_000
 _MAX_HOSTS_PER_FINDING = 20
 _MAX_TIMES = 1_000
 _MAX_TOTAL_TIMES = 200_000
-_MAX_DNS_OBSERVATIONS = 500_000
-_MAX_DNS_PER_ADDRESS = 256
+# DNS answers are stored per (context, client, address) as merged validity
+# intervals. The budget counts addresses and stored intervals across the input;
+# each address keeps at most this many AI intervals (beyond them it is marked
+# unattributable) and this many non-AI intervals (beyond them the closest are
+# merged, which can only widen negative evidence).
+_MAX_DNS_SPANS = 500_000
+_MAX_DNS_SPANS_PER_ADDRESS = 1_024
+_MAX_OTHER_SPANS_PER_ADDRESS = 16
+_DNS_OVERFLOW = (
+    "DNS answers for an address exceeded storage bounds; its flows were not attributed through DNS"
+)
+_DNS_UNRETAINED = (
+    "Some DNS answers for this client were not retained; port attribution was not checked against them"
+)
+_PROVENANCE_SAMPLED = "DNS attribution provenance is sampled to 20 entries"
 _MAX_JA4_PER_CONTACT = 32
 _MAX_DNS_PROVENANCE = 20
 _JA4 = re.compile(r"^[tqd](?:1[0-3]|s[23]|d[123]|00)[di][0-9]{4}[a-zA-Z0-9]{2}_[a-f0-9]{12}_[a-f0-9]{12}$")
@@ -142,32 +160,162 @@ class _Contact:
     limitations: set[str] = field(default_factory=set)
 
 
-@dataclass(frozen=True)
-class _DNSObservation:
-    signature: str
-    host: str
-    observed_at: float | None
-    ttl: float | None
+@dataclass
+class _Span:
+    """A merged DNS validity interval ``[start, end)`` of one service host at one address.
 
-    def valid(self, when: float | None, max_ttl: int, skew: int) -> bool:
-        # Never explain an older flow using a newer DNS answer. Skew only
-        # relaxes expiration; zero-TTL records must not create a cache interval.
-        window = self.window(max_ttl, skew)
-        return when is not None and window is not None and window[0] <= when < window[1]
+    ``start`` is always an answer's observation time; ``ttl`` and ``own_end``
+    describe that first answer, so provenance can show when later answers
+    extended the interval.
+    """
 
-    def window(self, max_ttl: int, skew: int) -> tuple[float, float] | None:
-        """The half-open interval in which this answer explains a flow, if known."""
-        if self.observed_at is None or self.ttl is None or self.ttl <= 0:
-            return None
-        return self.observed_at, self.observed_at + min(self.ttl, max_ttl) + skew
+    start: float
+    end: float
+    ttl: float
+    own_end: float
 
-    def covers(self, first: float, last: float, max_ttl: int, skew: int) -> bool:
-        """Valid for every time in [first, last]: the interval is convex."""
-        return self.valid(first, max_ttl, skew) and self.valid(last, max_ttl, skew)
 
-    def overlaps(self, first: float, last: float, max_ttl: int, skew: int) -> bool:
-        window = self.window(max_ttl, skew)
-        return window is not None and window[0] <= last and first < window[1]
+@dataclass
+class _AddressDNS:
+    """One client's DNS answers for one address in one observation context.
+
+    ``spans`` maps (signature, host) to sorted, disjoint, non-touching
+    intervals; non-AI answers share the key ("", ""). ``unknown`` holds the
+    signatures of answers whose validity is unknown (no timestamp or TTL).
+    A ``lossy`` address lost an answer to a storage bound and attributes
+    nothing through DNS.
+    """
+
+    spans: dict[tuple[str, str], list[_Span]] = field(default_factory=dict)
+    unknown: set[str] = field(default_factory=set)
+    signatures: set[str] = field(default_factory=set)
+    ai_spans: int = 0
+    lossy: bool = False
+
+    def stored(self) -> int:
+        return sum(len(spans) for spans in self.spans.values())
+
+
+def _span_start(span: _Span) -> float:
+    return span.start
+
+
+def _insert_span(spans: list[_Span], start: float, end: float, ttl: float) -> int:
+    """Merge ``[start, end)`` into sorted disjoint ``spans``; return the change in their number.
+
+    Overlapping or touching intervals merge: every time in the union is inside
+    at least one answer's own validity window, so the union stays exact.
+    """
+    index = bisect.bisect_left(spans, start, key=_span_start)
+    low = index - 1 if index > 0 and spans[index - 1].end >= start else index
+    high = index
+    while high < len(spans) and spans[high].start <= end:
+        high += 1
+    if low == high:
+        spans.insert(low, _Span(start, end, ttl, end))
+        return 1
+    first = spans[low]
+    if start < first.start or (start == first.start and end > first.own_end):
+        first = _Span(start, end, ttl, end)
+    merged = _Span(first.start, max(end, spans[high - 1].end), first.ttl, first.own_end)
+    spans[low:high] = [merged]
+    return 1 - (high - low)
+
+
+def _coarsen_spans(spans: list[_Span]) -> None:
+    """Merge the two neighbouring intervals with the smallest gap (non-AI evidence only).
+
+    The merged interval covers the gap, so it can only make more flows
+    ambiguous: never use it to attribute.
+    """
+    if len(spans) < 2:
+        return
+    _, index = min((spans[i + 1].start - spans[i].end, i) for i in range(len(spans) - 1))
+    left, right = spans[index], spans[index + 1]
+    spans[index : index + 2] = [_Span(left.start, right.end, left.ttl, left.own_end)]
+
+
+def _span_at(spans: list[_Span], when: float) -> _Span | None:
+    """The interval containing ``when``, found by bisection."""
+    index = bisect.bisect_right(spans, when, key=_span_start) - 1
+    return spans[index] if index >= 0 and when < spans[index].end else None
+
+
+def _overlaps(spans: list[_Span], first: float, last: float) -> bool:
+    """Whether any interval meets the closed range ``[first, last]``."""
+    index = bisect.bisect_right(spans, last, key=_span_start) - 1
+    return index >= 0 and first < spans[index].end
+
+
+class _DNSStore:
+    """Bounded DNS validity per (context, client, address); see ``_MAX_DNS_SPANS``.
+
+    A repeated answer merges into the interval it overlaps or touches, so it
+    costs nothing. When a bound is reached, only the client/address concerned
+    loses DNS attribution: an existing address is marked ``lossy``, and an
+    address that could not be stored at all records its client in
+    ``dropped_clients`` (a later address of that client starts lossy, since an
+    earlier answer for it may have been dropped).
+    """
+
+    def __init__(self) -> None:
+        self.addresses: dict[_DNSKey, _AddressDNS] = {}
+        self.used = 0
+        self.dropped = 0
+        self.dropped_clients: set[str] = set()
+
+    def add(
+        self,
+        key: _DNSKey,
+        signature: str,
+        host: str,
+        window: tuple[float, float] | None,
+        ttl: float | None,
+    ) -> bool:
+        """Record one answer; False when its address could not be stored at all."""
+        state = self.addresses.get(key)
+        if state is None:
+            if self.used >= _MAX_DNS_SPANS:
+                self.dropped += 1
+                self.dropped_clients.add(key[1])
+                return False
+            state = self.addresses[key] = _AddressDNS(lossy=key[1] in self.dropped_clients)
+            self.used += 1
+        if signature:
+            state.signatures.add(signature)
+        if state.lossy:
+            return True
+        if window is None or ttl is None:
+            if ttl is None:
+                # Unknown validity may conflict with any window; a zero TTL never does.
+                state.unknown.add(signature)
+            return True
+        spans = state.spans.setdefault((signature, host) if signature else ("", ""), [])
+        added = _insert_span(spans, window[0], window[1], ttl)
+        if signature:
+            if added > 0 and (
+                state.ai_spans + added > _MAX_DNS_SPANS_PER_ADDRESS or self.used + added > _MAX_DNS_SPANS
+            ):
+                self._lose(state, added)
+                return True
+            state.ai_spans += added
+        elif added > 0 and (len(spans) > _MAX_OTHER_SPANS_PER_ADDRESS or self.used + added > _MAX_DNS_SPANS):
+            if len(spans) < 2:
+                self._lose(state, added)
+                return True
+            _coarsen_spans(spans)
+            added -= 1
+        self.used += added
+        return True
+
+    def _lose(self, state: _AddressDNS, uncounted: int) -> None:
+        """Mark an address unattributable and release its intervals (``uncounted`` were never charged)."""
+        self.used -= state.stored() - uncounted
+        state.spans.clear()
+        state.unknown.clear()
+        state.ai_spans = 0
+        state.lossy = True
+        self.dropped += 1
 
 
 @dataclass
@@ -645,12 +793,12 @@ class NetworkLogConnector(BaseConnector, _NoDump):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         contacts: dict[tuple[str, str], _Contact] = {}
-        resolved: dict[_DNSKey, list[_DNSObservation]] = {}
+        dns = _DNSStore()
         sni_by_uid: dict[_TLSKey, _TLSIdentity] = {}
         pairs: dict[_PairKey, _Pair] = {}
-        times_used = dns_used = 0
+        times_used = 0
         extra_buckets = 0
-        dropped_pairs = dropped_clients = dropped_tls = dropped_dns = dropped_ja4 = 0
+        dropped_pairs = dropped_clients = dropped_tls = dropped_ja4 = 0
         clients: set[str] = set()
         for rec in records:
             self.ctx.examined()
@@ -668,18 +816,20 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 host = str(rec.get("query") if kind == "dns" else rec.get("sni"))
                 match = self._service(host)
                 signature = match.signature.id if match else ""
+                unretained = False
                 if kind == "dns":
-                    observation = _DNSObservation(signature, host if match else "", ts, rec.get("ttl"))
+                    ttl = rec.get("ttl")
+                    window = (
+                        (ts, ts + min(ttl, self.dns_max_ttl) + self.dns_clock_skew)
+                        if ts is not None and ttl is not None and ttl > 0
+                        else None
+                    )
+                    if ts is None:
+                        ttl = None  # validity unknown, as without a TTL
+                    named = host if match else ""
                     for address in rec.get("answers") or []:
-                        key_dns = (context, client, address)
-                        prior = resolved.get(key_dns, [])
-                        if observation in prior:
-                            continue
-                        if dns_used >= _MAX_DNS_OBSERVATIONS or len(prior) >= _MAX_DNS_PER_ADDRESS:
-                            dropped_dns += 1
-                            continue
-                        resolved.setdefault(key_dns, []).append(observation)
-                        dns_used += 1
+                        if not dns.add((context, client, address), signature, named, window, ttl):
+                            unretained = True
                 elif rec.get("uid"):
                     # Scope UIDs to the observation vantage as well as client.
                     # Keep non-AI SNI as negative evidence before DNS fallback.
@@ -700,6 +850,8 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     c.dns_queries += 1
                     if ts is None or rec.get("ttl") is None:
                         c.limitations.add("DNS observations without timestamp or TTL cannot attribute flows")
+                    if unretained:
+                        c.limitations.add(_DNS_OVERFLOW)
                 else:
                     c.tls_connections += 1
                     if rec.get("ja4"):
@@ -793,10 +945,15 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 f"network.logs: {dropped_tls:,} TLS record(s) beyond {_MAX_PAIRS:,} client/UID identities "
                 "were not retained for flow attribution"
             )
-        if dropped_dns:
+        if dns.dropped:
+            # Every finding is still reported: an AI answer that was not kept
+            # still counts as a DNS query, and the affected findings carry a
+            # limitation. Only flows to the affected client addresses lose
+            # DNS attribution.
             self.ctx.warn(
-                f"network.logs: {dropped_dns:,} DNS observation(s) exceeded storage bounds; "
-                "DNS and service-port flow attribution disabled because discarded answers may conflict"
+                f"network.logs: {dns.dropped:,} DNS answer(s) exceeded storage bounds; flows to the affected "
+                "client addresses were not attributed through DNS",
+                incomplete=False,
             )
         if dropped_ja4:
             self.ctx.warn(
@@ -819,8 +976,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 {key: pair for key, pair in pairs.items() if key[1] not in defect_clients},
                 sni_by_uid,
                 bool(dropped_tls),
-                resolved,
-                bool(dropped_dns),
+                dns,
             )
         if ambiguous:
             self.ctx.warn(
@@ -872,15 +1028,16 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         pairs: dict[_PairKey, _Pair],
         sni_by_uid: dict[_TLSKey, _TLSIdentity],
         tls_limit_reached: bool,
-        resolved: dict[_DNSKey, list[_DNSObservation]],
-        dns_limit_reached: bool,
+        dns: _DNSStore,
     ) -> int:
         """Attribute each connection group; through DNS only within observed validity windows.
 
         A TLS identity or the Ollama service port explains the whole group. DNS
-        explains a time bucket only when one same-service answer is valid for
-        the bucket's whole interval; a bucket that a coarsening merged across
-        an answer's start or expiry stays unattributed, with a limitation.
+        explains a time bucket only when one same-service host's merged answer
+        interval covers the bucket's whole interval; a bucket that a coarsening
+        merged across an interval's start or end stays unattributed, with a
+        limitation. Intervals are found by bisection, so the cost per bucket
+        does not grow with repeated lookups.
         """
         for context, client, server, port, uid in pairs:
             self.ctx.check_deadline()
@@ -899,37 +1056,40 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     c = self._contact(contacts, client, identity.signature, context)
                     self._count(c, pair.flows, pair.bytes_out, pair.bytes_in, pair.first, pair.last)
                 continue
-            if (uid is not None and tls_limit_reached) or dns_limit_reached:
+            if uid is not None and tls_limit_reached:
                 continue
-            local = resolved.get((context, client, server), [])
-            if not local:
+            local = dns.addresses.get((context, client, server))
+            if local is None:
+                # The service port does not depend on DNS storage; a client
+                # whose answers were not all retained is disclosed.
                 if port == _OLLAMA_PORT and self.index.get("provider.ollama") is not None:
                     c = self._contact(contacts, client, "provider.ollama", context)
                     c.hosts[f"{server}:{port}"] += pair.flows
                     self._count(c, pair.flows, pair.bytes_out, pair.bytes_in, pair.first, pair.last)
                     c.times.extend(pair.times[: max(0, _MAX_TIMES - len(c.times))])
+                    if client in dns.dropped_clients:
+                        c.limitations.add(_DNS_UNRETAINED)
+                continue
+            if local.lossy:
+                for signature in sorted(local.signatures):
+                    self._contact(contacts, client, signature, context).limitations.add(_DNS_OVERFLOW)
                 continue
             if pair.untimed_flows:
-                for item in local:
-                    if item.signature:
-                        self._contact(contacts, client, item.signature, context).limitations.add(
-                            "Flow records without timestamps cannot be attributed through DNS"
-                        )
-            unknown_validity = {
-                item.signature for item in local if item.observed_at is None or item.ttl is None
-            }
+                for signature in sorted(local.signatures):
+                    self._contact(contacts, client, signature, context).limitations.add(
+                        "Flow records without timestamps cannot be attributed through DNS"
+                    )
             attributed: dict[float, _Contact] = {}
             for key, bucket in pair.buckets.items():
-                touching = [
-                    item
-                    for item in local
-                    if item.overlaps(bucket.first, bucket.last, self.dns_max_ttl, self.dns_clock_skew)
-                ]
-                signatures = {item.signature for item in touching}
-                if touching:
+                signatures = {
+                    signature
+                    for (signature, _), spans in local.spans.items()
+                    if _overlaps(spans, bucket.first, bucket.last)
+                }
+                if signatures:
                     # An answer with unknown validity may be conflicting; it
                     # cannot safely be assumed expired or outside this window.
-                    signatures |= unknown_validity
+                    signatures |= local.unknown
                 if signatures - {""} and (len(signatures) > 1 or "" in signatures):
                     ambiguous += bucket.flows
                     continue
@@ -938,9 +1098,11 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 signature = next(iter(signatures))
                 c = self._contact(contacts, client, signature, context)
                 valid = [
-                    item
-                    for item in touching
-                    if item.covers(bucket.first, bucket.last, self.dns_max_ttl, self.dns_clock_skew)
+                    (host, span)
+                    for (owner, host), spans in local.spans.items()
+                    if owner == signature
+                    and (span := _span_at(spans, bucket.first)) is not None
+                    and bucket.last < span.end
                 ]
                 if not valid:
                     c.limitations.add(
@@ -948,27 +1110,11 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     )
                     continue
                 attributed[key] = c
-                for host in sorted({item.host for item in valid}):
+                for host in sorted({host for host, _ in valid}):
                     if len(c.hosts) < _MAX_HOSTS_PER_FINDING or host in c.hosts:
                         c.hosts[host] += bucket.flows
-                for item in sorted(valid, key=lambda item: (item.observed_at or 0, item.host)):
-                    provenance = {
-                        "host": item.host,
-                        "address": server,
-                        "observed_at": _iso(item.observed_at),
-                        "ttl_seconds": item.ttl,
-                        "flow_at": _iso(bucket.first),
-                        "sensor": context[0],
-                        "network_id": context[1],
-                        "resolver": context[2],
-                    }
-                    if bucket.last != bucket.first:
-                        provenance["flow_last_at"] = _iso(bucket.last)
-                    if provenance not in c.dns_attributions:
-                        if len(c.dns_attributions) < _MAX_DNS_PROVENANCE:
-                            c.dns_attributions.append(provenance)
-                        else:
-                            c.limitations.add("DNS attribution provenance is sampled to 20 entries")
+                if _PROVENANCE_SAMPLED not in c.limitations:
+                    self._provenance(c, valid, server, bucket, context)
                 self._count(c, bucket.flows, bucket.bytes_out, bucket.bytes_in, bucket.first, bucket.last)
                 c.flows_by_dns += bucket.flows
             for when in pair.times if attributed else ():
@@ -976,6 +1122,34 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 if owner is not None and len(owner.times) < _MAX_TIMES:
                     owner.times.append(when)
         return ambiguous
+
+    @staticmethod
+    def _provenance(
+        c: _Contact, valid: list[tuple[str, _Span]], server: str, bucket: _Bucket, context: _Context
+    ) -> None:
+        """Sample the first distinct attributions; stop building them once one is dropped."""
+        for host, span in sorted(valid, key=lambda item: (item[1].start, item[0])):
+            provenance: dict[str, Any] = {
+                "host": host,
+                "address": server,
+                "observed_at": _iso(span.start),
+                "ttl_seconds": span.ttl,
+                "flow_at": _iso(bucket.first),
+                "sensor": context[0],
+                "network_id": context[1],
+                "resolver": context[2],
+            }
+            if span.end != span.own_end:
+                # Later answers extended the first answer's validity.
+                provenance["valid_until"] = _iso(span.end)
+            if bucket.last != bucket.first:
+                provenance["flow_last_at"] = _iso(bucket.last)
+            if provenance in c.dns_attributions:
+                continue
+            if len(c.dns_attributions) >= _MAX_DNS_PROVENANCE:
+                c.limitations.add(_PROVENANCE_SAMPLED)
+                return
+            c.dns_attributions.append(provenance)
 
     @staticmethod
     def _count(

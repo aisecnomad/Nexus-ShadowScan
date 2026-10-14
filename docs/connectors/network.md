@@ -44,8 +44,10 @@ DNS windows start at the observation timestamp and exclude their expiry
 boundary. Missing timestamps or TTLs retain DNS query findings with explicit
 limitations, but cannot attribute flows. This includes ordinary Route 53
 query exports that omit TTLs. The connector never borrows another client's
-DNS answers. Repeated observations may refresh a window; expired answers do
-not identify later traffic, and future answers never identify earlier traffic.
+DNS answers. Repeated answers for the same host and address merge into one
+validity interval when their windows overlap or touch, so a busy client's
+repeated lookups cost no storage; expired answers do not identify later
+traffic, and future answers never identify earlier traffic.
 
 Optional `sensor`/`sensor_id`, `network_id`/`vpc_id`, and
 `resolver`/`resolver_id` fields scope both DNS and TLS UID joins. Supplied
@@ -60,9 +62,11 @@ TTL metadata are accepted. Vector TTLs must align with the answers. A
 response containing a CNAME and IP answers uses the shortest answer TTL;
 CNAME-only records do not produce an IP association, and chains are never
 resolved over the network. IPv4 and IPv6 addresses are normalized. Sampled
-`dns_attribution` metadata preserves host, address, original TTL, observation
-and flow timestamps, and context; provenance samples are limited to 20
-entries with an explicit limitation when more are available.
+`dns_attribution` metadata preserves host, address, the first answer's
+observation time and original TTL, flow timestamps and context; when later
+answers extended that answer's validity, `valid_until` gives the end of the
+merged interval. Provenance samples are limited to 20 entries with an
+explicit limitation when more are available.
 
 Flow counts and bytes remain separated by connection UID until attribution,
 so one AI connection cannot claim another connection's traffic on the same
@@ -131,13 +135,25 @@ Malformed lines, records the connector cannot read as DNS, TLS or flow
 records, and DNS or TLS records without a client address make the scan
 incomplete. Analysis keeps at most 50,000 client addresses, 500,000 flow
 groups (context, client, server address, port and UID), 500,000
-TLS identities (context, client and UID), 500,000 DNS observations with at
-most 256 per context/client/address, and 32 JA4 observations per contact. Records beyond any bound are reported and make the scan
+TLS identities (context, client and UID), and 32 JA4 observations per
+contact. Records beyond these bounds are reported and make the scan
 incomplete. If TLS identity storage fills, flows with an unretained UID are
 left unattributed because a discarded TLS record could contradict DNS.
-If DNS storage fills, DNS and service-port attribution are disabled for the
-input because a discarded answer could contradict retained evidence; directly
-linked TLS remains usable. Malformed TTLs, timestamps, context and explicit
+
+DNS answers are stored per context, client and address as merged validity
+intervals per AI host, plus the merged intervals of non-AI answers, within a
+budget of 500,000 addresses and intervals for the input. An address keeps at
+most 1,024 AI intervals; non-AI intervals beyond 16 are merged across their
+smallest gap, which can only widen the negative evidence that blocks
+attribution. When an answer cannot be kept, only that client/address loses
+DNS attribution: its flows stay unattributed, the affected findings carry the
+limitation "DNS answers for an address exceeded storage bounds; its flows
+were not attributed through DNS", and a warning reports the count without
+making the scan incomplete (every DNS query still counts on its finding).
+Attribution looks intervals up by bisection, so its cost does not grow with
+repeated lookups. The Ollama service-port rule does not depend on DNS
+storage; when some of the client's DNS answers were not retained, the finding
+says so. Malformed TTLs, timestamps, context and explicit
 JA4 values also make the scan incomplete. A discarded record might contradict
 the retained DNS or SNI, so flow attribution is suppressed as far as that
 record could reach; direct query/TLS observations remain visible with the

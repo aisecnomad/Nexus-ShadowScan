@@ -120,7 +120,13 @@ where the previous revision completed:
   129 to 128 shadow, high risk 63 to 62) and lowers Cursor's confidence from
   0.8 to 0.5 (risk high to medium). Other demo finding IDs are unchanged
   (gateway caller IDs are scan-local in every run). JA4 log values are
-  context only.
+  context only. DNS answers are kept per client and address as merged
+  validity intervals, so repeated lookups use no extra storage. When a DNS
+  storage bound is reached, only the affected client/address loses DNS
+  attribution: its findings carry a limitation, a warning reports the count,
+  and the scan stays complete. The Ollama port rule never depends on DNS
+  storage. Provenance gains `valid_until` when later answers extended the
+  first answer's validity.
 - `cloud.aws` CloudTrail callers no longer count exact duplicate event IDs
   twice, and offline `cloudtrail-event` records whose `eventName` is neither a
   collected invocation operation nor an STS assumption are ignored instead of
