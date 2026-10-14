@@ -1352,7 +1352,10 @@ flows named for an unambiguous AI product or provider (Claude, OpenAI), or
 with a marker, are. A genuine AI flow named only with a generic word or
 Gemini and no marker is a known false negative.
 n8n workflows whose only AI step is an HTTP Request POST to a model API are
-now reported as AI workflows. On a host that is not a known model host,
+now reported as AI workflows, including HTTP Request v1 and v2 nodes (method
+in `requestMethod`) and expression-mode URLs whose host is literal; a host
+written as an expression is never classified. On a host that is not a known
+model host,
 `/v1/messages`, `/v1/responses` and `/api/chat` count only with an
 `anthropic-version` header or a body with `model` and `messages`, `prompt` or
 `input`, so WhatsApp Business and help-desk chat calls are not AI steps; a

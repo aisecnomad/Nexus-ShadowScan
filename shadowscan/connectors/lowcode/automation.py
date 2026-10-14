@@ -147,8 +147,8 @@ def _model_request(params: dict[str, Any]) -> bool:
     """Whether an HTTP Request node's headers or body describe a model API call.
 
     An ``anthropic-version`` header, or a JSON or key-value body with a
-    ``model`` key and a ``messages``, ``prompt`` or ``input`` key (v4 and
-    v1-v3 parameter layouts). Headers or a body the node does not send never
+    ``model`` key and a ``messages``, ``prompt`` or ``input`` key (v3-v4 and
+    v1-v2 parameter layouts). Headers or a body the node does not send never
     count.
     """
     headers: set[str] = set()
@@ -303,16 +303,23 @@ class N8nConnector(_AutomationBase):
         params = node.get("parameters")
         if node.get("type") != _N8N_HTTP_NODE or not isinstance(params, dict):
             return False
-        method, url = params.get("method"), params.get("url")
+        # HTTP Request v1-v2 name the method ``requestMethod``; v3 and later ``method``.
+        method = params.get("method")
+        if method is None:
+            method = params.get("requestMethod")
+        url = params.get("url")
         if not isinstance(method, str) or method.upper() != "POST" or not isinstance(url, str):
             return False
         try:
-            parsed = urlsplit(url.strip())
+            # An expression-mode URL starts with "="; its {{ }} parts are not resolved.
+            parsed = urlsplit(url.strip().removeprefix("=").strip())
             host = parsed.hostname
         except ValueError:
             return False
         if parsed.scheme not in {"http", "https"} or not host:
             return False
+        if "{{" in host or "}}" in host:
+            return False  # a host chosen at run time cannot be classified
         path = parsed.path.rstrip("/") or "/"
         if not is_generation(path, method="POST"):
             return False

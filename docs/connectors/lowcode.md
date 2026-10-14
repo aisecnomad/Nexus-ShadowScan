@@ -100,7 +100,12 @@ messaging and help-desk chat routes, so on an unknown host they count only
 when the node sends an `anthropic-version` header, or a JSON or key-value
 body with a `model` key and a `messages`, `prompt` or `input` key. A bare
 `/messages`, `/responses` or `/completions` on an unknown host, a GET, and a
-request body on any other route never count. An HTTP model step makes the
+request body on any other route never count. The method is read from `method`
+(HTTP Request v3 and later) or `requestMethod` (v1 and v2); a node with
+neither uses n8n's default, GET. An expression-mode URL
+(`=https://llm.example/v1/chat/completions?user={{ $json.u }}`) is read
+without its leading `=`; a host that contains an expression is chosen at run
+time and never counts. An HTTP model step makes the
 workflow AI use, not an agent: only an agent or agent-tool node makes an n8n
 workflow an agent.
 
