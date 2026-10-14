@@ -780,7 +780,9 @@ def test_large_unidentified_nodes_list_is_not_a_workflow_graph(index, tmp_path, 
     limits = []
     structured_code_matches(index, name, text, limit_errors=limits)
     assert limits == []
-    findings, ctx = _scan(index, tmp_path, {name: text})
+    # A generous matching budget: the regression is the graph limit, and a
+    # 5,000-node document can outlast the default 2 s under coverage.
+    findings, ctx = _scan(index, tmp_path, {name: text}, scan_timeout=60)
     assert not ctx.stats.incomplete and not ctx.stats.errors
 
 
