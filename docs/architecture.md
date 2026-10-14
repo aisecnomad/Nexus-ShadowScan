@@ -110,11 +110,11 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       account wherever it is used, so it links across projects. Code
       findings report repository paths, so there a `projects/` path is a GCP
       resource name only with a valid project id or number, a GCP collection
-      after it and no `:<line>` suffix. Identifiers
-      are compared byte for byte, except Azure resource ids, which Azure
-      Resource Manager treats case-insensitively and which are compared in
-      ASCII lowercase. Shared AWS catalog ARNs (AWS-managed policies, Bedrock
-      foundation models) identify no workload and are not compared.
+      after it and no `:<line>` suffix. Identifiers are compared byte for
+      byte, except Azure resource ids, which Azure Resource Manager treats
+      case-insensitively and which are compared in ASCII lowercase. Shared
+      AWS catalog ARNs (AWS-managed policies, Bedrock foundation models)
+      identify no workload and are not compared.
       A local identifier links exactly only within a
       declared shared scope: the Entra tenant for an Entra application id
       (reported as `app_id`, `client_id`, a Teams `bot_id` or an Azure Bot
@@ -131,8 +131,8 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       cannot be compared (redacted, padded, or with wildcard characters, as a
       display name such as `Acme [EU]` has) gives its finding no identifier
       link, exact or candidate; its name similarity is still a candidate.
-      These links describe the supplied
-      observations, not independently verified ownership. Gateway activity is attached to the code it is bound
+      These links describe the supplied observations, not independently
+      verified ownership. Gateway activity is attached to the code it is bound
       to by `correlation_bindings` (`metadata.runtime_activity`). Endpoint
       findings are linked to a running process of the same tool on the same
       device (`metadata.lifecycle`, `observed-running`). Correlation changes
