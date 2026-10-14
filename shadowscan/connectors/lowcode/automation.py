@@ -85,6 +85,14 @@ _WORKBOT_HUMAN_TRIGGERS = re.compile(r"command|menu|modal|button|action|shortcut
 # host they count only with request corroboration: an anthropic-version
 # header, or a JSON body with a model key and a messages, prompt or input key.
 # A bare /messages, /responses or /completions on an unknown host never counts.
+_N8N_AI_NODE = re.compile(
+    r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace|\.agent$", re.I
+)
+# ``mcp`` as its own token in a node type: mcpClient, MCPServer, mcp_bridge, but
+# not a word or part number that contains it (smcpDecoder, mcp9808Sensor). The
+# token ends at a capital letter, a separator or the end, never a lower-case
+# letter or a digit, so the match is case-sensitive after the token.
+_N8N_MCP_NODE = re.compile(r"(?<![A-Za-z0-9])[Mm][Cc][Pp](?![a-z0-9])")
 _N8N_HTTP_NODE = "n8n-nodes-base.httpRequest"
 _UNQUALIFIED_GENERATION_ROUTE = re.compile(r"/(?:messages|responses|completions|chat/completions)/?", re.I)
 _CORROBORATED_GENERATION_ROUTE = re.compile(r"/v1/(?:messages|responses)|/api/chat", re.I)
@@ -381,12 +389,7 @@ class N8nConnector(_AutomationBase):
         ai_steps = [
             f"{n.get('name')} ({n.get('type')})"
             for n in nodes
-            if re.search(
-                r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
-                r"|\.agent$|\bmcp\b",
-                str(n.get("type", "")),
-                re.I,
-            )
+            if _N8N_AI_NODE.search(str(n.get("type", ""))) or _N8N_MCP_NODE.search(str(n.get("type", "")))
         ]
         ai_steps.extend(
             f"{n.get('name')} ({n.get('type')}, model API)" for n in nodes if self._http_model_node(n)

@@ -734,7 +734,16 @@ def test_n8n_ambiguous_generation_route_without_corroboration_is_not_an_ai_step(
 
 @pytest.mark.parametrize(
     "node_type",
-    ["n8n-nodes-base.mistralAi", "n8n-nodes-mcp.mcpClient", "@n8n/n8n-nodes-langchain.mcpClientTool"],
+    [
+        "n8n-nodes-base.mistralAi",
+        "n8n-nodes-mcp.mcpClient",
+        "@n8n/n8n-nodes-langchain.mcpClientTool",
+        # Custom and community MCP nodes: the token is followed by a capital or a separator.
+        "CUSTOM.mcpClient",
+        "n8n-nodes-base.mcpClient",
+        "CUSTOM.MCPServer",
+        "acme.mcp_bridge",
+    ],
 )
 def test_n8n_named_ai_and_mcp_nodes_are_still_detected(index, node_type):
     findings, _ = _n8n_run(index, {"name": "Step", "type": node_type, "parameters": {}})
