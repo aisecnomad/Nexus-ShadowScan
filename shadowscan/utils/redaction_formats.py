@@ -154,9 +154,13 @@ _AUTH = re.compile(r"(?i)\b(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUT
 _ESCAPED_AUTH = re.compile(
     r"(?i)(?P<glue>" + _ESCAPE + r")(?P<scheme>Bearer|Basic|SSWS)\s+" + _AUTH_WORD + _AUTH_CREDENTIAL
 )
-# The glued run a guard stop leaves after the credential, which the established
-# rules matched with it (see _redact_authorization_established).
-_AUTH_GLUED = r"(?P<glued>(?:--|=(?=[A-Za-z]))[A-Za-z0-9+/_.=-]*+)?"
+# The glued run a guard stop leaves after the credential ('Bearer v--tail',
+# 'Bearer v=x'), which the established rules matched with it (see
+# _redact_authorization_established). The possessive quantifier keeps the scan
+# linear in the text.
+_GLUED = r"(?:--|=(?=[A-Za-z]))[A-Za-z0-9+/_.=-]*+"
+_GLUED_RUN = re.compile(_GLUED)
+_AUTH_GLUED = r"(?P<glued>" + _GLUED + r")?"
 _AUTH_ESTABLISHED = re.compile(_AUTH.pattern + _AUTH_GLUED)
 _ESCAPED_AUTH_ESTABLISHED = re.compile(_ESCAPED_AUTH.pattern + _AUTH_GLUED)
 _ASSIGNED = re.compile(r"[ \t]*[:=]")
@@ -349,11 +353,6 @@ def _withhold_scheme_tails(text: str, *, later_lines: bool = False) -> str:
         return match.group("head")
 
     return _SCHEME_TAIL.sub(withheld, text) if REDACTED in text else text
-
-
-# A run a guard stop leaves glued after a scheme credential ('Bearer v--tail',
-# 'Bearer v=x'). The possessive quantifier keeps the scan linear in the text.
-_GLUED_RUN = re.compile(r"(?:--|=(?=[A-Za-z]))[A-Za-z0-9+/_.=-]*+")
 
 
 def _redact_jwts(text: str) -> str:
