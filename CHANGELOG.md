@@ -156,8 +156,9 @@ and #204, into one design. Rollout and migration notes are in the
   bound is stored in evidence weights, so merging duplicate observations
   reproduces it, and a generic AI-name hint stays separate so it never lowers a
   score. In the bundled demo, five findings change risk score, all within their
-  previous severity level; the demo stays at 133 findings (16 critical, 63
-  high, 54 medium).
+  previous severity level; this change keeps the demo at 133 findings (16
+  critical, 63 high, 54 medium), and the network change in the bounded
+  evidence entry above then removes one (132 findings, 62 high).
 - Correlation: `metadata.related` holds only exact identifier links, with
   `metadata.related_details` provenance (identifier type, fields, scope).
   Fully qualified ARNs, GCP resource names, Azure resource IDs and OCI OCIDs
@@ -322,7 +323,8 @@ and #204, into one design. Rollout and migration notes are in the
 
 ### ShadowBench review fixes (October 14)
 
-Fixes from the verified review of #199, carried on the integration branch.
+Fixes from the agent-run review of #199, carried on the integration branch.
+That review is not independent human review.
 
 - Cases scoring: on the code surface a negative case where a tool reported
   anything outside the fact taxonomy is now a case-level false alarm instead
@@ -566,8 +568,10 @@ Fixes from the verified review of #199, carried on the integration branch.
   case is always refused. A
   reported directory no longer earns credit for the files under it, a
   positive case counts as found only with a true positive, code keys
-  outside the fact taxonomy are neither credited nor charged (246 of
-  AgentDiscover's 247 code "false positives" were such keys), and McNemar
+  outside the fact taxonomy are neither true nor false positives at entity
+  level (246 of AgentDiscover's 247 code "false positives" were such keys;
+  the review fixes above make one on a negative case a case-level false
+  alarm), and McNemar
   with no shared case reads n/a. Decoys an adapter declares it never passes
   to the tool (AWS IAM roles for ShadowScan) earn that tool no true
   negative. `verify` always rebuilds the corpus and compares the cases (it

@@ -4,8 +4,8 @@ Internal, AI-assisted hardening and review logs from September and October
 2026, kept for history. They are not part of the published documentation and are not
 independent review; see [governance](../../docs/governance.md).
 
-Each record was written by the maintainer with an AI assistant while changing
-the code it describes, and says so in its first lines. None is a second-person
+Each record was written by the maintainer with an AI assistant, most while
+changing the code they describe, and says so in its first lines. None is a second-person
 or third-party audit, and none is live tenant acceptance. Files here are
 retained as written: the pre-commit whitespace hooks skip `archive/`.
 
