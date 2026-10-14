@@ -986,6 +986,46 @@ def test_answers_with_decremented_ttls_share_one_window(run_connector, tmp_path,
     ]
 
 
+@pytest.mark.parametrize(
+    "defect",
+    [
+        {"TTLs": ["bad"]},
+        {"ts": "bad timestamp"},
+        {"answers": [f"203.0.113.{i}" for i in range(33)], "TTLs": [60] * 33},
+        {"_path": "dns", "query": "not a host"},
+    ],
+)
+def test_malformed_dns_record_scopes_lost_attribution_to_its_client(run_connector, tmp_path, defect):
+    rows = _temporal_rows()
+    rows.extend({**row, "client": "192.0.2.11"} for row in _temporal_rows())
+    rows.append({**rows[0], "client": "192.0.2.11", "query": "api.anthropic.com", **defect})
+    # TLS evidence is not contradicted by a DNS defect: the UID-linked flow stays attributed.
+    rows.append({"client": "192.0.2.11", "uid": "C1", "sni": "api.openai.com", "ts": 1001})
+    rows.append({"client": "192.0.2.11", "uid": "C1", "dst_ip": "203.0.113.8", "dst_port": 443, "ts": 1001,
+                 "bytes_out": 7})  # fmt: skip
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    assert any("malformed or incomplete DNS records from 1 client(s)" in w for w in stats.warnings)
+    clean = found[("192.0.2.10", "provider.openai")]
+    assert clean.metadata["flows"] == 1 and "limitations" not in clean.metadata
+    affected = found[("192.0.2.11", "provider.openai")]
+    assert affected.metadata["flows"] == 1 and affected.metadata["bytes_out"] == 7
+    assert (
+        "DNS and service-port attribution disabled because this client's DNS records were malformed or incomplete"
+        in affected.metadata["limitations"]
+    )
+
+
+def test_dns_defect_storage_bound_falls_back_to_the_input_wide_gate(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_CLIENTS", 1)
+    rows = _temporal_rows()
+    rows.extend({**rows[0], "sensor": sensor, "TTLs": ["bad"]} for sensor in ("one", "two"))
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert stats.incomplete and finding.metadata["flows"] == 0
+    assert "Flow attribution disabled because input was incomplete" in finding.metadata["limitations"]
+
+
 def test_per_address_dns_bound_is_scoped_to_that_address(run_connector, tmp_path, monkeypatch):
     monkeypatch.setattr(network_logs, "_MAX_DNS_PER_ADDRESS", 1)
     rows = _temporal_rows()

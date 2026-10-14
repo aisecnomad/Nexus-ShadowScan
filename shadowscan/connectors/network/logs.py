@@ -541,9 +541,18 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         row: dict[str, Any],
         context: _Context,
     ) -> Iterator[dict[str, Any]]:
+        # A defect in a record whose client is known stays with that client:
+        # the record is reported without marking the input incomplete, and
+        # analyze() disables DNS attribution for the client and marks the
+        # scan incomplete. Without a client, the doubt covers the input.
         if not client or query is None:
-            self.ctx.warn(f"network.logs: {name}: DNS record without a client address or query name")
+            message = f"network.logs: {name}: DNS record without a client address or query name"
+            self.ctx.warn(message, incomplete=not client)
+            if client:
+                yield {"kind": "dns", "ts": None, "client": client, "query": "", "answers": [], "ttl": None,
+                       "context": context, "malformed": True}  # fmt: skip
             return
+        malformed = False
         ttl: float | None = None
         variants: list[list[float]] = []
         invalid = False
@@ -564,18 +573,23 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             numeric = [value for value in parsed if value is not None]
             variants.append(numeric if vector else numeric * len(answers))
         if invalid or (variants and any(values != variants[0] for values in variants)):
-            self.ctx.warn(f"network.logs: {name}: malformed DNS TTL values or conflicting aliases")
+            self.ctx.warn(
+                f"network.logs: {name}: malformed DNS TTL values or conflicting aliases", incomplete=False
+            )
+            malformed = True
         elif variants and variants[0]:
             # Every alias must describe the same answer TTLs. For CNAME
             # responses all links must remain valid, so use their minimum.
             ttl = min(variants[0])
         ts = _seconds(when)
         if when is not None and ts is None:
-            self.ctx.warn(f"network.logs: {name}: invalid DNS timestamp")
+            self.ctx.warn(f"network.logs: {name}: invalid DNS timestamp", incomplete=False)
+            malformed = True
         if len(answers) > 32:
-            self.ctx.warn(f"network.logs: {name}: DNS answer limit exceeded")
+            self.ctx.warn(f"network.logs: {name}: DNS answer limit exceeded", incomplete=False)
             # A dropped answer may contradict retained data; no interval.
             ttl = None
+            malformed = True
         yield {
             "kind": "dns",
             "ts": ts,
@@ -584,6 +598,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             "answers": [str(ipaddress.ip_address(a)) for a in answers if _ip(a)][:32],
             "ttl": ttl,
             "context": context,
+            "malformed": malformed,
         }
 
     def _vpc_flow(self, row: dict[str, Any], name: str, number: int | None) -> Iterator[dict[str, Any]]:
@@ -638,6 +653,8 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         sni_by_uid: dict[_TLSKey, _TLSIdentity] = {}
         pairs: dict[_PairKey, dict[float | None, _Pair]] = {}
         dns_overflow: set[_DNSKey] = set()
+        dns_defects: set[tuple[_Context, str]] = set()
+        unscoped_defects = False
         times_used = dns_used = dropped_address_dns = 0
         dropped_pairs = dropped_times = dropped_clients = dropped_tls = dropped_dns = dropped_ja4 = 0
         clients: set[str] = set()
@@ -653,6 +670,14 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     continue
                 clients.add(client)
             ts = rec.get("ts")
+            if kind == "dns" and rec.get("malformed"):
+                # The record stays in evidence; the client's DNS attribution does not.
+                if len(dns_defects) < _MAX_CLIENTS:
+                    dns_defects.add((context, client))
+                else:
+                    unscoped_defects = True
+                if not rec.get("query"):
+                    continue
             if kind in {"dns", "tls"}:
                 host = str(rec.get("query") if kind == "dns" else rec.get("sni"))
                 match = self._service(host)
@@ -756,7 +781,14 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     if len(pair.times) < _MAX_TIMES and times_used < _MAX_TOTAL_TIMES:
                         pair.times.append(ts)
                         times_used += 1
-        input_incomplete = self._limit_reported or bool(self.ctx.stats and self.ctx.stats.incomplete)
+        input_incomplete = (
+            self._limit_reported or unscoped_defects or bool(self.ctx.stats and self.ctx.stats.incomplete)
+        )
+        if dns_defects:
+            self.ctx.warn(
+                f"network.logs: malformed or incomplete DNS records from {len(dns_defects):,} client(s); "
+                "their DNS and service-port flow attribution disabled because a discarded value may conflict"
+            )
         if dropped_clients:
             self.ctx.warn(
                 f"network.logs: {dropped_clients:,} record(s) from clients beyond the first {_MAX_CLIENTS:,} "
@@ -800,8 +832,22 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 contact.limitations.add("Flow attribution disabled because input was incomplete")
         else:
             ambiguous = self._attribute_flows(
-                contacts, pairs, sni_by_uid, bool(dropped_tls), resolved, bool(dropped_dns), dns_overflow
+                contacts,
+                pairs,
+                sni_by_uid,
+                bool(dropped_tls),
+                resolved,
+                bool(dropped_dns),
+                dns_overflow,
+                dns_defects,
             )
+            defective = {client for _, client in dns_defects}
+            for contact in contacts.values():
+                if contact.client in defective:
+                    contact.limitations.add(
+                        "DNS and service-port attribution disabled because this client's DNS records were "
+                        "malformed or incomplete"
+                    )
         if ambiguous:
             self.ctx.warn(
                 f"network.logs: {ambiguous:,} flow(s) with ambiguous service attribution were not attributed",
@@ -855,6 +901,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         resolved: dict[_DNSKey, _DNSAnswers],
         dns_limit_reached: bool,
         dns_overflow: set[_DNSKey],
+        dns_defects: set[tuple[_Context, str]],
     ) -> int:
         """Attribute each connection's timestamp groups only within observed validity windows."""
         for context, client, server, port, uid in pairs:
@@ -874,7 +921,11 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 if not identity.signature:
                     continue
                 tls_signature = identity.signature
-            elif (uid is not None and tls_limit_reached) or dns_limit_reached:
+            elif (
+                (uid is not None and tls_limit_reached)
+                or dns_limit_reached
+                or (context, client) in dns_defects
+            ):
                 continue
             local = resolved.get((context, client, server))
             local_signatures = (
