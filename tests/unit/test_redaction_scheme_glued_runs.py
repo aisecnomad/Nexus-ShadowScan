@@ -358,6 +358,63 @@ def test_a_value_a_later_sanitization_withholds_is_withheld_at_once(scheme: str)
     assert sanitize_text(cleaned) == cleaned
 
 
+def _established(text: str) -> str:
+    """The text as the established rules read it: the passes outside any reading."""
+    return redaction._redact_extended(redaction._sanitize_established(text))
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # No credential stopped at a run, so the established rules' reading is
+        # kept, and the option on the line after the scheme's stays.
+        (
+            f"Bearer {SECRET}\n--insecure --location https://example.test/x",
+            f"Bearer {REDACTED}\n--insecure --location https://example.test/x",
+        ),
+        (f"auth: Bearer {SECRET}\n---\nnext: doc", f"auth: Bearer {REDACTED}\n---\nnext: doc"),
+        ("## Basic usage\n\n--verbose prints more", f"## Basic {REDACTED}\n\n--verbose prints more"),
+        # After a glued run, a run that starts a later line is withheld, with a
+        # marker where it was.
+        (
+            f"Bearer {SECRET}--x9\n--insecure --location https://example.test/x",
+            f"Bearer {REDACTED}\n{REDACTED} --location https://example.test/x",
+        ),
+        (f"Bearer {SECRET}=x9\n\n--verbose run", f"Bearer {REDACTED}\n\n{REDACTED} run"),
+    ],
+)
+def test_a_run_that_starts_a_later_line_is_not_removed_silently(text: str, expected: str) -> None:
+    # The step that withholds a glued run also took a run at the start of
+    # any line after a scheme credential, with no marker, so an excerpt lost
+    # an option or a separator and did not show that anything was withheld.
+    assert sanitize_text(text) == expected
+    assert sanitize({"note": text})["note"] == expected
+    if "--x9" not in text and "=x9" not in text:
+        assert expected == _established(text)
+
+
+@pytest.mark.parametrize("lead", ["", "--r0\n", "--r0\n\n"])
+@pytest.mark.parametrize("credential", [SECRET, SECRET + "--x9"])
+def test_a_value_read_once_the_later_line_runs_go_stays_withheld(credential: str, lead: str) -> None:
+    # A run that starts a later line stays only where removing it changes
+    # nothing else. Removed, it can let the passes read the value after it
+    # (see _without_glued_runs), and that reading is kept. The value does not
+    # look opaque, so no other rule withholds it.
+    text = f"Bearer {credential}\n{lead}=abc.def = password: hunter2pass"
+    assert not _shown(text, "hunter2pass")
+
+
+@pytest.mark.parametrize("glued", ["--{t}", "=x{t}"])
+def test_the_scheme_pass_outside_a_reading_withholds_the_run_with_the_credential(glued: str) -> None:
+    # Outside sanitize_text and sanitize no reading is set. The scheme pass
+    # then left the run in the text for a step that only those two run, and
+    # a direct call of the passes showed the token's tail.
+    text = f"x Bearer {SECRET}" + glued.format(t=TAIL) + " y"
+    assert redaction._redact_authorization(text) == f"x Bearer {REDACTED} y"
+    for passes in (redaction._established_passes, redaction._sanitize_established):
+        assert TAIL[:9] not in redaction._redact_extended(passes(text))
+
+
 def _tokens(text: str) -> Counter[str]:
     counts = Counter(re.findall(r"[A-Za-z0-9]+", text))
     del counts["REDACTED"]
@@ -475,7 +532,9 @@ def test_a_glued_run_ending_in_a_scheme_leaves_that_scheme_to_the_scan(
         (f"Basic \n {SECRET}=password: {VALUE}", f"{REDACTED}\n"),
         (f"SSWS\n\n{SECRET}--token {VALUE}", f"{REDACTED}\n\n"),
         (f"Bearer\n{SECRET}--{TAIL} x", f"Bearer {REDACTED}\n x"),
-        (f"Bearer token\n{SECRET}=x{TAIL}\n", f"Bearer {REDACTED}\n\n"),
+        # The established rules kept the tail after the 'token' word at the
+        # start of the credential's line; a marker shows where it was.
+        (f"Bearer token\n{SECRET}=x{TAIL}\n", f"Bearer {REDACTED}\n{REDACTED}\n"),
     ],
 )
 def test_a_glued_run_keeps_the_line_breaks_after_the_scheme(text: str, expected: str) -> None:
@@ -510,6 +569,108 @@ def test_a_name_on_the_credentials_line_after_a_header_scheme_is_withheld(
     assert sanitize_text(text).count("\n") == text.count("\n")
 
 
+@pytest.mark.parametrize(
+    ("kept", "shown", "within"),
+    [
+        ("a b c", "a b c", True),
+        ("a b c", f"a {REDACTED} c", True),
+        # Text removed beside a marker or at either end of the line.
+        ("a b c", " b c", True),
+        ("a b c", f"a {REDACTED}c", True),
+        ("a b c", REDACTED, True),
+        ("a b c", REDACTED + REDACTED, True),
+        ("a b c", "", True),
+        ("a b\r", f"{REDACTED}\r", True),
+        (f"a {REDACTED} c", f"a {REDACTED} c", True),
+        # A character the kept line does not show.
+        ("a b c", "a b d", False),
+        # Text removed inside a piece, with no marker there.
+        ("a b c", "a  c", False),
+        ("a b c", f"a {REDACTED} d", False),
+        # A piece that straddles the kept line's marker shows what it withholds.
+        (f"a{REDACTED}b", "ab", False),
+        # Pieces in another order, or overlapping in the kept line.
+        ("a b", f"b {REDACTED} a", False),
+        ("ab", f"ab{REDACTED}b", False),
+    ],
+)
+def test_shows_within_reads_the_markers_as_withheld_spans(kept: str, shown: str, within: bool) -> None:
+    assert redaction._shows_within(kept, shown) is within
+
+
+@pytest.mark.parametrize(
+    ("one", "other", "merged"),
+    [
+        ("a b", "a b", "a b"),
+        (f"a {REDACTED}", "a b", f"a {REDACTED}"),
+        ("a b", f"a {REDACTED}", f"a {REDACTED}"),
+        # Two spans differ, but one line shows only what the other shows: kept.
+        (f"a {REDACTED} b {REDACTED} c", "a X b Y c", f"a {REDACTED} b {REDACTED} c"),
+        ("a X b Y c", f"a {REDACTED} b {REDACTED} c", f"a {REDACTED} b {REDACTED} c"),
+        # Each shows what the other withholds: the whole line, keeping its CR.
+        (f"a {REDACTED} c", f"{REDACTED} b c", REDACTED),
+        (f"a {REDACTED} c\r", f"{REDACTED} b c\r", f"{REDACTED}\r"),
+        # The first reading removed the run that starts the second's line.
+        (" --location u", "--insecure --location u", f"{REDACTED} --location u"),
+        (" x\r", "=abc.def x\r", f"{REDACTED} x\r"),
+        ("", "---", REDACTED),
+        # Text that is not such a run is not marked.
+        (" x", "abc x", " x"),
+    ],
+)
+def test_a_merged_line_shows_nothing_either_reading_withholds(one: str, other: str, merged: str) -> None:
+    assert redaction._merged_line(one, other) == merged
+    assert redaction._shows_within(one, merged) and redaction._shows_within(other, merged)
+
+
+def test_readings_whose_lines_do_not_pair_up_withhold_the_whole_text() -> None:
+    assert redaction._merge_readings("a\nb\nc", "a b\nc") == REDACTED + "\n\n"
+    assert redaction._merge_readings("a\nb", "a\nb") == "a\nb"
+
+
+_CAPPED = [
+    # A cut after a cut: the second run is read only once the first goes.
+    f"Bearer {SECRET}--x9\n--r0\n=abc.def = password: hunter2pass",
+    # A reading a later sanitization withholds more of (see _settled).
+    f"Bearer token\n{SECRET[:16]}--a=:{VALUE}",
+    f"Bearer {SECRET}--x9\n--a=:{VALUE}",
+]
+
+
+@pytest.mark.parametrize("text", _CAPPED)
+def test_a_reading_cut_short_by_its_cap_still_shows_only_what_both_readings_show(
+    text: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The caps bound the work on a text that keeps changing. A reading cut
+    # short is still merged with the established one, line by line.
+    monkeypatch.setattr(redaction, "_GLUED_READINGS_AGAIN", 1)
+    monkeypatch.setattr(redaction, "_GLUED_RUN_READINGS", 1)
+    merged: list[tuple[str, str]] = []
+    merge = redaction._merge_readings
+    monkeypatch.setattr(
+        redaction,
+        "_merge_readings",
+        lambda first, second: merged.append((first, second)) or merge(first, second),
+    )
+    cleaned = sanitize_text(text)
+    assert "hunter2pass" not in cleaned and VALUE not in cleaned and SECRET[:9] not in cleaned
+    assert cleaned.count("\n") == text.count("\n")
+    ((plain, established),) = merged
+    for line, plain_line, established_line in zip(
+        cleaned.split("\n"), plain.split("\n"), established.split("\n"), strict=True
+    ):
+        assert redaction._shows_within(plain_line, line) and redaction._shows_within(established_line, line)
+
+
+def test_a_glued_text_in_a_list_is_merged_member_by_member() -> None:
+    record = {"notes": [f"Bearer {SECRET}--x9\n--insecure x", "plain words", f"Basic {SECRET}=x9 more"]}
+    assert sanitize(record)["notes"] == [
+        f"Bearer {REDACTED}\n{REDACTED} x",
+        "plain words",
+        f"Basic {REDACTED} more",
+    ]
+
+
 def test_long_glued_runs_are_read_in_linear_time() -> None:
     # Each glued run is split once and each distinct name in it judged once,
     # and a run stops at the next scheme's marker. This generous bound tells
@@ -539,3 +700,48 @@ assert sanitize_text('Bearer ' + secret + '--' + 'a' * n) == 'Bearer ' + REDACTE
         [sys.executable, "-c", script], cwd=ROOT, capture_output=True, text=True, timeout=60, check=False
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# Pins against the integration head before the later-line change: a run on a
+# later line that holds a value stays withheld; only a bare name or separator
+# run is kept.
+_LATER_LINE_SECRET = "AbCdEfGh1234567890Zz"
+_LATER_LINE_VALUE = "Qx7aBcDeFgHiJkLmNp9"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "--pw={v}--extra",
+        "--storepass={v}",
+        "--keypass={v}",
+        "--password=-{v}",
+        "--token=={v}",
+        "=pass={v}",
+        "=auth={v}",
+        "--x--pw={v}",
+        "--no-password.passwd={v}",
+        "--verbose\n--sig={v}",
+        "---\n--otp={v}",
+    ],
+)
+@pytest.mark.parametrize("gap", ["\n", "\n\n"])
+def test_a_value_in_a_run_that_starts_a_later_line_stays_withheld(line: str, gap: str) -> None:
+    text = f"Bearer {_LATER_LINE_SECRET}{gap}{line.format(v=_LATER_LINE_VALUE)}"
+    assert _LATER_LINE_VALUE[:8] not in sanitize_text(text)
+    assert _LATER_LINE_VALUE[:8] not in sanitize({"n": text})["n"]
+    assert _LATER_LINE_VALUE[:8] not in sanitize({"n": text}, redact_short_secrets=True)["n"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Bearer {s}\n--insecure --location https://example.test/x",
+        "auth: Bearer {s}\n---\nnext: doc",
+        "Bearer {s}\n=Section=\nx",
+    ],
+)
+def test_an_inert_run_after_a_scheme_line_is_kept(text: str) -> None:
+    text = text.format(s=_LATER_LINE_SECRET)
+    out = sanitize_text(text)
+    assert out.split("\n")[1:] == text.split("\n")[1:]

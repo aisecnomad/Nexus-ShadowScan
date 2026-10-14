@@ -5,6 +5,36 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Redaction review fixes (October 14)
+
+- A run at the start of the line after a `Bearer`, `Basic` or `SSWS`
+  credential that holds no value (`--insecure`, `---`, `=Section=`, also
+  after blank lines) is no longer removed from a text that has no run glued
+  to the credential. The step that withholds a glued run ran on every text
+  and deleted such a run without a marker, so an excerpt lost a curl flag, a
+  YAML separator or a README option and did not show that anything was
+  withheld. A later-line run that holds a value is still removed, as before:
+  returning the established reading there would show option values that the
+  previous rules withheld. In a text with a glued run, a run at the start of
+  a later line is still withheld, now with a marker in its place where the
+  rest of the line is unchanged.
+- Where the two readings of a text with a glued run do not pair up line by
+  line, the whole text is still withheld, keeping its line breaks. Keeping
+  the lines both readings show alike was tried and not carried: those lines
+  included values the previous rules withheld.
+- The scheme pass, called outside `sanitize_text` and `sanitize`, withholds a
+  glued run with its credential again, as the established rules did. With no
+  reading set it left the run in the text for a later step that only those
+  two entry points run. Their output was not affected.
+- The merge of the two readings is tested directly: hypothesis properties for
+  `sanitize_text` and `sanitize` check that each output line is a line of one
+  reading, that line with a marker, or a withheld line, and shows only what
+  both readings show; unit tests cover the line comparison, the line merge
+  and the read-again caps, and pin tests keep value-holding later-line runs
+  withheld. Unreachable bytes and set branches in the merge helpers and a
+  duplicated glued-run pattern are removed, and `docs/production.md` states
+  the merge rule as above.
+
 ### ShadowBench review fixes (October 14)
 
 Fixes from the verified review of #199, carried on the integration branch.

@@ -1080,10 +1080,17 @@ Redaction reads a text with a run glued after a `Bearer`, `Basic` or `SSWS`
 credential (`<token>--x`, `<token>=x`) twice, as every rule reads the run and
 as the earlier rules withheld it with the credential, and shows on each line
 only what both readings show; such a token's tail is withheld with it.
-Sanitized evidence around these credentials therefore withholds more: a line
-the readings differ on in more than one place is withheld whole, and a text
-with a name glued after a credential on the line after its scheme is
-withheld whole, keeping its line breaks. Finding identity does not use
+Sanitized evidence around these credentials therefore withholds more: where
+one reading's line shows nothing the other's does not, that line is kept, and
+otherwise the whole line is withheld; a text with a name glued after a
+credential on the line after its scheme is withheld whole, keeping its line
+breaks. In such a text a run that starts the line after a scheme credential
+(`--verbose`, `---`), or a later line after only blank lines or other such
+runs, is withheld as well, with a marker in its place where the rest of the
+line is unchanged. A text with no glued run reads as the earlier rules read
+it, those runs included where each is only a name or separator (`--verbose`,
+`---`, `=Section=`), unless removing them lets the rules withhold a value
+after them; a run holding a value is removed as before. Finding identity does not use
 evidence text. Regenerate retained reports, as after any change that
 withholds more.
 
