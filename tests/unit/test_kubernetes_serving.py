@@ -74,11 +74,8 @@ def test_agent_named_environment_and_model_mounts_are_not_ai_evidence(serving):
     assert _get(serving, "web", namespace="web") is None
 
 
-@pytest.mark.parametrize("field", ["args", "command"])
-@pytest.mark.parametrize("value", ["--model example-org/chat-7b", ["--model", 7]])
-def test_malformed_container_arguments_mark_the_scan_incomplete(tmp_path, run_connector, field, value):
+def _single_container(tmp_path, run_connector, container):
     source = tmp_path / "workloads.json"
-    container = {"image": "registry.example/ml/vllm-serving:1.4", field: value}
     source.write_text(
         json.dumps(
             {
@@ -93,8 +90,23 @@ def test_malformed_container_arguments_mark_the_scan_incomplete(tmp_path, run_co
             }
         )
     )
-    findings, ctx = run_connector("cloud.kubernetes", input=str(source), cluster="test")
+    return run_connector("cloud.kubernetes", input=str(source), cluster="test")
+
+
+@pytest.mark.parametrize("field", ["args", "command"])
+@pytest.mark.parametrize("value", ["--model example-org/chat-7b", ["--model", 7]])
+def test_malformed_container_arguments_mark_the_scan_incomplete(tmp_path, run_connector, field, value):
+    container = {"image": "registry.example/ml/vllm-serving:1.4", field: value}
+    findings, ctx = _single_container(tmp_path, run_connector, container)
     assert ctx.stats.incomplete
     assert any(f"malformed container {field}" in warning for warning in ctx.stats.warnings)
     # The workload is still reported from its image; the argument is not read.
     assert len(findings) == 1 and "self-hosted-model-serving" not in findings[0].tags
+
+
+@pytest.mark.parametrize("field", ["args", "command"])
+def test_null_container_arguments_are_unset_not_malformed(tmp_path, run_connector, field):
+    container = {"image": "registry.example/ml/vllm-serving:1.4", field: None}
+    findings, ctx = _single_container(tmp_path, run_connector, container)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+    assert len(findings) == 1 and findings[0].kind == Kind.AGENT

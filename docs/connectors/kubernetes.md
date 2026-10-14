@@ -29,8 +29,9 @@ corroborates an AI image or AI resource kind: together they add the
 own, a model argument and a GPU never make a workload an agent, because
 training and computer-vision jobs take the same arguments; such a GPU workload
 stays a cloud resource with unchanged confidence. Only the argument's presence
-is recorded, never its value. A `command` or `args` field that is not a list of
-strings is skipped with a warning that marks the scan incomplete.
+is recorded, never its value. A `command` or `args` field that is absent or
+`null` is unset; one that is not a list of strings is skipped with a warning
+that marks the scan incomplete.
 
 `cloud.kubernetes` and `cloud.openshift` use no credentials and accept no
 credential option: `allow_instance_credentials` is rejected on their entries.

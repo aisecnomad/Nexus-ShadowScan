@@ -258,7 +258,10 @@ class KubernetesConnector(BaseConnector):
                     if "image" in container and not isinstance(container["image"], str):
                         self.ctx.warn(f"{self.name}: container has malformed image")
                     for field in ("command", "args"):
-                        arguments = container.get(field, [])
+                        arguments = container.get(field)
+                        # kubectl and serializers emit an unset field as null.
+                        if arguments is None:
+                            continue
                         if not isinstance(arguments, list) or not all(isinstance(a, str) for a in arguments):
                             self.ctx.warn(f"{self.name}: workload has malformed container {field}")
                             continue
