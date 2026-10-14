@@ -48,6 +48,31 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
 - Live `cloud.aws` AgentCore gateway findings use the gateway ARN as their
   resource, so their finding ids change: re-baseline AWS scans that include
   gateways.
+- Atlassian finding ids change: exports scanned without a configured `site`
+  are bound to each export file's resolved path, and a `site` with an
+  uppercase host or an explicit `:443` is canonicalized. A `site` that is not
+  a plain HTTPS origin (for example a Data Center context path such as
+  `/jira`) stops the connector with exit 3. Configure `site` as
+  `https://<host>`, keep one site per input and rebaseline.
+- Kubernetes and OpenShift resources with names over 160 characters keep
+  their full name, so their finding ids change. These now end a scan
+  incomplete (exit 3): a namespace that is not an RFC 1123 DNS label, a
+  chunked `List` page (`metadata.continue` or `remainingItemCount`), a name
+  over 253 characters, and a container `command` or `args` that is not a list
+  of strings.
+- `gateway.logs`: Ollama-style requests to a host that is not a known or
+  declared model host are no longer callers. List internal model servers
+  behind a reverse proxy in the new `internal_model_hosts` option before
+  upgrading; setting it changes that source's finding ids.
+- More inputs end a scan incomplete (exit 3): a malformed or unsupported
+  `uv.lock`, `poetry.lock`, `pnpm-lock.yaml` or `Cargo.lock` with no manifest
+  beside it; a malformed or over-budget n8n, Flowise or Dify graph; a live
+  process command line over 65,536 bytes; a `SKILL.md` or MCP description
+  audit over 64 KiB, with malformed front matter or an unclosed fence; and
+  defective network log records (a malformed context, TTL, timestamp or JA4
+  value, or over 32 DNS answers). The
+  [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
+  lists each case and what it withholds.
 - Low-code autonomy evidence is read more strictly: triggers a person operates
   (n8n manual, chat and form triggers, Workato Workbot commands, Zapier
   Chrome extension or Interfaces steps), and Make on-demand scenarios, which a
