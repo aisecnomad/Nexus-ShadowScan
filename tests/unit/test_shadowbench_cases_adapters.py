@@ -10,7 +10,9 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -530,7 +532,7 @@ def test_version_probe_runs_scrubbed_and_bounded(
     for call in probes:
         argv, probe_env = call["argv"], call.get("env")
         if argv[0].endswith("unshare"):  # a root probe: see the privilege-drop tests below
-            assert argv[1:3] == ["--net", "--mount"] and "--no-new-privs" in " ".join(argv)
+            assert argv[1:4] == ["--net", "--pid", "--mount"] and "--no-new-privs" in " ".join(argv)
         assert probe_env is not None, f"{tool}: {argv} inherited the caller's environment"
         assert set(probe_env) <= PROBE_ENV_KEYS, sorted(set(probe_env) - PROBE_ENV_KEYS)
         assert not set(SECRETS.values()) & set(probe_env.values())
@@ -556,14 +558,16 @@ def test_a_root_probe_drops_to_the_stage_identity_with_the_homes_hidden(
     assert prefix is not None
     unshare_argv, (shell, flag, script, name) = prefix[:-4], prefix[-4:]
     assert unshare_argv == [
-        "/usr/bin/unshare", "--net", "--mount", "--propagation", "private", "--fork", "--kill-child", "--"
+        "/usr/bin/unshare", "--net", "--pid", "--mount", "--propagation", "private", "--mount-proc",
+        "--fork", "--kill-child", "--",
     ]  # fmt: skip
     assert (shell, flag, name) == ("/usr/bin/sh", "-c", "probe")
     assert "/usr/bin/mount -t tmpfs -o mode=0755 tmpfs /root" in script
     assert "/usr/bin/mount -t tmpfs -o mode=0755 tmpfs /home" in script
     assert script.endswith(
-        f'exec /usr/bin/setpriv --reuid={TOOL_UID} --regid={TOOL_GID} --clear-groups --no-new-privs -- "$@"'
+        f'/usr/bin/setpriv --reuid={TOOL_UID} --regid={TOOL_GID} --clear-groups --no-new-privs -- "$@"; exit $?'
     )
+    assert "exec" not in script  # the root shell stays the namespace's init
     monkeypatch.setattr(_probe.os, "geteuid", lambda: 1000)
     assert _probe.isolation() == []
 
@@ -613,6 +617,55 @@ def test_a_root_probe_really_runs_unprivileged_and_sees_no_home() -> None:
     assert (uid, gid) == (str(_probe.PROBE_UID), str(_probe.PROBE_GID))
     assert (root_entries, home_entries) == ("0", "0")
     assert cwd.startswith(_probe.PROBE_TMP + "/shadowbench-probe-")
+
+
+def _processes_with_args(*argv: str) -> list[int]:
+    """Host pids whose command line is exactly ``argv``."""
+    found = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            cmdline = Path(f"/proc/{entry}/cmdline").read_bytes()
+        except OSError:
+            continue
+        if cmdline.split(b"\0")[:-1] == [a.encode() for a in argv]:
+            found.append(int(entry))
+    return found
+
+
+def _assert_gone(*argv: str) -> None:
+    deadline = time.monotonic() + 5
+    while _processes_with_args(*argv) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert _processes_with_args(*argv) == [], f"{argv} outlived the probe"
+
+
+@pytest.mark.skipif(not _probe_can_drop(), reason="needs root with unshare, setpriv and mount namespaces")
+def test_a_root_probe_leaves_no_process_behind_and_sees_no_host_process() -> None:
+    """A probe ran in the host PID namespace: a setsid child outlived it as uid 65534 and saw every host pid."""
+    from tools.shadowbench.cases.adapters import _probe
+
+    marker = str(10_000_000 + os.getpid())  # an argument no other sleep on the host carries
+    leave = f"ls /proc | grep -c '^[0-9]'; (setsid sleep {marker} </dev/null >/dev/null 2>&1 &); echo v1.2.3"
+    try:
+        proc = _probe.run_probe(["sh", "-c", leave])
+        assert proc is not None and proc.returncode == 0, proc
+        visible, version = proc.stdout.split()
+        assert version == "v1.2.3"
+        assert int(visible) <= 5, f"the probe saw {visible} pids"
+        _assert_gone("sleep", marker)
+        # On a timeout the probed binary itself is still running, and has detached a child.
+        hang = f"(setsid sleep {marker} </dev/null >/dev/null 2>&1 &); exec sleep {marker}1"
+        assert _probe.run_probe(["sh", "-c", hang], timeout=2) is None
+        _assert_gone("sleep", marker)
+        _assert_gone("sleep", f"{marker}1")
+    finally:
+        for pid in _processes_with_args("sleep", marker) + _processes_with_args("sleep", f"{marker}1"):
+            try:
+                os.kill(pid, signal.SIGKILL)  # a namespace's init ignores anything less
+            except ProcessLookupError:
+                pass
 
 
 def test_failed_probe_is_unknown_and_never_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

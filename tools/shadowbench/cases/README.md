@@ -93,10 +93,13 @@ the runner's user. An adapter that runs the tool's binary for it does so only
 through `adapters/_probe.py`: the probe gets a fixed `PATH`, a throwaway
 `HOME` that is also its working directory, no other inherited environment, an
 empty stdin and a timeout. A probe started as root (the runner always is)
-never runs the binary as root: it gets an empty network namespace and a
-private mount namespace with `/root` and `/home` hidden, and drops to uid/gid
-65534 with no supplementary groups and `no_new_privs`, the identity the stage
-gives the tool, with its home under `/tmp`. Without `unshare`, `setpriv`,
+never runs the binary as root: it gets an empty network namespace, a fresh
+PID namespace with its own `/proc` and a private mount namespace with `/root`
+and `/home` hidden, and drops to uid/gid 65534 with no supplementary groups
+and `no_new_privs`, the identity the stage gives the tool, with its home under
+`/tmp`. Every process the binary starts, detached or not, ends when the probe
+returns or times out, so none is left running as that uid to reach a later
+case's `work/`. Without `unshare`, `setpriv`,
 `mount` and `sh` a root probe does not run. A probe that cannot start, cannot
 drop privileges or times out records `unknown`. Otherwise the adapter reads the version from what the probe
 printed, whatever its exit code; only the installed-package lookup (Snyk,

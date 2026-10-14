@@ -461,8 +461,10 @@ track:
   unchanged.
 * Version probes the runner starts as root now drop to uid/gid 65534 with
   `/root` and `/home` hidden, as the tools themselves do in the stage, and do
-  not run when that drop is impossible. In the 2026-10-11 run each tool's
-  version probe ran as root on the host, outside the stage.
+  not run when that drop is impossible. They also get their own PID namespace
+  and `/proc`, so a process a probed binary detaches dies with the probe
+  instead of staying on the host as that uid. In the 2026-10-11 run each
+  tool's version probe ran as root on the host, outside the stage.
 
 ### The 2026-10-11 run, in brief
 
