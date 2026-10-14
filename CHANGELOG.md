@@ -5,6 +5,126 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### ShadowBench review fixes (October 14)
+
+Fixes from the verified review of #199, carried on the integration branch.
+
+- Cases scoring: on the code surface a negative case where a tool reported
+  anything outside the fact taxonomy is now a case-level false alarm instead
+  of a true negative; such reports still earn no credit on a positive case and
+  stay neither true nor false positives at entity level. The code-surface
+  adapters (AgentDiscover, `agent-discovery`, vet, ShadowScan), which drop
+  hits that map to no fact, count them in each row's `out_of_taxonomy`, and
+  the scorer counts them as if passed on; it refuses a count that is not a
+  non-negative integer or sits on a non-code row. `metrics.json` reports
+  `case.out_of_taxonomy_alarms` per tool. `tools/discovery_benchmark`'s
+  ShadowScan normalizer records the findings it maps to no fact as
+  `detail["unmapped"]`, LLM-provider credential findings included.
+- Re-scored the 2026-10-11 cases run from the unchanged rows: only
+  AgentDiscover changes. Its 16 out-of-taxonomy keys on the encode/httpx
+  control (`code-checkout-017`) are now its one code false alarm: code case
+  specificity 90% (9 of 10; was 100%), in-scope case specificity 25 of 26
+  (was 26 of 26), case-level balanced accuracy 62% (was 64%), and the McNemar
+  comparison with ShadowScan 23 against 1 (was 22 against 1). This replaces
+  the earlier statement that out-of-taxonomy code keys are neither credited
+  nor charged at case level.
+- The run manifest now records each `<tool>.jsonl`'s SHA-256
+  (`rows_sha256`), and `score` refuses a results file whose digest differs
+  unless `--force`; before, only per-status row counts were checked, so an
+  edited or swapped file with the same statuses was scored. Tools whose
+  manifest entry has no digest, every tool of the 2026-10-11 run, are listed
+  in `metrics.json` under `rows_unbound`, and the report says their rows are
+  bound to the run only by status counts. The cases `REPORT.md` for a
+  manifest without harness fields now also states that its rows come from
+  earlier adapters under weaker isolation and were scored with rules revised
+  after the run.
+- Cases runner: version probes run in their own PID namespace with a fresh
+  `/proc`, under a root shell that stays the namespace's init, so a process a
+  probed binary detaches dies with the probe or its timeout instead of
+  staying on the host as uid 65534 with access to later work trees. After a
+  stage, `work/` is handed back to root with group and other write removed
+  before escaping symlinks are swept, so a uid-65534 process outside the stage
+  can no longer plant a symlink after the sweep and have the adapter read a
+  root-only file through it. Each stage gets its own IPC namespace and a fresh
+  tmpfs over `/var/tmp` and `/dev/shm`, and the runner refuses scratch or tool
+  paths under them; the host's `/tmp` is still shared between cases and
+  tools.
+- Cases `fetch_code` runs git without the system or global git configuration
+  and with `* !filter` in `.git/info/attributes`, so a repository's
+  `.gitattributes` can no longer start git-lfs or another operator-configured
+  filter driver on checkout; a proxy or CA bundle must come from
+  `HTTPS_PROXY` or `GIT_SSL_CAINFO`. The fetched commit is checked before
+  checkout. An existing checkout is kept only when this fetcher made it, its
+  origin is the pinned URL and it holds the pinned tree and nothing else;
+  `materialize` refuses a checkout with untracked, ignored or modified files
+  or a populated submodule directory.
+- The ShadowScan adapter records `-dirty` after the commit when `shadowscan/`
+  or `pyproject.toml` differs from it, and `unknown` when its version probe
+  exits non-zero.
+- `benchmarks/shadowbench/cases/README.md` no longer calls the author-written
+  benchmark "standardized".
+- Estate scoring fails closed on malformed `runs.json` rows: `score` exits 2
+  without writing anything when a result row has no tool, has no unit or a
+  unit other than `estate`, `sim`, `code:<name>` or `home:<name>`, or
+  repeats a (tool, unit) pair. A row without a unit was read as a
+  whole-estate run, which reached every entity, turned every unflagged
+  in-scope negative into a true negative and hid the missing code and home
+  units; a repeated row counted its unattributed predictions twice.
+- The estate Numbat wrapper fails the unit when `numbat agents` exits with
+  any status other than 0 or the documented empty-inventory 1, even if it
+  printed a report. A crash that had printed `[]` was recorded as a complete
+  empty inventory.
+- The estate vet wrapper checks a code repository's `vet.json` before the
+  code-surface adapter reads it: an unparseable report, one that is not a
+  list, or a list without a vet record (such as `{"error": ...}`) is an
+  adapter error, not an empty inventory. No report, an empty one, `null`
+  and `[]` still read as nothing found; `tools/discovery_benchmark` is
+  unchanged.
+- The estate README's rename erratum says the renamed artifacts and the
+  ShadowScan harness configuration still name Adatum tenants on real SaaS
+  parent domains (offline data that no harness contacts), and each estate
+  `tokens.txt` entry in `tools/secret_allowlist.json` gives a reason that
+  describes its own synthetic token.
+- None of these changes the committed 2026-10-11 estate results: the
+  committed `runs.json` re-scores to the committed `metrics.json` and
+  `REPORT.md` byte for byte.
+
+### Dependency refresh and repository hygiene (October 14)
+
+- Dependabot's #200 and #201 are carried. #200 bumped nine reviewed inputs in
+  `requirements-ci-constraints.txt` (ast-serialize, filelock, hypothesis,
+  iniconfig, platformdirs, rpds-py, tomli, types-requests, virtualenv) but
+  cannot refresh the hash locks: `requirements-ci.lock` is regenerated with the
+  documented uv command, the docs lock's platformdirs follows the CI pin, and
+  the mypy pre-commit hook pins the new types-requests. #201 moves
+  upload-artifact to 7.0.2, download-artifact to 8.0.2 and codeql-action to
+  4.38.3, by full commit SHA in the workflows and `examples/`.
+- The macOS test legs install `requirements-build.lock` as the Linux job does;
+  the release evidence records the build frontend's version since #202.
+- Navigation: READMEs index `examples/`, `benchmarks/sab_realworld/`,
+  `benchmarks/sab-holdout/` and `archive/reviews/`; the four benchmarks that
+  were all titled some variant of "real-world" have distinct titles;
+  `.github/workflows/README.md` lists every workflow, its triggers and what it
+  may write; the docs site groups assurance evidence and maintainer runbooks
+  separately, adds API pages for signatures and reporters, and each connector
+  surface package's docstring names its modules.
+- Labels: `.github/labels.yml` adopts GitHub's `duplicate`, `invalid` and
+  `wontfix`, adds `breaking-change` and `do-not-merge`, and a policy test
+  checks that Dependabot and the stale workflow only use defined labels.
+- Developer commands: `make help` prints targets by section, `make
+  check-fast` runs the offline gates without tests, `make evaluate` writes its
+  reports to a temporary directory, `make install` fails fast on an
+  unsupported Python, pytest shows its summary line again, and CONTRIBUTING,
+  the pull request template and `docs/testing.md` list one gate set. The
+  coverage gate's inventory-mismatch error says what to run.
+- Consistency tests check that tracked files already pass the pre-commit
+  whitespace hooks, that the mypy hook excludes what pyproject excludes, that
+  `archive/` links resolve, and that anchors linked in pages the docs site
+  renders are ones both GitHub and MkDocs generate.
+- `.gitignore` covers local credential stores (PKCS#12 bundles, `.netrc`,
+  `.pypirc`, `.envrc`, Terraform state); `.editorconfig` and `.gitattributes`
+  leave frozen benchmark data and archived reviews exactly as committed.
+
 ### Repository rename, source distribution and README detection matrix (October 14)
 
 - The repository is renamed from `aisecnomad/Project-Nexus` to
@@ -72,8 +192,10 @@ summarizes each release for people who install and operate ShadowScan.
   (87 positive, 27 control, 23 near-miss). Both are author-written: neither
   is independent review, field precision or a verdict on another vendor.
 - Integration: each track keeps its own harness under `cases/` or
-  `estate/`; the estate's authored files sit under `estate/artifacts/` with
-  every frozen digest unchanged. The vendor letter grades (`grades.json`,
+  `estate/`; the estate's authored files moved under `estate/artifacts/`
+  without a change to any frozen digest; the rename and the data errata below
+  then changed the affected files' digests, and `FREEZE.json` and the four
+  synthetic-JWT allowlist digests were recomputed. The vendor letter grades (`grades.json`,
   `GRADES.md`) and the two PDFs are not carried: the grades were a judgment
   over author-written corpora, and neither PDF could be rebuilt from the
   repository. The estate's fictional organization is renamed from Vantor,
