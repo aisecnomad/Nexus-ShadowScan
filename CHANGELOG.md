@@ -5,6 +5,56 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Repository rename, source distribution and README detection matrix (October 14)
+
+- The repository is renamed from `aisecnomad/Project-Nexus` to
+  `aisecnomad/Nexus-ShadowScan`, so that the repository URL, the
+  `NexusShadowScan` distribution, the `shadowscan` command and the
+  *Nexus ShadowScan* name match; "Project Nexus" also collided with unrelated
+  projects in search. Every live link, badge, clone command, issue form,
+  `pyproject.toml` URL, `CITATION.cff`, `NOTICE`, the Dockerfile source label,
+  the docs site configuration, the SARIF `informationUri` and `helpUri` and the
+  CycloneDX VCS reference follow. Retained reviews, frozen benchmark results and
+  their harnesses, the recorded ruleset responses and released changelog
+  entries keep the former name; a consistency test rejects it elsewhere unless
+  the line says it is the former name or the name 0.1.2 was attested under.
+- OCSF `metadata.product.vendor_name` is `Nexus ShadowScan` instead of
+  `Project Nexus`. The SARIF and CycloneDX tool name stays `ShadowScan`, so
+  GitHub code scanning keeps matching existing alerts to the same tool.
+- The scheduled governance audit job runs on the immutable repository ID
+  (`github.repository_id`) instead of the repository name, which a rename would
+  have turned into a silently skipped job. `tools/governance/rulesets.py`
+  expects the new name in each ruleset's `source`; the dated observed
+  snapshots keep the name GitHub returned at the time, and the tests read them
+  as GitHub now returns them.
+- Releases upload a source distribution beside the universal wheel. The
+  release workflow runs `python -m build --no-isolation` on the clean
+  `git archive`, which writes the sdist and then builds the wheel from it with
+  the hash-locked backend; `requirements-build.lock` pins `build` 1.6.1 and
+  `pyproject_hooks` 1.2.0 with the hash of every published file. The new
+  `tools/release/distributions.py` requires one `py3-none-any` wheel and one
+  sdist of the same version, byte-identical core metadata and package files,
+  an sdist of regular files under one root and no test suite in it. The
+  evidence manifest requires the pair, the SBOM is attested for both, and the
+  publication input, gate and publish job each require exactly one of each.
+  0.1.2 was published as a wheel only. CI and `make build` build the same way.
+- `MANIFEST.in` keeps `tests/` out of the sdist: setuptools otherwise added the
+  top-level `tests/test*.py` modules without the fixtures, conftest and tools
+  they need.
+- README: a name table, an abridged SARIF result from the offline demo, a
+  detection matrix and a benchmark summary at the top. `tools/readme_matrix.py`
+  (`make readme-matrix`) generates the matrix of frameworks by ecosystem, MCP
+  evidence and the identity, gateway, low-code, SaaS and network connectors
+  from the signature packs, the endpoint client locations and the connector
+  classes. Tests fail when the matrix is stale, when the SARIF excerpt stops
+  matching the demo's first result, or when a benchmark number differs from the
+  committed `metrics.json`. The benchmark section states that the maintainer
+  wrote the corpora, labels and harnesses, and that the code-surface run left 43
+  of 87 repositories incomplete.
+- The publishing runbook gains the rename steps: update the PyPI and TestPyPI
+  trusted publishers, republish the Pages site, and verify attestations signed
+  before a rename under the former name.
+
 ### ShadowBench, the nine-surface discovery benchmark (October 12)
 
 - `benchmarks/shadowbench/` and `tools/shadowbench/`: two benchmark tracks

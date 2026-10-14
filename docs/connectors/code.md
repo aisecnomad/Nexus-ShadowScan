@@ -204,7 +204,7 @@ Credential redaction resolves supported Go SDK import aliases against the full
 source before excerpts are cut. Excerpts use the same LF-based line positions as
 source matches, including when Go raw literals contain carriage returns.
 This is bounded lexical redaction, not arbitrary dynamic call resolution;
-reports remain confidential. See the [security policy](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+reports remain confidential. See the [security policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md).
 
 Rust ordinary strings and byte strings may span physical lines; their contents
 remain literal evidence, while code after the closing quote is still scanned.

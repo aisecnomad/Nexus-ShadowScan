@@ -17,10 +17,22 @@ from tools.governance.rulesets import REPOSITORY, RULESETS, observe_readback, pr
 from tools.governance_check import GITHUB_ACTIONS_APP_ID, check_ruleset, requires_advisory_check
 
 ROOT = Path(__file__).resolve().parents[1]
+# The observed snapshots are GitHub's 2026-10-10 responses, recorded before the
+# repository was renamed from its former name. They stay as recorded; GitHub now
+# reports the current name in `source`, so tests read them as it returns them.
+FORMER_REPOSITORY = "aisecnomad/Project-Nexus"
 
 
 def _snapshot(ruleset_id: int = 23913372) -> dict[str, Any]:
-    return json.loads((ROOT / ".github/rulesets/observed" / f"{ruleset_id}.json").read_text())
+    observed = json.loads((ROOT / ".github/rulesets/observed" / f"{ruleset_id}.json").read_text())
+    assert observed["source"] == FORMER_REPOSITORY
+    return {**observed, "source": REPOSITORY}
+
+
+def test_observed_snapshot_of_the_former_name_is_refused_as_another_repository() -> None:
+    observed = json.loads((ROOT / ".github/rulesets/observed/23913372.json").read_text())
+    with pytest.raises(ValueError, match="expected repository"):
+        prepare_payload(observed, ruleset_id=23913372)
 
 
 def _rule(snapshot: dict[str, Any], name: str) -> dict[str, Any]:
@@ -313,6 +325,8 @@ def test_cli_prepares_new_file_but_refuses_overwrite_or_ambiguous_json(tmp_path:
 def test_cli_verify_is_nonzero_for_the_observed_ruleset_with_bypass_actors(tmp_path: Path) -> None:
     """The 2026-10-10 observed snapshot is active and carries the policy's rules,
     but lists four `always` bypass actors; verify must still exit nonzero."""
+    snapshot = tmp_path / "observed-23913372.json"
+    snapshot.write_text(json.dumps(_snapshot()), encoding="utf-8")
     result = subprocess.run(
         [
             sys.executable,
@@ -322,7 +336,7 @@ def test_cli_verify_is_nonzero_for_the_observed_ruleset_with_bypass_actors(tmp_p
             "--ruleset-id",
             "23913372",
             "--input",
-            str(ROOT / ".github/rulesets/observed/23913372.json"),
+            str(snapshot),
             "--expected",
             str(ROOT / ".github/rulesets/23913372.update.json"),
         ],

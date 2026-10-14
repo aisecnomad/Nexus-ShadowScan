@@ -14,14 +14,14 @@ its reporting and enforcement process. For usage questions, start with the
 
 - **Documentation:** fix a confusing step, add a synthetic example, or improve
   an explanation. No live tenant or cloud credentials are needed. Use the
-  [documentation form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=documentation.yml)
+  [documentation form](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=documentation.yml)
   or submit a focused pull request.
 - **Detection quality:** provide a minimal positive or negative fixture with the
   expected outcome and why it is correct. A dependency name alone does not prove
   an agent is running. File it with the
-  [detection quality report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml);
+  [detection quality report form](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=detection_report.yml);
   accepted reports become labeled regression cases under `tools/evaluation/`.
-- **Bugs:** use the [bug report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=bug_report.yml)
+- **Bugs:** use the [bug report form](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=bug_report.yml)
   and include the full scanner commit, command, expected result and a sanitized
   reproducer. Search existing issues first; add evidence to an existing report
   where possible.
@@ -30,7 +30,7 @@ its reporting and enforcement process. For usage questions, start with the
 - **Review:** explain what you inspected and verified, including limits. Review
   from someone who did not author the change is especially valuable.
 
-Browse [open issues](https://github.com/aisecnomad/Project-Nexus/issues) or propose
+Browse [open issues](https://github.com/aisecnomad/Nexus-ShadowScan/issues) or propose
 a small improvement if no suitable issue exists. You can ask for scope guidance
 on the issue before starting; there is no expectation to build a large feature
 as your first contribution.
@@ -47,8 +47,8 @@ cloud and development toolchain. Fork the repository on GitHub if you need a
 branch you can push; clone your fork in that case. In a local checkout:
 
 ```bash
-git clone https://github.com/aisecnomad/Project-Nexus.git
-cd Project-Nexus
+git clone https://github.com/aisecnomad/Nexus-ShadowScan.git
+cd Nexus-ShadowScan
 python -m venv .venv
 source .venv/bin/activate
 git switch -c fix/short-description
@@ -257,7 +257,10 @@ contract. In brief:
    regenerates [docs/connectors/reference.md](docs/connectors/reference.md); a
    test fails when it is stale. Document required API scopes and the offline
    export format in the connector guide under `docs/connectors/`, and add the
-   connector's summary row to [docs/connectors.md](docs/connectors.md).
+   connector's summary row to [docs/connectors.md](docs/connectors.md). Run
+   `make readme-matrix` too: the README detection matrix lists the identity,
+   gateway, low-code, SaaS and network connectors, and a test fails when it is
+   stale.
 
 `BaseConnector.load_offline` already reads `input` exports. Declare an
 [engine hook](docs/architecture.md#engine-hooks) only when the engine must
@@ -271,6 +274,7 @@ Signatures are YAML. Add a pack directory with `--signatures` or the
 ```bash
 python -m shadowscan.signatures.validate
 make evaluate
+make readme-matrix   # the README detection matrix is generated from the built-in packs
 ```
 
 See [docs/signatures.md](docs/signatures.md) for the schema and authoring guide.
@@ -322,7 +326,7 @@ The historical review status is documented in
 Do not read a merged pull request, green check, AI review or version number as
 evidence that a second person examined the change. Repository settings are
 separate from this policy: inspect the
-[live rules](https://github.com/aisecnomad/Project-Nexus/rules) and PR checks
+[live rules](https://github.com/aisecnomad/Nexus-ShadowScan/rules) and PR checks
 before merging. The versioned policy requires no bypass actors; the 2026-10-10
 readback listed four `always` bypass actors on both `main` rulesets, so a
 repository administrator can merge without the non-author approval until they
@@ -335,12 +339,12 @@ merge possible, and recheck live enforcement before relying on it.
 reviewer must not have authored or produced the change. A review is recorded as
 a GitHub pull request approval from an account other than the author's. Inspect
 the review author, state and `commit_id` with
-`gh api repos/aisecnomad/Project-Nexus/pulls/<number>/reviews`, and compare that
+`gh api repos/aisecnomad/Nexus-ShadowScan/pulls/<number>/reviews`, and compare that
 commit to the current PR head. The ruleset on `main` is configured to require
 one approving review from a reviewer with write access; its enforcement state
 has changed several times since 2026-09 (the dated readbacks are under
 [merge gate and review status](docs/production.md#merge-gate-and-review-status)),
-so check the [live rules](https://github.com/aisecnomad/Project-Nexus/rules)
+so check the [live rules](https://github.com/aisecnomad/Nexus-ShadowScan/rules)
 rather than this sentence. While the maintainer is the only account with write access, that rule
 cannot be satisfied for the maintainer's own changes until a second eligible
 reviewer receives write access and approves. Never manufacture an approval or

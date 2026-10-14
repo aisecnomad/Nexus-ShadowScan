@@ -17,6 +17,7 @@ from typing import Any
 
 from shadowscan.utils.files import read_policy_text
 from shadowscan.utils.safe_json import strict_json_loads
+from tools.release.distributions import release_distributions
 from tools.release.rules import verify_receipt
 
 _SHA = re.compile(r"[0-9a-f]{40}")
@@ -141,8 +142,7 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
     }
     if not required.issubset({path.name for path in files}):
         raise ValueError("release evidence is missing required files")
-    if len([path for path in files if path.suffix == ".whl"]) != 1:
-        raise ValueError("release evidence requires exactly one wheel")
+    release_distributions(files)
     for path in files:
         if path.is_symlink() or not path.is_file() or not _FILENAME.fullmatch(path.name):
             raise ValueError("release files must be regular files with portable names")
@@ -181,11 +181,14 @@ def write_manifest(directory: Path, *, repository: str, commit: str, workflow_ru
         "build_environment": {
             "python": platform.python_version(),
             "platform": platform.platform(),
-            "tools": {name: version(name) for name in ("pip", "setuptools", "wheel", "pip-audit")},
+            "tools": {name: version(name) for name in ("pip", "build", "setuptools", "wheel", "pip-audit")},
         },
         "scope": {
             "sbom": "dependencies in requirements.lock (core and cloud extras); not a container/OS SBOM",
-            "artifact": "wheel candidate; publication requires a separate maintainer action",
+            "artifact": (
+                "wheel and sdist candidate, the wheel built from the sdist; "
+                "publication requires a separate maintainer action"
+            ),
             "assurance": (
                 "CI, CodeQL, supplied current merge-rule settings and artifact identity only; "
                 "not a claim of historical rules enforcement, independent human review, "

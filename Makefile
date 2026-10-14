@@ -4,14 +4,14 @@ SHELL := /bin/bash
 # --- Development -----------------------------------------------------------
 
 .PHONY: install
-install: ## Install in editable mode with dev + cloud + docs extras
+install: ## Install in editable mode with dev + cloud + docs extras and the build frontend
 	python -m pip install --require-hashes --only-binary=:all: \
-		-r requirements-ci.lock -r requirements.lock -r requirements-docs.lock
+		-r requirements-ci.lock -r requirements-build.lock -r requirements.lock -r requirements-docs.lock
 	python -m pip install --no-deps --no-build-isolation -e .
 
 .PHONY: install-dev
-install-dev: ## Install with dev extras only (no cloud SDKs)
-	python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock
+install-dev: ## Install with dev extras and the build frontend only (no cloud SDKs)
+	python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements-build.lock
 	python -m pip install --no-deps --no-build-isolation -e .
 
 .PHONY: install-hooks
@@ -97,9 +97,10 @@ check: lint format-check typecheck signatures mappings secrets audit test covera
 # --- Build -----------------------------------------------------------------
 
 .PHONY: build
-build: ## Build distributable wheel, stamped with the HEAD commit time as release.yml does
+build: ## Build the sdist and the wheel from it, stamped with the HEAD commit time as release.yml does
 	python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
-	SOURCE_DATE_EPOCH="$$(git show -s --format=%ct HEAD)" python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+	SOURCE_DATE_EPOCH="$$(git show -s --format=%ct HEAD)" python -m build --no-isolation --outdir dist .
+	python -m tools.release.distributions --directory dist
 
 .PHONY: wheel-validate
 wheel-validate: build ## Validate the wheel installs and works outside checkout
@@ -164,6 +165,10 @@ docs-serve: ## Serve documentation site with live reload
 .PHONY: connector-reference
 connector-reference: ## Regenerate docs/connectors/reference.md from the connector classes
 	python -m tools.connector_reference
+
+.PHONY: readme-matrix
+readme-matrix: ## Regenerate the README detection matrix from the signature packs and connector classes
+	python -m tools.readme_matrix
 
 .PHONY: mapping-reference
 mapping-reference: ## Regenerate docs/concepts/mappings-reference.md from the mapping catalogs

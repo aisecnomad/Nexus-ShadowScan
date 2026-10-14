@@ -32,7 +32,7 @@ The project is looking for reviewers and co-maintainers with experience in:
 Start by contributing documentation, signatures, offline fixtures, tests, or a
 connector. Consistent, high-quality work is how reviewer access is earned.
 
-Open a [usage question issue](https://github.com/aisecnomad/Project-Nexus/issues/new?template=question.yml)
+Open a [usage question issue](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=question.yml)
 titled `Maintainer interest` if you want to help share the load.
 
 See [GOVERNANCE.md](GOVERNANCE.md#path-to-additional-maintainers) for the path to
@@ -43,4 +43,4 @@ for the checklist when joining the team.
 
 - Public: GitHub issues and pull requests
 - Private / security / code of conduct:
-  [security advisories](https://github.com/aisecnomad/Project-Nexus/security/advisories/new)
+  [security advisories](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new)

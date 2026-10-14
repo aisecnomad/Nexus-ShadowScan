@@ -7,7 +7,7 @@ body:
       value: |
         Use minimal synthetic or public, permissioned examples. Do not upload private reports,
         secrets, tenant exports, or restricted code. Report bypasses with a security impact
-        through [private security advisories](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
+        through [private security advisories](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new).
         A static source indicator is not proof of runtime execution.
   - type: dropdown
     id: kind

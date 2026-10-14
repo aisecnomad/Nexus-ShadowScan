@@ -4,10 +4,10 @@ name: Release candidate evidence
 # independent review and acceptance (GOVERNANCE.md, release process), the
 # maintainer dispatches with `publish` set to testpypi or pypi. The upload job
 # then waits for approval in the protected environment of that name, checks out
-# nothing and uploads the exact attested wheel through PyPI trusted publishing;
-# no package-index token is stored anywhere. A pypi upload also requires the
-# maintainer's tag v<version> on the reviewed commit. A GitHub release stays a
-# separate maintainer action.
+# nothing and uploads the exact attested wheel and sdist through PyPI trusted
+# publishing; no package-index token is stored anywhere. A pypi upload also
+# requires the maintainer's tag v<version> on the reviewed commit. A GitHub
+# release stays a separate maintainer action.
 on:
   workflow_dispatch:
     inputs:
@@ -26,13 +26,13 @@ on:
       ruleset_readback:
         description: >-
           Administrator readback of merge ruleset 23913372, the output of
-          `gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` run as an administrator
+          `gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372` run as an administrator
         required: true
         type: string
       publish:
         description: >-
-          Upload the attested wheel: none (evidence only), testpypi (rehearsal)
-          or pypi (needs tag v<version> on expected_commit)
+          Upload the attested wheel and sdist: none (evidence only), testpypi
+          (rehearsal) or pypi (needs tag v<version> on expected_commit)
         required: true
         default: none
         type: choice
@@ -127,7 +127,7 @@ jobs:
           python -m pip install --require-hashes --only-binary=:all: \
             -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
           python -m pip check
-      - name: Build wheel from a clean archive of the verified source
+      - name: Build the sdist, then the wheel from it, from a clean archive of the verified source
         run: |
           set -euo pipefail
           status="$(git status --porcelain=v1 --untracked-files=all --ignored=matching)"
@@ -142,7 +142,12 @@ jobs:
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           export SOURCE_DATE_EPOCH
           cd "$source_dir"
-          python -m pip wheel . --no-deps --no-build-isolation --wheel-dir "$CANDIDATE_DIR"
+          # build writes the sdist, then builds the wheel from that sdist with the
+          # hash-locked backend; --no-isolation fails if that backend is missing.
+          # A file the sdist omits is therefore missing from the wheel as well.
+          python -m build --no-isolation --outdir "$CANDIDATE_DIR" .
+      - name: Check the wheel and sdist are one matching universal pair
+        run: python -m tools.release.distributions --directory "$CANDIDATE_DIR"
       - name: Validate the installed wheel outside the checkout
         run: |
           python -m venv "$RUNNER_TEMP/release-wheel"
@@ -213,11 +218,12 @@ jobs:
         with:
           subject-path: candidate/*
           create-storage-record: false
-      - name: Attest locked runtime SBOM for the wheel
+      - name: Attest locked runtime SBOM for the wheel and sdist
         id: sbom
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: candidate/*.whl
+          # Matches exactly the two distributions; no evidence file shares the prefix.
+          subject-path: candidate/nexusshadowscan-*
           sbom-path: candidate/runtime-sbom.cdx.json
           create-storage-record: false
       - name: Retain verification bundles
@@ -242,7 +248,7 @@ jobs:
     timeout-minutes: 10
     # This job deliberately has no OIDC token and does not publish. The publish
     # job below consumes this artifact's exact attested bytes; it never checks
-    # out source or rebuilds the wheel.
+    # out source or rebuilds a distribution.
     permissions: {}
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
@@ -263,9 +269,20 @@ jobs:
           set -euo pipefail
           sha256sum --check SHA256SUMS
           wheels=(nexusshadowscan-*.whl)
+          sdists=(nexusshadowscan-*.tar.gz)
           # `a && b` does not stop `set -e` when `a` fails; test both in one `if`.
           if [ "${#wheels[@]}" -ne 1 ] || [ ! -f "${wheels[0]}" ]; then
             echo "expected exactly one scanner wheel" >&2
+            exit 1
+          fi
+          if [ "${#sdists[@]}" -ne 1 ] || [ ! -f "${sdists[0]}" ]; then
+            echo "expected exactly one scanner sdist" >&2
+            exit 1
+          fi
+          version="${wheels[0]#nexusshadowscan-}"
+          version="${version%%-*}"
+          if [ "${sdists[0]}" != "nexusshadowscan-$version.tar.gz" ]; then
+            echo "sdist ${sdists[0]} does not match wheel version $version" >&2
             exit 1
           fi
           test -s attestations/provenance.json
@@ -301,6 +318,7 @@ jobs:
           set -euo pipefail
           sha256sum --check SHA256SUMS
           wheels=(nexusshadowscan-*.whl)
+          sdists=(nexusshadowscan-*.tar.gz)
           if [ "${#wheels[@]}" -ne 1 ] || [ ! -f "${wheels[0]}" ]; then
             echo "expected exactly one scanner wheel" >&2
             exit 1
@@ -309,6 +327,11 @@ jobs:
           version="${version%%-*}"
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
             echo "wheel version $version is not a public release version" >&2
+            exit 1
+          fi
+          if [ "${#sdists[@]}" -ne 1 ] || [ "${sdists[0]}" != "nexusshadowscan-$version.tar.gz" ] \
+            || [ ! -f "${sdists[0]}" ]; then
+            echo "expected exactly one scanner sdist, nexusshadowscan-$version.tar.gz" >&2
             exit 1
           fi
           if [ "$PUBLISH" = pypi ]; then
@@ -332,7 +355,8 @@ jobs:
     # The only job that uploads. It waits for approval in the protected
     # environment named by `publish`, whose trusted publisher on the package
     # index accepts this workflow and environment only. The OIDC token is its
-    # only permission; it checks out nothing and uploads the attested wheel.
+    # only permission; it checks out nothing and uploads the attested wheel and
+    # sdist.
     environment:
       name: ${{ inputs.publish }}
       url: ${{ inputs.publish == 'testpypi' && 'https://test.pypi.org/p/NexusShadowScan' || 'https://pypi.org/p/NexusShadowScan' }}
@@ -344,17 +368,22 @@ jobs:
           artifact-ids: ${{ needs.publication-input.outputs.artifact_id }}
           path: publication-input
           digest-mismatch: error
-      - name: Stage only the attested wheel
+      - name: Stage only the attested wheel and sdist
         run: |
           set -euo pipefail
           (cd publication-input && sha256sum --check SHA256SUMS)
           wheels=(publication-input/nexusshadowscan-*.whl)
+          sdists=(publication-input/nexusshadowscan-*.tar.gz)
           if [ "${#wheels[@]}" -ne 1 ] || [ ! -f "${wheels[0]}" ]; then
             echo "expected exactly one scanner wheel" >&2
             exit 1
           fi
+          if [ "${#sdists[@]}" -ne 1 ] || [ ! -f "${sdists[0]}" ]; then
+            echo "expected exactly one scanner sdist" >&2
+            exit 1
+          fi
           mkdir dist
-          cp -- "${wheels[0]}" dist/
+          cp -- "${wheels[0]}" "${sdists[0]}" dist/
       - name: Upload with trusted publishing
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:

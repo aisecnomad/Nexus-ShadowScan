@@ -102,7 +102,7 @@ def _assert_event_shape(event: dict[str, Any]) -> None:
     assert event["metadata"]["product"] == {
         "name": "ShadowScan",
         "version": __version__,
-        "vendor_name": "Project Nexus",
+        "vendor_name": "Nexus ShadowScan",
     }
     # ``time_dt`` and the ``*_dt`` twins are attributes of the datetime profile.
     assert event["metadata"]["profiles"] == ["datetime"]

@@ -56,9 +56,9 @@ jobs:
             echo "Set SHADOWSCAN_REVISION to an approved 40-character commit SHA" >&2
             exit 1
           fi
-          scanner_dir="$RUNNER_TEMP/project-nexus"
+          scanner_dir="$RUNNER_TEMP/nexus-shadowscan"
           git init -q "$scanner_dir"
-          git -C "$scanner_dir" remote add origin https://github.com/aisecnomad/Project-Nexus.git
+          git -C "$scanner_dir" remote add origin https://github.com/aisecnomad/Nexus-ShadowScan.git
           git -C "$scanner_dir" fetch --no-tags --depth 1 origin "$SHADOWSCAN_REVISION"
           git -C "$scanner_dir" checkout --detach -q FETCH_HEAD
           test "$(git -C "$scanner_dir" rev-parse HEAD)" = "$SHADOWSCAN_REVISION"

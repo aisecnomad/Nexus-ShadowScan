@@ -47,7 +47,7 @@ GITHUB = ROOT / ".github"
 # GitHub runs both YAML spellings; test_repository_policy.py checks the glob.
 WORKFLOWS = sorted(path for path in (GITHUB / "workflows").glob("*.y*ml") if path.is_file())
 FORMS = sorted(path for path in (GITHUB / "ISSUE_TEMPLATE").glob("*.yml") if path.name != "config.yml")
-ADVISORY_URL = "https://github.com/aisecnomad/Project-Nexus/security/advisories/new"
+ADVISORY_URL = "https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new"
 
 # Files GitHub's community profile and the OpenSSF Scorecard look for, plus the
 # project's own governance set. Each must exist and carry content.
@@ -259,8 +259,60 @@ def test_markdown_checks_cover_benchmarks_but_not_the_frozen_estate() -> None:
 
 
 _REPOSITORY_LINK = re.compile(
-    r"https://github\.com/aisecnomad/Project-Nexus/(blob|tree)/main/([^#?]+)(?:#(.+))?"
+    r"https://github\.com/aisecnomad/Nexus-ShadowScan/(blob|tree)/main/([^#?]+)(?:#(.+))?"
 )
+
+
+# The repository was renamed from aisecnomad/Project-Nexus to aisecnomad/Nexus-ShadowScan so
+# that its URL, the NexusShadowScan distribution and the brand match. These paths record
+# history as it happened and keep the former name: retained reviews, frozen benchmark
+# corpora, results and the harnesses that reproduce them, GitHub's recorded ruleset
+# responses, and released changelog entries.
+_FORMER_NAME_RECORDS = (
+    "archive/",
+    "benchmarks/",
+    "tools/benchmark/",
+    "tools/benchmark_realworld/",
+    "tools/discovery_benchmark/",
+    "tools/shadowbench/",
+    ".github/rulesets/observed/",
+    "CHANGELOG.md",
+)
+_FORMER_NAME = re.compile(r"aisecnomad(?:/|\.github\.io/)Project-Nexus", re.IGNORECASE)
+# Elsewhere a line may name the former repository only to say so: 0.1.2 was attested
+# under that name, and the rename runbook and tests describe it.
+_FORMER_NAME_CONTEXT = re.compile(r"0\.1\.2|\brenam|\bformer", re.IGNORECASE)
+
+
+def test_live_files_name_the_current_repository() -> None:
+    """Regression: links, badges, clone commands and policy checks follow the repository rename."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True, timeout=60
+    ).stdout.decode("utf-8")
+    stale = []
+    for name in filter(None, tracked.split("\0")):
+        if name.startswith(_FORMER_NAME_RECORDS) or not (ROOT / name).is_file():
+            continue
+        try:
+            text = (ROOT / name).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        stale.extend(
+            f"{name}:{number}"
+            for number, line in enumerate(text.splitlines(), start=1)
+            if _FORMER_NAME.search(line) and not _FORMER_NAME_CONTEXT.search(line)
+        )
+    assert not stale, "use aisecnomad/Nexus-ShadowScan:\n  " + "\n  ".join(stale)
+
+
+def test_former_name_check_flags_unexplained_references() -> None:
+    # Assembled from parts so that this test's own lines do not trip the check above.
+    slug, pages = "aisecnomad/" + "Project-Nexus", "aisecnomad.github.io/" + "Project-Nexus"
+    assert _FORMER_NAME.search(f"https://github.com/{slug.lower()}/blob/main/README.md")
+    assert _FORMER_NAME.search(f"https://{pages}/")
+    assert not _FORMER_NAME.search("https://github.com/aisecnomad/Nexus-ShadowScan")
+    assert _FORMER_NAME_CONTEXT.search(f"gh attestation verify nexusshadowscan-0.1.2.whl --repo {slug}")
+    assert not _FORMER_NAME_CONTEXT.search(f"git clone https://github.com/{slug}.git")
 
 
 @pytest.mark.parametrize("markdown", _markdown_files(), ids=_relative)
@@ -1305,6 +1357,98 @@ def test_readme_demo_output_matches_the_offline_demo(index) -> None:
     ]
     shown = [(lvl, int(score), *rest) for lvl, score, *rest in _DEMO_ROW.findall(table)]
     assert shown == expected, "README demo rows are stale; rerun the command it shows"
+
+
+def _abridged(excerpt: Any, actual: Any) -> bool:
+    """Whether ``excerpt`` abridges ``actual``: lists keep a subset, text ending in "…" a prefix."""
+    if isinstance(excerpt, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _abridged(value, actual[key]) for key, value in excerpt.items()
+        )
+    if isinstance(excerpt, list):
+        return isinstance(actual, list) and all(
+            any(_abridged(item, candidate) for candidate in actual) for item in excerpt
+        )
+    if isinstance(excerpt, str) and excerpt.endswith("…"):
+        return isinstance(actual, str) and actual.startswith(excerpt[:-1])
+    return type(excerpt) is type(actual) and excerpt == actual
+
+
+def test_abridged_excerpt_check_rejects_values_the_output_lacks() -> None:
+    actual = {"a": [1, 2, 3], "text": "one two three", "n": 1}
+    assert _abridged({"a": [3, 1], "text": "one two…"}, actual)
+    assert not _abridged({"a": [4]}, actual)
+    assert not _abridged({"text": "two…"}, actual)
+    assert not _abridged({"n": True}, actual)
+    assert not _abridged({"missing": 1}, actual)
+
+
+def test_readme_sarif_excerpt_is_the_first_result_of_the_offline_demo(index) -> None:
+    """The README's abridged SARIF result is current output of the demo the CLI example shows."""
+    from shadowscan.reporters.sarif import render_sarif
+
+    readme = _read(ROOT / "README.md")
+    start = readme.index("The same scan as SARIF")
+    fence = readme.index("```json\n", start) + len("```json\n")
+    excerpt = json.loads(readme[fence : readme.index("```", fence)])
+    result = Engine(ScanConfig.from_yaml(ROOT / "examples" / "shadowscan.offline.yaml"), index).run()
+    first = json.loads(render_sarif(result))["runs"][0]["results"][0]
+    assert _abridged(excerpt, first), "README SARIF excerpt is stale; rerun the demo with --format sarif"
+
+
+def test_readme_detection_matrix_is_current() -> None:
+    """The README detection matrix is generated from the signature packs and connector classes."""
+    from tools.readme_matrix import README, render, replace_block
+
+    text = README.read_text(encoding="utf-8")
+    assert replace_block(text, render()) == text, "README detection matrix is stale; run `make readme-matrix`"
+
+
+_BENCHMARKS = ROOT / "benchmarks"
+
+
+def _percentages(level: dict[str, Any]) -> str:
+    return " / ".join(f"{level[key]:.1%}" for key in ("precision", "recall", "f1"))
+
+
+def test_readme_benchmark_table_quotes_the_committed_results() -> None:
+    """Every number in the README benchmark table comes from the committed metrics files."""
+    readme = _read(ROOT / "README.md")
+    section = readme[readme.index("## Benchmarks") : readme.index("## The Why")]
+    estate_run = "shadowbench/estate/results/2026-10-11"
+    estate_metrics = json.loads((_BENCHMARKS / estate_run / "metrics.json").read_text(encoding="utf-8"))
+    corpus, tool = estate_metrics["corpus"], estate_metrics["tools"]["shadowscan"]
+    entity = tool["entity_level"]
+    negatives = corpus["control"] + corpus["nearmiss"]
+    assert entity["fp"] + entity["tn"] == negatives
+    estate = [
+        f"blob/main/benchmarks/{estate_run}/REPORT.md",
+        f"(2026-10-11, {tool['version']})",
+        f"{corpus['entities']} authored vendor-format entities",
+        f"{corpus['positive']} positive, {corpus['control']} control, {corpus['nearmiss']} near-miss",
+        f"Entity precision / recall / F1 {_percentages(entity)}",
+        f"{entity['positives_detected']} of {entity['positives']} positives found",
+        f"{entity['fp']} of {negatives} controls and near-misses flagged",
+    ]
+    code_run = "shadow-ai-discovery/results/2026-10-09"
+    code_metrics = json.loads((_BENCHMARKS / code_run / "metrics.json").read_text(encoding="utf-8"))
+    corpus, tool = code_metrics["corpus"], code_metrics["tools"]["shadowscan"]
+    repos = tool["repo_level"]
+    code = [
+        f"blob/main/benchmarks/{code_run}/REPORT.md",
+        f"(2026-10-09, {tool['version']})",
+        f"{corpus['repos']} public repositories pinned by SHA",
+        f"{corpus['positive']} positive, {corpus['control']} control, {corpus['nearmiss']} near-miss",
+        f"{corpus['expected_facts']} expected facts",
+        f"Fact precision / recall / F1 {_percentages(tool['value_level']['in_scope'])}",
+        f"{repos['positives_detected']} of {repos['positives']} positive repositories flagged",
+        f"{repos['controls_flagged'] + repos['nearmiss_flagged']} of "
+        f"{repos['controls'] + repos['nearmiss']} controls and near-misses flagged",
+        f"{tool['incomplete_runs']['count']} of {corpus['repos']} runs were incomplete (exit 3)",
+    ]
+    missing = [claim for claim in estate + code if claim not in section]
+    assert not missing, "README benchmark table no longer matches the committed metrics: " + repr(missing)
+    assert "not** independent review" in section and "not** measured production precision" in section
 
 
 _PIP_COMMANDS = frozenset(
