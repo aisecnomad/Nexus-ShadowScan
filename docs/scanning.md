@@ -1,4 +1,4 @@
-# Scan state and runtime correlation
+# Scan semantics
 
 ## Coverage policy
 

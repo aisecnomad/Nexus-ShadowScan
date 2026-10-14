@@ -1,4 +1,4 @@
-# Deployment and migration
+# Production deployment and migration
 
 This is the rollout guide for version 0.1.2. It covers reviewed
 revisions, installation, validation, rollout, operation and migration.

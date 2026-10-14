@@ -108,7 +108,7 @@ nav:
       - Architecture: architecture.md
       - Signatures: signatures.md
       - Inventory: inventory.md
-      - Scanning: scanning.md
+      - Scan semantics: scanning.md
       - Risk scoring: concepts/risk.md
       - Autonomy tiers: concepts/autonomy.md
       - Threat and control mappings: concepts/mappings.md
@@ -116,21 +116,19 @@ nav:
       - Severity and enforcement: severity.md
   - Operations:
       - Production deployment: production.md
-      - Evaluation: evaluation.md
-      - Assurance results (2026-09-24): assurance-results.md
-      - Tenant canaries: canaries.md
       - CI integration: operations/ci.md
       - Operational controls: operations/operational-controls.md
       - Scheduled drift detection: operations/drift.md
-      - AI bill of materials: operations/ai-bom.md
       - Fleet dashboard: operations/dashboard.md
       - Control evidence report: operations/controls.md
+      - AI bill of materials: operations/ai-bom.md
       - OCSF events: operations/ocsf.md
       - LLM triage: operations/llm-triage.md
-      - Merge policy enforcement: operations/merge-policy.md
-      - Publishing a release: operations/publishing.md
+  - Assurance:
+      - Evaluation: evaluation.md
+      - Assurance results (2026-09-24): assurance-results.md
+      - Tenant canaries: canaries.md
       - External reviewer packet: operations/reviewer-packet.md
-      - AI Review Gate: security/ai-review-gate.md
   - Community: community.md
   - Development:
       - Contributing: contributing.md
@@ -138,6 +136,9 @@ nav:
       - Governance: governance.md
       - "Proposals: agent governance": proposals/agent-governance.md
       - Maintainer onboarding: maintainer-onboarding.md
+      - Merge policy enforcement: operations/merge-policy.md
+      - Publishing a release: operations/publishing.md
+      - AI Review Gate: security/ai-review-gate.md
       - ADRs:
           - adrs/index.md
           - "ADR-001: Connector architecture": adrs/001-connector-architecture.md
@@ -164,10 +165,12 @@ nav:
           - MCP registry: api/mcp_registry.md
           - Declared governance: api/governance.md
           - Threat and control mappings: api/mappings.md
+          - Signatures: api/signatures.md
       - Reports and fleet:
           - Fleet merge: api/fleet.md
           - Dashboard: api/dashboard.md
           - Control evidence: api/controls.md
+          - Reporters: api/reporters.md
       - Connectors:
           - Base: api/base.md
           - Offline input: api/offline.md
