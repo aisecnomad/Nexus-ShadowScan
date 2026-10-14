@@ -66,6 +66,7 @@ EXPOSURE_TAGS = (
 # rule's references must change this table, so every mapping has a test.
 EXPECTED_REFS: dict[str, list[str]] = {
     "tool-poisoning": [f"{LLM}LLM01", f"{ASI}ASI01", f"{ATLAS}AML.T0110.000", f"{ATLAS}AML.T0051.001"],
+    "tool-name-shadowing": [f"{LLM}LLM01", f"{ASI}ASI01", f"{ATLAS}AML.T0051.001"],
     "unsafe-serialization": [f"{LLM}LLM04", f"{ASI}ASI04", f"{ATLAS}AML.T0011.000", f"{ATLAS}AML.T0010.003"],
     "credential-exposure": [f"{LLM}LLM02", f"{ASI}ASI03", f"{ATLAS}AML.T0055"],
     "credential-finding": [f"{ASI}ASI03"],
@@ -150,6 +151,7 @@ def _declared(risk_class: str) -> dict[str, Any]:
 # A minimal finding each rule should match.
 RULE_CASES: dict[str, dict[str, Any]] = {
     "tool-poisoning": {"kind": Kind.MCP_SERVER, "tags": ["tool-poisoning"]},
+    "tool-name-shadowing": {"kind": Kind.MCP_SERVER, "tags": ["tool-name-shadowing"]},
     "unsafe-serialization": {"kind": Kind.LOCAL_MODEL, "tags": ["unsafe-serialization"]},
     "credential-exposure": {"tags": ["hardcoded-credential"]},
     "credential-finding": {"kind": Kind.SECRET},

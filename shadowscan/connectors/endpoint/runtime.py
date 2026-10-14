@@ -27,6 +27,7 @@ from shadowscan.connectors.code.semantic_config import (
 from shadowscan.connectors.code.skill_audit import audit_skill_text
 from shadowscan.connectors.common import apply_matches, failure_summary, finalize
 from shadowscan.connectors.endpoint import a2a
+from shadowscan.connectors.mcp_risk import _broad_root
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import diagnostic_url
 from shadowscan.utils.jcs import CanonicalizationError
@@ -51,6 +52,47 @@ _HOST = re.compile(
     r"(?:https?://)?[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com|googleapis\.com)\b",
     re.IGNORECASE,
 )
+# Declared tool grants (``capabilities``, ``permissions`` or ``scopes`` on a tool definition).
+# A grant is read as the whole filesystem only when it names everything or a root that
+# mcp_risk already treats as broad; a scoped path such as ``filesystem:/srv/app`` is not.
+_DECLARED_GRANT_KEYS = ("capabilities", "permissions", "scopes")
+_BROAD_FILESYSTEM_CAPABILITIES = frozenset(
+    {"*", "filesystem:*", "filesystem:**", "filesystem:all", "filesystem:root", "filesystem:/"}
+)
+_SHELL_CAPABILITIES = frozenset({"shell", "command", "execute", "code-exec", "terminal"})
+_FILESYSTEM_GRANT = "filesystem:"
+_TRAILING_GLOB = re.compile(r"[\\/]\*{1,2}$")
+
+
+def _declared_grants(tool: dict[str, Any]) -> tuple[set[str], bool]:
+    """The string grants a tool definition declares, and whether any declaration was unreadable."""
+    grants: set[str] = set()
+    malformed = False
+    for key in _DECLARED_GRANT_KEYS:
+        declared = tool.get(key)
+        if declared is None:
+            continue
+        values = [declared] if isinstance(declared, str) else declared
+        if not isinstance(values, list):
+            malformed = True
+            continue
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                grants.add(value.strip())
+            else:
+                malformed = True
+    return grants, malformed
+
+
+def _broad_filesystem_grant(grant: str) -> bool:
+    if grant.casefold() in _BROAD_FILESYSTEM_CAPABILITIES:
+        return True
+    if not grant.casefold().startswith(_FILESYSTEM_GRANT):
+        return False
+    scope = grant[len(_FILESYSTEM_GRANT) :].strip()
+    # ``filesystem:/home/alice/**`` grants the home directory; ``filesystem:/srv/app/**`` does not.
+    root = _TRAILING_GLOB.sub("", scope) or "/"
+    return root in {"*", "**"} or _broad_root(root)
 
 
 def _text(value: object, limit: int = _MAX_LABEL) -> str:
@@ -378,6 +420,13 @@ class MCPInventoryConnector(_EndpointConnector):
             auth = _text(tool.get("auth") or tool.get("auth_mode")).casefold() or server_auth.get(server, "")
             if auth in {"", "none", "unauthenticated"}:
                 tags.append("unauthenticated-mcp")
+            grants, malformed_grants = _declared_grants(tool)
+            if malformed_grants:
+                self.ctx.warn("endpoint.mcp: malformed tool capabilities, permissions or scopes")
+            if any(_broad_filesystem_grant(grant) for grant in grants):
+                tags.append("mcp-broad-filesystem")
+            if any(grant.casefold() in _SHELL_CAPABILITIES for grant in grants):
+                tags.append("mcp-shell-command")
             words = set(re.findall(r"[a-z]+", name.casefold()))
             capabilities = []
             if words & {"exec", "execute", "shell", "command", "terminal"}:

@@ -1,0 +1,20 @@
+[
+  {
+    "server": "https://files.example.invalid",
+    "auth": "oauth",
+    "tools": [
+      {"name": "read_file", "description": "Read a file inside the project.", "capabilities": ["filesystem:/srv/app/data"]},
+      {"name": "search", "description": "Search the project files.", "capabilities": ["filesystem:/srv/app/data/**"]},
+      {"name": "list_directory", "description": "List a project directory.", "permissions": "filesystem:./workspace"}
+    ]
+  },
+  {
+    "server": "https://ops.example.invalid",
+    "auth": "oauth",
+    "tools": [
+      {"name": "home_backup", "description": "Back up the home directory.", "permissions": ["filesystem:/home/alice/**"]},
+      {"name": "run_task", "description": "Run a maintenance task.", "scopes": "shell"},
+      {"name": "export_report", "description": "Export the weekly report.", "capabilities": ["read", "write"]}
+    ]
+  }
+]

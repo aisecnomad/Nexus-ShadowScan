@@ -17,6 +17,17 @@ rules:
       A tool description carrying injected instructions is read by the model as
       trusted context and can redirect the agent's goal.
 
+  - id: tool-name-shadowing
+    when: {tags_any: [tool-name-shadowing]}
+    refs:
+      - owasp-llm-2026:LLM01
+      - owasp-asi-2026:ASI01
+      - mitre-atlas-2026.09:AML.T0051.001
+    rationale: >-
+      Two servers serving a tool of the same name let the model or the operator
+      call the other server's tool, and its description, in place of the one
+      they reviewed.
+
   - id: unsafe-serialization
     when: {tags_any: [unsafe-serialization]}
     refs:
