@@ -382,5 +382,247 @@
         }
       }
     }
+  },
+  {
+    "case": "email-sink",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "Email",
+          "type": "n8n-nodes-base.emailSend"
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Email",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "database-write",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "DB",
+          "type": "n8n-nodes-base.postgres",
+          "parameters": {
+            "operation": "insert"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "DB",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "database-read",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "DB",
+          "type": "n8n-nodes-base.postgres",
+          "parameters": {
+            "operation": "select"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "DB",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "database-query",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "DB",
+          "type": "n8n-nodes-base.mySql",
+          "parameters": {
+            "operation": "executeQuery"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "DB",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "imap-trigger",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.emailReadImap"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "Slack",
+          "type": "n8n-nodes-base.slack",
+          "parameters": {
+            "operation": "post"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Slack",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
   }
 ]
