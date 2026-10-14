@@ -1119,7 +1119,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         ),
         "min_events": "ignore callers with fewer events, a positive integer (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
-        "internal_model_hosts": "exact internal model-server hostnames to recognize (default [])",
+        "internal_model_hosts": (
+            "exact internal model-server hostnames to recognize, a list or one hostname (default [])"
+        ),
         "max_records": "stop after N records (default 5,000,000)",
         "label": (
             "gateway name recorded as the finding provider and as the account of unscoped callers (defaults "
@@ -1147,6 +1149,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         self.min_events = _positive_limit(ctx.get("min_events", 1), "min_events")
         self.llm_hosts_only = config_boolean(ctx.get("llm_hosts_only", True), "llm_hosts_only")
         internal_hosts = ctx.get("internal_model_hosts", [])
+        if isinstance(internal_hosts, str):
+            # One hostname, as YAML or ``--set internal_model_hosts=host`` gives it.
+            internal_hosts = [internal_hosts]
         if not isinstance(internal_hosts, list) or any(
             not isinstance(host, str) or len(host) > 253 or not _INTERNAL_HOST.fullmatch(host.strip().lower())
             for host in internal_hosts

@@ -79,6 +79,23 @@ to review for `internal_model_hosts`. Setting
 ids change; leaving it unset keeps existing ids. User agents never exclude a
 request: a browser calling a provider API is still attributed to the provider.
 
+Declare internal model hosts as a YAML list or as one hostname:
+
+```yaml
+connectors:
+  - name: gateway.logs
+    input: /var/log/nginx/llm-access.log
+    internal_model_hosts: [tgi.internal.example, gpu01.corp.example]
+    # or, for one host: internal_model_hosts: tgi.internal.example
+```
+
+On the command line, repeat `--internal-model-host` on the gateway command
+(`shadowscan gateway access.log --internal-model-host tgi.internal.example
+--internal-model-host gpu01.corp.example`), or pass one hostname or a
+comma-separated list to a single connector run
+(`shadowscan run gateway.logs --input access.log --set
+internal_model_hosts=tgi.internal.example`).
+
 A caller is titled **Agentic caller** when at least one agent indicator
 holds: requests carried tool definitions or responses invoked tools; a user
 agent belongs to a coding agent or agent framework; requests targeted a hosted

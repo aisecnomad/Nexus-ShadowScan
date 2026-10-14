@@ -5,7 +5,9 @@ import json
 import time
 
 import pytest
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.gateway import logs as logs_module
@@ -709,11 +711,47 @@ def test_browser_calling_a_provider_host_keeps_its_provider(tmp_path, run_connec
 
 
 @pytest.mark.parametrize(
-    "hosts", ["tgi.internal.example", ["bad host!"], [7], ["-leading.example"], ["a" * 254]]
+    "hosts", ["bad host!", "", 7, {"tgi": True}, ["bad host!"], [7], ["-leading.example"], ["a" * 254]]
 )
 def test_internal_model_hosts_must_be_a_list_of_hostnames(index, hosts):
     with pytest.raises(ConnectorError, match="internal_model_hosts"):
         GatewayLogConnector(context(index, input="export.log", internal_model_hosts=hosts))
+
+
+def test_one_internal_model_host_may_be_given_as_a_string(tmp_path, run_connector, index):
+    """Regression (F15): YAML or ``--set internal_model_hosts=host`` gives one hostname as a string."""
+    source = _access_log(tmp_path, *[("POST", "/generate", "python-requests/2.32", "llm.acme.internal")] * 3)
+    findings, ctx = run_connector("gateway.logs", input=source, internal_model_hosts="LLM.acme.internal")
+    assert len(findings) == 1 and not ctx.stats.incomplete
+    assert _source_id(index, internal_model_hosts="llm.acme.internal") == _source_id(
+        index, internal_model_hosts=["llm.acme.internal"]
+    )
+
+
+def _gateway_cli(*args):
+    result = CliRunner().invoke(main, [*args, "--format", "json"])
+    assert result.stdout.lstrip().startswith("{"), result.output
+    return result.exit_code, json.loads(result.stdout)
+
+
+def test_internal_model_hosts_from_the_command_line(tmp_path):
+    """Regression (F15): the gateway command and ``run --set`` both declare internal model hosts."""
+    source = _access_log(
+        tmp_path,
+        *[("POST", "/generate", "python-requests/2.32", "llm.acme.internal")] * 3,
+        *[("POST", "/generate", "python-requests/2.32", "tgi:8080")] * 2,
+    )
+    code, report = _gateway_cli("gateway", source)
+    assert code == 0 and report["findings"] == []
+    code, report = _gateway_cli(
+        "gateway", source, "--internal-model-host", "llm.acme.internal", "--internal-model-host", "tgi"
+    )
+    assert code == 0 and len(report["findings"]) == 1
+    assert report["findings"][0]["metadata"]["hosts"] == {"llm.acme.internal": 3, "tgi:8080": 2}
+    code, report = _gateway_cli(
+        "run", "gateway.logs", "--input", source, "--set", "internal_model_hosts=llm.acme.internal"
+    )
+    assert code == 0 and report["summary"]["complete"] is True and len(report["findings"]) == 1
 
 
 def _source_id(index, **config):

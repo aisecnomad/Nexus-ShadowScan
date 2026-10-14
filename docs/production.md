@@ -1324,7 +1324,9 @@ reported. Requests logged without a parsed host (`localhost:11434`) are still
 callers. If an internal Ollama or text-generation-inference server sits behind
 a reverse proxy with its own hostname, list that hostname in the new
 `gateway.logs` option `internal_model_hosts` before upgrading, or its callers
-disappear. Such excluded requests are reported in an advisory warning (not an
+disappear. The option takes a list or one hostname in a scan configuration
+or `--set internal_model_hosts=...`, and `shadowscan gateway` takes it as a
+repeatable `--internal-model-host`. Such excluded requests are reported in an advisory warning (not an
 incomplete scan) with their count and up to five host names; read it after
 the first scan and declare the hosts that are model servers. A bare
 `/generate` route counts only on a declared or known model host; such
