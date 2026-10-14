@@ -123,7 +123,10 @@ where the previous revision completed:
   classified from its leading complete arguments, with
   `metadata.command_lines_truncated`.
 - `SKILL.md` and MCP description audits over 64 KiB, with malformed front
-  matter or an unclosed fence. A line over 4,096 characters does not end the
+  matter (`SKILL.md` only) or an unclosed fence. An MCP description that
+  starts with a `---` line is audited as text: earlier revisions read it as
+  front matter, so lines after it other than `name` and `description` went
+  unaudited and an unclosed `---` made the scan incomplete. A line over 4,096 characters does not end the
   scan incomplete: it is audited sentence by sentence, so an instruction in
   its middle is reported. Only a single sentence over 4,096 characters is
   audited in its first and last 4,096 characters and marks the audit

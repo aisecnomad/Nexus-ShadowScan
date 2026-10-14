@@ -192,12 +192,12 @@ A bounded static sentence audit adds explanation on top of those rules. It
 reports direct instruction-override and sensitive-value disclosure candidates
 by rule identifier and line number in `metadata.static_instruction_audit`,
 with zero-weight evidence and explicit limitations, and retains no description
-excerpts. Quoted text, fenced code, YAML front matter other than `name` and
-`description`, and explicit prohibitions are excluded from this narrow English
-audit. An audit indicator also raises the
+excerpts. Quoted text, fenced code and explicit prohibitions are excluded from
+this narrow English audit. A description is not a `SKILL.md`: a leading `---`
+line is ordinary text, not YAML front matter, so the lines after it are
+audited. An audit indicator also raises the
 `tool-poisoning` tag; an audit that finds nothing never removes it.
-Descriptions exceeding 64 KiB, malformed front matter and unclosed fences
-mark coverage incomplete. A line over 4,096 characters is audited sentence by
+Descriptions exceeding 64 KiB and unclosed fences mark coverage incomplete. A line over 4,096 characters is audited sentence by
 sentence; only a single sentence over 4,096 characters is audited in its first
 and last 4,096 characters and marks the audit `partial`, not the scan
 incomplete. Tool definitions are fingerprinted

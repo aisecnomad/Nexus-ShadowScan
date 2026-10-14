@@ -358,7 +358,8 @@ class MCPInventoryConnector(_EndpointConnector):
             malformed_description = not isinstance(description, str)
             if malformed_description:
                 description = ""
-            audit = audit_skill_text(description)
+            # A description is not a SKILL.md: a leading "---" is text, not front matter.
+            audit = audit_skill_text(description, front_matter=False)
             if malformed_description:
                 audit = replace(
                     audit, incomplete=True, limitations=(*audit.limitations, "Tool description is not text.")

@@ -101,14 +101,21 @@ class InstructionAudit:
         }
 
 
-def audit_skill_text(text: str) -> InstructionAudit:
+def audit_skill_text(text: str, *, front_matter: bool = True) -> InstructionAudit:
     """Inspect a bounded snapshot; emit locations and fixed descriptions only.
 
     The caller reports ``incomplete`` through its connector statistics. Input
     size, malformed front matter and unclosed fences must not certify a clean
-    audit. A line over ``MAX_LINE_CHARACTERS`` is audited in its first and
+    audit. A line over ``MAX_LINE_CHARACTERS`` is audited sentence by
+    sentence; a single sentence over that bound is audited in its first and
     last ``MAX_LINE_CHARACTERS`` characters and marks the audit ``partial``.
     No evidence weight or agent classification is assigned here.
+
+    ``front_matter``: a leading ``---`` line opens YAML front matter, of which
+    only ``name`` and ``description`` are audited, as a skill loader reads a
+    ``SKILL.md``. Text that is not such a document (an MCP tool description)
+    passes ``False``, so a leading ``---`` is ordinary text and cannot hide
+    the lines after it from the audit.
     """
     limitations = list(_LIMITATIONS)
     incomplete = partial = False
@@ -121,7 +128,7 @@ def audit_skill_text(text: str) -> InstructionAudit:
     body_start = 0
     indicators: list[InstructionIndicator] = []
     counts: dict[str, int] = {}
-    if lines and lines[0].strip() == "---":
+    if front_matter and lines and lines[0].strip() == "---":
         end = next((i for i in range(1, min(len(lines), 129)) if lines[i].strip() == "---"), None)
         if end is None:
             return InstructionAudit((), True, (*limitations, "Unclosed or oversized YAML front matter."))
