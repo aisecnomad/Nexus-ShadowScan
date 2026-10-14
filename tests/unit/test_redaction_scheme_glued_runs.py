@@ -569,6 +569,108 @@ def test_a_name_on_the_credentials_line_after_a_header_scheme_is_withheld(
     assert sanitize_text(text).count("\n") == text.count("\n")
 
 
+@pytest.mark.parametrize(
+    ("kept", "shown", "within"),
+    [
+        ("a b c", "a b c", True),
+        ("a b c", f"a {REDACTED} c", True),
+        # Text removed beside a marker or at either end of the line.
+        ("a b c", " b c", True),
+        ("a b c", f"a {REDACTED}c", True),
+        ("a b c", REDACTED, True),
+        ("a b c", REDACTED + REDACTED, True),
+        ("a b c", "", True),
+        ("a b\r", f"{REDACTED}\r", True),
+        (f"a {REDACTED} c", f"a {REDACTED} c", True),
+        # A character the kept line does not show.
+        ("a b c", "a b d", False),
+        # Text removed inside a piece, with no marker there.
+        ("a b c", "a  c", False),
+        ("a b c", f"a {REDACTED} d", False),
+        # A piece that straddles the kept line's marker shows what it withholds.
+        (f"a{REDACTED}b", "ab", False),
+        # Pieces in another order, or overlapping in the kept line.
+        ("a b", f"b {REDACTED} a", False),
+        ("ab", f"ab{REDACTED}b", False),
+    ],
+)
+def test_shows_within_reads_the_markers_as_withheld_spans(kept: str, shown: str, within: bool) -> None:
+    assert redaction._shows_within(kept, shown) is within
+
+
+@pytest.mark.parametrize(
+    ("one", "other", "merged"),
+    [
+        ("a b", "a b", "a b"),
+        (f"a {REDACTED}", "a b", f"a {REDACTED}"),
+        ("a b", f"a {REDACTED}", f"a {REDACTED}"),
+        # Two spans differ, but one line shows only what the other shows: kept.
+        (f"a {REDACTED} b {REDACTED} c", "a X b Y c", f"a {REDACTED} b {REDACTED} c"),
+        ("a X b Y c", f"a {REDACTED} b {REDACTED} c", f"a {REDACTED} b {REDACTED} c"),
+        # Each shows what the other withholds: the whole line, keeping its CR.
+        (f"a {REDACTED} c", f"{REDACTED} b c", REDACTED),
+        (f"a {REDACTED} c\r", f"{REDACTED} b c\r", f"{REDACTED}\r"),
+        # The first reading removed the run that starts the second's line.
+        (" --location u", "--insecure --location u", f"{REDACTED} --location u"),
+        (" x\r", "=abc.def x\r", f"{REDACTED} x\r"),
+        ("", "---", REDACTED),
+        # Text that is not such a run is not marked.
+        (" x", "abc x", " x"),
+    ],
+)
+def test_a_merged_line_shows_nothing_either_reading_withholds(one: str, other: str, merged: str) -> None:
+    assert redaction._merged_line(one, other) == merged
+    assert redaction._shows_within(one, merged) and redaction._shows_within(other, merged)
+
+
+def test_readings_whose_lines_do_not_pair_up_withhold_the_whole_text() -> None:
+    assert redaction._merge_readings("a\nb\nc", "a b\nc") == REDACTED + "\n\n"
+    assert redaction._merge_readings("a\nb", "a\nb") == "a\nb"
+
+
+_CAPPED = [
+    # A cut after a cut: the second run is read only once the first goes.
+    f"Bearer {SECRET}--x9\n--r0\n=abc.def = password: hunter2pass",
+    # A reading a later sanitization withholds more of (see _settled).
+    f"Bearer token\n{SECRET[:16]}--a=:{VALUE}",
+    f"Bearer {SECRET}--x9\n--a=:{VALUE}",
+]
+
+
+@pytest.mark.parametrize("text", _CAPPED)
+def test_a_reading_cut_short_by_its_cap_still_shows_only_what_both_readings_show(
+    text: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The caps bound the work on a text that keeps changing. A reading cut
+    # short is still merged with the established one, line by line.
+    monkeypatch.setattr(redaction, "_GLUED_READINGS_AGAIN", 1)
+    monkeypatch.setattr(redaction, "_GLUED_RUN_READINGS", 1)
+    merged: list[tuple[str, str]] = []
+    merge = redaction._merge_readings
+    monkeypatch.setattr(
+        redaction,
+        "_merge_readings",
+        lambda first, second: merged.append((first, second)) or merge(first, second),
+    )
+    cleaned = sanitize_text(text)
+    assert "hunter2pass" not in cleaned and VALUE not in cleaned and SECRET[:9] not in cleaned
+    assert cleaned.count("\n") == text.count("\n")
+    ((plain, established),) = merged
+    for line, plain_line, established_line in zip(
+        cleaned.split("\n"), plain.split("\n"), established.split("\n"), strict=True
+    ):
+        assert redaction._shows_within(plain_line, line) and redaction._shows_within(established_line, line)
+
+
+def test_a_glued_text_in_a_list_is_merged_member_by_member() -> None:
+    record = {"notes": [f"Bearer {SECRET}--x9\n--insecure x", "plain words", f"Basic {SECRET}=x9 more"]}
+    assert sanitize(record)["notes"] == [
+        f"Bearer {REDACTED}\n{REDACTED} x",
+        "plain words",
+        f"Basic {REDACTED} more",
+    ]
+
+
 def test_long_glued_runs_are_read_in_linear_time() -> None:
     # Each glued run is split once and each distinct name in it judged once,
     # and a run stops at the next scheme's marker. This generous bound tells
