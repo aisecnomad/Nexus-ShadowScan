@@ -36,7 +36,7 @@ class LockfileError(ValueError):
 class LockedPackage:
     ecosystem: str
     name: str
-    version: str
+    version: str | None  # None when the lockfile records no version for the entry
     source: str = "unknown"
     relationship: str = "unknown"
     dependencies: list[tuple[str, str | None]] = field(default_factory=list)
@@ -128,10 +128,12 @@ def _toml_inventory(name: str, data: dict[str, Any]) -> LockInventory:
     for entry in packages:
         item = _mapping(entry)
         source = item.get("source")
+        recorded = item.get("version")
         package = LockedPackage(
             "cargo" if name == "cargo.lock" else "pypi",
             _name(item.get("name")),
-            _version(item.get("version")),
+            # uv records no version for a virtual root or a dynamic-version member.
+            None if name == "uv.lock" and recorded is None else _version(recorded),
             _source(source),
         )
         if name == "uv.lock":
@@ -161,13 +163,46 @@ def _toml_inventory(name: str, data: dict[str, Any]) -> LockInventory:
     return result
 
 
-def _pnpm_key(key: str) -> tuple[str, str]:
-    key = key.lstrip("/").split("(", 1)[0]
-    # v6 /name@version and v9 name@version, including @scope/name.
-    name, separator, version = key.rpartition("@")
-    if not separator or not name:
-        raise LockfileError("unsupported pnpm package key")
-    return _name(name), _version(version)
+def _pnpm_remote(reference: str) -> bool:
+    """A git or tarball reference: a remote source the inventory never resolves or retains."""
+    return "://" in reference or reference.startswith(("git+", "http:", "https:"))
+
+
+def _pnpm_identity(key: str) -> str:
+    """A packages/snapshots key without its leading slash (v6) or peer suffix (v9)."""
+    return key.lstrip("/").split("(", 1)[0]
+
+
+def _pnpm_key(key: str) -> tuple[str | None, str | None]:
+    """Return the name and version a packages/snapshots key proves, None for each it does not.
+
+    v6 ``/name@version`` and v9 ``name@version`` prove both, ``@scope/name``
+    included. A git or tarball key proves at most the name: v9 ``name@<url>``
+    does; v6 ``github.com/org/repo/<commit>`` or ``@host/path.tgz`` does not,
+    so the entry's own ``name`` and ``version`` fields are consulted.
+    """
+    key = _pnpm_identity(key)
+    scoped = key.startswith("@")
+    name, separator, version = (key[1:] if scoped else key).partition("@")
+    if scoped:
+        name = "@" + name
+    if separator and ("/" in version or _pnpm_remote(version)):
+        return _name(name), None
+    if separator:
+        return _name(name), _version(version)
+    if "/" in key:
+        return None, None
+    raise LockfileError("unsupported pnpm package key")
+
+
+def _pnpm_source(item: dict[str, Any]) -> str:
+    """The source kind a git or tarball entry's resolution records; the URL itself is dropped."""
+    resolution = item.get("resolution")
+    if not isinstance(resolution, dict):
+        return "unknown"
+    if resolution.get("type") == "git":
+        return "git"
+    return "url" if "tarball" in resolution else "unknown"
 
 
 def _pnpm_reference(name: str, reference: str) -> tuple[str, str] | None:
@@ -175,12 +210,17 @@ def _pnpm_reference(name: str, reference: str) -> tuple[str, str] | None:
     # does not model them, so never merge their edges into reachability claims.
     if "(" in reference:
         return None
-    if reference.startswith(("link:", "file:", "workspace:", "http:", "https:")):
+    # Links and remote sources resolve no registry package: reachability stays unknown.
+    if reference.startswith(("link:", "file:", "workspace:")) or _pnpm_remote(reference):
         return None
     if reference.startswith("npm:"):
         reference = reference[4:]
     if "@" in reference or reference.startswith("/"):
-        return _pnpm_key(reference)
+        resolved_name, version = _pnpm_key(reference)
+        return None if resolved_name is None or version is None else (resolved_name, version)
+    if "/" in reference:
+        # v6 git reference ``github.com/org/repo/<commit>``.
+        return None
     return _name(name), _version(reference)
 
 
@@ -193,20 +233,29 @@ def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
     snapshots = _mapping(data.get("snapshots", {}))
     if max(len(entries), len(snapshots)) > MAX_PACKAGES:
         raise LockfileError("lockfile package limit exceeded")
-    grouped_snapshots: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    grouped_snapshots: dict[str, list[dict[str, Any]]] = {}
     for key, value in snapshots.items():
-        identity = _pnpm_key(key)
+        _pnpm_key(key)  # a malformed key rejects the lockfile
         record = _mapping(value)
         if "(" not in key:
-            grouped_snapshots.setdefault(identity, []).append(record)
+            grouped_snapshots.setdefault(_pnpm_identity(key), []).append(record)
     for key, entry in entries.items():
         package_name, package_version = _pnpm_key(key)
         item = _mapping(entry)
-        package = LockedPackage("npm", package_name, package_version, "registry")
+        if package_name is not None and package_version is not None:
+            package = LockedPackage("npm", package_name, package_version, "registry")
+        else:
+            # A git or tarball entry: v6 records its name, and both record the
+            # version it resolved to when one is known.
+            recorded = item.get("version")
+            package = LockedPackage(
+                "npm",
+                _name(item.get("name")) if package_name is None else package_name,
+                None if recorded is None else _version(recorded),
+                _pnpm_source(item),
+            )
         # v9 snapshots contain resolved edges; peer variants can share one inventory identity.
-        edge_records = (
-            [item] if version.startswith("6") else grouped_snapshots.get((package_name, package_version), [])
-        )
+        edge_records = [item] if version.startswith("6") else grouped_snapshots.get(_pnpm_identity(key), [])
         for record in edge_records:
             for section in ("dependencies", "optionalDependencies"):
                 for dep_name, reference in _mapping(record.get(section, {})).items():
@@ -247,7 +296,8 @@ def _relationships(result: LockInventory) -> None:
     by_id: dict[tuple[str, str], list[int]] = {}
     for number, package in enumerate(result.packages):
         by_name.setdefault(package.name, []).append(number)
-        by_id.setdefault((package.name, package.version), []).append(number)
+        if package.version is not None:
+            by_id.setdefault((package.name, package.version), []).append(number)
     visited = {i for i, p in enumerate(result.packages) if p.root}
     pending = deque((i, 0) for i in sorted(visited))
     while pending:

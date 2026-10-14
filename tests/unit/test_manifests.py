@@ -761,6 +761,84 @@ def test_rejected_lockfile_is_scoped_to_the_file_and_keeps_the_scan_incomplete(
     assert not any(f.resource_type == "lockfile-inventory" for f in findings)
 
 
+LOCKFILE_FIXTURES = Path("tests/fixtures/code/lockfiles")
+
+
+def test_pnpm_v6_git_and_tarball_entries_are_inventoried_without_reachability():
+    text = (LOCKFILE_FIXTURES / "pnpm-remote-v6/pnpm-lock.yaml").read_text()
+    result = parse_manifest("pnpm-lock.yaml", text)
+    assert result and not result.errors and result.lockfile
+    packages = {p.name: p for p in result.lockfile.packages}
+    assert packages["wrapper"].relationship == "direct"
+    # A git or tarball key proves no name or version: the entry's own fields are inventoried.
+    graph = packages["@langchain/langgraph"]
+    assert (graph.version, graph.source, graph.relationship) == ("0.2.0", "url", "unknown")
+    assert (packages["is-positive"].version, packages["is-positive"].source) == ("3.1.0", "url")
+    assert (packages["lib"].version, packages["lib"].source, packages["lib"].relationship) == (
+        None,
+        "git",
+        "unknown",
+    )
+    # A reference to one is a remote source: no edge, and neither the URL nor the commit is kept.
+    assert packages["wrapper"].dependencies == []
+    retained = repr(result.lockfile)
+    assert "example.com" not in retained and "github.com" not in retained and "0f1e2d3c" not in retained
+
+
+def test_pnpm_v9_git_and_tarball_keys_are_inventoried_without_reachability():
+    text = (LOCKFILE_FIXTURES / "pnpm-remote-v9/pnpm-lock.yaml").read_text()
+    result = parse_manifest("pnpm-lock.yaml", text)
+    assert result and not result.errors and result.lockfile
+    packages = {p.name: p for p in result.lockfile.packages}
+    assert packages["wrapper"].relationship == "direct" and packages["wrapper"].dependencies == []
+    graph = packages["@langchain/langgraph"]
+    assert (graph.version, graph.source, graph.relationship) == ("0.2.0", "url", "unknown")
+    assert (packages["lib"].version, packages["lib"].source, packages["lib"].relationship) == (
+        None,
+        "git",
+        "unknown",
+    )
+    assert sorted(d.name for d in result.deps) == ["@langchain/langgraph", "lib", "wrapper"]
+    retained = repr(result.lockfile)
+    assert "example.com" not in retained and "gitlab" not in retained and "0123456789abcdef" not in retained
+
+
+def test_pnpm_remote_dependency_inventory_retains_no_source_url(tmp_path, run_connector):
+    (tmp_path / "pnpm-lock.yaml").write_text(
+        (LOCKFILE_FIXTURES / "pnpm-remote-v9/pnpm-lock.yaml").read_text()
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    inventory = next(f for f in findings if f.resource_type == "lockfile-inventory")
+    assert inventory.metadata["lockfile_inventory"]["matched_packages"] == [
+        {
+            "ecosystem": "npm",
+            "name": "@langchain/langgraph",
+            "version": "0.2.0",
+            "source_type": "url",
+            "relationship": "unknown",
+        }
+    ]
+    serialized = json.dumps(inventory.to_dict())
+    assert "example.com" not in serialized and "0123456789abcdef" not in serialized
+
+
+def test_uv_entries_without_a_recorded_version_are_inventoried():
+    result = parse_manifest("uv.lock", (LOCKFILE_FIXTURES / "uv-unversioned/uv.lock").read_text())
+    assert result and not result.errors and result.lockfile and result.lockfile.roots_known
+    packages = {p.name: p for p in result.lockfile.packages}
+    assert packages["example"].root and packages["example"].version is None
+    member = packages["member"]
+    assert (member.version, member.source, member.relationship) == (None, "local", "direct")
+    assert packages["crewai"].relationship == "transitive"
+    assert [(d.name, d.spec) for d in result.deps] == [("member", None), ("crewai", "0.80.0")]
+    # A recorded version is still validated, and the other formats still require one.
+    malformed = 'version = 1\n[[package]]\nname = "x"\nversion = 42\n'
+    assert parse_manifest("uv.lock", malformed).errors == ["invalid locked package version"]
+    unversioned = 'version = 4\n[[package]]\nname = "x"\n'
+    assert parse_manifest("Cargo.lock", unversioned).errors == ["invalid locked package version"]
+
+
 def test_pnpm_peer_snapshots_cannot_union_transitive_reachability():
     from shadowscan.connectors.code.lockfiles import parse_lockfile
 

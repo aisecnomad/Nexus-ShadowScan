@@ -1,0 +1,36 @@
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      '@langchain/langgraph':
+        specifier: https://example.com/langgraph-0.2.0.tgz
+        version: https://example.com/langgraph-0.2.0.tgz
+      lib:
+        specifier: git+ssh://git@gitlab.example/org/lib.git#0123456789abcdef0123456789abcdef01234567
+        version: git+ssh://git@gitlab.example/org/lib.git#0123456789abcdef0123456789abcdef01234567
+      wrapper:
+        specifier: ^1
+        version: 1.0.0
+
+packages:
+
+  '@langchain/langgraph@https://example.com/langgraph-0.2.0.tgz':
+    resolution: {tarball: https://example.com/langgraph-0.2.0.tgz}
+    version: 0.2.0
+
+  'lib@git+ssh://git@gitlab.example/org/lib.git#0123456789abcdef0123456789abcdef01234567':
+    resolution: {type: git, repo: git+ssh://git@gitlab.example/org/lib.git, commit: 0123456789abcdef0123456789abcdef01234567}
+
+  wrapper@1.0.0: {}
+
+snapshots:
+
+  '@langchain/langgraph@https://example.com/langgraph-0.2.0.tgz': {}
+
+  'lib@git+ssh://git@gitlab.example/org/lib.git#0123456789abcdef0123456789abcdef01234567': {}
+
+  wrapper@1.0.0:
+    dependencies:
+      '@langchain/langgraph': https://example.com/langgraph-0.2.0.tgz

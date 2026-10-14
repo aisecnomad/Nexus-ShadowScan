@@ -1,0 +1,39 @@
+lockfileVersion: '6.0'
+
+dependencies:
+  '@langchain/langgraph':
+    specifier: github:langchain-ai/langgraphjs#0f1e2d3c4b5a69788776655443322110ffeeddcc
+    version: github.com/langchain-ai/langgraphjs/0f1e2d3c4b5a69788776655443322110ffeeddcc
+  is-positive:
+    specifier: https://example.com/is-positive-3.1.0.tgz
+    version: '@example.com/is-positive-3.1.0.tgz'
+  lib:
+    specifier: git+https://gitlab.example/org/lib.git#0123456789abcdef0123456789abcdef01234567
+    version: gitlab.example/org/lib/0123456789abcdef0123456789abcdef01234567
+  wrapper:
+    specifier: ^1
+    version: 1.0.0
+
+packages:
+
+  /wrapper@1.0.0:
+    dependencies:
+      '@langchain/langgraph': github.com/langchain-ai/langgraphjs/0f1e2d3c4b5a69788776655443322110ffeeddcc
+    dev: false
+
+  '@example.com/is-positive-3.1.0.tgz':
+    resolution: {tarball: https://example.com/is-positive-3.1.0.tgz}
+    name: is-positive
+    version: 3.1.0
+    dev: false
+
+  github.com/langchain-ai/langgraphjs/0f1e2d3c4b5a69788776655443322110ffeeddcc:
+    resolution: {tarball: https://codeload.github.com/langchain-ai/langgraphjs/tar.gz/0f1e2d3c4b5a69788776655443322110ffeeddcc}
+    name: '@langchain/langgraph'
+    version: 0.2.0
+    dev: false
+
+  gitlab.example/org/lib/0123456789abcdef0123456789abcdef01234567:
+    resolution: {type: git, repo: https://gitlab.example/org/lib.git, commit: 0123456789abcdef0123456789abcdef01234567}
+    name: lib
+    dev: false
