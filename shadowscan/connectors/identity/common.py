@@ -13,7 +13,9 @@ from shadowscan.signatures import SignatureIndex
 # Redirect and homepage fields can hold several URLs separated by whitespace,
 # commas or semicolons (a ServiceNow redirect_url, for example). A comma or
 # semicolon separates only where a new http(s) URL starts (see _url_tokens).
-_URL_LIST_SEPARATOR = re.compile(r"[,;]+(?=https?://)", re.I)
+# One character, so a long run of separators is scanned in linear time; the
+# rest of a run is stripped from the token before it.
+_URL_LIST_SEPARATOR = re.compile(r"[,;](?=https?://)", re.I)
 # A parsed hostname: a DNS name or an IP literal, nothing else.
 _HOSTNAME = re.compile(r"[a-z0-9_.:-]+")
 # A backslash or control character parses differently in Python and in
