@@ -89,6 +89,40 @@ Fixes from the verified review of #199, carried on the integration branch.
   committed `runs.json` re-scores to the committed `metrics.json` and
   `REPORT.md` byte for byte.
 
+### Repository rename, source distribution and README matrix: review fixes (October 14)
+
+- `docs/testing.md` lists the build lock under `make install` and
+  `make install-dev`, CONTRIBUTING says why the release-evidence tests need it,
+  and a consistency test requires both CI test jobs and both Makefile install
+  targets to install it, the documented gates to start from `make install`,
+  and `docs/testing.md` to name it. An environment made before this change
+  needs `make install` again.
+- README benchmark summary: the code-surface row says that 4 of the 22
+  controls and near-misses reported clean came from incomplete runs, and
+  that an incomplete clean run is not a clean result; it no longer
+  qualifies only recall. The README test derives that count from the
+  committed `metrics.json` and `corpus.json`.
+- The former-repository-name check accepts the former slug only in listed
+  forms (the 0.1.2 `gh attestation verify --repo` command, "formerly",
+  "renamed from ... to", "attested as ... before the rename", a recorded path
+  marked "(the former name)" and the governance test constant), removed from
+  the line before checking, instead of any line that mentions "0.1.2",
+  "renam" or "former". It checks the Unreleased section of `CHANGELOG.md`,
+  exempting only released entries, and also matches the `%2F`-encoded slug.
+- `docs/production.md` again names the request path recorded in the
+  2026-10-02 08:05 UTC ruleset observation, under the former repository name
+  and marked as such, instead of a request under the new name that was never
+  made.
+- `tools/release/distributions.py` rejects a `.` or `./` sdist member as an
+  unsafe path; it previously failed with an uncaught `IndexError` and a
+  traceback. Tests also cover the member-count and member-size bounds for
+  both archives.
+- README detection matrix: the generator fails on an MCP dependency
+  ecosystem it has no display name for instead of leaving it out, lists
+  `**/` file globs once without the prefix (adding `.well-known/mcp.json`),
+  shows dependency name prefixes as `prefix*`, and says that hosts matching
+  the `protocol.mcp` regular expression are recognized too.
+
 ### Dependency refresh and repository hygiene (October 14)
 
 - Dependabot's #200 and #201 are carried. #200 bumped nine reviewed inputs in
@@ -136,8 +170,9 @@ Fixes from the verified review of #199, carried on the integration branch.
   the docs site configuration, the SARIF `informationUri` and `helpUri` and the
   CycloneDX VCS reference follow. Retained reviews, frozen benchmark results and
   their harnesses, the recorded ruleset responses and released changelog
-  entries keep the former name; a consistency test rejects it elsewhere unless
-  the line says it is the former name or the name 0.1.2 was attested under.
+  entries keep the former name; a consistency test rejects it elsewhere
+  except in a few listed forms that say it is the former name or the name 0.1.2
+  was attested under; the Unreleased section is checked too.
 - OCSF `metadata.product.vendor_name` is `Nexus ShadowScan` instead of
   `Project Nexus`. The SARIF and CycloneDX tool name stays `ShadowScan`, so
   GitHub code scanning keeps matching existing alerts to the same tool.

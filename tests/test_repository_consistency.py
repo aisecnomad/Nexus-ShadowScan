@@ -287,8 +287,8 @@ _REPOSITORY_LINK = re.compile(
 # The repository was renamed from aisecnomad/Project-Nexus to aisecnomad/Nexus-ShadowScan so
 # that its URL, the NexusShadowScan distribution and the brand match. These paths record
 # history as it happened and keep the former name: retained reviews, frozen benchmark
-# corpora, results and the harnesses that reproduce them, GitHub's recorded ruleset
-# responses, and released changelog entries.
+# corpora, results and the harnesses that reproduce them, and GitHub's recorded ruleset
+# responses. Released changelog entries are history too; the Unreleased section is not.
 _FORMER_NAME_RECORDS = (
     "archive/",
     "benchmarks/",
@@ -297,12 +297,31 @@ _FORMER_NAME_RECORDS = (
     "tools/discovery_benchmark/",
     "tools/shadowbench/",
     ".github/rulesets/observed/",
-    "CHANGELOG.md",
 )
-_FORMER_NAME = re.compile(r"aisecnomad(?:/|\.github\.io/)Project-Nexus", re.IGNORECASE)
-# Elsewhere a line may name the former repository only to say so: 0.1.2 was attested
-# under that name, and the rename runbook and tests describe it.
-_FORMER_NAME_CONTEXT = re.compile(r"0\.1\.2|\brenam|\bformer", re.IGNORECASE)
+_FORMER_NAME = re.compile(r"aisecnomad(?:/|%2F|\.github\.io/)Project-Nexus", re.IGNORECASE)
+# Elsewhere the former name may appear only in these forms, which say that it is the
+# former name: 0.1.2 was attested under it, the rename is described, and one dated
+# observation keeps the request path it recorded. Each form is removed from the line
+# before the check, so a stale link beside one is still caught.
+_FORMER_SLUG = re.escape("aisecnomad/" + "Project-Nexus")  # split so this file passes its own check
+_FORMER_NAME_FORMS = re.compile(
+    "|".join(
+        form.replace("SLUG", _FORMER_SLUG)
+        for form in (
+            r"gh attestation verify \S*-0\.1\.2-\S* --repo SLUG$",
+            r"verify (?:it|0\.1\.2) with `--repo SLUG`",
+            r"attested as `SLUG` before the rename",
+            r"renamed from `?SLUG`? to",
+            r"formerly `?SLUG`?(?![\w.%/-])",
+            r"`GET /repos/SLUG/[^`]*` \(the former name\)",
+            r'^FORMER_REPOSITORY = "SLUG"$',
+        )
+    )
+)
+
+
+def _names_former_repository(line: str) -> bool:
+    return bool(_FORMER_NAME.search(_FORMER_NAME_FORMS.sub("", line.strip())))
 
 
 def test_live_files_name_the_current_repository() -> None:
@@ -318,10 +337,12 @@ def test_live_files_name_the_current_repository() -> None:
             text = (ROOT / name).read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
+        if name == "CHANGELOG.md":
+            text = text[: text.index("\n## 0.")]
         stale.extend(
             f"{name}:{number}"
             for number, line in enumerate(text.splitlines(), start=1)
-            if _FORMER_NAME.search(line) and not _FORMER_NAME_CONTEXT.search(line)
+            if _names_former_repository(line)
         )
     assert not stale, "use aisecnomad/Nexus-ShadowScan:\n  " + "\n  ".join(stale)
 
@@ -332,8 +353,26 @@ def test_former_name_check_flags_unexplained_references() -> None:
     assert _FORMER_NAME.search(f"https://github.com/{slug.lower()}/blob/main/README.md")
     assert _FORMER_NAME.search(f"https://{pages}/")
     assert not _FORMER_NAME.search("https://github.com/aisecnomad/Nexus-ShadowScan")
-    assert _FORMER_NAME_CONTEXT.search(f"gh attestation verify nexusshadowscan-0.1.2.whl --repo {slug}")
-    assert not _FORMER_NAME_CONTEXT.search(f"git clone https://github.com/{slug}.git")
+    for explained in (
+        f"gh attestation verify wheels/nexusshadowscan-0.1.2-py3-none-any.whl --repo {slug}",
+        f"The 0.1.2 wheel was attested before the rename; verify it with `--repo {slug}`.",
+        f"The repository was formerly `{slug}`; GitHub redirects the old links.",
+        f"- The repository is renamed from `{slug}` to",
+        f"`GET /repos/{slug}/rules/branches/main` (the former name) returned no active",
+    ):
+        assert not _names_former_repository(explained), explained
+    for stale in (
+        f"git clone https://github.com/{slug}.git",
+        f'python -m pip install "git+https://github.com/{slug}.git@v0.1.2"',
+        f"[![CI](https://github.com/{slug}/actions/workflows/ci.yml/badge.svg)] <!-- before renaming -->",
+        f"Report at https://github.com/{slug}/security/advisories/new (formerly email)",
+        "https://img.shields.io/badge/x?link=github.com%2F" + slug.replace("/", "%2F"),
+        f"formerly `{slug}`; see https://github.com/{slug}/blob/main/SECURITY.md",
+        f"gh pr create --repo {slug}",
+        f"`git clone https://github.com/{slug}.git` (the former name)",
+        f"It was formerly {slug}.git; clone it from there",
+    ):
+        assert _names_former_repository(stale), stale
 
 
 @pytest.mark.parametrize("markdown", _markdown_files(), ids=_relative)
@@ -906,6 +945,29 @@ def test_ci_toolchain_is_exactly_pinned_and_hash_locked_everywhere() -> None:
     assert "-r requirements-ci.lock" in _read(GITHUB / "workflows" / "release.yml")
 
 
+def test_every_suite_environment_installs_the_build_frontend_lock() -> None:
+    # Release evidence records the version of the build frontend, which only
+    # requirements-build.lock provides. A test job or documented environment
+    # without it fails tests/test_release_evidence.py.
+    jobs = _load_yaml(GITHUB / "workflows" / "ci.yml")["jobs"]
+    expected = ["requirements-build.lock", "requirements-ci.lock", "requirements.lock"]
+    for name in ("test", "test-macos"):
+        (install,) = [
+            step["run"]
+            for step in jobs[name]["steps"]
+            if "--require-hashes" in step.get("run", "") and "-r requirements-ci.lock" in step["run"]
+        ]
+        assert sorted(re.findall(r"-r (requirements[\w-]*\.lock)", install)) == expected, name
+    makefile = _read(ROOT / "Makefile")
+    for target in ("install", "install-dev"):
+        (recipe,) = re.findall(rf"^{target}:.*\n((?:\t.*\n)+)", makefile, re.MULTILINE)
+        assert "-r requirements-build.lock" in recipe, target
+    gates = _read(ROOT / "CONTRIBUTING.md").split("The same gates as individual commands:", 1)[1]
+    # The documented gates start from make install, whose recipe is checked above.
+    assert re.search(r"^make install$", gates.split("```", 2)[1], re.MULTILINE)
+    assert "`requirements-build.lock`" in _read(ROOT / "docs" / "testing.md").split("## ", 2)[1]
+
+
 _USES_LINE = re.compile(r"^\s*-?\s*uses:\s*(?P<ref>[^#\s]+)\s*(?P<comment>#.*)?$")
 _PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@(?P<sha>[0-9a-f]{40})$")
 
@@ -1455,6 +1517,18 @@ def test_readme_benchmark_table_quotes_the_committed_results() -> None:
     code_metrics = json.loads((_BENCHMARKS / code_run / "metrics.json").read_text(encoding="utf-8"))
     corpus, tool = code_metrics["corpus"], code_metrics["tools"]["shadowscan"]
     repos = tool["repo_level"]
+    # An incomplete run left content unread, so its clean control or near-miss
+    # is not a clean result and the README has to say how many there were.
+    labels = {
+        entry["id"]: entry["class"]
+        for entry in json.loads(
+            (_BENCHMARKS / "shadow-ai-discovery" / "corpus.json").read_text(encoding="utf-8")
+        )["repos"]
+    }
+    incomplete_negatives = sum(
+        labels[repo] in {"control", "nearmiss"} for repo in tool["incomplete_runs"]["repos"]
+    )
+    assert incomplete_negatives
     code = [
         f"blob/main/benchmarks/{code_run}/REPORT.md",
         f"(2026-10-09, {tool['version']})",
@@ -1464,8 +1538,10 @@ def test_readme_benchmark_table_quotes_the_committed_results() -> None:
         f"Fact precision / recall / F1 {_percentages(tool['value_level']['in_scope'])}",
         f"{repos['positives_detected']} of {repos['positives']} positive repositories flagged",
         f"{repos['controls_flagged'] + repos['nearmiss_flagged']} of "
-        f"{repos['controls'] + repos['nearmiss']} controls and near-misses flagged",
+        f"{repos['controls'] + repos['nearmiss']} controls and near-misses flagged "
+        f"({incomplete_negatives} of those {repos['controls'] + repos['nearmiss']} runs incomplete)",
         f"{tool['incomplete_runs']['count']} of {corpus['repos']} runs were incomplete (exit 3)",
+        "an incomplete clean run is not a clean result",
     ]
     missing = [claim for claim in estate + code if claim not in section]
     assert not missing, "README benchmark table no longer matches the committed metrics: " + repr(missing)

@@ -206,7 +206,9 @@ make evaluate
 The cloud SDKs (`boto3`, `google-auth`, `azure-identity`, `oci`) are optional
 extras for users, but the test suite is gated with them installed. `make
 install` installs the hash-locked `requirements.lock`, which contains every
-cloud SDK, as CI does. Offline fixtures cover the
+cloud SDK, together with the CI and build locks, as CI does. The
+release-evidence tests record the version of the `build` frontend, which only
+`requirements-build.lock` provides. Offline fixtures cover the
 cloud connectors; do not commit live tenant exports.
 
 Dependabot updates the version ranges in `pyproject.toml` and the reviewed

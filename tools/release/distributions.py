@@ -93,7 +93,7 @@ class _Budget:
 
 def _safe_relative(name: str, source: str) -> PurePosixPath:
     path = PurePosixPath(name)
-    if not name or "\\" in name or path.is_absolute() or ".." in path.parts:
+    if not name or "\\" in name or path.is_absolute() or not path.parts or ".." in path.parts:
         raise ValueError(f"{source} has an unsafe member path: {name!r}")
     return path
 
