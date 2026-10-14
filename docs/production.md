@@ -1353,7 +1353,8 @@ engine, and NVIDIA Triton images without an LLM backend tag
 AI image or AI resource kind is not promoted. A container `command` or `args` field that is
 not a list of strings (a string, or a list with a non-string item) now makes a
 `cloud.kubernetes` or `cloud.openshift` scan incomplete (exit 3) with a
-"malformed container command/args" warning; the workload is still reported
+"workload has malformed container command" or "workload has malformed
+container args" warning for each malformed field; the workload is still reported
 from its image, without the model-argument check. A `null` field is unset, as
 kubectl exports it. Regenerate exports that fail this way before relying on
 exit codes.
