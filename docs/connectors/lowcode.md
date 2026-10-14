@@ -112,16 +112,25 @@ prompt injection or exfiltration; it does not by itself establish a "lethal
 trifecta."
 
 The graph adapter uses exact supported node identifiers, not display names or
-serialized parameter searches. n8n agent, model and auxiliary types are shared
-with its export reader; disabled nodes do not connect paths. Literal HTTP URLs
+serialized parameter searches, to assign graph roles; disabled nodes do not
+connect paths. The registry decides roles only, never inventory: `lowcode.n8n`
+keeps its own AI-node rule (any `n8n-nodes-langchain` type, provider nodes such
+as `openAi`, `anthropic`, `gemini`, `mistral`, `ollama` or `huggingFace`, a
+`\bmcp\b` type, and HTTP Request nodes that POST to a model-generation route)
+and its signature match over node types and parameters, and the export reader
+still projects every n8n node type, Flowise agent-category node and Dify
+agent/LLM/tool node for the signature packs to judge. A workflow outside the
+registry (an OpenRouter or embeddings node, a community MCP node, a disabled
+agent) is still reported; it just gets no AI graph role. Literal HTTP URLs
 are parsed into hostnames, so `api.openai.com.example.invalid` does not establish
 an OpenAI destination. Expressions and environment-variable references are not
 resolved. Unknown/community types retain their graph position without inferred
 roles. Flowise Agent Flows use their declared `startInputType` and HTTP node
 `inputs.url`; scheduled starts are not treated as untrusted inputs.
-An ordinary n8n Set node storing a prompt library produces no AI workflow
-finding solely from its prose. Repeated actual AI node declarations retain
-the existing grouped confidence; their prompts do not add independent signals.
+Repeated actual AI node declarations retain the existing grouped confidence;
+their prompts do not add independent signals. As before, AI text stored in an
+ordinary n8n node's parameters (a Set node holding a prompt library) can still
+match a signature at possible confidence; it receives no graph role.
 
 Directed traversal handles cycles and joins. n8n `main` edges establish declared
 order; `ai_tool`, model and memory attachments do not establish that order.
@@ -133,7 +142,12 @@ Analysis permits at most 16 graph documents per file, 4,096 nodes per graph and
 16,384 edges/connection-branch
 inspections, with node identifiers capped at 512 characters. A malformed supplied
 graph, dangling edge, duplicate identifier or exhausted budget marks coverage
-incomplete. An inventory omitting adjacency can still establish AI node presence,
+incomplete and sets the graph's `status` to `incomplete` with a `null` path, but
+the workflow finding (or the export's projected signals) is kept: graph metadata
+never decides whether a workflow is reported. Documents past the 16-graph budget
+are still projected, without graph metadata. n8n exports an unconnected output
+slot (an If or Switch branch) as `null`; that is an empty branch, not a defect.
+An inventory omitting adjacency can still establish AI node presence,
 but its graph status is `unavailable` and its path result is `null`, not `false`.
 Only a supplied and analyzed graph can produce `false`. Output uses node ordinals
 instead of retaining prompts, node names or destination URLs; example paths are

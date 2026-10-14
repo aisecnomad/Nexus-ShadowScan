@@ -760,13 +760,13 @@ def test_n8n_graph_relationship_fixture(index, case):
         {"Missing": {}},
         {"Input": []},
         {"Input": {"main": "bad"}},
-        {"Input": {"main": [None]}},
         {"Input": {"main": [[None]]}},
         {"Input": {"main": [[{"node": "Missing"}]]}},
         {"Input": {"main": [[{"node": []}]]}},
     ],
 )
-def test_n8n_malformed_graph_marks_incomplete_and_preserves_neighbors(index, connections):
+def test_n8n_malformed_graph_marks_incomplete_and_keeps_the_workflow(index, connections):
+    """Regression (#220 graph review F2): a graph defect limits the graph, not the inventory."""
     from copy import deepcopy
 
     bad = deepcopy(_graph_cases()[0]["workflow"])
@@ -776,8 +776,78 @@ def test_n8n_malformed_graph_marks_incomplete_and_preserves_neighbors(index, con
     connector = N8nConnector(ConnectorContext(index=index))
     connector.collect = Mock(return_value=iter([bad, good]))
     findings = connector.run()
-    assert [finding.resource for finding in findings] == ["n8n:workflow:good"]
+    assert [finding.resource for finding in findings] == ["n8n:workflow:graph-demo", "n8n:workflow:good"]
+    assert [finding.kind for finding in findings] == [Kind.AGENT, Kind.AGENT]
+    graph = findings[0].metadata["workflow_graph"]
+    assert graph["status"] == "incomplete" and graph["potential_input_ai_egress_path"] is None
+    assert findings[1].metadata["workflow_graph"]["status"] == "analyzed"
     assert connector.ctx.stats.incomplete and connector.ctx.stats.warnings
+
+
+def _agent_with(connections, *extra_nodes):
+    agent = {"name": "A", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}
+    return {"id": "wf-1", "name": "Agent", "nodes": [agent, *extra_nodes], "connections": connections}
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        # A connection left behind by a deleted or renamed node.
+        _agent_with({"Deleted": {"main": [[{"node": "A", "type": "main", "index": 0}]]}}),
+        # Two nodes with one name.
+        _agent_with({}, {"name": "A", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}),
+    ],
+    ids=["dangling-source", "duplicate-names"],
+)
+def test_n8n_graph_defects_keep_the_agent_inventory(index, workflow):
+    """Regression (#220 graph review F2): the base detected these agents; graph metadata must not hide them."""
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    assert finding.kind == Kind.AGENT
+    assert finding.metadata["workflow_graph"]["status"] == "incomplete"
+    assert connector.ctx.stats.incomplete
+
+
+def test_n8n_null_output_slot_is_an_unconnected_branch(index):
+    """n8n exports an unconnected If/Switch output as null; that is valid, not a defect."""
+    branch = {"name": "B", "type": "n8n-nodes-base.if", "parameters": {}}
+    workflow = _agent_with({"B": {"main": [None, [{"node": "A", "type": "main", "index": 0}]]}}, branch)
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    assert finding.kind == Kind.AGENT
+    assert finding.metadata["workflow_graph"]["status"] == "analyzed"
+    assert finding.metadata["workflow_graph"]["edge_count"] == 1
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {
+            "name": "H",
+            "type": "n8n-nodes-base.httpRequest",
+            "parameters": {"url": "https://api.openai.com/v1/chat/completions"},
+        },
+        {
+            "name": "M",
+            "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+            "parameters": {"model": "openai/gpt-4o"},
+        },
+        {"name": "E", "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi", "parameters": {}},
+        {"name": "C", "type": "n8n-nodes-mcp.mcpClient", "parameters": {}},
+    ],
+    ids=["http-to-openai", "openrouter-model", "embeddings", "community-mcp"],
+)
+def test_n8n_inventory_is_not_limited_to_the_graph_type_registry(index, node):
+    """Regression (#220 graph review F1): AI workflows outside the exact registry stay detected."""
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([{"id": "w1", "name": "wf", "nodes": [node]}]))
+    (finding,) = connector.run()
+    assert finding.kind == Kind.WORKFLOW
+    assert finding.metadata["workflow_graph"]["status"] == "unavailable"
+    assert not connector.ctx.stats.incomplete
 
 
 @pytest.mark.parametrize("limit,value", [("MAX_GRAPH_NODES", 2), ("MAX_GRAPH_EDGES", 1)])
@@ -787,7 +857,8 @@ def test_n8n_graph_resource_limits_are_incomplete(index, monkeypatch, limit, val
     monkeypatch.setattr(graph, limit, value)
     connector = N8nConnector(ConnectorContext(index=index))
     connector.collect = Mock(return_value=iter([_graph_cases()[0]["workflow"]]))
-    assert connector.run() == []
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["status"] == "incomplete"
     assert connector.ctx.stats.incomplete
 
 
@@ -896,7 +967,8 @@ def test_n8n_connection_fields_cannot_turn_attachment_into_execution_order(index
     assert result.metadata["potential_input_ai_egress_path"] is None
     connector = N8nConnector(ConnectorContext(index=index))
     connector.collect = Mock(return_value=iter([workflow]))
-    assert connector.run() == []
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["potential_input_ai_egress_path"] is None
     assert connector.ctx.stats.incomplete
 
 
