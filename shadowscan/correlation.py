@@ -98,9 +98,7 @@ _GCP_SERVICE_ACCOUNT_DOMAIN = ".gserviceaccount.com"
 _GCP_SERVICE_ACCOUNT = re.compile(
     r"[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+gserviceaccount\.com"
 )
-# Code evidence locations are repository paths ("projects/api/src/main.py:12").
-# A code finding's value is a GCP resource name only when it names a valid
-# project id or number, then a GCP collection, and carries no line suffix.
+# The strict form of a GCP resource name in a code finding (see _repository_path).
 _GCP_PROJECT = re.compile(
     r"[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,19}|[a-z0-9.-]{1,63}:[a-z][a-z0-9-]{4,28}[a-z0-9]"
 )
@@ -163,13 +161,28 @@ def _normalise_key(s: Any) -> str | None:
 
 def _qualified_prefix(value: str) -> bool:
     """Whether a value is spelled as a fully qualified reference (an Azure id in any letter case)."""
-    return value.startswith(_GLOBAL_PREFIXES) or value[: len(_AZURE_PREFIX)].lower() == _AZURE_PREFIX
+    return value.startswith(_GLOBAL_PREFIXES) or (
+        value[:1] == "/" and value[: len(_AZURE_PREFIX)].lower() == _AZURE_PREFIX
+    )
+
+
+def _repository_path(value: str) -> bool:
+    """Whether a code finding's ``projects/`` value is a repository path rather than a GCP resource name.
+
+    Code findings report repository locations ("projects/api/src/main.py:12").
+    From code, a GCP resource name must name a valid project id or number,
+    then a GCP collection, and carry no line suffix.
+    """
+    components = value.split("/", 3)
+    return not (
+        _GCP_PROJECT.fullmatch(components[1])
+        and components[2] in _GCP_COLLECTIONS
+        and not _LINE_SUFFIX.search(value)
+    )
 
 
 @lru_cache(maxsize=65536)
-def _global_resource(
-    value: str, repository: bool = False
-) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
+def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
     """Recognize fully qualified resource references; return their type, comparison key and scope.
 
     The identifier itself is the scope: an ARN, a GCP resource name, an Azure
@@ -183,9 +196,7 @@ def _global_resource(
     them case-insensitively and reports one resource in different casings (a
     lowercased role-assignment scope, an uppercased diagnostic-log resource
     id), so they are compared lowercased. Findings keep the spelling they
-    reported. A ``repository`` value comes from a code finding, whose locations
-    are file paths: there a ``projects/`` path is a GCP resource name only in
-    the strict form above.
+    reported.
     """
     if _SPACE_OR_PATTERN.search(value):
         return None
@@ -214,39 +225,32 @@ def _global_resource(
             len(components) == 4
             and components[1] not in {".", ".."}
             and components[2] == "serviceAccounts"
+            and components[3].endswith(_GCP_SERVICE_ACCOUNT_DOMAIN)
             and (account := _gcp_service_account(components[3])) is not None
         ):
             # The address identifies the account; "-" (any project) is a valid spelling.
             return account
         if components[1] in {"-", ".", ".."} or any(p in {".", ".."} for p in components):
             return None
-        if repository and (
-            not _GCP_PROJECT.fullmatch(components[1])
-            or components[2] not in _GCP_COLLECTIONS
-            or _LINE_SUFFIX.search(value)
-        ):
-            return None
         scope = {"provider": "gcp", "account": components[1]}
         if len(components) >= 6 and components[2] in {"locations", "regions"}:
             scope["region"] = components[3]
         return "resource:gcp-name", value, tuple(sorted(scope.items()))
-    if value[: len(_AZURE_PREFIX)].lower() == _AZURE_PREFIX:
-        key = value.translate(_ASCII_LOWER)
+    if value[:1] == "/" and value[: len(_AZURE_PREFIX)].lower() == _AZURE_PREFIX:
+        key = value.lower() if value.isascii() else value.translate(_ASCII_LOWER)
         components = key.split("/")
         if len(components) >= 7 and all(components[1:]) and not any(p in {".", ".."} for p in components):
             return "resource:azure-id", key, (("account", components[2]), ("provider", "azure"))
         return None
     if re.fullmatch(r"ocid1\.[a-z0-9]+\.[a-z0-9]+\.[a-z0-9-]*\.[A-Za-z0-9.]+", value):
         return "resource:oci-id", value, (("provider", "oci"),)
-    return _gcp_service_account(value)
+    if value.endswith(_GCP_SERVICE_ACCOUNT_DOMAIN):
+        return _gcp_service_account(value)
+    return None
 
 
 def _gcp_service_account(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
-    if (
-        len(value) <= 254
-        and value.endswith(_GCP_SERVICE_ACCOUNT_DOMAIN)
-        and _GCP_SERVICE_ACCOUNT.fullmatch(value)
-    ):
+    if len(value) <= 254 and _GCP_SERVICE_ACCOUNT.fullmatch(value):
         return "resource:gcp-service-account", value, (("provider", "gcp"),)
     return None
 
@@ -335,19 +339,26 @@ def _correlation_keys(findings: list[Finding]) -> tuple[_Groups, _Groups]:
             identifiers.extend(
                 (f"evidence[{number}].location", evidence.location)
                 for number, evidence in enumerate(finding.evidence)
-                if evidence.location and _qualified_prefix(evidence.location)
+                if evidence.location
+                and (
+                    evidence.location.startswith(_GLOBAL_PREFIXES)
+                    or (evidence.location[:1] == "/" and _qualified_prefix(evidence.location))
+                )
             )
         for source, raw in identifiers:
             value = _identity_text(raw)
             if value is None:
                 continue
-            qualified = _global_resource(value, repository)
-            if qualified is None and _qualified_prefix(value):
-                continue
-            if qualified is not None:
-                kind, key, scope = qualified[0], qualified[1], dict(qualified[2])
-            else:
+            qualified = _global_resource(value)
+            if qualified is None:
+                if _qualified_prefix(value):
+                    # A malformed qualified reference is not compared at all.
+                    continue
                 kind, key, scope = _identifier_kind(finding, source), value, declared
+            elif repository and qualified[0] == "resource:gcp-name" and _repository_path(value):
+                continue
+            else:
+                kind, key, scope = qualified[0], qualified[1], dict(qualified[2])
             group = exact.setdefault((kind, key), {})
             entry = group.setdefault(finding.id, _CorrelationKey(finding, scope, qualified is not None))
             entry.fields.add(source)
