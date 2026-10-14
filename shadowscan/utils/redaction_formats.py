@@ -285,6 +285,11 @@ _SCHEME_TAIL = re.compile(
     + _SCHEME_MARKER
     + r")[A-Za-z0-9+/_.=-])*+)"
 )
+# A run that starts a line after a run that stays ('Bearer [REDACTED]--token\n=x
+# ...'), read as a run that starts a line after the marker.
+_LATER_RUN = re.compile(
+    r"(?i)(?P<head>\n+)(?P<glued>(?:--|=(?=[A-Za-z]))(?:(?!" + _SCHEME_MARKER + r")[A-Za-z0-9+/_.=-])*+)"
+)
 
 
 # A run that starts a later line and holds no value: dashes or an '=' and at most
@@ -341,9 +346,15 @@ def _withhold_scheme_tails(text: str, *, later_lines: bool = False) -> str:
     ``redaction._without_glued_runs``). This step only removes text, so
     whatever the passes withhold stays withheld. Only a run that is one name
     a pass reads (see ``_glued_name_kept``) stays, beside the value it withheld.
+    A run that starts the line after a run that stays is read as one that
+    starts a line after the marker: kept, the name hid it from this step,
+    and the value a pass reads once it goes ('Bearer v--token\\n=abc.def =
+    password: w') was shown, and withheld only on the next sanitization.
     ``later_lines`` withholds only a run that starts a line after its
     marker's (see ``redaction._without_later_line_runs``).
     """
+    if REDACTED not in text:
+        return text
 
     def withheld(match: re.Match[str]) -> str:
         if _glued_name_kept(match.group("glued"), text, match.end()) or (
@@ -357,7 +368,17 @@ def _withhold_scheme_tails(text: str, *, later_lines: bool = False) -> str:
             return match.group("head") + glued[len(glued.rstrip("-+/.=")) :]
         return match.group("head")
 
-    return _SCHEME_TAIL.sub(withheld, text) if REDACTED in text else text
+    pieces: list[str] = []
+    cursor = 0
+    match = _SCHEME_TAIL.search(text)
+    while match is not None:
+        kept = withheld(match)
+        pieces.extend((text[cursor : match.start()], kept))
+        cursor = match.end()
+        following = _LATER_RUN.match(text, cursor) if kept == match.group() else None
+        match = following or _SCHEME_TAIL.search(text, cursor)
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def _redact_jwts(text: str) -> str:

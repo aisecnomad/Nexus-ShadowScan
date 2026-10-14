@@ -1216,7 +1216,9 @@ credential on the line after its scheme is withheld whole, keeping its line
 breaks. In such a text a run that starts the line after a scheme credential
 (`--verbose`, `---`), or a later line after only blank lines or other such
 runs, is withheld as well, with a marker in its place where the rest of the
-line is unchanged. A text with no glued run reads as the earlier rules read
+line is unchanged; so is a run that starts the line after a name glued to the
+credential that stays beside it (`<token>--token`), which was read only on the
+next sanitization, or never after `--token` and `--password`. A text with no glued run reads as the earlier rules read
 it, those runs included where each is only a name or separator (`--verbose`,
 `---`, `=Section=`), unless removing them lets the rules withhold a value
 after them; a run holding a value is removed as before. Finding identity does not use

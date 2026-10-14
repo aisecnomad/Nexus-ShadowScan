@@ -14,7 +14,7 @@ from collections.abc import Callable
 import pytest
 
 hypothesis = pytest.importorskip("hypothesis")
-from hypothesis import given, settings  # noqa: E402
+from hypothesis import example, given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
 from shadowscan.utils import redaction  # noqa: E402
@@ -119,7 +119,7 @@ _SCHEME_PARTS = [
     "SSWS abc123",
 ]
 _FOLLOWING_PARTS = [
-    *("--x9", "=x9", "--password", "=password", "--auth", "--token", "--a=:", "=v1="),
+    *("--x9", "=x9", "--password", "=password", "--auth", "--token", "--a=:", "=v1=", "--cookie"),
     *("--insecure", "---", "=Section=", "--r0", "=abc.def", "--x=abc.def"),
     *("\n", "\n", "\n\n", "\r\n", " ", "\\n", "\t", ": ", " = ", "=", "user: u"),
     *(" password: ", "password: ", " = password: ", "Bearer "),
@@ -198,3 +198,22 @@ def test_sanitize_shows_nothing_the_established_copy_withholds(text: str, short:
         _assert_each_line_shows_only_what_both_readings_show(cleaned, plain, settled)
     for value in (_PLAIN_VALUE, _OPAQUE_VALUE, _SCHEME_CREDENTIAL):
         assert value in established or value not in cleaned
+
+
+@given(text=_SCHEME_TEXTS, short=st.booleans())
+# Shapes the differential harness found: the run after the glued name went
+# only on the second sanitization.
+@example(text=f"Basic {_SCHEME_CREDENTIAL}--auth\n--r0\n=password=v1=: ---", short=False)
+@example(text=f"Bearer {_SCHEME_CREDENTIAL}--token\n=abc.def = password: {_PLAIN_VALUE}", short=True)
+@settings(max_examples=300, deadline=None)
+def test_sanitize_text_and_sanitize_are_idempotent_on_the_scheme_corpus(text: str, short: bool) -> None:
+    """Evidence is sanitized more than once: a second sanitization changes nothing.
+
+    A run that starts the line after a name glued to a scheme credential
+    ('<token>--token\\n=abc.def = password: v') was examined only on the
+    next sanitization, which then withheld the value.
+    """
+    cleaned = sanitize_text(text)
+    assert sanitize_text(cleaned) == cleaned
+    note = sanitize({"note": text}, redact_short_secrets=short)["note"]
+    assert sanitize({"note": note}, redact_short_secrets=short)["note"] == note

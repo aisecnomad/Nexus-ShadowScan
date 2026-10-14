@@ -394,14 +394,21 @@ def test_a_run_that_starts_a_later_line_is_not_removed_silently(text: str, expec
 
 
 @pytest.mark.parametrize("lead", ["", "--r0\n", "--r0\n\n"])
-@pytest.mark.parametrize("credential", [SECRET, SECRET + "--x9"])
-def test_a_value_read_once_the_later_line_runs_go_stays_withheld(credential: str, lead: str) -> None:
+@pytest.mark.parametrize("glued", ["", "--x9", "--auth", "--cookie", "--token", "--password"])
+def test_a_value_read_once_the_later_line_runs_go_stays_withheld(glued: str, lead: str) -> None:
     # A run that starts a later line stays only where removing it changes
     # nothing else. Removed, it can let the passes read the value after it
     # (see _without_glued_runs), and that reading is kept. The value does not
-    # look opaque, so no other rule withholds it.
-    text = f"Bearer {credential}\n{lead}=abc.def = password: hunter2pass"
+    # look opaque, so no other rule withholds it. After a name glued to the
+    # credential that stays ('--token'), the run on the next line was never
+    # examined: the value was shown, after '--auth' or '--cookie' only until
+    # the next sanitization, after '--token' or '--password' on every one.
+    text = f"Bearer {SECRET}{glued}\n{lead}=abc.def = password: hunter2pass"
     assert not _shown(text, "hunter2pass")
+    cleaned = sanitize_text(text)
+    assert sanitize_text(cleaned) == cleaned
+    note = sanitize({"note": text})["note"]
+    assert sanitize({"note": note})["note"] == note
 
 
 @pytest.mark.parametrize("glued", ["--{t}", "=x{t}"])
@@ -726,8 +733,10 @@ _LATER_LINE_VALUE = "Qx7aBcDeFgHiJkLmNp9"
     ],
 )
 @pytest.mark.parametrize("gap", ["\n", "\n\n"])
-def test_a_value_in_a_run_that_starts_a_later_line_stays_withheld(line: str, gap: str) -> None:
-    text = f"Bearer {_LATER_LINE_SECRET}{gap}{line.format(v=_LATER_LINE_VALUE)}"
+@pytest.mark.parametrize("glued", ["", "--auth", "--cookie", "--token", "--password"])
+def test_a_value_in_a_run_that_starts_a_later_line_stays_withheld(glued: str, line: str, gap: str) -> None:
+    # Also after a name glued to the credential that stays beside it.
+    text = f"Bearer {_LATER_LINE_SECRET}{glued}{gap}{line.format(v=_LATER_LINE_VALUE)}"
     assert _LATER_LINE_VALUE[:8] not in sanitize_text(text)
     assert _LATER_LINE_VALUE[:8] not in sanitize({"n": text})["n"]
     assert _LATER_LINE_VALUE[:8] not in sanitize({"n": text}, redact_short_secrets=True)["n"]
