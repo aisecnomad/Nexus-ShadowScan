@@ -5,6 +5,36 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Bounded discovery evidence and attribution (October 14)
+
+- Low-code: shared exact node semantics and bounded, cycle-safe graph reachability
+  for supported n8n, Flowise and Dify exports. Declared paths remain non-scoring
+  metadata and do not prove execution or private-data access.
+- Source inventory: bounded uv, Poetry, pnpm and Cargo lockfile parsing records
+  AI dependencies and only established dependency relationships. Optional raw
+  artifact inspection handles GGUF, safetensors, ONNX metadata and modern
+  PyInstaller archive structures without loading weights or executing code.
+- AWS: retain bounded CloudTrail event and assumed-role lineage with scoped,
+  temporal links and explicit missing/ambiguous provenance. Lifecycle metadata
+  now carries observation windows, coverage and historical/current limitations.
+- Network: DNS-to-flow attribution requires valid times, bounded TTLs and
+  compatible client/sensor context. Expired/future answers and cross-client DNS
+  fallback no longer attribute traffic. JA4 from supplied Zeek logs is retained
+  as non-scoring context; offline scans make no DNS or fingerprint queries.
+- Runtime: opt-in Linux maps, descriptor-link and allowlisted environment-key
+  inspection uses bounded reads, process identity checks and incomplete-scan
+  reporting. Generic ML libraries/model descriptors are inventory evidence;
+  packaging and environment names alone do not establish an agent.
+- Instruction review: MCP documentation URLs and ordinary tool references no
+  longer establish tool poisoning. MCP descriptions and discovered `SKILL.md`
+  files receive bounded direct-instruction heuristics with fixed explanations,
+  source locations and limitations. No described command, URL or tool is invoked.
+
+Rescan after upgrading and retain earlier reports as historical observations.
+Source fingerprints invalidate old incremental/comparison equivalence; lower
+attribution is not evidence that a workload stopped. See the
+[migration notes](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#october-14-bounded-evidence-migration-unreleased).
+
 ### Documentation aligned with the code (October 12)
 
 Documentation only; no scanner behaviour changes.

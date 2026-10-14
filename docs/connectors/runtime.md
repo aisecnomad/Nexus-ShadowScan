@@ -50,7 +50,73 @@ MCP package name are kept.
 Options: `label` (host name for records that carry none; default the host
 name), `max_processes` (live mode bound, default 100,000; reaching it makes
 the scan incomplete) and `input`. A record with neither a command line nor an
-executable makes the scan incomplete.
+executable nor a valid inspection record makes the scan incomplete.
+
+### Optional Linux inspection
+
+`inspect_maps: true` reads mapped-library names and `inspect_fds: true` reads
+descriptor link metadata. Both default to false. This never opens descriptor
+targets, reads process memory, executes code, or loads model weights. Recognized
+library labels are `ggml`, `llama`, `torch`, `onnxruntime`, `tokenizers`, and
+`vllm`; recognized descriptor extensions are `gguf`, `safetensors`, and `onnx`.
+Only those labels are retained, not filesystem paths. An `_MEI` directory is
+recorded as a packaging hint, not as evidence of an agent or a mount.
+
+Environment inspection is separately opt-in through `inspect_env_keys`, a list
+drawn from `OLLAMA_HOST`, `OLLAMA_MODELS`, `VLLM_WORKER_MULTIPROC_METHOD`,
+`VLLM_ATTENTION_BACKEND`, `HF_HOME`, `CUDA_VISIBLE_DEVICES`, and `TGI_HOSTNAME`.
+Only the selected **key names** are retained. Values are discarded, and raw
+records remain excluded from `--dump-records`. Packaging and environment names
+alone produce no finding.
+
+```yaml
+connectors:
+  - name: runtime.processes
+    label: build-host.example.invalid
+    inspect_maps: true
+    inspect_fds: true
+    inspect_env_keys: [OLLAMA_MODELS]
+```
+
+An unrecognized process with a model descriptor is a `local-model` inventory
+finding; one with mapped ML libraries is a `framework-usage` inventory finding.
+Neither establishes agency, unauthorized use, model validity, or evasion.
+Known tool findings retain their existing confidence; inspection adds metadata
+without another scoring signal. Mappings cannot reliably discover arbitrary
+Python imports or memory-only agents. Snapshots cannot establish activity
+outside their observation time.
+
+Process namespace and start ticks are checked before and after inspection;
+changed or exited processes are omitted with a race warning. These identities
+lack a boot ID, so they must not be used for joins across host restarts.
+Permission denial, malformed input and exhausted budgets mark coverage
+incomplete. No root privileges are requested; restricted non-root visibility
+is reported through the existing incomplete-scan mechanism.
+If only inspection identity or its budget is unavailable, independent readable
+command-line detections are retained without inspection attribution. Actual
+process exit or changed namespace/start identity omits that process observation.
+
+| Limit | Default |
+|---|---:|
+| `max_inspection_bytes` per process | 262,144 bytes |
+| `max_inspection_total_bytes` per scan | 16,777,216 bytes |
+| `max_inspection_entries` per scan (mappings, FDs, environment entries) | 100,000 |
+| `max_mappings` per process | 4,096 |
+| `max_fds` per process | 1,024 |
+| `inspection_timeout_seconds` per live collection | 30 seconds |
+
+The connector also checks the engine deadline between reads and entries. Limits
+are positive integers. Reaching a read cap is conservatively incomplete even
+when a file ends exactly at the cap. Reads are bounded and do not block on FIFOs.
+
+Sanitized offline inventories can provide an `inspection` object with the same
+fixed labels, explicit `status` for `maps`, `fds` and `environ`, and process
+`identity` (`pid_namespace`, `start_time_ticks`, both decimal strings). A valid
+PID is required. Statuses are `ok`, `not_requested`, `denied`, `unreadable` or
+`truncated`; indicators require `ok` for their respective source. Optional
+`observed_at` is an ISO timestamp. Offline replay does no live inspection and
+needs no inspection options. See the synthetic
+[inspection fixture](https://github.com/aisecnomad/Project-Nexus/blob/main/tests/fixtures/runtime/inspection.jsonl).
 
 ### Lifecycle corroboration
 

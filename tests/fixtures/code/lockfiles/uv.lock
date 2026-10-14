@@ -1,0 +1,15 @@
+version = 1
+[[package]]
+name = "example"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [{name = "wrapper"}]
+[[package]]
+name = "wrapper"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [{name = "crewai"}]
+[[package]]
+name = "crewai"
+version = "0.80.0"
+source = { registry = "https://pypi.org/simple" }

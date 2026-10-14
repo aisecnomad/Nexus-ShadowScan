@@ -1,0 +1,10 @@
+[[package]]
+name = "crewai"
+version = "0.80.0"
+[package.dependencies]
+httpx = ">=0.27"
+[[package]]
+name = "httpx"
+version = "0.27.0"
+[metadata]
+lock-version = "2.1"

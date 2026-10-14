@@ -505,7 +505,6 @@ def test_source_alias_into_another_project_marks_incomplete(tmp_path, run_connec
     ("link", "target"),
     [
         ("package-lock.json", "sub/package-lock.json"),  # hoisted lockfile
-        ("pnpm-lock.yaml", "node_modules/.pnpm/lock.yaml"),  # into an excluded directory
         ("dist/app.min.js", "build/app.min.js"),  # generated bundle
         ("logo.png", "node_modules/pkg/logo.png"),  # a type the walker never reads
     ],
@@ -1487,3 +1486,299 @@ def test_a_case_variant_settings_file_alone_establishes_its_client(tmp_path, ind
     configs = [f for f in findings if f.kind == Kind.AGENT_CONFIG]
     assert len(configs) == 1 and configs[0].metadata.get("posture"), [f.title for f in findings]
     assert any(e.location.startswith("/".join(parts)) for e in configs[0].evidence)
+
+
+def test_lockfile_inventory_is_separate_and_cannot_establish_agent(tmp_path, run_connector):
+    text = Path("tests/fixtures/code/lockfiles/uv.lock").read_text()
+    (tmp_path / "uv.lock").write_text(text)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    inventory = next(f for f in findings if f.resource_type == "lockfile-inventory")
+    assert inventory.kind == Kind.FRAMEWORK_USAGE
+    assert inventory.confidence == 0.4
+    assert not inventory.capabilities
+    assert inventory.metadata["lockfile_inventory"]["matched_packages"][0]["relationship"] == "transitive"
+    assert not any(f.kind == Kind.AGENT for f in findings)
+    assert not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("name", ["uv.lock", "poetry.lock", "Cargo.lock", "pnpm-lock.yaml"])
+def test_lockfile_oversize_is_incomplete_even_with_skip_glob(tmp_path, run_connector, name):
+    (tmp_path / name).write_text(" " * 256)
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), max_file_size=128, oversize_skip_globs=["*"]
+    )
+    assert not findings
+    assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    ("name", "format_name"),
+    [
+        ("header-only.gguf", "gguf"),
+        ("one.safetensors", "safetensors"),
+        ("minimal.onnx", "onnx"),
+        ("empty-archive.bin", "pyinstaller"),
+    ],
+)
+def test_bounded_artifact_inventory_is_opt_in(tmp_path, run_connector, name, format_name):
+    (tmp_path / name).write_bytes((Path("tests/fixtures/model_artifacts") / name).read_bytes())
+    before, _ = run_connector("code.filesystem", path=str(tmp_path))
+    after, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), inspect_model_artifacts=True, max_file_size=1
+    )
+    assert not any(f.resource_type == "binary-artifact" for f in before)
+    assert len(after) == 1 and not ctx.stats.incomplete
+    assert after[0].metadata["artifact_inventory"]["format"] == format_name
+    assert after[0].kind != Kind.AGENT and not after[0].capabilities
+    assert after[0].metadata["artifact_inventory"]["limitations"]
+
+
+@pytest.mark.parametrize(
+    ("name", "data"),
+    [
+        ("truncated.gguf", b"GGUF"),
+        ("decoy.gguf", b"ordinary text"),
+        ("future.gguf", b"GGUF" + (999).to_bytes(4, "little") + b"\0" * 16),
+        ("bad.safetensors", (2**63).to_bytes(8, "little")),
+        ("decoy.onnx", b"ordinary text"),
+        ("truncated.bin", b"MEI\x0c\x0b\x0a\x0b\x0e"),
+    ],
+)
+def test_bad_selected_artifacts_are_incomplete(tmp_path, run_connector, name, data):
+    (tmp_path / name).write_bytes(data)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert not findings and ctx.stats.incomplete
+
+
+def test_artifact_confined_reader_refuses_links_and_detects_rewrites(tmp_path, monkeypatch):
+    from shadowscan.connectors.code import model_artifacts
+
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(Path("tests/fixtures/model_artifacts/header-only.gguf").read_bytes())
+    link = tmp_path / "linked.gguf"
+    link.symlink_to(artifact)
+    with pytest.raises(OSError):
+        model_artifacts.inspect_artifact(link)
+    monkeypatch.setattr(model_artifacts, "changed_since", lambda *_: True)
+    with pytest.raises(ValueError, match="changed"):
+        model_artifacts.inspect_artifact(artifact)
+
+
+def test_artifact_byte_field_and_scan_limits(tmp_path, monkeypatch):
+    from shadowscan.connectors.code import model_artifacts
+
+    artifact = tmp_path / "model.onnx"
+    artifact.write_bytes(Path("tests/fixtures/model_artifacts/minimal.onnx").read_bytes())
+    with pytest.raises(ValueError, match="at least 128"):
+        model_artifacts.inspect_artifact(artifact, max_bytes=1)
+    monkeypatch.setattr(model_artifacts, "MAX_FIELDS", 1)
+    with pytest.raises(ValueError, match="field limit"):
+        model_artifacts.inspect_artifact(artifact)
+    artifact = tmp_path / "model.safetensors"
+    artifact.write_bytes((1024).to_bytes(8, "little") + b" " * 1024)
+    with pytest.raises(ValueError, match="byte limit"):
+        model_artifacts.inspect_artifact(artifact, max_bytes=128)
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        {"x": {"dtype": "F32", "shape": [2], "data_offsets": [0, 4]}},
+        {"x": {"dtype": "F32", "shape": [1], "data_offsets": [0, 8]}},
+        {"x": {"dtype": "unknown", "shape": [1], "data_offsets": [0, 4]}},
+        {"x": {"dtype": "F32", "shape": [-1], "data_offsets": [0, 4]}},
+        {"x": {"dtype": "F32", "shape": [1], "data_offsets": [True, 4]}},
+        {"x": {"dtype": "F32", "shape": [1], "data_offsets": [1, 4]}},
+        {"x": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4], "extra": "decoy"}},
+        {"__metadata__": {"secret": 7}},
+        [],
+    ],
+)
+def test_safetensors_invalid_shapes_offsets_and_metadata(tmp_path, header):
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    raw = json.dumps(header).encode()
+    artifact = tmp_path / "model.safetensors"
+    artifact.write_bytes(len(raw).to_bytes(8, "little") + raw + b"\0" * 4)
+    with pytest.raises(ValueError):
+        inspect_artifact(artifact)
+
+
+def test_safetensors_duplicate_fields_never_accepted(tmp_path):
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    raw = b'{"x":{},"x":{}}'
+    artifact = tmp_path / "model.safetensors"
+    artifact.write_bytes(len(raw).to_bytes(8, "little") + raw)
+    with pytest.raises(ValueError):
+        inspect_artifact(artifact)
+
+
+def test_pyinstaller_toc_is_checked_without_loading_archive(tmp_path):
+    import struct
+
+    from shadowscan.connectors.code.model_artifacts import PYINSTALLER_MAGIC, inspect_artifact
+
+    payload = b"harmless opaque bytes"
+    toc = struct.pack("!iIIIBc", 23, 0, len(payload), 99999999, 1, b"m") + b"main\0"
+    cookie = struct.pack(
+        "!8sIIII64s",
+        PYINSTALLER_MAGIC,
+        len(payload) + len(toc) + 88,
+        len(payload),
+        len(toc),
+        311,
+        b"python3.11.so",
+    )
+    artifact = tmp_path / "app.bin"
+    artifact.write_bytes(b"prefix" + payload + toc + cookie)
+    result = inspect_artifact(artifact)
+    assert result and result.metadata["entry_count"] == 1
+    broken = bytearray(toc)
+    broken[:4] = (2**31 - 1).to_bytes(4, "big")
+    artifact.write_bytes(b"prefix" + payload + broken + cookie)
+    with pytest.raises(ValueError, match="TOC"):
+        inspect_artifact(artifact)
+
+
+def test_onnx_skips_external_data_instead_of_opening_paths(tmp_path):
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    # The graph initializer body is opaque to this metadata-only inspector.
+    graph = b"\x12\x01x\x2a\x12" + b"../../outside.data"
+    artifact = tmp_path / "external.onnx"
+    artifact.write_bytes(b"\x08\x09\x3a" + bytes([len(graph)]) + graph + b"\x42\x02\x10\x12")
+    result = inspect_artifact(artifact)
+    assert result and result.metadata["validation"] == "protobuf-envelope-only"
+    assert "../../outside" not in str(result)
+
+
+def test_gguf_metadata_and_tensor_descriptor_are_bounded(tmp_path):
+    import struct
+
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    def string(value):
+        return struct.pack("<Q", len(value)) + value
+
+    metadata = string(b"general.alignment") + struct.pack("<II", 4, 32)
+    metadata += string(b"general.architecture") + struct.pack("<I", 8) + string(b"llama")
+    metadata += string(b"example.array") + struct.pack("<IIQ", 9, 4, 2) + struct.pack("<II", 1, 2)
+    descriptor = string(b"x") + struct.pack("<IQIQ", 1, 1, 0, 0)
+    data = b"GGUF" + struct.pack("<IQQ", 3, 1, 3) + metadata + descriptor
+    data += b"\0" * (-len(data) % 32) + b"\0" * 4
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(data)
+    result = inspect_artifact(artifact)
+    assert result and result.metadata["tensor_count"] == 1 and result.metadata["metadata_count"] == 3
+    assert "llama" not in str(result) and result.metadata["bytes_read"] < len(data)
+    artifact.write_bytes(data[:-8])
+    with pytest.raises(ValueError, match="offset"):
+        inspect_artifact(artifact)
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload", "message"),
+    [
+        (999, b"", "metadata type"),
+        (9, b"\x04\0\0\0" + (999999).to_bytes(8, "little"), "array limit"),
+        (8, (2**60).to_bytes(8, "little"), "byte limit"),
+    ],
+)
+def test_gguf_hostile_metadata_lengths_and_types(tmp_path, kind, payload, message):
+    import struct
+
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(
+        b"GGUF" + struct.pack("<IQQQ", 3, 0, 1, 1) + b"x" + struct.pack("<I", kind) + payload
+    )
+    with pytest.raises(ValueError, match=message):
+        inspect_artifact(artifact)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"\x00",  # protobuf field zero
+        b"\x0b",  # groups are not accepted by the envelope reader
+        b"\x08\x80",  # truncated varint
+        b"\x08" + b"\xff" * 10,  # integer overflow
+        b"\x3a\x20x",  # graph extends beyond file
+        b"\x08\x09\x3a\0\x42\x02\x10\x12",  # graph lacks required name
+        b"\x08\x09\x3a\x03\x12\x01x",  # recent IR without opset import
+    ],
+)
+def test_onnx_malformed_envelopes_are_unverified(tmp_path, data):
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    artifact = tmp_path / "model.onnx"
+    artifact.write_bytes(data)
+    with pytest.raises(ValueError):
+        inspect_artifact(artifact)
+
+
+def test_selected_artifact_symlink_and_fifo_mark_incomplete(tmp_path, run_connector):
+    (tmp_path / "linked.gguf").symlink_to(tmp_path / "outside")
+    os.mkfifo(tmp_path / "pipe.safetensors")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert not findings and ctx.stats.incomplete
+    assert any("pipe.safetensors" in issue for issue in ctx.stats.errors + ctx.stats.warnings)
+
+
+def test_supported_lockfile_symlink_is_not_silently_omitted(tmp_path, run_connector):
+    hidden = tmp_path / "node_modules" / "lock.yaml"
+    hidden.parent.mkdir()
+    hidden.write_text("lockfileVersion: 9.0")
+    (tmp_path / "pnpm-lock.yaml").symlink_to(hidden)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert ctx.stats.incomplete
+
+
+def test_artifact_global_budget_is_charged_before_read(tmp_path):
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(Path("tests/fixtures/model_artifacts/header-only.gguf").read_bytes())
+    remaining = 4
+
+    def charge(size):
+        nonlocal remaining
+        if size > remaining:
+            raise ValueError("scan-wide limit exceeded")
+        remaining -= size
+
+    with pytest.raises(ValueError, match="scan-wide"):
+        inspect_artifact(artifact, charge=charge)
+
+
+@pytest.mark.parametrize("value", [True, 127, 1048577, "65536"])
+def test_artifact_budget_option_validation(run_connector, tmp_path, value):
+    with pytest.raises(ConnectorError, match="model_metadata_bytes"):
+        run_connector("code.filesystem", path=str(tmp_path), model_metadata_bytes=value)
+
+
+def test_model_link_into_excluded_directory_remains_incomplete(tmp_path, run_connector):
+    hidden = tmp_path / "node_modules" / "weights.gguf"
+    hidden.parent.mkdir()
+    hidden.write_bytes(Path("tests/fixtures/model_artifacts/header-only.gguf").read_bytes())
+    (tmp_path / "model.gguf").symlink_to(hidden)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("provider", ["github", "gitlab"])
+def test_remote_code_connectors_forward_artifact_options(provider):
+    from shadowscan.connectors.code.github import GitHubConnector
+    from shadowscan.connectors.code.gitlab import GitLabConnector
+
+    cls = GitHubConnector if provider == "github" else GitLabConnector
+    connector = cls(ConnectorContext(config={"inspect_model_artifacts": True, "model_metadata_bytes": 1024}))
+    assert connector._filesystem_options()["inspect_model_artifacts"] is True
+    assert connector._filesystem_options()["model_metadata_bytes"] == 1024
+
+
+def test_large_artifact_reserves_metadata_scan_time():
+    connector = FilesystemConnector(ConnectorContext(config={"inspect_model_artifacts": True}))
+    assert connector._reserved_budget("model.gguf", Path("model.gguf"), 2**40, 10.0) == 2.0

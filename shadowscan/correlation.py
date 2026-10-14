@@ -350,7 +350,64 @@ def _lifecycle_keys(f: Finding, device: str) -> set[tuple[str, str]]:
     return keys
 
 
-def correlate_lifecycle(findings: list[Finding]) -> None:
+def _lifecycle_observation(
+    running: list[Finding],
+    observation_window: tuple[str, str] | None,
+    runtime_coverage: str,
+) -> dict[str, Any]:
+    """Describe recency without treating a process snapshot as continuous surveillance."""
+    start = parse_timestamp(observation_window[0]) if observation_window else None
+    end = parse_timestamp(observation_window[1]) if observation_window else None
+    window = {"start": to_iso(start), "end": to_iso(end)} if start and end and start <= end else None
+    samples: list[dict[str, Any]] = []
+    times = []
+    missing = False
+    for process in sorted(running, key=lambda f: f.id):
+        # Runtime first/last_seen historically include process start times.
+        # Birth time cannot stand in for the inventory's observation time.
+        stamp = parse_timestamp(process.metadata.get("observed_at"))
+        if stamp is None:
+            missing = True
+        else:
+            times.append(stamp)
+        if len(samples) < 50:
+            samples.append({"finding_id": process.id, "observed_at": to_iso(stamp) if stamp else None})
+    status = "unknown"
+    reason = "no-linked-runtime-observation"
+    if running:
+        reason = "missing-observation-timestamp" if missing else "no-comparable-observation-window"
+    if window and start and end and times:
+        if any(start <= stamp <= end for stamp in times):
+            status, reason = "observed-in-window", "timestamped-process-observation"
+        elif all(stamp < start for stamp in times) and not missing:
+            status, reason = "historical", "outside-observation-window"
+        elif any(stamp > end for stamp in times):
+            reason = "future-observation-timestamp"
+    return {
+        "status": status,
+        "reason": reason,
+        "window": window,
+        "runtime_coverage": runtime_coverage,
+        "coverage_scope": "connector-run-only; not device or continuous time-window coverage",
+        "observations": samples,
+        "observation_count": len(running),
+        "observations_truncated": len(running) > len(samples),
+        "last_seen": to_iso(max(times)) if times else None,
+        "current_execution": "not-established",
+        "limitations": [
+            "Process inventories are point-in-time observations, not continuous runtime coverage.",
+            "Missing, denied or out-of-scope telemetry never establishes inactivity, zombie or ghost status.",
+            "Tool/device links describe observations, not a unique agent, process lifetime or approval.",
+        ],
+    }
+
+
+def correlate_lifecycle(
+    findings: list[Finding],
+    *,
+    observation_window: tuple[str, str] | None = None,
+    runtime_coverage: str = "unknown",
+) -> None:
     """Link endpoint findings to processes of the same tool on the same device.
 
     A configured or installed tool with a running process on the same device
@@ -359,11 +416,19 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
     risk. Devices match by their full account/device identity; a short host name
     does not implicitly match an FQDN or a host in another DNS domain. MCP
     configurations match a running MCP server only through the same package.
+    ``running`` and the legacy tag describe a recorded observation, not current
+    execution. ``lifecycle_observation`` describes its recency within the supplied
+    scan window; without a window or timestamps recency remains unknown. Coverage
+    is diagnostic only and never promotes an absence into inactivity or a state
+    such as zombie. Replaying the same window is deterministic.
     """
     groups: dict[tuple[str, str], list[Finding]] = {}
+    if runtime_coverage not in {"unknown", "collected", "export-only", "incomplete", "not-collected"}:
+        runtime_coverage = "unknown"
     for f in findings:
         # Repeated calls replace earlier results.
         f.metadata.pop("lifecycle", None)
+        f.metadata.pop("lifecycle_observation", None)
         f.evidence[:] = [ev for ev in f.evidence if ev.signal != "lifecycle:observed-running"]
         if f.surface == Surface.ENDPOINT:
             # Endpoint runtime tags are derived from this pass. Runtime
@@ -371,6 +436,9 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
             f.tags[:] = [tag for tag in f.tags if tag != "observed-running"]
         if _LIFECYCLE_STATES.get((f.surface, f.kind)) is None:
             continue
+        f.metadata["lifecycle_observation"] = _lifecycle_observation(
+            [f] if f.kind == Kind.RUNTIME_PROCESS else [], observation_window, runtime_coverage
+        )
         device = _device_key(f.account)
         if device is None:
             continue
@@ -384,19 +452,25 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
         running = [f for f in members if f.kind == Kind.RUNTIME_PROCESS]
         for f in members:
             entry = linked.setdefault(
-                f.id, {"finding": f, "states": set(), "subjects": set(), "related": set()}
+                f.id, {"finding": f, "states": set(), "subjects": set(), "related": set(), "processes": {}}
             )
             entry["states"].update(states)
             entry["subjects"].add(subject)
             entry["related"].update(o.id for o in members if o.id != f.id)
+            entry["processes"].update({o.id: o for o in running})
             if f.kind != Kind.RUNTIME_PROCESS:
                 entry.setdefault("running", set()).update((o.owner or "", o.id) for o in running)
     for entry in linked.values():
         f = entry["finding"]
+        observation = _lifecycle_observation(
+            list(entry["processes"].values()), observation_window, runtime_coverage
+        )
+        f.metadata["lifecycle_observation"] = observation
         lifecycle: dict[str, Any] = {
             "states": [s for s in _LIFECYCLE_ORDER if s in entry["states"]],
             "subjects": sorted(entry["subjects"]),
             "related": sorted(entry["related"])[:20],
+            "observation": observation,
         }
         if "running" in entry:
             same_user = sorted({fid for owner, fid in entry["running"] if owner and owner == f.owner})
@@ -406,7 +480,7 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
                 Evidence(
                     signal="lifecycle:observed-running",
                     description=(
-                        f"{len(entry['running'])} running-process finding(s) for the same tool on this device"
+                        f"{len(entry['running'])} recorded process observation(s) for this tool and device"
                         + (" and account" if same_user else "")
                     ),
                     weight=0.0,

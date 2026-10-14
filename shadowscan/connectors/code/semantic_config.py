@@ -11,7 +11,7 @@ import json
 import re
 import tomllib
 import xml.etree.ElementTree as ET
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import PurePosixPath
@@ -21,6 +21,14 @@ from xml.parsers.expat import errors as expat_errors
 
 import yaml
 
+from shadowscan.connectors.lowcode.graph import (
+    FLOWISE_AGENT_TYPES,
+    MAX_GRAPH_DOCUMENTS,
+    N8N_AGENT_TYPES,
+    N8N_INVENTORY_TYPES,
+    analyze_workflow_graph,
+    is_workflow_graph,
+)
 from shadowscan.connectors.mcp_risk import _plaintext_remote
 from shadowscan.signatures.matcher import Match, SignatureIndex
 from shadowscan.utils.jsonc import load_json_lenient
@@ -75,7 +83,7 @@ def _nonempty(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def _choice(value: Any, values: set[str]) -> bool:
+def _choice(value: Any, values: Collection[str]) -> bool:
     return isinstance(value, str) and value in values
 
 
@@ -505,19 +513,29 @@ def _node_graph_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
         node_type = node.get("type")
         if "disabled" in node and node["disabled"] is not False:
             continue
-        if isinstance(node_type, str) and node_type.startswith(
-            ("@n8n/n8n-nodes-langchain.", "n8n-nodes-base.")
-        ):
+        if isinstance(node_type, str) and node_type in N8N_INVENTORY_TYPES | {
+            "n8n-nodes-base.code",
+            "n8n-nodes-base.executeCommand",
+            "n8n-nodes-base.ssh",
+        }:
             yield "platform.n8n", json.dumps({"type": node_type})
         node_data = node.get("data")
-        if not isinstance(node_data, dict):
+        if not isinstance(node_data, dict) or node_data.get("disabled"):
             continue
         if _choice(
-            node_data.get("category"), {"Agents", "Multi Agents", "Sequential Agents", "Agentflow"}
-        ) and _nonempty(node_data.get("name")):
+            node_data.get("category"),
+            {"Agents", "Multi Agents", "Sequential Agents", "Agentflow", "Agent Flows"},
+        ) and _choice(node_data.get("name"), FLOWISE_AGENT_TYPES):
             yield (
                 "platform.flowise",
-                json.dumps({"category": node_data["category"], "name": node_data["name"]}),
+                json.dumps(
+                    {
+                        "category": "Agentflow"
+                        if node_data["category"] == "Agent Flows"
+                        else node_data["category"],
+                        "name": node_data["name"],
+                    }
+                ),
             )
         if node_data.get("type") == "Agent" and isinstance(node_data.get("node"), dict):
             yield "platform.langflow", json.dumps({"type": "Agent", "display_name": "Agent"})
@@ -557,12 +575,18 @@ def _dify_signals(data: dict[str, Any]) -> Iterator[tuple[str, str]]:
             and _nonempty(model_spec.get("name"))
         )
         has_nodes = isinstance(graph_spec, dict) and any(
-            isinstance(node.get("data"), dict) and _choice(node["data"].get("type"), {"agent", "llm", "tool"})
+            isinstance(node.get("data"), dict)
+            and not node.get("disabled")
+            and not node["data"].get("disabled")
+            and _choice(node["data"].get("type"), {"agent", "llm", "tool"})
             for node in _objects(graph_spec.get("nodes"))
         )
         if has_model or has_nodes:
             has_agent_nodes = isinstance(graph_spec, dict) and any(
-                isinstance(node.get("data"), dict) and node["data"].get("type") == "agent"
+                isinstance(node.get("data"), dict)
+                and not node.get("disabled")
+                and not node["data"].get("disabled")
+                and node["data"].get("type") == "agent"
                 for node in _objects(graph_spec.get("nodes"))
             )
             declaration = "kind: app\nmode: " + app["mode"]
@@ -798,7 +822,8 @@ def structured_code_matches(
         issues.append("invalid structured configuration syntax")
         return []
     matches: list[Match] = []
-    seen: set[tuple[str, str]] = set()
+    seen: dict[tuple[str, str], list[Match]] = {}
+    graph_count = 0
     for data in documents:
         if not isinstance(data, dict):
             continue
@@ -807,11 +832,31 @@ def structured_code_matches(
         except ValueError:
             limits.append("structured configuration contains ambiguous field aliases")
             return []
+        if graph_count >= MAX_GRAPH_DOCUMENTS and is_workflow_graph(data):
+            if graph_count == MAX_GRAPH_DOCUMENTS:
+                limits.append("workflow graph export exceeds document budget")
+            graph_count += 1
+            continue
+        graph = analyze_workflow_graph(data)
+        if graph is not None:
+            graph_count += 1
+        if graph and graph.issues:
+            limits.extend(graph.issues)
+            continue
         for signature, projection in chain(_projected_signals(data), _coding_agent_signals(rel, data)):
-            if (signature, projection) in seen:
-                continue
-            seen.add((signature, projection))
-            matches.extend(_matches(index, signature, projection))
+            key = (signature, projection)
+            if key not in seen:
+                seen[key] = _matches(index, signature, projection)
+                matches.extend(seen[key])
+            if graph is not None and signature == "platform." + graph.metadata["provider"]:
+                for match in seen[key]:
+                    existing = match.extra.get("workflow_graph")
+                    if existing is None:
+                        match.extra["workflow_graph"] = graph.metadata
+                    elif existing != graph.metadata:
+                        graphs = match.extra.setdefault("workflow_graphs", [existing])
+                        if graph.metadata not in graphs:
+                            graphs.append(graph.metadata)
     return matches
 
 
@@ -835,11 +880,7 @@ def _matches(index: SignatureIndex, signature: str, projection: str) -> list[Mat
         match.extra["structured_config"] = True
         if signature == "platform.n8n":
             node_type = json.loads(projection).get("type", "")
-            match.extra["verified_agent"] = match.signature_id == signature and node_type in {
-                "@n8n/n8n-nodes-langchain.agent",
-                "@n8n/n8n-nodes-langchain.agentTool",
-                "@n8n/n8n-nodes-langchain.openAiAssistant",
-            }
+            match.extra["verified_agent"] = match.signature_id == signature and node_type in N8N_AGENT_TYPES
         elif signature == "platform.dify":
             match.extra["verified_agent"] = "agent_mode:\n  enabled: true" in projection
     return matches

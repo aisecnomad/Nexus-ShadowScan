@@ -32,6 +32,8 @@ Offline input: n/a (path is the input).
 | `max_ast_nodes` | Python syntax-tree nodes analyzed per file for import-bound evidence (default 50000); a larger file keeps its lexical evidence and is reported as partially analyzed: a warning under test paths, an error elsewhere |
 | `scan_timeout` | matching budget in CPU seconds per file up to 256 KiB (default 2); one more budget per further 256 KiB, capped at 10 seconds or scan\_timeout when higher; elapsed time ends a file at four times the budget |
 | `scan_secrets` | detect provider credentials (default true) |
+| `inspect_model_artifacts` | opt in to bounded GGUF/safetensors/ONNX header and PyInstaller footer inventory; never executes or loads tensor payloads (default false) |
+| `model_metadata_bytes` | maximum bytes read per selected binary/model artifact (128..1048576; default 65536) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |
 | `include_tests` | let test and fixture code establish agents and credential findings at full weight (default false) |
@@ -77,6 +79,8 @@ Offline input: directory of cloned repositories.
 | `max_files` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_entries` | forwarded to the filesystem scanner (see code.filesystem) |
 | `scan_secrets` | forwarded to the filesystem scanner (see code.filesystem) |
+| `inspect_model_artifacts` | forwarded to the filesystem scanner (checkout mode; see code.filesystem) |
+| `model_metadata_bytes` | forwarded to the filesystem scanner (see code.filesystem) |
 | `clone_depth` | git clone depth (default 1) |
 | `clone_max_bytes` | provider size preflight and observed checkout size cap (default 268435456); strict disk limits require an OS quota |
 | `clone_timeout_seconds` | per-repository git clone deadline (default 120) |
@@ -114,6 +118,8 @@ Offline input: directory of cloned projects.
 | `max_files` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_entries` | forwarded to the filesystem scanner (see code.filesystem) |
 | `scan_secrets` | forwarded to the filesystem scanner (see code.filesystem) |
+| `inspect_model_artifacts` | forwarded to the filesystem scanner (checkout mode; see code.filesystem) |
+| `model_metadata_bytes` | forwarded to the filesystem scanner (see code.filesystem) |
 | `input` | offline: directory of cloned projects |
 
 Also accepted: `label`, `max_input_bytes`, `max_input_file_bytes`, `max_input_files`.
@@ -777,6 +783,8 @@ Offline input: Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON
 | `format` | force the input format: zeek\|route53\|vpc-flow\|generic (default auto, per record) |
 | `label` | network or sensor name used in resource ids and as the finding account (default: network) |
 | `max_records` | stop after N records (default 10,000,000) |
+| `dns_max_ttl_seconds` | cap DNS attribution validity at N seconds (default 86400, maximum 604800) |
+| `dns_clock_skew_seconds` | extend DNS expiry by N seconds; never allow future answers (default 0, maximum 60) |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
@@ -793,6 +801,15 @@ Offline input: JSON / JSONL / CSV process inventories (osquery, Defender, CrowdS
 | --- | --- |
 | `label` | host name used when records carry none (default: the host name) |
 | `max_processes` | maximum processes read from /proc in live mode (default 100,000) |
+| `inspect_maps` | live only: inspect bounded mapped-library names (default false) |
+| `inspect_fds` | live only: inspect descriptor links, never targets (default false) |
+| `inspect_env_keys` | live only: allowlisted environment key names to inspect (default empty) |
+| `max_inspection_bytes` | maximum inspection bytes per process (default 262,144) |
+| `max_inspection_total_bytes` | maximum inspection bytes across the scan (default 16,777,216) |
+| `max_inspection_entries` | maximum mappings, descriptors and environment entries per scan (100,000) |
+| `max_mappings` | maximum mappings per process (default 4,096) |
+| `max_fds` | maximum descriptors per process (default 1,024) |
+| `inspection_timeout_seconds` | maximum live inspection duration in seconds (default 30) |
 | `input` | offline: osquery processes results, Defender DeviceProcessEvents, CrowdStrike process events or JSON/CSV with a command line or executable |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |

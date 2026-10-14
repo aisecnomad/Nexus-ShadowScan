@@ -571,7 +571,7 @@ A file the scanner reads that is a Git LFS pointer (a checkout or offline clone
 made without git-lfs) is not the content it stands for: it is reported as
 `Git LFS pointer file, not the content it stands for; coverage incomplete` (an
 error under `strict_coverage`) and not analyzed. A pointer in place of a file
-the scanner never reads, such as an image or a model, is not a gap.
+the scanner never reads, such as an image or a model while optional model inspection is off, is not a gap.
 Import-bound analysis is skipped for a Python module none of whose imports can
 resolve to a signature: no import, and no attribute of an imported module, forms
 an import statement that a signature's import pattern could match. Such a module
@@ -1030,3 +1030,63 @@ it does not replace a filesystem/container disk quota.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.
+
+## Locked dependency inventory
+
+The filesystem scanner now parses `uv.lock` v1, Poetry lock versions 1.1/2.0/2.1,
+`pnpm-lock.yaml` versions 6/9 and `Cargo.lock` versions 3/4. These are separate
+`lockfile-inventory` findings when a locked dependency matches an AI signature.
+They carry `dependency-inventory-only`, a single possible-confidence observation,
+and no agent capabilities. Repeated packages do not corroborate source execution.
+The metadata records total packages, edge count, matching packages, source type
+and limitations; it omits source URLs, credentials and package-manager scripts.
+
+`direct` and `transitive` describe reachability only where the lockfile supplies
+explicit roots and unambiguous package/version references (uv root packages or
+pnpm importers). Cargo and Poetry without a root manifest remain `unknown`.
+Aliases resolve to their recorded package name; workspace links, peer-qualified
+variants, remote sources, ambiguous versions, optional conditions and environment markers are not resolved.
+Nothing installs dependencies or launches a package manager. Presence in a lock
+file does not establish installation, execution, agency or authorization.
+
+Parsing is limited to the smaller of `max_file_size` and 1,000,000 UTF-8 bytes,
+4,096 packages, 16,384 dependency edges and 50,000 structural nodes/depth 64.
+Malformed inputs, unsupported format versions and exceeded limits are incomplete.
+The supported lockfiles no longer bypass analysis through oversize skip globs;
+other lockfile formats retain the documented exclusions.
+
+## Optional model and packaged-binary inventory
+
+Set `inspect_model_artifacts: true` on `code.filesystem` to inspect `.gguf`,
+`.safetensors`, `.onnx`, `.exe`, `.bin`, `.pkg` and extensionless files within the
+selected include/exclude scope. This is off by default. `code.github` and
+`code.gitlab` forward the option for checkout scans. Model payloads may exceed
+`max_file_size`: the reader seeks across payloads and reads only bounded metadata.
+`model_metadata_bytes` controls the cumulative per-file read budget (default
+65,536, allowed 128–1,048,576); each root also has a 32 MiB aggregate metadata-read
+budget, the ordinary entry/deadline budgets and an 8,192-field limit.
+
+- GGUF v2/v3: literal magic, header counts, bounded metadata and tensor descriptors;
+  tensor payloads and quantization semantics are not validated.
+- safetensors: bounded length-prefixed strict JSON, shape/dtype sizes and contiguous
+  payload offsets; metadata values and tensor names are not included in output.
+- ONNX: a bounded protobuf-envelope check of supported IR versions 1–13, graph and
+  opset presence. ONNX has no fixed magic. This is candidate format evidence,
+  not semantic model validation. Tensor/external-data paths are never followed.
+- PyInstaller: bounded tail-cookie and TOC checks for modern Python 3 archives.
+  Legacy cookies and cookies beyond the bounded tail search are unsupported.
+  Entries are never extracted, decompressed, imported or executed.
+
+Findings use `local-model` or `infra` for packaging, carry
+`artifact-inventory-only`, and explicitly leave execution and agency unobserved.
+An empty GGUF header is not a usable model; PyInstaller alone is not AI evidence.
+Unreadable or malformed selected formats, unsupported headers, truncated reads,
+changed files and budget exhaustion mark coverage incomplete. All reads use
+confined regular-file handles; symlinks, FIFOs and device files are never opened
+as model payloads. Headers are an inventory aid, not a guarantee that an artifact
+is safe to load. No deserializer, inference engine or scanned executable runs.
+
+Format references: [GGUF](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md),
+[safetensors](https://github.com/safetensors/safetensors/blob/main/README.md),
+[ONNX protobuf](https://github.com/onnx/onnx/blob/main/onnx/onnx.proto), and
+[PyInstaller archive reader](https://github.com/pyinstaller/pyinstaller/blob/develop/PyInstaller/archive/readers.py).

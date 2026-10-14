@@ -72,6 +72,36 @@ CloudTrail collection is enabled. The notice does not mark the scan incomplete:
 no returned callers still does not establish absence of runtime activity. A
 failed or denied `LookupEvents` call does mark it incomplete.
 
+CloudTrail exports can include normalized `cloudtrail-event` records or raw
+CloudTrail event objects with `_kind: cloudtrail-event`. Model invocation events
+(including `ConverseStream`) and STS assumption events may be replayed together.
+`metadata.cloudtrail_lineage` retains bounded event IDs, recipient account,
+region, timestamp, caller ARN, session issuer ARN and source identity. Request
+bodies and credential identifiers/values are never retained. STS records supply
+context only and never independently produce an AI finding. Exact duplicate
+event IDs within the same recipient/region scope do not inflate invocation
+counts; conflicting IDs make coverage incomplete and prevent lineage binding.
+
+A parent assumption is linked only when its returned session ARN and role ARN
+exactly match the invocation's principal and session issuer, its target account
+matches those ARNs, its creation timestamp matches the session creation time,
+and the invocation lies within an explicitly exported expiration (at most 12
+hours). Source identities must agree when supplied by the invocation. Multiple
+candidates remain ambiguous. STS and invocation regions may differ; their scopes
+are retained rather than treated as interchangeable event identities. The same
+rules follow up to eight observed STS ancestry hops; `chain_status` distinguishes
+an observed non-session origin, partial exports, ambiguity, cycles and depth
+limits. A missing predecessor never becomes an inferred edge. Even a chain
+ending at an observed origin does not prove effective access or completeness of
+the provider's audit record. Missing assumption events, session times or data
+events leave the relationship unlinked, never absent.
+
+Lineage retains at most 2,000 events per connector run and 100 observations per
+caller. Reaching a limit, malformed metadata, or invalid event timestamps marks
+coverage incomplete; valid invocation evidence is preserved. The synthetic
+fixture `tests/fixtures/cloud/lineage/assumed_session.jsonl` exercises a
+cross-account assumption, cross-region `ConverseStream`, and a non-AI control.
+
 Lambda `Environment.Error` is unknown environment coverage, not an empty set of
 variables. The `environment_coverage` marker survives sanitized exports and replay;
 other valid function evidence is retained while completeness fails.

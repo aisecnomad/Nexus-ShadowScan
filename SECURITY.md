@@ -33,6 +33,22 @@ coverage, even when a response includes an empty collection field.
 
 ## Implemented controls and limits
 
+* Optional filesystem model/artifact inspection uses confined regular-file
+  access, file identity checks and bounded metadata reads. It never executes
+  packaged code, unpickles objects, loads tensor data or follows ONNX external
+  data references. A recognized format is inventory evidence, not a working
+  model or an agent. Lockfile parsing never runs a package manager.
+* Optional Linux runtime inspection reads bounded maps and descriptor-link
+  metadata and, separately, allowlisted environment key names. It never opens
+  descriptor targets or `/proc/<pid>/mem`, and environment values and mapped
+  paths are not retained. PID namespace/start identity checks reject changed
+  observations; denied or truncated selected inspection remains incomplete.
+  These observations cannot establish arbitrary memory-only Python execution.
+* MCP/skill instruction review is static and bounded. It emits fixed heuristic
+  explanations and locations, not a safety verdict, and never launches a
+  discovered server, invokes a described tool or follows a supplied URL.
+  Zeek JA4 ingestion and temporal DNS attribution likewise operate solely on
+  supplied records; neither introduces live capture or DNS queries.
 * Source and manifest inputs are decoded from UTF-8, from UTF-16 or UTF-32
   with a byte-order mark, and for Python from the declared PEP 263 codec. An
   analyzed file with binary or undecodable content (dense NUL bytes, mostly invalid

@@ -95,7 +95,7 @@ def test_merging_duplicate_observations_does_not_inflate_a_repeated_signal():
 
 
 @pytest.mark.parametrize("prompts", [1, 3])
-def test_n8n_system_prompts_are_one_supporting_signal(tmp_path, run_connector, prompts):
+def test_n8n_prompt_library_does_not_establish_an_ai_workflow(tmp_path, run_connector, prompts):
     workflow = {
         "id": "wf-1",
         "name": "Prompt library",
@@ -107,6 +107,33 @@ def test_n8n_system_prompts_are_one_supporting_signal(tmp_path, run_connector, p
     export = tmp_path / "workflows.json"
     export.write_text(json.dumps([workflow]))
     findings, ctx = run_connector("lowcode.n8n", input=str(export))
+    # A Set node can store instructional examples without calling any model.
+    # Previously, arbitrary parameter scanning manufactured a 0.3-confidence
+    # AI workflow from these strings. Exact node semantics remove that decoy.
+    assert not ctx.stats.incomplete and findings == []
+
+
+@pytest.mark.parametrize("agents", [1, 3])
+def test_n8n_repeated_real_agent_nodes_preserve_grouped_confidence(tmp_path, run_connector, agents):
+    workflow = {
+        "id": "wf-1",
+        "name": "Declared agents",
+        "nodes": [
+            {
+                "name": f"Agent {i}",
+                "type": "@n8n/n8n-nodes-langchain.agent",
+                "parameters": {"systemMessage": prompt},
+            }
+            for i, prompt in enumerate(SYSTEM_PROMPTS[:agents])
+        ],
+    }
+    export = tmp_path / "workflows.json"
+    export.write_text(json.dumps([workflow]))
+    findings, ctx = run_connector("lowcode.n8n", input=str(export))
     assert not ctx.stats.incomplete and len(findings) == 1
-    assert len(findings[0].evidence) == prompts
-    assert findings[0].confidence == 0.3 and findings[0].likelihood == Likelihood.POSSIBLE
+    finding = findings[0]
+    assert finding.kind == Kind.AGENT
+    assert finding.confidence == 0.99 and finding.likelihood == Likelihood.STRONG
+    assert {item.signal for item in finding.evidence} == {"code:platform.n8n", "n8n:ai-steps"}
+    assert len(finding.evidence) == 2  # repeated identical node matches are deduplicated
+    assert finding.metadata["workflow_graph"]["potential_input_ai_egress_path"] is None

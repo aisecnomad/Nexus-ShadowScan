@@ -34,6 +34,11 @@ from shadowscan.connectors.common import (
     model_matches,
     name_matches,
 )
+from shadowscan.connectors.lowcode.graph import (
+    N8N_AGENT_TYPES,
+    N8N_INVENTORY_TYPES,
+    analyze_workflow_graph,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -247,6 +252,12 @@ class N8nConnector(_AutomationBase):
         return EVENT
 
     def _n8n_finding(self, w: dict[str, Any]) -> Finding | None:
+        graph = analyze_workflow_graph(w, provider="n8n")
+        assert graph is not None
+        if graph.issues:
+            for issue in graph.issues:
+                self.ctx.warn(f"lowcode.n8n: {issue}; graph coverage incomplete")
+            return None
         # Exported blueprints can contain useful AI evidence without a provider
         # object ID. A display name (or the string "None") is not that identity.
         workflow_id = w.get("id")
@@ -262,22 +273,16 @@ class N8nConnector(_AutomationBase):
             if self._record_fields_valid(
                 node,
                 required=("type",),
-                strings=("name",),
+                strings=("name", "type"),
                 mappings=("parameters",),
             )
         ]
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
+        nodes = [node for node in nodes if "disabled" not in node or node["disabled"] is False]
         types = [str(n.get("type", "")) for n in nodes]
         ai_steps = [
-            f"{n.get('name')} ({n.get('type')})"
-            for n in nodes
-            if re.search(
-                r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
-                r"|\.agent$|mcp",
-                str(n.get("type", "")),
-                re.I,
-            )
+            f"{n.get('name')} ({n.get('type')})" for n in nodes if n.get("type") in N8N_INVENTORY_TYPES
         ]
         # 'Respond to Webhook' is the reply step of a chat or form workflow, not a
         # trigger: counting it would read a person-operated workflow as event-run.
@@ -298,13 +303,13 @@ class N8nConnector(_AutomationBase):
                 )
             )
             for n in nodes
-            if get_path(n, "parameters.model", "parameters.modelId")
+            if n.get("type") in N8N_INVENTORY_TYPES and get_path(n, "parameters.model", "parameters.modelId")
         ]
         f = self._workflow_finding(
             wid=str(workflow_id),
             name=w.get("name") or "Unnamed workflow",
             blob=json.dumps(
-                {"nodes": [{"type": n.get("type"), "parameters": n.get("parameters")} for n in nodes]},
+                {"nodes": [{"type": n.get("type")} for n in nodes if n.get("type") in N8N_INVENTORY_TYPES]},
                 default=str,
             )[:300_000],
             owner=get_path(w, "homeProject.name", "shared.0.project.name", "owner", "createdBy"),
@@ -314,13 +319,10 @@ class N8nConnector(_AutomationBase):
             updated=w.get("updatedAt"),
             triggers=triggers,
             ai_steps=ai_steps,
-            kind=(
-                Kind.AGENT
-                if any(t.endswith(".agent") or t.endswith("agentTool") for t in types)
-                else Kind.WORKFLOW
-            ),
+            kind=(Kind.AGENT if any(t in N8N_AGENT_TYPES for t in types) else Kind.WORKFLOW),
             resource_type="workflow" if identified else "unresolved-workflow",
             extra={
+                "workflow_graph": graph.metadata,
                 "node_count": len(nodes),
                 "node_types": sorted(set(types))[:40],
                 "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)],

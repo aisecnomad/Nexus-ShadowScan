@@ -43,6 +43,7 @@ from shadowscan.connectors.base import (
     _non_negative_limit,
     _positive_limit,
 )
+from shadowscan.connectors.cloud.aws_lineage import ASSUME_OPERATIONS, CloudTrailLineage, normalize_detail
 from shadowscan.connectors.cloud.aws_registry import (
     AGENT_REGISTRY,
     AGENTCORE_REGISTRY,
@@ -1529,6 +1530,7 @@ class AwsConnector(BaseConnector):
         invalid_account = False
         failure: Exception | None = None
         callers: dict[str, dict[str, Any]] = {}
+        lineage = CloudTrailLineage(self.ctx.warn)
         dispatch = RecordDispatch(self, "account", "cloudtrail-event")
         self._registry_tainted = False
         received = 0
@@ -1552,10 +1554,17 @@ class AwsConnector(BaseConnector):
                             raise ValueError("account")
                         accounts.add(account)
                     elif kind == "cloudtrail-event":
+                        if "userIdentity" in rec:
+                            rec = normalize_detail(rec, rec.get("_region"))
                         for field in _CLOUDTRAIL_TEXT_FIELDS:
                             if rec.get(field) is not None and not isinstance(rec[field], str):
                                 raise ValueError("event field")
-                        self._acc_caller(callers, rec)
+                        if rec.get("eventName") not in {*CLOUDTRAIL_EVENTS, *ASSUME_OPERATIONS}:
+                            continue
+                        if not lineage.add(rec) or rec.get("eventName") in ASSUME_OPERATIONS:
+                            continue
+                        if rec.get("eventName") in CLOUDTRAIL_EVENTS:
+                            self._acc_caller(callers, rec)
                     else:
                         f = dispatch.handlers[kind](rec)
                         if f:
@@ -1581,7 +1590,9 @@ class AwsConnector(BaseConnector):
         for key, agg in callers.items():
             self.ctx.check_deadline()
             try:
-                pending.append(self._caller_finding(key, agg))
+                finding = self._caller_finding(key, agg)
+                finding.metadata["cloudtrail_lineage"] = lineage.for_principal(key)
+                pending.append(finding)
             except RECORD_ERRORS:
                 self.ctx.warn("cloud.aws: invalid aggregated caller fields")
         for f in pending:
@@ -3111,23 +3122,20 @@ def _cloudtrail_record(ev: dict[str, Any], region: str) -> dict[str, Any] | None
     """
     try:
         detail = strict_json_loads(ev.get("CloudTrailEvent") or "{}")
+        if not isinstance(detail, dict):
+            return None
+        return normalize_detail(
+            {
+                **detail,
+                "eventID": detail.get("eventID") or ev.get("EventId"),
+                "eventName": detail.get("eventName") or ev.get("EventName"),
+                "eventTime": detail.get("eventTime") or _optional_str(ev.get("EventTime")),
+                "eventSource": detail.get("eventSource") or ev.get("EventSource"),
+            },
+            region,
+        )
     except (ValueError, RecursionError):
         return None
-    ident = detail.get("userIdentity") or {}
-    return {
-        "_kind": "cloudtrail-event",
-        "_region": region,
-        "eventName": ev.get("EventName"),
-        "eventTime": str(ev.get("EventTime")),
-        "eventSource": ev.get("EventSource"),
-        "principal": ident.get("arn") or ident.get("principalId"),
-        "identityType": ident.get("type"),
-        "userAgent": detail.get("userAgent"),
-        "sourceIp": detail.get("sourceIPAddress"),
-        "modelId": (detail.get("requestParameters") or {}).get("modelId")
-        or (detail.get("requestParameters") or {}).get("agentId"),
-        "errorCode": detail.get("errorCode"),
-    }
 
 
 def _bedrock_malformed_functions(ags: list[Any]) -> int:

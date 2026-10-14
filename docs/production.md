@@ -7,6 +7,39 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 14 bounded evidence migration (Unreleased)
+
+Rescan affected inputs after updating to this revision. The scanner-source
+fingerprint changes; keep previous reports as historical observations and build
+a fresh comparison baseline. A reduced flow count or poisoning label is not
+proof that an agent stopped running or that a tool became safe.
+
+- DNS attribution now requires a matching client/context and an answer valid at
+  the flow timestamp. Logs without TTLs or timestamps retain service observations
+  but cannot claim attributed flow bytes or cadence from those answers. JA4 log
+  values are context only; neither feature introduces network access.
+- Graph paths, AWS lineage and lifecycle assessments add explained metadata.
+  They do not provide canonical agent identity, effective permissions, approval,
+  exfiltration proof, or complete visibility. Missing runtime scope is unknown,
+  and old observations remain historical even when they name the same tool.
+- Supported lockfiles add dependency inventory, which may increase inventory
+  totals without establishing active agents. Unknown dependency relationships
+  remain unknown. No package manager or dependency installer runs.
+- Raw model/binary inspection and Linux maps/descriptor inspection require
+  explicit connector options. Review the source/runtime guides for byte, entry
+  and time bounds before enabling them. Denied or truncated selected inspection
+  makes coverage incomplete; do not grant root merely to erase that limitation.
+- Static MCP/skill instruction heuristics distinguish direct candidate commands
+  from links and quoted guidance. They cannot certify arbitrary instructions as
+  safe. The scanner never executes a discovered MCP server, skill or model.
+
+Use the unchanged frozen estate for reproducible regression comparison and new
+synthetic fixtures for these additional contracts. Use the same reviewed scorer,
+adapter, dependencies and configuration on both sides; missing or incomplete
+runs must not earn true negatives. These author-written tests are not independent
+field precision or tenant acceptance. Review an independently labeled holdout
+before using new evidence for enforcement.
+
 ## Unreleased attribution migration
 
 This section covers the Python re-export and governance observation changes.
