@@ -165,7 +165,9 @@ publisher ownership.
 
 More generally, a match that does not establish its signature (an ambiguous
 name, or a caller's `establish=False` mention) adds none of the signature's
-tags; it is recorded only under `metadata.potential_*`. OAuth reply and homepage
+tags; it is recorded only under `metadata.potential_*`, except the generic
+AI-name hint (`identity-app.generic-ai-name`), which names no product and is
+never listed there. OAuth reply and homepage
 URLs corroborate a domain signal by their parsed `http(s)` hostname only. A URL
 field holding several URLs is split and each host is checked once: whitespace
 always separates, and a comma or semicolon separates only where a new

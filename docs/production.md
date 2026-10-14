@@ -1080,7 +1080,14 @@ domain, client ID or other non-name signal. They stay under
 signature's tags, capabilities or agent indicator. A Gemini-named app with no
 other AI evidence, such as a cryptocurrency-exchange integration, drops to
 possible confidence or out of the report. Once corroborated, the name keeps its
-full weight. OAuth reply and homepage URLs corroborate a product by their
+full weight. More generally, a signature match that does not establish its
+signature (an ambiguous name hint, or a code pattern recorded under
+`metadata.potential_frameworks` or `potential_providers` because the library's
+import or dependency is missing) no longer adds that signature's tags (for
+example `assistant` or `agent-platform`). Tag-based risk weights, filters and
+downstream rules stop matching such findings, so their risk can fall; tags of
+established technologies are unchanged. The generic AI-name hint is never
+listed as a potential product. OAuth reply and homepage URLs corroborate a product by their
 parsed `http(s)` hostname only: a product domain in another site's path, query,
 fragment or userinfo no longer counts, and URL tokens with userinfo, a
 backslash or a control character are skipped. A field with several URLs
@@ -1145,11 +1152,20 @@ pinned by digest) are now agent workloads, so new findings can appear. Engine
 names elsewhere in an image path, exporters and operators named after an
 engine, and NVIDIA Triton images without an LLM backend tag
 (`tritonserver:24.01-py3`) are not. A model argument with a GPU but without an
-AI image or AI resource kind is not promoted.
+AI image or AI resource kind is not promoted. A container `command` or `args` field that is
+not a list of strings (a string, or a list with a non-string item) now makes a
+`cloud.kubernetes` or `cloud.openshift` scan incomplete (exit 3) with a
+"malformed container command/args" warning; the workload is still reported
+from its image, without the model-argument check. A `null` field is unset, as
+kubectl exports it. Regenerate exports that fail this way before relying on
+exit codes.
 
 **Low-code.** ServiceNow flows named only with the generic AI hint (for example
-"Copilot" licence administration) and no ServiceNow AI marker are no longer
-reported; flows named for an AI product or provider, or with a marker, are.
+"Copilot" licence administration) or only with an ambiguous product name (a
+"Gemini" account sync), and no ServiceNow AI marker, are no longer reported;
+flows named for an unambiguous AI product or provider (Claude, OpenAI), or
+with a marker, are. A genuine AI flow named only with a generic word or
+Gemini and no marker is a known false negative.
 n8n workflows whose only AI step is an HTTP Request POST to a model API are
 now reported as AI workflows. On a host that is not a known model host,
 `/v1/messages`, `/v1/responses` and `/api/chat` count only with an
