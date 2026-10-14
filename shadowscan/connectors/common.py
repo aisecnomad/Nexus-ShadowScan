@@ -185,7 +185,10 @@ def apply_matches(
         )
         matched_establish = establish and not ambiguous_name
         if not matched_establish:
-            if sig.category == "provider" or sig.category in TECH_CATEGORIES:
+            # The generic AI-name hint is not a product, so it is never a potential one.
+            if sig.id != "identity-app.generic-ai-name" and (
+                sig.category == "provider" or sig.category in TECH_CATEGORIES
+            ):
                 key = "potential_providers" if sig.category == "provider" else "potential_frameworks"
                 established = finding.model_providers if sig.category == "provider" else finding.frameworks
                 if sig.id not in established:

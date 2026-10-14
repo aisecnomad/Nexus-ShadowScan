@@ -361,6 +361,14 @@ def test_a_match_that_does_not_establish_adds_no_signature_tags(index):
     assert not {"assistant", "agent-platform"}.intersection(finding.tags)
 
 
+def test_an_unestablished_generic_ai_name_is_not_a_potential_product(index):
+    finding = _finding()
+    apply_matches(finding, index.match_name("Support GPT"), establish=False)
+    assert "potential_frameworks" not in finding.metadata
+    assert finding.frameworks == [] and "ai-name-hint" not in finding.tags
+    assert [ev.signature for ev in finding.evidence] == ["identity-app.generic-ai-name"]
+
+
 def test_app_assessment_marker_never_reaches_a_report(index):
     finding = _machine_app(index, "nightly-reconcile-worker")
     assert "_app_assessment" not in finding.metadata
