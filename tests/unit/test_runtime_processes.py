@@ -176,7 +176,8 @@ def test_live_mode_classifies_a_truncated_command_line(run_connector, monkeypatc
         assert findings == []
         return
     (finding,) = findings
-    assert finding.title == "Claude Code running on box (root)"
+    # The title ends with the account that runs the test, so pin only the product and host.
+    assert finding.title.startswith("Claude Code running on box (")
     assert finding.metadata["command_lines_truncated"] == 1
     assert any("truncated" in limitation for limitation in finding.metadata["limitations"])
 
