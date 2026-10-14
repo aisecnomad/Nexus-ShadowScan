@@ -547,9 +547,13 @@ def test_cloudtrail_per_caller_limit_preserves_counts_but_reports_partial_proven
     monkeypatch.setattr(aws_lineage, "MAX_CALLER_OBSERVATIONS", 1)
     assumption, invocation, _ = _lineage_records()
     findings, ctx = _lineage(index, [assumption, invocation, {**invocation, "eventID": "another-call"}])
-    assert ctx.stats.incomplete and findings[0].metadata["events"] == 2
+    # A bounded sample is disclosed provenance, not a coverage gap: the tally is complete.
+    assert not ctx.stats.incomplete and findings[0].metadata["events"] == 2
+    assert any("observations per caller" in warning for warning in ctx.stats.warnings)
     lineage = findings[0].metadata["cloudtrail_lineage"]
-    assert len(lineage["observations"]) == 1 and "caller-observation-limit" in lineage["limits"]
+    assert len(lineage["observations"]) == 1 and lineage["observations_truncated"] is True
+    assert lineage["coverage"] == "partial" and "caller-observation-limit" in lineage["limits"]
+    assert any("capped at 1 per caller" in text for text in lineage["limitations"])
 
 
 def test_cloudtrail_two_hop_cross_account_chain_preserves_exact_ancestry(index):

@@ -115,6 +115,9 @@ class CloudTrailLineage:
         # Principals whose ancestry the per-principal event limit bounded: a disclosed
         # provenance limit, never a coverage gap.
         self.partial: set[str] = set()
+        # Callers whose observation sample the per-caller cap truncated: later
+        # invocation events are counted, not listed.
+        self.sampled: set[str] = set()
         self._events: dict[str, list[dict[str, Any]]] = {}
         self._assumptions: dict[str, list[dict[str, Any]]] = {}
 
@@ -232,11 +235,13 @@ class CloudTrailLineage:
     def for_principal(self, principal: str) -> dict[str, Any]:
         observations: list[dict[str, Any]] = []
         bounded = principal in self.partial
+        truncated = False
         for event in self._events.get(principal, []):
             if event.get("eventName") in ASSUME_OPERATIONS:
                 continue
             if len(observations) >= MAX_CALLER_OBSERVATIONS:
-                self._gap("caller-observation-limit")
+                # The sample is bounded; the caller's invocation tally is not.
+                truncated = True
                 break
             trace = self._trace(event)
             bounded = bounded or any(
@@ -254,10 +259,28 @@ class CloudTrailLineage:
                 f"The per-principal retention limit of {MAX_LINEAGE_EVENTS} lineage events was reached; "
                 "ancestry beyond the retained events is unknown while invocation counts are complete."
             )
+        if truncated:
+            if not self.sampled:
+                self.warn(
+                    f"cloud.aws: CloudTrail lineage lists at most {MAX_CALLER_OBSERVATIONS} observations "
+                    "per caller; later invocation events are counted, not listed",
+                    incomplete=False,
+                )
+            self.sampled.add(principal)
+            limitations.append(
+                f"The observation sample is capped at {MAX_CALLER_OBSERVATIONS} per caller; later "
+                "invocation events are counted in the finding, not listed here."
+            )
+        partial = bounded or truncated
         return {
             "observations": observations,
-            "coverage": "incomplete" if self.limits else "partial" if bounded else "export-observations-only",
-            "limits": sorted(self.limits | ({"event-limit"} if bounded else set())),
+            "observations_truncated": truncated,
+            "coverage": "incomplete" if self.limits else "partial" if partial else "export-observations-only",
+            "limits": sorted(
+                self.limits
+                | ({"event-limit"} if bounded else set())
+                | ({"caller-observation-limit"} if truncated else set())
+            ),
             "identity_basis": "exact-session-arn-issuer-creation-time-and-lifetime",
             "limitations": limitations,
         }
