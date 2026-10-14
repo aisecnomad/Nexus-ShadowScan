@@ -346,6 +346,94 @@ def test_arn_reference_can_link_principal_to_iam_identity_but_not_wrong_account(
     assert "related" not in left.metadata
 
 
+SERVICE_ACCOUNT = "crew-runner@shared-ml-a.iam.gserviceaccount.com"
+
+
+def test_gcp_service_account_links_to_its_caller_in_another_project(tmp_path, run_connector):
+    """A Vertex AI caller in one project is the service account another project defines."""
+    records = [
+        {
+            "_kind": "service-account",
+            "_project": "shared-ml-a",
+            "name": f"projects/shared-ml-a/serviceAccounts/{SERVICE_ACCOUNT}",
+            "email": SERVICE_ACCOUNT,
+            "displayName": "Anthropic Claude runner",
+            "user_managed_keys": 0,
+        },
+        {
+            "_kind": "audit-event",
+            "_project": "ml-prod-b",
+            "principal": SERVICE_ACCOUNT,
+            "method": "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
+            "resource": "projects/ml-prod-b/locations/us-central1/publishers/google/models/gemini-1.5-pro",
+            "timestamp": "2025-09-10T03:00:00Z",
+            "userAgent": "google-genai-sdk/1.0",
+        },
+    ]
+    source = tmp_path / "gcp.jsonl"
+    source.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    findings, _ = run_connector("cloud.gcp", input=str(source))
+    correlate(findings)
+    by = {f.resource: f for f in findings}
+    account = by[f"projects/shared-ml-a/serviceAccounts/{SERVICE_ACCOUNT}"]
+    caller = by[f"audit:{SERVICE_ACCOUNT}"]
+    assert (account.account, caller.account) == ("shared-ml-a", "ml-prod-b")
+    assert caller.metadata["related"] == [account.id]
+    [match] = caller.metadata["related_details"][0]["matches"]
+    assert match["key_type"] == "resource:gcp-service-account"
+    assert (match["source_fields"], match["target_fields"]) == (["metadata.principal"], ["resource"])
+    assert match["scope"] == {"provider": "gcp"}
+
+
+def _gcp(surface: Surface, project: str, resource: str, **metadata) -> Finding:
+    return finding(
+        surface=surface,
+        connector="cloud.gcp",
+        provider="gcp",
+        account=project,
+        resource=resource,
+        metadata=metadata,
+    )
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        SERVICE_ACCOUNT,
+        f"projects/-/serviceAccounts/{SERVICE_ACCOUNT}",
+        f"projects/ml-prod-b/serviceAccounts/{SERVICE_ACCOUNT}",
+    ],
+)
+def test_gcp_service_account_spellings_are_one_identifier_across_projects(spelling):
+    defined = _gcp(Surface.IDENTITY, "shared-ml-a", f"projects/shared-ml-a/serviceAccounts/{SERVICE_ACCOUNT}")
+    caller = _gcp(Surface.GATEWAY, "ml-prod-b", "audit:caller", principal=spelling)
+    correlate([defined, caller])
+    assert defined.metadata["related"] == [caller.id]
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        # Not Google-issued service account addresses: local identifiers, and
+        # the declared project conflict blocks them like any other.
+        "crew-runner@shared-ml-a.iam.gserviceaccount.com.example.com",
+        "crew-runner@example-gserviceaccount.com",
+        "crew-runner@gserviceaccount.com",
+        "Crew-Runner@shared-ml-a.iam.gserviceaccount.com",
+        "crew-runner@acme.com",
+    ],
+)
+def test_lookalike_service_account_addresses_keep_their_project_scope(other):
+    defined = _gcp(Surface.IDENTITY, "shared-ml-a", "audit:defined", principal=other)
+    caller = _gcp(Surface.GATEWAY, "ml-prod-b", "audit:caller", principal=other)
+    correlate([defined, caller])
+    assert not any(key.startswith("related") for key in defined.metadata)
+    caller.metadata["principal"] = SERVICE_ACCOUNT
+    caller.account = "shared-ml-a"
+    correlate([defined, caller])
+    assert "related" not in defined.metadata
+
+
 @pytest.mark.parametrize(
     "bad",
     [

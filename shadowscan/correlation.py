@@ -92,6 +92,12 @@ _GLOBAL_PREFIXES = ("arn:", "projects/", "/subscriptions/", "ocid1.")
 _AZURE_PREFIX = "/subscriptions/"
 # Only ASCII letters fold: Unicode lowercasing could merge distinct names.
 _ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+# Google issues service account addresses only under gserviceaccount.com, and
+# one address names one service account in every project that refers to it.
+_GCP_SERVICE_ACCOUNT_DOMAIN = ".gserviceaccount.com"
+_GCP_SERVICE_ACCOUNT = re.compile(
+    r"[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+gserviceaccount\.com"
+)
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 _PATTERN_CHARACTER = re.compile(r"[*?\[\]]")
 _SPACE_OR_PATTERN = re.compile(r"[\s*?\[\]]")
@@ -139,11 +145,15 @@ def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]]
     The identifier itself is the scope: an ARN, a GCP resource name, an Azure
     resource id or an OCI OCID names its partition, account, project or
     subscription, so it needs no scope from the finding that reported it.
-    Identifiers are compared byte for byte, except Azure resource ids: Azure
-    Resource Manager treats them case-insensitively and reports one resource
-    in different casings (a lowercased role-assignment scope, an uppercased
-    diagnostic-log resource id), so they are compared lowercased. Findings keep
-    the spelling they reported.
+    A GCP service account address, bare or as
+    ``projects/<project>/serviceAccounts/<address>``, is one global identifier:
+    the caller of another project's API is the same service account, so a
+    project in which it is used is not its scope. Identifiers are compared
+    byte for byte, except Azure resource ids: Azure Resource Manager treats
+    them case-insensitively and reports one resource in different casings (a
+    lowercased role-assignment scope, an uppercased diagnostic-log resource
+    id), so they are compared lowercased. Findings keep the spelling they
+    reported.
     """
     if _SPACE_OR_PATTERN.search(value):
         return None
@@ -168,6 +178,14 @@ def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]]
         return "resource:aws-arn", value, tuple(sorted(scope.items()))
     components = value.split("/")
     if value.startswith("projects/") and len(components) >= 4 and all(components):
+        if (
+            len(components) == 4
+            and components[1] not in {".", ".."}
+            and components[2] == "serviceAccounts"
+            and (account := _gcp_service_account(components[3])) is not None
+        ):
+            # The address identifies the account; "-" (any project) is a valid spelling.
+            return account
         if components[1] in {"-", ".", ".."} or any(p in {".", ".."} for p in components):
             return None
         scope = {"provider": "gcp", "account": components[1]}
@@ -182,6 +200,16 @@ def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]]
         return None
     if re.fullmatch(r"ocid1\.[a-z0-9]+\.[a-z0-9]+\.[a-z0-9-]*\.[A-Za-z0-9.]+", value):
         return "resource:oci-id", value, (("provider", "oci"),)
+    return _gcp_service_account(value)
+
+
+def _gcp_service_account(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
+    if (
+        len(value) <= 254
+        and value.endswith(_GCP_SERVICE_ACCOUNT_DOMAIN)
+        and _GCP_SERVICE_ACCOUNT.fullmatch(value)
+    ):
+        return "resource:gcp-service-account", value, (("provider", "gcp"),)
     return None
 
 

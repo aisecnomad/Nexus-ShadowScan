@@ -1293,6 +1293,12 @@ no longer grows with the number of reply URLs.
 with `metadata.related_details` describing the identifier type, matching
 fields and scope. A fully qualified ARN, GCP resource name, Azure resource id
 or OCI OCID links on its own: a cross-account caller ARN is the same principal.
+A GCP service account address (`<name>@<domain>.gserviceaccount.com`, bare
+or in `projects/<project>/serviceAccounts/<address>`) is one global identifier
+too: a Vertex AI caller in one project links exactly to the service account
+another project defines, which a declared project conflict used to block
+entirely. Lookalike addresses outside `gserviceaccount.com`, or with upper-case
+letters, stay local identifiers in their project.
 Azure resource ids compare case-insensitively, as Azure Resource Manager
 treats them, so a role assignment whose scope ARM returns lowercased still
 links to the resource listing; the findings keep the spelling they reported.
