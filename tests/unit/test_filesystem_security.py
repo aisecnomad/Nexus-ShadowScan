@@ -6,6 +6,7 @@ import codecs
 import hashlib
 import json
 import os
+import struct
 import subprocess
 import sys
 import time
@@ -1681,7 +1682,7 @@ def test_gguf_metadata_and_tensor_descriptor_are_bounded(tmp_path):
     ("kind", "payload", "message"),
     [
         (999, b"", "metadata type"),
-        (9, b"\x04\0\0\0" + (999999).to_bytes(8, "little"), "array limit"),
+        (9, b"\x04\0\0\0" + (999999).to_bytes(8, "little"), "outside file"),
         (8, (2**60).to_bytes(8, "little"), "byte limit"),
     ],
 )
@@ -1782,3 +1783,59 @@ def test_remote_code_connectors_forward_artifact_options(provider):
 def test_large_artifact_reserves_metadata_scan_time():
     connector = FilesystemConnector(ConnectorContext(config={"inspect_model_artifacts": True}))
     assert connector._reserved_budget("model.gguf", Path("model.gguf"), 2**40, 10.0) == 2.0
+
+
+def _gguf_bytes(value: bytes) -> bytes:
+    return struct.pack("<Q", len(value)) + value
+
+
+def test_gguf_vocabulary_arrays_are_skipped_not_rejected(tmp_path):
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    # Real models carry tokenizer.ggml.scores/token_type (fixed-size elements,
+    # tens of thousands long) and tokenizer.ggml.tokens (as many strings).
+    metadata = _gguf_bytes(b"general.alignment") + struct.pack("<II", 4, 32)
+    metadata += (
+        _gguf_bytes(b"general.tags") + struct.pack("<IIQ", 9, 8, 2) + _gguf_bytes(b"a") + _gguf_bytes(b"b")
+    )
+    metadata += _gguf_bytes(b"tokenizer.ggml.scores") + struct.pack("<IIQ", 9, 6, 20000) + b"\0" * 80000
+    descriptor = _gguf_bytes(b"x") + struct.pack("<IQIQ", 1, 1, 0, 0)
+    complete = b"GGUF" + struct.pack("<IQQ", 3, 1, 3) + metadata + descriptor
+    complete += b"\0" * (-len(complete) % 32) + b"\0" * 4
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(complete)
+    result = inspect_artifact(artifact)
+    assert result and result.metadata["tensor_count"] == 1 and result.metadata["metadata_count"] == 3
+    assert result.metadata["metadata_truncated"] is False
+    assert result.metadata["bytes_read"] < 1024
+    # A vocabulary has no byte length to seek past: parsing stops there and
+    # says so instead of reporting the model as an invalid header.
+    tokens = (
+        _gguf_bytes(b"tokenizer.ggml.tokens") + struct.pack("<IIQ", 9, 8, 9000) + _gguf_bytes(b"t") * 9000
+    )
+    truncated = b"GGUF" + struct.pack("<IQQ", 3, 1, 4) + metadata + tokens + descriptor
+    truncated += b"\0" * (-len(truncated) % 32) + b"\0" * 4
+    artifact.write_bytes(truncated)
+    result = inspect_artifact(artifact)
+    assert result and result.metadata["tensor_count"] == 1 and result.metadata["metadata_count"] == 4
+    assert result.metadata["metadata_truncated"] is True
+    assert any("truncated" in limitation for limitation in result.limitations)
+    assert result.metadata["bytes_read"] < 1024
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        struct.pack("<IQ", 0, 2**60),  # fixed-size elements declared past the file
+        struct.pack("<IQ", 8, 2**40),  # more strings than the file has length prefixes
+        struct.pack("<IQ", 8, 1) + (2**60).to_bytes(8, "little"),  # one string past the file
+        struct.pack("<IQ", 9, 2**40),  # nested arrays past the file
+    ],
+)
+def test_gguf_hostile_array_counts_fail_fast_without_reading(tmp_path, payload):
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(b"GGUF" + struct.pack("<IQQQ", 3, 0, 1, 1) + b"x" + struct.pack("<I", 9) + payload)
+    with pytest.raises(ValueError, match="outside file"):
+        inspect_artifact(artifact)

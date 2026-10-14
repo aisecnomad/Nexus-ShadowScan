@@ -18,6 +18,9 @@ from shadowscan.utils.safe_json import strict_json_loads
 DEFAULT_METADATA_BYTES = 64 * 1024
 MAX_FIELDS = 8192
 MAX_TENSORS = 2048
+# Strings in one GGUF array that are walked (each costs an 8-byte length read); a
+# tokenizer vocabulary is far longer and has no byte length to seek past.
+MAX_ARRAY_STRINGS = 1024
 PYINSTALLER_MAGIC = b"MEI\x0c\x0b\x0a\x0b\x0e"
 ARTIFACT_SUFFIXES = frozenset({".gguf", ".safetensors", ".onnx", ".exe", ".bin", ".pkg"})
 
@@ -69,11 +72,36 @@ class _Reader:
             raise ValueError("artifact offset outside file")
         self.stream.seek(offset)
 
+    def skip(self, size: int) -> None:
+        """Seek past ``size`` bytes that must lie inside the file; nothing is read or charged."""
+        if size < 0:
+            raise ValueError("artifact offset outside file")
+        self.seek(self.stream.tell() + size)
+
     def field(self) -> None:
         self.check()
         self.fields += 1
         if self.fields > MAX_FIELDS:
             raise ValueError("artifact metadata field limit exceeded")
+
+
+class _MetadataTruncated(Exception):
+    """Bounded parsing stopped inside the metadata; what follows was not read."""
+
+
+_GGUF_SCALARS = {
+    0: "<B",
+    1: "<b",
+    2: "<H",
+    3: "<h",
+    4: "<I",
+    5: "<i",
+    6: "<f",
+    7: "<?",
+    10: "<Q",
+    11: "<q",
+    12: "<d",
+}
 
 
 def _gguf_string(reader: _Reader) -> bytes:
@@ -85,33 +113,37 @@ def _gguf_value(reader: _Reader, kind: int, depth: int = 0) -> int | None:
     reader.field()
     if depth > 8:
         raise ValueError("GGUF metadata nesting limit exceeded")
-    formats = {
-        0: "<B",
-        1: "<b",
-        2: "<H",
-        3: "<h",
-        4: "<I",
-        5: "<i",
-        6: "<f",
-        7: "<?",
-        10: "<Q",
-        11: "<q",
-        12: "<d",
-    }
-    if kind in formats:
-        value = reader.unpack(formats[kind])[0]
+    if kind in _GGUF_SCALARS:
+        value = reader.unpack(_GGUF_SCALARS[kind])[0]
         return value if type(value) is int else None
     if kind == 8:
         _gguf_string(reader).decode("utf-8")
         return None
     if kind == 9:
-        item_type, count = reader.unpack("<IQ")
-        if count > MAX_FIELDS:
-            raise ValueError("GGUF array limit exceeded")
-        for _ in range(count):
-            _gguf_value(reader, item_type, depth + 1)
+        _gguf_array(reader, depth)
         return None
     raise ValueError("unsupported GGUF metadata type")
+
+
+def _gguf_array(reader: _Reader, depth: int) -> None:
+    """Seek past an array's elements; a vocabulary is never read into memory."""
+    item_type, count = reader.unpack("<IQ")
+    if item_type in _GGUF_SCALARS:
+        reader.skip(count * struct.calcsize(_GGUF_SCALARS[item_type]))
+        return
+    if item_type not in {8, 9}:
+        raise ValueError("unsupported GGUF metadata type")
+    # A string or nested array element carries at least its 8-byte length or count.
+    if count * 8 > reader.size - reader.stream.tell():
+        raise ValueError("GGUF array extends outside file")
+    if count > MAX_ARRAY_STRINGS:
+        raise _MetadataTruncated
+    for _ in range(count):
+        if item_type == 8:
+            reader.field()
+            reader.skip(reader.unpack("<Q")[0])
+        else:
+            _gguf_value(reader, 9, depth + 1)
 
 
 def _gguf(reader: _Reader) -> ArtifactInspection:
@@ -123,20 +155,25 @@ def _gguf(reader: _Reader) -> ArtifactInspection:
         raise ValueError("GGUF header count limit exceeded")
     alignment = 32
     keys: set[bytes] = set()
-    for _ in range(entries):
-        key = _gguf_string(reader)
-        key.decode("utf-8")
-        if key in keys:
-            raise ValueError("duplicate GGUF metadata key")
-        keys.add(key)
-        kind = reader.unpack("<I")[0]
-        value = _gguf_value(reader, kind)
-        if key == b"general.alignment":
-            if kind != 4 or value is None or not 1 <= value <= 65536 or value & (value - 1):
-                raise ValueError("invalid GGUF alignment")
-            alignment = value
+    truncated = False
+    try:
+        for _ in range(entries):
+            key = _gguf_string(reader)
+            key.decode("utf-8")
+            if key in keys:
+                raise ValueError("duplicate GGUF metadata key")
+            keys.add(key)
+            kind = reader.unpack("<I")[0]
+            value = _gguf_value(reader, kind)
+            if key == b"general.alignment":
+                if kind != 4 or value is None or not 1 <= value <= 65536 or value & (value - 1):
+                    raise ValueError("invalid GGUF alignment")
+                alignment = value
+    except _MetadataTruncated:
+        # The tensor descriptors follow the metadata with no offset to them.
+        truncated = True
     offsets: list[int] = []
-    for _ in range(tensors):
+    for _ in range(0 if truncated else tensors):
         reader.field()
         _gguf_string(reader).decode("utf-8")
         dimensions = reader.unpack("<I")[0]
@@ -147,19 +184,26 @@ def _gguf(reader: _Reader) -> ArtifactInspection:
         reader.unpack("<I")  # ggml type is inventoried, not loaded or interpreted.
         offsets.append(reader.unpack("<Q")[0])
     payload_start = (reader.stream.tell() + alignment - 1) // alignment * alignment
-    if tensors and (
+    if offsets and (
         payload_start > reader.size or any(x >= reader.size - payload_start or x % alignment for x in offsets)
     ):
         raise ValueError("GGUF tensor offset outside file or alignment")
-    return ArtifactInspection(
+    result = ArtifactInspection(
         "gguf",
         {
             "version": version,
             "tensor_count": tensors,
             "metadata_count": entries,
+            "metadata_truncated": truncated,
             "validation": "bounded-header-only",
         },
     )
+    if truncated:
+        result.limitations.append(
+            "GGUF metadata was truncated at a string array longer than the walk bound; "
+            "later keys and the tensor descriptors were not read or validated."
+        )
+    return result
 
 
 _DTYPE_BITS = {
