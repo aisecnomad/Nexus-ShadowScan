@@ -104,3 +104,79 @@ workflow an agent.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.
+
+## Declared graph relationships
+
+`lowcode.n8n` and the filesystem connector's n8n, Flowise and Dify export
+readers share bounded graph analysis. Findings include `metadata.workflow_graph`
+(or `workflow_graphs` for multiple distinct graph documents), with node/edge
+counts, role counts and a bounded example of a directed input → AI → outbound
+HTTP/message path. Relationships add **no confidence, capability or risk-score
+weight**. A connected path does not prove execution, private-data access,
+prompt injection or exfiltration; it does not by itself establish a "lethal
+trifecta."
+
+The graph adapter uses exact supported node identifiers, not display names or
+serialized parameter searches, to assign graph roles; disabled nodes do not
+connect paths. The registry decides roles only, never inventory: `lowcode.n8n`
+keeps its own AI-node rule (any `n8n-nodes-langchain` type, provider nodes such
+as `openAi`, `anthropic`, `gemini`, `mistral`, `ollama` or `huggingFace`, a
+type with `mcp` as its own token, and HTTP Request nodes that make a model
+call as described above)
+and its signature match over node types and parameters, and the export reader
+still projects every n8n node type, Flowise agent-category node and Dify
+agent/LLM/tool node for the signature packs to judge. A workflow outside the
+registry (an OpenRouter or embeddings node, a community MCP node, a disabled
+agent) is still reported; it just gets no AI graph role. Literal HTTP URLs
+are parsed into hostnames, so `api.openai.com.example.invalid` does not establish
+an OpenAI destination. Expressions and environment-variable references are not
+resolved. Unknown/community types retain their graph position without inferred
+roles. Flowise Agent Flows use their declared `startInputType` and HTTP node
+`inputs.url`; scheduled starts are not treated as untrusted inputs.
+Repeated actual AI node declarations retain the existing grouped confidence;
+their prompts do not add independent signals. As before, AI text stored in an
+ordinary n8n node's parameters (a Set node holding a prompt library) can still
+match a signature at possible confidence; it receives no graph role.
+
+Directed traversal handles cycles and joins. n8n `main` edges establish declared
+order; `ai_tool`, model and memory attachments do not establish that order.
+Flowise edges describe dependencies, so a path remains a declaration rather
+than proof of runtime ordering. Model-only Dify configurations remain detectable
+without pretending they contain a workflow graph.
+
+A document is a graph only when a node type identifies n8n or a node names a
+Flowise AI component, or when it is a Dify app; a long `nodes` list that
+identifies neither (a diagram, a dataset) is not a graph and is never reported
+as over budget. Analysis permits at most 16 graph documents per file, 4,096
+nodes per graph and 16,384 edges/connection-branch
+inspections, with node identifiers capped at 512 characters. A malformed supplied
+graph, dangling edge, duplicate identifier or exhausted budget marks coverage
+incomplete and sets the graph's `status` to `incomplete` with a `null` path, but
+the workflow finding (or the export's projected signals) is kept: graph metadata
+never decides whether a workflow is reported. In `lowcode.n8n`, a workflow whose
+graph cannot be analysed at all (an unexpected failure) gets the same
+`incomplete` status and a warning, and the other workflows of the export are
+still analysed; an n8n workflow that also carries Dify-like `kind` or
+`workflow` fields is still read as n8n. Documents past the 16-graph budget
+are still projected, without graph metadata. n8n exports an unconnected output
+slot (an If or Switch branch) as `null`; that is an empty branch, not a defect.
+An inventory omitting adjacency can still establish AI node presence,
+but its graph status is `unavailable` and its path result is `null`, not `false`.
+Only a supplied and analyzed graph can produce `false`. Output uses node ordinals
+instead of retaining prompts, node names or destination URLs; example paths are
+capped at 32 nodes and explicitly disclose truncation. In `lowcode.n8n`
+findings, `workflow_graph.node_count` and `path_node_indices` cover the same
+nodes as `metadata.node_count`: the workflow's valid nodes, disabled ones
+included, by position in export order. In export-file findings they index the
+file's own `nodes` array.
+
+The fixtures in `tests/fixtures/lowcode/graph_cases.json` cover connected,
+disconnected, cyclic, reversed, disabled, non-AI and type-prefix decoy workflows
+(the last three are still inventoried, but receive no AI graph role).
+They are synthetic regressions, not measured production precision. Registry
+extensions should cite the provider's actual node declaration and add positive
+and negative fixtures, including version differences where relevant. Provider
+references include [n8n node implementations](https://github.com/n8n-io/n8n/tree/master/packages/%40n8n/nodes-langchain/nodes)
+and Flowise's [Agent](https://github.com/FlowiseAI/Flowise/blob/main/packages/components/nodes/agentflow/Agent/Agent.ts),
+[Start](https://github.com/FlowiseAI/Flowise/blob/main/packages/components/nodes/agentflow/Start/Start.ts),
+and [HTTP](https://github.com/FlowiseAI/Flowise/blob/main/packages/components/nodes/agentflow/HTTP/HTTP.ts) declarations.

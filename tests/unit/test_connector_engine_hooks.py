@@ -292,3 +292,52 @@ def test_connector_without_the_split_hook_scans_its_roots_in_one_job(monkeypatch
     _run(monkeypatch, connector, [spec], incremental=True, state_dir=str(tmp_path / "state"))
     assert [ctx.config["paths"] for ctx in contexts] == [roots]
     assert "_shared_label_roots" not in contexts[0].config
+
+
+@pytest.mark.parametrize(
+    "surface,offline,incomplete,expected",
+    [
+        (Surface.RUNTIME, False, False, "collected"),
+        (Surface.RUNTIME, True, False, "export-only"),
+        (Surface.RUNTIME, False, True, "incomplete"),
+        (Surface.LOWCODE, False, False, "not-collected"),
+    ],
+)
+def test_lifecycle_coverage_uses_declared_surface_and_collection_status(
+    monkeypatch, tmp_path, surface, offline, incomplete, expected
+):
+    # The arbitrary connector name and label must not decide its surface.
+    connector, _ = _recording_connector(surface=surface)
+    if incomplete:
+
+        def collect(self):
+            self.ctx.warn("synthetic unavailable source")
+            return []
+
+        monkeypatch.setattr(connector, "collect", collect)
+    policies = _recording_lookup(monkeypatch, connector)
+    captured = []
+    monkeypatch.setattr(
+        engine_module, "correlate_lifecycle", lambda findings, **kwargs: captured.append(kwargs)
+    )
+    source = tmp_path / "empty.json"
+    source.write_text("[]")
+    spec = ConnectorSpec("platform.recorder", {"input": str(source)} if offline else {}, label="arbitrary")
+    result = Engine(ScanConfig(connectors=[spec]), SignatureIndex([])).run()
+    assert result.complete is not incomplete
+    assert len(policies) == 1  # Coverage does not import or resolve a plugin a second time.
+    assert captured[0]["runtime_coverage"] == expected
+
+
+def test_lifecycle_coverage_is_unknown_when_connector_lookup_failed(monkeypatch):
+    def unresolved(name):
+        raise ConnectorError("synthetic lookup failure")
+
+    monkeypatch.setattr(engine_module, "get_connector_class", unresolved)
+    captured = []
+    monkeypatch.setattr(
+        engine_module, "correlate_lifecycle", lambda findings, **kwargs: captured.append(kwargs)
+    )
+    result = Engine(ScanConfig(connectors=[ConnectorSpec("platform.recorder")]), SignatureIndex([])).run()
+    assert not result.complete
+    assert captured[0]["runtime_coverage"] == "unknown"

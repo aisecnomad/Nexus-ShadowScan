@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+from pathlib import Path
 from unittest import mock
 from unittest.mock import Mock
 
@@ -10,7 +12,7 @@ import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import ConnectorError
-from shadowscan.connectors.cloud.aws import AwsConnector
+from shadowscan.connectors.cloud.aws import AwsConnector, _cloudtrail_record
 from shadowscan.models import ScanStats
 from shadowscan.utils.redaction import REDACTED
 
@@ -378,3 +380,293 @@ def test_non_string_alias_version_does_not_abort_the_bedrock_agent(index):
     assert len(agents) == 1
     assert agents[0]["_versions_scanned"] == ["2", "DRAFT"]
     assert any("invalid alias version for agent A1" in w for w in connector.ctx.stats.warnings)
+
+
+def _lineage_records():
+    source = Path(__file__).parents[1] / "fixtures/cloud/lineage/assumed_session.jsonl"
+    return [json.loads(line) for line in source.read_text().splitlines()]
+
+
+def _lineage(index, records):
+    ctx = _context(index, input="synthetic-cloudtrail.jsonl")
+    findings = list(AwsConnector(ctx).analyze(records))
+    return findings, ctx
+
+
+def test_cloudtrail_export_preserves_scoped_session_lineage_and_ignores_ordinary_events(index):
+    findings, ctx = _lineage(index, _lineage_records())
+    assert not ctx.stats.incomplete and len(findings) == 1
+    finding = findings[0]
+    assert finding.account == "222222222222" and finding.metadata["events"] == 1
+    (observation,) = finding.metadata["cloudtrail_lineage"]["observations"]
+    assert observation["eventID"] == "invocation-17"
+    assert observation["eventName"] == "ConverseStream"
+    assert observation["recipientAccountId"] == "222222222222"
+    assert observation["_region"] == "us-west-2"
+    assert observation["sourceIdentity"] == "build-17"
+    assert observation["assumption_status"] == "linked"
+    assert observation["assumption"]["_region"] == "us-east-1"
+    assert observation["assumption"]["principal"].startswith("arn:aws:sts::111111111111:")
+    assert finding.metadata["cloudtrail_lineage"]["coverage"] == "export-observations-only"
+    # STS events are lineage context, never an independent AI finding.
+    assert _lineage(index, _lineage_records()[:1])[0] == []
+
+
+def test_cloudtrail_normalization_never_exports_credentials_or_request_bodies():
+    assumption, invocation, _ = _lineage_records()
+    assumption["responseElements"]["credentials"].update(
+        {
+            "accessKeyId": "synthetic-access-value",
+            "secretAccessKey": "synthetic-secret-value",
+            "sessionToken": "synthetic-session-value",
+        }
+    )
+    assumption["requestParameters"]["policy"] = "private-policy-body"
+    record = _cloudtrail_record({"CloudTrailEvent": json.dumps(assumption)}, "us-east-1")
+    assert record["sessionExpiresAt"] == "2026-01-01T01:00:00Z"
+    encoded = json.dumps(record)
+    for forbidden in ("synthetic-access", "synthetic-secret", "synthetic-session", "private-policy"):
+        assert forbidden not in encoded
+    invocation["requestParameters"]["messages"] = "private-prompt-body"
+    assert "private-prompt" not in json.dumps(
+        _cloudtrail_record({"CloudTrailEvent": json.dumps(invocation)}, "us-west-2")
+    )
+
+
+@pytest.mark.parametrize(
+    "detail",
+    [
+        [],
+        {"userIdentity": []},
+        {"requestParameters": []},
+        {"responseElements": {"credentials": []}},
+        {"eventID": "x" * 2049},
+    ],
+)
+def test_cloudtrail_malformed_nested_metadata_fails_closed(detail):
+    assert _cloudtrail_record({"CloudTrailEvent": json.dumps(detail)}, "us-east-1") is None
+
+
+def test_cloudtrail_duplicate_event_ids_do_not_inflate_counts_and_order_does_not_change_links(index):
+    assumption, invocation, _ = _lineage_records()
+    first, _ = _lineage(index, [assumption, invocation, invocation])
+    second, _ = _lineage(index, [invocation, assumption])
+    assert first[0].metadata["events"] == second[0].metadata["events"] == 1
+    assert first[0].metadata["cloudtrail_lineage"] == second[0].metadata["cloudtrail_lineage"]
+
+
+@pytest.mark.parametrize(
+    "change", ["recipient", "issuer", "created", "expired", "source", "missing-time", "wrong-service"]
+)
+def test_cloudtrail_session_links_require_exact_account_identity_and_lifetime(index, change):
+    assumption, invocation, _ = _lineage_records()
+    if change == "recipient":
+        assumption["recipientAccountId"] = "333333333333"
+    elif change == "issuer":
+        invocation["userIdentity"]["sessionContext"]["sessionIssuer"]["arn"] = (
+            "arn:aws:iam::333333333333:role/ml-worker"
+        )
+    elif change == "created":
+        invocation["userIdentity"]["sessionContext"]["attributes"]["creationDate"] = "2025-12-31T23:00:00Z"
+    elif change == "expired":
+        invocation["eventTime"] = "2026-01-01T02:00:00Z"
+    elif change == "source":
+        invocation["userIdentity"]["sessionContext"]["sourceIdentity"] = "another-build"
+    elif change == "missing-time":
+        del assumption["responseElements"]["credentials"]["expiration"]
+    else:
+        assumption["eventSource"] = "untrusted.example"
+    findings, _ = _lineage(index, [assumption, invocation])
+    (observation,) = findings[0].metadata["cloudtrail_lineage"]["observations"]
+    assert observation["assumption_status"] == "unlinked" and observation["assumption"] is None
+
+
+def test_cloudtrail_ambiguous_sessions_and_conflicting_event_ids_do_not_bind(index):
+    assumption, invocation, _ = _lineage_records()
+    duplicate = {**assumption, "eventID": "other-assumption"}
+    findings, _ = _lineage(index, [assumption, duplicate, invocation])
+    assert findings[0].metadata["cloudtrail_lineage"]["observations"][0]["assumption_status"] == "ambiguous"
+    duplicate["eventID"] = assumption["eventID"]
+    duplicate["userIdentity"] = {"type": "IAMUser", "arn": "arn:aws:iam::111111111111:user/different"}
+    findings, ctx = _lineage(index, [assumption, duplicate, invocation])
+    assert ctx.stats.incomplete
+    assert "conflicting-event-id" in findings[0].metadata["cloudtrail_lineage"]["limits"]
+    assert findings[0].metadata["cloudtrail_lineage"]["observations"][0]["assumption"] is None
+
+
+def test_cloudtrail_lineage_limits_are_partial_and_invalid_times_incomplete(index, monkeypatch):
+    from shadowscan.connectors.cloud import aws_lineage
+
+    monkeypatch.setattr(aws_lineage, "MAX_LINEAGE_EVENTS", 1)
+    assumption, invocation, _ = _lineage_records()
+    other = deepcopy(assumption)
+    other["eventID"] = "another-assumption"
+    findings, ctx = _lineage(index, [other, assumption, invocation])
+    # Lineage is non-scoring: a bounded sample is disclosed, detection is complete.
+    assert findings and not ctx.stats.incomplete
+    lineage = findings[0].metadata["cloudtrail_lineage"]
+    assert lineage["limits"] == ["assumption-limit"] and lineage["coverage"] == "partial"
+    assert any("lineage partial" in warning for warning in ctx.stats.warnings)
+    invocation["eventTime"] = "not-a-time"
+    findings, ctx = _lineage(index, [invocation])
+    assert ctx.stats.incomplete
+    assert "invalid-timestamp" in findings[0].metadata["cloudtrail_lineage"]["limits"]
+    assert findings[0].metadata["cloudtrail_lineage"]["coverage"] == "incomplete"
+
+
+def test_cloudtrail_per_caller_limit_preserves_counts_but_reports_partial_provenance(index, monkeypatch):
+    from shadowscan.connectors.cloud import aws_lineage
+
+    monkeypatch.setattr(aws_lineage, "MAX_CALLER_OBSERVATIONS", 1)
+    assumption, invocation, _ = _lineage_records()
+    findings, ctx = _lineage(index, [assumption, invocation, {**invocation, "eventID": "another-call"}])
+    assert not ctx.stats.incomplete and findings[0].metadata["events"] == 2
+    lineage = findings[0].metadata["cloudtrail_lineage"]
+    assert len(lineage["observations"]) == 1 and lineage["observation_count"] == 2
+    assert lineage["observations_truncated"] and lineage["coverage"] == "partial"
+
+
+def test_cloudtrail_two_hop_cross_account_chain_preserves_exact_ancestry(index):
+    path = Path(__file__).parents[1] / "fixtures/cloud/lineage/assumed_chain.jsonl"
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    findings, ctx = _lineage(index, list(reversed(records)))
+    assert not ctx.stats.incomplete
+    (observation,) = findings[0].metadata["cloudtrail_lineage"]["observations"]
+    assert observation["chain_status"] == "observed-origin"
+    assert [hop["eventID"] for hop in observation["assumption_chain"]] == [
+        "assumption-17",
+        "root-assumption-17",
+    ]
+    # Equal role/session names in a different account are not an ancestry edge.
+    records[0]["responseElements"]["assumedRoleUser"]["arn"] = (
+        "arn:aws:sts::444444444444:assumed-role/build/runner"
+    )
+    findings, ctx = _lineage(index, records)
+    (observation,) = findings[0].metadata["cloudtrail_lineage"]["observations"]
+    assert observation["chain_status"] == "partial" and len(observation["assumption_chain"]) == 1
+    assert not ctx.stats.incomplete  # incomplete export ancestry is a disclosed limitation, not a parse error
+
+
+def test_cloudtrail_lineage_survives_real_offline_collection_and_sanitization(run_connector):
+    source = Path(__file__).parents[1] / "fixtures/cloud/lineage/assumed_chain.jsonl"
+    findings, ctx = run_connector("cloud.aws", input=str(source))
+    assert not ctx.stats.incomplete and len(findings) == 1
+    lineage = findings[0].to_dict()["metadata"]["cloudtrail_lineage"]
+    assert lineage["observations"][0]["chain_status"] == "observed-origin"
+    assert len(lineage["observations"][0]["assumption_chain"]) == 2
+
+
+def _normalized_chain(length):
+    def role(i):
+        return f"arn:aws:iam::222222222222:role/r{i}"
+
+    def session(i):
+        return f"arn:aws:sts::222222222222:assumed-role/r{i}/worker"
+
+    common = {
+        "_kind": "cloudtrail-event",
+        "_region": "us-east-1",
+        "recipientAccountId": "222222222222",
+        "eventTime": "2026-01-01T00:00:00Z",
+    }
+    assumptions = [
+        {
+            **common,
+            "eventID": f"assume-{i}",
+            "eventName": "AssumeRole",
+            "eventSource": "sts.amazonaws.com",
+            "principal": session(i - 1) if i else "arn:aws:iam::222222222222:user/origin",
+            "identityType": "AssumedRole" if i else "IAMUser",
+            "sessionIssuerArn": role(i - 1),
+            "sessionCreatedAt": common["eventTime"],
+            "assumedRoleArn": session(i),
+            "roleArn": role(i),
+            "sessionExpiresAt": "2026-01-01T01:00:00Z",
+        }
+        for i in range(length)
+    ]
+    invocation = {
+        **common,
+        "eventID": "invoke-chain",
+        "eventName": "ConverseStream",
+        "eventTime": "2026-01-01T00:10:00Z",
+        "principal": session(length - 1),
+        "identityType": "AssumedRole",
+        "sessionIssuerArn": role(length - 1),
+        "sessionCreatedAt": common["eventTime"],
+    }
+    return assumptions, invocation
+
+
+def test_cloudtrail_chain_hop_budget_and_cycles_are_partial_lineage(index):
+    assumptions, invocation = _normalized_chain(9)
+    findings, ctx = _lineage(index, [*assumptions, invocation])
+    observation = findings[0].metadata["cloudtrail_lineage"]["observations"][0]
+    assert observation["chain_status"] == "depth-limit" and len(observation["assumption_chain"]) == 8
+    assert not ctx.stats.incomplete
+    assert findings[0].metadata["cloudtrail_lineage"]["coverage"] == "partial"
+    assumptions, invocation = _normalized_chain(1)
+    assumptions[0].update(
+        principal=invocation["principal"],
+        identityType="AssumedRole",
+        sessionIssuerArn=invocation["sessionIssuerArn"],
+    )
+    findings, ctx = _lineage(index, [*assumptions, invocation])
+    observation = findings[0].metadata["cloudtrail_lineage"]["observations"][0]
+    assert observation["chain_status"] == "cycle" and not ctx.stats.incomplete
+    assert "lineage-cycle" in findings[0].metadata["cloudtrail_lineage"]["limits"]
+
+
+def _invocations(count, users):
+    return [
+        {
+            "_kind": "cloudtrail-event",
+            "eventID": f"e{n}",
+            "eventName": "InvokeModel",
+            "eventSource": "bedrock.amazonaws.com",
+            "eventTime": "2026-01-01T00:10:00Z",
+            "_region": "us-west-2",
+            "recipientAccountId": "222222222222",
+            "principal": f"arn:aws:iam::222222222222:user/u{n % users}",
+            "identityType": "IAMUser",
+            "modelId": "anthropic.claude-v2",
+        }
+        for n in range(count)
+    ]
+
+
+@pytest.mark.parametrize(("count", "users"), [(101, 1), (2100, 5)])
+def test_busy_cloudtrail_export_stays_complete_when_lineage_is_sampled(index, count, users):
+    """Regression (#220 graph review F3): lineage bounds must not make every busy account exit 3."""
+    ctx = _context(index, input="synthetic-cloudtrail.jsonl", account_id="222222222222")
+    findings = list(AwsConnector(ctx).analyze(_invocations(count, users)))
+    assert len(findings) == users and not ctx.stats.incomplete
+    assert sum(finding.metadata["events"] for finding in findings) == count
+    for finding in findings:
+        lineage = finding.metadata["cloudtrail_lineage"]
+        assert lineage["observation_count"] == finding.metadata["events"]
+        assert len(lineage["observations"]) == 100 and lineage["observations_truncated"]
+        assert lineage["coverage"] == "partial"
+
+
+@pytest.mark.parametrize(
+    "role_path,session_role,linked",
+    [
+        ("team/ml-worker", "ml-worker", True),
+        ("ml-worker", "DifferentRole", False),
+        ("team/ml-worker", "team/ml-worker", False),
+    ],
+)
+def test_cloudtrail_session_role_name_must_match_issuer_even_when_both_events_repeat_mismatch(
+    index, role_path, session_role, linked
+):
+    assumption, invocation, _ = _lineage_records()
+    role = f"arn:aws:iam::222222222222:role/{role_path}"
+    session = f"arn:aws:sts::222222222222:assumed-role/{session_role}/job-17"
+    assumption["requestParameters"]["roleArn"] = role
+    assumption["responseElements"]["assumedRoleUser"]["arn"] = session
+    invocation["userIdentity"]["arn"] = session
+    invocation["userIdentity"]["sessionContext"]["sessionIssuer"]["arn"] = role
+    findings, _ = _lineage(index, [assumption, invocation])
+    observation = findings[0].metadata["cloudtrail_lineage"]["observations"][0]
+    assert (observation["assumption_status"] == "linked") is linked

@@ -35,6 +35,7 @@ from shadowscan.connectors.common import (
     model_matches,
     name_matches,
 )
+from shadowscan.connectors.lowcode.graph import GraphAnalysis, analyze_workflow_graph
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -356,6 +357,34 @@ class N8nConnector(_AutomationBase):
             arrays=("nodes", "tags"),
         ) and isinstance(w.get("nodes"), list)
 
+    @staticmethod
+    def _workflow_graph(workflow: dict[str, Any]) -> GraphAnalysis:
+        """The workflow's graph metadata; a graph that cannot be analysed is reported, never fatal.
+
+        The graph is non-scoring, so a failure is contained to this workflow's
+        ``workflow_graph`` (status ``incomplete``) and never drops its finding
+        or another workflow's.
+        """
+        try:
+            graph = analyze_workflow_graph(workflow, provider="n8n")
+        except Exception as exc:  # noqa: BLE001 - one hostile workflow must not end the export
+            graph = None
+            reason = f"workflow graph analysis failed ({type(exc).__name__})"
+        else:
+            reason = "workflow graph shape not recognised"
+        if graph is None:
+            graph = GraphAnalysis(
+                {
+                    "provider": "n8n",
+                    "status": "incomplete",
+                    "scoring": False,
+                    "potential_input_ai_egress_path": None,
+                    "limitations": ["The workflow graph could not be analysed."],
+                },
+                [reason],
+            )
+        return graph
+
     def _trigger_initiation(self, trigger: str) -> str | None:
         if _N8N_HUMAN_TRIGGERS.search(trigger):
             return HUMAN
@@ -379,12 +408,20 @@ class N8nConnector(_AutomationBase):
             if self._record_fields_valid(
                 node,
                 required=("type",),
-                strings=("name",),
+                strings=("name", "type"),
                 mappings=("parameters",),
             )
         ]
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
+        # The graph covers the same nodes as the inventory, so its counts and
+        # path ordinals (positions in this list, in export order) agree with
+        # node_count. It is non-scoring metadata: a malformed or over-budget
+        # graph is reported (status "incomplete"), but the AI inventory below
+        # does not depend on it and is kept.
+        graph = self._workflow_graph({**w, "nodes": nodes})
+        for issue in graph.issues:
+            self.ctx.warn(f"lowcode.n8n: {issue}; graph coverage incomplete")
         types = [str(n.get("type", "")) for n in nodes]
         ai_steps = [
             f"{n.get('name')} ({n.get('type')})"
@@ -436,6 +473,7 @@ class N8nConnector(_AutomationBase):
             ),
             resource_type="workflow" if identified else "unresolved-workflow",
             extra={
+                "workflow_graph": graph.metadata,
                 "node_count": len(nodes),
                 "node_types": sorted(set(types))[:40],
                 "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)],

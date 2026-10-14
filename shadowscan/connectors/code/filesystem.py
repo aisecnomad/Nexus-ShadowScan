@@ -106,6 +106,7 @@ from shadowscan.connectors.code.instruction_content import (
     inspect_instruction_text,
 )
 from shadowscan.connectors.code.java_semantics import spring_tool_registration_matches
+from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES, LockInventory
 from shadowscan.connectors.code.manifests import (
     Artifact,
     Dep,
@@ -116,6 +117,11 @@ from shadowscan.connectors.code.manifests import (
 )
 from shadowscan.connectors.code.mcp_config import _mcp_client_for, _parse_mcp_servers
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_capabilities, mcp_tool_names
+from shadowscan.connectors.code.model_artifacts import (
+    ARTIFACT_SUFFIXES,
+    ArtifactBudgetExhausted,
+    inspect_artifact,
+)
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
@@ -147,6 +153,7 @@ from shadowscan.connectors.code.semantic_config import (
     structured_code_matches,
 )
 from shadowscan.connectors.code.semantic_config import bounded_metadata as _clip
+from shadowscan.connectors.code.skill_audit import InstructionAudit, audit_skill_text
 from shadowscan.connectors.code.source_identity import named_construction_spans
 from shadowscan.connectors.code.source_ranges import noncode_ranges, nul_reading_ranges
 from shadowscan.connectors.code.source_semantics import (
@@ -379,6 +386,10 @@ VCS_METADATA_EXCLUDES = frozenset({".git", ".hg", ".svn"})
 
 # Non-regular entries named individually per root, before the rest are summarized.
 _MAX_NON_REGULAR_NOTES = 10
+# Artifact metadata bytes (inspect_model_artifacts) read per scanned root, and
+# bytes read only to skip GGUF array values (vocabularies) per scanned root.
+_ARTIFACT_SCAN_BYTES = 32 * 1024 * 1024
+_ARTIFACT_SKIP_BYTES = 256 * 1024 * 1024
 
 LOCK_FILES = {
     "package-lock.json",
@@ -487,9 +498,20 @@ _ANY_FILE_NAME = "\x00"
 _LFS_POINTER_TEXT = LFS_POINTER_PREFIX.decode("ascii")
 
 
+# The manifest that declares a supported lockfile's direct dependencies, in the
+# same directory. A lockfile beside it adds locked (largely transitive)
+# inventory; without it the lockfile is the directory's only dependency record.
+_LOCKFILE_MANIFESTS = {
+    "uv.lock": "pyproject.toml",
+    "poetry.lock": "pyproject.toml",
+    "pnpm-lock.yaml": "package.json",
+    "cargo.lock": "Cargo.toml",
+}
+
+
 def _never_read_by_name(name: str) -> bool:
     """Whether the walker skips ``name`` silently because it never carries evidence."""
-    return name in LOCK_FILES or name.endswith(_NEVER_READ_SUFFIXES)
+    return name.lower() not in LOCKFILE_NAMES and (name in LOCK_FILES or name.endswith(_NEVER_READ_SUFFIXES))
 
 
 def _special_file_kind(mode: int) -> str:
@@ -800,6 +822,7 @@ class _Project:
     coding_agent_files: dict[str, list[str]] = field(default_factory=dict)  # sig id -> files
     coding_agent_matches: dict[str, list[tuple[Match, str, _Snippet]]] = field(default_factory=dict)
     instruction_hits: dict[str, list[ContentHit]] = field(default_factory=dict)
+    skill_audits: dict[str, InstructionAudit] = field(default_factory=dict)
     agent_defs: list[dict[str, Any]] = field(default_factory=list)
     seen: set[tuple[str, int, str, str, int | None]] = field(default_factory=set)
     mcp_tools: dict[str, str] = field(default_factory=dict)  # registered MCP tool name -> relpath
@@ -832,6 +855,11 @@ class _ScanState:
     root_fd: int = -1
     base: Path | None = None  # that directory (the scan root, or a single-file root's parent)
     projects: dict[str, _Project] = field(default_factory=lambda: {".": _Project(".")})
+    inventory_findings: list[Finding] = field(default_factory=list)
+    artifact_bytes_remaining: int = field(default_factory=lambda: _ARTIFACT_SCAN_BYTES)
+    artifact_skip_bytes_remaining: int = field(default_factory=lambda: _ARTIFACT_SKIP_BYTES)
+    # Selected files the exhausted artifact budget left uninspected.
+    artifacts_uninspected: int = 0
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
     # relpath, parsed servers
     mcp_files: list[tuple[str, list[dict[str, Any]]]] = field(default_factory=list)
@@ -1933,6 +1961,13 @@ class FilesystemConnector(BaseConnector):
             "times the budget"
         ),
         "scan_secrets": "detect provider credentials (default true)",
+        "inspect_model_artifacts": (
+            "opt in to bounded GGUF/safetensors/ONNX header and PyInstaller footer inventory; "
+            "never executes or loads tensor payloads (default false)"
+        ),
+        "model_metadata_bytes": (
+            "maximum bytes read per selected binary/model artifact (128..1048576; default 65536)"
+        ),
         "use_git": (
             "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ "
             "(default false)"
@@ -2001,6 +2036,14 @@ class FilesystemConnector(BaseConnector):
             ctx.get("oversize_skip_globs", list(DEFAULT_OVERSIZE_SKIP_GLOBS))
         )
         self.scan_secrets = config_boolean(ctx.get("scan_secrets", True), "scan_secrets")
+        self.inspect_model_artifacts = config_boolean(
+            ctx.get("inspect_model_artifacts", False), "inspect_model_artifacts"
+        )
+        self.model_metadata_bytes = ctx.get("model_metadata_bytes", 65536)
+        if type(self.model_metadata_bytes) is not int or not 128 <= self.model_metadata_bytes <= 1048576:
+            raise ConnectorError(
+                "code.filesystem: model_metadata_bytes must be an integer between 128 and 1048576"
+            )
         self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
@@ -2069,6 +2112,9 @@ class FilesystemConnector(BaseConnector):
         self._ownership_steps_remaining: dict[Path, int] = {}
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
         self._symlink_warnings: set[Path] = set()
+        # Supported lockfiles of the current root's walk -> whether their own
+        # manifest sits beside them (see _lockfile_gap).
+        self._lockfile_governed: dict[str, bool] = {}
         # (project root, path) of settings files the walk skipped (a link gap or a non-regular entry).
         self._unread_settings: list[tuple[str, str]] = []
         # Settings files of the scanned tree that a remote API snapshot did not include (set by
@@ -2172,11 +2218,17 @@ class FilesystemConnector(BaseConnector):
         """
         ext = Path(name).suffix.lower()
         return (
-            ext in SOURCE_EXTENSIONS
+            self._model_artifact_name(name)
+            or ext in SOURCE_EXTENSIONS
             or ext in TEXT_CONFIG_EXTENSIONS
             or is_manifest_name(name)
             or name in MCP_CONFIG_NAMES
             or bool(self.index.match_file(rel))
+        )
+
+    def _model_artifact_name(self, name: str) -> bool:
+        return self.inspect_model_artifacts and (
+            Path(name).suffix.lower() in ARTIFACT_SUFFIXES or "." not in name
         )
 
     def _disclosed_default_exclusion(self, rel: str, name: str) -> bool:
@@ -2246,6 +2298,44 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
+    def _lockfile_gap(self, rel: str, reason: str) -> None:
+        """Report a supported lockfile that was not inventoried, scoped to that lockfile.
+
+        ``reason`` is fixed text (a lockfiles.py reason or a walker condition),
+        never file content. Beside the manifest that declares its direct
+        dependencies, the manifest is still scanned and only the locked
+        inventory is missing: a warning that leaves the scan complete, as an
+        unread lockfile always did. Without that manifest the lockfile is the
+        directory's only dependency record, so the failure hides dependency
+        evidence and leaves coverage incomplete, as an unparseable manifest
+        does.
+        """
+        manifest = _LOCKFILE_MANIFESTS[PurePosixPath(rel).name.lower()]
+        if self._lockfile_governed.get(rel, False):
+            self.ctx.warn(
+                f"code.filesystem: {rel}: lockfile inventory skipped ({reason}); the dependencies "
+                f"declared in the adjacent {manifest} are still scanned, locked versions and "
+                "transitive dependencies are not inventoried",
+                incomplete=False,
+            )
+        else:
+            self.ctx.error(
+                f"code.filesystem: {rel}: lockfile parsing failed ({reason}); no adjacent {manifest} "
+                "declares these dependencies, so they are unscanned"
+            )
+
+    def _lockfile_manifest_beside(self, rel_dir: str, lockfile: str, filenames: Iterable[str]) -> bool:
+        """Whether the walk selects ``lockfile``'s own manifest in the same directory."""
+        manifest = _LOCKFILE_MANIFESTS[lockfile.lower()].lower()
+        for name in filenames:
+            if name.lower() != manifest:
+                continue
+            shown = _report_name(name)
+            rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
+            if not self._excluded_file(rel) and self._included(rel):
+                return True
+        return False
+
     def _skip_oversize(self, rel: str, size: int, reason: str | None = None) -> None:
         reason = reason or "generated or binary content is never analyzed"
         self.ctx.warn(
@@ -2292,6 +2382,13 @@ class FilesystemConnector(BaseConnector):
         before. A coding-agent settings file skipped here is still recorded as
         unread for its project's approval gate (``_iter_entries``).
         """
+        # Selected inventories must be checked or explicitly incomplete. Binary
+        # payload size is unrelated to the bounded metadata read budget.
+        if self._model_artifact_name(name):
+            return False
+        if name.lower() in LOCKFILE_NAMES:
+            self._lockfile_gap(rel, "file exceeds max_file_size")
+            return True
         if self._oversize_skippable(rel, name):
             self._skip_oversize(rel, size)
             return True
@@ -2348,7 +2445,9 @@ class FilesystemConnector(BaseConnector):
         link_name = PurePosixPath(rel).name
         link_ext = Path(link_name).suffix.lower()
         alias_signals = {(m.signature.id, id(m.signal)) for m in self.index.match_file(rel)}
-        link_read = bool(alias_signals) or _analyzed_by_name(link_name)
+        link_read = (
+            bool(alias_signals) or _analyzed_by_name(link_name) or self._model_artifact_name(link_name)
+        )
         if _never_read_by_name(link_name) or not link_read:
             # The walker would skip this name silently even as a regular
             # file, whatever it points at: the alias hides nothing.
@@ -2547,6 +2646,8 @@ class FilesystemConnector(BaseConnector):
                 if self._excluded_file(rel) or not self._included(rel):
                     continue
                 p = Path(dirpath) / fn
+                if fn.lower() in LOCKFILE_NAMES:
+                    self._lockfile_governed[rel] = self._lockfile_manifest_beside(rel_dir, fn, filenames)
                 try:
                     if p.is_symlink():
                         gaps = walk.link_gaps
@@ -2678,6 +2779,10 @@ class FilesystemConnector(BaseConnector):
         target = _resolved_link_target(link, resolved_root)
         if target is not None and self._link_target_is_scanned(rel, target, resolved_root, walk):
             return True
+        if PurePosixPath(rel).name.lower() in LOCKFILE_NAMES:
+            # Never followed; scoped like any other lockfile that was not inventoried.
+            self._lockfile_gap(rel, "symbolic link is not followed")
+            return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names.
         walk.link_gaps += 1
@@ -2701,10 +2806,12 @@ class FilesystemConnector(BaseConnector):
         signal) reserve nothing, so they cannot end the walk under a short
         deadline.
         """
+        if self._model_artifact_name(path.name):
+            return scan_timeout_for_size(self.scan_timeout, min(size, self.model_metadata_bytes))
         if size > self._size_limit(path.name):
             return 0.0
         will_read = _analyzed_by_name(path.name) or bool(self.index.match_file(rel))
-        return budget if will_read else 0.0
+        return budget if will_read or self._model_artifact_name(path.name) else 0.0
 
     def _stop_at_deadline(self, root: Path, examined: int, remaining: int) -> None:
         """Record one error naming exactly how much of the tree the deadline left unread.
@@ -2756,6 +2863,14 @@ class FilesystemConnector(BaseConnector):
                 scan.diff_base_ref = self.diff_base
                 scan.diff_files = self._resolve_diff(root)
             self._walk(scan)
+            if scan.artifacts_uninspected:
+                self.ctx.warn(
+                    f"code.filesystem: {scan.label}: artifact metadata budget ({_ARTIFACT_SCAN_BYTES:,} "
+                    f"bytes, or {_ARTIFACT_SKIP_BYTES:,} array bytes, per root) exhausted; "
+                    f"{scan.artifacts_uninspected} selected file(s) were not inspected as artifacts "
+                    "(extensionless ones were still analysed as text); artifact inventory incomplete",
+                    incomplete=True,
+                )
             self._resolve_reexport_sources(scan)
             for f in self._emit_findings(scan):
                 if scan.diff_files is not None:
@@ -2931,6 +3046,7 @@ class FilesystemConnector(BaseConnector):
         entries: list[tuple[str, Path, str, int]] = []
         try:
             self._unread_settings = []
+            self._lockfile_governed = {}
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
             # Enumeration hit max_entries or its share of the deadline: the
@@ -2943,7 +3059,10 @@ class FilesystemConnector(BaseConnector):
         for index, (rel, path, proj_root, size) in enumerate(entries):
             if scan.diff_files is not None and not self._diff_included(rel, scan.diff_files):
                 continue
-            budget = scan_timeout_for_size(self.scan_timeout, size)
+            analysis_size = (
+                min(size, self.model_metadata_bytes) if self._model_artifact_name(path.name) else size
+            )
+            budget = scan_timeout_for_size(self.scan_timeout, analysis_size)
             wall_cap = budget * WALL_BUDGET_FACTOR
             reserve = self._reserved_budget(rel, path, size, budget)
             if deadline is not None:
@@ -3022,6 +3141,65 @@ class FilesystemConnector(BaseConnector):
         if lang:
             proj.languages.add(lang)
 
+        if self._model_artifact_name(path.name):
+            on_disk = (
+                PurePosixPath(path.relative_to(scan.base).as_posix()) if scan.base else PurePosixPath(rel)
+            )
+
+            def charge(size: int) -> None:
+                if size > scan.artifact_bytes_remaining:
+                    raise ArtifactBudgetExhausted("artifact scan-wide metadata byte limit exceeded")
+                scan.artifact_bytes_remaining -= size
+
+            def skip_charge(size: int) -> None:
+                if size > scan.artifact_skip_bytes_remaining:
+                    raise ArtifactBudgetExhausted("artifact scan-wide array skip byte limit exceeded")
+                scan.artifact_skip_bytes_remaining -= size
+
+            try:
+                result = inspect_artifact(
+                    on_disk,
+                    dir_fd=scan.root_fd,
+                    max_bytes=self.model_metadata_bytes,
+                    check=self.ctx.check_deadline,
+                    charge=charge,
+                    skip_charge=skip_charge,
+                )
+            except ArtifactBudgetExhausted:
+                # The root's budget is spent: count the file once (reported
+                # after the walk) and still give it the text analysis below.
+                scan.artifacts_uninspected += 1
+                result = None
+            if result is not None:
+                kind = Kind.INFRA if result.format == "pyinstaller" else Kind.LOCAL_MODEL
+                finding = self._base(
+                    scan.label,
+                    scan.root,
+                    rel,
+                    kind,
+                    f"{result.format} artifact inventory: {rel}",
+                    "binary-artifact",
+                )
+                finding.metadata["artifact_inventory"] = {
+                    "format": result.format,
+                    **result.metadata,
+                    "limitations": result.limitations,
+                }
+                finding.add_tag("artifact-inventory-only")
+                finding.add_evidence(
+                    Evidence(
+                        signal=f"artifact-format:{result.format}",
+                        description="Bounded file-format metadata observed; execution is unobserved",
+                        location=rel,
+                        weight=0.4,
+                    )
+                )
+                finding.recompute_confidence()
+                scan.inventory_findings.append(finding)
+            # Extensionless text can still be a source/configuration file.
+            if path.suffix.lower() in ARTIFACT_SUFFIXES or result is not None:
+                return
+
         # 1. file-name signals (config files of agents / MCP / A2A ...)
         file_matches = self.index.match_file(rel)
         by_name = _analyzed_by_name(path.name)
@@ -3037,6 +3215,15 @@ class FilesystemConnector(BaseConnector):
             _note_unread_settings(proj, rel)
             return
         text, raw_notebook, cells = loaded
+        if path.name.lower() in LOCKFILE_NAMES:
+            manifest = parse_manifest(rel, text)
+            if manifest is not None:
+                if manifest.lockfile_issue is not None:
+                    self._lockfile_gap(rel, manifest.lockfile_issue)
+                self._file_errors(rel, manifest.errors)
+                if manifest.lockfile is not None:
+                    self._lockfile_inventory(scan, rel, manifest.lockfile)
+            return
         nul_text = None
         if "\x00" in text and path.suffix.lower() != ".ipynb":
             # Bash drops NUL bytes from a script, so `api.open<NUL>ai.com` runs as api.openai.com: names
@@ -3064,6 +3251,13 @@ class FilesystemConnector(BaseConnector):
                 # own few literals are cheaper than the union.
                 file.literals = self.index.literal_scan(text, file.lang)
             self._record_file_matches(file)
+            if path.name == "SKILL.md":
+                audit = audit_skill_text(text)
+                proj.skill_audits[rel] = audit
+                if audit.incomplete:
+                    self.ctx.warn(
+                        f"code.filesystem: {rel}: static instruction audit incomplete", incomplete=True
+                    )
             if any(rel in files for files in proj.coding_agent_files.values()):
                 # Inspect the same confined snapshot as every other analysis pass.
                 if len(text.encode("utf-8")) > MAX_INSTRUCTION_TEXT_BYTES:
@@ -3495,6 +3689,58 @@ class FilesystemConnector(BaseConnector):
         # configured server when the entries are all empty.
         if m.signature_id != "protocol.mcp" or not file.is_mcp or file.mcp_active:
             self._record(file.proj, m, file.rel, snippet)
+
+    def _lockfile_inventory(self, scan: _ScanState, rel: str, inventory: LockInventory) -> None:
+        """Keep locked dependencies separate from deployment and source observations."""
+        packages = []
+        signatures: set[str] = set()
+        for package in inventory.packages:
+            if package.root:
+                continue
+            matches = self.index.match_dependency(package.ecosystem, package.name)
+            if not matches:
+                continue
+            signatures.update(m.signature_id for m in matches)
+            packages.append(
+                {
+                    "ecosystem": package.ecosystem,
+                    "name": package.name,
+                    "version": package.version,
+                    "source_type": package.source,
+                    "relationship": package.relationship,
+                }
+            )
+        if not packages:
+            return
+        finding = self._base(
+            scan.label,
+            scan.root,
+            rel,
+            Kind.FRAMEWORK_USAGE,
+            f"AI dependency lockfile inventory: {rel}",
+            "lockfile-inventory",
+        )
+        finding.frameworks = sorted(signatures)
+        finding.metadata["lockfile_inventory"] = {
+            "format": inventory.format,
+            "package_count": sum(not p.root for p in inventory.packages),
+            "dependency_edge_count": inventory.edge_count,
+            "roots_known": inventory.roots_known,
+            "matched_packages": packages,
+            "limitations": inventory.limitations,
+        }
+        finding.add_tag("dependency-inventory-only")
+        finding.add_evidence(
+            Evidence(
+                signal="dependency:locked-inventory",
+                description="AI dependencies recorded in lockfile; installation and execution unobserved",
+                location=rel,
+                weight=0.4,
+                attributes={"confidence_group": "locked-dependencies"},
+            )
+        )
+        finding.recompute_confidence()
+        scan.inventory_findings.append(finding)
 
     def _scan_manifest(self, scan: _ScanState, file: _SourceFile) -> None:
         """Match the dependencies and artifacts (images, env names, IaC types) a manifest declares."""
@@ -4212,6 +4458,7 @@ class FilesystemConnector(BaseConnector):
     def _emit_findings(self, scan: _ScanState) -> Iterator[Finding]:
         """Yield the findings of one walk; a failure is isolated to its own file or project."""
         label, root = scan.label, scan.root
+        yield from scan.inventory_findings
         # Project findings are held back until the manifests are read: a
         # manifest inside a reported project describes that project's agent
         # and is folded into its finding instead of counting it twice.
@@ -5191,6 +5438,25 @@ class FilesystemConnector(BaseConnector):
             apply_matches(f, [m], location=rel, snippet=snip)
         f.metadata["files"] = sorted(files)
         self._inspect_instruction_files(f, proj, sig_id, files)
+        if sig_id == "coding-agent.agent-skills":
+            audits = []
+            for rel in sorted(files):
+                if (audit := proj.skill_audits.get(rel)) is None:
+                    continue
+                audits.append({"path": rel, **audit.to_metadata()})
+                for indicator in audit.indicators:
+                    f.add_tag("suspicious-instruction")
+                    f.add_evidence(
+                        Evidence(
+                            signal=f"static-instruction:{indicator.rule}",
+                            description=indicator.description,
+                            location=f"{rel}:{indicator.line}",
+                            weight=0.0,
+                            attributes={"category": "static-instruction-audit", "rule": indicator.rule},
+                        )
+                    )
+            if audits:
+                f.metadata["static_instruction_audit"] = {"files": audits}
         posture = proj.posture.get(sig_id, [])
         if posture:
             record_posture(f, posture)
@@ -5593,6 +5859,15 @@ class FilesystemConnector(BaseConnector):
         finalize(f, self.index)
         f.kind = Kind.AGENT if agent_flow else Kind.WORKFLOW
         f.metadata["agent_flow"] = agent_flow
+        graphs = []
+        for match, _ in hits:
+            for graph in match.extra.get("workflow_graphs", [match.extra.get("workflow_graph")]):
+                if isinstance(graph, dict) and graph not in graphs:
+                    graphs.append(graph)
+        if len(graphs) == 1:
+            f.metadata["workflow_graph"] = graphs[0]
+        elif graphs:
+            f.metadata["workflow_graphs"] = graphs
         return f
 
     def _infra_finding(

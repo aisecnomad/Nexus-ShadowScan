@@ -590,3 +590,287 @@ def test_shared_document_equals_a_fresh_parse_and_is_refused_for_jsonc(tmp_path,
     assert not ctx.stats.errors
     assert ctx.stats.warnings == ["code.filesystem: package.json: input defect: invalid JSON"]
     assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("name", ["uv.lock", "poetry.lock", "pnpm-lock.yaml", "Cargo.lock"])
+def test_lockfile_inventory_fixtures(name):
+    from pathlib import Path
+
+    source = Path("tests/fixtures/code/lockfiles") / name
+    result = parse_manifest(name, source.read_text())
+    assert result and not result.errors and result.lockfile
+    assert is_manifest_name(name)
+    inventory = result.lockfile
+    packages = {p.name: p for p in inventory.packages}
+    if name == "uv.lock":
+        assert packages["wrapper"].relationship == "direct"
+        assert packages["crewai"].relationship == "transitive"
+        assert inventory.roots_known
+    elif name == "pnpm-lock.yaml":
+        assert packages["@langchain/langgraph"].relationship == "transitive"
+    else:
+        assert all(p.relationship == "unknown" for p in inventory.packages)
+    assert all("http" not in p.source for p in inventory.packages)
+
+
+def _lockfile_reasons():
+    """Every fixed LockfileError reason in lockfiles.py."""
+    import re
+    from pathlib import Path
+
+    source = Path("shadowscan/connectors/code/lockfiles.py").read_text()
+    return frozenset(re.findall(r'LockfileError\("([^"]+)"\)', source))
+
+
+_LOCKFILE_REASONS = _lockfile_reasons()
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("uv.lock", "version = true"),
+        ("uv.lock", "version = 999"),
+        ("uv.lock", "version = 1\npackage = {}"),
+        ("uv.lock", "version = 1\npackage = [42]"),
+        ("uv.lock", 'version = 1\n[[package]]\nname="example"\nversion="1"\ndependencies=[42]'),
+        ("uv.lock", 'version = 1\n[[package]]\nname="example"\nversion="https://example.invalid"'),
+        ("Cargo.lock", "version = 2"),
+        ("Cargo.lock", "version = 3.0"),
+        ("poetry.lock", '[metadata]\nlock-version="99"'),
+        ("pnpm-lock.yaml", "lockfileVersion: 5.4"),
+        ("pnpm-lock.yaml", "lockfileVersion: 9.0\npackages: []"),
+        ("pnpm-lock.yaml", "lockfileVersion: 9.0\npackages: {invalid: {}}"),
+        (
+            "pnpm-lock.yaml",
+            "lockfileVersion: 9.0\npackages: {x@1: {}}\nsnapshots: {x@1: {dependencies: {y: 2}}}",
+        ),
+        ("pnpm-lock.yaml", "lockfileVersion: 9.0\nimporters: {.: {dependencies: {x: {version: 1}}}}"),
+        ("pnpm-lock.yaml", "lockfileVersion: 9.0\nlockfileVersion: 9.0"),
+    ],
+)
+def test_malformed_or_unsupported_lockfiles_are_explicit(name, text):
+    from shadowscan.connectors.code import lockfiles
+
+    result = parse_manifest(name, text)
+    assert result is not None and result.lockfile is None and not result.deps
+    # A fixed reason from lockfiles.py; the filesystem connector scopes it.
+    assert result.lockfile_issue
+    assert result.lockfile_issue == lockfiles._MALFORMED or result.lockfile_issue in _LOCKFILE_REASONS
+
+
+def test_lockfile_cycles_ambiguous_versions_and_aliases():
+    from shadowscan.connectors.code.lockfiles import parse_lockfile
+
+    text = """version = 1
+[[package]]
+name = "root"
+version = "1"
+source = {editable = "."}
+dependencies = [{name="crewai"}]
+[[package]]
+name = "crewai"
+version = "1"
+dependencies = [{name="root"}]
+[[package]]
+name = "crewai"
+version = "2"
+"""
+    result = parse_lockfile("uv.lock", text)
+    assert all(p.relationship == "unknown" for p in result.packages)
+    text = """lockfileVersion: '6.0'
+dependencies:
+  agent-alias: {specifier: 'npm:crewai@1.0', version: 'crewai@1.0'}
+  local: {specifier: 'workspace:*', version: 'link:../local'}
+packages:
+  /crewai@1.0:
+    dependencies: {local: 'workspace:*', crewai: '1.0'}
+"""
+    result = parse_lockfile("pnpm-lock.yaml", text)
+    assert result.packages[0].name == "crewai"
+    assert result.packages[0].relationship == "direct"
+
+
+def test_lockfile_parser_resource_limits(monkeypatch):
+    from shadowscan.connectors.code import lockfiles
+
+    with pytest.raises(ValueError, match="unsupported"):
+        lockfiles.parse_lockfile("unknown.lock", "")
+    with pytest.raises(ValueError, match="byte limit"):
+        lockfiles.parse_lockfile("uv.lock", " " * (lockfiles.MAX_LOCKFILE_BYTES + 1))
+    monkeypatch.setattr(lockfiles, "MAX_PACKAGES", 1)
+    result = parse_manifest(
+        "uv.lock", 'version=1\n[[package]]\nname="a"\nversion="1"\n[[package]]\nname="b"\nversion="1"'
+    )
+    assert result and result.lockfile_issue == "lockfile package limit exceeded"
+    monkeypatch.setattr(lockfiles, "MAX_STRUCTURE_NODES", 2)
+    result = parse_manifest("uv.lock", "version=1\npackage=[]")
+    assert result and result.lockfile_issue == "lockfile structure limit exceeded"
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "reason"),
+    [
+        ("uv.lock", "version = [", "lockfile is not valid TOML"),
+        ("pnpm-lock.yaml", "lockfileVersion: '9.0'\npackages: [unclosed", "lockfile is not valid YAML"),
+        ("pnpm-lock.yaml", "a: &a [*a]", "lockfile YAML exceeds safety limits"),
+        ("Cargo.lock", "version = 4\npackage = [" + "[" * 2000 + "]" * 2000 + "]", None),
+        # Regression (#220 verifier): an integer past Python's digit limit was "not valid YAML".
+        pytest.param(
+            "uv.lock",
+            "version = 1\nsize = " + "9" * 5000,
+            "lockfile is not valid TOML",
+            id="uv-integer-digits",
+        ),
+        pytest.param(
+            "poetry.lock", "size = " + "9" * 5000, "lockfile is not valid TOML", id="poetry-integer-digits"
+        ),
+        pytest.param(
+            "Cargo.lock", "version = " + "9" * 5000, "lockfile is not valid TOML", id="cargo-integer-digits"
+        ),
+    ],
+)
+def test_lockfile_parser_errors_become_fixed_reasons(name, text, reason):
+    """Regression (#220 review F6): parser messages, which can quote input, are never passed on."""
+    from shadowscan.connectors.code.lockfiles import LockfileError, parse_lockfile
+
+    with pytest.raises(LockfileError) as raised:
+        parse_lockfile(name, text)
+    assert str(raised.value) in _LOCKFILE_REASONS | {"malformed lockfile content"}
+    if reason is not None:
+        assert str(raised.value) == reason
+
+
+def test_pnpm_peer_snapshots_cannot_union_transitive_reachability():
+    from shadowscan.connectors.code.lockfiles import parse_lockfile
+
+    text = """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      wrapper: {version: '1.0.0(peer@1.0.0)'}
+packages:
+  wrapper@1.0.0: {}
+  '@langchain/langgraph@0.2.0': {}
+snapshots:
+  wrapper@1.0.0(peer@1.0.0): {}
+  wrapper@1.0.0(peer@2.0.0):
+    dependencies: {'@langchain/langgraph': 0.2.0}
+  '@langchain/langgraph@0.2.0': {}
+"""
+    inventory = parse_lockfile("pnpm-lock.yaml", text)
+    graph = next(p for p in inventory.packages if p.name == "@langchain/langgraph")
+    assert graph.relationship == "unknown"
+
+
+_PNPM_NON_REGISTRY = {
+    "v9-codeload": """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      is-positive:
+        specifier: github:kevva/is-positive
+        version: https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678
+      openai: {specifier: ^4.0.0, version: 4.0.0}
+packages:
+  is-positive@https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678:
+    resolution: {tarball: https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678}
+    version: 3.1.0
+  openai@4.0.0:
+    resolution: {integrity: sha512-x}
+snapshots:
+  is-positive@https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678: {}
+  openai@4.0.0: {}
+""",
+    "v9-git-ssh": """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      helper: {specifier: 'git+ssh://git@github.com/example/helper.git', version: 'git+ssh://git@github.com/example/helper.git#abc123'}
+      openai: {specifier: ^4.0.0, version: 4.0.0}
+packages:
+  helper@git+ssh://git@github.com/example/helper.git#abc123:
+    resolution: {commit: abc123, repo: 'git@github.com:example/helper.git', type: git}
+    version: 1.0.0
+  openai@4.0.0:
+    resolution: {integrity: sha512-x}
+snapshots:
+  helper@git+ssh://git@github.com/example/helper.git#abc123:
+    dependencies: {openai: 4.0.0}
+  openai@4.0.0: {}
+""",
+    "v9-tarball": """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      helper: {specifier: 'https://example.invalid/helper-1.0.0.tgz', version: 'https://example.invalid/helper-1.0.0.tgz'}
+      openai: {specifier: ^4.0.0, version: 4.0.0}
+packages:
+  helper@https://example.invalid/helper-1.0.0.tgz:
+    resolution: {tarball: 'https://example.invalid/helper-1.0.0.tgz'}
+    version: 1.0.0
+  openai@4.0.0:
+    resolution: {integrity: sha512-x}
+snapshots:
+  helper@https://example.invalid/helper-1.0.0.tgz: {}
+  openai@4.0.0: {}
+""",
+    "v6-git": """lockfileVersion: '6.0'
+dependencies:
+  is-positive:
+    specifier: github:kevva/is-positive
+    version: github.com/kevva/is-positive/97edff6f525f192a3f83cea1944765f769ae2678
+  openai: {specifier: ^4.0.0, version: 4.0.0}
+packages:
+  github.com/kevva/is-positive/97edff6f525f192a3f83cea1944765f769ae2678:
+    resolution: {tarball: https://codeload.github.com/kevva/is-positive/tar.gz/97edff6f525f192a3f83cea1944765f769ae2678}
+    name: is-positive
+    version: 3.1.0
+    dependencies: {openai: 4.0.0}
+  /openai@4.0.0:
+    resolution: {integrity: sha512-x}
+""",
+}
+
+
+@pytest.mark.parametrize("case", sorted(_PNPM_NON_REGISTRY))
+def test_pnpm_git_and_tarball_entries_are_skipped_not_fatal(case):
+    """Regression (#220 verifier): one git or tarball dependency rejected the whole pnpm lockfile."""
+    from shadowscan.connectors.code.lockfiles import parse_lockfile
+
+    inventory = parse_lockfile("pnpm-lock.yaml", _PNPM_NON_REGISTRY[case])
+    packages = {(p.name, p.version): p for p in inventory.packages if not p.root}
+    assert set(packages) == {("openai", "4.0.0")}
+    assert packages[("openai", "4.0.0")].relationship == "direct"
+    assert any("1 pnpm package(s) from git, tarball or URL sources" in item for item in inventory.limitations)
+    assert "example.invalid" not in str(inventory) and "kevva" not in str(inventory)
+
+
+def test_pnpm_lockfile_with_a_git_dependency_is_inventoried_by_the_scan(tmp_path, run_connector):
+    (tmp_path / "pnpm-lock.yaml").write_text(_PNPM_NON_REGISTRY["v9-codeload"])
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    (finding,) = [f for f in findings if f.resource_type == "lockfile-inventory"]
+    assert [p["name"] for p in finding.metadata["lockfile_inventory"]["matched_packages"]] == ["openai"]
+
+
+def test_uv_package_without_a_version_is_inventoried_without_one():
+    """Regression (#220 verifier): a workspace member or dynamic version rejected the whole uv.lock."""
+    from shadowscan.connectors.code.lockfiles import LockfileError, parse_lockfile
+
+    text = """version = 1
+[[package]]
+name = "agent-app"
+source = { editable = "." }
+dependencies = [{ name = "openai" }]
+[[package]]
+name = "openai"
+version = "1.40.0"
+source = { registry = "https://pypi.org/simple" }
+"""
+    inventory = parse_lockfile("uv.lock", text)
+    packages = {p.name: p for p in inventory.packages}
+    assert packages["agent-app"].version is None and packages["agent-app"].root
+    assert packages["openai"].version == "1.40.0" and packages["openai"].relationship == "direct"
+    assert any("without a version" in item for item in inventory.limitations)
+    with pytest.raises(LockfileError, match="invalid locked package version"):
+        parse_lockfile("poetry.lock", '[metadata]\nlock-version="2.0"\n[[package]]\nname="openai"\n')

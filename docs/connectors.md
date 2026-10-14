@@ -239,6 +239,23 @@ A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
+Supported `uv.lock`, `poetry.lock`, `pnpm-lock.yaml` and `Cargo.lock` inputs
+also provide bounded AI dependency inventory, with direct/transitive relationships
+only when their roots and edges establish them. Locked packages do not establish
+installation, execution or agency. A lockfile that cannot be inventoried is
+reported against that lockfile with a fixed reason; it leaves the scan
+incomplete only when no manifest beside it declares its dependencies. A pnpm
+git, tarball or URL package is skipped with a limitation, and a `uv.lock`
+package without a version is kept without one. `SKILL.md` adds a bounded static
+instruction review of the body and the front matter `name` and `description`,
+with fixed rule explanations and locations; quoted examples and ordinary URLs
+are not direct suspicious instructions, and a line over 4,096 characters is
+audited at both ends and marks the audit `partial`. Optional
+`inspect_model_artifacts` adds read-only, format-specific model and
+packaged-binary metadata inspection; GGUF vocabularies are skipped under their
+own bounds.
+See the [source guide](connectors/code.md) for supported formats and limits.
+
 Supported Go SDK import aliases are resolved before source evidence is
 excerpted; reports remain confidential. Ordinary Rust multiline strings, C raw
 strings, `\x`/`\u{...}` character escapes and supported JSX in `.js`, `.mjs` and
@@ -793,6 +810,14 @@ collection incomplete and cannot be approved by a registry card. Authentication
 uses `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`), against `api_url`
 (env `N8N_API_URL`, for example `https://n8n.example.com/api/v1`).
 
+Declared workflow graphs carry bounded, cycle-safe input/AI/egress reachability
+metadata. Disconnected nodes do not establish a path. Exact supported node types
+and literal HTTP destinations, shared with static n8n/Flowise/Dify export
+analysis, assign graph roles only; which workflows are reported is unchanged.
+Dynamic expressions remain unresolved. A malformed graph marks coverage
+incomplete but keeps the workflow finding. These relationships neither change
+confidence nor prove execution, private-data access or exfiltration.
+
 ### `lowcode.make`
 Make scenarios with AI modules and AI Agents; triggers (`scheduling.type` →
 `scheduled`, webhook → `event-triggered`, both with `autonomous`; an on-demand
@@ -951,6 +976,14 @@ actions (via `get_account_authorization_details`), CloudTrail LLM callers.
 Options: `profile`, `role_arn`, `regions` (`all`), `services` (default: every
 service except `registry`), `cloudtrail_days`, `max_ecs_api_calls` (default 2000
 per region), `max_registry_records`, `registry_arns`.
+
+CloudTrail exports retain bounded event and assumed-role provenance. Lineage
+requires exact scoped session identifiers and compatible creation/lifetime
+timestamps; missing or ambiguous predecessors remain unknown. This metadata
+does not add confidence, and its sampling bounds report partial lineage
+without marking the scan incomplete. Live `LookupEvents` retrieves no STS
+events, so live lineage is always unlinked, and it is not invocation
+data-event coverage; see the [cloud guide](connectors/cloud.md).
 
 Opt-in registry records (`services` including `registry`): AWS Agent Registry
 and AgentCore registry records of every status, from the control-plane APIs,
@@ -1160,6 +1193,13 @@ that sets both `input` and `agent_card_urls` is refused (exit 3), because a
 replay never probes. Model metadata is not parsed from GGUF/safetensors files,
 and MCP fingerprints have no rug-pull baseline.
 
+The separate opt-in filesystem artifact pass can inspect bounded raw model
+metadata. MCP description review remains static. The `tool-poisoning` tag keeps
+its description rules, which also match documentation URLs and tool references,
+so it marks a review candidate. A bounded sentence audit adds zero-weight
+explanations of direct suspicious instructions and excludes quoted examples and
+prohibitions. No MCP server is launched.
+
 ## Network
 
 ### `network.logs`
@@ -1169,7 +1209,13 @@ Resolver query logs, VPC Flow Logs, and generic JSON or CSV DNS and SNI
 records. Host names match a signature's exact domain or declared wildcard,
 never a substring. Non-AI TLS names are retained as negative attribution evidence.
 A flow is attributed by its connection identity to an AI TLS server name, or
-through unambiguous DNS answers in the same input. Conflicting identities and
+through unambiguous DNS answers valid at the flow time for the same client and
+compatible sensor/resolver/network context. Missing timestamps or TTLs retain
+DNS observations with explicit attribution limitations. Future or expired
+answers do not explain flows. Repeated DNS answers merge into validity
+intervals per client and address; a storage bound withholds DNS attribution
+only for the affected client/address, with a limitation and a warning that
+leaves the scan complete. Conflicting identities and
 explicit non-AI TLS evidence prevent fallback attribution. Coding-agent, MCP and hosted-agent services
 are tagged `agent-service`; runs of connections to a model API seconds apart
 are tagged `agent-loop`. Malformed or unrecognized records make the scan
@@ -1179,6 +1225,10 @@ make coverage incomplete; `NODATA` is a valid no-traffic observation.
 Options: `format` (`zeek`, `route53`, `vpc-flow`, `generic`; default auto),
 `label` (network name; default `network`), `max_records`. See the
 [network guide](connectors/network.md).
+
+Optional JA4 values from Zeek TLS logs are bounded supporting metadata, never
+AI identity or an independent confidence boost. This connector performs no
+live DNS lookup, packet capture or external fingerprint query.
 
 ## Runtime
 
@@ -1195,6 +1245,15 @@ command line or executable; live mode reads `/proc` on Linux. The engine
 links these findings to endpoint findings for the same tool on the same
 device (`metadata.lifecycle`, tag `observed-running`) without changing
 scores.
+
+Lifecycle assessments additionally disclose their observation window, runtime
+coverage and whether activity is current, historical or unknown. Unobservable
+scope does not establish dormancy. Optional `inspect_maps`, `inspect_fds` and
+allowlisted `inspect_env_keys` inspect bounded Linux process metadata; they never
+read process memory, open descriptor targets or retain environment values.
+Kernel threads are not inspected, and `ESRCH` on an unchanged process is
+recorded as `not_applicable`.
+Generic libraries, model descriptors and packaging do not establish an agent.
 
 Options: `label` (host name for records without one), `max_processes` (live
 mode bound). See the [runtime guide](connectors/runtime.md).

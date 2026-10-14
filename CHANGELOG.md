@@ -5,6 +5,111 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Bounded evidence analysis across connectors (October 14)
+
+Carried from #220 with the review fixes below. The bundled evaluation corpora
+give the same predictions before and after. The new tests are author-written
+synthetic fixtures; they establish implementation behavior, not independent
+review, live tenant acceptance or production precision.
+
+- Low-code: a shared bounded, cycle-safe graph core for n8n, Flowise and Dify
+  exports adds non-scoring `workflow_graph` metadata: node and edge counts,
+  role counts and an example input → AI → outbound path by node ordinal. Exact
+  node types assign graph roles only. `lowcode.n8n` and the export reader
+  report the same workflows as before, for example OpenRouter, embeddings,
+  vector-store and community MCP nodes outside the registry. A malformed or
+  over-budget graph marks coverage incomplete and sets the graph status to
+  `incomplete`, but keeps the workflow finding. A `null` n8n output slot is an
+  unconnected branch, not a defect. In `lowcode.n8n` the graph and
+  `metadata.node_count` cover the same nodes, an n8n workflow that also
+  carries Dify-like `kind`/`workflow` fields is read as n8n, and a graph that
+  fails unexpectedly affects only its own workflow. A document is a graph only
+  when its nodes identify n8n or Flowise (or it is a Dify app): a long
+  `nodes` list alone is never reported as an over-budget graph.
+- Source inventory: bounded `uv.lock` v1, Poetry 1.1/2.0/2.1, `pnpm-lock.yaml`
+  6/9 and `Cargo.lock` 3/4 parsing adds `lockfile-inventory` findings
+  (dependency inventory only, possible confidence), with direct/transitive
+  labels only where roots and edges establish them. No package manager runs.
+  A lockfile that is malformed, an unsupported version, over a limit (1,000,000
+  bytes, 4,096 packages, 16,384 edges) or a symbolic link is reported against
+  that lockfile with a fixed reason. Beside its `pyproject.toml`,
+  `package.json` or `Cargo.toml` this is a warning and the scan stays complete;
+  without that manifest the scan is incomplete, as for an unparseable manifest.
+  A pnpm package from a git, tarball or URL source is skipped and counted in a
+  limitation while the rest of the file is inventoried; a `uv.lock` package
+  without a version (a workspace member or dynamic version) is inventoried
+  with `version: null`; an integer past Python's digit limit in a TOML lockfile
+  is reported as invalid TOML.
+- Model and binary artifacts: opt-in `inspect_model_artifacts` (with
+  `model_metadata_bytes`) inventories GGUF, safetensors, ONNX envelope and
+  PyInstaller structures through confined, bounded reads. Nothing is
+  unpickled, decompressed, loaded or executed. GGUF array values (tokenizer
+  vocabularies of 32,000-256,000 entries, scores, merges) are skipped without
+  being decoded, under their own element and byte bounds, so llama.cpp models
+  are inventoried. An extensionless file is searched for a PyInstaller cookie
+  only when it starts with an ELF, PE or Mach-O header; when a root's artifact
+  budget is spent, remaining selected files are counted in one warning that
+  marks coverage incomplete, and extensionless files still get normal text
+  analysis. Symlinked Hugging Face cache entries are not followed; the source
+  guide documents that gap.
+- `SKILL.md` files and MCP tool descriptions get a bounded static sentence
+  audit with fixed rule explanations and line numbers, and quoted-example and
+  prohibition controls. For MCP tools it is additional, zero-weight signal: the
+  existing `tool-poisoning` rules still apply unchanged, including to
+  documentation URLs and tool references, and an audit indicator can also
+  raise the tag. The `SKILL.md` audit also covers the front matter `name` and
+  `description`. A line over 4,096 characters is audited in its first and last
+  4,096 characters and marks the audit `partial`, not the scan incomplete.
+  Oversized text (over 64 KiB), malformed front matter and unclosed fences
+  mark coverage incomplete.
+- Runtime: opt-in Linux `inspect_maps`, `inspect_fds` and `inspect_env_keys`
+  read bounded mapped-library names, descriptor-link extensions and
+  allowlisted environment key names, with process identity checks and
+  budgets. They never read process memory, open descriptor targets or keep
+  environment values. Kernel threads are not inspected, and a source that
+  fails with `ESRCH` while the process identity is unchanged is recorded as
+  `not_applicable` without marking coverage incomplete. A live command line
+  over 65,536 bytes is classified from its leading complete arguments,
+  recorded in `metadata.command_lines_truncated`, and leaves the scan
+  incomplete.
+- Network: DNS-to-flow attribution requires a matching client and context and
+  an answer valid at the flow time (`dns_max_ttl_seconds`, default 86,400;
+  `dns_clock_skew_seconds`, default 0). Flows are grouped per connection, with
+  their times in at most 64 buckets each, and a bucket that straddles an
+  answer's validity is not attributed. DNS answers are stored per client and
+  address as merged validity intervals, so repeated lookups use no extra
+  storage and attribution looks intervals up by bisection. A storage bound
+  withholds DNS attribution only for the affected client/address, with a
+  limitation on its findings and a warning that leaves the scan complete; the
+  Ollama port rule does not depend on DNS storage. A defective record
+  withholds flow attribution only for the client it names; a record limit or
+  a defect with no known client withholds it for the whole input. Zeek JA4
+  values are validated,
+  non-scoring context. Offline scans make no DNS or fingerprint queries. In the
+  bundled demo one finding is removed (a client borrowing another client's
+  expired answer: 133 to 132 findings) and Cursor's confidence drops from 0.8
+  to 0.5.
+- AWS: CloudTrail exports retain bounded event provenance and exact
+  assumed-role lineage (session ARN, issuer, creation time and lifetime, up to
+  eight hops) as non-scoring metadata. Sampling bounds (100 invocations per
+  caller, 2,000 invocations and 2,000 STS assumptions per run) mark lineage
+  `partial` without marking the scan incomplete; invalid timestamps and
+  conflicting event IDs mark it incomplete. Exact duplicate event IDs no longer
+  inflate caller counts, and offline records with other event names are
+  ignored. Live `LookupEvents` retrieves no STS events, so live lineage is
+  always unlinked.
+- Lifecycle: endpoint and process findings gain a non-scoring
+  `lifecycle_observation` with the scan's observation window, runtime coverage
+  and historical/current/unknown recency. Samples never name a finding the
+  report omits; `observations_omitted` counts them.
+
+Rescan after upgrading and keep earlier reports as historical observations;
+lower attribution is not evidence that a workload stopped. See the
+[migration notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#october-14-bounded-evidence-migration-unreleased).
+The archived implementation record under
+`archive/reviews/evidence-depth-2026-10-14/` is author-written offline evidence;
+its full before/after reports were not committed.
+
 ### Detection precision, ambiguous app names and scoped correlation (October 14)
 
 Integrates the reviewed parts of three draft pull requests, #216, #203

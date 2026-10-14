@@ -25,9 +25,12 @@ import os
 import platform
 import re
 import socket
+import stat
+import time
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -140,6 +143,168 @@ _PID_FIELDS = ("pid", "ProcessId", "process_id", "TargetProcessId")
 _PROC = Path("/proc")
 _MAX_CMDLINE_BYTES = 64 * 1024
 
+# Only these fixed labels leave collection. Paths and environment values never do.
+_LIBRARIES = {
+    "ggml": re.compile(r"libggml(?:[-_.]|$)"),
+    "llama": re.compile(r"libllama(?:[-_.]|$)"),
+    "torch": re.compile(r"libtorch(?:[-_.]|$)"),
+    "onnxruntime": re.compile(r"(?:lib)?onnxruntime(?:[-_.]|$)"),
+    "tokenizers": re.compile(r"(?:lib)?tokenizers(?:[-_.]|$)"),
+    "vllm": re.compile(r"vllm(?:[-_.]|$)"),
+}
+_MODEL_FORMATS = {"gguf", "safetensors", "onnx"}
+_ENV_KEYS = {
+    "OLLAMA_HOST",
+    "OLLAMA_MODELS",
+    "VLLM_WORKER_MULTIPROC_METHOD",
+    "VLLM_ATTENTION_BACKEND",
+    "HF_HOME",
+    "CUDA_VISIBLE_DEVICES",
+    "TGI_HOSTNAME",
+}
+_INSPECTION_STATUSES = {"ok", "denied", "unreadable", "truncated", "not_requested", "not_applicable"}
+# Statuses that leave inspection scope complete: read, not asked for, or a
+# source the process does not have (ESRCH from a process whose identity is
+# unchanged, such as a zombie without an address space).
+_COMPLETE_STATUSES = {"ok", "not_requested", "not_applicable"}
+# PF_KTHREAD in the flags field of /proc/<pid>/stat.
+_PF_KTHREAD = 0x00200000
+_MAP_LINE = re.compile(
+    r"^[0-9a-f]+-[0-9a-f]+\s+[rwxps-]{4}\s+[0-9a-f]+\s+[0-9a-f]+:[0-9a-f]+\s+\d+(?:\s+(.*))?$", re.I
+)
+
+
+class _InspectionLimit(Exception):
+    """A fixed, non-sensitive limit reason."""
+
+
+class _KernelThread(Exception):
+    """A kernel thread: no user environment, mappings or descriptors to inspect."""
+
+
+@dataclass
+class _InspectionBudget:
+    ctx: ConnectorContext
+    total_bytes: int
+    total_entries: int
+    deadline: float
+    process_bytes: int = 0
+
+    def check(self) -> None:
+        self.ctx.check_deadline()
+        if time.monotonic() >= self.deadline:
+            raise _InspectionLimit("inspection deadline")
+
+    def entry(self) -> None:
+        self.check()
+        if self.total_entries <= 0:
+            raise _InspectionLimit("inspection entry budget")
+        self.total_entries -= 1
+
+    def read(self, directory: int, name: str, limit: int) -> bytes:
+        self.check()
+        size = min(limit, self.process_bytes, self.total_bytes)
+        if size <= 0:
+            raise _InspectionLimit("inspection byte budget")
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise OSError("not a regular proc file")
+            chunks: list[bytes] = []
+            remaining = size
+            while remaining:
+                self.check()
+                chunk = os.read(fd, min(remaining, 8192))
+                if not chunk:
+                    return b"".join(chunks)
+                chunks.append(chunk)
+                remaining -= len(chunk)
+                self.process_bytes -= len(chunk)
+                self.total_bytes -= len(chunk)
+            # Reaching a cap is conservatively incomplete; do not read past a budget.
+            raise _InspectionLimit("inspection byte budget")
+        finally:
+            os.close(fd)
+
+
+def _proc_identity(directory: int, budget: _InspectionBudget) -> dict[str, str]:
+    raw = budget.read(directory, "stat", 4096).decode("ascii", "replace")
+    end = raw.rfind(")")
+    fields = raw[end + 1 :].split() if end >= 0 else []
+    if (
+        len(fields) < 20
+        or not fields[19].isascii()
+        or not fields[19].isdecimal()
+        or not fields[6].isascii()
+        or not fields[6].isdecimal()
+    ):
+        raise ValueError("malformed process stat")
+    if int(fields[6]) & _PF_KTHREAD:
+        raise _KernelThread
+    namespace = os.open("ns", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+    try:
+        inode = os.stat("pid", dir_fd=namespace).st_ino
+    finally:
+        os.close(namespace)
+    return {"pid_namespace": str(inode), "start_time_ticks": fields[19]}
+
+
+def _maps(raw: bytes, budget: _InspectionBudget, max_entries: int) -> tuple[list[str], list[str]]:
+    libraries: set[str] = set()
+    packaging: set[str] = set()
+    for number, line in enumerate(raw.decode("utf-8", "replace").splitlines()):
+        budget.entry()
+        if number >= max_entries:
+            raise _InspectionLimit("mapping count")
+        match = _MAP_LINE.fullmatch(line)
+        if match is None:
+            raise ValueError("malformed process maps")
+        path = (match.group(1) or "").removesuffix(" (deleted)")
+        base = path.rsplit("/", 1)[-1].lower()
+        libraries.update(name for name, pattern in _LIBRARIES.items() if pattern.match(base))
+        if any(part.startswith("_MEI") for part in path.split("/")):
+            packaging.add("pyinstaller")
+    return sorted(libraries), sorted(packaging)
+
+
+def _fd_indicators(
+    directory: int, budget: _InspectionBudget, max_entries: int
+) -> tuple[list[str], list[str]]:
+    formats: set[str] = set()
+    packaging: set[str] = set()
+    fd_directory = os.open("fd", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+    try:
+        with os.scandir(fd_directory) as entries:
+            for number, entry in enumerate(entries):
+                budget.entry()
+                if number >= max_entries:
+                    raise _InspectionLimit("descriptor count")
+                if not entry.name.isascii() or not entry.name.isdecimal():
+                    raise ValueError("malformed descriptor name")
+                if min(budget.process_bytes, budget.total_bytes) < 4096:
+                    raise _InspectionLimit("descriptor link byte budget")
+                try:
+                    target = os.readlink(entry.name, dir_fd=fd_directory)
+                except FileNotFoundError:
+                    budget.ctx.warn(
+                        "runtime.processes: descriptor closed during inspection", incomplete=False
+                    )
+                    continue  # A descriptor can close independently of the process.
+                count = len(target.encode("utf-8", "replace"))
+                budget.process_bytes -= count
+                budget.total_bytes -= count
+                if count > 4096 or budget.process_bytes < 0 or budget.total_bytes < 0:
+                    raise _InspectionLimit("descriptor link byte budget")
+                path = target.removesuffix(" (deleted)")
+                suffix = path.rsplit(".", 1)[-1].lower()
+                if suffix in _MODEL_FORMATS:
+                    formats.add(suffix)
+                if any(part.startswith("_MEI") for part in path.split("/")):
+                    packaging.add("pyinstaller")
+    finally:
+        os.close(fd_directory)
+    return sorted(formats), sorted(packaging)
+
 
 def classify(executable: str | None, argv: list[str]) -> tuple[ProcessRule, str | None] | None:
     """The AI tool a process runs, and an MCP package name when it is an MCP server."""
@@ -209,6 +374,9 @@ class _Run:
     packages: Counter = field(default_factory=Counter)
     first: str | None = None
     last: str | None = None
+    observed_at: str | None = None
+    inspections: list[dict[str, Any]] = field(default_factory=list)
+    truncated: int = 0
 
 
 class RuntimeProcessConnector(BaseConnector, _NoDump):
@@ -224,6 +392,15 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
     config_keys: ClassVar[dict[str, str]] = {
         "label": "host name used when records carry none (default: the host name)",
         "max_processes": "maximum processes read from /proc in live mode (default 100,000)",
+        "inspect_maps": "live only: inspect bounded mapped-library names (default false)",
+        "inspect_fds": "live only: inspect descriptor links, never targets (default false)",
+        "inspect_env_keys": "live only: allowlisted environment key names to inspect (default empty)",
+        "max_inspection_bytes": "maximum inspection bytes per process (default 262,144)",
+        "max_inspection_total_bytes": "maximum inspection bytes across the scan (default 16,777,216)",
+        "max_inspection_entries": "maximum mappings, descriptors and environment entries per scan (100,000)",
+        "max_mappings": "maximum mappings per process (default 4,096)",
+        "max_fds": "maximum descriptors per process (default 1,024)",
+        "inspection_timeout_seconds": "maximum live inspection duration in seconds (default 30)",
         "input": (
             "offline: osquery processes results, Defender DeviceProcessEvents, CrowdStrike process events or "
             "JSON/CSV with a command line or executable"
@@ -235,6 +412,31 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         super().__init__(ctx)
         self.label = str(ctx.get("label") or socket.gethostname() or "host")
         self.max_processes = _positive_limit(ctx.get("max_processes", 100_000), "max_processes")
+        self.inspect_maps = ctx.get("inspect_maps", False)
+        self.inspect_fds = ctx.get("inspect_fds", False)
+        if not isinstance(self.inspect_maps, bool) or not isinstance(self.inspect_fds, bool):
+            raise ConnectorError("inspect_maps and inspect_fds must be booleans")
+        env_keys = ctx.get("inspect_env_keys", [])
+        if not isinstance(env_keys, list) or any(
+            not isinstance(key, str) or key not in _ENV_KEYS for key in env_keys
+        ):
+            raise ConnectorError("inspect_env_keys must contain only documented allowlisted key names")
+        self.inspect_env_keys = set(env_keys)
+        self.inspection_enabled = bool(self.inspect_maps or self.inspect_fds or self.inspect_env_keys)
+        self.max_inspection_bytes = _positive_limit(
+            ctx.get("max_inspection_bytes", 262_144), "max_inspection_bytes"
+        )
+        self.max_inspection_total_bytes = _positive_limit(
+            ctx.get("max_inspection_total_bytes", 16_777_216), "max_inspection_total_bytes"
+        )
+        self.max_inspection_entries = _positive_limit(
+            ctx.get("max_inspection_entries", 100_000), "max_inspection_entries"
+        )
+        self.max_mappings = _positive_limit(ctx.get("max_mappings", 4096), "max_mappings")
+        self.max_fds = _positive_limit(ctx.get("max_fds", 1024), "max_fds")
+        self.inspection_timeout_seconds = _positive_limit(
+            ctx.get("inspection_timeout_seconds", 30), "inspection_timeout_seconds"
+        )
 
     # ------------------------------------------------------------------ live
     def collect(self) -> Iterable[dict[str, Any]]:
@@ -250,8 +452,17 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             self.ctx.warn(f"runtime.processes: not every process is visible: {restricted}")
         seen = 0
         unreadable = 0
+        truncated = 0
+        inspection_stopped = False
         users: dict[int, str] = {}
+        budget = _InspectionBudget(
+            self.ctx,
+            self.max_inspection_total_bytes,
+            self.max_inspection_entries,
+            time.monotonic() + self.inspection_timeout_seconds,
+        )
         for entry in os.scandir(proc):
+            self.ctx.check_deadline()
             if not entry.name.isdigit():
                 continue
             if seen >= self.max_processes:
@@ -260,26 +471,163 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 )
                 break
             seen += 1
+            inspection: dict[str, Any] | None = None
+            observed_at = datetime.now(UTC).isoformat()
             try:
-                fd = os.open(proc / entry.name / "cmdline", os.O_RDONLY | os.O_NOFOLLOW)
+                directory = os.open(proc / entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                 try:
-                    raw = os.read(fd, _MAX_CMDLINE_BYTES)
+                    before: dict[str, str] | None = None
+                    if self.inspection_enabled and not inspection_stopped:
+                        if (
+                            budget.total_bytes <= 0
+                            or budget.total_entries <= 0
+                            or time.monotonic() >= budget.deadline
+                        ):
+                            inspection_stopped = True
+                            self.ctx.warn(
+                                "runtime.processes: inspection scan budget/deadline reached; "
+                                "command-line collection continues without inspection"
+                            )
+                    if self.inspection_enabled and not inspection_stopped:
+                        budget.process_bytes = self.max_inspection_bytes
+                        before = self._inspection_identity(directory, budget)
+                    fd = os.open("cmdline", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+                    try:
+                        raw = os.read(fd, _MAX_CMDLINE_BYTES + 1)
+                    finally:
+                        os.close(fd)
+                    cut = len(raw) > _MAX_CMDLINE_BYTES
+                    if cut:
+                        # Classify the bounded prefix (argv[0] and the leading
+                        # arguments), dropping the final argument the limit may
+                        # have cut: a partial name must not match a rule alone.
+                        raw = raw[: raw.rfind(b"\0", 0, _MAX_CMDLINE_BYTES) + 1]
+                        truncated += 1
+                    uid = os.fstat(directory).st_uid
+                    if before is not None:
+                        inspection = self._inspect(directory, budget)
+                        after = self._inspection_identity(directory, budget)
+                        if after is None:
+                            inspection = None  # Retain independent command-line evidence only.
+                        elif after != before:
+                            self.ctx.warn(
+                                "runtime.processes: process identity changed during inspection; omitted",
+                                incomplete=False,
+                            )
+                            continue
+                        else:
+                            inspection["identity"] = before
                 finally:
-                    os.close(fd)
-                uid = os.stat(proc / entry.name, follow_symlinks=False).st_uid
+                    os.close(directory)
             except FileNotFoundError:
+                if self.inspection_enabled:
+                    self.ctx.warn(
+                        "runtime.processes: process exited during inspection; omitted", incomplete=False
+                    )
                 continue  # exited while listing
             except OSError:
                 unreadable += 1
                 continue
             argv = [a.decode("utf-8", "replace") for a in raw.split(b"\0") if a]
-            if not argv or classify(None, argv) is None:
+            if classify(None, argv) is None and not inspection:
                 continue
             if uid not in users:
                 users[uid] = _user_name(uid)
-            yield {"host": self.label, "user": users[uid], "pid": int(entry.name), "argv": argv}
+            record: dict[str, Any] = {
+                "host": self.label,
+                "user": users[uid],
+                "pid": int(entry.name),
+                "argv": argv,
+                "observed_at": observed_at,
+            }
+            if inspection is not None:
+                record["inspection"] = inspection
+            if cut:
+                record["argv_truncated"] = True
+            yield record
+        if truncated:
+            # Unread arguments could hold evidence (an MCP package name, a model
+            # path), so coverage is incomplete; the readable prefix still counts.
+            self.ctx.warn(
+                f"runtime.processes: {truncated} command line(s) exceeded {_MAX_CMDLINE_BYTES:,} bytes; "
+                "classified from the leading complete arguments"
+            )
         if unreadable:
             self.ctx.warn(f"runtime.processes: {unreadable} process(es) could not be read")
+
+    def _inspection_identity(self, directory: int, budget: _InspectionBudget) -> dict[str, str] | None:
+        """Unavailable enrichment never erases readable, independent command-line evidence."""
+        try:
+            return _proc_identity(directory, budget)
+        except _KernelThread:
+            # Linux returns ESRCH for a kernel thread's environ and similar
+            # sources; it runs no user program, so inspection does not apply.
+            return None
+        except FileNotFoundError:
+            # A namespace/stat file can be unavailable on a still-readable PID. Only
+            # classify this as process disappearance if its command line also vanished.
+            os.stat("cmdline", dir_fd=directory, follow_symlinks=False)
+            self.ctx.warn("runtime.processes: inspection identity unavailable; inspection omitted")
+        except _InspectionLimit as exc:
+            self.ctx.warn(f"runtime.processes: {exc}; inspection omitted")
+        except (OSError, ValueError):
+            self.ctx.warn(
+                "runtime.processes: inspection identity unreadable or malformed; inspection omitted"
+            )
+        return None
+
+    def _inspect(self, directory: int, budget: _InspectionBudget) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "mapped_libraries": [],
+            "open_model_formats": [],
+            "packaging": [],
+            "environment_keys": [],
+            "status": {"maps": "not_requested", "fds": "not_requested", "environ": "not_requested"},
+        }
+        for source, enabled in (
+            ("maps", self.inspect_maps),
+            ("fds", self.inspect_fds),
+            ("environ", bool(self.inspect_env_keys)),
+        ):
+            if not enabled:
+                continue
+            try:
+                if source == "maps":
+                    libraries, packaging = _maps(
+                        budget.read(directory, "maps", self.max_inspection_bytes), budget, self.max_mappings
+                    )
+                    result["mapped_libraries"] = libraries
+                    result["packaging"].extend(packaging)
+                elif source == "fds":
+                    formats, packaging = _fd_indicators(directory, budget, self.max_fds)
+                    result["open_model_formats"] = formats
+                    result["packaging"].extend(packaging)
+                else:
+                    raw = budget.read(directory, "environ", self.max_inspection_bytes)
+                    names = set()
+                    for item in raw.split(b"\0"):
+                        budget.entry()
+                        name = item.partition(b"=")[0].decode("ascii", "replace")
+                        if name in self.inspect_env_keys:
+                            names.add(name)
+                    result["environment_keys"] = sorted(names)
+                result["status"][source] = "ok"
+            except PermissionError:
+                result["status"][source] = "denied"
+            except ProcessLookupError:
+                # ESRCH: the process has no such source (no address space). The
+                # identity check that follows tells this from a process exit.
+                result["status"][source] = "not_applicable"
+            except FileNotFoundError:
+                # The following identity check identifies process exit. A missing source
+                # on a still-observable process is unavailable scope, not an exit.
+                result["status"][source] = "unreadable"
+            except _InspectionLimit:
+                result["status"][source] = "truncated"
+            except (OSError, ValueError):
+                result["status"][source] = "unreadable"
+        result["packaging"] = sorted(set(result["packaging"]))
+        return result
 
     # --------------------------------------------------------------- analyse
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -291,6 +639,9 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 continue
             match = classify(rec["exe"], rec["argv"])
             if match is None:
+                inspection = rec["inspection"]
+                if inspection and (inspection["mapped_libraries"] or inspection["open_model_formats"]):
+                    yield self._inspection_finding(rec)
                 continue
             rule, package = match
             key = (rec["host"], rec["user"], rule.tool)
@@ -310,6 +661,12 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             if when:
                 run.first = when if run.first is None or when < run.first else run.first
                 run.last = when if run.last is None or when > run.last else run.last
+            if rec["observed_at"]:
+                run.observed_at = max(run.observed_at or rec["observed_at"], rec["observed_at"])
+            if rec["inspection"] and len(run.inspections) < 10:
+                run.inspections.append({"pid": rec["pid"], **rec["inspection"]})
+            if rec["argv_truncated"]:
+                run.truncated += 1
         for run in sorted(runs.values(), key=lambda r: (r.host, r.user, r.rule.tool)):
             yield self._finding(run)
 
@@ -332,7 +689,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         ):
             # Defender FolderPath is a directory; FileName is the executable.
             exe = f"{exe.rstrip('/').rstrip(chr(92))}/{name}"
-        if not argv and not exe:
+        inspection = self._normalise_inspection(row.get("inspection"))
+        if not argv and not exe and not inspection:
             self.ctx.warn("runtime.processes: record has no command line or executable")
             return None
         host = _first(raw, ("hostIdentifier", "host_identifier")) or _first(row, _HOST_FIELDS) or self.label
@@ -340,7 +698,11 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         if user is None and row.get("uid") not in (None, ""):
             user = f"uid-{row['uid']}"
         pid = _first(row, _PID_FIELDS)
+        if inspection is not None and _pid(pid) is None:
+            self.ctx.warn("runtime.processes: inspection has no valid PID; indicators omitted")
+            inspection = None
         started = parse_timestamp(_first(row, _TIME_FIELDS))
+        observed = parse_timestamp(row.get("observed_at"))
         return {
             "host": str(host)[:120],
             "user": str(user or "unknown")[:120],
@@ -348,7 +710,115 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             "exe": exe,
             "pid": _pid(pid),
             "started": started.isoformat() if started else None,
+            "observed_at": observed.isoformat() if observed else None,
+            "inspection": inspection,
+            "argv_truncated": row.get("argv_truncated") is True,
         }
+
+    def _normalise_inspection(self, raw: Any) -> dict[str, Any] | None:
+        if raw is None:
+            return None
+        if not isinstance(raw, dict):
+            self.ctx.warn("runtime.processes: malformed inspection record")
+            return None
+        result: dict[str, Any] = {}
+        for name, allowed in (
+            ("mapped_libraries", set(_LIBRARIES)),
+            ("open_model_formats", _MODEL_FORMATS),
+            ("packaging", {"pyinstaller"}),
+            ("environment_keys", _ENV_KEYS),
+        ):
+            values = raw.get(name, [])
+            if (
+                not isinstance(values, list)
+                or len(values) > 64
+                or any(not isinstance(v, str) or v not in allowed for v in values)
+            ):
+                self.ctx.warn("runtime.processes: malformed or unallowlisted inspection labels")
+                return None
+            result[name] = sorted(set(values))
+        identity = raw.get("identity")
+        if not isinstance(identity, dict) or any(
+            not isinstance(identity.get(name), str)
+            or not identity[name].isascii()
+            or not identity[name].isdecimal()
+            or len(identity[name]) > 20
+            for name in ("pid_namespace", "start_time_ticks")
+        ):
+            self.ctx.warn("runtime.processes: inspection has no valid process start/namespace identity")
+            return None
+        result["identity"] = {name: identity[name] for name in ("pid_namespace", "start_time_ticks")}
+        status = raw.get("status")
+        if not isinstance(status, dict) or any(
+            not isinstance(status.get(name), str) or status[name] not in _INSPECTION_STATUSES
+            for name in ("maps", "fds", "environ")
+        ):
+            self.ctx.warn("runtime.processes: inspection has invalid visibility status")
+            return None
+        result["status"] = {name: status[name] for name in ("maps", "fds", "environ")}
+        for source, outcome in result["status"].items():
+            if outcome not in _COMPLETE_STATUSES:
+                self.ctx.warn(f"runtime.processes: {source} inspection {outcome}; scope incomplete")
+        if any(
+            result[field_name] and result["status"][source] != "ok"
+            for field_name, source in (
+                ("mapped_libraries", "maps"),
+                ("open_model_formats", "fds"),
+                ("environment_keys", "environ"),
+            )
+        ):
+            self.ctx.warn("runtime.processes: inspection labels conflict with visibility status")
+            return None
+        if result["packaging"] and not any(result["status"][source] == "ok" for source in ("maps", "fds")):
+            self.ctx.warn("runtime.processes: packaging indication conflicts with visibility status")
+            return None
+        return result
+
+    def _inspection_metadata(self, inspections: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "runtime_inspection": inspections,
+            "process_identities": [{"pid": item["pid"], **item["identity"]} for item in inspections],
+            "inspection_limitations": [
+                "Library names and descriptor extensions do not validate file content or agency.",
+                "Mappings do not expose arbitrary Python imports or memory-only code.",
+                "Process identities lack a boot identifier and are not stable across host restarts.",
+                "A process snapshot does not establish activity outside its observation time.",
+            ],
+        }
+
+    def _inspection_finding(self, rec: dict[str, Any]) -> Finding:
+        inspection = rec["inspection"]
+        identity = inspection["identity"]
+        finding = Finding(
+            surface=Surface.RUNTIME,
+            connector=self.name,
+            kind=Kind.LOCAL_MODEL if inspection["open_model_formats"] else Kind.FRAMEWORK_USAGE,
+            title=f"ML runtime indicators on {rec['host']} (PID {rec['pid']})",
+            resource=f"runtime:{rec['host']}:{identity['pid_namespace']}:{rec['pid']}:{identity['start_time_ticks']}:ml-runtime",
+            resource_type="process/model-runtime-indicator",
+            provider="runtime",
+            account=rec["host"],
+            owner=rec["user"],
+            metadata={
+                "host": rec["host"],
+                "user": rec["user"],
+                "role": "model-runtime-indicator",
+                "pids": [rec["pid"]],
+                "observation_source": "process-inventory" if self.offline else "live-proc",
+                **self._inspection_metadata([{"pid": rec["pid"], **inspection}]),
+            },
+        )
+        if rec["observed_at"]:
+            finding.metadata["observed_at"] = rec["observed_at"]
+        finding.add_evidence(
+            Evidence(
+                signal="runtime:process:model-runtime-indicator",
+                location=rec["host"],
+                weight=0.35,
+                description="Mapped-library or open-model extension indicators; agent behavior unestablished",
+            )
+        )
+        return finalize(finding, self.index)
 
     def _finding(self, run: _Run) -> Finding:
         rule = run.rule
@@ -406,6 +876,17 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 "mcp_packages": dict(run.packages.most_common(10)),
             }
         )
+        f.metadata["observation_source"] = "process-inventory" if self.offline else "live-proc"
+        if run.observed_at:
+            f.metadata["observed_at"] = run.observed_at
+        if run.inspections:
+            f.metadata.update(self._inspection_metadata(run.inspections))
+        if run.truncated:
+            f.metadata["command_lines_truncated"] = run.truncated
+            f.metadata.setdefault("limitations", []).append(
+                f"{run.truncated} command line(s) were truncated at {_MAX_CMDLINE_BYTES:,} bytes; "
+                "only their leading complete arguments were classified."
+            )
         return finalize(f, self.index)
 
 
@@ -464,7 +945,7 @@ def _restricted_view(proc: Path) -> str | None:
 def _proc_mount_options(proc: Path) -> dict[str, str] | None:
     """The superblock options of the procfs mounted on /proc; the last mount there is the visible one."""
     try:
-        mounts = (proc / "self" / "mountinfo").read_text(encoding="ascii", errors="replace")
+        mounts = _proc_text(proc / "self" / "mountinfo")
     except OSError:
         return None
     found: str | None = None
@@ -480,8 +961,8 @@ def _proc_mount_options(proc: Path) -> dict[str, str] | None:
 def _own_groups(proc: Path) -> set[str]:
     """This process's filesystem gid and supplementary groups, when its gids are the host's."""
     try:
-        gid_map = (proc / "self" / "gid_map").read_text(encoding="ascii", errors="replace").split()
-        status = (proc / "self" / "status").read_text(encoding="ascii", errors="replace")
+        gid_map = _proc_text(proc / "self" / "gid_map").split()
+        status = _proc_text(proc / "self" / "status")
     except OSError:
         return set()
     if gid_map != ["0", "0", "4294967295"]:
@@ -494,6 +975,25 @@ def _own_groups(proc: Path) -> set[str]:
         elif parts[:1] == ["Groups:"]:
             groups.update(parts[1:])
     return groups
+
+
+def _proc_text(path: Path) -> str:
+    """Bound the existing proc visibility probes as well as optional inspection."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("not a regular proc visibility file")
+        remaining = 256 * 1024
+        chunks: list[bytes] = []
+        while remaining:
+            raw = os.read(fd, min(remaining, 8192))
+            if not raw:
+                return b"".join(chunks).decode("ascii", "replace")
+            chunks.append(raw)
+            remaining -= len(raw)
+        raise OSError("proc visibility byte limit")
+    finally:
+        os.close(fd)
 
 
 def _user_name(uid: int) -> str:

@@ -1,0 +1,8 @@
+[
+  {"client":"192.0.2.10","sensor":"sensor-a","query":"api.openai.com","answers":["203.0.113.8"],"ts":1000,"TTLs":[60]},
+  {"client":"192.0.2.10","sensor":"sensor-a","dst_ip":"203.0.113.8","dst_port":443,"ts":900,"bytes_out":9000},
+  {"client":"192.0.2.10","sensor":"sensor-a","dst_ip":"203.0.113.8","dst_port":443,"ts":1001,"bytes_out":100},
+  {"client":"192.0.2.10","sensor":"sensor-a","dst_ip":"203.0.113.8","dst_port":443,"ts":2000000,"bytes_out":9000},
+  {"client":"192.0.2.11","sensor":"sensor-a","dst_ip":"203.0.113.8","dst_port":443,"ts":1001,"bytes_out":9000},
+  {"client":"192.0.2.10","sensor":"sensor-b","dst_ip":"203.0.113.8","dst_port":443,"ts":1001,"bytes_out":9000}
+]

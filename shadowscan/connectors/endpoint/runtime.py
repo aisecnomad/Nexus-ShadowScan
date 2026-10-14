@@ -11,6 +11,7 @@ import json
 import re
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
+from dataclasses import replace
 from itertools import islice
 from typing import Any, ClassVar
 from urllib.parse import urlsplit
@@ -23,6 +24,7 @@ from shadowscan.connectors.code.semantic_config import (
     a2a_unsupported_protocol_version,
     validate_agent_manifest,
 )
+from shadowscan.connectors.code.skill_audit import audit_skill_text
 from shadowscan.connectors.common import apply_matches, failure_summary, finalize
 from shadowscan.connectors.endpoint import a2a
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -34,6 +36,10 @@ from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitiz
 _MAX_LABEL = 160
 _MAX_TOOLS = 500
 _MAX_OTEL_SPANS = 100_000
+# Base tool-poisoning rules. They match anywhere in a description, so they
+# also tag documentation URLs, tool references and quoted or prohibited
+# wording; the sentence audit below is additional, zero-weight signal and
+# never removes this tag.
 _POISONING = re.compile(
     r"<\s*IMPORTANT\s*>|ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|"
     r"(?:exfiltrat|send|forward)\w*\s+(?:the\s+)?(?:data|secret|credential|prompt)|https?://",
@@ -344,13 +350,25 @@ class MCPInventoryConnector(_EndpointConnector):
 
         for server, tool in staged:
             name = _text(tool.get("name")) or "unnamed-tool"
-            desc = _text(tool.get("description"), 4096)
+            description = tool.get("description", "")
+            malformed_description = not isinstance(description, str)
+            if malformed_description:
+                description = ""
+            audit = audit_skill_text(description)
+            if malformed_description:
+                audit = replace(
+                    audit, incomplete=True, limitations=(*audit.limitations, "Tool description is not text.")
+                )
+            if audit.incomplete:
+                self.ctx.warn("endpoint.mcp: tool description instruction audit incomplete")
+            desc = _text(description, 4096)
             tags: list[str] = []
             if (
                 _POISONING.search(desc)
                 or _ZERO_WIDTH.search(desc)
                 or _TOOL_REF.search(desc)
                 or _HOST.search(desc)
+                or audit.indicators
             ):
                 tags.append("tool-poisoning")
             if any(name.casefold() in tools for other, tools in names_by_server.items() if other != server):
@@ -368,7 +386,7 @@ class MCPInventoryConnector(_EndpointConnector):
                 capabilities.append("browsing")
             if words & {"slack", "email", "ticket", "issue", "send", "publish"}:
                 capabilities.append("saas-actions")
-            yield self._finding(
+            finding = self._finding(
                 f"{server}/{name}",
                 "mcp-tool",
                 f"MCP tool {name} on {_text(server)}",
@@ -384,9 +402,21 @@ class MCPInventoryConnector(_EndpointConnector):
                     "tls": server_tls.get(
                         server, _text(tool.get("url") or server).lower().startswith("https://")
                     ),
+                    "static_instruction_audit": audit.to_metadata(),
                 },
                 weight=0.8 if tags else 0.65,
             )
+            for indicator in audit.indicators:
+                finding.add_evidence(
+                    Evidence(
+                        signal=f"instruction:{indicator.rule}",
+                        description=indicator.description,
+                        location=f"description:{indicator.line}",
+                        weight=0.0,
+                        attributes={"category": "static-instruction-audit", "rule": indicator.rule},
+                    )
+                )
+            yield finding
 
     # ------------------------------------------------------------ A2A cards
     def _card_finding(self, record: dict[str, Any]) -> Finding | None:

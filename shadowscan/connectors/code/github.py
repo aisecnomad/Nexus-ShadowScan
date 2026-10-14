@@ -110,6 +110,8 @@ class GitHubConnector(RemoteRepositoryConnector):
         "max_files": "forwarded to the filesystem scanner (see code.filesystem)",
         "max_entries": "forwarded to the filesystem scanner (see code.filesystem)",
         "scan_secrets": "forwarded to the filesystem scanner (see code.filesystem)",
+        "inspect_model_artifacts": "forwarded to the filesystem scanner (checkout mode; see code.filesystem)",
+        "model_metadata_bytes": "forwarded to the filesystem scanner (see code.filesystem)",
         "clone_depth": "git clone depth (default 1)",
         "clone_max_bytes": (
             "provider size preflight and observed checkout size cap (default 268435456); "
@@ -239,6 +241,8 @@ class GitHubConnector(RemoteRepositoryConnector):
                 "max_entries",
                 "scan_timeout",
                 "scan_secrets",
+                "inspect_model_artifacts",
+                "model_metadata_bytes",
                 "use_git",
                 "strict_coverage",
                 "include_tests",
