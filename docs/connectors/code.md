@@ -917,9 +917,12 @@ template note, and a documented installer may pipe to a shell. Read the file.
 A `SKILL.md` also gets a bounded static instruction audit
 (`metadata.static_instruction_audit`, one entry per file): direct English
 instruction-override and sensitive-value disclosure candidates, by rule and
-line, with zero-weight evidence and no excerpts. Quoted examples, fenced and
-indented code, block quotes and explicit prohibitions are excluded. A line
-over 4,096 characters is audited in its first and last 4,096 characters; its
+line, with zero-weight evidence and no excerpts. The front matter `name` and
+`description`, which a skill loader places in the agent's context every
+session, are audited with the same rules and reported at their key's line;
+other front matter fields are not. Quoted examples, fenced and indented code,
+block quotes and explicit prohibitions are excluded. An audited line over
+4,096 characters is audited in its first and last 4,096 characters; its
 middle is not, so the audit is marked `partial: true` (status `partial` when
 nothing was found) and the scan stays complete. Text over 64 KiB, malformed
 or oversized YAML front matter and an unclosed fence make the audit and the

@@ -148,7 +148,9 @@ where the previous revision completed:
   reported as LLM callers.
 - MCP tools keep the `tool-poisoning` rules of the previous revision; a
   bounded sentence audit adds zero-weight `instruction:*` evidence and
-  `metadata.static_instruction_audit`, and can also raise the tag.
+  `metadata.static_instruction_audit`, and can also raise the tag. The
+  `SKILL.md` audit also covers the front matter `name` and `description`,
+  which skill loaders place in the agent context every session.
 - n8n workflows and exported graphs gain non-scoring `workflow_graph`
   metadata; inventory and confidence do not depend on it. Lifecycle findings
   gain `lifecycle_observation`, whose samples never name a finding the report

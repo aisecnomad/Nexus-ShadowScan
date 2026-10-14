@@ -23,8 +23,11 @@ MAX_INDICATORS_PER_RULE = 3
 _LIMITATIONS = (
     "Static lexical indicators do not establish intent, execution, or safety.",
     "Only direct English instruction forms are inspected; quoted examples, fenced code and YAML "
-    "front matter are excluded. Links and tools are never followed or invoked.",
+    "front matter other than name and description are excluded. Links and tools are never "
+    "followed or invoked.",
 )
+# Front matter fields a skill loader places in the agent's context every session.
+_AUDITED_FRONT_MATTER = ("name", "description")
 _OVERLONG = (
     "Lines over 4,096 characters were audited only in their first and last 4,096 characters; "
     "the rest of each such line was not inspected."
@@ -111,6 +114,8 @@ def audit_skill_text(text: str) -> InstructionAudit:
         text = encoded[:MAX_TEXT_BYTES].decode("utf-8", errors="ignore")
     lines = text.splitlines()
     body_start = 0
+    indicators: list[InstructionIndicator] = []
+    counts: dict[str, int] = {}
     if lines and lines[0].strip() == "---":
         end = next((i for i in range(1, min(len(lines), 129)) if lines[i].strip() == "---"), None)
         if end is None:
@@ -127,19 +132,19 @@ def audit_skill_text(text: str) -> InstructionAudit:
             except (ValueError, RecursionError, yaml.YAMLError):
                 incomplete = True
                 limitations.append("YAML front matter is malformed or exceeds structural limits.")
+            else:
+                for key in _AUDITED_FRONT_MATTER:
+                    field = value.get(key) if isinstance(value, dict) else None
+                    if not isinstance(field, str):
+                        continue
+                    # Report the key's line; a block scalar's own lines do not map back.
+                    key_line = next((i + 1 for i in range(1, end) if lines[i].startswith(f"{key}:")), 1)
+                    for field_line in field.splitlines():
+                        partial |= _audit_text_line(field_line, key_line, indicators, counts)
         body_start = end + 1
 
-    indicators: list[InstructionIndicator] = []
-    counts: dict[str, int] = {}
     fence: tuple[str, int] | None = None
     for line_number, raw_line in enumerate(lines[body_start:], body_start + 1):
-        segments = [raw_line]
-        if len(raw_line) > MAX_LINE_CHARACTERS:
-            # Bound regex work per line: audit both ends, say the middle was not.
-            segments = [raw_line[:MAX_LINE_CHARACTERS], raw_line[-MAX_LINE_CHARACTERS:]]
-            if not partial:
-                partial = True
-                limitations.append(_OVERLONG)
         line = raw_line.strip()
         if line.startswith(">") or raw_line.startswith(("    ", "\t")):
             continue
@@ -153,15 +158,31 @@ def audit_skill_text(text: str) -> InstructionAudit:
             continue
         if fence is not None:
             continue
-        found: set[str] = set()
-        for segment in segments:
-            _audit_line(segment.strip(), line_number, found, indicators, counts)
+        partial |= _audit_text_line(raw_line, line_number, indicators, counts)
+    if partial:
+        limitations.append(_OVERLONG)
     if fence is not None:
         incomplete = True
         limitations.append("Unclosed Markdown fence; its remaining content was excluded.")
     if any(count == MAX_INDICATORS_PER_RULE for count in counts.values()):
         limitations.append("At most three locations are retained for each instruction rule.")
     return InstructionAudit(tuple(indicators), incomplete, tuple(limitations), partial)
+
+
+def _audit_text_line(
+    raw_line: str, line_number: int, indicators: list[InstructionIndicator], counts: dict[str, int]
+) -> bool:
+    """Audit one line; return whether it was overlong, so only its two ends were audited.
+
+    Regex work per line stays bounded: a line over ``MAX_LINE_CHARACTERS`` is
+    audited in its first and last ``MAX_LINE_CHARACTERS`` characters.
+    """
+    overlong = len(raw_line) > MAX_LINE_CHARACTERS
+    segments = [raw_line[:MAX_LINE_CHARACTERS], raw_line[-MAX_LINE_CHARACTERS:]] if overlong else [raw_line]
+    found: set[str] = set()
+    for segment in segments:
+        _audit_line(segment.strip(), line_number, found, indicators, counts)
+    return overlong
 
 
 def _audit_line(
