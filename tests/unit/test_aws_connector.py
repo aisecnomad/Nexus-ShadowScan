@@ -99,6 +99,23 @@ def test_aws_layer_name_and_ssm_parameter_arn(index):
     )
 
 
+def test_lambda_bedrock_agent_configuration_is_classified_as_agent(index):
+    connector = AwsConnector(context(index, account_id=ACCOUNT))
+    record = _lambda_record()
+    record["FunctionName"] = "lambda-target"
+    record["FunctionArn"] = f"arn:aws:lambda:us-east-1:{ACCOUNT}:function:lambda-target"
+    record["Environment"] = {"BEDROCK_AGENT_ID": "agent-id", "BEDROCK_AGENT_ALIAS_ID": "alias-id"}
+    record["Layers"] = []
+
+    finding = connector._h_lambda(record)
+
+    assert finding is not None
+    assert finding.kind.value == "agent"
+    assert "cloud.aws-bedrock-agents" in finding.frameworks
+    assert "tool-use" in finding.capabilities
+    assert finding.metadata["env_names"] == ["BEDROCK_AGENT_ALIAS_ID", "BEDROCK_AGENT_ID"]
+
+
 def test_aws_clients_carry_explicit_timeouts(index, monkeypatch):
     pytest.importorskip("botocore")
     connector = AwsConnector(context(index, account_id="123456789012"))

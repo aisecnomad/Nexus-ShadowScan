@@ -167,6 +167,9 @@ _AI_ACTION_CANDIDATES = (
     "kendra:Query",
     "kendra:Retrieve",
 )
+_LAMBDA_BEDROCK_AGENT_ENV_NAMES = frozenset(
+    {"BEDROCK_AGENT_ID", "BEDROCK_AGENT_ALIAS_ID", "BEDROCK_AGENT_ARN"}
+)
 # AgentCore tool and identity inventories: (record _kind, list operation, items key).
 _AGENTCORE_LISTS = (
     ("agentcore-browser", "list_browsers", "browserSummaries"),
@@ -2387,7 +2390,32 @@ class AwsConnector(BaseConnector):
         if rec.get("environment_coverage") == "unknown":
             # Preserve coverage when sanitized collection records are rescanned.
             self.ctx.warn("cloud.aws: Lambda environment coverage is unknown")
-        scan_env(self.index, f, rec.get("Environment"), location=arn)
+        environment = rec.get("Environment")
+        agent_config_names = (
+            sorted(
+                name
+                for name in environment
+                if isinstance(name, str) and name in _LAMBDA_BEDROCK_AGENT_ENV_NAMES
+            )
+            if isinstance(environment, dict)
+            else []
+        )
+        scan_env(self.index, f, environment, location=arn)
+        if agent_config_names:
+            f.add_framework("cloud.aws-bedrock-agents")
+            f.add_model_provider("provider.aws-bedrock")
+            f.add_capability("tool-use")
+            f.add_evidence(
+                Evidence(
+                    signal="aws:lambda-agent-config",
+                    description=(
+                        "Lambda environment declares Bedrock agent configuration "
+                        f"({', '.join(agent_config_names)})"
+                    ),
+                    location=arn,
+                    weight=0.7,
+                )
+            )
         for layer in rec.get("Layers") or []:
             # arn:aws:lambda:REGION:ACCOUNT:layer:NAME:VERSION -> NAME
             layer_name = layer.split(":")[6] if layer.count(":") >= 7 else layer
@@ -2442,7 +2470,7 @@ class AwsConnector(BaseConnector):
                 "tags": rec.get("Tags"),
             }
         )
-        return done(f, self.index, Kind.CLOUD_RESOURCE)
+        return done(f, self.index, Kind.AGENT if agent_config_names else Kind.CLOUD_RESOURCE)
 
     def _h_ecs_task_definition(self, rec: dict[str, Any]) -> Finding | None:
         arn = rec.get("taskDefinitionArn")
