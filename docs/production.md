@@ -62,7 +62,15 @@ proof that an agent stopped running or that a tool became safe.
 - DNS attribution now requires a matching client/context and an answer valid at
   the flow timestamp. Logs without TTLs or timestamps retain service observations
   but cannot claim attributed flow bytes or cadence from those answers. JA4 log
-  values are context only; neither feature introduces network access.
+  values are context only; neither feature introduces network access. A
+  malformed DNS record disables attribution for its own client only, and an
+  address whose answers exceed the per-address window bound loses attribution
+  alone; both keep the scan incomplete.
+- Network finding identity: the client address in a `network:` resource id is
+  now canonical, so an IPv6 client a log wrote in uppercase or uncompressed
+  hexadecimal (`2001:0DB8::1`) gets a new finding id (`2001:db8::1`); IPv4
+  clients and already-canonical IPv6 clients keep theirs. Rescan and rebuild
+  comparison baselines for such logs.
 - Graph paths, AWS lineage and lifecycle assessments add explained metadata.
   They do not provide canonical agent identity, effective permissions, approval,
   exfiltration proof, or complete visibility. Missing runtime scope is unknown,

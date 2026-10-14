@@ -44,8 +44,12 @@ DNS windows start at the observation timestamp and exclude their expiry
 boundary. Missing timestamps or TTLs retain DNS query findings with explicit
 limitations, but cannot attribute flows. This includes ordinary Route 53
 query exports that omit TTLs. The connector never borrows another client's
-DNS answers. Repeated observations may refresh a window; expired answers do
-not identify later traffic, and future answers never identify earlier traffic.
+DNS answers. Repeated answers for the same client, address and host merge into
+one validity window whenever the new answer starts before the previous window
+ends, whatever TTL a caching resolver reported, so a day of 60-second TTLs is
+one window rather than thousands of entries; answers separated by an expiry
+keep separate windows. Expired answers do not identify later traffic, and
+future answers never identify earlier traffic.
 
 Optional `sensor`/`sensor_id`, `network_id`/`vpc_id`, and
 `resolver`/`resolver_id` fields scope both DNS and TLS UID joins. Supplied
@@ -60,9 +64,11 @@ TTL metadata are accepted. Vector TTLs must align with the answers. A
 response containing a CNAME and IP answers uses the shortest answer TTL;
 CNAME-only records do not produce an IP association, and chains are never
 resolved over the network. IPv4 and IPv6 addresses are normalized. Sampled
-`dns_attribution` metadata preserves host, address, original TTL, observation
-and flow timestamps, and context; provenance samples are limited to 20
-entries with an explicit limitation when more are available.
+`dns_attribution` metadata preserves host, address, the longest TTL merged into
+the window (`ttl_seconds`), the window's observation, refresh and expiry
+timestamps (`observed_at`, `refreshed_at`, `expires_at`), the flow timestamp
+and context; provenance samples are limited to 20 entries with an explicit
+limitation when more are available.
 
 Flow counts and bytes remain separated by connection UID until attribution,
 so one AI connection cannot claim another connection's traffic on the same
@@ -129,19 +135,26 @@ Options:
 
 Malformed lines, records the connector cannot read as DNS, TLS or flow
 records, and DNS or TLS records without a client address make the scan
-incomplete. Analysis keeps at most 50,000 client addresses, 500,000 flow
-groups (context, client, server address, port, UID and timestamp), 500,000
-TLS identities (context, client and UID), 500,000 DNS observations with at
-most 256 per context/client/address, and 32 JA4 observations per contact. Records beyond any bound are reported and make the scan
-incomplete. If TLS identity storage fills, flows with an unretained UID are
-left unattributed because a discarded TLS record could contradict DNS.
-If DNS storage fills, DNS and service-port attribution are disabled for the
-input because a discarded answer could contradict retained evidence; directly
-linked TLS remains usable. Malformed TTLs, timestamps, context and explicit
-JA4 values also make the scan incomplete. Malformed or truncated input
-suppresses flow attribution, since a discarded record might contradict the
-retained DNS or SNI; direct query/TLS observations remain visible with that
-limitation. Observation timestamps are
+incomplete. Analysis keeps at most 50,000 client addresses, 500,000
+connections (context, client, server address, port and UID) with 100,000
+timestamp groups per connection, 500,000 TLS identities (context, client and
+UID), 500,000 DNS observations with at most 4,096 windows per
+context/client/address, and 32 JA4 observations per contact. Records beyond
+any bound are reported and make the scan incomplete. If TLS identity storage
+fills, flows with an unretained UID are left unattributed because a discarded
+TLS record could contradict DNS. If the global DNS bound fills, DNS and
+service-port attribution are disabled for the input because a discarded answer
+could contradict retained evidence; if only one address's window bound fills,
+attribution is disabled for that context, client and address, with a
+limitation on the client's contacts. Directly linked TLS remains usable in
+both cases. A malformed TTL, an invalid timestamp, an answer list over the
+limit or an unparseable query name in a DNS record whose client is known
+disables DNS and service-port attribution for that client only, with a
+limitation on its contacts and an incomplete scan; malformed context, explicit
+JA4 values, records without a client and unrecognised records still make the
+whole input incomplete, and malformed or truncated input then suppresses flow
+attribution, since a discarded record might contradict the retained DNS or
+SNI; direct query/TLS observations remain visible with that limitation. Observation timestamps are
 exporter-provided, not independently verified.
 
 VPC Flow Logs `SKIPDATA` records mean AWS did not capture some flows. They

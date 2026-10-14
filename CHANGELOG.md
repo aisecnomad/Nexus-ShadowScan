@@ -120,6 +120,36 @@ a second verification; each has a regression test.
   as malformed. A git or tarball package records its name, the version its
   entry records (`null` when none), `source_type` `git` or `url` and
   relationship `unknown`; no URL or commit is retained.
+- Network: the connection-group bound (500,000) keys connections by context,
+  client, server address, port and UID instead of every flow timestamp, so a
+  day-long VPC Flow Log or Zeek `conn.log` no longer exhausts it after
+  500,000 records; the per-timestamp groups inside a connection are bounded
+  at 100,000 (reported, incomplete), so a flow is still attributed only to a
+  DNS answer valid at its own timestamp.
+- Network: repeated DNS answers for the same client, address and host merge
+  into validity windows (an answer that starts before the previous window
+  ends extends it, whatever TTL a caching resolver reported), kept disjoint
+  and sorted per host so lookups bisect. The per-address bound counts
+  windows (4,096, was 256 observations, which a 60-second TTL filled in
+  about four hours) and, when hit, disables DNS and service-port attribution
+  for that context, client and address only, with a limitation on the
+  client's contacts and an incomplete scan; the global bound keeps its
+  input-wide effect. `dns_attribution` provenance adds `refreshed_at` and
+  `expires_at`; `ttl_seconds` is the longest TTL merged. On a synthetic day
+  (300 clients, 200,000 DNS rows at a 60-second TTL, 432,000 flows) every
+  flow inside a window is attributed where before none was.
+- Network: a malformed TTL, an invalid DNS timestamp, an answer list over
+  the limit or an unparseable query name in one client's DNS record no
+  longer disables flow attribution for every client. The record is kept with
+  a `malformed` flag, DNS and service-port attribution is disabled for that
+  context and client only (TLS attribution by connection UID continues), the
+  client's contacts carry a limitation and one warning marks the scan
+  incomplete. Records without a client address, unrecognised records,
+  malformed context and the record limit still gate the whole input.
+- Network: IP address parsing is cached (one bounded cache of 100,000
+  strings) and attribution provenance stops being built once a contact's
+  sample is full; analysis of the synthetic day drops from 10.2 s to 3.9 s
+  with no finding change.
 - Model artifacts: GGUF inspection seeks past fixed-size metadata arrays and
   walks string arrays up to 1,024 elements by their length prefixes; a longer
   string array (a tokenizer vocabulary) ends metadata parsing with
