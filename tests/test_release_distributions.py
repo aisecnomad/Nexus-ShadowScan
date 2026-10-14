@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from tools.release import distributions
 from tools.release.distributions import release_distributions, verify_distributions
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,6 +129,15 @@ def _absolute(archive: tarfile.TarFile) -> None:
     archive.addfile(info, io.BytesIO(b""))
 
 
+def _current_directory(name: str) -> Callable[[tarfile.TarFile], None]:
+    def add(archive: tarfile.TarFile) -> None:
+        directory = tarfile.TarInfo(name)
+        directory.type = tarfile.DIRTYPE
+        archive.addfile(directory)
+
+    return add
+
+
 def _duplicate(archive: tarfile.TarFile) -> None:
     data = b"replaced\n"
     info = tarfile.TarInfo(f"{SDIST_ROOT}/shadowscan/__init__.py")
@@ -144,6 +154,8 @@ def _duplicate(archive: tarfile.TarFile) -> None:
         pytest.param(_traversal, "unsafe member path", id="parent-traversal"),
         pytest.param(_absolute, "unsafe member path", id="absolute-path"),
         pytest.param(_duplicate, "repeats member", id="duplicate-member"),
+        pytest.param(_current_directory("./"), "unsafe member path", id="dot-slash"),
+        pytest.param(_current_directory("."), "unsafe member path", id="dot"),
     ],
 )
 def test_sdist_members_must_be_plain_files_under_one_root(
@@ -151,6 +163,41 @@ def test_sdist_members_must_be_plain_files_under_one_root(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         verify_distributions(_pair(tmp_path / "dist", extra=extra))
+
+
+@pytest.mark.parametrize(
+    ("limit", "message"),
+    [("_MAX_MEMBERS", "too many members"), ("_MAX_MEMBER_BYTES", "exceeds the size limit")],
+)
+def test_sdist_member_count_and_size_are_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: str, message: str
+) -> None:
+    # Lowered just below what the fixture sdist needs; the pair passes with the real bounds.
+    sdist = _sdist_files()
+    needed = len(sdist) + 1 if limit == "_MAX_MEMBERS" else max(map(len, sdist.values()))
+    monkeypatch.setattr(distributions, limit, needed - 1)
+    with pytest.raises(ValueError, match=message):
+        verify_distributions(_pair(tmp_path / "dist"))
+
+
+@pytest.mark.parametrize(
+    ("limit", "message"),
+    [("_MAX_MEMBERS", "too many members"), ("_MAX_MEMBER_BYTES", "exceeds the size limit")],
+)
+def test_wheel_member_count_and_size_are_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: str, message: str
+) -> None:
+    # The sdist stays within the lowered bound, so only the wheel's own members cross it.
+    sdist = _sdist_files()
+    if limit == "_MAX_MEMBERS":
+        monkeypatch.setattr(distributions, limit, len(sdist) + 1)
+        extra = {f"{DIST_INFO}/extra-{index}": b"" for index in range(len(sdist))}
+    else:
+        bound = max(map(len, sdist.values()))
+        monkeypatch.setattr(distributions, limit, bound)
+        extra = {f"{DIST_INFO}/oversized": b"x" * (bound + 1)}
+    with pytest.raises(ValueError, match=message):
+        verify_distributions(_pair(tmp_path / "dist", wheel={**_wheel_files(), **extra}))
 
 
 def _without(name: str) -> dict[str, bytes]:

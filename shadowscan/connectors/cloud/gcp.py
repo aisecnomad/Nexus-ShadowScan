@@ -1437,7 +1437,7 @@ class GcpConnector(BaseConnector):
             for e in c.get("env") or []:
                 if e.get("valueSource") and e.get("name"):
                     apply_matches(f, self.index.match_env(e["name"]), location=name, weight_scale=0.6)
-        name_hint(self.index, f, name.rsplit("/", 1)[-1], rec.get("description"), weak=True)
+        name_hint(self.index, f, name.rsplit("/", 1)[-1], rec.get("description"))
         if not f.frameworks and not f.model_providers:
             return None
         images = ", ".join(str(c.get("image")) for c in tmpl.get("containers") or [])[:200]
@@ -1485,7 +1485,7 @@ class GcpConnector(BaseConnector):
         scan_env(self.index, f, svc.get("environmentVariables"), location=name)
         for s in svc.get("secretEnvironmentVariables") or []:
             apply_matches(f, self.index.match_env(str(s.get("key"))), location=name, weight_scale=0.6)
-        name_hint(self.index, f, name.rsplit("/", 1)[-1], rec.get("description"), weak=True)
+        name_hint(self.index, f, name.rsplit("/", 1)[-1], rec.get("description"))
         if not f.frameworks and not f.model_providers:
             return None
         f.add_evidence(

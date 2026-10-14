@@ -8,6 +8,7 @@ import pytest
 
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.saas.slack import SlackConnector
+from shadowscan.models import Kind
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.loader import signature_from_dict
 
@@ -30,7 +31,7 @@ def _notion_bot(bot_id, name=None, owner="workspace"):
     return record
 
 
-def test_notion_inventories_only_bots_with_an_established_ai_product(tmp_path, run_connector):
+def test_notion_inventories_only_bots_with_ai_evidence_or_an_ai_name_hint(tmp_path, run_connector):
     source = _write(
         tmp_path,
         {
@@ -39,13 +40,38 @@ def test_notion_inventories_only_bots_with_an_established_ai_product(tmp_path, r
                 _notion_bot("bot-2", "Issue tracker sync"),
                 _notion_bot("bot-3"),
                 _notion_bot("bot-4", "Gemini roadmap"),
+                # Every Notion integration is a bot user: the word alone is no AI hint.
+                _notion_bot("bot-5", "Jira Bot"),
             ]
         },
     )
     findings, ctx = run_connector("saas.notion", input=source)
     assert not ctx.stats.incomplete
-    assert [finding.resource for finding in findings] == ["notion:bot:bot-1"]
-    assert "identity-app.anthropic-claude" in findings[0].frameworks
+    by_resource = {finding.resource: finding for finding in findings}
+    assert set(by_resource) == {"notion:bot:bot-1", "notion:bot:bot-4"}
+    assert "identity-app.anthropic-claude" in by_resource["notion:bot:bot-1"].frameworks
+    # An ambiguous product name is a hint: kept, never attributed, bounded at possible.
+    gemini = by_resource["notion:bot:bot-4"]
+    assert gemini.frameworks == [] and gemini.metadata["potential_frameworks"] == [
+        "identity-app.google-gemini"
+    ]
+    assert "ai-name-hint" in gemini.tags and gemini.confidence <= 0.35
+
+
+@pytest.mark.parametrize(
+    "name", ["Internal LLM Agent", "Acme AI Assistant", "Support GPT", "Ticket chatbot", "GPT Bot"]
+)
+def test_notion_keeps_bots_with_a_generic_ai_name(tmp_path, run_connector, name):
+    findings, ctx = run_connector(
+        "saas.notion", input=_write(tmp_path, {"results": [_notion_bot("bot-9", name)]})
+    )
+    assert not ctx.stats.incomplete
+    assert [finding.resource for finding in findings] == ["notion:bot:bot-9"]
+    finding = findings[0]
+    assert finding.kind == Kind.BOT_APP and finding.frameworks == [] and finding.model_providers == []
+    assert "ai-name-hint" in finding.tags
+    # The name hint is a separate weak signal; the bot's own observation is bounded.
+    assert 0.35 < finding.confidence < 0.7
 
 
 @pytest.mark.parametrize("homepage", ["https://www.wudpecker.io", "https://tactiq.io/install"])
@@ -102,7 +128,9 @@ def test_auth0_keeps_clients_attributed_by_provider_or_product(tmp_path, run_con
     records = [
         _auth0_client("c-provider", "Ticket drafts", allowed_origins=["https://api.cohere.com"]),
         _auth0_client(
-            "c-product", "mcp2518fd uploader", description="Uploads CAN frames with OpenAI GPT summaries"
+            "c-product",
+            "tmp117 sensor bridge",
+            description="Uploads sensor readings with OpenAI GPT summaries",
         ),
         _auth0_client("c-plain", "Customer portal", callbacks=["https://portal.example/cb"]),
     ]

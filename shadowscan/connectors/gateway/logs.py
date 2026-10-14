@@ -76,7 +76,7 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import Match, MatchTimeoutError, SignatureIndex
 from shadowscan.utils.redaction import REDACTED, sanitize
 from shadowscan.utils.safe_json import strict_json_loads
-from shadowscan.utils.text import get_path, parse_timestamp, to_iso
+from shadowscan.utils.text import get_path, host_of, parse_timestamp, to_iso
 
 _MAX_CACHED_USER_AGENTS = 256
 _MAX_CACHED_USER_AGENT_CHARS = 1024
@@ -397,6 +397,10 @@ _SELF_HOSTED_ROUTE = re.compile(r"/(?:(api/(?:chat|generate|tags))|generate(?:_s
 _INTERNAL_HOST = re.compile(
     r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
 )
+# Self-hosted-route requests excluded because their parsed host is not a known
+# or declared model host: distinct hosts tallied, and hosts a warning names.
+_MAX_UNDECLARED_ROUTE_HOSTS = 1000
+_NAMED_UNDECLARED_ROUTE_HOSTS = 5
 # Access-log trailer keys that name the requested host, and the host a value starts with.
 _TRAILER_HOST_KEYS = frozenset({"host", "authority", "upstream_host", "server_name"})
 _HOST_VALUE = re.compile(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -1421,6 +1425,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         skipped = 0
         unusable_usage = 0
         static_excluded = 0
+        undeclared_route_hosts: Counter[str] = Counter()
         untrusted_host_requests = 0
         untimed = 0
         omitted_caller_records = 0
@@ -1448,6 +1453,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     skipped += 1
                     static_excluded += _is_static_or_probe(ev.path)
                     untrusted_host_requests += self._untrusted_host_is_llm(ev, rec)
+                    self._tally_undeclared_route_host(ev, undeclared_route_hosts)
                     continue
                 unusable_usage += _discard_unusable_usage(ev)
                 if ev.timestamp is None and _has_unparsed_timestamp(rec):
@@ -1506,6 +1512,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 f"{static_excluded}",
                 incomplete=False,
             )
+        if undeclared_route_hosts:
+            self._warn_undeclared_route_hosts(undeclared_route_hosts)
         if skipped:
             self.log.info("gateway.logs: %d/%d records skipped (unrecognised or non-LLM)", skipped, n)
         for c in callers.values():
@@ -1725,9 +1733,40 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         # the threshold and do not identify inference traffic by themselves.
         if not host:
             return False
-        if host.lower().rstrip(".") in self.internal_model_hosts:
+        # A declared hostname matches with or without a logged port (host:8080).
+        if (host_of(host) or "").rstrip(".") in self.internal_model_hosts:
             return True
         return any(m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host))
+
+    @staticmethod
+    def _tally_undeclared_route_host(ev: Event, tally: Counter[str]) -> None:
+        """Count an excluded self-hosted-route request whose parsed host is not a model host.
+
+        Called only for requests already excluded as non-LLM traffic. A host
+        that is not a plain hostname is counted without being named.
+        """
+        if not ev.path or ev.host is None or _is_static_or_probe(ev.path):
+            return
+        if not _SELF_HOSTED_ROUTE.search(ev.path.partition("?")[0]):
+            return
+        host = (host_of(ev.host) or "").rstrip(".")
+        label = host if len(host) <= 253 and _INTERNAL_HOST.fullmatch(host) else ""
+        if label not in tally and len(tally) >= _MAX_UNDECLARED_ROUTE_HOSTS:
+            label = ""
+        tally[label] += ev.request_count
+
+    def _warn_undeclared_route_hosts(self, tally: Counter[str]) -> None:
+        named = sorted(((count, host) for host, count in tally.items() if host), key=lambda x: (-x[0], x[1]))
+        shown = ", ".join(f"{host} ({count})" for count, host in named[:_NAMED_UNDECLARED_ROUTE_HOSTS])
+        others = len(named) - _NAMED_UNDECLARED_ROUTE_HOSTS
+        if others > 0 or "" in tally:
+            shown = f"{shown}; and other hosts" if shown else "unnamed hosts"
+        self.ctx.warn(
+            "gateway.logs: requests to Ollama-style or text-generation-inference routes on hosts that are "
+            f"not known or declared model hosts were not counted as LLM traffic: {sum(tally.values())} "
+            f"({shown}). List internal model servers among them in internal_model_hosts",
+            incomplete=False,
+        )
 
     def _untrusted_host_is_llm(self, ev: Event, rec: dict[str, Any]) -> bool:
         """Whether an excluded request would be LLM traffic with a host token a client could have written."""

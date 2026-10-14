@@ -79,12 +79,29 @@ _WORKBOT_HUMAN_TRIGGERS = re.compile(r"command|menu|modal|button|action|shortcut
 # and messaging APIs also take POST /v1/messages or /messages. A node counts as
 # a model step when it POSTs to a generation route (agent_behavior's
 # is_generation) and either (a) the host is a known model host, or (b) the
-# route is versioned or namespaced (/v1/chat/completions, /v1/messages,
-# /v1/responses, /openai/deployments/.../chat/completions, /api/generate,
-# /api/chat) and the host is not a known messaging API. A bare /messages,
-# /responses or /completions on an unknown host never counts.
+# route is versioned or namespaced (/v1/chat/completions, /v1/completions,
+# /openai/deployments/.../chat/completions, /api/generate) and the host is not
+# a known messaging API. /v1/messages, /v1/responses and /api/chat are also
+# WhatsApp Business, messaging and help-desk chat routes, so on an unknown
+# host they count only with request corroboration: an anthropic-version
+# header, or a JSON body with a model key and a messages, prompt or input key.
+# A bare /messages, /responses or /completions on an unknown host never counts.
+_N8N_AI_NODE = re.compile(
+    r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace|\.agent$", re.I
+)
+# ``mcp`` as its own token in a node type: mcpClient, MCPServer, mcp_bridge, but
+# not a word or part number that contains it (smcpDecoder, mcp9808Sensor). The
+# token ends at a capital letter, a separator or the end, never a lower-case
+# letter or a digit, so the match is case-sensitive after the token.
+_N8N_MCP_NODE = re.compile(r"(?<![A-Za-z0-9])[Mm][Cc][Pp](?![a-z0-9])")
 _N8N_HTTP_NODE = "n8n-nodes-base.httpRequest"
 _UNQUALIFIED_GENERATION_ROUTE = re.compile(r"/(?:messages|responses|completions|chat/completions)/?", re.I)
+_CORROBORATED_GENERATION_ROUTE = re.compile(r"/v1/(?:messages|responses)|/api/chat", re.I)
+_MODEL_REQUEST_KEYS = frozenset({"messages", "prompt", "input"})
+# A request key in a template that is not plain JSON: an n8n expression outside
+# a string, or JSON.stringify of an object literal ({ model: ..., messages: ... }).
+_TEMPLATE_KEY = re.compile(r"(?<![\w$\"'])[\"']?(model|messages|prompt|input)[\"']?\s*:")
+_MAX_REQUEST_TEMPLATE = 65_536
 _NON_AI_MESSAGE_APIS = (
     "nexmo.com",
     "vonage.com",
@@ -98,6 +115,55 @@ _NON_AI_MESSAGE_APIS = (
 # Domain signals weighted below this are hints, not model hosts (as in gateway.logs).
 _MIN_MODEL_HOST_WEIGHT = 0.3
 _ZAPIER_HUMAN_APPS = re.compile(r"zapier (?:chrome extension|interfaces|chatbots)|\bmanual\b", re.I)
+
+
+def _named_parameters(value: Any, key: str) -> set[str]:
+    """Lower-cased names of an n8n ``{key: [{"name": ..., "value": ...}]}`` collection."""
+    items = value.get(key) if isinstance(value, dict) else None
+    if not isinstance(items, list):
+        return set()
+    return {
+        item["name"].strip().lower()
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+
+
+def _json_template_keys(value: Any) -> set[str]:
+    """Top-level keys of an n8n JSON template, or the model-request keys it names when it is an expression."""
+    if not isinstance(value, str):
+        return set()
+    text = value[:_MAX_REQUEST_TEMPLATE].strip().removeprefix("=").strip()
+    try:
+        parsed = strict_json_loads(text)
+    except (ValueError, RecursionError):
+        return set(_TEMPLATE_KEY.findall(text))
+    return {key.lower() for key in parsed} if isinstance(parsed, dict) else set()
+
+
+def _model_request(params: dict[str, Any]) -> bool:
+    """Whether an HTTP Request node's headers or body describe a model API call.
+
+    An ``anthropic-version`` header, or a JSON or key-value body with a
+    ``model`` key and a ``messages``, ``prompt`` or ``input`` key (v4 and
+    v1-v3 parameter layouts). Headers or a body the node does not send never
+    count.
+    """
+    headers: set[str] = set()
+    if params.get("sendHeaders") is not False:
+        headers |= _named_parameters(params.get("headerParameters"), "parameters")
+        headers |= _named_parameters(params.get("headerParametersUi"), "parameter")
+        headers |= _json_template_keys(params.get("jsonHeaders"))
+        headers |= _json_template_keys(params.get("headerParametersJson"))
+    if "anthropic-version" in headers:
+        return True
+    body: set[str] = set()
+    if params.get("sendBody") is not False:
+        body |= _named_parameters(params.get("bodyParameters"), "parameters")
+        body |= _named_parameters(params.get("bodyParametersUi"), "parameter")
+        body |= _json_template_keys(params.get("jsonBody"))
+        body |= _json_template_keys(params.get("bodyParametersJson"))
+    return "model" in body and bool(_MODEL_REQUEST_KEYS & body)
 
 
 class _AutomationBase(BaseConnector):
@@ -252,7 +318,11 @@ class N8nConnector(_AutomationBase):
             return True
         if any(host == api or host.endswith(f".{api}") for api in _NON_AI_MESSAGE_APIS):
             return False
-        return not _UNQUALIFIED_GENERATION_ROUTE.fullmatch(path)
+        if _UNQUALIFIED_GENERATION_ROUTE.fullmatch(path):
+            return False
+        if _CORROBORATED_GENERATION_ROUTE.fullmatch(path):
+            return _model_request(params)
+        return True
 
     def collect(self) -> Iterable[dict[str, Any]]:
         base = str(self.ctx.get("api_url", env="N8N_API_URL") or "").rstrip("/")
@@ -329,12 +399,7 @@ class N8nConnector(_AutomationBase):
         ai_steps = [
             f"{n.get('name')} ({n.get('type')})"
             for n in nodes
-            if re.search(
-                r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
-                r"|\.agent$|\bmcp\b",
-                str(n.get("type", "")),
-                re.I,
-            )
+            if _N8N_AI_NODE.search(str(n.get("type", ""))) or _N8N_MCP_NODE.search(str(n.get("type", "")))
         ]
         ai_steps.extend(
             f"{n.get('name')} ({n.get('type')}, model API)" for n in nodes if self._http_model_node(n)

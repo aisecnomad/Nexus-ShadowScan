@@ -29,13 +29,21 @@ _AI_IMAGE_MARKERS = (
     "kagent",
 )
 _AI_RESOURCE_NAME = re.compile(r"(?:llm|model|agent|mcp|inference|ollama|vllm)", re.IGNORECASE)
-# Serving-engine names as delimited image tokens, for private-registry rebuilds
-# (registry.example/team/vllm-serving) that the vendor image markers miss.
+# Serving-engine names that start an image's name (its last path component,
+# without tag or digest), for private-registry rebuilds
+# (registry.example/team/vllm-serving) that the vendor image markers miss. An
+# engine name followed by an auxiliary role (ollama-exporter, vllm-operator)
+# is a sidecar or controller, not a model server.
 _AI_IMAGE_NAME = re.compile(
-    r"(?:^|[/.:_-])(?:llama(?:\.cpp|-cpp|cpp)|ollama|sglang|text-generation-inference|tritonserver|vllm)"
-    r"(?:$|[/.:_-])",
+    r"(?:llama(?:\.cpp|-cpp|cpp)|ollama|sglang|text-generation-inference|vllm)"
+    r"(?:$|[._-](?!(?:exporter|operator|metrics|monitor(?:ing)?)(?:$|[._-])))",
     re.IGNORECASE,
 )
+# NVIDIA Triton serves any model type (vision, tabular, ensembles), so its image
+# counts only with an LLM backend in its name or tag (24.05-trtllm-python-py3,
+# 24.05-vllm-python-py3).
+_TRITON_IMAGE_NAME = re.compile(r"tritonserver(?:$|[._-])", re.IGNORECASE)
+_TRITON_LLM_BACKEND = re.compile(r"(?:^|[.:_-])(?:trtllm|tensorrt-llm|vllm)(?:$|[.:_-])", re.IGNORECASE)
 # A Hugging Face-style ``--model org/name`` (or ``--model-id``) argument. Only
 # its presence is recorded, never the value.
 _MODEL_ARGUMENT = re.compile(r"(?:^|\s)--model(?:-id)?(?:=|\s+)[\"']?[\w.-]+/[\w.-]+", re.IGNORECASE)
@@ -89,6 +97,14 @@ _WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "
 _MAX_OBJECTS = 10_000
 
 
+def _serving_engine_image(image: str) -> bool:
+    """Whether an image's name starts with a model-serving engine (see _AI_IMAGE_NAME)."""
+    name, _, tag = image.partition("@")[0].rpartition("/")[2].partition(":")
+    if _AI_IMAGE_NAME.match(name):
+        return True
+    return bool(_TRITON_IMAGE_NAME.match(name) and _TRITON_LLM_BACKEND.search(f"{name}:{tag}"))
+
+
 def _name(obj: dict[str, Any]) -> str:
     metadata = obj.get("metadata")
     if not isinstance(metadata, dict):
@@ -97,15 +113,17 @@ def _name(obj: dict[str, Any]) -> str:
     return value if isinstance(value, str) else ""
 
 
-_MAX_NAMESPACE = 63
+# A namespace is an RFC 1123 DNS label. Without "/" in it, and with the kind
+# from a fixed set, a resource identity reads one way even when names contain "/".
+_NAMESPACE_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 
 def _namespace(obj: dict[str, Any]) -> str | None:
     """Return the full namespace, or None when it cannot be a distinct identity.
 
-    Namespaces are DNS labels of at most 63 characters. A non-string or
-    oversized value is malformed; shortening or defaulting it would merge
-    distinct objects into one resource identity.
+    Namespaces are DNS labels of at most 63 characters. Any other value is
+    malformed; shortening, defaulting or accepting it would merge distinct
+    objects into one resource identity.
     """
     metadata = obj.get("metadata")
     if not isinstance(metadata, dict):
@@ -113,7 +131,7 @@ def _namespace(obj: dict[str, Any]) -> str | None:
     if "namespace" not in metadata:
         return "default"
     value = metadata["namespace"]
-    if not isinstance(value, str) or len(value) > _MAX_NAMESPACE:
+    if not isinstance(value, str) or not _NAMESPACE_LABEL.fullmatch(value):
         return None
     return value
 
@@ -195,9 +213,9 @@ class KubernetesConnector(BaseConnector):
         egress_policies: set[str] = set()
         for record in records:
             if "items" in record:
-                # A List envelope inside an array or JSONL export is not
-                # unwrapped by the shared loader, so check its continuation
-                # here. Observed items are still analyzed.
+                # A List envelope inside a JSON array is not unwrapped by the
+                # shared loader, so check its continuation here. Observed
+                # items are still analyzed.
                 pagination_issue = self._offline_pagination_issue(record)
                 if pagination_issue:
                     self.ctx.warn(f"{self.name}: {pagination_issue}")
@@ -283,7 +301,7 @@ class KubernetesConnector(BaseConnector):
                 image
                 for image in images
                 if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
-                or _AI_IMAGE_NAME.search(image)
+                or _serving_engine_image(image)
             ]
             tags: list[str] = []
             capabilities: list[str] = []
@@ -322,7 +340,10 @@ class KubernetesConnector(BaseConnector):
                     if "image" in container and not isinstance(container["image"], str):
                         self.ctx.warn(f"{self.name}: container has malformed image")
                     for field in ("command", "args"):
-                        arguments = container.get(field, [])
+                        arguments = container.get(field)
+                        # kubectl and serializers emit an unset field as null.
+                        if arguments is None:
+                            continue
                         if not isinstance(arguments, list) or not all(isinstance(a, str) for a in arguments):
                             self.ctx.warn(f"{self.name}: workload has malformed container {field}")
                             continue

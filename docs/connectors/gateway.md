@@ -63,8 +63,13 @@ Ollama-style routes only, no host was parsed (a local server logged as
 route. A self-hosted TGI server cannot be told apart from another service by
 its path: list its exact hostname in `internal_model_hosts` (for an internal
 Ollama behind a reverse proxy, too). Entries are validated hostnames, matched
-exactly and case-insensitively, with no DNS lookup; anything else fails the
-connector. Declared hosts also pass the default `llm_hosts_only` filter. Setting
+exactly and case-insensitively, with or without a logged port and with no DNS
+lookup; anything else fails the connector. Declared hosts also pass the default
+`llm_hosts_only` filter. Requests to these routes that are not counted because
+their parsed host is neither known nor declared are reported in one advisory
+warning with their total and up to five of the busiest hosts; the warning does
+not make the scan incomplete, and it names the hosts to review for
+`internal_model_hosts`. Setting
 `internal_model_hosts` changes how a source is read, so that source's finding
 ids change; leaving it unset keeps existing ids. User agents never exclude a
 request: a browser calling a provider API is still attributed to the provider.

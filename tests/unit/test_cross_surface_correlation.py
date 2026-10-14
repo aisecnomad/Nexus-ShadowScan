@@ -316,6 +316,32 @@ def test_unusable_identities_never_establish_exact_relationships(bad):
     assert "related" not in left.metadata
 
 
+@pytest.mark.parametrize(
+    "shared",
+    [
+        "arn:aws:iam::aws:policy/AdministratorAccess",
+        "arn:aws:iam::aws:policy/AmazonBedrockFullAccess",
+        "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-5-sonnet-20240620-v1:0",
+    ],
+)
+def test_shared_aws_catalog_arns_never_relate_findings(shared):
+    # Two accounts attaching the same managed policy or calling the same
+    # foundation model are not one identity, exactly or as a candidate.
+    left = finding(account="111111111111", metadata={"arn": shared})
+    right = peer(resource="cloudtrail:caller", account="222222222222", metadata={"arn": shared})
+    correlate([left, right])
+    for item in (left, right):
+        assert not {"related", "related_details", "related_candidates"} & set(item.metadata)
+
+
+def test_globally_unique_accountless_arns_still_link():
+    bucket = "arn:aws:s3:::shared-agent-artifacts"
+    left = finding(account="111111111111", metadata={"arn": bucket})
+    right = peer(resource="cloudtrail:caller", account="222222222222", metadata={"arn": bucket})
+    correlate([left, right])
+    assert left.metadata["related"] == [right.id]
+
+
 @pytest.mark.parametrize("field", ["resource", "principal", "client_id", "account"])
 @pytest.mark.parametrize("pattern", ["*", "svc-*", "svc-?", "svc-[ab]"])
 def test_wildcards_in_local_identifiers_or_scope_never_create_exact_relationships(field, pattern):

@@ -135,16 +135,16 @@ def _global_resource(value: str) -> tuple[str, tuple[tuple[str, str], ...]] | No
         return None
     parts = value.split(":", 5)
     if len(parts) == 6 and parts[0] == "arn" and all(parts[i] for i in (1, 2, 5)):
-        if parts[4] and not re.fullmatch(r"[0-9]{12}|aws", parts[4]):
+        if parts[4] and not re.fullmatch(r"[0-9]{12}", parts[4]):
             return None
         # A missing account cannot turn a truncated workload ARN into a global
-        # identity. Only known accountless namespaces are meaningful here.
-        if not parts[4] and not (
-            parts[2] in {"s3", "route53"}
-            or (parts[2] == "bedrock" and parts[5].startswith("foundation-model/"))
-        ):
-            return None
-        if parts[4] == "aws" and parts[2] != "iam":
+        # identity. Only accountless namespaces whose names are globally unique
+        # (an S3 bucket, a Route 53 zone) are. AWS-managed policies
+        # (arn:aws:iam::aws:policy/...) and Bedrock foundation models are
+        # shared catalog entries every account references: an equal reference
+        # says nothing about one workload, so it is neither a link nor a
+        # candidate.
+        if not parts[4] and parts[2] not in {"s3", "route53"}:
             return None
         scope = {"provider": "aws"}
         if parts[3]:

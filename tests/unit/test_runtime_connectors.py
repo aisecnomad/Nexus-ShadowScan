@@ -800,7 +800,9 @@ def test_kubernetes_long_namespaces_are_rejected_without_colliding(tmp_path, con
 
 
 @pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
-@pytest.mark.parametrize("namespace", [None, 7, ["ai"], {"name": "ai"}, "n" * 64])
+@pytest.mark.parametrize(
+    "namespace", [None, 7, ["ai"], {"name": "ai"}, "n" * 64, "", "Team-A", "x/Pod/y", "-ai"]
+)
 def test_kubernetes_malformed_namespace_is_not_defaulted(tmp_path, connector_type, namespace):
     workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
     workload["metadata"]["namespace"] = namespace
@@ -812,6 +814,24 @@ def test_kubernetes_malformed_namespace_is_not_defaulted(tmp_path, connector_typ
     assert findings == []
     assert ctx.stats is not None and ctx.stats.incomplete
     assert any("metadata.namespace" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_slash_in_namespace_cannot_merge_with_a_slashed_name(tmp_path, connector_type):
+    """Regression: namespace "x/Pod/y" with name "z" read as the same identity as namespace "x", name "y/Pod/z"."""
+    workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
+    first, second = deepcopy(workload), deepcopy(workload)
+    first["metadata"].update(namespace="x", name="y/Pod/z")
+    second["metadata"].update(namespace="x/Pod/y", name="z")
+    first["kind"] = second["kind"] = "Pod"
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps([first, second]))
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("metadata.namespace" in warning for warning in ctx.stats.warnings)
+    assert len({finding.resource for finding in findings}) == len(findings) <= 1
 
 
 @pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])

@@ -134,20 +134,31 @@ def _framework_rows(signatures: dict[str, Signature]) -> list[str]:
 
 
 def _mcp_rows(mcp: Signature) -> list[str]:
-    files = _unique(glob for signal in _signals(mcp, "file") for glob in signal.globs if "*" not in glob)
+    # A glob matches at any depth either way, so `**/x` is listed once as `x`.
+    files = _unique(glob.removeprefix("**/") for signal in _signals(mcp, "file") for glob in signal.globs)
     clients = _unique(location.client for location in LOCATIONS)
     unknown = sorted(set(clients) - set(CLIENT_NAMES))
     if unknown:
         raise ValueError(f"no display name for endpoint clients: {unknown}")
-    sdks = []
-    for signal in _signals(mcp, "dependency"):
-        if signal.ecosystem in ECOSYSTEM_NAMES:
-            sdks.append(f"{ECOSYSTEM_NAMES[signal.ecosystem]} {_code(signal.names)}")
-    servers = [name for signal in _signals(mcp, "dependency") for name in signal.names if "/server-" in name]
-    images = [pattern for signal in _signals(mcp, "image") for pattern in signal.patterns]
-    hosts = [
-        value for signal in _signals(mcp, "domain") for value in signal.values if not value.startswith("re:")
+    dependencies = _signals(mcp, "dependency")
+    unnamed = sorted({str(signal.ecosystem) for signal in dependencies} - set(ECOSYSTEM_NAMES))
+    if unnamed:
+        raise ValueError(f"no display name for MCP dependency ecosystems: {unnamed}")
+    sdks = [
+        f"{ECOSYSTEM_NAMES[str(signal.ecosystem)]} "
+        + _code([*signal.names, *(f"{prefix}*" for prefix in signal.prefixes)])
+        for signal in dependencies
     ]
+    servers = [name for signal in dependencies for name in signal.names if "/server-" in name]
+    images = [pattern for signal in _signals(mcp, "image") for pattern in signal.patterns]
+    domains = [value for signal in _signals(mcp, "domain") for value in signal.values]
+    hosts = [value for value in domains if not value.startswith("re:")]
+    host_patterns = len(domains) - len(hosts)
+    if host_patterns:
+        expressions = "a regular expression" if host_patterns == 1 else f"{host_patterns} regular expressions"
+        hosts_cell = f"{_code(hosts)}, and hosts that match {expressions} in the `protocol.mcp` signature"
+    else:
+        hosts_cell = _code(hosts)
     environment = [name for signal in _signals(mcp, "env") for name in signal.names]
     return [
         "| Evidence | Recognized |",
@@ -158,7 +169,7 @@ def _mcp_rows(mcp: Signature) -> list[str]:
         f"| Package dependencies | {'; '.join(sdks)} |",
         f"| Reference servers (npm) | {_code(servers)} |",
         f"| Server image patterns (regular expressions) | {_code(images)} |",
-        f"| Remote MCP hosts | {_code(hosts)} |",
+        f"| Remote MCP hosts | {hosts_cell} |",
         f"| Environment variables | {_code(environment)} |",
     ]
 

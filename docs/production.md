@@ -39,11 +39,15 @@ Atlassian finding IDs change on upgrade. Exports scanned without a configured
 `site` get a new identity discriminator bound to the resolved path of each
 export file, so renaming or moving the file changes its IDs; two files in one
 directory input stay separate findings even when they share an app key. A
-configured site is canonicalized (host case, an explicit `:443` and a trailing
-slash), so an operator whose `site` used a non-canonical spelling also sees
-new IDs. Configure the canonical `site`, keep one site's exports per scan
-input, rescan and establish a fresh baseline; earlier Atlassian IDs do not
-carry over.
+configured site is canonicalized, so an operator whose `site` used an
+uppercase host or an explicit `:443` also sees new IDs (a trailing slash was
+already ignored). A `site` that is not a plain HTTPS origin now stops the
+connector with an error and exit 3 instead of scanning: a value without
+`https://`, `http://`, a path (including a Data Center context path such as
+`/jira` or `/wiki`), user information, a query or fragment, a trailing dot or a
+non-ASCII host. Configure the canonical `site` as `https://<host>`, keep one
+site's exports per scan input, rescan and establish a fresh baseline; earlier
+Atlassian IDs do not carry over.
 
 The new tests use offline exports. Live connector acceptance and independently
 labeled field accuracy still require the existing rollout acceptance procedure.
@@ -831,8 +835,9 @@ no bypass actors; `CI gate` is not yet among its required checks. `Protect
 main` adds linear history and deletion protection and still names bypass
 actors. At 08:05 UTC on 2026-10-02 both rulesets read back as
 `enforcement: disabled` again (last updated 04:28 UTC), and
-`GET /repos/aisecnomad/Nexus-ShadowScan/rules/branches/main` returned no active
-rules, so nothing enforced review, CI or linear history on `main` at that time.
+`GET /repos/aisecnomad/Project-Nexus/rules/branches/main` (the former name)
+returned no active rules, so nothing enforced review, CI or linear history on
+`main` at that time.
 At 19:08 UTC on 2026-10-02 both again read back as `enforcement: disabled`
 (last updated 18:39 UTC) with no active rules on `main`. The committed
 snapshots in
@@ -1170,10 +1175,17 @@ Redaction reads a text with a run glued after a `Bearer`, `Basic` or `SSWS`
 credential (`<token>--x`, `<token>=x`) twice, as every rule reads the run and
 as the earlier rules withheld it with the credential, and shows on each line
 only what both readings show; such a token's tail is withheld with it.
-Sanitized evidence around these credentials therefore withholds more: a line
-the readings differ on in more than one place is withheld whole, and a text
-with a name glued after a credential on the line after its scheme is
-withheld whole, keeping its line breaks. Finding identity does not use
+Sanitized evidence around these credentials therefore withholds more: where
+one reading's line shows nothing the other's does not, that line is kept, and
+otherwise the whole line is withheld; a text with a name glued after a
+credential on the line after its scheme is withheld whole, keeping its line
+breaks. In such a text a run that starts the line after a scheme credential
+(`--verbose`, `---`), or a later line after only blank lines or other such
+runs, is withheld as well, with a marker in its place where the rest of the
+line is unchanged. A text with no glued run reads as the earlier rules read
+it, those runs included where each is only a name or separator (`--verbose`,
+`---`, `=Section=`), unless removing them lets the rules withhold a value
+after them; a run holding a value is removed as before. Finding identity does not use
 evidence text. Regenerate retained reports, as after any change that
 withholds more.
 
@@ -1216,12 +1228,21 @@ domain, client ID or other non-name signal. They stay under
 signature's tags, capabilities or agent indicator. A Gemini-named app with no
 other AI evidence, such as a cryptocurrency-exchange integration, drops to
 possible confidence or out of the report. Once corroborated, the name keeps its
-full weight. OAuth reply and homepage URLs corroborate a product by their
+full weight. More generally, a signature match that does not establish its
+signature (an ambiguous name hint, or a code pattern recorded under
+`metadata.potential_frameworks` or `potential_providers` because the library's
+import or dependency is missing) no longer adds that signature's tags (for
+example `assistant` or `agent-platform`). Tag-based risk weights, filters and
+downstream rules stop matching such findings, so their risk can fall; tags of
+established technologies are unchanged. The generic AI-name hint is never
+listed as a potential product. OAuth reply and homepage URLs corroborate a product by their
 parsed `http(s)` hostname only: a product domain in another site's path, query,
 fragment or userinfo no longer counts, and URL tokens with userinfo, a
 backslash or a control character are skipped. A field with several URLs
-(comma, semicolon or whitespace separated, as in a ServiceNow `redirect_url`)
-is split, so an AI host listed second is still found.
+(whitespace separated, or comma or semicolon separated before a new `http(s)://`
+URL, as in a ServiceNow `redirect_url`) is split, so an AI host listed second
+is still found; a separator inside a URL's query or fragment
+(`?next=a,https://chatgpt.com/`) does not split it.
 
 **Unattributed apps.** An app assessed by an identity or SaaS connector with no
 established AI product, provider, LLM-access permission, Entra agent identity
@@ -1238,6 +1259,9 @@ no longer grows with the number of reply URLs.
 with `metadata.related_details` describing the identifier type, matching
 fields and scope. A fully qualified ARN, GCP resource name, Azure resource id
 or OCI OCID links on its own: a cross-account caller ARN is the same principal.
+AWS-managed policy ARNs (`arn:aws:iam::aws:policy/...`) and Bedrock
+foundation-model ARNs are shared by every account and relate no findings,
+exactly or as candidates; accountless S3 bucket and Route 53 ARNs still link.
 An Entra application id links exactly across `app_id`, `client_id`, a Teams
 `bot_id` and an Azure Bot `msa_app_id` only when both findings declare the same
 Entra tenant; other local identifiers need a shared declared tenant, workspace,
@@ -1263,30 +1287,55 @@ reported. Requests logged without a parsed host (`localhost:11434`) are still
 callers. If an internal Ollama or text-generation-inference server sits behind
 a reverse proxy with its own hostname, list that hostname in the new
 `gateway.logs` option `internal_model_hosts` before upgrading, or its callers
-disappear. A bare `/generate` route counts only on a declared or known model
-host. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
+disappear. Such excluded requests are reported in an advisory warning (not an
+incomplete scan) with their count and up to five host names; read it after
+the first scan and declare the hosts that are model servers. A bare
+`/generate` route counts only on a declared or known model host. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
 setting it changes that source's ids by design, so rebaseline that source.
 
 **Kubernetes.** Workloads that set `nvidia.com/gpu` only in `limits` are now
-reported as GPU workloads, and private-registry serving images named by an
-engine token (`registry.example/ml/vllm-serving`) are now agent workloads, so
-new findings can appear. A model argument with a GPU but without an AI image or
-AI resource kind is not promoted.
+reported as GPU workloads, and private-registry serving images whose name
+starts with an engine name (`registry.example/ml/vllm-serving`, also when
+pinned by digest) are now agent workloads, so new findings can appear. Engine
+names elsewhere in an image path, exporters and operators named after an
+engine, and NVIDIA Triton images without an LLM backend tag
+(`tritonserver:24.01-py3`) are not. A model argument with a GPU but without an
+AI image or AI resource kind is not promoted. A container `command` or `args` field that is
+not a list of strings (a string, or a list with a non-string item) now makes a
+`cloud.kubernetes` or `cloud.openshift` scan incomplete (exit 3) with a
+"malformed container command/args" warning; the workload is still reported
+from its image, without the model-argument check. A `null` field is unset, as
+kubectl exports it. Regenerate exports that fail this way before relying on
+exit codes.
 
 **Low-code.** ServiceNow flows named only with the generic AI hint (for example
-"Copilot" licence administration) and no ServiceNow AI marker are no longer
-reported; flows named for an AI product or provider, or with a marker, are.
+"Copilot" licence administration) or only with an ambiguous product name (a
+"Gemini" account sync), and no ServiceNow AI marker, are no longer reported;
+flows named for an unambiguous AI product or provider (Claude, OpenAI), or
+with a marker, are. A genuine AI flow named only with a generic word or
+Gemini and no marker is a known false negative.
 n8n workflows whose only AI step is an HTTP Request POST to a model API are
-now reported as AI workflows, and node types that merely contain `mcp` inside
-another word are no longer AI steps.
+now reported as AI workflows. On a host that is not a known model host,
+`/v1/messages`, `/v1/responses` and `/api/chat` count only with an
+`anthropic-version` header or a body with `model` and `messages`, `prompt` or
+`input`, so WhatsApp Business and help-desk chat calls are not AI steps; a
+self-hosted model called without either is missed. `mcp` in a node type
+counts as its own token: custom `mcpClient` or `MCPServer` nodes are AI
+steps, and node types that merely contain `mcp` inside another word or part
+number are not.
 
-**SaaS, identity and cloud inventory.** Notion bots without an established AI
-product or provider (nameless bots, sync integrations) are no longer
-inventoried. Slack apps can now match `client_id` rule-pack signals by their
+**SaaS, identity and cloud inventory.** Notion bots are inventoried only with
+an established AI product or provider, or an AI-name hint in their name (a
+generic AI word such as "LLM", "GPT" or "AI Assistant", or an ambiguous product
+name such as Gemini, which stays a possible-product hint). Nameless bots,
+sync integrations and bots named only "... Bot" are no longer inventoried;
+hint-only bots keep a bounded, possible-level confidence. Slack apps can now match `client_id` rule-pack signals by their
 app id, and Wudpecker and Tactiq apps are recognised as meeting note-takers.
 Auth0 non-machine clients attributed only by a model provider are now kept.
-GCP Cloud Run services and Cloud Functions whose only AI evidence was their own
-name or description are no longer reported.
+GCP Cloud Run services and Cloud Functions whose only AI evidence is an
+ambiguous product name (Gemini) in their name or description are no longer
+reported; a name or description that names an unambiguous product or provider
+(Anthropic Claude, OpenAI) is reported as before.
 
 Permission and machine-identity observations are not proof of agent execution,
 and observations in an offline export are not authenticated publisher evidence.

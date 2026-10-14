@@ -1,9 +1,9 @@
 [
   {
-    "id": "gemini-exchange",
-    "name": "Gemini Exchange Portal",
-    "publisher": "Gemini Trust Company",
-    "description": "Cryptocurrency settlement and account reporting",
+    "id": "gemini-ledger-sync",
+    "name": "Gemini Ledger Sync",
+    "publisher": "Northwind Treasury",
+    "description": "Settlement ledger reconciliation and account reporting",
     "url": "https://api.gemini.com/v1/settlement",
     "scopes": ["https://www.googleapis.com/auth/userinfo.email"],
     "users": 300

@@ -310,6 +310,9 @@ def test_domain_matches_are_counted_once_across_urls(index):
         "https://intranet.example/cb, https://chatgpt.com/aip/oauth/callback",
         "https://intranet.example/cb https://chatgpt.com/aip/oauth/callback",
         "https://intranet.example/cb;https://chatgpt.com/aip/oauth/callback",
+        # Whitespace always separates, even after a query; trailing separators are dropped.
+        "https://intranet.example/cb?state=1 https://chatgpt.com/aip/oauth/callback",
+        "https://intranet.example/cb,https://chatgpt.com,",
     ],
 )
 def test_every_host_in_a_multi_url_field_is_checked(index, redirect):
@@ -317,6 +320,25 @@ def test_every_host_in_a_multi_url_field_is_checked(index, redirect):
     assess_app(index, finding, name="Custom action", urls=[redirect])
     finalize(finding, index)
     assert "identity-app.openai-chatgpt" in finding.frameworks
+
+
+@pytest.mark.parametrize(
+    "redirect",
+    [
+        "https://portal.example/cb?x=1;https://chatgpt.com/cb",
+        "https://portal.example/cb?next=a,https://chatgpt.com/",
+        "https://portal.example/cb#a,https://chatgpt.com/",
+        # A comma or semicolon separates only before a new http(s) URL.
+        "https://portal.example/cb;chatgpt.com",
+        "https://portal.example/cb,chatgpt.com/aip",
+    ],
+)
+def test_a_url_list_is_never_split_inside_a_query_fragment_or_path(index, redirect):
+    finding = _finding()
+    assess_app(index, finding, name="Custom action", urls=[redirect])
+    finalize(finding, index)
+    assert "identity-app.openai-chatgpt" not in finding.frameworks
+    assert finding.metadata["agent_indicators"] == 0
 
 
 def test_servicenow_oauth_redirect_list_keeps_a_later_ai_host(tmp_path, run_connector):
@@ -359,6 +381,14 @@ def test_a_match_that_does_not_establish_adds_no_signature_tags(index):
     assert finding.frameworks == []
     assert finding.metadata["potential_frameworks"] == [GEMINI]
     assert not {"assistant", "agent-platform"}.intersection(finding.tags)
+
+
+def test_an_unestablished_generic_ai_name_is_not_a_potential_product(index):
+    finding = _finding()
+    apply_matches(finding, index.match_name("Support GPT"), establish=False)
+    assert "potential_frameworks" not in finding.metadata
+    assert finding.frameworks == [] and "ai-name-hint" not in finding.tags
+    assert [ev.signature for ev in finding.evidence] == ["identity-app.generic-ai-name"]
 
 
 def test_app_assessment_marker_never_reaches_a_report(index):

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import string
+from collections.abc import Callable
 
 import pytest
 
@@ -16,6 +17,7 @@ hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import given, settings  # noqa: E402
 from hypothesis import strategies as st  # noqa: E402
 
+from shadowscan.utils import redaction  # noqa: E402
 from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text  # noqa: E402
 
 # Characters that commonly appear in credentials and source code.
@@ -102,3 +104,97 @@ def test_safe_text_passes_through(safe: str) -> None:
     """Text without credential patterns should pass through mostly unchanged."""
     result = sanitize_text(safe)
     assert REDACTED not in result or REDACTED in safe
+
+
+# Texts around a scheme credential: glued runs, runs that start later lines,
+# separators and names before planted values. Every value is synthetic.
+_PLAIN_VALUE = "hunter2pass"
+_OPAQUE_VALUE = "Hv7" + "Qx2Lm9Pw4Rt6Yu1"
+_SCHEME_CREDENTIAL = "Zq8" + "Lm2Xw9Rt4Yu7Io1Pa5"
+_SCHEME_PARTS = [
+    *(f"{scheme} {_SCHEME_CREDENTIAL}" for scheme in ("Bearer", "Basic", "SSWS")),
+    f"Bearer token {_SCHEME_CREDENTIAL}",
+    f"Bearer\n{_SCHEME_CREDENTIAL}",
+    "Basic dXNlcjpwYXNz==",
+    "SSWS abc123",
+]
+_FOLLOWING_PARTS = [
+    *("--x9", "=x9", "--password", "=password", "--auth", "--token", "--a=:", "=v1="),
+    *("--insecure", "---", "=Section=", "--r0", "=abc.def", "--x=abc.def"),
+    *("\n", "\n", "\n\n", "\r\n", " ", "\\n", "\t", ": ", " = ", "=", "user: u"),
+    *(" password: ", "password: ", " = password: ", "Bearer "),
+    # A run on the next line before a name that the passes read only once the run goes.
+    *("\n=abc.def = password: ", "\n--r0\n"),
+    *(_PLAIN_VALUE, _OPAQUE_VALUE),
+]
+_SCHEME_TEXTS = st.builds(
+    lambda lead, scheme, rest: "".join([*lead, scheme, *rest]),
+    st.lists(st.sampled_from(_FOLLOWING_PARTS), max_size=3),
+    st.sampled_from(_SCHEME_PARTS),
+    st.lists(st.sampled_from(_FOLLOWING_PARTS), min_size=1, max_size=10),
+)
+
+
+def _merged_readings(read: Callable[[], str]) -> tuple[str, list[tuple[str, str]]]:
+    """The result of ``read()`` and the pairs of readings ``_merge_readings`` merged on the way."""
+    merged: list[tuple[str, str]] = []
+    merge = redaction._merge_readings
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            redaction,
+            "_merge_readings",
+            lambda first, second: merged.append((first, second)) or merge(first, second),
+        )
+        return read(), merged
+
+
+def _assert_each_line_shows_only_what_both_readings_show(cleaned: str, plain: str, established: str) -> None:
+    lines, plain_lines, established_lines = cleaned.split("\n"), plain.split("\n"), established.split("\n")
+    assert len(lines) == len(plain_lines)
+    if len(plain_lines) != len(established_lines):
+        assert cleaned == REDACTED + "\n" * plain.count("\n")
+        return
+    for line, one, other in zip(lines, plain_lines, established_lines, strict=True):
+        # A line of one reading, the plain line with a marker where a run was, or a withheld line.
+        assert line in (one, other, REDACTED + one, REDACTED + "\r" * one.endswith("\r"))
+        assert redaction._shows_within(one, line) and redaction._shows_within(other, line)
+
+
+@given(text=_SCHEME_TEXTS)
+@settings(max_examples=300, deadline=None)
+def test_sanitize_text_shows_nothing_the_established_reading_withholds(text: str) -> None:
+    """Each output line is a line of one of the two readings, and shows only what both show.
+
+    The established reading is the text as the established rules read it,
+    the scheme pass withholding a glued run with its credential (outside any
+    reading, see ``_SchemeReading``). A text with no glued run returns it, or
+    what the step that withholds the runs leaves of it.
+    """
+    cleaned, merged = _merged_readings(lambda: sanitize_text(text))
+    established = redaction._redact_extended(redaction._sanitize_established(text))
+    if merged:
+        ((plain, settled),) = merged
+        _assert_each_line_shows_only_what_both_readings_show(cleaned, plain, settled)
+    else:
+        assert cleaned in (
+            established,
+            redaction._in_reading(
+                redaction._SchemeReading(established=False),
+                lambda: redaction._without_glued_runs(established),
+            ),
+        )
+    for value in (_PLAIN_VALUE, _OPAQUE_VALUE, _SCHEME_CREDENTIAL):
+        assert value in established or value not in cleaned
+
+
+@given(text=_SCHEME_TEXTS, short=st.booleans())
+@settings(max_examples=150, deadline=None)
+def test_sanitize_shows_nothing_the_established_copy_withholds(text: str, short: bool) -> None:
+    """``sanitize`` keeps the same invariant for each text of the copy (see ``_merge_copies``)."""
+    cleaned, merged = _merged_readings(lambda: sanitize({"note": text}, redact_short_secrets=short)["note"])
+    established = redaction._sanitize_reading({"note": text}, short, True)["note"]
+    if merged:
+        ((plain, settled),) = merged
+        _assert_each_line_shows_only_what_both_readings_show(cleaned, plain, settled)
+    for value in (_PLAIN_VALUE, _OPAQUE_VALUE, _SCHEME_CREDENTIAL):
+        assert value in established or value not in cleaned

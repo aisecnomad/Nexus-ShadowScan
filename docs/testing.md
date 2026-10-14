@@ -15,17 +15,20 @@ POSIX `venv/bin` layout.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-make install          # hash-locked runtime, cloud, development and docs sets
+make install          # hash-locked runtime, cloud, development, build and docs sets
 pre-commit install    # optional: run the lint, format and secret hooks on commit
 ```
 
-`make install` installs `requirements-ci.lock`, `requirements.lock` and
-`requirements-docs.lock` under `--require-hashes --only-binary=:all:` and then
-the scanner itself in editable mode. `make install-dev` installs only the
-hash-locked core and development set, which is enough for lint, typing and the
-offline suite but leaves the cloud SDK code paths unexercised. Do not work
-around a hash mismatch: a lock that no longer installs is a signal to review,
-not to bypass.
+`make install` installs `requirements-ci.lock`, `requirements-build.lock`,
+`requirements.lock` and `requirements-docs.lock` under
+`--require-hashes --only-binary=:all:` and then the scanner itself in editable
+mode. `make install-dev` installs only the hash-locked core, development and
+build set, which is enough for lint, typing and the offline suite but leaves the
+cloud SDK code paths unexercised. The release-evidence tests record the `build`
+frontend version, so an environment without `requirements-build.lock` fails
+them; re-run `make install-dev` or `make install` in an older environment. Do
+not work around a hash mismatch: a lock that no longer installs is a signal to
+review, not to bypass.
 
 The development set already includes the `types-PyYAML` and `types-requests`
 stubs that `mypy` needs. The third-party packages that ship neither stubs nor

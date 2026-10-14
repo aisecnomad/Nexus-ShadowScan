@@ -792,7 +792,8 @@ registry approval from an unrelated parent.
 ### `lowcode.n8n`
 n8n workflows with AI or agent steps, including LangChain nodes and HTTP
 Request POSTs to a model API (a known model host, or a versioned generation
-route on a host that is not a messaging API); triggers
+route on a host that is not a messaging API; `/v1/messages`, `/v1/responses`
+and `/api/chat` there also need a model request header or body); triggers
 (schedule → `scheduled`, webhook or app event → `event-triggered`, both with
 `autonomous`; a manual, chat, form or evaluation trigger adds neither), code
 steps (→ code-exec) and models. Live
@@ -894,7 +895,8 @@ explicit `accounts` site binding. URL host case, a default HTTPS port and a
 trailing slash are normalized without folding app resource IDs.
 
 ### `saas.notion`
-Notion bot users with an established AI product or provider. A missing or repeated pagination cursor, or reaching the live
+Notion bot users with an established AI product or provider, or an AI-name
+hint other than the word "bot". A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete. Provider error
 envelopes make collection incomplete even when they include empty record arrays;
 valid observations from other pages remain available. The same rule applies to
@@ -1050,8 +1052,9 @@ Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
 and endpoints per location, Dialogflow CX agents, Discovery Engine /
 Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,
 service accounts (user-managed keys), API keys restricted to Gemini, Secret
-Manager names, optional Cloud Audit Log callers (`audit_days`). Cloud Run and
-Cloud Functions names are hints only. Auth: ADC via
+Manager names, optional Cloud Audit Log callers (`audit_days`). An ambiguous
+product name (Gemini) on a Cloud Run service or Cloud Function stays a hint
+until another signal corroborates it. Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows potential access, not observed agent execution. Project IAM collection

@@ -36,8 +36,8 @@ def test_scheduled_audit_reports_scoped_assurance_without_admin_writes(tmp_path:
     workflow = yaml.safe_load((ROOT / ".github/workflows/audit.yml").read_text())
     job = workflow["jobs"]["merge-policy"]
     assert workflow["permissions"] == {"contents": "read"}
-    # Pinned to the immutable repository ID (aisecnomad/Nexus-ShadowScan, formerly
-    # aisecnomad/Project-Nexus), so a rename cannot turn the audit into a skipped job.
+    # Pinned to the immutable repository ID of aisecnomad/Nexus-ShadowScan
+    # (formerly aisecnomad/Project-Nexus), so a rename cannot skip the audit job.
     assert job["if"] == "github.repository_id == '1174915264' && github.ref == 'refs/heads/main'"
     assert "permissions" not in job
     steps = [step for step in job["steps"] if step.get("env", {}).get("GH_TOKEN")]

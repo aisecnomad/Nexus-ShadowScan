@@ -334,13 +334,13 @@ def done(finding: Finding, index: SignatureIndex, kind: Kind) -> Finding:
     return finding
 
 
-def name_hint(index: SignatureIndex, finding: Finding, *names: str | None, weak: bool = False) -> None:
-    """Match resource names and descriptions; ``weak`` keeps them as potential hints only.
+def name_hint(index: SignatureIndex, finding: Finding, *names: str | None) -> None:
+    """Match resource names and descriptions at half weight.
 
-    A resource name chosen by its owner never establishes a product by itself
-    on a surface where any service can carry any name (Cloud Run, Cloud
-    Functions): with ``weak`` the matches stay under ``metadata.potential_*``.
+    An ambiguous product name (Gemini) stays a possible-product hint under
+    ``metadata.potential_frameworks`` until a non-name signal corroborates it;
+    an unambiguous one (a description naming Anthropic Claude) establishes it.
     """
     for n in names:
         if n:
-            apply_matches(finding, index.match_name(str(n)), weight_scale=0.5, establish=not weak)
+            apply_matches(finding, index.match_name(str(n)), weight_scale=0.5)

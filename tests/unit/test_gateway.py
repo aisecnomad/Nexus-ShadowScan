@@ -733,3 +733,55 @@ def test_unset_internal_model_hosts_keeps_existing_finding_ids(index):
     assert _source_id(index, internal_model_hosts=[]) == _source_id(index)
     # Declaring internal hosts changes how the source is read, so it is a new source identity.
     assert _source_id(index, internal_model_hosts=["tgi.internal.example"]) != _source_id(index)
+
+
+def _route_warnings(ctx):
+    return [warning for warning in ctx.stats.warnings if "internal_model_hosts" in warning]
+
+
+def test_undeclared_self_hosted_route_hosts_are_named_without_incompleteness(tmp_path, run_connector):
+    source = _access_log(
+        tmp_path,
+        *[("POST", "/api/generate", "langchain/0.2", "gpu01.corp.example:11434")] * 3,
+        *[("POST", "/api/chat", "ollama-python/0.3", "ollama.svc.cluster.local")] * 2,
+        ("POST", "/v1/chat/completions", "python-httpx/0.27", "api.openai.com"),
+    )
+    findings, ctx = run_connector("gateway.logs", input=source)
+    assert len(findings) == 1 and "provider.openai" in findings[0].model_providers
+    # Not counting a request on an undeclared host is a classification, not lost coverage.
+    assert not ctx.stats.incomplete
+    assert _route_warnings(ctx) == [
+        "gateway.logs: requests to Ollama-style or text-generation-inference routes on hosts that are not "
+        "known or declared model hosts were not counted as LLM traffic: 5 (gpu01.corp.example (3), "
+        "ollama.svc.cluster.local (2)). List internal model servers among them in internal_model_hosts"
+    ]
+    findings, ctx = run_connector(
+        "gateway.logs", input=source, internal_model_hosts=["gpu01.corp.example", "ollama.svc.cluster.local"]
+    )
+    assert len(findings) == 3 and _route_warnings(ctx) == []
+
+
+def test_undeclared_route_host_list_is_bounded(tmp_path, run_connector):
+    hosts = [f"svc{n}.corp.example" for n in range(7)]
+    source = _access_log(tmp_path, *[("POST", "/api/chat", "python-httpx/0.27", host) for host in hosts])
+    findings, ctx = run_connector("gateway.logs", input=source)
+    assert findings == [] and not ctx.stats.incomplete
+    (warning,) = _route_warnings(ctx)
+    assert ": 7 (svc0.corp.example (1), " in warning and "; and other hosts)" in warning
+    assert "svc5.corp.example" not in warning and "svc6.corp.example" not in warning
+
+
+def test_declared_internal_model_host_matches_a_logged_port(tmp_path, run_connector):
+    source = tmp_path / "access.jsonl"
+    record = {
+        "remote_addr": "10.0.0.1",
+        "request": "POST /generate HTTP/1.1",
+        "host": "tgi.internal.example:8080",
+    }
+    source.write_text("\n".join(json.dumps(record) for _ in range(3)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(source))
+    assert findings == [] and "tgi.internal.example (3)" in _route_warnings(ctx)[0]
+    findings, ctx = run_connector(
+        "gateway.logs", input=str(source), internal_model_hosts=["tgi.internal.example"]
+    )
+    assert len(findings) == 1 and _route_warnings(ctx) == []

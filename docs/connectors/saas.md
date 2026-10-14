@@ -55,15 +55,24 @@ and a trailing slash are normalized; app resource IDs remain case-sensitive.
 Without a configured `site`, finding IDs are bound to the resolved path of
 each export file: the same app key in two files stays two findings, and moving
 or renaming a file changes its IDs. Finding IDs from earlier releases change
-for unscoped exports and for non-canonical `site` spellings; configure the
-canonical site, rescan and take a fresh baseline. Keep one site's exports per
-scan input.
+for unscoped exports and for a `site` with an uppercase host or an explicit
+`:443`; configure the canonical site, rescan and take a fresh baseline. Keep one
+site's exports per scan input. A `site` must be a plain HTTPS origin
+(`https://<host>`): a missing scheme, `http://`, a path such as a Data Center
+context path, user information, a query, a fragment, a trailing dot or a
+non-ASCII host stops the connector with exit 3.
 
 ## `saas.notion`
-Notion bot users. A bot is inventoried only when its name or other evidence
-establishes an AI product or provider; a nameless bot or an ordinary sync
-integration is not reported, because a bot's existence and owner do not
-identify AI. A missing or repeated pagination cursor, or reaching the live
+Notion bot users. A bot is inventoried when its name or other evidence
+establishes an AI product or provider, or when its name is an AI-name hint, as
+for GitHub Apps: a generic AI word ("Internal LLM Agent", "Acme AI Assistant",
+"Support GPT") or an ambiguous product name such as Gemini. Every Notion
+integration is a bot user, so the word "bot" alone ("Jira Bot") is not a hint
+here. A hint never attributes a product: the bot's own observation is bounded
+at possible confidence and an ambiguous product stays under
+`metadata.potential_frameworks`. A nameless bot (its id is never matched as a
+name) or an ordinary sync integration is not reported, because a bot's
+existence and owner do not identify AI. A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete.
 
 ## `saas.zoom`
