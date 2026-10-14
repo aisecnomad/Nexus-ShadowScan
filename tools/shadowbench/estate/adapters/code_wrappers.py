@@ -4,7 +4,12 @@ Each wrapper runs one authored repository per unit through the exact
 commands and normalization of the corresponding `tools.discovery_benchmark`
 adapter, then lifts the resulting code-taxonomy facts into estate
 predictions. Behavior on the code surface is therefore identical to the
-code-surface benchmark's.
+code-surface benchmark's: the same argv, exit codes and environment, and a
+command the inner adapter runs in the repository (`cwd="repo"`, as vet's
+does) still starts there. The estate runner starts every command in the run
+directory, so such a command is prefixed with a fixed `/bin/sh` trampoline
+that changes into the repository and execs the unchanged argv; the paths
+are passed as arguments, never interpolated into shell text.
 """
 
 from __future__ import annotations
@@ -44,8 +49,20 @@ class _CodeAdapter(Protocol):
     def normalize(self, out_dir: Path) -> Normalized | CodeNormalized: ...  # pragma: no cover
 
 
-def _convert_commands(commands: list[CodeCommand]) -> list[Command]:
-    return [Command(argv=c.argv, ok_exit_codes=c.ok_exit_codes, env=dict(c.env)) for c in commands]
+#: Change into the directory in $1, then exec the remaining arguments unchanged.
+_IN_DIR = 'cd -- "$1" && shift && exec "$@"'
+
+
+def _convert_commands(commands: list[CodeCommand], repo_dir: Path) -> list[Command]:
+    converted: list[Command] = []
+    for command in commands:
+        argv = command.argv
+        # Mirrors tools.discovery_benchmark.runner: "repo" runs in the checkout,
+        # anything else in the run directory (the estate runner's default).
+        if command.cwd == "repo":
+            argv = ("/bin/sh", "-c", _IN_DIR, "sh", str(repo_dir.absolute()), *argv)
+        converted.append(Command(argv=argv, ok_exit_codes=command.ok_exit_codes, env=dict(command.env)))
+    return converted
 
 
 def _lift(normalized: CodeNormalized, unit: str) -> Normalized:
@@ -82,7 +99,8 @@ class _WrappedCodeAdapter:
         return code_units(estate)
 
     def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
-        return _convert_commands(self.inner.commands(cfg, unit_path(unit, estate), out_dir))
+        repo_dir = unit_path(unit, estate)
+        return _convert_commands(self.inner.commands(cfg, repo_dir, out_dir), repo_dir)
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:
         normalized = self.inner.normalize(out_dir)
@@ -119,8 +137,23 @@ class AgentDiscoverEstateAdapter(_WrappedCodeAdapter):
         )
 
 
+def _vet_record(item: object) -> bool:
+    """Whether an `ai.json` item is a vet record: an `App` or `Name`, or an `MCPServer` object."""
+    if not isinstance(item, dict):
+        return False
+    named = any(isinstance(item.get(key), str) and item[key] for key in ("App", "Name"))
+    return named or (isinstance(item.get("MCPServer"), dict) and bool(item["MCPServer"]))
+
+
 class VetEstateAdapter(_WrappedCodeAdapter):
-    """vet on code repositories plus `vet ai discover` on home trees."""
+    """vet on code repositories plus `vet ai discover` on home trees.
+
+    On a home tree `ai.json` must be a list. `null` and an empty list read as
+    nothing found: the code-surface adapter records that vet writes either
+    when it finds nothing. Any other top level, or a list holding items but no
+    vet record, is an adapter error, never an empty inventory. Other items
+    beside a record are skipped.
+    """
 
     def __init__(self) -> None:
         self.inner = VetAdapter()
@@ -168,10 +201,16 @@ class VetEstateAdapter(_WrappedCodeAdapter):
             data = json.loads(path.read_text(encoding="utf-8"))
         except ValueError as exc:
             return Normalized(error=f"ai.json unparseable: {exc}")
-        items = data if isinstance(data, list) else []
+        if data is None:
+            return Normalized()
+        if not isinstance(data, list):
+            return Normalized(error="ai.json is not a list")
+        if data and not any(_vet_record(item) for item in data):
+            return Normalized(error="ai.json holds no vet record")
+        items: list[Any] = data
         result = Normalized(raw_count=len(items))
         for item in items:
-            if not isinstance(item, dict):
+            if not _vet_record(item):
                 continue
             server: dict[str, Any] = item.get("MCPServer") or {}
             name = str(item.get("Name") or item.get("App") or "")

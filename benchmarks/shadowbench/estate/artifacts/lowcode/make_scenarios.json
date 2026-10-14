@@ -5,7 +5,7 @@
   "name": "Tender negotiator",
   "teamId": 12,
   "model": "gpt-4o",
-  "systemPrompt": "You negotiate spot freight tenders for Vantor Logistics. Counter-offer within the approved rate band and escalate anything above it.",
+  "systemPrompt": "You negotiate spot freight tenders for Adatum Logistics. Counter-offer within the approved rate band and escalate anything above it.",
   "tools": [
    {
     "name": "send_email"

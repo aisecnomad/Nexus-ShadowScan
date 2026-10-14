@@ -7,8 +7,8 @@
         "GITHUB_PERSONAL_ACCESS_TOKEN": "..."
       }
     },
-    "vantor-freight-mcp": {
-      "command": "/home/dana/tools/vantor-freight-mcp/bin/vantor-freight-mcp",
+    "adatum-freight-mcp": {
+      "command": "/home/dana/tools/adatum-freight-mcp/bin/adatum-freight-mcp",
       "args": ["--rates-db", "/home/dana/freight/rates.db"],
       "env": {
         "FREIGHT_RATES_DB_URL": "..."

@@ -9,7 +9,7 @@
   },
   {
     "binary": "backup-sync",
-    "destination": "storage.vantor.example",
+    "destination": "storage.adatum.example",
     "destination_port": 8443,
     "namespace": "ops",
     "pod": "backup-sync-7rq2p",

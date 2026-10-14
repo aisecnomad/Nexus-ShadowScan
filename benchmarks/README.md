@@ -16,8 +16,11 @@ evidence and for the bundled regression corpora that `make evaluate` runs.
 | Repo and home-view surfaces | Public GitHub repositories, read as a working tree and as `$HOME` | Two model labelers, adjudicated | [`tools/benchmark_realworld/`](../tools/benchmark_realworld/README.md) | `tools/benchmark_realworld/results*/` |
 | Sampled real-world repositories (326) | Random and purposive samples of GitHub and GitLab | Deterministic oracle plus model adjudication | [`tools/benchmark/realworld/`](../tools/benchmark/realworld/README.md) | `tools/benchmark/realworld/results*/` |
 | Shadow AI discovery, code surface (87) | 87 public repositories pinned by SHA | Session-labeled facts with file pointers | [`tools/discovery_benchmark/`](../tools/discovery_benchmark/README.md) | [`shadow-ai-discovery/`](shadow-ai-discovery/README.md) |
-| ShadowBench synthetic track, nine surfaces (346) | 320 seeded platform-native cases on identity, gateway, low-code, SaaS, cloud, endpoint, network and runtime, plus 26 pinned public repositories | Generator rubrics with per-entity evidence; code facts from the code-surface corpus | [`tools/shadowbench/`](../tools/shadowbench/README.md) (`python -m tools.shadowbench synthetic`) | [`shadowbench/synthetic/`](shadowbench/synthetic/README.md) |
-| ShadowBench estate track, nine surfaces (137) | Authored vendor-format artifacts for one fictional estate, frozen by SHA-256 | Authored with each entity, anchors and evidence pointers | [`tools/shadowbench/`](../tools/shadowbench/README.md) (`python -m tools.shadowbench estate`) | [`shadowbench/estate/`](shadowbench/estate/README.md) |
+| ShadowBench cases, nine surfaces (346) | 320 generated platform-native cases on eight surfaces, plus 26 pinned public repositories | Generator rubrics with per-entity evidence, tolerated keys and decoys | [`tools/shadowbench/cases/`](../tools/shadowbench/cases/README.md) (`python -m tools.shadowbench cases`) | [`shadowbench/cases/`](shadowbench/cases/README.md) |
+| ShadowBench estate, nine surfaces (137 entities) | One authored fictional organization's artifacts on all nine surfaces, frozen by SHA-256 | Authored with each entity: facts, anchors, evidence pointers | [`tools/shadowbench/estate/`](../tools/shadowbench/README.md) (`python -m tools.shadowbench estate`) | [`shadowbench/estate/`](shadowbench/estate/README.md) |
+
+[`shadowbench/`](shadowbench/README.md) explains how ShadowBench's two tracks
+differ.
 
 Only the code-surface discovery benchmark runs in automation: the weekly
 [`benchmark.yml`](../.github/workflows/benchmark.yml) workflow runs ShadowScan

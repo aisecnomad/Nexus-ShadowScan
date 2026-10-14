@@ -20,7 +20,7 @@
    "authorization_code"
   ],
   "callbacks": [
-   "https://drivers.vantor.example/cb"
+   "https://drivers.adatum.example/cb"
   ]
  },
  {
@@ -38,7 +38,7 @@
  {
   "_kind": "client_grant",
   "client_id": "m2mrateq-ag7x4",
-  "audience": "https://api.vantor.example/",
+  "audience": "https://api.adatum.example/",
   "scope": [
    "read:rates",
    "write:quotes"
@@ -47,7 +47,7 @@
  {
   "_kind": "client_grant",
   "client_id": "mcp2515-brdg-t44qe",
-  "audience": "https://telemetry.vantor.example/",
+  "audience": "https://telemetry.adatum.example/",
   "scope": [
    "write:canbus-frames"
   ]

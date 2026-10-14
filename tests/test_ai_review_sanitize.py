@@ -9,6 +9,8 @@ check_secrets.py remains the authoritative file gate with exact approvals.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from tools.ai_review.sanitize import redact
@@ -39,13 +41,67 @@ def test_a_private_key_quoted_on_one_line_or_escaped_is_withheld_whole(quote: st
     assert body not in out and "END" not in out and out.endswith(" Rotate it.")
 
 
-@pytest.mark.parametrize("quote", ["{begin} {body}", "{begin}\\n{body}\\n"])
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "{begin} {body}",
+        "{begin}\\n{body}\\n",
+        # Escaped CRLF, as a JSON string of a Windows file quotes it.
+        "{begin}\\r\\n{body}\\r\\n{line}\\r\\n",
+        # A Markdown blockquote, the usual way a review finding quotes a file.
+        "> {begin}\n> {body}\n> {line}\n",
+        "> {begin}\r\n> {body}\r\n> {line}\r\n",
+        "> > {begin}\n> > {body}\n> > {line}\n",
+        "> {begin}\n>\n> {body}\n> {line}\n",
+        "> {begin}\n> Proc-Type: 4,ENCRYPTED\n> DEK-Info: AES-128-CBC,00FF\n>\n> {body}\n> {line}\n",
+        # Encryption headers after escaped line breaks, as a JSON string quotes them.
+        "{begin}\\nProc-Type: 4,ENCRYPTED\\nDEK-Info: AES-128-CBC,00FF\\n\\n{body}\\n{line}\\n",
+        "{begin}\\r\\nProc-Type: 4,ENCRYPTED\\r\\nDEK-Info: AES-128-CBC,00FF\\r\\n\\r\\n{body}\\r\\n{line}\\r\\n",
+        "{begin}\\n> Proc-Type: 4,ENCRYPTED\\n> DEK-Info: AES-128-CBC,00FF\\n>\\n> {body}\\n> {line}\\n",
+    ],
+)
 def test_a_footerless_private_key_on_one_line_or_escaped_is_withheld(quote: str) -> None:
     # A reviewer may quote a truncated key without its footer; the body must not be published.
     begin = "-----BEGIN " + "PRIVATE KEY-----"
+    body, line = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2, "Qq1Zz9" * 5
+    out = redact(quote.format(begin=begin, body=body, line=line) + " Rotate it.")
+    assert body not in out and line not in out and out.endswith(" Rotate it.")
+
+
+@pytest.mark.parametrize("scheme", ["postgresql+psycopg2", "postgresql+asyncpg", "mysql+mysqlconnector"])
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "> {begin}\n> {url}\nRotate it.",
+        "> > {begin}\n> > {url}\nRotate it.",
+        "> {begin}\n>\n> {url}\nRotate it.",
+        '"{begin}\\r\\n{url}"',
+        '"{begin}\\n{url}"',
+        "{begin} {url}",
+        "{begin}\n{url}",
+        "{begin}\n{body}\n{url}",
+    ],
+)
+def test_a_url_password_after_a_footerless_key_header_is_withheld(quote: str, scheme: str) -> None:
+    # A footerless key's base64 run takes in a long URL scheme on the next line and
+    # stops at ':'. The URL rule must still see the whole URL and withhold its password.
+    begin, password = "-----BEGIN " + "PRIVATE KEY-----", "Synthetic-" + "Passw0rd"
+    url = f"{scheme}://admin:{password}@db.internal/prod"
     body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2
-    out = redact(quote.format(begin=begin, body=body) + " Rotate it.")
-    assert body not in out and out.endswith(" Rotate it.")
+    out = redact(quote.format(begin=begin, url=url, body=body))
+    assert password not in out and body not in out and "BEGIN" not in out
+
+
+def test_a_credential_inside_a_key_body_hides_neither() -> None:
+    # Each rule sees the original text, and the text as the earlier rules left it:
+    # an Azure key inside a footerless key body leaves the lines after it withheld,
+    # and a key run that swallows one Azure key label leaves the next key withheld.
+    begin = "-----BEGIN " + "PRIVATE KEY-----"
+    body, first, second = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" * 2, "U3ludGhldGljS2V5" * 3, "QWxhZGRp" * 6
+    out = redact(f"{begin}\n\nAccountKey={first}\\n{body}\\n")
+    assert first not in out and body not in out
+    out = redact(f"{begin}\tAAAA{body}==/SharedAccessKey = {first}/AccountKey={second}=\nRotate them.")
+    assert body not in out and first not in out and second not in out and out.endswith("\nRotate them.")
 
 
 def test_prose_after_a_quoted_key_header_is_kept() -> None:
@@ -57,6 +113,10 @@ def test_prose_after_a_quoted_key_header_is_kept() -> None:
         "Scenario: the file begins with\n[redacted]\n\nRecommendation: Rotate the key.\n\nAssumptions: None."
     )
     assert redact(f"```\n{begin}\n```") == "```\n[redacted]\n```"
+    # Quoted as a Markdown blockquote, the prose after the header is kept too.
+    assert redact(f"> {begin}\n>\n> Recommendation: Rotate the key.") == (
+        "> [redacted]\n>\n> Recommendation: Rotate the key."
+    )
 
 
 def test_every_check_secrets_family_is_redacted() -> None:
@@ -88,6 +148,81 @@ def test_every_check_secrets_family_is_redacted() -> None:
         assert sample not in out, f"{family} survived redact()"
         assert "[redacted]" in out
         assert out.startswith("prefix ") and out.endswith(" suffix")
+
+
+@pytest.mark.parametrize("token", ["sk-" + "A" * 8171, "glpat-" + "B" * 8200, "hf_" + "C" * 8300])
+def test_a_key_whose_footer_a_long_token_moves_out_of_reach_is_withheld_whole(token: str) -> None:
+    # Matched in turn, an earlier rule replaced the token with the marker, which
+    # brought the footer within the key rule's bounded search. A replacement
+    # that kept the token's length left the footer out of reach, and the key
+    # lines after the token and the footer were published.
+    begin, end = "-----BEGIN " + "PRIVATE KEY-----", "-----END " + "PRIVATE KEY-----"
+    line = "Zqu8" + "jzPde0IgxLd6"
+    out = redact(f"Scenario:\n{begin}\n{token}\n{line}\n{end}\nRotate it.")
+    assert out == "Scenario:\n[redacted]\nRotate it."
+
+
+def _url_password_cases() -> list[tuple[str, int, list[str]]]:
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    azure = "AccountKey=" + "Ab3/" * 11
+    password, inner, tail = "Hq7Zr2" + "Lm9Xw4", "Pw6Ys0" + "Ga2Fe8", "Vt3Nb8" + "Kc5Jd1"
+    # Joined at runtime so the source holds no URL with a password.
+    scheme, user = "postgresql+psycopg2://", "u:"
+    url = scheme + user + f"{password};{azure};{tail}@h"
+    google = "AIzaHq7Zr2Lm9Xw4Vt3N" + "_b8Kc5Jd1Pw6Ys0Ga2F"
+    return [
+        (f"> {header}\n> {url}", 1, [password, tail]),
+        (f"{header} {url}", 1, [password, tail]),
+        (
+            f"> {header}\n> " + scheme + user + password + "redis://" + "a:" + f"{inner}@cache{tail}@h",
+            2,
+            [password, inner, tail],
+        ),
+        (f"> {header}\n> {google}{header}", 2, [google[20:]]),
+    ]
+
+
+@pytest.mark.parametrize(("text", "passes", "secrets"), _url_password_cases())
+def test_a_quoted_key_header_leaves_a_url_password_to_the_url_rule(
+    text: str, passes: int, secrets: list[str]
+) -> None:
+    # The key rule's run took in the URL's scheme ('postgresql+psycopg2'), so the
+    # URL rule, which matches only once the Azure key or inner URL in the password
+    # is replaced, never did. The earlier key rules stopped at the header and left
+    # the scheme; the patterns are matched in turn with them as well, twice, as a
+    # posted review body is redacted twice.
+    out = text
+    for _ in range(passes):
+        out = redact(out)
+    assert not any(secret in out for secret in secrets)
+
+
+@pytest.mark.parametrize("layout", ["\n>", "\n> ", " ", "\\n", "\\r\\n"])
+@pytest.mark.parametrize("depth", [2, 3])
+def test_a_url_nested_in_a_url_password_after_a_key_header_is_withheld_on_the_first_pass(
+    layout: str, depth: int
+) -> None:
+    # Matched in turn, the outer URL matches only once every URL inside its
+    # password is replaced, one per sweep; the gate's later passes did that
+    # while the key rule's wider run had already taken the outer scheme. The
+    # rules now sweep until they match nothing more.
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    secret = "IkRveITF" + "o1CPdwbf"
+    inner = "u" + ":" + "rfnUCi@h@;"
+    for _ in range(depth):
+        inner = "s://u" + ":" + inner
+    text = header + layout + "postgresql+psycopg2://u" + ":" + inner + secret + "@h"
+    assert secret not in redact(text)
+
+
+def test_a_long_blank_run_after_a_key_header_is_scanned_in_linear_time() -> None:
+    # The blank runs before a footerless key's base64 lines could be split
+    # between two quantifiers, which made the scan quadratic in the run's length.
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    started = time.perf_counter()
+    for blank in (" ", "\t", "\\n "):
+        redact(header + "\n" + blank * 40_000 + "!")
+    assert time.perf_counter() - started < 5
 
 
 def test_workflow_commands_are_neutralized() -> None:

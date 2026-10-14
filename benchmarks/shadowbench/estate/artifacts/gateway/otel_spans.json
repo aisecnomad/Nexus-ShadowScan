@@ -1,12 +1,12 @@
 [
  {
-  "serviceName": "vantor-invoice-agent-d4k",
+  "serviceName": "adatum-invoice-agent-d4k",
   "resource": {
    "attributes": [
     {
      "key": "service.name",
      "value": {
-      "stringValue": "vantor-invoice-agent-d4k"
+      "stringValue": "adatum-invoice-agent-d4k"
      }
     }
    ]
@@ -19,13 +19,13 @@
   }
  },
  {
-  "serviceName": "vantor-invoice-agent-d4k",
+  "serviceName": "adatum-invoice-agent-d4k",
   "resource": {
    "attributes": [
     {
      "key": "service.name",
      "value": {
-      "stringValue": "vantor-invoice-agent-d4k"
+      "stringValue": "adatum-invoice-agent-d4k"
      }
     }
    ]
@@ -38,13 +38,13 @@
   }
  },
  {
-  "serviceName": "vantor-invoice-agent-d4k",
+  "serviceName": "adatum-invoice-agent-d4k",
   "resource": {
    "attributes": [
     {
      "key": "service.name",
      "value": {
-      "stringValue": "vantor-invoice-agent-d4k"
+      "stringValue": "adatum-invoice-agent-d4k"
      }
     }
    ]
@@ -57,13 +57,13 @@
   }
  },
  {
-  "serviceName": "vantor-billing-cron-t6b",
+  "serviceName": "adatum-billing-cron-t6b",
   "resource": {
    "attributes": [
     {
      "key": "service.name",
      "value": {
-      "stringValue": "vantor-billing-cron-t6b"
+      "stringValue": "adatum-billing-cron-t6b"
      }
     }
    ]
@@ -75,13 +75,13 @@
   }
  },
  {
-  "serviceName": "vantor-billing-cron-t6b",
+  "serviceName": "adatum-billing-cron-t6b",
   "resource": {
    "attributes": [
     {
      "key": "service.name",
      "value": {
-      "stringValue": "vantor-billing-cron-t6b"
+      "stringValue": "adatum-billing-cron-t6b"
      }
     }
    ]

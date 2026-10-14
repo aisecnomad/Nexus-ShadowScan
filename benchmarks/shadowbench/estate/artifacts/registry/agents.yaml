@@ -1,11 +1,11 @@
-# Approved agent registry for the Vantor Logistics estate benchmark.
+# Approved agent registry for the Adatum Logistics estate benchmark.
 # Findings whose resource matches an entry are registered (shadow: false);
 # everything else discovered is shadow. Resources are case-sensitive
 # fnmatch globs on the finding resource, scoped per entry.
 agents:
   - id: freight-quote-agent
     name: Freight quote agent
-    owner: platform-eng@vantor.example
+    owner: platform-eng@adatum.example
     resources:
       - "arn:aws:bedrock:us-east-1:210987654321:agent/KR9FQAGT01"
     surfaces: [cloud]
@@ -13,7 +13,7 @@ agents:
     accounts: ["210987654321"]
   - id: claude-code-dana
     name: Claude Code on dev-laptop-01 (dana)
-    owner: dana@vantor.example
+    owner: dana@adatum.example
     resources:
       - "endpoint:dev-laptop-01:dana:agent-config:claude-code"
     surfaces: [endpoint]
@@ -21,13 +21,13 @@ agents:
     accounts: ["dev-laptop-01"]
   - id: hr-helper-copilot
     name: HR Helper (Copilot Studio)
-    owner: dana@vantor.example
+    owner: dana@adatum.example
     resources:
       - "power-platform:bot:bot-hrhelper-v7q2k"
     surfaces: [lowcode]
   - id: coderabbit-reviewer
     name: CodeRabbit AI reviewer
-    owner: platform-eng@vantor.example
+    owner: platform-eng@adatum.example
     resources:
       - "github:installation:70110427"
     surfaces: [saas]

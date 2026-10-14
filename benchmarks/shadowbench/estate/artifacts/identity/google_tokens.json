@@ -7,7 +7,7 @@
    "https://www.googleapis.com/auth/gmail.readonly",
    "https://www.googleapis.com/auth/userinfo.email"
   ],
-  "userEmail": "dana@vantor.example"
+  "userEmail": "dana@adatum.example"
  },
  {
   "clientId": "77421983406-ot4vq.apps.googleusercontent.com",
@@ -16,7 +16,7 @@
    "https://www.googleapis.com/auth/calendar.readonly",
    "https://www.googleapis.com/auth/gmail.readonly"
   ],
-  "userEmail": "tom@vantor.example"
+  "userEmail": "tom@adatum.example"
  },
  {
   "clientId": "58203471196-rcm8w.apps.googleusercontent.com",
@@ -25,7 +25,7 @@
    "https://www.googleapis.com/auth/calendar.readonly",
    "https://www.googleapis.com/auth/userinfo.email"
   ],
-  "userEmail": "priya@vantor.example"
+  "userEmail": "priya@adatum.example"
  },
  {
   "clientId": "64091120034-exp3j.apps.googleusercontent.com",
@@ -33,6 +33,6 @@
   "scopes": [
    "https://www.googleapis.com/auth/userinfo.email"
   ],
-  "userEmail": "nika@vantor.example"
+  "userEmail": "nika@adatum.example"
  }
 ]

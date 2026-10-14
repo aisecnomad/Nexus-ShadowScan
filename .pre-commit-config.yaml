@@ -6,14 +6,16 @@ repos:
     rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
     hooks:
       # Fixtures reproduce foreign files byte for byte, the retained licence
-      # texts are digest-bound to their upstream copies and archive/ holds
-      # retained review artifacts; never rewrite them.
+      # texts are digest-bound to their upstream copies, archive/ holds
+      # retained review artifacts, and ShadowBench's corpora, artifacts and
+      # results are frozen by digest or written by its scorers; never rewrite
+      # them.
       - id: trailing-whitespace
         # Two trailing spaces are a Markdown line break (.editorconfig keeps them).
         args: [--markdown-linebreak-ext=md]
-        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/)
+        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/|benchmarks/shadowbench/[^/]+/(artifacts/|results/|corpus\.json$|FREEZE\.json$))
       - id: end-of-file-fixer
-        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/)
+        exclude: ^(archive/|tests/fixtures/|tools/evaluation/independent_licenses/|benchmarks/shadowbench/[^/]+/(artifacts/|results/|corpus\.json$|FREEZE\.json$))
       # mkdocs.yml uses Material's `!!python/name:` tags, which the safe loader
       # rejects; `mkdocs build --strict` in CI validates that file instead.
       # Signature packs are parsed by the signature-validate hook below (and by
@@ -56,6 +58,10 @@ repos:
     hooks:
       - id: mypy
         files: ^(shadowscan|tools|benchmarks)/
+        # The estate track's sample repositories are inputs under test, not
+        # project code. pre-commit passes files explicitly, which mypy's own
+        # `exclude` setting does not filter, so the hook excludes them too.
+        exclude: ^benchmarks/shadowbench/estate/artifacts/
         # The hook runs in its own environment. click, PyJWT, rich and urllib3
         # ship their own types; without them those imports are Any, so a wrong
         # call passes the hook but fails CI and `type: ignore` comments read as

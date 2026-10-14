@@ -28,7 +28,7 @@ import sys
 import types
 import uuid
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, TypeVar
 
 from shadowscan.utils import (
     redaction_assignments,
@@ -62,6 +62,7 @@ from shadowscan.utils.redaction_commands import (
 from shadowscan.utils.redaction_formats import (
     _ADDED_PEM,
     _PEM,
+    _SCHEME_READING,
     _URL,
     _redact_authorization,
     _redact_compact_colons,
@@ -71,6 +72,8 @@ from shadowscan.utils.redaction_formats import (
     _redact_query_text,
     _redact_secret_tokens,
     _sanitize_url,
+    _SchemeReading,
+    _withhold_scheme_tails,
 )
 from shadowscan.utils.redaction_markup import (
     _redact_flow_records,
@@ -102,6 +105,7 @@ from shadowscan.utils.redaction_statements import _redact_python_assignments
 
 # Values the sanitizer descends into; sets and frozensets are traversed like lists.
 _CONTAINERS = (Mapping, list, tuple, set, frozenset)
+_T = TypeVar("_T")
 
 # Keys whose mapping or list of name/value records holds environment variables.
 _ENVIRONMENT_KEYS = frozenset({"env", "environment", "environment_variables", "environmentvariables"})
@@ -186,9 +190,141 @@ def sanitize_text(text: str) -> str:
     ('v#password = ...') hides that name from the assignment rules, and the
     credential after the name is no longer withheld. Run last, an added rule
     only adds markers, and whatever the established passes withhold stays
-    withheld.
+    withheld. The runs glued after a scheme credential's marker go after
+    every pass, since the passes read them (see ``_without_glued_runs``).
+
+    A text with such a run is read twice: so, and as the established rules
+    read it, withholding the run with its credential in the scheme pass (see
+    ``_SchemeReading``); neither reading withholds all that the other does.
+    Each reading is read again as the next sanitizations would read it, until
+    it stays the same (see ``_settled``), since evidence is sanitized more
+    than once; each line then shows only what both settled readings show (see
+    ``_merge_readings``).
     """
-    return _redact_extended(_sanitize_established(text))
+    text = _checked_text(text)
+    reading = _SchemeReading(established=False)
+    shown = _in_reading(reading, lambda: _without_glued_runs(_redact_extended(_sanitize_established(text))))
+    if not reading.glued:
+        return shown
+    plain = _settled(
+        shown,
+        lambda again: _in_reading(
+            _SchemeReading(established=False),
+            lambda: _without_glued_runs(_redact_extended(_established_passes(again))),
+        ),
+    )
+    established = _in_reading(
+        _SchemeReading(established=True),
+        lambda: _settled(
+            _redact_extended(_sanitize_established(text)),
+            lambda again: _redact_extended(_established_passes(again)),
+        ),
+    )
+    return _merge_readings(plain, established)
+
+
+# How often a reading of a text with a glued run is read again (see _settled).
+_GLUED_READINGS_AGAIN = 4
+
+
+def _settled(first: _T, again: Callable[[_T], _T]) -> _T:
+    """``first``, read ``again`` until a reading changes nothing, at most ``_GLUED_READINGS_AGAIN`` times.
+
+    A later sanitization can withhold more of a reading than the reading
+    itself did ('--a=:v' once the run before it is withheld), and evidence is
+    sanitized more than once on its way to a report. Each reading only adds
+    markers, so the last one withholds whatever any earlier one did.
+    """
+    current = first
+    for _ in range(_GLUED_READINGS_AGAIN):
+        following = again(current)
+        if following == current:
+            break
+        current = following
+    return current
+
+
+def _in_reading(reading: _SchemeReading, read: Callable[[], _T]) -> _T:
+    """``read()``, with the scheme pass taking part in ``reading`` (see ``_SchemeReading``)."""
+    token = _SCHEME_READING.set(reading)
+    try:
+        return read()
+    finally:
+        _SCHEME_READING.reset(token)
+
+
+def _merge_readings(first: str, second: str) -> str:
+    """Two readings of one text, each line as withheld as both withhold it.
+
+    A text with a run glued after a scheme credential is read with the run
+    and without it (see ``sanitize_text``). The run is text the passes read:
+    with it, a name in it withholds the value after it ('v=x--password w');
+    without it, a value it hid from the assignment rules ('v=x = password:
+    w') is read. Every pass keeps the lines of a text, so the two readings
+    are compared line by line (see ``_merged_line``). The established rules
+    joined a line kept after a scheme to the scheme's line; readings whose
+    lines do not pair up withhold the whole text, keeping its line breaks.
+    """
+    if first == second:
+        return first
+    first_lines, second_lines = first.split("\n"), second.split("\n")
+    if len(first_lines) != len(second_lines):
+        return REDACTED + "\n" * first.count("\n")
+    return "\n".join(_merged_line(one, other) for one, other in zip(first_lines, second_lines, strict=True))
+
+
+def _merged_line(one: str, other: str) -> str:
+    """One line of two readings, showing nothing either withholds (see ``_merge_readings``).
+
+    Where one line shows only what the other shows (see ``_shows_within``),
+    that one is kept; otherwise the whole line is withheld.
+    """
+    if one == other or _shows_within(other, one):
+        return one
+    if _shows_within(one, other):
+        return other
+    return REDACTED + "\r" * one.endswith("\r")
+
+
+def _shows_within(kept: str, shown: str) -> bool:
+    """Whether ``shown`` is ``kept`` with spans withheld or removed, and nothing more.
+
+    Each piece ``shown`` shows between its markers occurs in ``kept``, in
+    order and without overlapping, so every character it shows ``kept``
+    shows as well.
+    """
+    position = 0
+    for piece in shown.split(REDACTED):
+        found = kept.find(piece, position)
+        if found < 0:
+            return False
+        position = found + len(piece)
+    return True
+
+
+# How often the text left once the glued runs go is read again (see _without_glued_runs).
+_GLUED_RUN_READINGS = 3
+
+
+def _without_glued_runs(text: str) -> str:
+    """``text``, which every pass has read, without the runs glued after scheme credentials.
+
+    The passes read each run as text (see ``_withhold_scheme_tails``), so
+    they can also read it as part of what follows: '<token>=abc.def =
+    password: v' is an assignment to 'abc.def', and 'password: v' is not
+    read. Without the run, the text says 'password: v' plainly. So a text
+    the step changes is read once more by every pass, as the next
+    sanitization would read it, and its runs go again. Each reading only
+    adds markers and each step only removes text, so the result withholds
+    whatever any reading withholds. A text still changing after
+    ``_GLUED_RUN_READINGS`` readings keeps the last one, without its runs.
+    """
+    for _ in range(_GLUED_RUN_READINGS):
+        cut = _withhold_scheme_tails(text)
+        if cut == text:
+            return text
+        text = _redact_extended(_established_passes(cut))
+    return _withhold_scheme_tails(text)
 
 
 def _checked_text(text: str) -> str:
@@ -873,8 +1009,47 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     It runs last, so it too only adds markers: a leaf can be an option or
     setting name the first two passes read to withhold the value after it.
     The values the established pass knew are already removed everywhere.
+
+    The runs glued after a scheme credential's marker are withheld after
+    all three, from every field and key, as ``sanitize_text`` withholds them
+    after its passes (see ``_withhold_scheme_tails``): withheld earlier, a run
+    could take with it the start of a known value ('Bearer token v=x y' for a
+    known 'x y'), and the third pass no longer found the rest.
+
+    As ``sanitize_text`` does, a value whose texts hold such a run is read
+    twice, so and as the established rules read it, each reading again until
+    it settles, and each text of the copy shows only what both readings show
+    (see ``_merge_copies``).
     """
     _check_sanitization_structure(value)
+    reading = _SchemeReading(established=False)
+    shown = _in_reading(
+        reading,
+        lambda: _without_scheme_tails(_sanitize_reading(value, redact_short_secrets, env_values_are_secrets)),
+    )
+    if not reading.glued:
+        return shown
+    plain = _settled(
+        shown,
+        lambda again: _in_reading(
+            _SchemeReading(established=False),
+            lambda: _without_scheme_tails(
+                _sanitize_reading(again, redact_short_secrets, env_values_are_secrets)
+            ),
+        ),
+    )
+    established = _in_reading(
+        _SchemeReading(established=True),
+        lambda: _settled(
+            _sanitize_reading(value, redact_short_secrets, env_values_are_secrets),
+            lambda again: _sanitize_reading(again, redact_short_secrets, env_values_are_secrets),
+        ),
+    )
+    return _merge_copies(plain, established)
+
+
+def _sanitize_reading(value: Any, redact_short_secrets: bool, env_values_are_secrets: bool) -> Any:
+    """One reading of ``value`` by the three ``sanitize`` passes (see ``sanitize``)."""
     passes = [
         _Sanitizer(
             redact_short_secrets=redact_short_secrets,
@@ -895,6 +1070,60 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
         return copy
     nested.order()
     return nested.clean(copy)
+
+
+def _merge_copies(first: Any, second: Any) -> Any:
+    """Two readings of one value merged, each text as withheld as both withhold it (see ``_merge_readings``).
+
+    Both copies come from the same value through the same structural rules,
+    so they pair up member by member. A part that does not pair up is withheld.
+    """
+    if first == second:
+        return first
+    if isinstance(first, str) and isinstance(second, str):
+        return _merge_readings(first, second)
+    if isinstance(first, Mapping) and isinstance(second, Mapping) and len(first) == len(second):
+        return {
+            _merge_copies(key, other_key): _merge_copies(child, other_child)
+            for (key, child), (other_key, other_child) in zip(first.items(), second.items(), strict=True)
+        }
+    if isinstance(first, (list, tuple)) and type(first) is type(second) and len(first) == len(second):
+        members = [_merge_copies(one, other) for one, other in zip(first, second, strict=True)]
+        return tuple(members) if isinstance(first, tuple) else members
+    if isinstance(first, (bytes, bytearray)) and type(first) is type(second):
+        merged = _merge_readings(
+            bytes(first).decode("utf-8", errors="replace"), bytes(second).decode("utf-8", errors="replace")
+        )
+        return type(first)(merged.encode())
+    if type(first) is type(second) and not isinstance(first, _CONTAINERS):
+        # A leaf no text pass reads, the same in both readings ('nan' is not equal to itself).
+        return first
+    return REDACTED
+
+
+def _without_scheme_tails(item: Any) -> Any:
+    """``item``, a copy ``sanitize`` made, with ``_without_glued_runs`` applied to each text and key.
+
+    The copy holds only what ``clean`` returns: new mappings, sequences and
+    sets, nested no deeper than ``clean`` goes, and texts, bytes and other
+    leaves it keeps as they are.
+    """
+    if isinstance(item, str):
+        return _without_glued_runs(item)
+    if isinstance(item, Mapping):
+        return {_without_scheme_tails(key): _without_scheme_tails(child) for key, child in item.items()}
+    if isinstance(item, (list, tuple)):
+        members = [_without_scheme_tails(child) for child in item]
+        return tuple(members) if isinstance(item, tuple) else members
+    if isinstance(item, (set, frozenset)):
+        return type(item)(_without_scheme_tails(child) for child in item)
+    if isinstance(item, (bytes, bytearray)):
+        decoded = bytes(item).decode("utf-8", errors="replace")
+        cleaned = _without_glued_runs(decoded)
+        if cleaned == decoded:
+            return item
+        return type(item)(cleaned.encode())
+    return item
 
 
 def _check_sanitization_structure(value: Any) -> None:

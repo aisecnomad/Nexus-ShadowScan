@@ -5,12 +5,12 @@
       "args": [
         "-y",
         "@modelcontextprotocol/server-postgres@0.6.2",
-        "postgresql://eta_ro@pg.vantor.example:5432/eta"
+        "postgresql://eta_ro@pg.adatum.example:5432/eta"
       ]
     },
     "telemetry": {
       "type": "http",
-      "url": "https://mcp.vantor.example/telemetry/mcp"
+      "url": "https://mcp.adatum.example/telemetry/mcp"
     }
   }
 }

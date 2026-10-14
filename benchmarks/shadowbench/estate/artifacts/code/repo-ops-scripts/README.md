@@ -1,8 +1,8 @@
 # repo-ops-scripts
 
-Small Go tools for the Vantor Logistics ops channel.
+Small Go tools for the Adatum Logistics ops channel.
 
-Internal clone: `git@git.vantor.example:platform/repo-ops-scripts.git`
+Internal clone: `git@git.adatum.example:platform/repo-ops-scripts.git`
 
 | Command | Purpose |
 | --- | --- |

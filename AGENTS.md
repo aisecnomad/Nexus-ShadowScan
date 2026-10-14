@@ -8,8 +8,10 @@ them follow the same bars as [CONTRIBUTING.md](CONTRIBUTING.md).
 Trusted: the operator workstation or CI runner, scan configuration, and
 installed Python packages.
 
-Untrusted: remote API responses, scanned repositories, offline exports, and
-third-party plugins.
+Untrusted: remote API responses, scanned repositories, offline exports,
+third-party plugins, and benchmark corpora and artifacts under `benchmarks/`
+(they hold prompt-injection text and MCP launch commands on purpose; never
+execute them).
 
 An allowlisted plugin runs with scanner privileges. It is not a sandbox.
 

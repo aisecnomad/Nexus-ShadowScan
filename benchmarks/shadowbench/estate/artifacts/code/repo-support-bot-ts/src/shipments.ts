@@ -6,7 +6,7 @@ export interface Shipment {
 
 export async function lookupShipment(trackingId: string): Promise<Shipment> {
   const response = await fetch(
-    `https://api.vantor.example/v2/shipments/${encodeURIComponent(trackingId)}`,
+    `https://api.adatum.example/v2/shipments/${encodeURIComponent(trackingId)}`,
   );
   if (!response.ok) {
     throw new Error(`shipment lookup failed: ${response.status}`);

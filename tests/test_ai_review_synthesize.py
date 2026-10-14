@@ -356,9 +356,19 @@ class TestRender:
         assert "0999 " not in body
         assert " not listed." in body and " and 0 not listed." not in body
 
-    def test_rendered_output_is_redacted(self) -> None:
-        secret = "ghp_" + "a1" * 20
-        parsed = parse_finding(finding(severity="low", body=f"token {secret} in the log"))
+    @pytest.mark.parametrize(
+        ("text", "secret"),
+        [
+            ("token {secret} in the log", "ghp_" + "a1" * 20),
+            # A quoted key header must not hide the password of a URL on the next line.
+            (
+                "> -----BEGIN " + "PRIVATE KEY-----\n> postgresql+psycopg2://" + "admin:{secret}@db/x",
+                "Synth-pw",
+            ),
+        ],
+    )
+    def test_rendered_output_is_redacted(self, text: str, secret: str) -> None:
+        parsed = parse_finding(finding(severity="low", body=text.format(secret=secret)))
         assert parsed is not None
         body, comments = render_default([parsed])
         assert secret not in body
@@ -460,6 +470,10 @@ class TestMainEndToEnd:
         assert "stale finding" not in body and "other/file.py" not in body
         # The drop is disclosed: the review says stale findings were left out.
         assert "named files outside this pull request's diff" in body
+        # The notice precedes the kept findings, so it points down to them.
+        notice = body.index("named files outside this pull request's diff")
+        assert notice < body.index("kept finding") and notice < body.index("unlocated finding")
+        assert "listed below" in body[notice:] and "listed above" not in body
 
     def test_blocking_finding_fails_gate(self, tmp_path: Path) -> None:
         returncode, decision = self.run_gate(tmp_path, {"appsec.json": [finding()]})

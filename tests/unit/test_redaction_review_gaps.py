@@ -182,13 +182,17 @@ def test_a_setting_path_glued_into_the_token_word_credential_keeps_its_value_wit
     assert SECOND not in cleaned
 
 
+@pytest.mark.parametrize("word", ["", "token "], ids=["plain", "token-word"])
 @pytest.mark.parametrize("scheme", ["Bearer", "Basic", "SSWS"])
 @pytest.mark.parametrize("glue", ["--", "=x"])
-def test_a_plain_scheme_credential_with_a_glued_run_is_withheld_whole(scheme: str, glue: str) -> None:
-    # Without the token word there is no following name for a later pass to
-    # read: the whole opaque run is the credential, so a token containing '--'
-    # or '=x' leaves no tail in the output.
-    assert sanitize_text(f"{scheme} {SECRET}{glue}{SECOND}") == f"{scheme} {REDACTED}"
+def test_a_scheme_credential_with_a_glued_run_is_withheld_whole(scheme: str, glue: str, word: str) -> None:
+    # A glued run that names nothing for a later pass to read is part of the
+    # opaque credential, so a token containing '--' or '=x' leaves no tail in
+    # the output, with or without the token word, in prose or a JSON string.
+    credential = f"{word}{SECRET}{glue}{SECOND}"
+    assert sanitize_text(f"{scheme} {credential}") == f"{scheme} {REDACTED}"
+    assert sanitize_text(f"send {scheme} {credential} now") == f"send {scheme} {REDACTED} now"
+    assert sanitize_text(f'{{"h": "{scheme} {credential}"}}') == f'{{"h": "{scheme} {REDACTED}"}}'
 
 
 @pytest.mark.parametrize("glued", ["=password: ", "--token "])

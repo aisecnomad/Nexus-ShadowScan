@@ -6,7 +6,7 @@
    "app_slug": "coderabbitai",
    "target_type": "Organization",
    "account": {
-    "login": "vantor-logistics"
+    "login": "adatum-logistics"
    },
    "repository_selection": "all",
    "permissions": {
@@ -21,7 +21,7 @@
     "issue_comment"
    ],
    "created_at": "2025-03-14T09:30:00Z",
-   "html_url": "https://github.com/organizations/vantor-logistics/settings/installations/70110427"
+   "html_url": "https://github.com/organizations/adatum-logistics/settings/installations/70110427"
   },
   {
    "id": 70110955,
@@ -29,7 +29,7 @@
    "app_slug": "claude",
    "target_type": "Organization",
    "account": {
-    "login": "vantor-logistics"
+    "login": "adatum-logistics"
    },
    "repository_selection": "selected",
    "permissions": {
@@ -44,7 +44,7 @@
     "pull_request_review"
    ],
    "created_at": "2025-07-02T11:00:00Z",
-   "html_url": "https://github.com/organizations/vantor-logistics/settings/installations/70110955"
+   "html_url": "https://github.com/organizations/adatum-logistics/settings/installations/70110955"
   },
   {
    "id": 70110233,
@@ -52,7 +52,7 @@
    "app_slug": "renovate",
    "target_type": "Organization",
    "account": {
-    "login": "vantor-logistics"
+    "login": "adatum-logistics"
    },
    "repository_selection": "all",
    "permissions": {
@@ -66,7 +66,7 @@
     "pull_request"
    ],
    "created_at": "2024-11-20T08:00:00Z",
-   "html_url": "https://github.com/organizations/vantor-logistics/settings/installations/70110233"
+   "html_url": "https://github.com/organizations/adatum-logistics/settings/installations/70110233"
   },
   {
    "id": 70110688,
@@ -74,7 +74,7 @@
    "app_slug": "dataai-export",
    "target_type": "Organization",
    "account": {
-    "login": "vantor-logistics"
+    "login": "adatum-logistics"
    },
    "repository_selection": "selected",
    "permissions": {
@@ -85,7 +85,7 @@
     "push"
    ],
    "created_at": "2025-01-08T15:45:00Z",
-   "html_url": "https://github.com/organizations/vantor-logistics/settings/installations/70110688"
+   "html_url": "https://github.com/organizations/adatum-logistics/settings/installations/70110688"
   }
  ]
 }

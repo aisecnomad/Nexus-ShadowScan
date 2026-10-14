@@ -1,14 +1,15 @@
-"""ShadowBench: the nine-surface shadow AI agent discovery benchmark, in two tracks.
+"""ShadowBench: nine-surface shadow AI agent discovery benchmarks.
 
-``synthetic`` (:mod:`tools.shadowbench.synthetic`) generates a seeded corpus of
-platform-native inputs across the nine surfaces with entity-level truth, tolerated
-keys and decoys; ``estate`` (:mod:`tools.shadowbench.estate`) scores tools against
-the authored artifacts of one fictional organization, Vantor Logistics, whose
-labeled entities are anchored to unique tokens inside those artifacts. The two
-tracks ask the same question with different evidence: generated breadth at scale,
-and an authored estate whose every artifact a person wrote and labeled.
+Two tracks share the name and the question, and nothing else: each has its own
+corpus model, adapters, runner and scorer.
 
-Corpora, protocols and committed results live under ``benchmarks/shadowbench/``.
-Nothing here is a release artifact, and the results are not independent review:
-the same maintainer wrote ShadowScan, both harnesses, the rubrics and the labels.
+* ``tools.shadowbench.cases``: seeded, generated, platform-native cases per
+  surface, with decoys (``benchmarks/shadowbench/cases/``).
+* ``tools.shadowbench.estate``: one authored fictional organization whose
+  artifacts span all nine surfaces at once, scored entity by entity
+  (``benchmarks/shadowbench/estate/``).
+
+``python -m tools.shadowbench <track> <command>`` runs a track's command; see
+``benchmarks/shadowbench/README.md`` for what each track can and cannot show.
+Nothing here is a release artifact.
 """

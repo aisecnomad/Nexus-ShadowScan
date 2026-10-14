@@ -9,7 +9,7 @@ The MCP driver lives in `src/mcp2515.c`; register and command names follow
 the MCP2515 datasheet (DS20001801J). The MCP interrupt line is unconnected
 on rev C boards, so reception is polled from the main loop.
 
-Internal clone: `git@git.vantor.example:firmware/repo-canbus-fw.git`
+Internal clone: `git@git.adatum.example:firmware/repo-canbus-fw.git`
 
 ## Build
 

@@ -393,8 +393,8 @@ def render(
         lines.append("")
         lines.append(
             "> One or more findings named files outside this pull request's diff and were "
-            "dropped from this review. The findings on files the diff does contain are "
-            "listed above; the gate fails closed on the stale ones."
+            "dropped from this review. Any findings on files the diff does contain are "
+            "listed below; the gate fails closed on the stale ones."
         )
     budget = MAX_REVIEW_BODY - PUBLISHER_RESERVE - _FOOTER_RESERVE - len("\n".join(lines)) - len(_TRAILER)
     entries, listed, unlisted = _fit(findings, budget)

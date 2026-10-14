@@ -3,11 +3,18 @@
 `numbat agents` inventories installed agents from their root directories and
 at-rest transcripts; `numbat scan` emits evidence records whose local paths
 help anchor attribution. Both run fully local.
+
+The adapter reads `agents.json` as a list of agent records: objects with an
+`agent` name and a `present` or `detected` field. An empty list is an empty
+inventory. A list that holds entries but no agent record (`[{"error": ...}]`,
+or rows without the agent fields) is an adapter error, never an empty
+inventory. Other rows beside a record are skipped.
 """
 
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 from tools.shadowbench.estate.adapters import (
@@ -20,7 +27,7 @@ from tools.shadowbench.estate.adapters import (
     run_version,
     unit_path,
 )
-from tools.shadowbench.estate.adapters.common import client_slug
+from tools.shadowbench.estate.adapters.common import client_slug, sh_command, write_script
 from tools.shadowbench.estate.corpus import EstateCorpus
 
 SPEC = ToolSpec(
@@ -31,6 +38,14 @@ SPEC = ToolSpec(
     categories=frozenset({"ai-client"}),
     notes="agents --format json plus scan --emit all; local only",
 )
+
+
+def _agent_record(entry: object) -> bool:
+    """Whether an `agents.json` row is an agent record: an `agent` name and `present` or `detected`."""
+    if not isinstance(entry, dict):
+        return False
+    name = entry.get("agent")
+    return isinstance(name, str) and bool(name) and ("present" in entry or "detected" in entry)
 
 
 class NumbatAdapter:
@@ -47,19 +62,20 @@ class NumbatAdapter:
 
     def commands(self, cfg: ToolConfig, unit: str, estate: Path, out_dir: Path) -> list[Command]:
         home = unit_path(unit, estate)
-        binary = cfg.binary("numbat")
-        script = out_dir / "run.sh"
-        script.write_text(
-            "#!/bin/sh\n"
+        binary = cfg.binary("numbat") or "numbat"
+        out = out_dir.absolute()
+        agents = out / "agents.json"
+        lines = [
             # `agents` exits 1 when no agent artifacts exist under HOME; an empty
             # inventory is a valid result, so only a missing/empty file fails.
-            f'"{binary}" agents --format json > "{out_dir}/agents.json"; status=$?\n'
-            f'[ -s "{out_dir}/agents.json" ] || exit "$status"\n'
-            f'"{binary}" scan --emit all > "{out_dir}/scan.ndjson" 2> "{out_dir}/scan.err"\n'
-            "exit 0\n",
-            encoding="utf-8",
-        )
-        script.chmod(0o755)
+            sh_command((binary, "agents", "--format", "json"), stdout=agents) + "; status=$?",
+            f'[ -s {shlex.quote(str(agents))} ] || exit "$status"',
+            sh_command(
+                (binary, "scan", "--emit", "all"), stdout=out / "scan.ndjson", stderr=out / "scan.err"
+            ),
+            "exit 0",
+        ]
+        script = write_script(out / "run.sh", lines)
         return [Command(argv=("/bin/sh", str(script)), env={"HOME": str(home)})]
 
     def normalize(self, unit: str, out_dir: Path) -> Normalized:
@@ -72,6 +88,8 @@ class NumbatAdapter:
             return Normalized(error=f"agents.json unparseable: {exc}")
         if not isinstance(agents, list):
             return Normalized(error="agents.json is not a list")
+        if agents and not any(_agent_record(entry) for entry in agents):
+            return Normalized(error="agents.json holds no agent record")
         evidence: dict[str, list[str]] = {}
         scan_path = out_dir / "scan.ndjson"
         if scan_path.exists():
@@ -90,7 +108,7 @@ class NumbatAdapter:
                         evidence[source].append(local)
         result = Normalized(raw_count=len(agents))
         for entry in agents:
-            if not isinstance(entry, dict):
+            if not _agent_record(entry):
                 continue
             if not (entry.get("present") or entry.get("detected")):
                 continue

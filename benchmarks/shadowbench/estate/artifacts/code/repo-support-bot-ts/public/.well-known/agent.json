@@ -1,7 +1,7 @@
 {
-  "name": "Vantor Support Agent",
-  "description": "Answers shipment, quote and delivery-window questions for Vantor Logistics customers.",
-  "url": "https://support-bot.vantor.example/a2a",
+  "name": "Adatum Support Agent",
+  "description": "Answers shipment, quote and delivery-window questions for Adatum Logistics customers.",
+  "url": "https://support-bot.adatum.example/a2a",
   "version": "2.1.0",
   "protocolVersion": "0.3.0",
   "capabilities": {

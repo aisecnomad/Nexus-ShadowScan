@@ -240,9 +240,10 @@ the sample exports under `tests/fixtures/` are not shipped in the wheel. Steps
 (`--format json -o report.json`); step 6 writes the per-machine reports that
 `merge` and `dashboard` read. Sample gateway logs live under
 `tests/fixtures/gateway/` in a checkout. Scanning the ShadowScan checkout
-itself reports an incomplete scan (exit 3): its redaction test fixtures
-intentionally exceed the sanitizer's limits, and the scanner fails closed
-rather than skip them silently.
+itself reports an incomplete scan (exit 3): some redaction rules and tests
+intentionally exceed the sanitizer's limits, and some committed benchmark
+corpora and results exceed the default `max_file_size`. The scanner fails
+closed rather than skip them silently.
 
 ### Configuration
 
@@ -510,7 +511,10 @@ core-only environment skips the tests that need them and does not validate
 every connector. `make check` runs local copies of the CI quality gates (CI
 also validates packaging and containers); `make help` lists the individual
 targets. See
-[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#getting-started).
+[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#getting-started)
+to get started and its
+[repository map](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#find-your-way-around)
+for where the code, tests, docs, tooling and benchmarks live.
 
 
 ### Evidence and assurance limits
@@ -522,6 +526,11 @@ targets. See
   and log provenance. See [evaluation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/evaluation.md) and
   [rollout acceptance](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#rollout-acceptance) before using a risk
   threshold as a production gate.
+- **Benchmarks against other tools:** The
+  [benchmarks](https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/README.md),
+  including the nine-surface ShadowBench, compare ShadowScan with other
+  discovery tools on inputs and labels the same maintainer wrote. They show
+  behaviour on those inputs, not field accuracy, and none is independent.
 - **Assurance results:** The baseline and later results use a frozen corpus of
   42 public files (30 negatives), labeled by two AI reviewers before evaluation.
   The labelers share model capabilities, so these are not independent human
