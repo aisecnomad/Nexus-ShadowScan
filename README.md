@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="docs/assets/hero-banner.webp" alt="ShadowScan — Open-Source AI Agent Discovery" width="100%">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/hero-banner.webp" alt="ShadowScan — Open-Source AI Agent Discovery" width="100%">
 </p>
 
 <h1 align="center">Project Nexus · ShadowScan</h1>
 
 <p align="center">
-  <strong>Finds the AI agents nobody registered — then tells you who owns them, what they can do, and whether anyone approved them.</strong>
+  <strong>Finds evidence of AI agents nobody registered — then shows what they can do, and whether anyone approved them.</strong>
 </p>
 
 <p align="center">
@@ -109,7 +109,7 @@ for the pipeline, the package layout and the connector contract.
 ## Architecture
 
 <p align="center">
-  <img src="docs/assets/architecture-data-flow.jpg" alt="ShadowScan Architecture — Data Flow" width="95%">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/architecture-data-flow.jpg" alt="ShadowScan Architecture — Data Flow" width="95%">
 </p>
 
 <p align="center"><em>Nine surfaces in, one scored and registry-reconciled finding list out. Tinted: trusted operator inputs. Dashed: untrusted scan targets. Arrows: data flow of one scan.</em></p>
@@ -118,7 +118,7 @@ for the pipeline, the package layout and the connector contract.
 <summary><strong>Detailed architecture diagram</strong></summary>
 <br>
 <p align="center">
-  <img src="docs/assets/architecture-detailed.jpg" alt="ShadowScan Detailed Architecture" width="95%">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/architecture-detailed.jpg" alt="ShadowScan Detailed Architecture" width="95%">
 </p>
 <p align="center"><em>Signature configuration, multi-surface connectors, engine pipeline, and output reporters.</em></p>
 </details>
