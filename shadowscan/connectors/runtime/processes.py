@@ -122,6 +122,7 @@ _NOT_RUNNING = {
 }  # fmt: skip
 _PYTHON = re.compile(r"^python(?:\d+(?:\.\d+)?)?w?$")
 _SKIP_ARGS = {"-y", "--yes", "-q", "--quiet", "x", "dlx", "exec", "run", "tool", "--", "-u", "-b", "-e"}
+_PACKAGE_ARGS = 3  # positional arguments of a launcher that may name the package it runs
 
 # Field names of process exports, in order of preference.
 _HOST_FIELDS = (
@@ -288,11 +289,30 @@ def _fd_indicators(
     return sorted(formats), sorted(packaging)
 
 
+def _base(exe: str) -> str:
+    """An executable's base name, lower case and without ``.exe``."""
+    base = exe.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def _classification_complete(argv: list[str]) -> bool:
+    """Whether the leading arguments of a longer command line already decide its classification.
+
+    A launcher is classified by its first positional arguments; until ``_packages``
+    has seen them all, the package it runs may still lie past the read limit.
+    """
+    if not argv:
+        return False
+    base = _base(argv[0])
+    if base not in _LAUNCHERS and not _PYTHON.match(base):
+        return True
+    return sum(1 for _ in _packages(base, argv[1:])) >= _PACKAGE_ARGS
+
+
 def classify(executable: str | None, argv: list[str]) -> tuple[ProcessRule, str | None] | None:
     """The AI tool a process runs, and an MCP package name when it is an MCP server."""
     exe = (executable or (argv[0] if argv else "") or "").replace("\\", "/")
-    base = exe.rsplit("/", 1)[-1].lower()
-    base = base[:-4] if base.endswith(".exe") else base
+    base = _base(exe)
     lowered = exe.lower()
     for name, fragment, rule in DESKTOP_APPS:
         if base == name and fragment in lowered:
@@ -322,7 +342,7 @@ def _packages(launcher: str, args: list[str]) -> Iterator[str]:
     """Candidate package or module names in a launcher's arguments (the first few positional ones)."""
     seen = 0
     i = 0
-    while i < len(args) and seen < 3:
+    while i < len(args) and seen < _PACKAGE_ARGS:
         arg = args[i]
         i += 1
         if arg in {"-m", "--from", "-p", "--package"} and i < len(args):
@@ -358,6 +378,7 @@ class _Run:
     last: str | None = None
     observed_at: str | None = None
     inspections: list[dict[str, Any]] = field(default_factory=list)
+    truncated: int = 0  # processes classified from the leading arguments of a longer command line
 
 
 class RuntimeProcessConnector(BaseConnector, _NoDump):
@@ -474,11 +495,12 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                     fd = os.open("cmdline", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
                     try:
                         raw = os.read(fd, _MAX_CMDLINE_BYTES)
-                        if len(raw) >= _MAX_CMDLINE_BYTES:
-                            self.ctx.warn("runtime.processes: command line byte limit reached")
-                            continue
                     finally:
                         os.close(fd)
+                    truncated = len(raw) >= _MAX_CMDLINE_BYTES
+                    if truncated:
+                        # The leading arguments classify the process; one cut by the limit is dropped.
+                        raw = raw[: raw.rfind(b"\0") + 1]
                     uid = os.fstat(directory).st_uid
                     if before is not None:
                         inspection = self._inspect(directory, budget)
@@ -505,8 +527,13 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 unreadable += 1
                 continue
             argv = [a.decode("utf-8", "replace") for a in raw.split(b"\0") if a]
-            if classify(None, argv) is None and not inspection:
-                continue
+            if classify(None, argv) is None:
+                if truncated and not _classification_complete(argv):
+                    self.ctx.warn(
+                        "runtime.processes: command line byte limit reached before a classifying argument"
+                    )
+                if not inspection:
+                    continue
             if uid not in users:
                 users[uid] = _user_name(uid)
             record: dict[str, Any] = {
@@ -516,6 +543,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 "argv": argv,
                 "observed_at": observed_at,
             }
+            if truncated:
+                record["argv_truncated"] = True
             if inspection is not None:
                 record["inspection"] = inspection
             yield record
@@ -624,6 +653,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 run.observed_at = max(run.observed_at or rec["observed_at"], rec["observed_at"])
             if rec["inspection"] and len(run.inspections) < 10:
                 run.inspections.append({"pid": rec["pid"], **rec["inspection"]})
+            if rec["truncated"]:
+                run.truncated += 1
         for run in sorted(runs.values(), key=lambda r: (r.host, r.user, r.rule.tool)):
             yield self._finding(run)
 
@@ -669,6 +700,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             "started": started.isoformat() if started else None,
             "observed_at": observed.isoformat() if observed else None,
             "inspection": inspection,
+            "truncated": row.get("argv_truncated") is True,
         }
 
     def _normalise_inspection(self, raw: Any) -> dict[str, Any] | None:
@@ -766,6 +798,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         )
         if rec["observed_at"]:
             finding.metadata["observed_at"] = rec["observed_at"]
+        if rec["truncated"]:
+            finding.metadata["truncated_command_lines"] = 1
         finding.add_evidence(
             Evidence(
                 signal="runtime:process:model-runtime-indicator",
@@ -837,6 +871,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             f.metadata["observed_at"] = run.observed_at
         if run.inspections:
             f.metadata.update(self._inspection_metadata(run.inspections))
+        if run.truncated:
+            f.metadata["truncated_command_lines"] = run.truncated
         return finalize(f, self.index)
 
 

@@ -150,6 +150,44 @@ def test_live_mode_reads_proc(run_connector, monkeypatch, tmp_path):
     assert findings[0].account == "box"
 
 
+def test_long_command_lines_are_classified_from_their_leading_arguments(run_connector, monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    tail = b"A" * (2 * runtime_processes._MAX_CMDLINE_BYTES)
+    eslint = b"/usr/lib/node_modules/eslint/bin/eslint.js"
+    for pid, argv in {
+        "11": [b"claude", b"-p", b"prompt-sentinel", tail],  # a prompt that runs past the byte limit
+        "12": [b"bash", b"-c", tail],  # the first argument alone rules it out, whatever follows
+        "13": [b"node", eslint, b"src/a.js", b"src/b.js", tail],  # the package arguments were all read
+    }.items():
+        (proc / pid).mkdir(parents=True)
+        (proc / pid / "cmdline").write_bytes(b"\0".join(argv) + b"\0")
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+    assert [f.title.split(" running on ")[0] for f in findings] == ["Claude Code"]
+    assert findings[0].metadata["pids"] == [11] and findings[0].metadata["truncated_command_lines"] == 1
+    assert "prompt-sentinel" not in json.dumps(findings[0].to_dict())
+
+
+def test_long_launcher_command_line_without_a_package_is_incomplete(run_connector, monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    (proc / "12").mkdir(parents=True)
+    # The script that names the package lies past the byte limit: neither classified nor silently dropped.
+    (proc / "12" / "cmdline").write_bytes(
+        b"node\0--stack-trace-limit="
+        + b"9" * (2 * runtime_processes._MAX_CMDLINE_BYTES)
+        + b"\0/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js\0"
+    )
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert findings == [] and ctx.stats.incomplete
+    assert any("command line byte limit" in w for w in ctx.stats.warnings)
+
+
 def test_live_mode_outside_linux_is_refused(run_connector, monkeypatch):
     monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Darwin")
     _, ctx = run_connector("runtime.processes")
@@ -608,6 +646,14 @@ def test_empty_cmdline_still_allows_scoped_inspection_inventory(run_connector, m
     findings, ctx = run_connector("runtime.processes", inspect_maps=True)
     assert len(findings) == 1 and not ctx.stats.incomplete
     assert findings[0].kind == Kind.FRAMEWORK_USAGE and not findings[0].capabilities
+
+
+def test_truncated_command_line_is_marked_on_inspection_findings(run_connector, monkeypatch, tmp_path):
+    config = b"B" * (2 * runtime_processes._MAX_CMDLINE_BYTES)
+    _inspection_proc(tmp_path, monkeypatch, argv=b"worker\0--config\0" + config + b"\0")
+    findings, ctx = run_connector("runtime.processes", inspect_fds=True)
+    assert len(findings) == 1 and not ctx.stats.incomplete
+    assert findings[0].kind == Kind.LOCAL_MODEL and findings[0].metadata["truncated_command_lines"] == 1
 
 
 def test_malformed_descriptor_entries_are_incomplete(run_connector, monkeypatch, tmp_path):
