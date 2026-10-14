@@ -35,6 +35,7 @@ from shadowscan.connectors.common import (
     model_matches,
     name_matches,
 )
+from shadowscan.connectors.lowcode.graph import N8N_AGENT_TYPES, analyze_workflow_graph
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -364,6 +365,15 @@ class N8nConnector(_AutomationBase):
         return EVENT
 
     def _n8n_finding(self, w: dict[str, Any]) -> Finding | None:
+        # The declared graph (lowcode/graph.py: exact node registry, bounded,
+        # cycle-safe) is non-scoring metadata on top of the inventory below,
+        # which stays the detection floor. A malformed or over-budget graph
+        # marks coverage incomplete and the finding records that status; it
+        # never hides a workflow the inventory establishes.
+        graph = analyze_workflow_graph(w, provider="n8n")
+        assert graph is not None  # an explicit provider always projects a shape
+        for issue in graph.issues:
+            self.ctx.warn(f"lowcode.n8n: {issue}; graph coverage incomplete")
         # Exported blueprints can contain useful AI evidence without a provider
         # object ID. A display name (or the string "None") is not that identity.
         workflow_id = w.get("id")
@@ -379,12 +389,15 @@ class N8nConnector(_AutomationBase):
             if self._record_fields_valid(
                 node,
                 required=("type",),
-                strings=("name",),
+                strings=("name", "type"),
                 mappings=("parameters",),
             )
         ]
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
+        # A disabled node stays in the inventory (a switch re-enables it); the
+        # graph projection gives it no role.
+        disabled_nodes = sum(1 for node in nodes if "disabled" in node and node["disabled"] is not False)
         types = [str(n.get("type", "")) for n in nodes]
         ai_steps = [
             f"{n.get('name')} ({n.get('type')})"
@@ -431,12 +444,14 @@ class N8nConnector(_AutomationBase):
             ai_steps=ai_steps,
             kind=(
                 Kind.AGENT
-                if any(t.endswith(".agent") or t.endswith("agentTool") for t in types)
+                if any(t.endswith(".agent") or t.endswith("agentTool") or t in N8N_AGENT_TYPES for t in types)
                 else Kind.WORKFLOW
             ),
             resource_type="workflow" if identified else "unresolved-workflow",
             extra={
+                "workflow_graph": graph.metadata,
                 "node_count": len(nodes),
+                "disabled_node_count": disabled_nodes,
                 "node_types": sorted(set(types))[:40],
                 "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)],
             },

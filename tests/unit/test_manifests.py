@@ -590,3 +590,123 @@ def test_shared_document_equals_a_fresh_parse_and_is_refused_for_jsonc(tmp_path,
     assert not ctx.stats.errors
     assert ctx.stats.warnings == ["code.filesystem: package.json: input defect: invalid JSON"]
     assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("name", ["uv.lock", "poetry.lock", "pnpm-lock.yaml", "Cargo.lock"])
+def test_lockfile_inventory_fixtures(name):
+    from pathlib import Path
+
+    source = Path("tests/fixtures/code/lockfiles") / name
+    result = parse_manifest(name, source.read_text())
+    assert result and not result.errors and result.lockfile
+    assert is_manifest_name(name)
+    inventory = result.lockfile
+    packages = {p.name: p for p in inventory.packages}
+    if name == "uv.lock":
+        assert packages["wrapper"].relationship == "direct"
+        assert packages["crewai"].relationship == "transitive"
+        assert inventory.roots_known
+    elif name == "pnpm-lock.yaml":
+        assert packages["@langchain/langgraph"].relationship == "transitive"
+    else:
+        assert all(p.relationship == "unknown" for p in inventory.packages)
+    assert all("http" not in p.source for p in inventory.packages)
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("uv.lock", "version = true"),
+        ("uv.lock", "version = 999"),
+        ("uv.lock", "version = 1\npackage = {}"),
+        ("uv.lock", "version = 1\npackage = [42]"),
+        ("uv.lock", 'version = 1\n[[package]]\nname="example"\nversion="1"\ndependencies=[42]'),
+        ("uv.lock", 'version = 1\n[[package]]\nname="example"\nversion="https://example.invalid"'),
+        ("Cargo.lock", "version = 2"),
+        ("Cargo.lock", "version = 3.0"),
+        ("poetry.lock", '[metadata]\nlock-version="99"'),
+        ("pnpm-lock.yaml", "lockfileVersion: 5.4"),
+        ("pnpm-lock.yaml", "lockfileVersion: 9.0\npackages: []"),
+        ("pnpm-lock.yaml", "lockfileVersion: 9.0\npackages: {invalid: {}}"),
+        (
+            "pnpm-lock.yaml",
+            "lockfileVersion: 9.0\npackages: {x@1: {}}\nsnapshots: {x@1: {dependencies: {y: 2}}}",
+        ),
+        ("pnpm-lock.yaml", "lockfileVersion: 9.0\nimporters: {.: {dependencies: {x: {version: 1}}}}"),
+        ("pnpm-lock.yaml", "lockfileVersion: 9.0\nlockfileVersion: 9.0"),
+    ],
+)
+def test_malformed_or_unsupported_lockfiles_are_explicit(name, text):
+    result = parse_manifest(name, text)
+    assert result is not None and result.errors
+
+
+def test_lockfile_cycles_ambiguous_versions_and_aliases():
+    from shadowscan.connectors.code.lockfiles import parse_lockfile
+
+    text = """version = 1
+[[package]]
+name = "root"
+version = "1"
+source = {editable = "."}
+dependencies = [{name="crewai"}]
+[[package]]
+name = "crewai"
+version = "1"
+dependencies = [{name="root"}]
+[[package]]
+name = "crewai"
+version = "2"
+"""
+    result = parse_lockfile("uv.lock", text)
+    assert all(p.relationship == "unknown" for p in result.packages)
+    text = """lockfileVersion: '6.0'
+dependencies:
+  agent-alias: {specifier: 'npm:crewai@1.0', version: 'crewai@1.0'}
+  local: {specifier: 'workspace:*', version: 'link:../local'}
+packages:
+  /crewai@1.0:
+    dependencies: {local: 'workspace:*', crewai: '1.0'}
+"""
+    result = parse_lockfile("pnpm-lock.yaml", text)
+    assert result.packages[0].name == "crewai"
+    assert result.packages[0].relationship == "direct"
+
+
+def test_lockfile_parser_resource_limits(monkeypatch):
+    from shadowscan.connectors.code import lockfiles
+
+    with pytest.raises(ValueError, match="unsupported"):
+        lockfiles.parse_lockfile("unknown.lock", "")
+    with pytest.raises(ValueError, match="byte limit"):
+        lockfiles.parse_lockfile("uv.lock", " " * (lockfiles.MAX_LOCKFILE_BYTES + 1))
+    monkeypatch.setattr(lockfiles, "MAX_PACKAGES", 1)
+    result = parse_manifest(
+        "uv.lock", 'version=1\n[[package]]\nname="a"\nversion="1"\n[[package]]\nname="b"\nversion="1"'
+    )
+    assert result and result.errors
+    monkeypatch.setattr(lockfiles, "MAX_STRUCTURE_NODES", 2)
+    result = parse_manifest("uv.lock", "version=1\npackage=[]")
+    assert result and result.errors
+
+
+def test_pnpm_peer_snapshots_cannot_union_transitive_reachability():
+    from shadowscan.connectors.code.lockfiles import parse_lockfile
+
+    text = """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      wrapper: {version: '1.0.0(peer@1.0.0)'}
+packages:
+  wrapper@1.0.0: {}
+  '@langchain/langgraph@0.2.0': {}
+snapshots:
+  wrapper@1.0.0(peer@1.0.0): {}
+  wrapper@1.0.0(peer@2.0.0):
+    dependencies: {'@langchain/langgraph': 0.2.0}
+  '@langchain/langgraph@0.2.0': {}
+"""
+    inventory = parse_lockfile("pnpm-lock.yaml", text)
+    graph = next(p for p in inventory.packages if p.name == "@langchain/langgraph")
+    assert graph.relationship == "unknown"

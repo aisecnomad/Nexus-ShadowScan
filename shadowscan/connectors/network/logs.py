@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import re
 from collections import Counter
 from collections.abc import Iterable, Iterator
@@ -61,6 +62,15 @@ _MAX_PAIRS = 500_000
 _MAX_HOSTS_PER_FINDING = 20
 _MAX_TIMES = 1_000
 _MAX_TOTAL_TIMES = 200_000
+_MAX_DNS_OBSERVATIONS = 500_000
+_MAX_DNS_PER_ADDRESS = 256
+_MAX_JA4_PER_CONTACT = 32
+_MAX_DNS_PROVENANCE = 20
+_JA4 = re.compile(r"^[tqd](?:1[0-3]|s[23]|d[123]|00)[di][0-9]{4}[a-zA-Z0-9]{2}_[a-f0-9]{12}_[a-f0-9]{12}$")
+_Context = tuple[str, str, str]
+_DNSKey = tuple[_Context, str, str]
+_TLSKey = tuple[_Context, str, str]
+_PairKey = tuple[_Context, str, str, int | None, str | None, float | None]
 _OLLAMA_PORT = 11434
 _VPC_DEFAULT_FIELDS = [
     "version",
@@ -112,12 +122,36 @@ class _Contact:
     tls_connections: int = 0
     flows: int = 0
     flows_by_dns: int = 0
-    flows_by_global_dns: int = 0
     bytes_out: int = 0
     bytes_in: int = 0
     first: float | None = None
     last: float | None = None
     times: list[float] = field(default_factory=list)
+    dns_attributions: list[dict[str, Any]] = field(default_factory=list)
+    ja4: set[tuple[str, str, _Context, str | None]] = field(default_factory=set)
+    ja4_incomplete: bool = False
+    context: _Context | None = None
+    mixed_contexts: bool = False
+    limitations: set[str] = field(default_factory=set)
+
+
+@dataclass(frozen=True)
+class _DNSObservation:
+    signature: str
+    host: str
+    observed_at: float | None
+    ttl: float | None
+
+    def valid(self, when: float | None, max_ttl: int, skew: int) -> bool:
+        # Never explain an older flow using a newer DNS answer. Skew only
+        # relaxes expiration; zero-TTL records must not create a cache interval.
+        return (
+            when is not None
+            and self.observed_at is not None
+            and self.ttl is not None
+            and self.ttl > 0
+            and self.observed_at <= when < self.observed_at + min(self.ttl, max_ttl) + skew
+        )
 
 
 @dataclass
@@ -169,6 +203,10 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         "format": "force the input format: zeek|route53|vpc-flow|generic (default auto, per record)",
         "label": "network or sensor name used in resource ids and as the finding account (default: network)",
         "max_records": "stop after N records (default 10,000,000)",
+        "dns_max_ttl_seconds": "cap DNS attribution validity at N seconds (default 86400, maximum 604800)",
+        "dns_clock_skew_seconds": (
+            "extend DNS expiry by N seconds; never allow future answers (default 0, maximum 60)"
+        ),
     }
     offline_formats: ClassVar[str] = "Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON / CSV"
 
@@ -179,6 +217,13 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             raise ConnectorError("network.logs: unsupported format")
         self.label = str(ctx.get("label") or "network")
         self.max_records = _positive_limit(ctx.get("max_records", 10_000_000), "max_records")
+        self.dns_max_ttl = _positive_limit(ctx.get("dns_max_ttl_seconds", 86400), "dns_max_ttl_seconds")
+        skew = ctx.get("dns_clock_skew_seconds", 0)
+        if isinstance(skew, bool) or not isinstance(skew, int) or not 0 <= skew <= 60:
+            raise ConnectorError("network.logs: dns_clock_skew_seconds must be an integer from 0 to 60")
+        if self.dns_max_ttl > 604800:
+            raise ConnectorError("network.logs: dns_max_ttl_seconds must not exceed 604800")
+        self.dns_clock_skew = skew
         self._records = 0
         self._limit_reported = False
         self._host_cache: dict[str, Match | None] = {}
@@ -289,7 +334,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 for key, value in zip(zeek_fields, values, strict=True):
                     if value in {"-", "(empty)"}:
                         continue
-                    row[key] = value.split(set_separator) if key == "answers" else value
+                    row[key] = value.split(set_separator) if key in {"answers", "TTLs"} else value
                 yield from self._normalise(row, source.name)
                 continue
             tokens = line.split()
@@ -310,6 +355,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         if not isinstance(row, dict):
             self.ctx.warn(f"network.logs: {name}: records must be objects")
             return
+        context = self._context(row, name)
+        if context is None:
+            return
         fmt = self.format if self.format not in (None, "auto") else _detect(row)
         if fmt == "route53":
             client = _text(row.get("srcaddr"))
@@ -319,7 +367,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 for a in row.get("answers") or []
                 if isinstance(a, dict) and (text := _text(a.get("Rdata")))
             ]
-            yield from self._dns(name, client, query, answers, row.get("query_timestamp"))
+            # Route 53 query exports normally omit TTLs: preserve observations,
+            # but require explicitly supplied TTL metadata for flow attribution.
+            yield from self._dns(name, client, query, answers, row.get("query_timestamp"), row, context)
             return
         if fmt == "vpc-flow":
             yield from self._vpc_flow(row, name, None)
@@ -338,8 +388,11 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             raw = row.get("answers") or []
             values = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, list) else []
             answers = [text for a in values if (text := _text(a))]
-            yield from self._dns(name, client, query, answers, when)
+            yield from self._dns(name, client, query, answers, when, row, context)
             return
+        ts = _seconds(when)
+        if when is not None and ts is None:
+            self.ctx.warn(f"network.logs: {name}: invalid event timestamp")
         if sni is not None or path == "ssl":
             if not client:
                 self.ctx.warn(f"network.logs: {name}: TLS record without a client address")
@@ -347,30 +400,106 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             if sni is None:
                 return  # a TLS connection without SNI names nothing
             yield {
-                "kind": "tls", "ts": _seconds(when), "client": client, "server": server, "port": port,
-                "sni": sni, "uid": _text(_first(row, ("uid",))),
+                "kind": "tls", "ts": ts, "client": client, "server": server, "port": port,
+                "sni": sni, "uid": _text(_first(row, ("uid",))), "context": context,
+                "ja4": self._ja4(row, name),
             }  # fmt: skip
             return
         if server and client:
             yield {
-                "kind": "flow", "ts": _seconds(when), "client": client, "server": server, "port": port,
+                "kind": "flow", "ts": ts, "client": client, "server": server, "port": port,
                 "bytes_out": _int(row.get("orig_bytes") or row.get("bytes_out") or row.get("bytes")) or 0,
                 "bytes_in": _int(row.get("resp_bytes") or row.get("bytes_in")) or 0,
-                "uid": _text(_first(row, ("uid",))),
+                "uid": _text(_first(row, ("uid",))), "context": context,
             }  # fmt: skip
             return
         self.ctx.warn(f"network.logs: {name}: record has no query, server name or flow endpoints")
 
+    def _context(self, row: dict[str, Any], name: str) -> _Context | None:
+        values = []
+        for aliases in (("sensor", "sensor_id"), ("network_id", "vpc_id"), ("resolver", "resolver_id")):
+            supplied = [row[key] for key in aliases if row.get(key) not in (None, "", "-")]
+            if (
+                any(
+                    not isinstance(value, str)
+                    or len(value) > 255
+                    or not value.strip()
+                    or any(ord(char) < 32 for char in value)
+                    for value in supplied
+                )
+                or len({value.strip() for value in supplied if isinstance(value, str)}) > 1
+            ):
+                self.ctx.warn(f"network.logs: {name}: malformed observation context")
+                return None
+            values.append(supplied[0].strip() if supplied else "")
+        return values[0], values[1], values[2]
+
+    def _ja4(self, row: dict[str, Any], name: str) -> tuple[str, str] | None:
+        aliases = [key for key in ("ja4", "tls.ja4") if row.get(key) not in (None, "", "-")]
+        if not aliases:
+            return None
+        values = [row[key] for key in aliases]
+        if any(not isinstance(value, str) or not _JA4.fullmatch(value) for value in values) or any(
+            value != values[0] for value in values
+        ):
+            self.ctx.warn(f"network.logs: {name}: invalid or conflicting JA4 fingerprint")
+            return None
+        return values[0], aliases[0]
+
     def _dns(
-        self, name: str, client: str | None, query: str | None, answers: list[str], when: Any
+        self,
+        name: str,
+        client: str | None,
+        query: str | None,
+        answers: list[str],
+        when: Any,
+        row: dict[str, Any],
+        context: _Context,
     ) -> Iterator[dict[str, Any]]:
         if not client or query is None:
             self.ctx.warn(f"network.logs: {name}: DNS record without a client address or query name")
             return
+        ttl: float | None = None
+        variants: list[list[float]] = []
+        invalid = False
+        for alias in ("TTLs", "ttls", "ttl", "TTL"):
+            raw = row.get(alias)
+            if raw in (None, "", "-"):
+                continue
+            vector = alias in {"TTLs", "ttls"} or isinstance(raw, list)
+            values = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, list) else [raw]
+            parsed = [_ttl(value) for value in values]
+            if (
+                not parsed
+                or any(value is None for value in parsed)
+                or len(values) != (len(answers) if vector else 1)
+            ):
+                invalid = True
+                continue
+            numeric = [value for value in parsed if value is not None]
+            variants.append(numeric if vector else numeric * len(answers))
+        if invalid or (variants and any(values != variants[0] for values in variants)):
+            self.ctx.warn(f"network.logs: {name}: malformed DNS TTL values or conflicting aliases")
+        elif variants and variants[0]:
+            # Every alias must describe the same answer TTLs. For CNAME
+            # responses all links must remain valid, so use their minimum.
+            ttl = min(variants[0])
+        ts = _seconds(when)
+        if when is not None and ts is None:
+            self.ctx.warn(f"network.logs: {name}: invalid DNS timestamp")
+        if len(answers) > 32:
+            self.ctx.warn(f"network.logs: {name}: DNS answer limit exceeded")
+            # A dropped answer may contradict retained data; no interval.
+            ttl = None
         yield {
-            "kind": "dns", "ts": _seconds(when), "client": client, "query": query,
-            "answers": [a for a in answers if _ip(a)][:32],
-        }  # fmt: skip
+            "kind": "dns",
+            "ts": ts,
+            "client": client,
+            "query": query,
+            "answers": [str(ipaddress.ip_address(a)) for a in answers if _ip(a)][:32],
+            "ttl": ttl,
+            "context": context,
+        }
 
     def _vpc_flow(self, row: dict[str, Any], name: str, number: int | None) -> Iterator[dict[str, Any]]:
         where = f"{name} line {number}" if number else name
@@ -392,14 +521,20 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             return
         if str(row.get("action") or "ACCEPT").upper() != "ACCEPT":
             return
+        context = self._context(row, name)
+        if context is None:
+            return
         client, server = _text(row.get("srcaddr")), _text(row.get("dstaddr"))
         if not (_ip(client) and _ip(server)):
             self.ctx.warn(f"network.logs: {where}: malformed VPC flow record")
             return
+        ts = _seconds(row.get("start"))
+        if row.get("start") is not None and ts is None:
+            self.ctx.warn(f"network.logs: {where}: invalid event timestamp")
         yield {
-            "kind": "flow", "ts": _seconds(row.get("start")), "client": client, "server": server,
+            "kind": "flow", "ts": ts, "client": client, "server": server,
             "port": _int(row.get("dstport")), "bytes_out": _int(row.get("bytes")) or 0, "bytes_in": 0,
-            "uid": None,
+            "uid": None, "context": context,
         }  # fmt: skip
 
     # ---------------------------------------------------------------- analyse
@@ -414,18 +549,18 @@ class NetworkLogConnector(BaseConnector, _NoDump):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         contacts: dict[tuple[str, str], _Contact] = {}
-        resolved: dict[tuple[str, str], set[str]] = {}  # (client, address) -> signatures it resolved to
-        resolved_any: dict[str, set[str]] = {}  # address -> signatures, any client
-        address_hosts: dict[str, set[tuple[str, str]]] = {}  # address -> AI (signature, host) names
-        sni_by_uid: dict[tuple[str, str], _TLSIdentity] = {}
-        pairs: dict[tuple[str, str, int | None, str | None], _Pair] = {}
-        times_used = 0
-        dropped_pairs = dropped_clients = dropped_tls = 0
+        resolved: dict[_DNSKey, list[_DNSObservation]] = {}
+        sni_by_uid: dict[_TLSKey, _TLSIdentity] = {}
+        pairs: dict[_PairKey, _Pair] = {}
+        times_used = dns_used = 0
+        dropped_pairs = dropped_clients = dropped_tls = dropped_dns = dropped_ja4 = 0
         clients: set[str] = set()
         for rec in records:
             self.ctx.examined()
             kind = rec.get("kind")
-            client = str(rec.get("client"))
+            client = _address(rec.get("client"))
+            context = rec.get("context") or ("", "", "")
+            server = _address(rec.get("server")) if rec.get("server") else None
             if client not in clients:
                 if len(clients) >= _MAX_CLIENTS:
                     dropped_clients += 1
@@ -437,32 +572,56 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 match = self._service(host)
                 signature = match.signature.id if match else ""
                 if kind == "dns":
+                    observation = _DNSObservation(signature, host if match else "", ts, rec.get("ttl"))
                     for address in rec.get("answers") or []:
-                        resolved.setdefault((client, address), set()).add(signature)
-                        resolved_any.setdefault(address, set()).add(signature)
-                        names = address_hosts.setdefault(address, set())
-                        if match is not None and len(names) < 8:
-                            names.add((signature, host))
+                        key_dns = (context, client, address)
+                        prior = resolved.get(key_dns, [])
+                        if observation in prior:
+                            continue
+                        if dns_used >= _MAX_DNS_OBSERVATIONS or len(prior) >= _MAX_DNS_PER_ADDRESS:
+                            dropped_dns += 1
+                            continue
+                        resolved.setdefault(key_dns, []).append(observation)
+                        dns_used += 1
                 elif rec.get("uid"):
-                    # Non-AI names must survive as negative correlation evidence:
-                    # DNS must not override the known destination of this connection.
-                    uid_key = (client, str(rec["uid"]))
+                    # Scope UIDs to the observation vantage as well as client.
+                    # Keep non-AI SNI as negative evidence before DNS fallback.
+                    uid_key = (context, client, str(rec["uid"]))
                     identity = sni_by_uid.get(uid_key)
                     if identity is not None:
-                        identity.observe(rec.get("server"), rec.get("port"), signature)
+                        identity.observe(server, rec.get("port"), signature)
                     elif len(sni_by_uid) < _MAX_PAIRS:
-                        sni_by_uid[uid_key] = _TLSIdentity(rec.get("server"), rec.get("port"), signature)
+                        sni_by_uid[uid_key] = _TLSIdentity(server, rec.get("port"), signature)
                     else:
                         dropped_tls += 1
                 if match is None:
                     continue
-                c = self._contact(contacts, client, match.signature.id)
+                c = self._contact(contacts, client, match.signature.id, context)
                 if len(c.hosts) < _MAX_HOSTS_PER_FINDING or host in c.hosts:
                     c.hosts[host] += 1
                 if kind == "dns":
                     c.dns_queries += 1
+                    if ts is None or rec.get("ttl") is None:
+                        c.limitations.add("DNS observations without timestamp or TTL cannot attribute flows")
                 else:
                     c.tls_connections += 1
+                    if rec.get("ja4"):
+                        fingerprint, source_field = rec["ja4"]
+                        ja4 = (
+                            fingerprint,
+                            source_field,
+                            context,
+                            str(rec["uid"]) if rec.get("uid") else None,
+                        )
+                        if not c.ja4_incomplete and (ja4 in c.ja4 or len(c.ja4) < _MAX_JA4_PER_CONTACT):
+                            c.ja4.add(ja4)
+                        else:
+                            dropped_ja4 += 1
+                            c.ja4_incomplete = True
+                            c.ja4.clear()
+                            c.limitations.add(
+                                "JA4 metadata omitted because observation storage was incomplete"
+                            )
                     if ts is not None and len(c.times) < _MAX_TIMES and times_used < _MAX_TOTAL_TIMES:
                         c.times.append(ts)
                         times_used += 1
@@ -470,7 +629,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 continue
             if kind == "flow":
                 uid = str(rec["uid"]) if rec.get("uid") else None
-                key = (client, str(rec.get("server")), rec.get("port"), uid)
+                # Keep timestamps distinct: an aggregate spanning expiry must
+                # not transfer its stale bytes through one fresh observation.
+                key = (context, client, str(server), rec.get("port"), uid, ts)
                 pair = pairs.get(key)
                 if pair is None:
                     if len(pairs) >= _MAX_PAIRS:
@@ -486,6 +647,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     if len(pair.times) < _MAX_TIMES and times_used < _MAX_TOTAL_TIMES:
                         pair.times.append(ts)
                         times_used += 1
+        input_incomplete = self._limit_reported or bool(self.ctx.stats and self.ctx.stats.incomplete)
         if dropped_clients:
             self.ctx.warn(
                 f"network.logs: {dropped_clients:,} record(s) from clients beyond the first {_MAX_CLIENTS:,} "
@@ -501,90 +663,152 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 f"network.logs: {dropped_tls:,} TLS record(s) beyond {_MAX_PAIRS:,} client/UID identities "
                 "were not retained for flow attribution"
             )
-        ambiguous = self._attribute_flows(
-            contacts, pairs, sni_by_uid, bool(dropped_tls), resolved, resolved_any, address_hosts
-        )
+        if dropped_dns:
+            self.ctx.warn(
+                f"network.logs: {dropped_dns:,} DNS observation(s) exceeded storage bounds; "
+                "DNS and service-port flow attribution disabled because discarded answers may conflict"
+            )
+        if dropped_ja4:
+            self.ctx.warn(
+                f"network.logs: {dropped_ja4:,} JA4 observation(s) exceeded per-contact storage bound"
+            )
+        # Malformed/truncated input may have discarded a contradictory DNS or
+        # TLS record. Keep direct observations but do not synthesize flow claims.
+        ambiguous = 0
+        if input_incomplete:
+            for contact in contacts.values():
+                contact.limitations.add("Flow attribution disabled because input was incomplete")
+        else:
+            ambiguous = self._attribute_flows(
+                contacts, pairs, sni_by_uid, bool(dropped_tls), resolved, bool(dropped_dns)
+            )
         if ambiguous:
-            # Strict attribution, not missing coverage: the scan stays complete.
             self.ctx.warn(
                 f"network.logs: {ambiguous:,} flow(s) with ambiguous service attribution were not attributed",
                 incomplete=False,
             )
         for c in contacts.values():
+            self.ctx.check_deadline()
+            if input_incomplete:
+                c.ja4.clear()
+            fingerprint_sets: dict[tuple[_Context, str], set[str]] = {}
+            for value, _, context, uid in c.ja4:
+                if uid is not None:
+                    fingerprint_sets.setdefault((context, uid), set()).add(value)
+            conflicting = {key for key, values in fingerprint_sets.items() if len(values) > 1}
+            if conflicting:
+                self.ctx.warn("network.logs: conflicting JA4 fingerprints for a client/UID were omitted")
+            # Direct TLS fingerprints are context only; conflicting UID identity
+            # must not attach one endpoint's fingerprint to another endpoint.
+            c.ja4 = {
+                item
+                for item in c.ja4
+                if item[3] is None
+                or (
+                    (identity := sni_by_uid.get((item[2], c.client, item[3]))) is not None
+                    and not identity.ambiguous
+                    and identity.signature == c.signature
+                    and (item[2], item[3]) not in conflicting
+                )
+            }
             yield self._finding(c, ambiguous)
 
     @staticmethod
-    def _contact(contacts: dict[tuple[str, str], _Contact], client: str, signature: str) -> _Contact:
+    def _contact(
+        contacts: dict[tuple[str, str], _Contact], client: str, signature: str, context: _Context
+    ) -> _Contact:
         key = (client, signature)
         c = contacts.get(key)
         if c is None:
             c = contacts[key] = _Contact(client, signature)
+        if c.context is not None and c.context != context:
+            c.mixed_contexts = True
+        c.context = c.context if c.context is not None else context
         return c
 
     def _attribute_flows(
         self,
         contacts: dict[tuple[str, str], _Contact],
-        pairs: dict[tuple[str, str, int | None, str | None], _Pair],
-        sni_by_uid: dict[tuple[str, str], _TLSIdentity],
+        pairs: dict[_PairKey, _Pair],
+        sni_by_uid: dict[_TLSKey, _TLSIdentity],
         tls_limit_reached: bool,
-        resolved: dict[tuple[str, str], set[str]],
-        resolved_any: dict[str, set[str]],
-        address_hosts: dict[str, set[tuple[str, str]]],
+        resolved: dict[_DNSKey, list[_DNSObservation]],
+        dns_limit_reached: bool,
     ) -> int:
-        """Attribute connection groups before adding traffic to service totals."""
-        # Generic SNI exports can omit endpoints. Bind those identities from
-        # flows first, so a reused UID spanning endpoints cannot claim both.
-        # Finish this pass before attribution to keep ambiguity order-independent.
-        for client, server, port, uid in pairs:
-            identity = sni_by_uid.get((client, uid)) if uid is not None else None
+        """Attribute each timestamp group only within observed validity windows."""
+        for context, client, server, port, uid, _ in pairs:
+            self.ctx.check_deadline()
+            identity = sni_by_uid.get((context, client, uid)) if uid is not None else None
             if identity is not None:
                 identity.observe(server, port, identity.signature)
         ambiguous = 0
-        for (client, server, port, uid), pair in pairs.items():
+        for (context, client, server, port, uid, ts), pair in pairs.items():
+            self.ctx.check_deadline()
             signature: str | None = None
             basis = ""
-            identity = sni_by_uid.get((client, uid)) if uid is not None else None
+            valid: list[_DNSObservation] = []
+            identity = sni_by_uid.get((context, client, uid)) if uid is not None else None
             if identity is not None:
                 if identity.ambiguous or not identity.matches(server, port):
                     ambiguous += pair.flows
                     continue
                 if not identity.signature:
-                    continue  # Known non-AI SNI cannot become AI traffic via DNS/port.
+                    continue
                 signature, basis = identity.signature, "tls"
-            elif uid is not None and tls_limit_reached:
-                # A dropped SNI might contradict DNS; do not guess after overflow.
+            elif (uid is not None and tls_limit_reached) or dns_limit_reached:
                 continue
             else:
-                local = resolved.get((client, server))
-                anywhere = resolved_any.get(server)
-                if local:
-                    if len(local) == 1 and "" not in local:
-                        signature, basis = next(iter(local)), "dns"
-                    elif local - {""}:
-                        ambiguous += pair.flows
-                elif anywhere:
-                    if len(anywhere) == 1 and "" not in anywhere:
-                        signature, basis = next(iter(anywhere)), "global-dns"
-                    elif anywhere - {""}:
-                        ambiguous += pair.flows
-                elif port == _OLLAMA_PORT and self.index.get("provider.ollama") is not None:
+                local = resolved.get((context, client, server), [])
+                if ts is None:
+                    for item in local:
+                        if item.signature:
+                            self._contact(contacts, client, item.signature, context).limitations.add(
+                                "Flow records without timestamps cannot be attributed through DNS"
+                            )
+                valid = [item for item in local if item.valid(ts, self.dns_max_ttl, self.dns_clock_skew)]
+                signatures = {item.signature for item in valid}
+                if valid:
+                    # An answer with unknown validity may be conflicting; it
+                    # cannot safely be assumed expired or outside this window.
+                    signatures.update(
+                        item.signature for item in local if item.observed_at is None or item.ttl is None
+                    )
+                if len(signatures) == 1 and "" not in signatures:
+                    signature, basis = next(iter(signatures)), "dns"
+                elif signatures - {""}:
+                    ambiguous += pair.flows
+                elif not local and port == _OLLAMA_PORT and self.index.get("provider.ollama") is not None:
                     signature, basis = "provider.ollama", "port"
             if signature is None:
                 continue
-            c = self._contact(contacts, client, signature)
+            c = self._contact(contacts, client, signature, context)
             if basis == "port":
                 c.hosts[f"{server}:{port}"] += pair.flows
-            elif basis in {"dns", "global-dns"}:
-                for sig_id, name in sorted(address_hosts.get(server, ())):
-                    if sig_id == signature and (len(c.hosts) < _MAX_HOSTS_PER_FINDING or name in c.hosts):
-                        c.hosts[name] += pair.flows
+            elif basis == "dns":
+                for host in sorted({item.host for item in valid}):
+                    if len(c.hosts) < _MAX_HOSTS_PER_FINDING or host in c.hosts:
+                        c.hosts[host] += pair.flows
+                for item in sorted(valid, key=lambda item: (item.observed_at or 0, item.host)):
+                    provenance = {
+                        "host": item.host,
+                        "address": server,
+                        "observed_at": _iso(item.observed_at),
+                        "ttl_seconds": item.ttl,
+                        "flow_at": _iso(ts),
+                        "sensor": context[0],
+                        "network_id": context[1],
+                        "resolver": context[2],
+                    }
+                    if provenance not in c.dns_attributions:
+                        if len(c.dns_attributions) < _MAX_DNS_PROVENANCE:
+                            c.dns_attributions.append(provenance)
+                        else:
+                            c.limitations.add("DNS attribution provenance is sampled to 20 entries")
             c.flows += pair.flows
             c.flows_by_dns += pair.flows if basis == "dns" else 0
-            c.flows_by_global_dns += pair.flows if basis == "global-dns" else 0
             c.bytes_out += pair.bytes_out
             c.bytes_in += pair.bytes_in
             if basis != "tls":
-                # A TLS-linked flow is the same connection as its SNI record.
                 room = _MAX_TIMES - len(c.times)
                 c.times.extend(pair.times[: max(0, room)])
             _seen(c, pair.first)
@@ -638,9 +862,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             basis = []
             if c.flows_by_dns:
                 basis.append(f"{c.flows_by_dns} by this client's DNS answers")
-            if c.flows_by_global_dns:
-                basis.append(f"{c.flows_by_global_dns} by another client's DNS answers")
-            rest = c.flows - c.flows_by_dns - c.flows_by_global_dns
+            rest = c.flows - c.flows_by_dns
             if rest:
                 basis.append(f"{rest} by TLS server name or service port")
             f.add_evidence(
@@ -650,7 +872,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                         f"{c.flows} flow(s), {c.bytes_out:,} bytes sent, {c.bytes_in:,} received; attributed "
                         + "; ".join(basis)
                     ),
-                    weight=0.4 if c.flows_by_global_dns == c.flows else 0.6,
+                    weight=0.6,
                     signature=c.signature,
                 )
             )
@@ -658,7 +880,11 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             # A coding agent's, MCP server's or agent platform's own service.
             f.metadata["agent_indicators"] = 1
             f.add_tag("agent-service")
-        cadence = loop_cadence(c.times)
+        cadence = loop_cadence([] if c.mixed_contexts else c.times)
+        if c.mixed_contexts:
+            c.limitations.add(
+                "Cadence inference suppressed because the contact combines observation contexts"
+            )
         if cadence.loops and sig is not None and sig.category == "provider":
             # Browsers rarely open connections to a model API; scripts and agents do.
             f.add_tag("agent-loop")
@@ -687,6 +913,24 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 "network": self.label,
             }
         )
+        if c.dns_attributions:
+            f.metadata["dns_attribution"] = sorted(c.dns_attributions, key=lambda item: str(item))
+        if c.ja4:
+            f.metadata["tls_fingerprints"] = [
+                {
+                    "type": "ja4",
+                    "value": value,
+                    "source_field": source_field,
+                    "sensor": context[0],
+                    "network_id": context[1],
+                    "resolver": context[2],
+                    "uid": uid,
+                }
+                for value, source_field, context, uid in sorted(c.ja4, key=lambda item: str(item))
+            ]
+            c.limitations.add("JA4 describes a TLS client stack, not AI use, agency or a unique application")
+        if c.limitations:
+            f.metadata["limitations"] = sorted(c.limitations)
         if cadence.loops:
             f.metadata["loop_cadence"] = {"loops": cadence.loops, "longest": cadence.longest}
         if ambiguous:
@@ -749,6 +993,21 @@ def _int(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return number if 0 <= number <= 10**15 else None
+
+
+def _address(value: Any) -> str:
+    text = str(value)
+    return str(ipaddress.ip_address(text)) if _ip(text) else text
+
+
+def _ttl(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return None
+    try:
+        ttl = float(value)
+    except (ValueError, OverflowError):
+        return None
+    return ttl if math.isfinite(ttl) and 0 <= ttl <= 2**31 - 1 else None
 
 
 def _seconds(value: Any) -> float | None:

@@ -107,6 +107,36 @@ def test_n8n_system_prompts_are_one_supporting_signal(tmp_path, run_connector, p
     export = tmp_path / "workflows.json"
     export.write_text(json.dumps([workflow]))
     findings, ctx = run_connector("lowcode.n8n", input=str(export))
+    # A Set node holding prompt text is weak evidence of an AI workflow, as on
+    # main: one supporting signal, never an established one.
     assert not ctx.stats.incomplete and len(findings) == 1
     assert len(findings[0].evidence) == prompts
     assert findings[0].confidence == 0.3 and findings[0].likelihood == Likelihood.POSSIBLE
+
+
+@pytest.mark.parametrize("agents", [1, 3])
+def test_n8n_repeated_real_agent_nodes_preserve_grouped_confidence(tmp_path, run_connector, agents):
+    workflow = {
+        "id": "wf-1",
+        "name": "Declared agents",
+        "nodes": [
+            {
+                "name": f"Agent {i}",
+                "type": "@n8n/n8n-nodes-langchain.agent",
+                "parameters": {"systemMessage": prompt},
+            }
+            for i, prompt in enumerate(SYSTEM_PROMPTS[:agents])
+        ],
+    }
+    export = tmp_path / "workflows.json"
+    export.write_text(json.dumps([workflow]))
+    findings, ctx = run_connector("lowcode.n8n", input=str(export))
+    assert not ctx.stats.incomplete and len(findings) == 1
+    finding = findings[0]
+    assert finding.kind == Kind.AGENT
+    assert finding.confidence >= 0.99 and finding.likelihood == Likelihood.STRONG
+    assert {"code:platform.n8n", "n8n:ai-steps"} <= {item.signal for item in finding.evidence}
+    # Repeated identical node matches are deduplicated: one platform signal
+    # however many agent nodes, plus the step list and the prompt evidence.
+    assert sum(item.signal == "code:platform.n8n" for item in finding.evidence) == 1
+    assert finding.metadata["workflow_graph"]["potential_input_ai_egress_path"] is None

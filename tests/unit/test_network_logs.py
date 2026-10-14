@@ -36,7 +36,6 @@ def test_zeek_dns_ssl_and_conn_logs(run_connector):
         ("10.1.4.21", "provider.openai"),
         ("10.1.4.33", "identity-app.openai-chatgpt"),
         ("10.1.4.40", "protocol.mcp"),
-        ("10.1.4.60", "identity-app.openai-chatgpt"),
         ("10.1.4.70", "provider.ollama"),
         ("10.1.4.80", "coding-agent.cursor"),
     }
@@ -55,10 +54,9 @@ def test_zeek_dns_ssl_and_conn_logs(run_connector):
     assert openai.metadata["flows"] == 0 and openai.metadata["ambiguous_flows_in_input"] == 1
 
     chatgpt = found[("10.1.4.33", "identity-app.openai-chatgpt")]
-    assert chatgpt.metadata["flows"] == 2 and "agent-service" not in chatgpt.tags
-    other = found[("10.1.4.60", "identity-app.openai-chatgpt")]
-    assert other.title.endswith("(chatgpt.com) from 10.1.4.60")
-    assert any("another client's DNS answers" in e.description for e in other.evidence)
+    assert chatgpt.metadata["flows"] == 1 and "agent-service" not in chatgpt.tags
+    # Another client's DNS answers cannot identify this client's traffic.
+    assert ("10.1.4.60", "identity-app.openai-chatgpt") not in found
 
     for key in [("10.1.4.40", "protocol.mcp"), ("10.1.4.80", "coding-agent.cursor")]:
         assert "agent-service" in found[key].tags and found[key].metadata["agent_indicators"] == 1
@@ -71,8 +69,11 @@ def test_route53_resolver_and_vpc_flow_logs(run_connector):
     assert not stats.warnings and not stats.incomplete
     assert set(found) == {("10.20.1.15", "provider.aws-bedrock"), ("10.20.1.15", "cloud.aws-bedrock-agents")}
     runtime = found[("10.20.1.15", "provider.aws-bedrock")]
-    assert runtime.metadata["flows"] == 4 and runtime.metadata["bytes_out"] == 36000
-    assert "agent-loop" in runtime.tags
+    # The historical Route 53 export has no TTLs: retain observed queries,
+    # but do not invent a validity interval or infer execution cadence.
+    assert runtime.metadata["flows"] == runtime.metadata["bytes_out"] == 0
+    assert "agent-loop" not in runtime.tags
+    assert any("without timestamp or TTL" in item for item in runtime.metadata["limitations"])
     agents = found[("10.20.1.15", "cloud.aws-bedrock-agents")]
     assert "agent-service" in agents.tags and "agent-loop" not in agents.tags
 
@@ -161,7 +162,7 @@ def test_global_dns_attribution_is_refused_for_shared_addresses(run_connector, t
     path.write_text(json.dumps(rows))
     found, stats = scan(run_connector, path)
     assert set(found) == {("10.0.0.1", "provider.openai")}
-    assert not stats.incomplete and any("1 flow(s)" in w for w in stats.warnings)
+    assert not stats.incomplete and not stats.warnings
 
 
 def test_format_option_and_record_limit(run_connector, tmp_path):
@@ -176,7 +177,16 @@ def test_format_option_and_record_limit(run_connector, tmp_path):
 
 def test_vpc_flows_with_the_default_format_and_no_header(run_connector, tmp_path):
     (tmp_path / "dns.jsonl").write_text(
-        json.dumps({"client": "10.0.0.4", "query": "api.mistral.ai", "answers": ["198.51.100.9"]}) + "\n"
+        json.dumps(
+            {
+                "client": "10.0.0.4",
+                "query": "api.mistral.ai",
+                "answers": ["198.51.100.9"],
+                "ts": 1759132799,
+                "ttl": 60,
+            }
+        )
+        + "\n"
     )
     (tmp_path / "flows.log").write_text(
         "2 1 eni-1 10.0.0.4 198.51.100.9 40000 443 6 3 1200 1759132800 1759132860 ACCEPT OK\n"
@@ -249,8 +259,15 @@ def test_vpc_status_only_json_fails_closed_without_flow_endpoints(tmp_path, stat
 @pytest.mark.parametrize("statuses", [{}, {"log-status": "OK", "log_status": "ok"}])
 def test_vpc_optional_or_matching_statuses_preserve_normal_flows(run_connector, tmp_path, statuses):
     rows = [
-        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"]},
-        {"srcaddr": "10.0.0.1", "dstaddr": "203.0.113.5", "dstport": 443, "bytes": 100, **statuses},
+        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"], "ts": 1000, "ttl": 60},
+        {
+            "srcaddr": "10.0.0.1",
+            "dstaddr": "203.0.113.5",
+            "dstport": 443,
+            "bytes": 100,
+            "start": 1001,
+            **statuses,
+        },
     ]
     path = tmp_path / "flow.json"
     path.write_text(json.dumps(rows))
@@ -414,9 +431,18 @@ def test_flow_endpoint_mismatch_does_not_fall_back_to_dns(run_connector, tmp_pat
 
 def test_connection_group_cap_counts_distinct_uids_on_one_address(run_connector, tmp_path, monkeypatch):
     monkeypatch.setattr(network_logs, "_MAX_PAIRS", 1)
-    rows = [{"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"]}]
+    rows = [
+        {"client": "10.0.0.1", "query": "api.openai.com", "answers": ["203.0.113.5"], "ts": 1000, "ttl": 60}
+    ]
     rows += [
-        {"client": "10.0.0.1", "dst_ip": "203.0.113.5", "dst_port": 443, "uid": uid, "bytes_out": 100}
+        {
+            "client": "10.0.0.1",
+            "dst_ip": "203.0.113.5",
+            "dst_port": 443,
+            "uid": uid,
+            "bytes_out": 100,
+            "ts": 1001,
+        }
         for uid in ["C1", "C2", "C1"]
     ]
     path = tmp_path / "rows.json"
@@ -522,3 +548,417 @@ def test_host_normalisation(value, expected):
 def test_small_helpers():
     assert _zeek_escape("\\x09") == "\t"
     assert (_int("12"), _int(True), _int("-1"), _int("x")) == (12, None, None, None)
+
+
+def _scan_network_rows(run_connector, tmp_path, rows, **config):
+    path = tmp_path / "observations.json"
+    path.write_text(json.dumps(rows))
+    return scan(run_connector, path, **config)
+
+
+def _temporal_rows(*, flow_time=1001, ttl=60):
+    return [
+        {
+            "client": "192.0.2.10",
+            "query": "api.openai.com",
+            "answers": ["203.0.113.8"],
+            "ts": 1000,
+            "TTLs": [ttl],
+        },
+        {"client": "192.0.2.10", "dst_ip": "203.0.113.8", "dst_port": 443, "ts": flow_time, "bytes_out": 100},
+    ]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("offset", range(6))
+def test_temporal_dns_fixture_attributes_only_fresh_same_client_context(
+    run_connector, tmp_path, reverse, offset
+):
+    rows = json.loads((FIXTURES / "temporal_dns.json").read_text())
+    rows = rows[offset:] + rows[:offset]
+    if reverse:
+        rows.reverse()
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete and not stats.warnings
+    assert set(found) == {("192.0.2.10", "provider.openai")}
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 1 and finding.metadata["bytes_out"] == 100
+    assert finding.metadata["dns_attribution"] == [
+        {
+            "host": "api.openai.com",
+            "address": "203.0.113.8",
+            "observed_at": "1970-01-01T00:16:40+00:00",
+            "ttl_seconds": 60,
+            "flow_at": "1970-01-01T00:16:41+00:00",
+            "sensor": "sensor-a",
+            "network_id": "",
+            "resolver": "",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("flow_time", "ttl", "expected"),
+    [
+        (999, 60, 0),
+        (1000, 60, 1),
+        (1059.9, 60, 1),
+        (1060, 60, 0),
+        (2000000, 60, 0),
+        (1000, 0, 0),
+    ],
+)
+def test_dns_ttl_window_is_half_open_and_never_explains_future_answers(
+    run_connector, tmp_path, flow_time, ttl, expected
+):
+    found, stats = _scan_network_rows(run_connector, tmp_path, _temporal_rows(flow_time=flow_time, ttl=ttl))
+    assert not stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == expected
+
+
+@pytest.mark.parametrize("missing", ["dns-ts", "ttl", "flow-ts"])
+def test_missing_dns_validity_metadata_preserves_queries_not_flow_attribution(
+    run_connector, tmp_path, missing
+):
+    rows = _temporal_rows()
+    if missing == "dns-ts":
+        del rows[0]["ts"]
+    elif missing == "ttl":
+        del rows[0]["TTLs"]
+    else:
+        del rows[1]["ts"]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["dns_queries"] == 1 and finding.metadata["flows"] == 0
+    if missing != "flow-ts":
+        assert (
+            "DNS observations without timestamp or TTL cannot attribute flows"
+            in finding.metadata["limitations"]
+        )
+
+
+@pytest.mark.parametrize("ttl", [True, -1, "nan", "inf", {}, "invalid", 2**32])
+def test_malformed_dns_ttl_is_incomplete_without_flow_attribution(run_connector, tmp_path, ttl):
+    found, stats = _scan_network_rows(run_connector, tmp_path, _temporal_rows(ttl=ttl))
+    assert stats.incomplete and any("malformed DNS TTL" in warning for warning in stats.warnings)
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+def test_invalid_dns_timestamp_and_answer_limit_fail_closed(run_connector, tmp_path):
+    rows = _temporal_rows()
+    rows[0].update(ts="bad timestamp", answers=[f"203.0.113.{i}" for i in range(33)], TTLs=[60] * 33)
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    assert any("invalid DNS timestamp" in warning for warning in stats.warnings)
+    assert any("DNS answer limit" in warning for warning in stats.warnings)
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+@pytest.mark.parametrize("field", ["sensor", "network_id", "resolver"])
+@pytest.mark.parametrize("other", ["other", None])
+def test_dns_attribution_requires_exact_supplied_context(run_connector, tmp_path, field, other):
+    rows = _temporal_rows()
+    rows[0][field] = "one"
+    if other is not None:
+        rows[1][field] = other
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+def test_dns_cname_chain_uses_shortest_ttl_and_ipv6_normalization(run_connector, tmp_path):
+    rows = _temporal_rows(flow_time=1005)
+    rows[0].update(answers=["edge.example.net", "2001:db8::1"], TTLs=[10, 600])
+    rows[1]["dst_ip"] = "2001:0db8:0:0:0:0:0:1"
+    rows.append({**rows[1], "ts": 1010, "bytes_out": 999})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["bytes_out"] == 100
+
+
+@pytest.mark.parametrize("negative_ttl", [60, None])
+def test_shared_address_conflict_including_unknown_validity_blocks_dns(run_connector, tmp_path, negative_ttl):
+    rows = _temporal_rows()
+    other = {**rows[0], "query": "cdn.example.net"}
+    if negative_ttl is None:
+        del other["TTLs"]
+    rows.append(other)
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert any("ambiguous service attribution" in warning for warning in stats.warnings)
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+def test_ip_reuse_after_expiry_does_not_link_previous_provider(run_connector, tmp_path):
+    rows = _temporal_rows(flow_time=1101)
+    rows.append({**rows[0], "query": "api.anthropic.com", "ts": 1100})
+    found, stats = _scan_network_rows(run_connector, tmp_path, list(reversed(rows)))
+    assert not stats.incomplete and not stats.warnings
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+    assert found[("192.0.2.10", "provider.anthropic")].metadata["flows"] == 1
+
+
+@pytest.mark.parametrize("limit", ["_MAX_DNS_OBSERVATIONS", "_MAX_DNS_PER_ADDRESS"])
+def test_dns_budget_exhaustion_disables_fallback_even_when_conflict_dropped(
+    run_connector, tmp_path, monkeypatch, limit
+):
+    monkeypatch.setattr(network_logs, limit, 1)
+    rows = _temporal_rows()
+    rows.append({**rows[0], "query": "cdn.example.net"})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete and any("DNS observation(s) exceeded" in warning for warning in stats.warnings)
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+def test_duplicate_dns_observation_does_not_consume_budget(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_DNS_OBSERVATIONS", 1)
+    rows = _temporal_rows()
+    rows.append(dict(rows[0]))
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 1
+
+
+def test_dns_expiry_skew_and_maximum_age_are_explicit_and_bounded(run_connector, tmp_path):
+    found, _ = _scan_network_rows(
+        run_connector, tmp_path, _temporal_rows(flow_time=1061), dns_clock_skew_seconds=2
+    )
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 1
+    found, _ = _scan_network_rows(
+        run_connector, tmp_path, _temporal_rows(flow_time=999), dns_clock_skew_seconds=2
+    )
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+    found, _ = _scan_network_rows(
+        run_connector, tmp_path, _temporal_rows(flow_time=1010), dns_max_ttl_seconds=10
+    )
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"dns_clock_skew_seconds": -1},
+        {"dns_clock_skew_seconds": 61},
+        {"dns_clock_skew_seconds": True},
+        {"dns_clock_skew_seconds": "1"},
+        {"dns_max_ttl_seconds": 604801},
+        {"dns_max_ttl_seconds": 0},
+    ],
+)
+def test_dns_options_reject_invalid_values(config):
+    with pytest.raises(ConnectorError):
+        NetworkLogConnector(ConnectorContext(config=config, index=get_index()))
+
+
+@pytest.mark.parametrize("suffix", ["jsonl", "log"])
+def test_ja4_json_and_zeek_tsv_are_non_scoring_and_collision_safe(run_connector, suffix):
+    found, stats = scan(run_connector, FIXTURES / f"ja4_ssl.{suffix}")
+    assert not stats.incomplete and not stats.warnings
+    assert set(found) == {("192.0.2.10", "provider.openai")}
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.confidence == 0.7 and finding.kind == Kind.NETWORK_CONTACT
+    assert len(finding.evidence) == 1 and finding.evidence[0].signal == "network:tls-sni"
+    assert finding.metadata["tls_fingerprints"] == [
+        {
+            "type": "ja4",
+            "value": "t13d1516h2_8daaf6152771_02713d6af862",
+            "source_field": "ja4",
+            "sensor": "",
+            "network_id": "",
+            "resolver": "",
+            "uid": "C1",
+        }
+    ]
+
+
+@pytest.mark.parametrize("fingerprint", ["invalid", "x" * 10000, {}, 5])
+def test_malformed_ja4_is_incomplete_but_does_not_discard_sni(run_connector, tmp_path, fingerprint):
+    rows = [{"client": "192.0.2.10", "sni": "api.openai.com", "ja4": fingerprint}]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete and any("invalid or conflicting JA4" in warning for warning in stats.warnings)
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.confidence == 0.7 and "tls_fingerprints" not in finding.metadata
+
+
+def test_ja4_alias_duplicate_and_conflicting_uid_do_not_transfer_fingerprints(run_connector, tmp_path):
+    rows = [json.loads((FIXTURES / "ja4_ssl.jsonl").read_text().splitlines()[0])]
+    rows[0]["tls.ja4"] = rows[0].pop("ja4")
+    rows.append(dict(rows[0]))
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    fingerprints = found[("192.0.2.10", "provider.openai")].metadata["tls_fingerprints"]
+    assert len(fingerprints) == 1 and fingerprints[0]["source_field"] == "tls.ja4"
+    rows.append({**rows[0], "server_name": "docs.example.net"})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert "tls_fingerprints" not in found[("192.0.2.10", "provider.openai")].metadata
+
+
+def test_ja4_storage_is_bounded_and_context_uid_join_is_scoped(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_JA4_PER_CONTACT", 1)
+    row = json.loads((FIXTURES / "ja4_ssl.jsonl").read_text().splitlines()[0])
+    rows = [dict(row), {**row, "uid": "C2"}]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete and any("JA4 observation(s) exceeded" in warning for warning in stats.warnings)
+    assert "tls_fingerprints" not in found[("192.0.2.10", "provider.openai")].metadata
+    rows = [{**row, "sensor": "one"}, {**row, "server_name": "docs.example.net", "sensor": "two"}]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert len(found[("192.0.2.10", "provider.openai")].metadata["tls_fingerprints"]) == 1
+
+
+def test_network_enrichment_never_resolves_names(run_connector, monkeypatch):
+    import socket
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("offline network logs must not resolve names")
+
+    monkeypatch.setattr(socket, "getaddrinfo", refuse)
+    monkeypatch.setattr(socket, "gethostbyname_ex", refuse)
+    found, stats = scan(run_connector, FIXTURES / "temporal_dns.json")
+    assert not stats.incomplete and found
+
+
+@pytest.mark.parametrize("prefix", ["ts3i000000", "dd2i0304h1", "q13d1516h3", "t00d1516X2"])
+def test_ja4_supports_upstream_version_and_alpn_tokens(run_connector, tmp_path, prefix):
+    fingerprint = prefix + "_000000000000_000000000000"
+    found, stats = _scan_network_rows(
+        run_connector, tmp_path, [{"client": "192.0.2.10", "sni": "api.openai.com", "ja4": fingerprint}]
+    )
+    assert not stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["tls_fingerprints"][0]["value"] == fingerprint
+
+
+@pytest.mark.parametrize("mode", ["aliases", "uid"])
+def test_conflicting_ja4_values_are_incomplete_and_not_attached(run_connector, tmp_path, mode):
+    row = json.loads((FIXTURES / "ja4_ssl.jsonl").read_text().splitlines()[0])
+    other = "t13d1516h2_000000000000_000000000000"
+    rows = [{**row, "tls.ja4": other}] if mode == "aliases" else [row, {**row, "ja4": other}]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete and any("conflicting JA4" in warning for warning in stats.warnings)
+    assert "tls_fingerprints" not in found[("192.0.2.10", "provider.openai")].metadata
+
+
+@pytest.mark.parametrize("context", [123, {}, "x" * 256, "one\ntwo"])
+def test_malformed_context_cannot_collapse_into_default_scope(run_connector, tmp_path, context):
+    rows = _temporal_rows()
+    rows[1]["sensor"] = context
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete and any("malformed observation context" in warning for warning in stats.warnings)
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+@pytest.mark.parametrize("kind", ["flow", "vpc", "tls"])
+def test_invalid_event_timestamp_is_reported(run_connector, tmp_path, kind):
+    row = {
+        "flow": {"client": "192.0.2.10", "dst_ip": "203.0.113.8", "ts": "invalid"},
+        "vpc": {"srcaddr": "192.0.2.10", "dstaddr": "203.0.113.8", "dstport": 443, "start": "invalid"},
+        "tls": {"client": "192.0.2.10", "sni": "api.openai.com", "ts": "invalid"},
+    }[kind]
+    _, stats = _scan_network_rows(run_connector, tmp_path, [row])
+    assert stats.incomplete and any("invalid event timestamp" in warning for warning in stats.warnings)
+
+
+def test_fresh_dns_cannot_override_non_ai_sni_or_cross_sensor_uid(run_connector, tmp_path):
+    rows = _temporal_rows()
+    rows[1]["uid"] = "C1"
+    rows.append({"client": "192.0.2.10", "uid": "C1", "sni": "docs.example.net"})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+    # A known AI SNI from another sensor must not override local non-AI DNS.
+    rows[0]["query"] = "docs.example.net"
+    rows[-1].update(sni="api.openai.com", sensor="another-sensor")
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+def test_dns_provenance_sample_is_bounded_and_disclosed(run_connector, tmp_path):
+    rows = _temporal_rows()
+    rows.extend({**rows[1], "ts": 1002 + index} for index in range(24))
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert not stats.incomplete and finding.metadata["flows"] == 25
+    assert len(finding.metadata["dns_attribution"]) == 20
+    assert "DNS attribution provenance is sampled to 20 entries" in finding.metadata["limitations"]
+
+
+def test_record_limit_cannot_hide_a_contradictory_dns_answer(run_connector, tmp_path):
+    rows = _temporal_rows()
+    rows.append({**rows[0], "query": "docs.example.net"})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows, max_records=2)
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert stats.incomplete and finding.metadata["flows"] == 0
+    assert "Flow attribution disabled because input was incomplete" in finding.metadata["limitations"]
+
+
+def test_truncated_input_preserves_direct_tls_context_with_limitations(run_connector, tmp_path):
+    row = json.loads((FIXTURES / "ja4_ssl.jsonl").read_text().splitlines()[0])
+    rows = [row, {**row, "ja4": "invalid"}]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows, max_records=1)
+    assert stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+@pytest.mark.parametrize(
+    ("first", "alias"), [("sensor", "sensor_id"), ("network_id", "vpc_id"), ("resolver", "resolver_id")]
+)
+def test_conflicting_context_aliases_cannot_be_used_for_attribution(run_connector, tmp_path, first, alias):
+    rows = _temporal_rows()
+    rows[0].update({first: "one", alias: "another"})
+    rows[1][first] = "one"
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete and not found
+    assert any("malformed observation context" in warning for warning in stats.warnings)
+
+
+@pytest.mark.parametrize("ttls", ["60", [60]])
+def test_plural_ttl_aliases_require_one_value_per_answer(run_connector, tmp_path, ttls):
+    rows = _temporal_rows()
+    rows[0].update(answers=["edge.example.net", "203.0.113.8"], TTLs=ttls)
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    assert found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+@pytest.mark.parametrize("extra", [{"ttl": 0}, {"TTL": 300}, {"ttls": [False]}])
+def test_conflicting_or_invalid_ttl_alias_cannot_be_silently_ignored(run_connector, tmp_path, extra):
+    rows = _temporal_rows()
+    rows[0].update(extra)
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete and found[("192.0.2.10", "provider.openai")].metadata["flows"] == 0
+
+
+def test_equivalent_context_and_ttl_aliases_remain_usable(run_connector, tmp_path):
+    rows = _temporal_rows()
+    rows[0].update(sensor="one", sensor_id=" one ", ttl=60, ttls="60")
+    rows[1].update(sensor_id="one")
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert not stats.incomplete and found[("192.0.2.10", "provider.openai")].metadata["flows"] == 1
+
+
+def test_ja4_cap_cannot_hide_a_conflicting_fingerprint(run_connector, tmp_path, monkeypatch):
+    monkeypatch.setattr(network_logs, "_MAX_JA4_PER_CONTACT", 1)
+    row = json.loads((FIXTURES / "ja4_ssl.jsonl").read_text().splitlines()[0])
+    rows = [row, {**row, "ja4": "t13d1516h2_000000000000_000000000000"}, dict(row)]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete and "tls_fingerprints" not in found[("192.0.2.10", "provider.openai")].metadata
+
+
+def test_cadence_does_not_combine_separate_sensor_contexts(run_connector, tmp_path):
+    rows = [
+        {
+            "client": "192.0.2.10",
+            "sni": "api.openai.com",
+            "ts": 1000 + index,
+            "sensor": sensor,
+            "uid": f"C{index}",
+        }
+        for index, sensor in enumerate(("one", "two", "one"))
+    ]
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert not stats.incomplete and finding.confidence == 0.7
+    assert "agent-loop" not in finding.tags and "loop_cadence" not in finding.metadata
+    assert any("combines observation contexts" in item for item in finding.metadata["limitations"])

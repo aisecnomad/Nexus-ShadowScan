@@ -279,10 +279,10 @@ def _engine_config(tmp_path: Path, **connector) -> ScanConfig:
     return ScanConfig(connectors=[ConnectorSpec("code.filesystem", config)], parallel=1)
 
 
-def test_oversize_lockfile_is_a_warning_and_the_scan_stays_complete(tmp_path, index):
+def test_oversize_unselected_lockfile_is_a_warning_and_the_scan_stays_complete(tmp_path, index):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     (tmp_path / "yarn.lock").write_text("x" * 200)
-    (tmp_path / "poetry.lock").write_text("small")
+    (tmp_path / "pdm.lock").write_text("small")
     (tmp_path / "data.csv").write_text("a,b\n" * 60)
     (tmp_path / "LOGO.PNG").write_bytes(b"\x89PNG" + b"\0" * 200)
     result = Engine(_engine_config(tmp_path), index).run()
@@ -292,6 +292,15 @@ def test_oversize_lockfile_is_a_warning_and_the_scan_stays_complete(tmp_path, in
     named = sorted(warning.split(": ")[1] for warning in stats.warnings)
     assert named == ["LOGO.PNG", "data.csv", "yarn.lock"]
     assert all("over max_file_size" in warning for warning in stats.warnings)
+
+
+@pytest.mark.parametrize("name", ["uv.lock", "poetry.lock", "pnpm-lock.yaml", "Cargo.lock"])
+def test_malformed_selected_lockfile_marks_scan_incomplete(tmp_path, index, name):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    (tmp_path / name).write_text("small")
+    result = Engine(_engine_config(tmp_path), index).run()
+    assert not result.complete and result.findings
+    assert any(name in error and "manifest parsing failed" in error for error in result.stats[0].errors)
 
 
 def test_oversize_source_file_marks_coverage_incomplete_by_default(tmp_path, index):

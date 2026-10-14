@@ -168,10 +168,18 @@ particular, MCP tool fingerprints are not compared with a rug-pull baseline.
 | `endpoint.ebpf` | Tetragon, Falco, Tracee, or Hubble event records |
 | `gateway.otel` | OTLP span records with GenAI semantic-convention attributes |
 
-MCP tool definitions are analyzed for risky capability names, prompt-injection
-or exfiltration indicators, missing declared authentication, and duplicate
-tool names across servers. Tool definitions are fingerprinted for downstream
-comparison, but baseline/rug-pull detection is not yet implemented. No tool is
+MCP tool definitions are analyzed for risky capability names, direct instruction
+override or sensitive-value disclosure candidates, missing declared authentication,
+and duplicate tool names across servers. A documentation URL, ordinary reference
+to another tool, quoted example, explicit prohibition, or invisible character alone
+does not establish tool poisoning. The bounded static audit reports rule identifiers
+and line numbers in `metadata.static_instruction_audit`, with zero-weight explanatory
+evidence and explicit limitations; it retains no description excerpts. The existing
+`tool-poisoning` tag describes a review candidate, not verified intent or execution.
+Quoted text, fenced code and YAML front matter are excluded from this narrow English
+instruction audit. Descriptions exceeding 64 KiB, overlong lines, malformed front
+matter and unclosed fences mark coverage incomplete. Tool definitions are fingerprinted
+for downstream comparison, but baseline/rug-pull detection is not yet implemented. No tool is
 invoked. With `options.mcp_registries`, a tool finding whose server is an
 HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL
 (`metadata.mcp_registry.matches`); a bare server name identifies nothing and

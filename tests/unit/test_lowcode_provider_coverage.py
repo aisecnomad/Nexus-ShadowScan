@@ -796,3 +796,211 @@ def test_servicenow_provider_named_and_marked_flows_are_kept(tmp_path, run_conne
     assert set(findings) == {f"servicenow:sys_hub_flow:flow-{n}" for n in range(3)}
     assert "identity-app.anthropic-claude" in findings["servicenow:sys_hub_flow:flow-0"].frameworks
     assert "platform.servicenow-now-assist" in findings["servicenow:sys_hub_flow:flow-2"].frameworks
+
+
+# Declared graph relationships are supporting metadata; they do not prove
+# runtime execution, private-data access, or a prompt-injection vulnerability.
+def _graph_cases():
+    from pathlib import Path
+
+    source = Path(__file__).parents[1] / "fixtures" / "lowcode" / "graph_cases.json"
+    return json.loads(source.read_text())
+
+
+@pytest.mark.parametrize("case", _graph_cases(), ids=lambda case: case["case"])
+def test_n8n_graph_relationship_fixture(index, case):
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    workflow = case["workflow"]
+    result = analyze_workflow_graph(workflow, provider="n8n")
+    assert result is not None and not result.issues
+    assert result.metadata["potential_input_ai_egress_path"] is case["expected_path"]
+    assert result.metadata["scoring"] is False
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    findings = connector.run()
+    assert not connector.ctx.stats.incomplete
+    # The inventory keeps every workflow main reports (a spoofed or disabled
+    # langchain node, a Set node whose text names a model host); only the exact
+    # registry gives graph roles, and the graph never scores.
+    (finding,) = findings
+    assert finding.metadata["workflow_graph"] == result.metadata
+    assert all("graph" not in evidence.signal for evidence in finding.evidence)
+    if case["case"] in {"non-ai", "spoofed-type"}:
+        assert finding.kind == Kind.WORKFLOW
+        assert result.metadata["role_counts"]["ai"] == 0
+    else:
+        assert finding.kind == Kind.AGENT
+        assert finding.confidence == pytest.approx(0.99)
+    assert finding.metadata["disabled_node_count"] == (1 if case["case"] == "disabled" else 0)
+
+
+@pytest.mark.parametrize(
+    "connections",
+    [
+        None,
+        [],
+        {"Missing": {}},
+        {"Input": []},
+        {"Input": {"main": "bad"}},
+        {"Input": {"main": [None]}},
+        {"Input": {"main": [[None]]}},
+        {"Input": {"main": [[{"node": "Missing"}]]}},
+        {"Input": {"main": [[{"node": []}]]}},
+    ],
+)
+def test_n8n_malformed_graph_marks_incomplete_and_preserves_neighbors(index, connections):
+    from copy import deepcopy
+
+    bad = deepcopy(_graph_cases()[0]["workflow"])
+    bad["connections"] = connections
+    good = deepcopy(_graph_cases()[0]["workflow"])
+    good["id"] = "good"
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([bad, good]))
+    findings = connector.run()
+    # A malformed graph never hides the workflow: the finding records the
+    # incomplete projection and the scan is incomplete.
+    assert [finding.resource for finding in findings] == ["n8n:workflow:graph-demo", "n8n:workflow:good"]
+    assert findings[0].metadata["workflow_graph"]["status"] == "incomplete"
+    assert findings[0].metadata["workflow_graph"]["potential_input_ai_egress_path"] is None
+    assert findings[1].metadata["workflow_graph"]["status"] == "analyzed"
+    assert connector.ctx.stats.incomplete and connector.ctx.stats.warnings
+
+
+@pytest.mark.parametrize("limit,value", [("MAX_GRAPH_NODES", 2), ("MAX_GRAPH_EDGES", 1)])
+def test_n8n_graph_resource_limits_are_incomplete(index, monkeypatch, limit, value):
+    from shadowscan.connectors.lowcode import graph
+
+    monkeypatch.setattr(graph, limit, value)
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([_graph_cases()[0]["workflow"]]))
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["status"] == "incomplete"
+    assert finding.metadata["workflow_graph"]["potential_input_ai_egress_path"] is None
+    assert connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("bad_id", [None, "", "x" * 513, "Input", []])
+def test_n8n_graph_rejects_missing_duplicate_or_oversized_identifiers(bad_id):
+    from copy import deepcopy
+
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    workflow = deepcopy(_graph_cases()[0]["workflow"])
+    workflow["nodes"][1]["name"] = bad_id
+    result = analyze_workflow_graph(workflow, provider="n8n")
+    assert result.issues
+    assert result.metadata["potential_input_ai_egress_path"] is None
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://api.openai.com/v1/responses", True),
+        ("https://API.OPENAI.COM./v1/responses", True),
+        ("https://api.openai.com.attacker.invalid/v1", False),
+        ("https://api.openai.com@attacker.invalid/v1", False),
+        ("https://example.invalid/api.openai.com", False),
+        ("={{ $env.LLM_ENDPOINT }}", False),
+        ("https://api.openai.com:99999/v1", False),
+        ("file:///api.openai.com", False),
+        ("https://[broken", False),
+        (None, False),
+    ],
+)
+def test_n8n_literal_api_sink_uses_host_boundaries(url, expected):
+    from shadowscan.connectors.lowcode.graph import n8n_node_roles
+
+    node = {"type": "n8n-nodes-base.httpRequest", "parameters": {"url": url}}
+    assert ("ai" in n8n_node_roles(node)) is expected
+
+
+def test_graph_missing_adjacency_is_unknown_not_disconnected(index):
+    workflow = _graph_cases()[0]["workflow"]
+    workflow.pop("connections")
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["status"] == "unavailable"
+    assert finding.metadata["workflow_graph"]["potential_input_ai_egress_path"] is None
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("provider", ["flowise", "dify"])
+@pytest.mark.parametrize("edges", [{}, [None], [{"source": "start", "target": "missing"}]])
+def test_other_workflow_graphs_reject_malformed_edges(provider, edges):
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    graph = {"nodes": [{"id": "start", "data": {"type": "start", "name": "startAgentflow"}}], "edges": edges}
+    data = {"kind": "app", "workflow": {"graph": graph}} if provider == "dify" else graph
+    result = analyze_workflow_graph(data, provider=provider)
+    assert result.issues
+    assert result.metadata["potential_input_ai_egress_path"] is None
+
+
+def test_graph_long_path_output_is_bounded_and_loops_do_not_expand_work():
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    nodes = [{"name": str(i), "type": "n8n-nodes-base.set"} for i in range(60)]
+    nodes[0]["type"] = "n8n-nodes-base.webhook"
+    nodes[1]["type"] = "@n8n/n8n-nodes-langchain.agent"
+    nodes[-1].update({"type": "n8n-nodes-base.httpRequest", "parameters": {"url": "https://example.invalid"}})
+    connections = {str(i): {"main": [[{"node": str((i + 1) % 60)}]]} for i in range(60)}
+    result = analyze_workflow_graph({"nodes": nodes, "connections": connections})
+    assert result.metadata["potential_input_ai_egress_path"] is True
+    assert result.metadata["path_length"] == 60
+    assert len(result.metadata["path_node_indices"]) == 32
+    assert result.metadata["path_truncated"] is True
+
+
+@pytest.mark.parametrize("value", [None, [], {}, True, 1])
+def test_workflow_roles_handle_malformed_provider_values(value):
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph, n8n_node_roles
+
+    assert not n8n_node_roles({"type": value})
+    assert "egress" not in n8n_node_roles(
+        {"type": "n8n-nodes-base.slack", "parameters": {"operation": value}}
+    )
+    workflow = {
+        "nodes": [{"id": "a", "data": {"name": "startAgentflow", "inputs": {"startInputType": value}}}],
+        "edges": [],
+    }
+    result = analyze_workflow_graph(workflow, provider="flowise")
+    assert result.metadata["role_counts"]["untrusted-input"] == 0
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("type", "ai_tool"), ("type", []), ("index", True), ("index", -1), ("index", "0"), ("index", [])],
+)
+def test_n8n_connection_fields_cannot_turn_attachment_into_execution_order(index, field, value):
+    from copy import deepcopy
+
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    workflow = deepcopy(_graph_cases()[0]["workflow"])
+    workflow["connections"]["Input"]["main"][0][0][field] = value
+    result = analyze_workflow_graph(workflow)
+    assert result.issues
+    assert result.metadata["potential_input_ai_egress_path"] is None
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["potential_input_ai_egress_path"] is None
+    assert connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("node_type,ai", [("lmChatXAiGrok", True), ("lmChatXAi", False)])
+def test_n8n_xai_model_registry_uses_actual_registered_name(index, node_type, ai):
+    from shadowscan.connectors.lowcode.graph import n8n_node_roles
+
+    node = {"name": "model", "type": "@n8n/n8n-nodes-langchain." + node_type}
+    assert ("ai" in n8n_node_roles(node)) is ai
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([{"id": "xai", "nodes": [node], "connections": {}}]))
+    # Any node in the langchain namespace stays in the inventory, as on main;
+    # only the registered name gets the graph's AI role.
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["role_counts"]["ai"] == int(ai)
+    assert not connector.ctx.stats.incomplete
