@@ -29,8 +29,9 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
 - Default risk changes: the new `mcp-server` capability adds 5; findings whose
   only evidence is documentation, example or generated code lose 8, 8 or 10;
   `hidden-instructions` (20), `remote-code-fetch` (15), `invisible-text`,
-  `autonomy-understated`, `a2a-plaintext-interface`, `a2a-card-signature-invalid`
-  (10 each) and the governance factor `mcp-not-in-approved-registry` (15) are new.
+  `autonomy-understated`, `a2a-plaintext-interface`, `a2a-card-signature-invalid`,
+  `tool-name-shadowing` (10 each) and the governance factor
+  `mcp-not-in-approved-registry` (15) are new.
 - On CPython 3.12.0 to 3.12.3 (Ubuntu 24.04 ships 3.12.3), a file with a very
   long line no longer stalls redaction: the finding is omitted and the scan is
   incomplete (exit 3). Run ShadowScan on 3.11, 3.12.4 or later, or 3.13.
