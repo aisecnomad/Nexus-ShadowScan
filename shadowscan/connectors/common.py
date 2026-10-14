@@ -160,6 +160,14 @@ def apply_matches(
     ``metadata.potential_providers`` instead, for a code pattern without the
     library's import or dependency, or a mention too weak to establish.
 
+    Name signals marked ``ambiguous`` remain weak, correlated hints. They
+    never establish a technology, its tags/capabilities or an agent
+    indicator; same-product non-name matches establish those independently.
+    A match that does not establish its signature adds none of its tags. Once
+    a non-name signal has established the product on this finding, a later
+    ambiguous name for the same product is corroborated: its evidence keeps
+    its full weight, but it adds no second agent indicator.
+
     ``snippet`` may be a callable: it is invoked once, and only when the
     per-signature evidence quota retains a match, so an excerpt that reaches
     no report is never produced.
@@ -170,13 +178,21 @@ def apply_matches(
     indicators = 0
     for m in matches:
         sig = m.signature
-        if not establish:
+        ambiguous_name = m.signal.type == "name" and m.signal.ambiguous
+        # A non-name signal already established this product on the finding.
+        corroborated_name = ambiguous_name and (
+            sig.id in finding.frameworks or sig.id in finding.model_providers
+        )
+        matched_establish = establish and not ambiguous_name
+        if not matched_establish:
             if sig.category == "provider" or sig.category in TECH_CATEGORIES:
                 key = "potential_providers" if sig.category == "provider" else "potential_frameworks"
-                potential: list[str] = finding.metadata.setdefault(key, [])
-                if sig.id not in potential:
-                    potential.append(sig.id)
-                    potential.sort()
+                established = finding.model_providers if sig.category == "provider" else finding.frameworks
+                if sig.id not in established:
+                    potential: list[str] = finding.metadata.setdefault(key, [])
+                    if sig.id not in potential:
+                        potential.append(sig.id)
+                        potential.sort()
         elif sig.id == "identity-app.generic-ai-name":
             finding.add_tag("ai-name-hint")  # a hint, not a technology
         elif sig.category in TECH_CATEGORIES:
@@ -185,14 +201,24 @@ def apply_matches(
             finding.add_model_provider(sig.id)
         elif sig.category == "policy":
             finding.add_tag(sig.id)
-        if capabilities and establish:
+        if matched_establish:
+            for potential_key in ("potential_frameworks", "potential_providers"):
+                potential_values = finding.metadata.get(potential_key)
+                if isinstance(potential_values, list) and sig.id in potential_values:
+                    potential_values.remove(sig.id)
+                    if not potential_values:
+                        finding.metadata.pop(potential_key)
+        if capabilities and matched_establish:
             # Static source analysis can retain library-wide features as
             # potential metadata while scoring only the matched code signal.
             for cap in m.capabilities() if signature_capabilities else m.signal.capabilities:
                 finding.add_capability(cap)
-        for t in sig.tags:
-            finding.add_tag(t)
-        if establish and m.agent_indicator and (indicator_filter is None or indicator_filter(m)):
+        if matched_establish:
+            for t in sig.tags:
+                finding.add_tag(t)
+        elif ambiguous_name and not corroborated_name:
+            finding.add_tag("ai-name-hint")
+        if matched_establish and m.agent_indicator and (indicator_filter is None or indicator_filter(m)):
             indicators += 1
         key = f"{sig.id}|{m.signal.type}"
         counts[key] = counts.get(key, 0) + 1
@@ -206,19 +232,44 @@ def apply_matches(
         loc = location
         if loc and m.line:
             loc = f"{loc}:{m.line}"
+        attributes: dict[str, Any] = {"category": sig.category, "value": value}
+        weight = max(0.0, min(1.0, m.weight * weight_scale))
+        if ambiguous_name and not corroborated_name:
+            # Multiple aliases/products/publisher fields are one weak name
+            # observation, never independent corroboration of AI use.
+            weight = min(weight, 0.2)
+            attributes.update(ambiguous_name=True, confidence_group="unverified-app-name")
         finding.add_evidence(
             Evidence(
                 signal=f"{m.signal.type}:{sig.id}",
                 description=describe_match(m).replace(m.value, value) if m.value else describe_match(m),
                 location=loc,
                 snippet=excerpt,
-                weight=max(0.0, min(1.0, m.weight * weight_scale)),
+                weight=weight,
                 signature=sig.id,
-                attributes={"category": sig.category, "value": value},
+                attributes=attributes,
             )
         )
     finding.metadata["agent_indicators"] = finding.metadata.get("agent_indicators", 0) + indicators
     return indicators
+
+
+# Ceiling of the one correlated group that holds an application's non-AI
+# observations (existence, consent, installation, ordinary scopes, machine
+# grant, an ambiguous product name) when no AI product, provider, LLM-access
+# permission, agent identity or registry record is established for it. Such an
+# app is never reported above "possible".
+UNATTRIBUTED_APP_MAX_WEIGHT = 0.35
+_AI_EVIDENCE_TAGS = frozenset({"policy.llm-access-scopes", "entra-agent-identity", "registry-record"})
+
+
+def _ai_attributed(finding: Finding) -> bool:
+    """Whether an app assessment established AI by product, provider, permission, identity or registry."""
+    return (
+        bool(finding.frameworks or finding.model_providers)
+        or bool(_AI_EVIDENCE_TAGS.intersection(finding.tags))
+        or any(ev.attributes.get("confidence_group") == "registry-record" for ev in finding.evidence)
+    )
 
 
 def finalize(finding: Finding, index: SignatureIndex | None = None) -> Finding:
@@ -227,6 +278,19 @@ def finalize(finding: Finding, index: SignatureIndex | None = None) -> Finding:
     Source provenance, control flow and test exclusion belong to the code
     analyzer. Co-occurring snippets here cannot override that analysis.
     """
+    if finding.metadata.pop("_app_assessment", False) and not _ai_attributed(finding):
+        # An app's existence, consent, installation, scopes and machine grant do
+        # not identify AI. Co-observations of one app are one correlated
+        # observation, bounded whatever the display name; an ambiguous product
+        # name joins that group rather than corroborating it. A generic AI-name
+        # hint stays a separate weak signal, so a hint never lowers the score.
+        # The bound lives in the evidence weights, so merge-time recomputation
+        # reproduces it.
+        for ev in finding.evidence:
+            if ev.signal.startswith("name:") and ev.attributes.get("ambiguous_name") is not True:
+                continue
+            ev.attributes["confidence_group"] = "unattributed-app"
+            ev.weight = min(ev.weight, UNATTRIBUTED_APP_MAX_WEIGHT)
     finding.recompute_confidence()
     counts = finding.metadata.pop("_evidence_counts", None)
     if counts:

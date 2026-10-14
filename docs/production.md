@@ -1064,6 +1064,41 @@ Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 14 detection precision, ambiguous app names and scoped correlation (unreleased)
+
+These changes can remove findings, lower confidence and risk, and add new
+findings. Rescan affected sources and rebuild comparison baselines under the
+reviewed revision: scanner-source and signature fingerprints change. A finding
+or technology label that disappears after the upgrade does not establish that
+an agent was removed or stopped running.
+
+**Ambiguous app names.** Google Gemini names (`ambiguous: true` in the
+signature) no longer establish Google AI attribution without a same-product
+domain, client ID or other non-name signal. They stay under
+`metadata.potential_frameworks` with an `ai-name-hint` tag and add none of the
+signature's tags, capabilities or agent indicator. A Gemini-named app with no
+other AI evidence, such as a cryptocurrency-exchange integration, drops to
+possible confidence or out of the report. Once corroborated, the name keeps its
+full weight. OAuth reply and homepage URLs corroborate a product by their
+parsed `http(s)` hostname only: a product domain in another site's path, query,
+fragment or userinfo no longer counts, and URL tokens with userinfo, a
+backslash or a control character are skipped. A field with several URLs
+(comma, semicolon or whitespace separated, as in a ServiceNow `redirect_url`)
+is split, so an AI host listed second is still found.
+
+**Unattributed apps.** An app assessed by an identity or SaaS connector with no
+established AI product, provider, LLM-access permission, Entra agent identity
+or registry record now has its non-AI observations bounded at 0.35 as one
+group. Machine identities kept by policy remain in the report at that ceiling,
+so their confidence and risk fall; for example, two machine identities in the
+bundled demo drop from risk 69 to 61 and from 65 to 58, and one unattributed
+SaaS app from 47 to 41, all within their previous severity levels. Domain
+matches are counted once per app across all of its URLs, so `agent_indicators`
+no longer grows with the number of reply URLs.
+
+Permission and machine-identity observations are not proof of agent execution,
+and observations in an offline export are not authenticated publisher evidence.
+
 ### October 14 repository rename, source distribution and OCSF vendor name (unreleased)
 
 The repository is renamed from `aisecnomad/Project-Nexus` to

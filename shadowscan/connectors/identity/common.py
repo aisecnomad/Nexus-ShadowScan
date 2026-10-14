@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
+from urllib.parse import urlsplit
 
 from shadowscan.connectors.common import apply_matches, classify_permissions, domain_matches, name_matches
 from shadowscan.models import Evidence, Finding, Kind
 from shadowscan.signatures import SignatureIndex
+
+# Redirect and homepage fields can hold several URLs separated by commas,
+# semicolons or whitespace (a ServiceNow redirect_url, for example).
+_URL_SEPARATORS = re.compile(r"[,;\s]+")
+# A backslash or control character parses differently in Python and in
+# browsers (WHATWG treats "\\" as a path separator), so such a token cannot
+# establish the host a user is sent to.
+_PARSER_DIFFERENTIAL = re.compile(r"[\\\x00-\x1f\x7f]")
 
 MACHINE_GRANT_TYPES = {
     "client_credentials",
@@ -35,10 +45,11 @@ def assess_app(
     ``aliases`` are other spellings of the name, such as an app slug with its
     hyphens read as spaces; each signature still counts once.
     """
-    apply_matches(finding, name_matches(index, name, *aliases, publisher, description))
-    apply_matches(finding, domain_matches(index, *urls), weight_scale=0.8)
+    finding.metadata["_app_assessment"] = True
+    apply_matches(finding, domain_matches(index, *_url_hosts(urls)), weight_scale=0.8)
     if client_id:
         apply_matches(finding, index.match_client_id(client_id))
+    apply_matches(finding, name_matches(index, name, *aliases, publisher, description))
     classify_permissions(index, finding, scopes)
     gts = {str(g).lower() for g in grant_types if g}
     if gts & MACHINE_GRANT_TYPES:
@@ -60,6 +71,34 @@ def assess_app(
         "client_secret_basic",
     }:
         finding.metadata["token_endpoint_auth_method"] = auth_method
+
+
+def _url_hosts(urls: Iterable[str | None]) -> list[str]:
+    """The hostnames of the http(s) URLs in ``urls``, in order.
+
+    OAuth reply/homepage URLs establish only their own hostname. A product
+    domain in another site's path, query, fragment or userinfo is a mention,
+    not corroboration of the app's product identity. A token with userinfo or
+    a parser-differential character is skipped: a reply URL never carries
+    credentials, and its host is not reliably the one a browser would use.
+    """
+    hosts: list[str] = []
+    for url in urls:
+        if not isinstance(url, str) or not url:
+            continue
+        for token in _URL_SEPARATORS.split(url):
+            if not token or _PARSER_DIFFERENTIAL.search(token):
+                continue
+            try:
+                parsed = urlsplit(token if "://" in token else f"//{token}")
+                host = parsed.hostname
+                has_userinfo = parsed.username is not None or parsed.password is not None
+            except ValueError:
+                continue
+            if parsed.scheme.lower() not in {"", "http", "https"} or not host or has_userinfo:
+                continue
+            hosts.append(host)
+    return hosts
 
 
 def identity_kind_for(*, user_consented: bool, machine: bool) -> Kind:
