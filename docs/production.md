@@ -39,11 +39,15 @@ Atlassian finding IDs change on upgrade. Exports scanned without a configured
 `site` get a new identity discriminator bound to the resolved path of each
 export file, so renaming or moving the file changes its IDs; two files in one
 directory input stay separate findings even when they share an app key. A
-configured site is canonicalized (host case, an explicit `:443` and a trailing
-slash), so an operator whose `site` used a non-canonical spelling also sees
-new IDs. Configure the canonical `site`, keep one site's exports per scan
-input, rescan and establish a fresh baseline; earlier Atlassian IDs do not
-carry over.
+configured site is canonicalized, so an operator whose `site` used an
+uppercase host or an explicit `:443` also sees new IDs (a trailing slash was
+already ignored). A `site` that is not a plain HTTPS origin now stops the
+connector with an error and exit 3 instead of scanning: a value without
+`https://`, `http://`, a path (including a Data Center context path such as
+`/jira` or `/wiki`), user information, a query or fragment, a trailing dot or a
+non-ASCII host. Configure the canonical `site` as `https://<host>`, keep one
+site's exports per scan input, rescan and establish a fresh baseline; earlier
+Atlassian IDs do not carry over.
 
 The new tests use offline exports. Live connector acceptance and independently
 labeled field accuracy still require the existing rollout acceptance procedure.

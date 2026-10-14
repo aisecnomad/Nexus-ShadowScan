@@ -141,7 +141,7 @@ def test_atlassian_unknown_exports_keep_stable_separate_identities(fixtures, tmp
     "site",
     [
         "http://approved.atlassian.net",
-        "https://user:secret@approved.atlassian.net",
+        "https://user@approved.atlassian.net",
         "https://approved.atlassian.net/wiki",
         "https://approved.atlassian.net?site=other",
         "https://approved.atlassian.net#site",

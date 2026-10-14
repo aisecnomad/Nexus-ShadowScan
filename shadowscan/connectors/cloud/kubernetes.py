@@ -87,15 +87,17 @@ def _name(obj: dict[str, Any]) -> str:
     return value if isinstance(value, str) else ""
 
 
-_MAX_NAMESPACE = 63
+# A namespace is an RFC 1123 DNS label. Without "/" in it, and with the kind
+# from a fixed set, a resource identity reads one way even when names contain "/".
+_NAMESPACE_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 
 
 def _namespace(obj: dict[str, Any]) -> str | None:
     """Return the full namespace, or None when it cannot be a distinct identity.
 
-    Namespaces are DNS labels of at most 63 characters. A non-string or
-    oversized value is malformed; shortening or defaulting it would merge
-    distinct objects into one resource identity.
+    Namespaces are DNS labels of at most 63 characters. Any other value is
+    malformed; shortening, defaulting or accepting it would merge distinct
+    objects into one resource identity.
     """
     metadata = obj.get("metadata")
     if not isinstance(metadata, dict):
@@ -103,7 +105,7 @@ def _namespace(obj: dict[str, Any]) -> str | None:
     if "namespace" not in metadata:
         return "default"
     value = metadata["namespace"]
-    if not isinstance(value, str) or len(value) > _MAX_NAMESPACE:
+    if not isinstance(value, str) or not _NAMESPACE_LABEL.fullmatch(value):
         return None
     return value
 
@@ -185,9 +187,9 @@ class KubernetesConnector(BaseConnector):
         egress_policies: set[str] = set()
         for record in records:
             if "items" in record:
-                # A List envelope inside an array or JSONL export is not
-                # unwrapped by the shared loader, so check its continuation
-                # here. Observed items are still analyzed.
+                # A List envelope inside a JSON array is not unwrapped by the
+                # shared loader, so check its continuation here. Observed
+                # items are still analyzed.
                 pagination_issue = self._offline_pagination_issue(record)
                 if pagination_issue:
                     self.ctx.warn(f"{self.name}: {pagination_issue}")

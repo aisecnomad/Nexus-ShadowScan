@@ -25,11 +25,14 @@ and to `List` envelopes in a JSON array or JSONL. Malformed values of either
 field are also incomplete.
 
 Namespaces are kept in full in resource identities. A `metadata.namespace`
-that is not a string or is longer than 63 characters (the DNS-label bound)
-is rejected with incomplete coverage instead of being shortened or replaced
-by `default`. Objects without a namespace key keep the `default` namespace.
+that is not an RFC 1123 DNS label (lowercase letters, digits and inner hyphens,
+at most 63 characters) is rejected with incomplete coverage instead of being
+shortened, replaced by `default` or allowed to contain `/`, which could make two
+objects share one identity. Objects without a namespace key keep the `default`
+namespace.
 
-Workload analysis includes Deployments, StatefulSets, DaemonSets, Jobs and Pods.
+Workload analysis includes Deployments, StatefulSets, DaemonSets, Jobs, Pods
+and, for OpenShift, DeploymentConfigs.
 CronJobs use `spec.jobTemplate.spec.template.spec` for image and posture
 analysis. Missing or malformed nested templates leave coverage incomplete.
 
