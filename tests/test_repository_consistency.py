@@ -1561,6 +1561,29 @@ def test_readme_estate_row_says_when_the_labels_were_frozen() -> None:
     assert "label-completeness pass in which every runnable tool ran once" in section
 
 
+def test_estate_benchmark_documents_say_later_shadowscan_runs_are_in_sample() -> None:
+    """ShadowScan was tuned with the 2026-10-11 estate run's errors in view.
+
+    Rule changes made after that run fix seven of its twelve ShadowScan errors on a replay, so a
+    later ShadowScan run on the estate is in-sample. Every document that presents that run, and
+    the changelog entry for those rules, has to say so, and the benchmark-derived note-taker
+    recognition is marked as such.
+    """
+    readme = _read(ROOT / "README.md")
+    documents = {
+        "README.md": readme[readme.index("## Benchmarks") : readme.index("## The Why")],
+        "benchmarks/shadowbench/README.md": _read(ROOT / "benchmarks/shadowbench/README.md"),
+        "benchmarks/shadowbench/estate/README.md": _read(ROOT / "benchmarks/shadowbench/estate/README.md"),
+    }
+    unstated = [name for name, text in documents.items() if "in-sample" not in " ".join(text.split())]
+    assert not unstated, f"no in-sample disclosure for later ShadowScan estate runs in {unstated}"
+    changelog = _read(ROOT / "CHANGELOG.md")
+    start = changelog.index("\n## Unreleased\n")
+    unreleased = " ".join(changelog[start : changelog.index("\n## ", start + 1)].split())
+    assert "in-sample" in unreleased
+    assert re.search(r"Wudpecker and Tactiq[^.]*\(benchmark-derived", unreleased)
+
+
 _PIP_COMMANDS = frozenset(
     {
         "cache", "check", "completion", "config", "debug", "download", "freeze", "hash", "help",

@@ -19,6 +19,12 @@ model, adapters, runner and scorer.
 > reruns the benchmark, ideally with their own corpus. Everything needed to
 > do that is committed. See [docs/evaluation.md](../../docs/evaluation.md) for
 > what ShadowScan accepts as evidence.
+>
+> ShadowScan's detection rules were changed after the 2026-10-11 estate run
+> with that run's errors in view (see the estate README's
+> [Bias and limits](estate/README.md#bias-and-limits)). A ShadowScan run on the
+> estate after those changes is in-sample and says nothing new about field
+> accuracy; only a new, independently authored estate can.
 
 ## Two tracks
 
@@ -33,7 +39,7 @@ model, adapters, runner and scorer.
 | Harness | [`tools/shadowbench/cases/`](../../tools/shadowbench/cases/README.md) | [`tools/shadowbench/estate/`](../../tools/shadowbench/estate/) |
 | Results | [`cases/results/`](cases/results/) | [`estate/results/`](estate/results/) |
 
-The tracks were written independently (pull requests #193 and #194) and
+The tracks were written separately (pull requests #193 and #194) and
 integrated side by side. Their tool lists, versions and scoring rules differ,
 so a tool's numbers on one track are not comparable with its numbers on the
 other.

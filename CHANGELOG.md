@@ -222,7 +222,9 @@ and #204, into one design. Rollout and migration notes are in the
   integration is a bot user, and a bot's id is not matched as a name.
   `saas.slack` matches the app ID as the app's client ID, so a rule pack can
   bind a reviewed Slack app. Wudpecker and Tactiq are recognised as meeting
-  note-takers by name and domain. `identity.auth0` keeps a client attributed
+  note-takers by name and domain (benchmark-derived: Wudpecker is the
+  ShadowBench estate positive the 2026-10-11 run missed, and Tactiq was added
+  with it). `identity.auth0` keeps a client attributed
   only by a model provider. A GCP Cloud Run service or Cloud Function name or
   description establishes an unambiguous product (a function described as
   using Anthropic Claude); an ambiguous Gemini name there stays a hint.
@@ -240,8 +242,15 @@ and #204, into one design. Rollout and migration notes are in the
 - The bundled evaluation corpora and the ShadowBench estate replay are
   author-written offline inputs. They show the intended behaviour on known
   cases; they are not measured production precision, independent review or
-  live tenant acceptance. Rescan and rebuild comparison baselines after
-  upgrading: signature and scanner fingerprints change.
+  live tenant acceptance. Several of these changes (ambiguous Gemini names,
+  Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
+  serving-engine images, n8n HTTP model calls, ServiceNow flow names,
+  Wudpecker) were made with the 2026-10-11 ShadowBench estate run's
+  ShadowScan errors in view, so a ShadowScan run on that estate after them is
+  in-sample: replayed on it, seven of that run's twelve ShadowScan errors no
+  longer occur, which is no evidence of better field accuracy. Rescan and
+  rebuild comparison baselines after upgrading: signature and scanner
+  fingerprints change.
 
 ### Kubernetes discovery and Atlassian approval scope (October 14)
 

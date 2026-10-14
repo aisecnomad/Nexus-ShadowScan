@@ -74,6 +74,10 @@ The corpus deliberately includes, in both directions:
   Chrome caller at the confidence threshold, hosted-agent `GET /runs`
   near-misses.
 
+Both lists describe ShadowScan as it was when the corpus was frozen. Its
+rules were changed after the 2026-10-11 run with these entities in view; see
+[Bias and limits](#bias-and-limits).
+
 ## Protocol
 
 1. **Authoring.** The same maintainer wrote each surface's artifacts and
@@ -555,7 +559,9 @@ ShadowScan's four misses are four of the hard positives listed under
 [Corpus](#corpus) (the text-generation-inference caller, the n8n
 `httpRequest` flow, the k8s vLLM workload and the Wudpecker notetaker). It
 flagged eight negatives (two controls, six near-misses), listed in the
-report's control and near-miss grid. Its registry layer gave all 83
+report's control and near-miss grid. ShadowScan's rules were changed after
+this run with these twelve errors in view, so a later ShadowScan run on this
+estate is in-sample (see [Bias and limits](#bias-and-limits)). Its registry layer gave all 83
 detected positives the expected verdict (79 shadow, 4 registered). No other
 tool flagged a control or near-miss in this run. That is partly precision
 and partly coverage: 36 of the 50 negatives sit on surfaces only ShadowScan
@@ -683,9 +689,28 @@ reproduction.
 - **Trigger knowledge.** The author knew the documented detection triggers
   of ShadowScan and, to a lesser extent, of the other tools. Mitigations:
   hard positives beyond documented triggers, negatives ShadowScan itself
-  over-flags (verified: it flags eight), per-entity rationale, and every
-  run's normalized predictions committed. The tools' raw output was not
-  committed.
+  over-flags (it flagged eight in the 2026-10-11 run), per-entity rationale,
+  and every run's normalized predictions committed. The tools' raw output was
+  not committed.
+- **Later ShadowScan runs are in-sample.** After the 2026-10-11 run,
+  ShadowScan's detection rules were changed (the changelog's October 14
+  detection-precision entry) with that run's twelve ShadowScan errors in
+  view: ambiguous Gemini names on identity, SaaS and GCP inventory, Notion
+  bots, Ollama-style `/api/chat` and text-generation-inference `/generate`
+  gateway routes, Kubernetes serving-engine images and GPU limits, n8n HTTP
+  Request model calls, ServiceNow flows whose names mention an AI product,
+  and recognition of the Wudpecker note-taker. One new test fixture first
+  copied an estate row (the Gemini exchange app) before it was replaced with
+  unrelated tokens. Replayed on this frozen estate after those changes,
+  ShadowScan no longer makes seven of the twelve errors: the controls
+  `gateway.egress-helpdesk-browser` and `saas.notion-jira-sync` and the
+  near-misses `saas.generic-gemini-exchange` and
+  `cloud.gcp-gemini-settlement` are no longer flagged, and the positives
+  `cloud.k8s-eta-vllm`, `lowcode.n8n-dock-manifest-qa` and
+  `saas.slack-wudpecker` are detected. That replay is in-sample: it is not
+  published as a result and is no evidence of better field accuracy, and the
+  2026-10-11 run stays the run of record. Measuring those changes needs an
+  estate authored without sight of these errors.
 - **Anchor collisions.** `validate` reports 12 anchors that also occur
   outside their entity's artifacts. Some are deliberate (the agent registry
   names three registered entities, the live-sim services file names the two
