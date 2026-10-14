@@ -157,7 +157,12 @@ Per tool, per surface and per modality, over the cases the tool ran
   MCC and the McNemar test use these outcomes.
 * **Errors, missing rows and incomplete runs.** A crash, timeout or unreadable
   output is an `error` row, and a case with no row counts as an error and is
-  also reported as missing. An error is never a correct outcome: every expected
+  also reported as missing. The exception is a case on a surface and modality
+  the tool does not run (its other rows there are `unsupported`, or it has
+  none there and its adapter does not declare the pair): the runner writes an
+  `unsupported` row for each such case, so a run of some surfaces or cases
+  left out nothing else there, and the missing row counts as `unsupported`.
+  An error is never a correct outcome: every expected
   entity is missed, the decoys stay in the specificity denominator without
   being true negatives, a positive case is missed and a negative case is a
   false alarm. A run marked incomplete (the tool says so, as with ShadowScan's

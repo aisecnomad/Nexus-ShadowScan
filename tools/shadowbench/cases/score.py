@@ -26,7 +26,13 @@ non-negative integer or sits on a row outside the code surface, and an
 ``unsupported`` row on a (surface, modality) where the same tool has ``ok`` or
 ``error`` rows (the runner decides support per surface and modality) are
 refused, ``--force`` or not. A case with no row counts as an ``error`` and is
-also reported as missing.
+also reported as missing, unless the tool does not run that case's surface and
+modality: its other rows there are ``unsupported``, or it has none there and
+its adapter does not declare that pair. The runner writes an ``unsupported``
+row for every such case, so a run of some surfaces or cases (``--surfaces``,
+``--cases``) left out only rows that would have been ``unsupported``, and such
+a missing row counts as ``unsupported``. A tool with no loaded adapter declares
+nothing, so its missing rows stay errors.
 
 Matching. A reported key equal to a tolerated key is neither credited nor
 penalized. Otherwise it matches an expected or decoy key when they are equal,
@@ -121,14 +127,22 @@ ROW_FIELDS: tuple[str, ...] = ("surface", "modality", "family", "label", "diffic
 Withheld = dict[tuple[str, str], tuple[str, ...]]
 """Per (surface, modality), the key prefixes of the decoys an adapter never passes to its tool."""
 
+Support = frozenset[tuple[str, str]]
+"""The (surface, modality) pairs an adapter declares it runs."""
+
 
 class ResultsError(ValueError):
     """Stored results that cannot be scored against this corpus without misreporting."""
 
 
-def withheld_decoys(tools: Iterable[str]) -> tuple[dict[str, Withheld], list[str]]:
-    """Each tool's declared ``withheld_decoys``, and a problem for each adapter module that does not load."""
-    adapters, unloaded = load_adapters()
+def withheld_decoys(
+    tools: Iterable[str], registry: tuple[Mapping[str, Any], Mapping[str, str]] | None = None
+) -> tuple[dict[str, Withheld], list[str]]:
+    """Each tool's declared ``withheld_decoys``, and a problem for each adapter module that does not load.
+
+    ``registry`` is what ``load_adapters`` returned, loaded here when not given.
+    """
+    adapters, unloaded = registry if registry is not None else load_adapters()
     out: dict[str, Withheld] = {}
     for tool in tools:
         declared = getattr(adapters.get(tool), "withheld_decoys", None) or {}
@@ -154,6 +168,40 @@ def withheld_decoys(tools: Iterable[str]) -> tuple[dict[str, Withheld], list[str
         for module, why in sorted(unloaded.items())
     ]
     return out, problems
+
+
+def declared_support(adapter: object) -> Support | None:
+    """The (surface, modality) pairs ``adapter`` declares in ``surfaces``.
+
+    None without an adapter or without a well-formed declaration: then nothing is unsupported on its word.
+    """
+    surfaces = getattr(adapter, "surfaces", None)
+    if not isinstance(surfaces, Mapping):
+        return None
+    pairs: set[tuple[str, str]] = set()
+    for surface, modalities in surfaces.items():
+        if not isinstance(surface, str) or not isinstance(modalities, frozenset | set | tuple | list):
+            return None
+        if not all(isinstance(modality, str) for modality in modalities):
+            return None
+        pairs.update((surface, modality) for modality in modalities)
+    return frozenset(pairs)
+
+
+def missing_row_status(
+    pairs_run: Mapping[tuple[str, str], bool], support: Support | None, case: Case
+) -> Status:
+    """How a case the tool has no row for is scored: ``unsupported`` where the tool does not run.
+
+    The runner decides support per (surface, modality) and writes an ``unsupported`` row for every
+    case it does not run, so the tool's rows on the case's pair (``pairs_run``: whether they are
+    ``ok`` or ``error`` rather than ``unsupported``) say what this one would have been. With none
+    there, the adapter's declaration decides. Anything else is an ``error``.
+    """
+    where = (case.surface, case.modality)
+    if where in pairs_run:
+        return "error" if pairs_run[where] else "unsupported"
+    return "unsupported" if support is not None and where not in support else "error"
 
 
 def wilson(k: int, n: int) -> tuple[float | None, float | None, float | None]:
@@ -194,14 +242,21 @@ class CaseScore:
     """Entity-level outcome of one (tool, case); ``row`` is ``None`` when the tool has no row for it.
 
     ``withheld`` holds the key prefixes of the decoys the tool's adapter never passed to it on this
-    case's surface and modality.
+    case's surface and modality. ``missing_status`` is how a missing row is scored: an ``error``,
+    or ``unsupported`` where the tool does not run (``missing_row_status``).
     """
 
-    def __init__(self, case: Case, row: dict[str, Any] | None, withheld: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        case: Case,
+        row: dict[str, Any] | None,
+        withheld: tuple[str, ...] = (),
+        missing_status: Status = "error",
+    ) -> None:
         self.case = case
         self.missing = row is None
         if row is None:
-            row = {"status": "error", "entities": [], "incomplete": False, "seconds": 0.0}
+            row = {"status": missing_status, "entities": [], "incomplete": False, "seconds": 0.0}
         self.status = str(row["status"])
         self.incomplete = bool(row.get("incomplete"))
         # only a complete ok run can vouch for what it did not report
@@ -559,7 +614,8 @@ def score(
     if not isinstance(tool_runs, dict):
         raise ResultsError(f"{manifest_path}: tools must be a JSON object")
     ran, problems, unbound = _provenance(rows, tool_runs, results)
-    withheld, unloaded = withheld_decoys(sorted(set(rows) | ran))
+    registry = load_adapters()
+    withheld, unloaded = withheld_decoys(sorted(set(rows) | ran), registry)
     for problem in problems + unloaded:
         refuse_unless_forced(problem)
     out: dict[str, Any] = {
@@ -584,11 +640,20 @@ def score(
             "modalities": sorted({c.modality for c in cs}),
         }
     all_scores: dict[str, dict[str, CaseScore]] = {}
-    # a forced score of a tool the manifest says ran but whose rows are gone scores as all missing
+    # a forced score of a tool the manifest says ran but whose rows are gone scores as all missing:
+    # errors, except on the pairs its adapter does not declare
     for tool in sorted(set(rows) | ran):
         by_case = rows.get(tool, {})
+        # load_rows refuses unsupported rows beside ok or error rows on one pair
+        pairs_run = {(r["surface"], r["modality"]): r["status"] != "unsupported" for r in by_case.values()}
+        support = declared_support(registry[0].get(tool))
         scores = {
-            c.case_id: CaseScore(c, by_case.get(c.case_id), withheld[tool].get((c.surface, c.modality), ()))
+            c.case_id: CaseScore(
+                c,
+                by_case.get(c.case_id),
+                withheld[tool].get((c.surface, c.modality), ()),
+                missing_row_status(pairs_run, support, c),
+            )
             for c in corpus.cases
         }
         all_scores[tool] = scores
