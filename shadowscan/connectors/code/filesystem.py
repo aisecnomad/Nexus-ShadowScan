@@ -64,6 +64,7 @@ import ast
 import errno
 import fnmatch
 import hashlib
+import json
 import os
 import re
 import stat
@@ -200,7 +201,12 @@ from shadowscan.signatures.matcher import (
     _finditer,
     language_for_path,
 )
-from shadowscan.utils.files import open_confined_directory, read_policy_text
+from shadowscan.utils.files import (
+    changed_since,
+    open_confined_directory,
+    open_confined_file,
+    read_policy_text,
+)
 from shadowscan.utils.git import (
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
@@ -485,6 +491,9 @@ _DOCUMENTATION_EXTENSIONS = frozenset({".md", ".mdc", ".mdx", ".txt"})
 _ANY_FILE_NAME = "\x00"
 # The first line of a Git LFS pointer file (at most LFS_POINTER_MAX_BYTES long).
 _LFS_POINTER_TEXT = LFS_POINTER_PREFIX.decode("ascii")
+_ARTIFACT_MAGIC_SUFFIXES = frozenset({".gguf", ".safetensors", ".onnx", ".exe", ".bin", ".run", ".pyz"})
+_ARTIFACT_HEADER_BYTES = 64 * 1024
+_PYINSTALLER_COOKIE = b"MEI\014\013\012\013\016"
 
 
 def _never_read_by_name(name: str) -> bool:
@@ -847,6 +856,7 @@ class _ScanState:
     infra_models: dict[str, list[Match]] = field(default_factory=dict)  # relpath -> model ids declared in IaC
     # project root -> (relpath, line, excerpt)
     iam_wildcards: dict[str, list[tuple[str, int, str]]] = field(default_factory=dict)
+    artifact_findings: list[Finding] = field(default_factory=list)
     diff_files: frozenset[str] | None = None  # when set, only these changed files + context files are scanned
     diff_base_ref: str | None = None  # the ref that was diffed against
     reexports: PythonReexports = field(default_factory=PythonReexports)
@@ -2703,7 +2713,11 @@ class FilesystemConnector(BaseConnector):
         """
         if size > self._size_limit(path.name):
             return 0.0
-        will_read = _analyzed_by_name(path.name) or bool(self.index.match_file(rel))
+        will_read = (
+            _analyzed_by_name(path.name)
+            or bool(self.index.match_file(rel))
+            or path.suffix.lower() in _ARTIFACT_MAGIC_SUFFIXES
+        )
         return budget if will_read else 0.0
 
     def _stop_at_deadline(self, root: Path, examined: int, remaining: int) -> None:
@@ -3022,6 +3036,11 @@ class FilesystemConnector(BaseConnector):
         if lang:
             proj.languages.add(lang)
 
+        if path.suffix.lower() in _ARTIFACT_MAGIC_SUFFIXES:
+            artifact = self._inspect_artifact_magic(scan, rel, path)
+            if artifact is not None:
+                scan.artifact_findings.append(self._artifact_finding(scan.label, rel, *artifact))
+
         # 1. file-name signals (config files of agents / MCP / A2A ...)
         file_matches = self.index.match_file(rel)
         by_name = _analyzed_by_name(path.name)
@@ -3101,6 +3120,93 @@ class FilesystemConnector(BaseConnector):
                 # file: what the re-export pass, a consumer it never reaches and
                 # emit read from it afterwards is only cut from the redacted lines.
                 self._redacted_lines(file)
+
+    def _inspect_artifact_magic(self, scan: _ScanState, rel: str, path: Path) -> tuple[str, int] | None:
+        """Identify a small set of model/bundle formats from bounded bytes, never parsing payloads."""
+        on_disk = (
+            PurePosixPath(path.relative_to(scan.base).as_posix())
+            if scan.base is not None
+            else PurePosixPath(rel)
+        )
+        with open_confined_file(on_disk, label="code artifact", dir_fd=scan.root_fd) as (stream, before):
+            if before.st_size > self._size_limit(path.name):
+                self.ctx.warn(
+                    f"code.filesystem: {rel}: artifact header skipped, file exceeds max_file_size; "
+                    "coverage incomplete",
+                    incomplete=True,
+                )
+                return None
+            header = stream.read(min(64, before.st_size))
+            artifact: str | None = None
+            if (
+                len(header) >= 8
+                and header[:4] == b"GGUF"
+                and int.from_bytes(header[4:8], byteorder="little") in {1, 2, 3}
+            ):
+                artifact = "GGUF"
+            elif (
+                len(header) >= 4
+                and header[0] == 0x08
+                and 0 < header[1] < 32
+                and header[2] in {0x12, 0x1A, 0x22, 0x2A}
+            ):
+                artifact = "ONNX"
+            elif len(header) >= 8 and path.suffix.lower() == ".safetensors":
+                header_size = int.from_bytes(header[:8], byteorder="little")
+                if 0 < header_size <= _ARTIFACT_HEADER_BYTES and 8 + header_size <= before.st_size:
+                    stream.seek(8)
+                    try:
+                        parsed = json.loads(stream.read(header_size).decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+                        parsed = None
+                    if isinstance(parsed, dict) and any(
+                        isinstance(value, dict)
+                        and isinstance(value.get("dtype"), str)
+                        and isinstance(value.get("shape"), list)
+                        and isinstance(value.get("data_offsets"), list)
+                        and len(value["data_offsets"]) == 2
+                        and all(
+                            isinstance(offset, int) and not isinstance(offset, bool)
+                            for offset in value["data_offsets"]
+                        )
+                        for key, value in parsed.items()
+                        if key != "__metadata__"
+                    ):
+                        artifact = "safetensors"
+            if before.st_size:
+                stream.seek(max(0, before.st_size - _ARTIFACT_HEADER_BYTES))
+                tail = stream.read(_ARTIFACT_HEADER_BYTES)
+                if _PYINSTALLER_COOKIE in tail:
+                    artifact = "PyInstaller CArchive"
+            if changed_since(before, stream.fileno()):
+                self.ctx.error(f"code.filesystem: {rel}: file changed during artifact inspection")
+                return None
+            if artifact is None:
+                return None
+            return artifact, min(before.st_size, _ARTIFACT_HEADER_BYTES)
+
+    def _artifact_finding(self, label: str, rel: str, artifact: str, inspected: int) -> Finding:
+        finding = Finding(
+            surface=Surface.CODE,
+            connector=self.name,
+            kind=Kind.LOCAL_MODEL,
+            title=f"Model or bundled artifact identified: {Path(rel).name}",
+            resource=f"{label}:{rel}",
+            resource_type="local-model-artifact",
+            provider="local-model",
+            identity_discriminator=f"file-magic:{artifact.casefold()}",
+            metadata={"artifact_format": artifact, "inspection": "bounded-file-magic"},
+        )
+        finding.add_evidence(
+            Evidence(
+                signal=f"model-artifact:magic:{artifact.casefold().replace(' ', '-')}",
+                description=f"{artifact} file signature identified from a bounded header/tail read",
+                location=rel,
+                weight=0.8,
+            )
+        )
+        finding.metadata["bytes_inspected"] = inspected
+        return finalize(finding, self.index)
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
@@ -4222,6 +4328,7 @@ class FilesystemConnector(BaseConnector):
                 yield self._mcp_finding(label, root, rel, servers)
         yield from self._emit_manifests(scan, project_findings)
         yield from project_findings.values()
+        yield from scan.artifact_findings
         for rel, hits in scan.workflow_files.items():
             with self._isolated(rel, "workflow analysis"):
                 yield self._workflow_finding(label, root, rel, [*hits, *scan.workflow_providers.get(rel, [])])

@@ -43,6 +43,33 @@ def scan(run_connector, root: Path, **config):
     return findings, ctx.stats
 
 
+def test_model_and_pyinstaller_magic_is_bounded_and_read_only(run_connector, tmp_path):
+    write(tmp_path, "model.gguf", "").write_bytes(b"GGUF" + (3).to_bytes(4, "little") + b"\0" * 16)
+    write(tmp_path, "model.onnx", "").write_bytes(b"\x08\x08\x12\x00")
+    safe_header = json.dumps(
+        {"weights": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]}}, separators=(",", ":")
+    ).encode()
+    write(tmp_path, "model.safetensors", "").write_bytes(
+        len(safe_header).to_bytes(8, "little") + safe_header + b"\0" * 4
+    )
+    write(tmp_path, "bundle.exe", "").write_bytes(b"MZ" + b"\0" * 20 + b"MEI\014\013\012\013\016")
+    write(tmp_path, "decoy.gguf", "").write_bytes(b"GGUFx" + b"\0" * 32)
+    write(tmp_path, "decoy.txt", "GGUFx but not a model container\n")
+    write(tmp_path, "truncated.safetensors", "").write_bytes((100).to_bytes(8, "little") + b"{}")
+
+    findings, stats = scan(run_connector, tmp_path)
+
+    artifacts = [finding for finding in findings if finding.resource_type == "local-model-artifact"]
+    assert {finding.metadata["artifact_format"] for finding in artifacts} == {
+        "GGUF",
+        "ONNX",
+        "safetensors",
+        "PyInstaller CArchive",
+    }
+    assert not stats.incomplete
+    assert all(finding.evidence[0].signal.startswith("model-artifact:magic:") for finding in artifacts)
+
+
 def kinds(findings) -> list[Kind]:
     return [f.kind for f in findings]
 
