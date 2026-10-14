@@ -1,0 +1,238 @@
+{
+ "options": {
+  "min_confidence": 0.2,
+  "parallel": 2,
+  "connector_timeout_seconds": 600
+ },
+ "connectors": [
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-canbus-fw",
+   "label": "repo-canbus-fw"
+  },
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-eta-graph",
+   "label": "repo-eta-graph"
+  },
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-freight-crew",
+   "label": "repo-freight-crew"
+  },
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-infra",
+   "label": "repo-infra"
+  },
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-n8n-flows",
+   "label": "repo-n8n-flows"
+  },
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-ops-scripts",
+   "label": "repo-ops-scripts"
+  },
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-site",
+   "label": "repo-site"
+  },
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-support-bot-ts",
+   "label": "repo-support-bot-ts"
+  },
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-ua-parser",
+   "label": "repo-ua-parser"
+  },
+  {
+   "name": "code.filesystem",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/code/repo-wms-core",
+   "label": "repo-wms-core"
+  },
+  {
+   "name": "identity.okta",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/identity/okta_apps.json",
+   "org_url": "https://adatum.okta.com"
+  },
+  {
+   "name": "identity.entra",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/identity/entra_graph.json",
+   "tenant_id": "adatum-tenant"
+  },
+  {
+   "name": "identity.google-workspace",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/identity/google_tokens.json",
+   "customer": "C0adatum99"
+  },
+  {
+   "name": "identity.auth0",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/identity/auth0_clients.json",
+   "domain": "adatum.eu.auth0.com"
+  },
+  {
+   "name": "identity.jwt",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/identity/tokens.txt"
+  },
+  {
+   "name": "gateway.logs",
+   "label": "litellm_spend",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/gateway/litellm_spend.jsonl"
+  },
+  {
+   "name": "gateway.logs",
+   "label": "bedrock_invocations",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/gateway/bedrock_invocations.jsonl"
+  },
+  {
+   "name": "gateway.logs",
+   "label": "azure_openai_diag",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/gateway/azure_openai_diag.json"
+  },
+  {
+   "name": "gateway.logs",
+   "label": "egress_proxy",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/gateway/egress_proxy.log"
+  },
+  {
+   "name": "gateway.otel",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/gateway/otel_spans.json"
+  },
+  {
+   "name": "lowcode.power-platform",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/lowcode/power_platform.json"
+  },
+  {
+   "name": "lowcode.salesforce",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/lowcode/salesforce.json",
+   "instance_url": "https://adatum.my.salesforce.com"
+  },
+  {
+   "name": "lowcode.servicenow",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/lowcode/servicenow.json",
+   "instance": "https://adatum.service-now.com"
+  },
+  {
+   "name": "lowcode.n8n",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/lowcode/n8n_workflows.json"
+  },
+  {
+   "name": "lowcode.make",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/lowcode/make_scenarios.json"
+  },
+  {
+   "name": "lowcode.zapier",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/lowcode/zapier_zaps.csv"
+  },
+  {
+   "name": "lowcode.workato",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/lowcode/workato_recipes.json"
+  },
+  {
+   "name": "saas.slack",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/saas/slack.json"
+  },
+  {
+   "name": "saas.microsoft-teams",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/saas/teams_apps.json",
+   "tenant_id": "adatum-tenant"
+  },
+  {
+   "name": "saas.github-apps",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/saas/github_installations.json",
+   "org": "adatum-logistics"
+  },
+  {
+   "name": "saas.atlassian",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/saas/atlassian_plugins.json",
+   "site": "https://adatum.atlassian.net"
+  },
+  {
+   "name": "saas.notion",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/saas/notion_users.json"
+  },
+  {
+   "name": "saas.zoom",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/saas/zoom_apps.json"
+  },
+  {
+   "name": "saas.generic",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/saas/generic_apps.csv",
+   "platform": "google-marketplace",
+   "fields": {
+    "name": "App Name",
+    "scopes": "Permissions",
+    "users": "Users",
+    "owner": "Installed By",
+    "url": "Domain"
+   }
+  },
+  {
+   "name": "cloud.aws",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/cloud/aws_records.jsonl"
+  },
+  {
+   "name": "cloud.gcp",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/cloud/gcp_records.jsonl"
+  },
+  {
+   "name": "cloud.azure",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/cloud/azure_records.jsonl"
+  },
+  {
+   "name": "cloud.kubernetes",
+   "cluster": "adatum-prod",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/cloud/kubernetes_workloads.json"
+  },
+  {
+   "name": "endpoint.inventory",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/home/dev-laptop-01/dana",
+   "label": "dev-laptop-01"
+  },
+  {
+   "name": "endpoint.inventory",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/home/dev-laptop-02/marcus",
+   "label": "dev-laptop-02"
+  },
+  {
+   "name": "endpoint.inventory",
+   "path": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/home/win-laptop-03/priya",
+   "label": "win-laptop-03"
+  },
+  {
+   "name": "endpoint.mcp",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/endpoint-exports/mcp_tool_inventory.json"
+  },
+  {
+   "name": "endpoint.ollama",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/endpoint-exports/ollama_models.json"
+  },
+  {
+   "name": "endpoint.ebpf",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/endpoint-exports/ebpf_events.json"
+  },
+  {
+   "name": "network.logs",
+   "label": "adatum-zeek",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/network/zeek"
+  },
+  {
+   "name": "network.logs",
+   "label": "adatum-dns",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/network/generic_dns.csv"
+  },
+  {
+   "name": "runtime.processes",
+   "input": "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/runtime/processes.jsonl",
+   "label": "fleet"
+  }
+ ],
+ "inventory": [
+  "/tmp/shadowbench-estate-9d8gb1eo/shadowscan/estate/artifacts/registry/agents.yaml"
+ ]
+}
