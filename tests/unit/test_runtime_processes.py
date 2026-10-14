@@ -150,6 +150,50 @@ def test_live_mode_reads_proc(run_connector, monkeypatch, tmp_path):
     assert findings[0].account == "box"
 
 
+@pytest.mark.parametrize(
+    ("cmdline", "found"),
+    [
+        # A long prompt passed with -p: the leading arguments are intact.
+        (b"claude\0-p\0" + b"x" * 70_000 + b"\0", True),
+        # The partial final argument is dropped: cut at the limit, the package
+        # @anthropic-ai/claude-codex would read as @anthropic-ai/claude-code.
+        (b"npx\0" + b"y" * (64 * 1024 - 30) + b"\0@anthropic-ai/claude-codex\0", False),
+    ],
+    ids=["long-prompt", "partial-final-argument"],
+)
+def test_live_mode_classifies_a_truncated_command_line(run_connector, monkeypatch, tmp_path, cmdline, found):
+    """Regression (#220 review F3): a command line over the byte limit is truncated, not dropped."""
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    (proc / "11").mkdir(parents=True)
+    (proc / "11" / "cmdline").write_bytes(cmdline)
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert ctx.stats.incomplete
+    assert any("1 command line(s) exceeded 65,536 bytes" in w for w in ctx.stats.warnings)
+    if not found:
+        assert findings == []
+        return
+    (finding,) = findings
+    assert finding.title == "Claude Code running on box (root)"
+    assert finding.metadata["command_lines_truncated"] == 1
+    assert any("truncated" in limitation for limitation in finding.metadata["limitations"])
+
+
+def test_live_mode_command_line_at_the_limit_is_complete(run_connector, monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    (proc / "11").mkdir(parents=True)
+    cmdline = b"claude\0-p\0"
+    (proc / "11" / "cmdline").write_bytes(cmdline + b"x" * (64 * 1024 - len(cmdline) - 1) + b"\0")
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert len(findings) == 1 and not ctx.stats.incomplete and not ctx.stats.warnings
+    assert "command_lines_truncated" not in findings[0].metadata
+
+
 def test_live_mode_outside_linux_is_refused(run_connector, monkeypatch):
     monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Darwin")
     _, ctx = run_connector("runtime.processes")

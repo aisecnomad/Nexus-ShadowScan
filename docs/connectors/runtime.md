@@ -45,7 +45,12 @@ MCP package name are kept.
   the mount's `gid=` group (group 0 by default, so root sees everything); and
   `hidepid=ptraceable`, which hides processes the account may not trace even
   from root. `subset=pid` hides no process. Elsewhere, export osquery results
-  instead.
+  instead. A command line longer than 65,536 bytes (a long prompt passed with
+  `-p`, a JVM classpath) is classified from its leading complete arguments: the
+  final argument the limit may have cut is dropped, so a partial name never
+  matches a rule. The finding records `metadata.command_lines_truncated` with a
+  limitation, and the scan is incomplete because the unread arguments could
+  hold evidence.
 
 Options: `label` (host name for records that carry none; default the host
 name), `max_processes` (live mode bound, default 100,000; reaching it makes

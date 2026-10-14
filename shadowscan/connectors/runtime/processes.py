@@ -358,6 +358,7 @@ class _Run:
     last: str | None = None
     observed_at: str | None = None
     inspections: list[dict[str, Any]] = field(default_factory=list)
+    truncated: int = 0
 
 
 class RuntimeProcessConnector(BaseConnector, _NoDump):
@@ -433,6 +434,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             self.ctx.warn(f"runtime.processes: not every process is visible: {restricted}")
         seen = 0
         unreadable = 0
+        truncated = 0
         inspection_stopped = False
         users: dict[int, str] = {}
         budget = _InspectionBudget(
@@ -473,12 +475,16 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                         before = self._inspection_identity(directory, budget)
                     fd = os.open("cmdline", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
                     try:
-                        raw = os.read(fd, _MAX_CMDLINE_BYTES)
-                        if len(raw) >= _MAX_CMDLINE_BYTES:
-                            self.ctx.warn("runtime.processes: command line byte limit reached")
-                            continue
+                        raw = os.read(fd, _MAX_CMDLINE_BYTES + 1)
                     finally:
                         os.close(fd)
+                    cut = len(raw) > _MAX_CMDLINE_BYTES
+                    if cut:
+                        # Classify the bounded prefix (argv[0] and the leading
+                        # arguments), dropping the final argument the limit may
+                        # have cut: a partial name must not match a rule alone.
+                        raw = raw[: raw.rfind(b"\0", 0, _MAX_CMDLINE_BYTES) + 1]
+                        truncated += 1
                     uid = os.fstat(directory).st_uid
                     if before is not None:
                         inspection = self._inspect(directory, budget)
@@ -518,7 +524,16 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             }
             if inspection is not None:
                 record["inspection"] = inspection
+            if cut:
+                record["argv_truncated"] = True
             yield record
+        if truncated:
+            # Unread arguments could hold evidence (an MCP package name, a model
+            # path), so coverage is incomplete; the readable prefix still counts.
+            self.ctx.warn(
+                f"runtime.processes: {truncated} command line(s) exceeded {_MAX_CMDLINE_BYTES:,} bytes; "
+                "classified from the leading complete arguments"
+            )
         if unreadable:
             self.ctx.warn(f"runtime.processes: {unreadable} process(es) could not be read")
 
@@ -624,6 +639,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 run.observed_at = max(run.observed_at or rec["observed_at"], rec["observed_at"])
             if rec["inspection"] and len(run.inspections) < 10:
                 run.inspections.append({"pid": rec["pid"], **rec["inspection"]})
+            if rec["argv_truncated"]:
+                run.truncated += 1
         for run in sorted(runs.values(), key=lambda r: (r.host, r.user, r.rule.tool)):
             yield self._finding(run)
 
@@ -669,6 +686,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             "started": started.isoformat() if started else None,
             "observed_at": observed.isoformat() if observed else None,
             "inspection": inspection,
+            "argv_truncated": row.get("argv_truncated") is True,
         }
 
     def _normalise_inspection(self, raw: Any) -> dict[str, Any] | None:
@@ -837,6 +855,12 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             f.metadata["observed_at"] = run.observed_at
         if run.inspections:
             f.metadata.update(self._inspection_metadata(run.inspections))
+        if run.truncated:
+            f.metadata["command_lines_truncated"] = run.truncated
+            f.metadata.setdefault("limitations", []).append(
+                f"{run.truncated} command line(s) were truncated at {_MAX_CMDLINE_BYTES:,} bytes; "
+                "only their leading complete arguments were classified."
+            )
         return finalize(f, self.index)
 
 
