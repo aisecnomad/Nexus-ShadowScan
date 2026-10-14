@@ -142,17 +142,35 @@ def test_power_platform_app_later_page_failure_keeps_findings_and_scans_next_env
 @pytest.mark.parametrize(
     ("responses", "max_pages", "warning"),
     [
-        ([{"results": [{"id": "bot-1", "type": "bot"}], "has_more": True}], 1000, "without next_cursor"),
+        (
+            [{"results": [{"id": "bot-1", "type": "bot", "name": "Claude"}], "has_more": True}],
+            1000,
+            "without next_cursor",
+        ),
         (
             [
-                {"results": [{"id": "bot-1", "type": "bot"}], "has_more": True, "next_cursor": "same"},
-                {"results": [{"id": "bot-2", "type": "bot"}], "has_more": True, "next_cursor": "same"},
+                {
+                    "results": [{"id": "bot-1", "type": "bot", "name": "Claude"}],
+                    "has_more": True,
+                    "next_cursor": "same",
+                },
+                {
+                    "results": [{"id": "bot-2", "type": "bot", "name": "Claude"}],
+                    "has_more": True,
+                    "next_cursor": "same",
+                },
             ],
             1000,
             "repeated users cursor",
         ),
         (
-            [{"results": [{"id": "bot-1", "type": "bot"}], "has_more": True, "next_cursor": "remaining"}],
+            [
+                {
+                    "results": [{"id": "bot-1", "type": "bot", "name": "Claude"}],
+                    "has_more": True,
+                    "next_cursor": "remaining",
+                }
+            ],
             1,
             "page limit",
         ),
@@ -183,8 +201,16 @@ def test_notion_normal_pagination_is_complete(monkeypatch, run_connector):
     def get_json(self, path, *, params):
         seen.append(params)
         if "start_cursor" in params:
-            return {"results": [{"id": "bot-2", "type": "bot"}], "has_more": False, "next_cursor": None}
-        return {"results": [{"id": "bot-1", "type": "bot"}], "has_more": True, "next_cursor": "cursor-1"}
+            return {
+                "results": [{"id": "bot-2", "type": "bot", "name": "Claude"}],
+                "has_more": False,
+                "next_cursor": None,
+            }
+        return {
+            "results": [{"id": "bot-1", "type": "bot", "name": "Claude"}],
+            "has_more": True,
+            "next_cursor": "cursor-1",
+        }
 
     monkeypatch.setattr(HttpClient, "get_json", get_json)
     findings, ctx = run_connector("saas.notion", token="test")
@@ -197,9 +223,13 @@ def test_notion_normal_pagination_is_complete(monkeypatch, run_connector):
 @pytest.mark.parametrize(
     "page",
     [
-        {"results": [{"id": "bot-1", "type": "bot"}], "next_cursor": "uncollected"},
-        {"results": [{"id": "bot-1", "type": "bot"}], "has_more": "false", "next_cursor": "uncollected"},
-        {"results": [{"id": "bot-1", "type": "bot"}], "has_more": 0},
+        {"results": [{"id": "bot-1", "type": "bot", "name": "Claude"}], "next_cursor": "uncollected"},
+        {
+            "results": [{"id": "bot-1", "type": "bot", "name": "Claude"}],
+            "has_more": "false",
+            "next_cursor": "uncollected",
+        },
+        {"results": [{"id": "bot-1", "type": "bot", "name": "Claude"}], "has_more": 0},
     ],
 )
 def test_notion_missing_or_nonboolean_has_more_is_incomplete(monkeypatch, run_connector, page):

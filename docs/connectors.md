@@ -26,6 +26,13 @@ internal PKI fails verification (and the scan is incomplete) unless the connecto
 offers an explicit CA option. Only `identity.jwt` does today (`ca_bundle`, JWKS
 endpoint); other connectors trust the default CA store.
 
+Ambiguous app-name signals retain possible-product hints until the same product
+has non-name corroboration, and an app with no established AI evidence is
+bounded at possible confidence; see [identity attribution](connectors/identity.md#ambiguous-product-names).
+Cross-surface correlation separates exact identifier links from review
+candidates (name similarity, or an identifier without a verifiable shared
+tenant or account); see the [pipeline](architecture.md#scan-pipeline).
+
 ### Offline input limits
 
 Offline file and directory inputs use shared safety limits: 10,000 files,
@@ -622,7 +629,8 @@ eligible for collection.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
-audiences and scopes, AI-named apps. Auth: M2M client for the Management API
+audiences and scopes, AI-named apps, and other clients with an established AI
+product or model provider. Auth: M2M client for the Management API
 (`read:clients`, `read:client_grants`) or `token`.
 Options: `domain` (tenant domain such as `acme.eu.auth0.com`, env
 `AUTH0_DOMAIN`) and the M2M application's `client_id` and `client_secret` (env
@@ -705,7 +713,7 @@ hint, never an agent indicator, and a host counts only through the one
 service it belongs to (its highest-weight signature), so browsing
 `chatgpt.com` is AI use while traffic to `api2.cursor.sh` is a coding agent.
 
-Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
+Options: `format`, `min_events`, `llm_hosts_only`, `internal_model_hosts`, `max_records`,
 `correlation_bindings`, and `label` (or `gateway_name` when the entry has no
 label), which names the gateway on findings: it becomes the provider and the
 account of callers without a tenant/account scope.
@@ -757,7 +765,9 @@ query, at most 1000).
 
 ### `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
-`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer.
+`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer. A flow needs
+a ServiceNow AI marker or an AI product or provider name; the generic AI-name
+hint alone does not qualify it.
 
 Options: `instance` (env `SNOW_INSTANCE`), `username` and `password` (env
 `SNOW_USERNAME`, `SNOW_PASSWORD`) or `token` (env `SNOW_TOKEN`) for a bearer
@@ -769,7 +779,9 @@ as unresolved observations, make coverage incomplete and cannot inherit
 registry approval from an unrelated parent.
 
 ### `lowcode.n8n`
-n8n workflows with AI or agent steps, including LangChain nodes; triggers
+n8n workflows with AI or agent steps, including LangChain nodes and HTTP
+Request POSTs to a model API (a known model host, or a versioned generation
+route on a host that is not a messaging API); triggers
 (schedule → `scheduled`, webhook or app event → `event-triggered`, both with
 `autonomous`; a manual, chat, form or evaluation trigger adds neither), code
 steps (→ code-exec) and models. Live
@@ -807,7 +819,8 @@ models. Live pagination is bounded by
 
 ### `saas.slack`
 `users.list` (bots), `admin.apps.approved.list` / `restricted` / `requests`
-(scopes, pending requests), `team.integrationLogs` (who installed what).
+(scopes, pending requests), `team.integrationLogs` (who installed what). The
+app id is matched as the app's client id.
 `team.info` must return an authenticated workspace identity. If `team_id` is
 configured, it must match exactly before inventory calls begin. Missing/null
 collection arrays and malformed pagination are incomplete coverage. Later
@@ -856,7 +869,7 @@ offline exports. Options: `site`
 (`jira`, `confluence`; default both).
 
 ### `saas.notion`
-Notion bot users. A missing or repeated pagination cursor, or reaching the live
+Notion bot users with an established AI product or provider. A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete. Provider error
 envelopes make collection incomplete even when they include empty record arrays;
 valid observations from other pages remain available. The same rule applies to
@@ -1004,7 +1017,8 @@ Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
 and endpoints per location, Dialogflow CX agents, Discovery Engine /
 Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,
 service accounts (user-managed keys), API keys restricted to Gemini, Secret
-Manager names, optional Cloud Audit Log callers (`audit_days`). Auth: ADC via
+Manager names, optional Cloud Audit Log callers (`audit_days`). Cloud Run and
+Cloud Functions names are hints only. Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows potential access, not observed agent execution. Project IAM collection
@@ -1080,7 +1094,9 @@ converted is skipped with a warning and makes the scan incomplete.
 Analyze offline Kubernetes and OpenShift workload exports (images, exposure,
 GPU, privilege and egress-policy indicators). Live collection is not
 implemented and the connectors use no credentials; their findings carry no
-device name, so lifecycle links do not apply to them. See the
+device name, so lifecycle links do not apply to them. Engine-named images,
+GPU requests or limits and `--model` arguments corroborate serving workloads;
+a model argument and a GPU alone never make an agent. See the
 [Kubernetes and OpenShift guide](connectors/kubernetes.md).
 
 ## Endpoint

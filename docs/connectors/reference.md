@@ -241,6 +241,7 @@ Offline input: JSONL / JSON / CSV / text access logs.
 | `format` | force schema: litellm\|portkey\|kong\|cloudflare\|helicone\|langfuse\|bedrock\|azure-openai\|vertex\|openai-usage\|anthropic-usage\|access-log\|generic (default auto) |
 | `min_events` | ignore callers with fewer events, a positive integer (default 1) |
 | `llm_hosts_only` | for access logs, keep only requests to known LLM/agent hosts (default true) |
+| `internal_model_hosts` | exact internal model-server hostnames to recognize (default \[\]) |
 | `max_records` | stop after N records (default 5,000,000) |
 | `label` | gateway name recorded as the finding provider and as the account of unscoped callers (defaults to the entry's `label`) |
 | `gateway_name` | fallback for `label` when the connector entry has none |

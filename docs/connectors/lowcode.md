@@ -54,6 +54,15 @@ flag or an `agent_type` of exactly `autonomous`. A use case or its
 `event-triggered` for a record or application trigger; a use case without a
 trigger, which runs from a conversation, adds neither.
 
+A `sys_hub_flow` is reported when its name, description or scope carries a
+ServiceNow AI marker (Now Assist, generative AI, GPT, LLM, `sn_generative_ai`,
+`sn_aia`, AI agent) or a name that establishes an AI product or provider (a
+flow named for Claude or OpenAI). The generic AI-name hint ("Copilot",
+"assistant") and ambiguous product names do not qualify a flow on their own,
+so a "Copilot seat reclamation" flow that administers licences is not
+reported. This is a known false-negative class: a genuine AI flow named only
+with a generic word and no marker is missed.
+
 ## `lowcode.n8n` · `lowcode.make` · `lowcode.zapier` · `lowcode.workato`
 Workflows/scenarios/zaps/recipes with AI or agent steps (n8n LangChain nodes,
 Make AI modules and AI Agents, Zapier AI/Agents from account exports, Workato
@@ -74,6 +83,19 @@ Zapier export record needs an `id`, `title`,
 `name` or `Zap` field; any other object is reported as an unsupported record
 and makes the scan incomplete. A CSV row whose cells are all blank is skipped
 without a diagnostic.
+
+An n8n step counts as AI when its node type is a LangChain, model-provider,
+agent or MCP node (`mcp` matched as a whole token, so `mcp2515` hardware
+nodes do not count), or when it is an HTTP Request node that calls a model
+API. The HTTP rule: the node POSTs to a generation route (OpenAI, Anthropic,
+Azure OpenAI, Bedrock, Vertex or Ollama style) and either the host is a known
+model host, or the route is versioned or namespaced (`/v1/chat/completions`,
+`/v1/messages`, `/v1/responses`, `/api/generate`, `/api/chat`) on a host that
+is not a known SMS or messaging API (Vonage, MessageBird, Twilio, Sinch,
+Plivo, Telnyx). A bare `/messages`, `/responses` or `/completions` on an
+unknown host, a GET, and request bodies with `model` or `messages` keys never
+count. An HTTP model step makes the workflow AI use, not an agent: only an
+agent or agent-tool node makes an n8n workflow an agent.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

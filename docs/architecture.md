@@ -101,9 +101,21 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       large to sanitize within the output budget is dropped and reported as an
       `engine.postprocess` error.
    2. **Correlate** (`correlation.py`). Findings from different connectors or
-      surfaces that share resource ids, normalised names or repository labels
-      are linked in
-      `metadata.related`. Gateway activity is attached to the code it is bound
+      surfaces that share an exact identifier are linked in `metadata.related`,
+      with `metadata.related_details` records of the identifier type, the
+      matching fields and the scope. A fully qualified reference (an ARN, a
+      GCP resource name, an Azure resource id, an OCI OCID) carries its own
+      account or project. A local identifier links exactly only within a
+      declared shared scope: the Entra tenant for an Entra application id
+      (reported as `app_id`, `client_id`, a Teams `bot_id` or an Azure Bot
+      `msa_app_id`), or a shared tenant, workspace, cloud account,
+      subscription or project. Vendor names and gateway labels are not scope.
+      Normalised names, and equal local identifiers whose shared scope cannot
+      be verified, produce only `metadata.related_candidates`, with candidate
+      assurance and a limitation; they never enter the exact-link list. A
+      conflicting declared tenant, account, subscription, project or
+      workspace prevents both kinds of link. These links describe the supplied
+      observations, not independently verified ownership. Gateway activity is attached to the code it is bound
       to by `correlation_bindings` (`metadata.runtime_activity`). Endpoint
       findings are linked to a running process of the same tool on the same
       device (`metadata.lifecycle`, `observed-running`). Correlation changes

@@ -387,6 +387,16 @@ _SUFFIXED_INFERENCE_OPERATION = re.compile(
     r"\.(?:css|js|map|png|jpe?g|gif|ico|svg|woff2?)$",
     re.I,
 )
+# Ollama-style (/api/chat, /api/generate, /api/tags) and bare TGI
+# (/generate, /generate_stream) routes. They are ordinary paths on other
+# services, so they identify model traffic only with a model field, on a known
+# or operator-declared model host, or (Ollama-style only) when no host was
+# parsed, as for a local server logged as localhost:11434.
+_SELF_HOSTED_ROUTE = re.compile(r"/(?:(api/(?:chat|generate|tags))|generate(?:_stream)?)\b")
+# An internal model-server hostname declared in ``internal_model_hosts``.
+_INTERNAL_HOST = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+)
 # Access-log trailer keys that name the requested host, and the host a value starts with.
 _TRAILER_HOST_KEYS = frozenset({"host", "authority", "upstream_host", "server_name"})
 _HOST_VALUE = re.compile(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -1077,6 +1087,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         ),
         "min_events": "ignore callers with fewer events, a positive integer (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
+        "internal_model_hosts": "exact internal model-server hostnames to recognize (default [])",
         "max_records": "stop after N records (default 5,000,000)",
         "label": (
             "gateway name recorded as the finding provider and as the account of unscoped callers (defaults "
@@ -1103,6 +1114,13 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         self.format = ctx.get("format")
         self.min_events = _positive_limit(ctx.get("min_events", 1), "min_events")
         self.llm_hosts_only = config_boolean(ctx.get("llm_hosts_only", True), "llm_hosts_only")
+        internal_hosts = ctx.get("internal_model_hosts", [])
+        if not isinstance(internal_hosts, list) or any(
+            not isinstance(host, str) or len(host) > 253 or not _INTERNAL_HOST.fullmatch(host.strip().lower())
+            for host in internal_hosts
+        ):
+            raise ConnectorError("gateway.logs: internal_model_hosts must be a list of hostnames")
+        self.internal_model_hosts = {host.strip().lower() for host in internal_hosts}
         self.max_records = _positive_limit(ctx.get("max_records", 5_000_000), "max_records")
         self.label = ctx.get("label") or ctx.get("gateway_name")
         if self.format not in _FORMATS:
@@ -1139,6 +1157,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 self.llm_hosts_only,
                 self.max_records,
                 sorted(self.correlation_bindings, key=lambda b: json.dumps(b, sort_keys=True)),
+                # Appended only when set, so existing sources keep their finding ids.
+                *([sorted(self.internal_model_hosts)] if self.internal_model_hosts else []),
             ],
             sort_keys=True,
         )
@@ -1670,12 +1690,18 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             r"|runs|audio|images|files|batches|realtime)"
             r"|/openai/deployments/|/generateContent|:generateContent|:streamGenerateContent"
             r"|/invoke(?:-with-response-stream)?|/converse|/mcp\b|/sse\b|/a2a\b|/agents?/|/predict\b"
-            r"|/api/(?:chat|generate|tags)\b"
             # Cloudflare Workers AI inference on the general api.cloudflare.com REST API.
             r"|/accounts/[^/\s?#]+/ai/(?:run|v1)/",
             text,
         ):
             return True
+        if ev.path and (route := _SELF_HOSTED_ROUTE.search(ev.path.partition("?")[0])):
+            if ev.model or self._is_llm_host(ev.host):
+                return True
+            # A parsed non-model host contradicts the route; an unparsed host
+            # does not. A bare TGI /generate needs a known or declared host.
+            if ev.host is None and route.group(1) is not None:
+                return True
         if ev.schema == "access-log" and ev.path:
             # A known provider/agent host identifies inference traffic even
             # when the operation is not an enumerated endpoint; static assets
@@ -1697,9 +1723,11 @@ class GatewayLogConnector(BaseConnector, _NoDump):
     def _is_llm_host(self, host: str | None) -> bool:
         # Generic vendor hosts (a general REST API, a dataset site) carry hint weights below
         # the threshold and do not identify inference traffic by themselves.
-        return bool(host) and any(
-            m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host or "")
-        )
+        if not host:
+            return False
+        if host.lower().rstrip(".") in self.internal_model_hosts:
+            return True
+        return any(m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host))
 
     def _untrusted_host_is_llm(self, ev: Event, rec: dict[str, Any]) -> bool:
         """Whether an excluded request would be LLM traffic with a host token a client could have written."""
