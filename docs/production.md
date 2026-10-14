@@ -14,9 +14,10 @@ could omit an unread export suffix at the object limit, collapse different long
 object names into one identity, or reject a valid CronJob. The corrected scan
 retains full valid names and analyzes the nested CronJob pod template. A limit
 that leaves objects unread, a chunked `List` page (`metadata.continue` or
-`remainingItemCount`), an overlong name, a non-string or overlong namespace or
-a malformed template marks coverage incomplete; inspect retained findings
-without treating the report as complete estate coverage.
+`remainingItemCount`), an overlong name, a namespace that is not an RFC 1123
+DNS label (not a string, or with uppercase letters, a `/` or more than 63
+characters) or a malformed template marks coverage incomplete; inspect
+retained findings without treating the report as complete estate coverage.
 
 Kubernetes resources with names longer than 160 characters now have their full
 name in `k8s:<cluster>/<namespace>/<kind>/<name>`. Regenerate and review cards
@@ -119,9 +120,12 @@ where the previous revision completed:
   audit is marked `partial` (`static_instruction_audit.partial`, status
   `partial` when nothing was found).
 - Network records with a malformed observation context, TTL, timestamp or JA4
-  value, or over 32 DNS answers. Flow attribution is then withheld only for
+  value, or over 32 DNS answers. A malformed context or JA4 value in a DNS or
+  TLS record, or an answer list over 32, withholds flow attribution only for
   the client the record names, or for the whole input when the client is
-  unknown or `max_records` was reached.
+  unknown; reaching `max_records` withholds it for the whole input. A
+  malformed TTL or timestamp keeps the record with that field unknown and
+  does not withhold attribution for its client (see the network guide).
 - CloudTrail exports with invalid timestamps or conflicting event IDs.
   CloudTrail lineage sampling bounds (100 invocations per caller, 2,000
   invocations and 2,000 STS assumptions per run) only mark lineage `partial`,
