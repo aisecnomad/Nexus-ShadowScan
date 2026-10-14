@@ -5,13 +5,21 @@
 at the commit the code corpus (``benchmarks/shadow-ai-discovery``) pins. Only ``git`` runs,
 and the repositories are untrusted input, so every call is hardened:
 
+* git reads none of the operator's system or global configuration or attributes
+  (``GIT_CONFIG_NOSYSTEM``, ``GIT_CONFIG_GLOBAL=/dev/null``, ``GIT_ATTR_NOSYSTEM``,
+  ``core.attributesFile=/dev/null``), and ``.git/info/attributes`` unsets ``filter`` for
+  every path, so a repository's ``.gitattributes`` cannot select a filter driver (git-lfs,
+  say) that then runs on checkout; an operator behind a TLS-inspecting proxy sets
+  ``HTTPS_PROXY`` and ``GIT_SSL_CAINFO`` in the environment, since ``http.proxy`` or
+  ``http.sslCAInfo`` in ``~/.gitconfig`` no longer apply;
 * the remote must be an ``https://`` URL without credentials, and git may use no other
   transport (``protocol.allow=never`` plus ``protocol.https.allow=always``), so neither a
   redirect nor a submodule URL reaches ``ssh``, ``file`` or ``ext``;
 * hooks are disabled (``core.hooksPath=/dev/null``, which also overrides a hooks path in
   the operator's configuration) and submodules are never fetched or checked out;
 * the pinned commit is fetched by SHA (depth 1), falling back to the default branch only
-  when its tip is that commit, and ``rev-parse HEAD`` must equal the pinned SHA;
+  when its tip is that commit; the fetched commit is checked before anything is checked
+  out, and ``rev-parse HEAD`` must equal the pinned SHA afterwards;
 * ``DEST/<repo id>`` must not be a symbolic link: an existing link is refused, never
   followed, and a stale checkout is replaced only when it is a real directory;
 * git gets the caller's environment without its ``GIT_*`` variables (only the TLS trust
@@ -39,6 +47,7 @@ from tools.shadowbench.cases.generate import CODE_CORPUS, CODE_REPOS
 GIT_CONFIG: tuple[str, ...] = (
     "core.hooksPath=/dev/null",
     "core.fsmonitor=false",
+    "core.attributesFile=/dev/null",
     "submodule.recurse=false",
     "fetch.recurseSubmodules=false",
     "protocol.allow=never",
@@ -61,6 +70,10 @@ def git_env(checkout: Path) -> dict[str, str]:
     """The environment of every git call in ``checkout`` (see the module docstring)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_") or k in GIT_ENV_KEEP}
     env["GIT_TERMINAL_PROMPT"] = "0"
+    # The operator's own configuration may define filter drivers a fetched .gitattributes can select.
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_ATTR_NOSYSTEM"] = "1"
     # Without a .git of its own, the checkout must never resolve to a repository above it.
     env["GIT_CEILING_DIRECTORIES"] = str(checkout.resolve().parent)
     return env
@@ -120,6 +133,9 @@ def fetch_pinned(url: str, commit: str, branch: str, dest: Path) -> str:
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
     _check(_git(["init", "-q"], dest), "git init")
+    # info/attributes overrides every .gitattributes in the tree: no path selects a filter driver.
+    (dest / ".git" / "info").mkdir(parents=True, exist_ok=True)
+    (dest / ".git" / "info" / "attributes").write_text("* !filter\n", encoding="utf-8")
     _check(_git(["remote", "add", "origin", url], dest), "git remote add")
     fetch = ["fetch", "-q", "--depth", "1", "--no-tags", "--no-recurse-submodules", "origin"]
     fetched = _git([*fetch, commit], dest, FETCH_TIMEOUT)
@@ -128,6 +144,10 @@ def fetch_pinned(url: str, commit: str, branch: str, dest: Path) -> str:
         if not _BRANCH.match(branch) or ".." in branch:
             raise FetchError(f"fetch of {commit} failed and default branch {branch!r} is not a branch name")
         _check(_git([*fetch, f"refs/heads/{branch}"], dest, FETCH_TIMEOUT), "fetch by commit and branch")
+    fetched_commit = _git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"], dest).stdout.strip()
+    if fetched_commit != commit:
+        # A default branch that moved on: refuse before any of its content reaches the disk.
+        raise FetchError(f"fetched {fetched_commit or '(nothing)'}, not the pinned commit {commit}")
     _check(
         _git(["checkout", "-q", "--detach", "--no-recurse-submodules", "FETCH_HEAD"], dest, FETCH_TIMEOUT),
         "git checkout",

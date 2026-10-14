@@ -807,8 +807,10 @@ def test_fetch_disables_hooks_and_submodules(tmp_path: Path, monkeypatch: pytest
 
 
 def test_fetch_rejects_a_head_other_than_the_pin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    code, _ = _fetch_main(tmp_path, monkeypatch, "https://github.com/demo/repo.git", "f" * 40)
+    code, fake = _fetch_main(tmp_path, monkeypatch, "https://github.com/demo/repo.git", "f" * 40)
     assert code == 1
+    # A default branch that moved past the pin used to be checked out before the HEAD check refused it.
+    assert not [argv for argv in fake.calls if "checkout" in argv]
 
 
 def test_fetch_never_follows_a_symlinked_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -865,7 +867,14 @@ GIT_REDIRECTS = {
     "GIT_CONFIG_VALUE_0": "/operator/hooks",
     "GIT_SSL_NO_VERIFY": "1",
 }
-GIT_ENV_ALLOWED = {"GIT_SSL_CAINFO", "GIT_TERMINAL_PROMPT", "GIT_CEILING_DIRECTORIES"}
+GIT_ENV_ALLOWED = {
+    "GIT_SSL_CAINFO",
+    "GIT_TERMINAL_PROMPT",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_ATTR_NOSYSTEM",
+}
 
 
 def test_fetch_runs_git_without_the_callers_git_variables(
@@ -885,6 +894,11 @@ def test_fetch_runs_git_without_the_callers_git_variables(
         assert {key for key in env if key.startswith("GIT_")} <= GIT_ENV_ALLOWED, argv
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         assert env["GIT_CEILING_DIRECTORIES"] == str(checkout.parent)
+        assert (env["GIT_CONFIG_NOSYSTEM"], env["GIT_CONFIG_GLOBAL"], env["GIT_ATTR_NOSYSTEM"]) == (
+            "1",
+            os.devnull,
+            "1",
+        )
         assert env["GIT_SSL_CAINFO"] == "/etc/ssl/proxy-ca.pem"  # an operator's proxy CA still applies
         assert env["HTTPS_PROXY"] == "http://proxy.invalid:3128"
         assert ("-c", "http.sslVerify=true") in set(zip(argv, argv[1:], strict=False))
@@ -919,3 +933,33 @@ def test_fetch_leaves_the_repository_in_git_dir_alone(
     assert Path(_git("rev-parse", "--absolute-git-dir", cwd=dest)).resolve() == (dest / ".git").resolve()
     assert _git("rev-parse", "HEAD", cwd=dest) == pinned
     assert (dest / "README").read_text(encoding="utf-8") == "pinned\n"
+
+
+@pytest.mark.skipif(not shutil.which("git"), reason="needs git")
+def test_fetch_runs_no_filter_driver_from_the_operator_or_the_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repository's .gitattributes selected a filter driver from the operator's git config, and it ran."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _git("init", "-q", "-b", "main", cwd=src)
+    (src / ".gitattributes").write_text("*.txt filter=demo\n", encoding="utf-8")
+    (src / "a.txt").write_text("blob\n", encoding="utf-8")
+    _git("add", ".gitattributes", "a.txt", cwd=src)
+    _git("commit", "-q", "-m", "pinned", cwd=src)
+    pinned = _git("rev-parse", "HEAD", cwd=src)
+    ran = tmp_path / "smudge-ran"
+    home = tmp_path / "operator-home"
+    home.mkdir()
+    (home / ".gitconfig").write_text(
+        f'[filter "demo"]\n\tsmudge = touch {ran} && sed s/blob/smudged/\n\trequired = true\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+    monkeypatch.setattr(fetch_code, "https_remote", lambda remote: remote)
+    monkeypatch.setattr(fetch_code, "GIT_CONFIG", (*fetch_code.GIT_CONFIG, "protocol.file.allow=always"))
+    dest = tmp_path / "dest" / "repo"
+    assert fetch_code.fetch_pinned(f"file://{src}", pinned, "main", dest) == pinned
+    assert not ran.exists(), "the operator's filter driver ran on the fetched repository"
+    assert (dest / "a.txt").read_text(encoding="utf-8") == "blob\n"

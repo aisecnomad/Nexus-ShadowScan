@@ -177,9 +177,13 @@ python -m tools.shadowbench.cases report --corpus benchmarks/shadowbench/cases/c
 `fetch_code` fetches the 26 pinned code-surface repositories with its own
 hardened `git` calls: `https` remotes only, hooks off, submodules never
 fetched, the caller's `GIT_*` variables dropped except the TLS CA settings,
-TLS verification on, no symlinked destination, and `rev-parse HEAD` checked
-against the pinned commit. The runner checks each checkout's HEAD again before
-copying it into a case.
+none of the operator's system or global git configuration read and no filter
+driver run (so a repository's `.gitattributes` cannot start git-lfs or any
+other driver on checkout), TLS verification on, no symlinked destination, the
+fetched commit checked against the pin before checkout, and `rev-parse HEAD`
+checked after it. A proxy or CA bundle therefore comes from `HTTPS_PROXY` and
+`GIT_SSL_CAINFO`, not from `~/.gitconfig`. The runner checks each checkout's
+HEAD again before copying it into a case.
 
 `run` records in `manifest.json` the corpus path and SHA-256, the generator
 digest, the platform, each tool's version and row-status counts, and the
