@@ -103,7 +103,10 @@ where the previous revision completed:
   classified from its leading complete arguments, with
   `metadata.command_lines_truncated`.
 - `SKILL.md` and MCP description audits over 64 KiB, with malformed front
-  matter or an unclosed fence.
+  matter or an unclosed fence. A line over 4,096 characters does not end the
+  scan incomplete: its first and last 4,096 characters are audited and the
+  audit is marked `partial` (`static_instruction_audit.partial`, status
+  `partial` when nothing was found).
 - Network records with a malformed observation context, TTL, timestamp or JA4
   value, or over 32 DNS answers. Flow attribution is then withheld only for
   the client the record names, or for the whole input when the client is

@@ -185,8 +185,10 @@ with zero-weight evidence and explicit limitations, and retains no description
 excerpts. Quoted text, fenced code, YAML front matter and explicit prohibitions
 are excluded from this narrow English audit. An audit indicator also raises the
 `tool-poisoning` tag; an audit that finds nothing never removes it.
-Descriptions exceeding 64 KiB, overlong lines, malformed front matter and
-unclosed fences mark coverage incomplete. Tool definitions are fingerprinted
+Descriptions exceeding 64 KiB, malformed front matter and unclosed fences
+mark coverage incomplete. A line over 4,096 characters is audited in its first
+and last 4,096 characters and marks the audit `partial`, not the scan
+incomplete. Tool definitions are fingerprinted
 for downstream comparison, but baseline/rug-pull detection is not yet implemented. No tool is
 invoked. With `options.mcp_registries`, a tool finding whose server is an
 HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL

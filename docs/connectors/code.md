@@ -914,6 +914,17 @@ rules and files. The checks are bounded regexes; nothing is executed. They do
 not judge whether an instruction is malicious: a hidden comment may be a
 template note, and a documented installer may pipe to a shell. Read the file.
 
+A `SKILL.md` also gets a bounded static instruction audit
+(`metadata.static_instruction_audit`, one entry per file): direct English
+instruction-override and sensitive-value disclosure candidates, by rule and
+line, with zero-weight evidence and no excerpts. Quoted examples, fenced and
+indented code, block quotes and explicit prohibitions are excluded. A line
+over 4,096 characters is audited in its first and last 4,096 characters; its
+middle is not, so the audit is marked `partial: true` (status `partial` when
+nothing was found) and the scan stays complete. Text over 64 KiB, malformed
+or oversized YAML front matter and an unclosed fence make the audit and the
+scan incomplete.
+
 ### Coding-agent settings: posture and approval
 
 Claude Code (`.claude/settings.json`, `.claude/settings.local.json`), Codex
