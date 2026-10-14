@@ -63,7 +63,10 @@ stopped running.
 
 - `code.filesystem` (and `code.github` / `code.gitlab` checkouts):
   `inspect_model_artifacts` and `model_metadata_bytes` (default 65,536) for
-  bounded GGUF, safetensors, ONNX and PyInstaller metadata inventory. An
+  bounded GGUF, safetensors, ONNX and PyInstaller metadata inventory. GGUF
+  array values (tokenizer vocabularies) are skipped under their own bounds,
+  so real llama.cpp models are inventoried. Hugging Face cache links are not
+  followed (see the source guide). An
   extensionless file is searched for a PyInstaller cookie only when it starts
   with an ELF, PE or Mach-O header. When a root's 32 MiB artifact budget is
   spent, the remaining selected files are counted in one warning that marks

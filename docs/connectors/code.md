@@ -1086,7 +1086,12 @@ selected include/exclude scope. This is off by default. `code.github` and
 budget, the ordinary entry/deadline budgets and an 8,192-field limit.
 
 - GGUF v2/v3: literal magic, header counts, bounded metadata and tensor descriptors;
-  tensor payloads and quantization semantics are not validated.
+  tensor payloads and quantization semantics are not validated. Array values
+  (a llama.cpp vocabulary holds 32,000–256,000 tokens, plus scores and merges)
+  are skipped without being decoded or counted as fields: fixed-size items by
+  seeking, strings by walking their length prefixes in 64 KiB chunks. Skipping
+  has its own bounds: 8,388,608 array elements and 64 MiB read per file, and
+  256 MiB read per root; the bytes read are reported as `array_bytes_skimmed`.
 - safetensors: bounded length-prefixed strict JSON, shape/dtype sizes and contiguous
   payload offsets; metadata values and tensor names are not included in output.
 - ONNX: a bounded protobuf-envelope check of supported IR versions 1–13, graph and
@@ -1111,6 +1116,15 @@ coverage incomplete. All reads use
 confined regular-file handles; symlinks, FIFOs and device files are never opened
 as model payloads. Headers are an inventory aid, not a guarantee that an artifact
 is safe to load. No deserializer, inference engine or scanned executable runs.
+
+Known limitation: a Hugging Face cache (`snapshots/<revision>/model.safetensors`
+linked to an extensionless file under `blobs/`) is not inventoried through its
+links, because inventory symlinks are never followed. Each link is reported as
+an unscanned symbolic link (coverage incomplete). A GGUF blob is still
+inventoried at its `blobs/` path by its magic; a safetensors blob has no magic
+and is read as an ordinary extensionless file, so its binary content is
+reported as unreadable. Scan a materialised copy instead, such as a download
+to a local directory that writes regular files.
 
 Format references: [GGUF](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md),
 [safetensors](https://github.com/safetensors/safetensors/blob/main/README.md),

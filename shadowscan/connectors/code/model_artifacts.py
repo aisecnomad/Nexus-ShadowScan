@@ -2,6 +2,8 @@
 
 Format evidence describes an artifact, not a working model or an active agent.
 The reader seeks across payloads and bounds cumulative metadata bytes and fields.
+GGUF array values (tokenizer vocabularies, scores, merges) are skipped without
+being materialised, under their own element and byte bounds.
 """
 
 from __future__ import annotations
@@ -18,6 +20,26 @@ from shadowscan.utils.safe_json import strict_json_loads
 DEFAULT_METADATA_BYTES = 64 * 1024
 MAX_FIELDS = 8192
 MAX_TENSORS = 2048
+# GGUF arrays are skipped, not parsed into fields: fixed-size items by seeking,
+# strings by walking their length prefixes in bounded chunks. These bounds
+# apply per file; the bytes read while skipping are also reported to the
+# caller's ``skip_charge``.
+MAX_ARRAY_ELEMENTS = 8 * 1024 * 1024
+MAX_ARRAY_SKIP_BYTES = 64 * 1024 * 1024
+_SKIP_CHUNK = 64 * 1024
+_GGUF_SCALARS = {
+    0: "<B",
+    1: "<b",
+    2: "<H",
+    3: "<h",
+    4: "<I",
+    5: "<i",
+    6: "<f",
+    7: "<?",
+    10: "<Q",
+    11: "<q",
+    12: "<d",
+}
 PYINSTALLER_MAGIC = b"MEI\x0c\x0b\x0a\x0b\x0e"
 ARTIFACT_SUFFIXES = frozenset({".gguf", ".safetensors", ".onnx", ".exe", ".bin", ".pkg"})
 # ELF, PE (MZ) and Mach-O (32/64-bit, both byte orders, universal) headers. An
@@ -62,10 +84,14 @@ class _Reader:
         budget: int,
         check: Callable[[], None],
         charge: Callable[[int], None],
+        skip_charge: Callable[[int], None],
     ) -> None:
         self.stream, self.size, self.remaining, self.check = stream, size, budget, check
         self.fields = 0
         self.charge = charge
+        self.skip_charge = skip_charge
+        self.elements = 0
+        self.skimmed = 0
 
     def read(self, size: int) -> bytes:
         self.check()
@@ -95,43 +121,84 @@ class _Reader:
         if self.fields > MAX_FIELDS:
             raise ValueError("artifact metadata field limit exceeded")
 
+    def array_elements(self, count: int) -> None:
+        self.check()
+        self.elements += count
+        if self.elements > MAX_ARRAY_ELEMENTS:
+            raise ValueError("artifact array element limit exceeded")
+
+    def skim(self, size: int) -> bytes:
+        """Read bytes only to find the end of an array; they are never retained or reported."""
+        self.check()
+        if size < 0 or self.skimmed + size > MAX_ARRAY_SKIP_BYTES:
+            raise ValueError("artifact array byte limit exceeded")
+        self.skip_charge(size)
+        self.skimmed += size
+        data = self.stream.read(size)
+        if len(data) != size:
+            raise ValueError("artifact changed or truncated while reading")
+        return data
+
 
 def _gguf_string(reader: _Reader) -> bytes:
     length = reader.unpack("<Q")[0]
     return reader.read(length)
 
 
-def _gguf_value(reader: _Reader, kind: int, depth: int = 0) -> int | None:
+def _gguf_value(reader: _Reader, kind: int) -> int | None:
     reader.field()
-    if depth > 8:
-        raise ValueError("GGUF metadata nesting limit exceeded")
-    formats = {
-        0: "<B",
-        1: "<b",
-        2: "<H",
-        3: "<h",
-        4: "<I",
-        5: "<i",
-        6: "<f",
-        7: "<?",
-        10: "<Q",
-        11: "<q",
-        12: "<d",
-    }
-    if kind in formats:
-        value = reader.unpack(formats[kind])[0]
+    if kind in _GGUF_SCALARS:
+        value = reader.unpack(_GGUF_SCALARS[kind])[0]
         return value if type(value) is int else None
     if kind == 8:
         _gguf_string(reader).decode("utf-8")
         return None
     if kind == 9:
         item_type, count = reader.unpack("<IQ")
-        if count > MAX_FIELDS:
-            raise ValueError("GGUF array limit exceeded")
-        for _ in range(count):
-            _gguf_value(reader, item_type, depth + 1)
+        _gguf_skip_array(reader, item_type, count, 1)
         return None
     raise ValueError("unsupported GGUF metadata type")
+
+
+def _gguf_skip_array(reader: _Reader, item_type: int, count: int, depth: int) -> None:
+    """Move past an array's values without materialising them.
+
+    A llama.cpp vocabulary holds 32K-256K strings, far more than the field
+    limit, so values are not fields: fixed-size items are skipped by seeking
+    and strings by their length prefixes, under the element and skim bounds.
+    String contents are not decoded or validated.
+    """
+    if depth > 8:
+        raise ValueError("GGUF metadata nesting limit exceeded")
+    reader.array_elements(count)
+    if item_type in _GGUF_SCALARS:
+        reader.seek(reader.stream.tell() + count * struct.calcsize(_GGUF_SCALARS[item_type]))
+    elif item_type == 8:
+        _gguf_skip_strings(reader, count)
+    elif item_type == 9:
+        for _ in range(count):
+            nested_type, nested_count = struct.unpack("<IQ", reader.skim(12))
+            _gguf_skip_array(reader, nested_type, nested_count, depth + 1)
+    else:
+        raise ValueError("unsupported GGUF metadata type")
+
+
+def _gguf_skip_strings(reader: _Reader, count: int) -> None:
+    """Walk ``count`` length-prefixed strings, reading bounded chunks; seek past the last."""
+    position = reader.stream.tell()
+    base, chunk = position, b""
+    for number in range(count):
+        if not number % 4096:
+            reader.check()
+        if position + 8 > reader.size:
+            raise ValueError("truncated artifact metadata")
+        if position + 8 > base + len(chunk):
+            reader.seek(position)
+            base, chunk = position, reader.skim(min(_SKIP_CHUNK, reader.size - position))
+        position += 8 + struct.unpack_from("<Q", chunk, position - base)[0]
+    if position > reader.size:
+        raise ValueError("truncated artifact metadata")
+    reader.seek(position)
 
 
 def _gguf(reader: _Reader) -> ArtifactInspection:
@@ -386,12 +453,18 @@ def inspect_artifact(
     max_bytes: int = DEFAULT_METADATA_BYTES,
     check: Callable[[], None] = lambda: None,
     charge: Callable[[int], None] = lambda size: None,
+    skip_charge: Callable[[int], None] = lambda size: None,
 ) -> ArtifactInspection | None:
-    """Inspect the selected regular file through one confined, identity-checked handle."""
+    """Inspect the selected regular file through one confined, identity-checked handle.
+
+    ``charge`` receives metadata bytes before they are read and
+    ``skip_charge`` the bytes read only to skip GGUF array values; either may
+    raise to stop the inspection.
+    """
     if type(max_bytes) is not int or max_bytes < 128:
         raise ValueError("artifact metadata byte limit must be at least 128")
     with open_confined_file(path, label="model artifact", dir_fd=dir_fd) as (stream, before):
-        reader = _Reader(stream, before.st_size, max_bytes, check, charge)
+        reader = _Reader(stream, before.st_size, max_bytes, check, charge, skip_charge)
         suffix = path.suffix.lower()
         result: ArtifactInspection | None
         prefix = reader.read(min(4, before.st_size))
@@ -409,4 +482,9 @@ def inspect_artifact(
             raise ValueError("artifact changed while reading")
         if result is not None:
             result.metadata["bytes_read"] = max_bytes - reader.remaining
+            if reader.elements:
+                result.metadata["array_bytes_skimmed"] = reader.skimmed
+                result.limitations.append(
+                    "Array values (tokenizer vocabularies, scores, merges) were skipped without validation."
+                )
         return result

@@ -1777,7 +1777,10 @@ def test_gguf_metadata_and_tensor_descriptor_are_bounded(tmp_path):
     ("kind", "payload", "message"),
     [
         (999, b"", "metadata type"),
-        (9, b"\x04\0\0\0" + (999999).to_bytes(8, "little"), "array limit"),
+        (9, b"\x04\0\0\0" + (999999).to_bytes(8, "little"), "outside file"),
+        (9, b"\x04\0\0\0" + (2**40).to_bytes(8, "little"), "element limit"),
+        (9, b"\x08\0\0\0" + (2).to_bytes(8, "little") + (2**60).to_bytes(8, "little"), "truncated"),
+        (9, b"\x63\0\0\0" + (1).to_bytes(8, "little"), "metadata type"),
         (8, (2**60).to_bytes(8, "little"), "byte limit"),
     ],
 )
@@ -1952,3 +1955,82 @@ def test_exhausted_artifact_budget_falls_back_to_text_analysis(tmp_path, run_con
     assert not ctx.stats.errors and ctx.stats.incomplete
     (warning,) = [w for w in ctx.stats.warnings if "artifact metadata budget" in w]
     assert "2 selected file(s)" in warning
+
+
+def _gguf_string(value: bytes) -> bytes:
+    import struct
+
+    return struct.pack("<Q", len(value)) + value
+
+
+def _vocabulary_gguf(tokens: int = 32_000) -> bytes:
+    """A llama.cpp-shaped GGUF: tokenizer arrays far past the metadata field limit."""
+    import struct
+
+    metadata = _gguf_string(b"general.architecture") + struct.pack("<I", 8) + _gguf_string(b"llama")
+    metadata += _gguf_string(b"tokenizer.ggml.tokens") + struct.pack("<IIQ", 9, 8, tokens)
+    metadata += b"".join(_gguf_string(f"tok{number}".encode()) for number in range(tokens))
+    metadata += _gguf_string(b"tokenizer.ggml.scores") + struct.pack("<IIQ", 9, 6, tokens)
+    metadata += struct.pack(f"<{tokens}f", *([0.0] * tokens))
+    descriptor = _gguf_string(b"x") + struct.pack("<IQIQ", 1, 1, 0, 0)
+    data = b"GGUF" + struct.pack("<IQQ", 3, 1, 3) + metadata + descriptor
+    return data + b"\0" * (-len(data) % 32) + b"\0" * 4
+
+
+def test_gguf_vocabulary_arrays_are_skipped_not_counted_as_fields(tmp_path, run_connector):
+    """Regression (#220 verifier): arrays over 8,192 entries rejected every real llama.cpp model."""
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    artifact = tmp_path / "llama.gguf"
+    artifact.write_bytes(_vocabulary_gguf())
+    result = inspect_artifact(artifact)
+    assert result is not None and result.format == "gguf"
+    assert result.metadata["tensor_count"] == 1 and result.metadata["metadata_count"] == 3
+    # Array payloads are skipped, never read into the metadata budget or the output.
+    assert result.metadata["bytes_read"] < 1024 and "tok31999" not in str(result)
+    assert 0 < result.metadata["array_bytes_skimmed"] <= artifact.stat().st_size
+    assert any("Array values" in item for item in result.limitations)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert not ctx.stats.incomplete and [f.metadata["artifact_inventory"]["format"] for f in findings] == [
+        "gguf"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("limit", "value", "message"),
+    [("MAX_ARRAY_ELEMENTS", 40_000, "element limit"), ("MAX_ARRAY_SKIP_BYTES", 4096, "array byte limit")],
+)
+def test_gguf_array_skipping_has_its_own_bounds(tmp_path, monkeypatch, limit, value, message):
+    from shadowscan.connectors.code import model_artifacts
+
+    monkeypatch.setattr(model_artifacts, limit, value)
+    artifact = tmp_path / "llama.gguf"
+    artifact.write_bytes(_vocabulary_gguf())
+    with pytest.raises(ValueError, match=message):
+        model_artifacts.inspect_artifact(artifact)
+
+
+def test_gguf_array_skim_bytes_are_charged_to_the_caller(tmp_path):
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    artifact = tmp_path / "llama.gguf"
+    artifact.write_bytes(_vocabulary_gguf())
+    skimmed = []
+    inspect_artifact(artifact, skip_charge=skimmed.append)
+    assert sum(skimmed) > 32_000 * 8
+
+    def refuse(size):
+        raise ValueError("scan-wide skip budget")
+
+    with pytest.raises(ValueError, match="scan-wide skip budget"):
+        inspect_artifact(artifact, skip_charge=refuse)
+
+
+def test_gguf_array_skim_bytes_share_a_per_root_budget(tmp_path, run_connector, monkeypatch):
+    from shadowscan.connectors.code import filesystem
+
+    monkeypatch.setattr(filesystem, "_ARTIFACT_SKIP_BYTES", 1024)
+    (tmp_path / "llama.gguf").write_bytes(_vocabulary_gguf())
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert not findings and ctx.stats.incomplete and not ctx.stats.errors
+    assert any("artifact metadata budget" in w and "1 selected file(s)" in w for w in ctx.stats.warnings)

@@ -386,8 +386,10 @@ VCS_METADATA_EXCLUDES = frozenset({".git", ".hg", ".svn"})
 
 # Non-regular entries named individually per root, before the rest are summarized.
 _MAX_NON_REGULAR_NOTES = 10
-# Artifact metadata bytes (inspect_model_artifacts) read per scanned root.
+# Artifact metadata bytes (inspect_model_artifacts) read per scanned root, and
+# bytes read only to skip GGUF array values (vocabularies) per scanned root.
 _ARTIFACT_SCAN_BYTES = 32 * 1024 * 1024
+_ARTIFACT_SKIP_BYTES = 256 * 1024 * 1024
 
 LOCK_FILES = {
     "package-lock.json",
@@ -855,6 +857,7 @@ class _ScanState:
     projects: dict[str, _Project] = field(default_factory=lambda: {".": _Project(".")})
     inventory_findings: list[Finding] = field(default_factory=list)
     artifact_bytes_remaining: int = field(default_factory=lambda: _ARTIFACT_SCAN_BYTES)
+    artifact_skip_bytes_remaining: int = field(default_factory=lambda: _ARTIFACT_SKIP_BYTES)
     # Selected files the exhausted artifact budget left uninspected.
     artifacts_uninspected: int = 0
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
@@ -2862,8 +2865,8 @@ class FilesystemConnector(BaseConnector):
             self._walk(scan)
             if scan.artifacts_uninspected:
                 self.ctx.warn(
-                    f"code.filesystem: {scan.label}: artifact metadata budget "
-                    f"({_ARTIFACT_SCAN_BYTES:,} bytes per root) exhausted; "
+                    f"code.filesystem: {scan.label}: artifact metadata budget ({_ARTIFACT_SCAN_BYTES:,} "
+                    f"bytes, or {_ARTIFACT_SKIP_BYTES:,} array bytes, per root) exhausted; "
                     f"{scan.artifacts_uninspected} selected file(s) were not inspected as artifacts "
                     "(extensionless ones were still analysed as text); artifact inventory incomplete",
                     incomplete=True,
@@ -3148,6 +3151,11 @@ class FilesystemConnector(BaseConnector):
                     raise ArtifactBudgetExhausted("artifact scan-wide metadata byte limit exceeded")
                 scan.artifact_bytes_remaining -= size
 
+            def skip_charge(size: int) -> None:
+                if size > scan.artifact_skip_bytes_remaining:
+                    raise ArtifactBudgetExhausted("artifact scan-wide array skip byte limit exceeded")
+                scan.artifact_skip_bytes_remaining -= size
+
             try:
                 result = inspect_artifact(
                     on_disk,
@@ -3155,6 +3163,7 @@ class FilesystemConnector(BaseConnector):
                     max_bytes=self.model_metadata_bytes,
                     check=self.ctx.check_deadline,
                     charge=charge,
+                    skip_charge=skip_charge,
                 )
             except ArtifactBudgetExhausted:
                 # The root's budget is spent: count the file once (reported
