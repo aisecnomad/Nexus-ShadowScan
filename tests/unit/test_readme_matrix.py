@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from shadowscan.connectors import builtin_connector_names
-from shadowscan.signatures.loader import load_signatures
-from tools.readme_matrix import BEGIN, END, FRAMEWORKS, main, render, replace_block
+from shadowscan.signatures.loader import Signal, Signature, load_signatures
+from tools.readme_matrix import BEGIN, END, FRAMEWORKS, _mcp_rows, main, render, replace_block
+
+
+def _mcp() -> Signature:
+    (mcp,) = [signature for signature in load_signatures() if signature.id == "protocol.mcp"]
+    return mcp
 
 
 def test_every_listed_framework_is_a_shipped_framework_signature() -> None:
@@ -49,3 +56,29 @@ def test_replace_block_refuses_missing_or_ambiguous_markers(text: str) -> None:
 def test_cli_rejects_unknown_arguments(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--write"]) == 2
     assert "usage" in capsys.readouterr().err
+
+
+def test_mcp_dependency_in_an_unnamed_ecosystem_is_refused() -> None:
+    # Regression: a dependency signal in an ecosystem without a display name
+    # disappeared from the table instead of failing the generator.
+    mcp = _mcp()
+    extended = dataclasses.replace(
+        mcp, signals=[*mcp.signals, Signal(type="dependency", ecosystem="rubygems", names=["mcp"])]
+    )
+    with pytest.raises(ValueError, match="rubygems"):
+        _mcp_rows(extended)
+
+
+def test_mcp_rows_keep_wildcard_globs_prefixes_and_host_patterns() -> None:
+    # Regression: wildcard-only globs, dependency prefixes and pattern-matched
+    # hosts were dropped, so the table under-stated what is recognized.
+    mcp = _mcp()
+    rows = "\n".join(_mcp_rows(mcp))
+    files = [glob for signal in mcp.signals if signal.type == "file" for glob in signal.globs]
+    assert "**/.well-known/mcp.json" in files and "`.well-known/mcp.json`" in rows
+    assert "`**/" not in rows
+    prefixes = [prefix for signal in mcp.signals if signal.type == "dependency" for prefix in signal.prefixes]
+    assert prefixes and all(f"`{prefix}*`" in rows for prefix in prefixes)
+    patterns = [value for signal in mcp.signals if signal.type == "domain" for value in signal.values]
+    assert any(value.startswith("re:") for value in patterns)
+    assert "regular expression" in rows.split("| Remote MCP hosts |", 1)[1].split("\n", 1)[0]
