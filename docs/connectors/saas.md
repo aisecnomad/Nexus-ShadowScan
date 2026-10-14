@@ -36,7 +36,12 @@ tagged `unrecognized-app` and capped at possible confidence. `workflows` or
 are SaaS write actions.
 
 ## `saas.atlassian`
-UPM user-installed apps for Jira and Confluence.
+UPM user-installed apps for Jira and Confluence. Set `site` to the concrete
+HTTPS site origin for offline exports as well as live collection. App keys
+are shared across sites, so approvals must also name the site in
+`discovery.accounts`. Missing site identity leaves discovery incomplete and
+generated cards unbound pending review. URL host case, a default HTTPS port
+and a trailing slash are normalized; app resource IDs remain case-sensitive.
 
 ## `saas.notion`
 Notion bot users. A missing or repeated pagination cursor, or reaching the live
