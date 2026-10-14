@@ -781,7 +781,8 @@ registry approval from an unrelated parent.
 ### `lowcode.n8n`
 n8n workflows with AI or agent steps, including LangChain nodes and HTTP
 Request POSTs to a model API (a known model host, or a versioned generation
-route on a host that is not a messaging API); triggers
+route on a host that is not a messaging API; `/v1/messages`, `/v1/responses`
+and `/api/chat` there also need a model request header or body); triggers
 (schedule → `scheduled`, webhook or app event → `event-triggered`, both with
 `autonomous`; a manual, chat, form or evaluation trigger adds neither), code
 steps (→ code-exec) and models. Live

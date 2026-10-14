@@ -90,12 +90,16 @@ nodes do not count), or when it is an HTTP Request node that calls a model
 API. The HTTP rule: the node POSTs to a generation route (OpenAI, Anthropic,
 Azure OpenAI, Bedrock, Vertex or Ollama style) and either the host is a known
 model host, or the route is versioned or namespaced (`/v1/chat/completions`,
-`/v1/messages`, `/v1/responses`, `/api/generate`, `/api/chat`) on a host that
-is not a known SMS or messaging API (Vonage, MessageBird, Twilio, Sinch,
-Plivo, Telnyx). A bare `/messages`, `/responses` or `/completions` on an
-unknown host, a GET, and request bodies with `model` or `messages` keys never
-count. An HTTP model step makes the workflow AI use, not an agent: only an
-agent or agent-tool node makes an n8n workflow an agent.
+`/v1/completions`, `/api/generate`) on a host that is not a known SMS or
+messaging API (Vonage, MessageBird, Twilio, Sinch, Plivo, Telnyx).
+`/v1/messages`, `/v1/responses` and `/api/chat` are also WhatsApp Business,
+messaging and help-desk chat routes, so on an unknown host they count only
+when the node sends an `anthropic-version` header, or a JSON or key-value
+body with a `model` key and a `messages`, `prompt` or `input` key. A bare
+`/messages`, `/responses` or `/completions` on an unknown host, a GET, and a
+request body on any other route never count. An HTTP model step makes the
+workflow AI use, not an agent: only an agent or agent-tool node makes an n8n
+workflow an agent.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

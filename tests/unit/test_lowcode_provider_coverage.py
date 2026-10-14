@@ -622,7 +622,7 @@ _WEBHOOK = {"name": "Hook", "type": "n8n-nodes-base.webhook", "parameters": {}}
     "url",
     [
         "https://llm.internal.example/v1/chat/completions",
-        "https://llm.internal.example/v1/messages",
+        "https://llm.internal.example/v1/completions",
         "http://ollama.internal.example:11434/api/generate",
         "https://api.openai.com/v1/chat/completions",
         "https://api.anthropic.com/v1/messages",
@@ -656,6 +656,78 @@ def test_n8n_http_request_to_a_model_generation_route_is_an_ai_step(index, url):
     ],
 )
 def test_n8n_http_request_to_other_apis_is_not_an_ai_step(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert findings == [] and not stats.incomplete
+
+
+_ANTHROPIC_HEADER = {"parameters": [{"name": "anthropic-version", "value": "2023-06-01"}]}
+_WHATSAPP_BODY = '={"messaging_product": "whatsapp", "to": "{{ $json.phone }}", "type": "text"}'
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        _http_node(
+            "https://llm.internal.example/v1/messages", sendHeaders=True, headerParameters=_ANTHROPIC_HEADER
+        ),
+        _http_node(
+            "https://llm.internal.example/v1/messages",
+            headerParametersUi={"parameter": [{"name": "Anthropic-Version", "value": "2023-06-01"}]},
+        ),
+        _http_node(
+            "https://gateway.internal.example/v1/responses",
+            sendBody=True,
+            specifyBody="json",
+            jsonBody='={"model": "gpt-4.1", "input": "{{ $json.text }}"}',
+        ),
+        _http_node(
+            "https://ollama.internal.example/api/chat",
+            sendBody=True,
+            bodyParameters={
+                "parameters": [
+                    {"name": "model", "value": "llama3"},
+                    {"name": "messages", "value": "={{ $json.m }}"},
+                ]
+            },
+        ),
+        # Templates that are not plain JSON: an expression outside a string, JSON.stringify.
+        _http_node(
+            "https://llm.internal.example/v1/messages",
+            jsonParameters=True,
+            bodyParametersJson='{"model": "chat-7b", "messages": {{ JSON.stringify($json.m) }} }',
+        ),
+        _http_node(
+            "https://ollama.internal.example/api/chat",
+            jsonBody="={{ JSON.stringify({ model: 'llama3', prompt: $json.text }) }}",
+        ),
+    ],
+)
+def test_n8n_ambiguous_generation_route_counts_with_model_request_corroboration(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert len(findings) == 1 and not stats.incomplete
+    assert any("model API" in step for step in findings[0].metadata["ai_steps"])
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        # WhatsApp Business API (a hosted provider and an on-premises client) and a help-desk chat.
+        _http_node("https://waba.360dialog.io/v1/messages", sendBody=True, jsonBody=_WHATSAPP_BODY),
+        _http_node("https://whatsapp.corp.example/v1/messages", sendBody=True, jsonBody=_WHATSAPP_BODY),
+        _http_node("https://helpdesk.example/api/chat"),
+        _http_node("https://forms.internal.example/v1/responses", jsonBody='{"form": "nps", "input": 9}'),
+        # A model key alone, or a model request the node does not send.
+        _http_node("https://catalog.example/api/chat", jsonBody='{"model": "Model S"}'),
+        _http_node(
+            "https://llm.internal.example/v1/messages",
+            sendBody=False,
+            jsonBody='{"model": "chat-7b", "messages": []}',
+            sendHeaders=False,
+            headerParameters=_ANTHROPIC_HEADER,
+        ),
+    ],
+)
+def test_n8n_ambiguous_generation_route_without_corroboration_is_not_an_ai_step(index, node):
     findings, stats = _n8n_run(index, _WEBHOOK, node)
     assert findings == [] and not stats.incomplete
 

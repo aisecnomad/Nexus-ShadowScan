@@ -1141,8 +1141,12 @@ AI resource kind is not promoted.
 "Copilot" licence administration) and no ServiceNow AI marker are no longer
 reported; flows named for an AI product or provider, or with a marker, are.
 n8n workflows whose only AI step is an HTTP Request POST to a model API are
-now reported as AI workflows, and node types that merely contain `mcp` inside
-another word are no longer AI steps.
+now reported as AI workflows. On a host that is not a known model host,
+`/v1/messages`, `/v1/responses` and `/api/chat` count only with an
+`anthropic-version` header or a body with `model` and `messages`, `prompt` or
+`input`, so WhatsApp Business and help-desk chat calls are not AI steps; a
+self-hosted model called without either is missed. Node types that merely
+contain `mcp` inside another word are no longer AI steps.
 
 **SaaS, identity and cloud inventory.** Notion bots without an established AI
 product or provider (nameless bots, sync integrations) are no longer
