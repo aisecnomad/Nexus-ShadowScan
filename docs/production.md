@@ -1096,6 +1096,28 @@ SaaS app from 47 to 41, all within their previous severity levels. Domain
 matches are counted once per app across all of its URLs, so `agent_indicators`
 no longer grows with the number of reply URLs.
 
+**Correlation.** `metadata.related` now holds only exact identifier matches,
+with `metadata.related_details` describing the identifier type, matching
+fields and scope. A fully qualified ARN, GCP resource name, Azure resource id
+or OCI OCID links on its own: a cross-account caller ARN is the same principal.
+An Entra application id links exactly across `app_id`, `client_id`, a Teams
+`bot_id` and an Azure Bot `msa_app_id` only when both findings declare the same
+Entra tenant; other local identifiers need a shared declared tenant, workspace,
+cloud account, subscription or project. Vendor names and gateway labels are not
+compared as scope. Name similarity, and equal local identifiers whose shared
+scope cannot be verified, move to `metadata.related_candidates` with candidate
+assurance and a limitation. A declared tenant or account conflict blocks both.
+In the bundled demo, the three identifier links main produced stay exact and
+three new same-ARN links appear; the three links main made from a display name
+or a caller label (a Teams bot and an Entra service principal named Otter.ai,
+and an Azure OpenAI caller label equal to an Entra app id) are now review
+candidates. Do not merge candidate links with exact links in a downstream
+graph, and do not treat old `related` lists as exact identity evidence unless a
+new scan reproduces them. Neither relationship type changes registry approval,
+risk, confidence or runtime activity; confidence filtering prunes references to
+omitted findings from all three fields. The HTML and Markdown reports show
+candidates on their own "Possible related (review candidates)" line.
+
 Permission and machine-identity observations are not proof of agent execution,
 and observations in an offline export are not authenticated publisher evidence.
 

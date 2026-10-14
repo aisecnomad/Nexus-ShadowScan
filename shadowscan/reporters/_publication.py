@@ -83,3 +83,15 @@ def related_finding_ids(metadata: dict[str, Any], *, limit: int = 8) -> tuple[st
     if not isinstance(related, list):
         return ()
     return tuple(item for item in related[:limit] if isinstance(item, str))
+
+
+def related_candidate_ids(metadata: dict[str, Any], *, limit: int = 8) -> tuple[str, ...]:
+    """Return well-formed review-candidate identifiers from untrusted metadata."""
+    candidates = metadata.get("related_candidates")
+    if not isinstance(candidates, list):
+        return ()
+    return tuple(
+        item["finding_id"]
+        for item in candidates[:limit]
+        if isinstance(item, dict) and isinstance(item.get("finding_id"), str)
+    )

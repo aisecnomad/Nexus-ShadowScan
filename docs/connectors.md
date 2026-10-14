@@ -29,6 +29,9 @@ endpoint); other connectors trust the default CA store.
 Ambiguous app-name signals retain possible-product hints until the same product
 has non-name corroboration, and an app with no established AI evidence is
 bounded at possible confidence; see [identity attribution](connectors/identity.md#ambiguous-product-names).
+Cross-surface correlation separates exact identifier links from review
+candidates (name similarity, or an identifier without a verifiable shared
+tenant or account); see the [pipeline](architecture.md#scan-pipeline).
 
 ### Offline input limits
 

@@ -136,6 +136,30 @@ def test_html_and_markdown_keep_only_string_related_ids(make_finding) -> None:
     assert "**Related findings:** `ss-good`" in render_markdown(result)
 
 
+def test_correlation_provenance_is_rendered_not_dumped(make_finding) -> None:
+    finding = make_finding(
+        metadata={
+            "related": ["ss-exact"],
+            "related_details": [{"finding_id": "ss-exact", "assurance": "exact-identifier", "matches": []}],
+            "related_candidates": [
+                {"finding_id": "ss-<candidate>", "assurance": "candidate", "matches": [], "limitation": "hint"},
+                {"finding_id": 7},
+                "malformed",
+            ],
+            "visible_key": "kept",
+        }
+    )
+    result = ScanResult(findings=[finding])
+    html_report = render_html(result)
+    markdown = render_markdown(result)
+    assert "<b>Possible related (review candidates)</b> <code>ss-&lt;candidate&gt;</code>" in html_report
+    assert "ss-<candidate>" not in html_report
+    assert "exact-identifier" not in html_report and "related_candidates" not in html_report
+    assert "visible_key" in html_report
+    assert "**Possible related (review candidates):** `ss-<candidate>`" in markdown
+    assert "**Related findings:** `ss-exact`" in markdown
+
+
 def test_sarif_distinguishes_source_prefixes_from_remote_resource_ids(make_finding) -> None:
     finding = make_finding(
         evidence=[
