@@ -628,3 +628,21 @@ def test_cloudtrail_session_role_name_must_match_issuer_even_when_both_events_re
     findings, _ = _lineage(index, [assumption, invocation])
     observation = findings[0].metadata["cloudtrail_lineage"]["observations"][0]
     assert (observation["assumption_status"] == "linked") is linked
+
+
+def test_cloudtrail_display_format_expiration_links_the_session(index):
+    # CloudTrail renders responseElements.credentials.expiration as "Jan 1, 2026, 1:00:00 PM".
+    path = Path(__file__).parents[1] / "fixtures/cloud/lineage/assumed_session_display_time.jsonl"
+    assumption, invocation = (json.loads(line) for line in path.read_text().splitlines())
+    assert assumption["responseElements"]["credentials"]["expiration"] == "Jan 1, 2026, 1:00:00 PM"
+    findings, ctx = _lineage(index, [assumption, invocation])
+    assert not ctx.stats.incomplete
+    (observation,) = findings[0].metadata["cloudtrail_lineage"]["observations"]
+    assert observation["assumption_status"] == "linked"
+    assert observation["assumption"]["sessionExpiresAt"] == "2026-01-01T13:00:00+00:00"
+    assumption["responseElements"]["credentials"]["expiration"] = "not-a-time"
+    findings, ctx = _lineage(index, [assumption, invocation])
+    assert ctx.stats.incomplete
+    (observation,) = findings[0].metadata["cloudtrail_lineage"]["observations"]
+    assert observation["assumption_status"] == "unlinked"
+    assert "invalid-timestamp" in findings[0].metadata["cloudtrail_lineage"]["limits"]

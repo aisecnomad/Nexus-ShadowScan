@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeGuard
 
 from shadowscan.connectors.cloud.aws_registry import text
@@ -38,6 +38,8 @@ _FIELDS = (
     "errorCode",
 )
 _ARN = re.compile(r"arn:(aws(?:-[a-z-]+)?):(iam|sts)::([0-9]{12}):(role|assumed-role)/(.+)")
+# CloudTrail renders STS credential expirations as "Jan 20, 2024, 3:16:07 PM" (UTC).
+_CLOUDTRAIL_TIME_FORMAT = "%b %d, %Y, %I:%M:%S %p"
 
 
 def _object(value: Any) -> dict[str, Any]:
@@ -87,6 +89,16 @@ def normalize_detail(detail: dict[str, Any], region: str | None = None) -> dict[
     return {k: text(v, 2048) for k, v in raw.items()}
 
 
+def _parse_time(value: Any) -> datetime | None:
+    """CloudTrail's display format first: ``parse_timestamp`` reads it as RFC 2822 and drops the meridian."""
+    if isinstance(value, str):
+        try:
+            return datetime.strptime(value, _CLOUDTRAIL_TIME_FORMAT).replace(tzinfo=UTC)
+        except ValueError:
+            pass
+    return parse_timestamp(value)
+
+
 def _usable(value: Any) -> TypeGuard[str]:
     return isinstance(value, str) and bool(value) and REDACTED.lower() not in value.lower()
 
@@ -116,7 +128,7 @@ class CloudTrailLineage:
                 observation[name] = text(value, 2048)
         for name in ("eventTime", "sessionCreatedAt", "sessionExpiresAt"):
             if observation.get(name):
-                stamp = parse_timestamp(observation[name])
+                stamp = _parse_time(observation[name])
                 if stamp is None:
                     self._gap("invalid-timestamp")
                     observation.pop(name)
