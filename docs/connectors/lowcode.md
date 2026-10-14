@@ -158,7 +158,8 @@ included, by position in export order. In export-file findings they index the
 file's own `nodes` array.
 
 The fixtures in `tests/fixtures/lowcode/graph_cases.json` cover connected,
-disconnected, cyclic, reversed, disabled, non-AI and type-prefix decoy workflows.
+disconnected, cyclic, reversed, disabled, non-AI and type-prefix decoy workflows
+(the last three are still inventoried, but receive no AI graph role).
 They are synthetic regressions, not measured production precision. Registry
 extensions should cite the provider's actual node declaration and add positive
 and negative fixtures, including version differences where relevant. Provider

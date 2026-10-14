@@ -33,8 +33,9 @@ needs to be checked and reproduced:
   replace them with your own.
 
 Everything here describes the source tested on 2026-10-14, not the integrated
-code. Later review fixes change some of the behaviour described here, so these
-results are history, not a description of the current scanner.
+code. The integration carry changed several behaviours after review (see
+[What the integration carry changed](#what-the-integration-carry-changed)), so
+these results are history, not a description of the current scanner.
 
 ## Revisions
 
@@ -107,6 +108,30 @@ production migration notes accompany the source. No exporter is reimplemented:
 the existing CycloneDX and SARIF exporters remain in place. Opt-in live forward
 DNS (#210), canonical entities, live MCP probing and packet capture are outside
 this implementation.
+
+## What the integration carry changed
+
+Review of #220 found regressions against the baseline, and the integration
+carry fixed them before merging. The comparison above predates these fixes,
+and the bundled evaluation corpora give the same predictions with them. The
+carried code:
+
+- keeps the baseline MCP tool-poisoning rules and adds the description audit
+  as additional, zero-weight signal;
+- reports a lockfile it cannot inventory against that lockfile with a fixed
+  reason, and marks the scan incomplete only when no manifest beside it
+  declares the dependencies;
+- still classifies a live process whose command line exceeds 64 KiB, from its
+  leading complete arguments;
+- groups flows per connection with bounded time buckets, and withholds flow
+  attribution only for the client an incomplete record names;
+- keeps the n8n connector's and the export reader's baseline AI-node
+  inventory, and keeps a workflow finding when its graph is malformed;
+- bounds CloudTrail lineage as partial metadata without marking the scan
+  incomplete, and states that live collection never links lineage;
+- prunes lifecycle observation links to findings the report omits.
+
+`docs/production.md` describes the carried behaviour and its rollout impact.
 
 ## Additional observed behavior
 

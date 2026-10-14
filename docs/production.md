@@ -52,34 +52,96 @@ labeled field accuracy still require the existing rollout acceptance procedure.
 
 Rescan affected inputs after updating to this revision. The scanner-source
 fingerprint changes; keep previous reports as historical observations and build
-a fresh comparison baseline. A reduced flow count or poisoning label is not
-proof that an agent stopped running or that a tool became safe.
+a fresh comparison baseline. A reduced flow count is not proof that an agent
+stopped running.
 
-- DNS attribution now requires a matching client/context and an answer valid at
-  the flow timestamp. Logs without TTLs or timestamps retain service observations
-  but cannot claim attributed flow bytes or cadence from those answers. JA4 log
-  values are context only; neither feature introduces network access.
-- Graph paths, AWS lineage and lifecycle assessments add explained metadata.
-  They do not provide canonical agent identity, effective permissions, approval,
-  exfiltration proof, or complete visibility. Missing runtime scope is unknown,
-  and old observations remain historical even when they name the same tool.
-- Supported lockfiles add dependency inventory, which may increase inventory
-  totals without establishing active agents. Unknown dependency relationships
-  remain unknown. No package manager or dependency installer runs.
-- Raw model/binary inspection and Linux maps/descriptor inspection require
-  explicit connector options. Review the source/runtime guides for byte, entry
-  and time bounds before enabling them. Denied or truncated selected inspection
-  makes coverage incomplete; do not grant root merely to erase that limitation.
-- Static MCP/skill instruction heuristics distinguish direct candidate commands
-  from links and quoted guidance. They cannot certify arbitrary instructions as
-  safe. The scanner never executes a discovered MCP server, skill or model.
+**New opt-in settings** (all default off or to the values shown):
 
-Use the unchanged frozen estate for reproducible regression comparison and new
-synthetic fixtures for these additional contracts. Use the same reviewed scorer,
-adapter, dependencies and configuration on both sides; missing or incomplete
-runs must not earn true negatives. These author-written tests are not independent
-field precision or tenant acceptance. Review an independently labeled holdout
-before using new evidence for enforcement.
+- `code.filesystem` (and `code.github` / `code.gitlab` checkouts):
+  `inspect_model_artifacts` and `model_metadata_bytes` (default 65,536) for
+  bounded GGUF, safetensors, ONNX and PyInstaller metadata inventory.
+- `runtime.processes` (live Linux only): `inspect_maps`, `inspect_fds`,
+  `inspect_env_keys`, with `max_inspection_bytes`,
+  `max_inspection_total_bytes`, `max_inspection_entries`, `max_mappings` and
+  `inspection_timeout_seconds` bounds. Reading another user's maps or
+  descriptors needs the same user or `CAP_SYS_PTRACE`. Denied or truncated
+  selected inspection makes coverage incomplete; do not grant root merely to
+  erase that limitation.
+- `network.logs`: `dns_max_ttl_seconds` (default 86,400) and
+  `dns_clock_skew_seconds` (default 0) bound DNS attribution. These are on by
+  default; the options only tune them.
+
+**Exit-code impact.** These inputs can now end a scan incomplete (exit 3)
+where the previous revision completed:
+
+- A supported lockfile (`uv.lock`, `poetry.lock`, `pnpm-lock.yaml`,
+  `Cargo.lock`) that is malformed, an unsupported version (`Cargo.lock` v1/v2,
+  `pnpm-lock.yaml` 5.x), over a limit or a symbolic link, when no
+  `pyproject.toml`, `package.json` or `Cargo.toml` sits beside it. Beside its
+  manifest the same gap is a warning naming the lockfile and the reason, and
+  the scan stays complete; earlier revisions never read these files.
+- A malformed or over-budget n8n, Flowise or Dify graph (dangling or invalid
+  connections, duplicate node names). The workflow finding is kept with
+  `workflow_graph.status: incomplete`. A `null` n8n output slot is valid.
+- A live process command line over 65,536 bytes. The process is still
+  classified from its leading complete arguments, with
+  `metadata.command_lines_truncated`.
+- `SKILL.md` and MCP description audits over 64 KiB, with malformed front
+  matter or an unclosed fence.
+- Network records with a malformed observation context, TTL, timestamp or JA4
+  value, or over 32 DNS answers. Flow attribution is then withheld only for
+  the client the record names, or for the whole input when the client is
+  unknown or `max_records` was reached.
+- CloudTrail exports with invalid timestamps or conflicting event IDs.
+  CloudTrail lineage sampling bounds (100 invocations per caller, 2,000
+  invocations and 2,000 STS assumptions per run) only mark lineage `partial`,
+  with a warning that leaves the scan complete; live collection never
+  retrieves STS events, so live lineage is always `unlinked`.
+
+**Finding changes.**
+
+- New finding identities: `lockfile-inventory` findings at
+  `<root label>/<lockfile path>` (dependency inventory only, possible
+  confidence); with `inspect_model_artifacts`, `binary-artifact` findings at
+  the artifact path; with runtime inspection, ML-runtime indicator findings
+  at `runtime:<host>:<pid namespace>:<pid>:<start ticks>:ml-runtime`. These
+  identities include the PID and start time, so they change with every
+  process restart.
+- DNS attribution now requires a matching client/context and an answer valid
+  at the flow time; flow times are grouped per connection in bounded buckets,
+  and a bucket that straddles an answer's validity is not attributed. Logs
+  without TTLs or timestamps keep service observations but claim no flow bytes
+  or cadence from them. In the bundled demo this removes one finding (a client
+  that borrowed another client's expired ChatGPT answer: 133 to 132 findings,
+  129 to 128 shadow, high risk 63 to 62) and lowers Cursor's confidence from
+  0.8 to 0.5 (risk high to medium). Other demo finding IDs are unchanged
+  (gateway caller IDs are scan-local in every run). JA4 log values are
+  context only.
+- `cloud.aws` CloudTrail callers no longer count exact duplicate event IDs
+  twice, and offline `cloudtrail-event` records whose `eventName` is neither a
+  collected invocation operation nor an STS assumption are ignored instead of
+  reported as LLM callers.
+- MCP tools keep the `tool-poisoning` rules of the previous revision; a
+  bounded sentence audit adds zero-weight `instruction:*` evidence and
+  `metadata.static_instruction_audit`, and can also raise the tag.
+- n8n workflows and exported graphs gain non-scoring `workflow_graph`
+  metadata; inventory and confidence do not depend on it. Lifecycle findings
+  gain `lifecycle_observation`, whose samples never name a finding the report
+  omits (`observations_omitted` counts them).
+
+Graph paths, AWS lineage and lifecycle assessments are explained metadata.
+They do not provide canonical agent identity, effective permissions, approval,
+exfiltration proof, or complete visibility. Missing runtime scope is unknown,
+and old observations remain historical even when they name the same tool.
+Static MCP/skill instruction heuristics cannot certify arbitrary instructions
+as safe, and the scanner never executes a discovered MCP server, skill or
+model. Lockfile inventory never runs a package manager and does not establish
+installation, execution or agency.
+
+The bundled evaluation corpora give the same predictions before and after this
+change. These author-written tests are not independent field precision or
+tenant acceptance. Review an independently labeled holdout before using new
+evidence for enforcement.
 
 ## Unreleased attribution migration
 

@@ -242,7 +242,9 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 Supported `uv.lock`, `poetry.lock`, `pnpm-lock.yaml` and `Cargo.lock` inputs
 also provide bounded AI dependency inventory, with direct/transitive relationships
 only when their roots and edges establish them. Locked packages do not establish
-installation, execution or agency. `SKILL.md` adds a bounded static instruction
+installation, execution or agency. A lockfile that cannot be inventoried is
+reported against that lockfile with a fixed reason; it leaves the scan
+incomplete only when no manifest beside it declares its dependencies. `SKILL.md` adds a bounded static instruction
 review with fixed rule explanations and locations; quoted examples and ordinary
 URLs are not direct suspicious instructions. Optional `inspect_model_artifacts`
 adds read-only, format-specific model and packaged-binary metadata inspection.
@@ -803,9 +805,11 @@ uses `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`), against `api_url`
 
 Declared workflow graphs carry bounded, cycle-safe input/AI/egress reachability
 metadata. Disconnected nodes do not establish a path. Exact supported node types
-and literal HTTP destinations are shared with static n8n/Flowise/Dify export
-analysis; dynamic expressions remain unresolved. These relationships neither
-change confidence nor prove execution, private-data access or exfiltration.
+and literal HTTP destinations, shared with static n8n/Flowise/Dify export
+analysis, assign graph roles only; which workflows are reported is unchanged.
+Dynamic expressions remain unresolved. A malformed graph marks coverage
+incomplete but keeps the workflow finding. These relationships neither change
+confidence nor prove execution, private-data access or exfiltration.
 
 ### `lowcode.make`
 Make scenarios with AI modules and AI Agents; triggers (`scheduling.type` →
