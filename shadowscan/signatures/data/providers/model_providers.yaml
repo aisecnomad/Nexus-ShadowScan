@@ -4,6 +4,11 @@
 #
 # `secret` patterns are matched against file contents; connectors redact the
 # match before storing it as evidence.
+#
+# `references` cite the provider's endpoint documentation and IP-range
+# publications behind the hosted-provider domain patterns. The IP-range
+# sources are documentation only: network attribution uses hostname-to-address
+# DNS results, never broad shared-provider or CDN ranges.
 signatures:
   - id: provider.openai
     name: OpenAI
@@ -336,6 +341,9 @@ signatures:
     category: provider
     vendor: Google Cloud
     homepage: https://cloud.google.com/vertex-ai
+    references:
+      - https://cloud.google.com/vertex-ai/docs/general/accessing-service#service_endpoints
+      - https://www.gstatic.com/ipranges/cloud.json
     signals:
       - type: dependency
         ecosystem: pypi
@@ -441,6 +449,9 @@ signatures:
     category: provider
     vendor: Amazon Web Services
     homepage: https://aws.amazon.com/bedrock/
+    references:
+      - https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints-supported.html
+      - https://ip-ranges.amazonaws.com/ip-ranges.json
     signals:
       - type: dependency
         ecosystem: npm
@@ -553,6 +564,10 @@ signatures:
     category: provider
     vendor: Microsoft
     homepage: https://learn.microsoft.com/azure/ai-services/openai/
+    references:
+      - https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
+      - https://www.microsoft.com/en-us/download/details.aspx?id=56519
+      - https://learn.microsoft.com/en-us/azure/virtual-network/service-tags-overview
     signals:
       - type: secret
         patterns: ['(?i)\bAZURE_OPENAI_(?:API_)?KEY\s*[=:]\s*["'']?[0-9a-f]{32}\b']
