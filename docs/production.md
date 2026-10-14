@@ -1129,6 +1129,12 @@ disappear. A bare `/generate` route counts only on a declared or known model
 host. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
 setting it changes that source's ids by design, so rebaseline that source.
 
+**Kubernetes.** Workloads that set `nvidia.com/gpu` only in `limits` are now
+reported as GPU workloads, and private-registry serving images named by an
+engine token (`registry.example/ml/vllm-serving`) are now agent workloads, so
+new findings can appear. A model argument with a GPU but without an AI image or
+AI resource kind is not promoted.
+
 Permission and machine-identity observations are not proof of agent execution,
 and observations in an offline export are not authenticated publisher evidence.
 

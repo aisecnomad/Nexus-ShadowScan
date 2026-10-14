@@ -1087,7 +1087,9 @@ converted is skipped with a warning and makes the scan incomplete.
 Analyze offline Kubernetes and OpenShift workload exports (images, exposure,
 GPU, privilege and egress-policy indicators). Live collection is not
 implemented and the connectors use no credentials; their findings carry no
-device name, so lifecycle links do not apply to them. See the
+device name, so lifecycle links do not apply to them. Engine-named images,
+GPU requests or limits and `--model` arguments corroborate serving workloads;
+a model argument and a GPU alone never make an agent. See the
 [Kubernetes and OpenShift guide](connectors/kubernetes.md).
 
 ## Endpoint
