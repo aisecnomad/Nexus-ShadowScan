@@ -1,0 +1,43 @@
+# Proposed additions for shadowscan/signatures/data/providers/model_providers.yaml
+# Append or merge these entries. Validate with python -m shadowscan.signatures.validate
+# and make evaluate on the estate harness.
+
+signatures:
+  - id: provider.tgi
+    name: Text Generation Inference (TGI)
+    category: provider
+    vendor: Hugging Face
+    homepage: https://github.com/huggingface/text-generation-inference
+    description: Self-hosted text-generation-inference server exposing an OpenAI-compatible API (typically port 8080).
+    signals:
+      - type: image
+        patterns:
+          - '(?i)text-generation-inference'
+          - '(?i)huggingface/text-generation-inference'
+          - '(?i)ghcr.io/huggingface/text-generation-inference'
+        weight: 0.9
+      - type: env
+        names:
+          - TGI_MODEL_ID
+          - HF_MODEL_ID
+          - TEXT_GENERATION_INFERENCE_MODEL
+        weight: 0.7
+      - type: domain
+        values:
+          - "re:.*:8080$"
+        weight: 0.5
+      - type: code
+        patterns:
+          - 'text-generation-inference'
+          - 'text_generation_inference'
+          - 'from text_generation'
+        weight: 0.65
+      - type: dependency
+        ecosystem: pypi
+        names:
+          - text-generation
+          - text-generation-inference
+        weight: 0.75
+
+# Note: provider.ollama and provider.vllm already have strong coverage (images, ports, env, code).
+# Consider adding explicit VLLM_PORT / OLLAMA_HOST env signals if not already present at sufficient weight.
