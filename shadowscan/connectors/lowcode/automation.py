@@ -35,6 +35,7 @@ from shadowscan.connectors.common import (
     model_matches,
     name_matches,
 )
+from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -294,6 +295,12 @@ class N8nConnector(_AutomationBase):
         return EVENT
 
     def _n8n_finding(self, w: dict[str, Any]) -> Finding | None:
+        graph = analyze_workflow_graph(w, provider="n8n")
+        assert graph is not None
+        if graph.issues:
+            for issue in graph.issues:
+                self.ctx.warn(f"lowcode.n8n: {issue}; graph coverage incomplete")
+            return None
         # Exported blueprints can contain useful AI evidence without a provider
         # object ID. A display name (or the string "None") is not that identity.
         workflow_id = w.get("id")
@@ -309,7 +316,7 @@ class N8nConnector(_AutomationBase):
             if self._record_fields_valid(
                 node,
                 required=("type",),
-                strings=("name",),
+                strings=("name", "type"),
                 mappings=("parameters",),
             )
         ]
@@ -371,6 +378,7 @@ class N8nConnector(_AutomationBase):
             ),
             resource_type="workflow" if identified else "unresolved-workflow",
             extra={
+                "workflow_graph": graph.metadata,
                 "node_count": len(nodes),
                 "node_types": sorted(set(types))[:40],
                 "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)],

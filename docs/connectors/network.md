@@ -37,20 +37,46 @@ not names, so it counts towards a service only when:
 
 - its Zeek `uid` and client address link it to a TLS record whose server
   name is an AI host, with matching server address and port when supplied;
-- the same client resolved an AI host to that address; or
-- no client resolved anything else to that address, and some client resolved
-  an AI host to it (weaker evidence, reported as such).
+- the same client resolved an AI host to that address **before** the flow,
+  and the flow timestamp is inside the answer's bounded TTL window.
+
+DNS windows start at the observation timestamp and exclude their expiry
+boundary. Missing timestamps or TTLs retain DNS query findings with explicit
+limitations, but cannot attribute flows. This includes ordinary Route 53
+query exports that omit TTLs. The connector never borrows another client's
+DNS answers. Repeated observations may refresh a window; expired answers do
+not identify later traffic, and future answers never identify earlier traffic.
+
+Optional `sensor`/`sensor_id`, `network_id`/`vpc_id`, and
+`resolver`/`resolver_id` fields scope both DNS and TLS UID joins. Supplied
+context must match exactly; missing context does not wildcard-match a known
+sensor. With no context fields, the configured input/label is the shared
+vantage. Split overlapping address spaces into separate labeled connector
+inputs when exporters cannot supply context. Findings still aggregate by
+configured label, client and service.
+
+Zeek `TTLs`, generic `ttls`, `ttl`/`TTL`, and explicitly supplied Route 53
+TTL metadata are accepted. Vector TTLs must align with the answers. A
+response containing a CNAME and IP answers uses the shortest answer TTL;
+CNAME-only records do not produce an IP association, and chains are never
+resolved over the network. IPv4 and IPv6 addresses are normalized. Sampled
+`dns_attribution` metadata preserves host, address, original TTL, observation
+and flow timestamps, and context; provenance samples are limited to 20
+entries with an explicit limitation when more are available.
 
 Flow counts and bytes remain separated by connection UID until attribution,
 so one AI connection cannot claim another connection's traffic on the same
-address and port. UIDs are scoped to the client address. A known non-AI TLS
+address and port. UIDs are scoped to the client address and observation
+context. Flow groups also retain timestamps, so an aggregate cannot count
+stale bytes through one fresh DNS observation. A known non-AI TLS
 name blocks DNS and service-port attribution for that connection; conflicting
 TLS service identities or endpoints leave its flows unattributed. A missing
 UID does not inherit a different connection's TLS name. Without linked TLS
 evidence, the DNS rules above still apply.
 
 DNS evidence for a shared address does not attribute flows when it names
-multiple services or both AI and non-AI hosts. Ambiguous flows are reported
+multiple services or both AI and non-AI hosts within an applicable window.
+A potentially conflicting answer with unknown validity also blocks attribution. Ambiguous flows are reported
 as a warning that does not make the scan incomplete. A flow to port 11434,
 the default Ollama port, is attributed to Ollama only without TLS or DNS
 evidence that contradicts it.
@@ -59,9 +85,25 @@ evidence that contradicts it.
 or a hosted agent runtime (for example `api2.cursor.sh`, `mcp.linear.app` or
 `bedrock-agent-runtime`) is tagged `agent-service`. Runs of three or more
 connections to a model API at most 30 seconds apart are tagged `agent-loop`.
-That cadence is a heuristic: a batch script has the same shape, and a client
+Cadence inference is suppressed when a contact combines different observation
+contexts, so overlapping addresses from separate sensors cannot synthesize an
+agent loop. That cadence is a heuristic: a batch script has the same shape, and a client
 that reuses one connection for many requests shows none. Consumer AI sites
 such as `chatgpt.com` are AI use, not agent indicators.
+
+**JA4 context.** Existing Zeek JSON/TSV `ja4` and generic `tls.ja4` fields
+are validated against the hashed [JA4 client format](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md)
+and retained as bounded `tls_fingerprints` metadata on the directly observed
+AI TLS contact. Metadata includes the source field, UID and sensor context;
+it does not assert an exporter version that the input did not supply.
+JA4 contributes no confidence, risk or agency score. If fingerprint storage
+fills, the contact's fingerprint metadata is omitted because discarded
+observations could conflict. The same fingerprint
+on a non-AI host creates no finding. Conflicting UID/endpoint identities do
+not transfer fingerprints; contradictory fingerprints for the same UID are
+omitted and mark the export incomplete. Missing fingerprints leave the
+existing detection path unchanged. There is no capture, external fingerprint
+lookup, stack-to-agent classifier, or required JA4 detection gate.
 
 Options:
 
@@ -73,14 +115,28 @@ Options:
   account (default `network`).
 - `max_records`: the number of records read (default 10,000,000). Reaching
   it makes the scan incomplete.
+- `dns_max_ttl_seconds`: maximum DNS attribution age, even when the input
+  reports a longer TTL (default 86,400; maximum 604,800).
+- `dns_clock_skew_seconds`: optional expiry extension (integer 0–60,
+  default 0). It never allows a flow before the DNS observation and never
+  turns a zero-TTL answer into a cache interval.
 
 Malformed lines, records the connector cannot read as DNS, TLS or flow
 records, and DNS or TLS records without a client address make the scan
 incomplete. Analysis keeps at most 50,000 client addresses, 500,000 flow
-groups (client, server address, port and UID), and 500,000 TLS identities
-(client and UID). Records beyond any bound are reported and make the scan
+groups (context, client, server address, port, UID and timestamp), 500,000
+TLS identities (context, client and UID), 500,000 DNS observations with at
+most 256 per context/client/address, and 32 JA4 observations per contact. Records beyond any bound are reported and make the scan
 incomplete. If TLS identity storage fills, flows with an unretained UID are
 left unattributed because a discarded TLS record could contradict DNS.
+If DNS storage fills, DNS and service-port attribution are disabled for the
+input because a discarded answer could contradict retained evidence; directly
+linked TLS remains usable. Malformed TTLs, timestamps, context and explicit
+JA4 values also make the scan incomplete. Malformed or truncated input
+suppresses flow attribution, since a discarded record might contradict the
+retained DNS or SNI; direct query/TLS observations remain visible with that
+limitation. Observation timestamps are
+exporter-provided, not independently verified.
 
 VPC Flow Logs `SKIPDATA` records mean AWS did not capture some flows. They
 produce an incomplete report (`summary.complete: false`) and CLI exit 3,

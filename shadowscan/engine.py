@@ -30,7 +30,7 @@ from shadowscan.governance import apply_declared_governance
 from shadowscan.incremental import IncrementalCache
 from shadowscan.mcp_registry import LoadedRegistries, enrich_mcp_findings, load_registries
 from shadowscan.merge import merge
-from shadowscan.models import Finding, ScanResult, ScanStats, now_iso
+from shadowscan.models import Finding, ScanResult, ScanStats, Surface, now_iso
 from shadowscan.registries import (
     RECORD_KEY,
     REGISTRY_TYPES,
@@ -311,6 +311,17 @@ class _ScopeLedger:
     def __init__(self) -> None:
         self._lock = Lock()
         self._records: dict[int, dict[str, Any] | None] = {}
+        self._surfaces: dict[int, Surface] = {}
+
+    def declare_surface(self, number: int, surface: Surface) -> None:
+        """Remember a worker's already-resolved class contract without importing it again."""
+        with self._lock:
+            self._surfaces[number] = surface
+
+    def surfaces(self) -> dict[int, Surface]:
+        """Declared surfaces, including failed collections; these do not attest coverage."""
+        with self._lock:
+            return dict(self._surfaces)
 
     def record(self, state: _JobState, number: int, record: dict[str, Any]) -> None:
         with self._lock:
@@ -412,6 +423,10 @@ class _ConnectorRunner:
 
     def _run_job(self, number: int, spec: ConnectorSpec, state: _JobState) -> _JobResult:
         resolved = self._resolve(spec.name, state)
+        if isinstance(resolved, type) and issubclass(resolved, BaseConnector):
+            surface = resolved.surface
+            if isinstance(surface, Surface):
+                self._scopes.declare_surface(number, surface)
         roots = spec.config.get("paths")
         root_ids = spec.config.get("root_ids")
         if isinstance(roots, list):
@@ -1245,6 +1260,8 @@ class Engine:
         *,
         registries: _RegistryOutcome | None = None,
         offline: frozenset[str] = frozenset(),
+        lifecycle_window: tuple[str, str] | None = None,
+        runtime_coverage: str = "unknown",
     ) -> tuple[list[Finding], list[str]]:
         """Merge, correlate, match MCP registries, reconcile and score; report what had to be omitted.
 
@@ -1261,7 +1278,12 @@ class Engine:
             correlate_runtime(findings)
         except SanitizationLimitError:
             errors.append("runtime correlation incomplete: sanitization safety limit exceeded")
-        correlate_lifecycle(findings)
+        if lifecycle_window is None and runtime_coverage == "unknown":
+            correlate_lifecycle(findings)
+        else:
+            correlate_lifecycle(
+                findings, observation_window=lifecycle_window, runtime_coverage=runtime_coverage
+            )
         outcome = registries if registries is not None else _RegistryOutcome()
         if self._mcp_registries is None:
             self._mcp_registries = load_registries(self.config.mcp_registries)
@@ -1389,8 +1411,29 @@ class Engine:
             offline |= _offline_record_ids(spec, fs)
         export_entries = exports.entries(jobs, timed_out) if dump_directory else []
         registries = _RegistryOutcome()
+        declared_surfaces = scopes.surfaces()
+        runtime_jobs = [
+            (spec, completed[number][2])
+            for number, spec in jobs
+            if declared_surfaces.get(number) == Surface.RUNTIME
+        ]
+        unknown_surfaces = any(number not in declared_surfaces for number, _ in jobs)
+        runtime_coverage = "unknown" if unknown_surfaces else "not-collected"
+        if runtime_jobs:
+            if any(st.incomplete or st.skipped or st.errors for _, st in runtime_jobs):
+                runtime_coverage = "incomplete"
+            elif unknown_surfaces:
+                runtime_coverage = "unknown"
+            elif all(spec.config.get("input") for spec, _ in runtime_jobs):
+                runtime_coverage = "export-only"
+            else:
+                runtime_coverage = "collected"
         findings, postprocess_errors = self._postprocess(
-            findings, registries=registries, offline=frozenset(offline)
+            findings,
+            registries=registries,
+            offline=frozenset(offline),
+            lifecycle_window=(result.started_at, now_iso()),
+            runtime_coverage=runtime_coverage,
         )
         result.inventory_size += registries.approval_entries
         stats += self._registry_stats(registries, stats, result.started_at)

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.correlation import correlate_lifecycle
+from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, Surface
 from shadowscan.utils.redaction import REDACTED
 
@@ -87,3 +91,100 @@ def test_repeated_pass_removes_endpoint_derived_runtime_tag():
     assert not any(e.signal == "lifecycle:observed-running" for e in endpoint.evidence)
     correlate_lifecycle([process])
     assert process.tags == ["observed-running"]
+
+
+WINDOW = ("2026-01-02T00:00:00Z", "2026-01-02T01:00:00Z")
+
+
+@pytest.mark.parametrize(
+    "timestamp,status,reason",
+    [
+        ("2026-01-02T00:30:00Z", "observed-in-window", "timestamped-process-observation"),
+        ("2026-01-01T00:00:00Z", "historical", "outside-observation-window"),
+        ("2026-01-03T00:00:00Z", "unknown", "future-observation-timestamp"),
+        (None, "unknown", "missing-observation-timestamp"),
+        ("invalid", "unknown", "missing-observation-timestamp"),
+    ],
+)
+def test_lifecycle_recency_is_explicit_without_promoting_historical_observations(timestamp, status, reason):
+    endpoint, process = _findings("build-01", "build-01")
+    process.metadata["observed_at"] = timestamp
+    before = (endpoint.confidence, endpoint.risk.score)
+    correlate_lifecycle([endpoint, process], observation_window=WINDOW, runtime_coverage="export-only")
+    assessment = endpoint.metadata["lifecycle_observation"]
+    assert assessment["status"] == status and assessment["reason"] == reason
+    assert assessment["current_execution"] == "not-established"
+    assert assessment["runtime_coverage"] == "export-only"
+    assert assessment == endpoint.metadata["lifecycle"]["observation"]
+    assert (endpoint.confidence, endpoint.risk.score) == before
+    assert all(e.weight == 0 for e in endpoint.evidence)
+    assert not any(state in json.dumps(assessment).lower() for state in ('"zombie"', '"ghost"'))
+
+
+@pytest.mark.parametrize("coverage", ["unknown", "incomplete", "not-collected", "collected", "export-only"])
+def test_missing_runtime_never_becomes_inactivity_even_when_collection_succeeded(coverage):
+    endpoint, _ = _findings("build-01", "build-01")
+    correlate_lifecycle([endpoint], observation_window=WINDOW, runtime_coverage=coverage)
+    assessment = endpoint.metadata["lifecycle_observation"]
+    assert assessment["status"] == "unknown"
+    assert assessment["reason"] == "no-linked-runtime-observation"
+    assert assessment["runtime_coverage"] == coverage and assessment["observations"] == []
+    assert "lifecycle" not in endpoint.metadata and "observed-running" not in endpoint.tags
+
+
+def test_lifecycle_repeated_pass_updates_recency_and_never_reuses_prior_processes():
+    endpoint, process = _findings("build-01", "build-01")
+    process.metadata["observed_at"] = "2026-01-02T00:30:00Z"
+    correlate_lifecycle([endpoint, process], observation_window=WINDOW)
+    assert endpoint.metadata["lifecycle_observation"]["status"] == "observed-in-window"
+    correlate_lifecycle([endpoint], observation_window=WINDOW, runtime_coverage="incomplete")
+    assert endpoint.metadata["lifecycle_observation"]["status"] == "unknown"
+    assert endpoint.metadata["lifecycle_observation"]["observations"] == []
+
+
+@pytest.mark.parametrize("window", [None, ("invalid", WINDOW[1]), (WINDOW[1], WINDOW[0])])
+def test_lifecycle_without_a_valid_window_does_not_claim_current_observation(window):
+    endpoint, process = _findings("build-01", "build-01")
+    process.metadata["observed_at"] = "2026-01-02T00:30:00Z"
+    correlate_lifecycle([endpoint, process], observation_window=window, runtime_coverage="fabricated")
+    assessment = endpoint.metadata["lifecycle_observation"]
+    assert assessment["status"] == "unknown" and assessment["window"] is None
+    assert assessment["runtime_coverage"] == "unknown"
+
+
+def test_engine_supplies_real_scan_window_and_offline_collection_status(index, tmp_path):
+    source = tmp_path / "processes.json"
+    source.write_text(
+        json.dumps(
+            [{"pid": 1, "host": "build-01", "argv": ["claude"], "observed_at": "2025-01-01T00:00:00Z"}]
+        )
+    )
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("runtime.processes", {"input": str(source)})]), index
+    ).run()
+    assert result.findings
+    assessment = result.findings[0].metadata["lifecycle_observation"]
+    assert assessment["window"]["start"] == result.started_at
+    assert assessment["runtime_coverage"] == "export-only"
+    assert assessment["status"] == "historical"
+
+
+def test_lifecycle_process_birth_time_is_not_an_observation_time():
+    endpoint, process = _findings("build-01", "build-01")
+    process.first_seen = process.last_seen = "2026-01-02T00:30:00Z"
+    correlate_lifecycle([endpoint, process], observation_window=WINDOW)
+    assert endpoint.metadata["lifecycle_observation"]["status"] == "unknown"
+
+
+def test_lifecycle_sample_limit_does_not_drop_current_observations():
+    from shadowscan.correlation import _lifecycle_observation
+
+    processes = [_findings("build-01", f"build-{n}")[1] for n in range(51)]
+    processes.sort(key=lambda f: f.id)
+    for process in processes:
+        process.metadata["observed_at"] = "2026-01-01T00:00:00Z"
+    processes[-1].metadata["observed_at"] = "2026-01-02T00:30:00Z"
+    assessment = _lifecycle_observation(processes, WINDOW, "collected")
+    assert assessment["status"] == "observed-in-window"
+    assert assessment["observation_count"] == 51 and assessment["observations_truncated"]
+    assert len(assessment["observations"]) == 50
