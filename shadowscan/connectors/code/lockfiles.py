@@ -123,6 +123,43 @@ def _non_registry(reference: str) -> bool:
     return bool(_NON_REGISTRY_SOURCE.search(rest if separator else text))
 
 
+_GIT_PREFIXES = ("git+", "git:", "github:", "git@")
+# A key that starts with its source rather than a package name: a scheme,
+# an scp-style git remote or a host-qualified path.
+_LEADING_SOURCE = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*:|git@|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}/)")
+
+
+def _pnpm_source_package(key: str, item: dict[str, Any]) -> LockedPackage:
+    """Inventory a git, tarball, URL or local pnpm entry by name, without a version.
+
+    v9 keys (and v6 ``/name@<source>`` keys) carry the package name before
+    the source; a v6 ``github.com/<owner>/<repo>/<commit>`` or host-path
+    tarball key does not, and pnpm records the name in the entry's ``name``
+    field. An entry with neither has no name to match and stays malformed.
+    The source URL is never retained, only its kind.
+    """
+    text = key.lstrip("/").split("(", 1)[0]
+    scoped = text.startswith("@")
+    head, separator, rest = text[1 if scoped else 0 :].partition("@")
+    if separator and head and not _LEADING_SOURCE.match(text):
+        name = _name(("@" if scoped else "") + head)
+    elif "name" in item:
+        name, rest = _name(item["name"]), text
+    else:
+        raise LockfileError("unsupported pnpm package key")
+    resolution = item.get("resolution")
+    resolution = resolution if isinstance(resolution, dict) else {}
+    if rest.startswith(("file:", "link:")) or resolution.get("type") == "directory":
+        source = "local"
+    elif resolution.get("type") == "git" or "repo" in resolution or rest.startswith(_GIT_PREFIXES):
+        source = "git"
+    elif "tarball" in resolution:
+        source = "tarball"
+    else:
+        source = "url"
+    return LockedPackage("npm", name, None, source)
+
+
 def _source(value: Any) -> str:
     if isinstance(value, dict):
         for kind in ("registry", "git", "url", "path", "directory", "editable", "virtual"):
@@ -215,8 +252,8 @@ def _pnpm_reference(name: str, reference: str) -> tuple[str, str] | None:
             return _pnpm_key(reference)
         return _name(name), _version(reference)
     except LockfileError:
-        # A git, tarball or URL source is not inventoried, so its edge has
-        # unknown reachability; anything else is still malformed.
+        # A git, tarball or URL source has no locked version to match, so
+        # its edge has unknown reachability; anything else is still malformed.
         if _non_registry(reference):
             return None
         raise
@@ -239,20 +276,23 @@ def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
         except LockfileError:
             if not _non_registry(key):
                 raise
-            continue  # its package entry is skipped and counted below
+            # Its package entry is inventoried by name below; the edges of
+            # a non-registry source have unknown reachability.
+            continue
         if "(" not in key:
             grouped_snapshots.setdefault(identity, []).append(record)
-    skipped = 0
+    unversioned = 0
     for key, entry in entries.items():
         try:
             package_name, package_version = _pnpm_key(key)
         except LockfileError:
             if not _non_registry(key):
                 raise
-            # Inventory the registry packages; a git, tarball or URL source
-            # has no registry identity to report.
-            _mapping(entry)
-            skipped += 1
+            # A git, tarball, URL or local source has no registry version,
+            # but its name still matches AI dependencies. Dropping it hid an
+            # AI package (and the limitation) behind an empty, complete scan.
+            result.packages.append(_pnpm_source_package(key, _mapping(entry)))
+            unversioned += 1
             continue
         item = _mapping(entry)
         package = LockedPackage("npm", package_name, package_version, "registry")
@@ -292,9 +332,10 @@ def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
     if importers:
         result.packages.append(LockedPackage("npm", "workspace", "0", "local", dependencies=roots, root=True))
         result.roots_known = True
-    if skipped:
+    if unversioned:
         result.limitations.append(
-            f"{skipped} pnpm package(s) from git, tarball or URL sources were not inventoried."
+            f"{unversioned} pnpm package(s) from git, tarball, URL or local sources are inventoried "
+            "by name without a version; their edges have unknown reachability."
         )
     return result
 

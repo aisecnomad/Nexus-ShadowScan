@@ -832,17 +832,156 @@ packages:
 }
 
 
+_PNPM_NON_REGISTRY_PACKAGE = {
+    "v9-codeload": ("is-positive", "tarball"),
+    "v9-git-ssh": ("helper", "git"),
+    "v9-tarball": ("helper", "tarball"),
+    "v6-git": ("is-positive", "tarball"),
+}
+
+
 @pytest.mark.parametrize("case", sorted(_PNPM_NON_REGISTRY))
-def test_pnpm_git_and_tarball_entries_are_skipped_not_fatal(case):
-    """Regression (#220 verifier): one git or tarball dependency rejected the whole pnpm lockfile."""
+def test_pnpm_git_and_tarball_entries_are_inventoried_by_name_not_fatal(case):
+    """Regression (#220 verifier, security220-1): a git or tarball entry neither rejects the file nor vanishes."""
     from shadowscan.connectors.code.lockfiles import parse_lockfile
 
     inventory = parse_lockfile("pnpm-lock.yaml", _PNPM_NON_REGISTRY[case])
     packages = {(p.name, p.version): p for p in inventory.packages if not p.root}
-    assert set(packages) == {("openai", "4.0.0")}
+    name, source = _PNPM_NON_REGISTRY_PACKAGE[case]
+    assert set(packages) == {("openai", "4.0.0"), (name, None)}
     assert packages[("openai", "4.0.0")].relationship == "direct"
-    assert any("1 pnpm package(s) from git, tarball or URL sources" in item for item in inventory.limitations)
+    # The source kind is kept, its URL is not, and its edges stay unresolved.
+    assert packages[(name, None)].source == source
+    assert packages[(name, None)].relationship == "unknown"
+    assert any(
+        "1 pnpm package(s) from git, tarball, URL or local sources are inventoried by name without a version"
+        in item
+        for item in inventory.limitations
+    )
     assert "example.invalid" not in str(inventory) and "kevva" not in str(inventory)
+
+
+_PNPM_SOURCE_ONLY_AI = """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      openai:
+        specifier: github:example/openai-node
+        version: https://codeload.github.com/example/openai-node/tar.gz/0123456789abcdef0123456789abcdef01234567
+      zod: {specifier: ^3.23.8, version: 3.23.8}
+packages:
+  openai@https://codeload.github.com/example/openai-node/tar.gz/0123456789abcdef0123456789abcdef01234567:
+    resolution: {tarball: https://codeload.github.com/example/openai-node/tar.gz/0123456789abcdef0123456789abcdef01234567}
+    version: 4.56.0
+  zod@3.23.8:
+    resolution: {integrity: sha512-x}
+snapshots:
+  openai@https://codeload.github.com/example/openai-node/tar.gz/0123456789abcdef0123456789abcdef01234567: {}
+  zod@3.23.8: {}
+"""
+
+_PNPM_TRANSITIVE_SOURCE_AI = """lockfileVersion: '9.0'
+importers:
+  .:
+    dependencies:
+      wrapper: {specifier: 1.0.0, version: 1.0.0}
+packages:
+  wrapper@1.0.0:
+    resolution: {integrity: sha512-x}
+  '@langchain/core@https://example.invalid/langchain-core-0.2.0.tgz':
+    resolution: {tarball: 'https://example.invalid/langchain-core-0.2.0.tgz'}
+    version: 0.2.0
+snapshots:
+  wrapper@1.0.0:
+    dependencies:
+      '@langchain/core': https://example.invalid/langchain-core-0.2.0.tgz
+  '@langchain/core@https://example.invalid/langchain-core-0.2.0.tgz': {}
+"""
+
+
+def test_pnpm_ai_package_from_a_tarball_is_not_hidden_by_a_complete_scan(tmp_path, run_connector):
+    """Regression (security220-1): the only AI package, locked from a tarball, left an empty complete scan."""
+    (tmp_path / "pnpm-lock.yaml").write_text(_PNPM_SOURCE_ONLY_AI)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    (finding,) = [f for f in findings if f.resource_type == "lockfile-inventory"]
+    assert "provider.openai" in finding.frameworks
+    inventory = finding.metadata["lockfile_inventory"]
+    assert inventory["matched_packages"] == [
+        {
+            "ecosystem": "npm",
+            "name": "openai",
+            "version": None,
+            "source_type": "tarball",
+            "relationship": "unknown",
+        }
+    ]
+    assert any("without a version" in item for item in inventory["limitations"])
+    assert "codeload" not in str(finding.to_dict())
+
+
+def test_pnpm_transitive_ai_package_from_a_tarball_is_inventoried(tmp_path, run_connector):
+    """Regression (security220-1): a transitive AI package from a tarball vanished beside a non-AI manifest."""
+    (tmp_path / "package.json").write_text('{"name": "app", "dependencies": {"wrapper": "1.0.0"}}')
+    (tmp_path / "pnpm-lock.yaml").write_text(_PNPM_TRANSITIVE_SOURCE_AI)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    (finding,) = [f for f in findings if f.resource_type == "lockfile-inventory"]
+    (package,) = finding.metadata["lockfile_inventory"]["matched_packages"]
+    assert (package["name"], package["version"], package["source_type"]) == (
+        "@langchain/core",
+        None,
+        "tarball",
+    )
+    assert "example.invalid" not in str(finding.to_dict())
+
+
+@pytest.mark.parametrize(
+    ("key", "entry", "expected"),
+    [
+        # A v6 host-path key carries no name; pnpm records it in `name`.
+        (
+            "github.com/example/helper/abc123",
+            "{name: openai, resolution: {type: git, repo: x}}",
+            ("openai", "git"),
+        ),
+        ("'@example.invalid/helper-1.0.0.tgz'", "{name: '@langchain/core'}", ("@langchain/core", "url")),
+        (
+            "helper@file:../helper",
+            "{resolution: {type: directory, directory: ../helper}}",
+            ("helper", "local"),
+        ),
+        ("'@scope/pkg@git+https://example.invalid/pkg.git#abc'", "{}", ("@scope/pkg", "git")),
+    ],
+)
+def test_pnpm_source_entry_names_come_from_the_key_or_the_name_field(key, entry, expected):
+    from shadowscan.connectors.code.lockfiles import parse_lockfile
+
+    inventory = parse_lockfile("pnpm-lock.yaml", f"lockfileVersion: '9.0'\npackages:\n  {key}: {entry}\n")
+    assert [(p.name, p.version, p.source) for p in inventory.packages] == [(*expected[:1], None, expected[1])]
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "github.com/example/helper/abc123",
+        "'git@github.com:example/helper.git'",
+        "'@example.invalid/helper.tgz'",
+    ],
+)
+def test_pnpm_source_entry_without_a_name_is_still_malformed(key, tmp_path, run_connector):
+    """A non-registry entry whose name cannot be told stays a lockfile gap, never a silent skip."""
+    from shadowscan.connectors.code.lockfiles import LockfileError, parse_lockfile
+
+    text = f"lockfileVersion: '9.0'\npackages:\n  {key}: {{resolution: {{tarball: x}}}}\n"
+    with pytest.raises(LockfileError, match="^unsupported pnpm package key$"):
+        parse_lockfile("pnpm-lock.yaml", text)
+    (tmp_path / "pnpm-lock.yaml").write_text(text)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert any(
+        "pnpm-lock.yaml" in error and "unsupported pnpm package key" in error for error in ctx.stats.errors
+    )
 
 
 def test_pnpm_lockfile_with_a_git_dependency_is_inventoried_by_the_scan(tmp_path, run_connector):

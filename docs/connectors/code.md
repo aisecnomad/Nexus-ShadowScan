@@ -1060,10 +1060,15 @@ explicit roots and unambiguous package/version references (uv root packages or
 pnpm importers). Cargo and Poetry without a root manifest remain `unknown`.
 Aliases resolve to their recorded package name; workspace links, peer-qualified
 variants, remote sources, ambiguous versions, optional conditions and environment markers are not resolved.
-A pnpm package from a git, tarball or URL source (`name@https://...`,
-`name@git+ssh://...`, a v6 `github.com/<owner>/<repo>/<commit>` key) has no
-registry identity: it is skipped and counted in a limitation, its edges have
-unknown reachability, and the rest of the lockfile is inventoried. A `uv.lock`
+A pnpm package from a git, tarball, URL or local source (`name@https://...`,
+`name@git+ssh://...`, `name@file:...`, a v6 `github.com/<owner>/<repo>/<commit>`
+key) has no registry version. It is inventoried by name with `version: null`
+and a `source_type` of `git`, `tarball`, `url` or `local`, so it still matches
+AI signatures; the source URL is not kept, its edges have unknown
+reachability, and a limitation counts these packages. The name comes from the
+key (`name@<source>`) or, for a v6 key that does not carry it, the entry's
+`name` field; an entry with neither is malformed and reported as
+`unsupported pnpm package key`. A `uv.lock`
 package without a `version` (a workspace member or a dynamic version) is
 inventoried with `version: null`.
 Nothing installs dependencies or launches a package manager. Presence in a lock
