@@ -36,6 +36,17 @@ from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitiz
 _MAX_LABEL = 160
 _MAX_TOOLS = 500
 _MAX_OTEL_SPANS = 100_000
+# The tool-poisoning floor: a description matching any of these (or _HOST) is tagged
+# as a review candidate. The sentence audit in skill_audit adds evidence on top of
+# the floor; it never replaces it, so a URL, an AI host, a reference to another tool
+# or an invisible control character keeps the recall main had.
+_POISONING = re.compile(
+    r"<\s*IMPORTANT\s*>|ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|"
+    r"(?:exfiltrat|send|forward)\w*\s+(?:the\s+)?(?:data|secret|credential|prompt)|https?://",
+    re.IGNORECASE,
+)
+_ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff\U000e0000-\U000e007f]")
+_TOOL_REF = re.compile(r"\b(?:use|call|invoke)\s+the\s+[`\"']?([A-Za-z][\w.-]{0,63})", re.IGNORECASE)
 _HOST = re.compile(
     r"(?:https?://)?[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com|googleapis\.com)\b",
     re.IGNORECASE,
@@ -343,6 +354,9 @@ class MCPInventoryConnector(_EndpointConnector):
             malformed_description = not isinstance(description, str)
             if malformed_description:
                 description = ""
+            # The floor reads the same bounded, sanitized prefix it always has; the audit
+            # reads the whole text under its own limits and adds evidence on top.
+            desc = _text(description, 4096)
             audit = audit_skill_text(description)
             if malformed_description:
                 audit = replace(
@@ -351,7 +365,13 @@ class MCPInventoryConnector(_EndpointConnector):
             if audit.incomplete:
                 self.ctx.warn("endpoint.mcp: tool description instruction audit incomplete")
             tags: list[str] = []
-            if audit.indicators:
+            if (
+                _POISONING.search(desc)
+                or _ZERO_WIDTH.search(desc)
+                or _TOOL_REF.search(desc)
+                or _HOST.search(desc)
+                or audit.indicators
+            ):
                 tags.append("tool-poisoning")
             if any(name.casefold() in tools for other, tools in names_by_server.items() if other != server):
                 tags.append("tool-name-shadowing")
