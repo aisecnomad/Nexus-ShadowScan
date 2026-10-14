@@ -74,7 +74,7 @@ repos:
           - rich==15.0.0
           - urllib3==2.8.0
           - types-PyYAML==6.0.12.20260906
-          - types-requests==2.33.0.20260906
+          - types-requests==2.33.0.20261006
         args: []
 
   - repo: local
