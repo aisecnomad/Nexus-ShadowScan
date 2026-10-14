@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar
@@ -191,6 +192,28 @@ def _with_list_item_kinds(data: Any) -> Any:
             for item in data["items"]
         ],
     }
+
+
+# A Kubernetes resource quantity: a decimal number with an optional binary or
+# decimal SI suffix or exponent (1, "2", "500m", "1Ki", "1e3").
+_QUANTITY = re.compile(r"\s*\+?(\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+|[KMGTPE]i|[numkMGTPE])?\s*")
+
+
+def _positive_quantity(value: Any) -> bool | None:
+    """Whether a resource quantity is above zero; None when it is not a quantity.
+
+    An unset (absent or null) quantity is zero. A GPU count of ``0`` or ``"0"``
+    requests no GPU, so only a positive count makes a GPU workload.
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return value > 0 if math.isfinite(value) and value >= 0 else None
+    if isinstance(value, str) and len(value) <= 64 and (match := _QUANTITY.fullmatch(value)):
+        return float(match.group(1)) > 0
+    return None
 
 
 def _workload_images(spec: dict[str, Any]) -> list[str]:
@@ -412,7 +435,14 @@ class KubernetesConnector(BaseConnector):
                     requests = resources.get("requests") if isinstance(resources, dict) else {}
                     limits = resources.get("limits") if isinstance(resources, dict) else {}
                     # A GPU can be set in limits alone (Kubernetes then copies it to requests).
-                    if any(isinstance(r, dict) and r.get("nvidia.com/gpu") for r in (requests, limits)):
+                    gpus = [
+                        _positive_quantity(r.get("nvidia.com/gpu"))
+                        for r in (requests, limits)
+                        if isinstance(r, dict)
+                    ]
+                    if None in gpus:
+                        self.ctx.warn(f"{self.name}: container has malformed GPU quantity")
+                    if True in gpus:
                         tags.append("gpu-workload")
                         gpu_workload = True
             volumes = pod_spec.get("volumes", [])

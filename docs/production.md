@@ -1342,7 +1342,9 @@ items are Pods) and are analyzed, so new findings can appear; earlier they were
 skipped without a warning. An object without a `kind` anywhere else, or with a
 non-string or empty `kind`, now makes a `cloud.kubernetes` or `cloud.openshift`
 scan incomplete (exit 3). Workloads that set `nvidia.com/gpu` only in `limits` are now
-reported as GPU workloads, and private-registry serving images whose name
+reported as GPU workloads, while an `nvidia.com/gpu` of `0` or `"0"` no longer
+makes a GPU workload and a value that is not a resource quantity makes the scan
+incomplete. Private-registry serving images whose name
 starts with an engine name (`registry.example/ml/vllm-serving`, also when
 pinned by digest) are now agent workloads, so new findings can appear. Engine
 names elsewhere in an image path, exporters and operators named after an
