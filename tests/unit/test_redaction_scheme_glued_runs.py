@@ -700,3 +700,48 @@ assert sanitize_text('Bearer ' + secret + '--' + 'a' * n) == 'Bearer ' + REDACTE
         [sys.executable, "-c", script], cwd=ROOT, capture_output=True, text=True, timeout=60, check=False
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# Pins against the integration head before the later-line change: a run on a
+# later line that holds a value stays withheld; only a bare name or separator
+# run is kept.
+_LATER_LINE_SECRET = "AbCdEfGh1234567890Zz"
+_LATER_LINE_VALUE = "Qx7aBcDeFgHiJkLmNp9"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "--pw={v}--extra",
+        "--storepass={v}",
+        "--keypass={v}",
+        "--password=-{v}",
+        "--token=={v}",
+        "=pass={v}",
+        "=auth={v}",
+        "--x--pw={v}",
+        "--no-password.passwd={v}",
+        "--verbose\n--sig={v}",
+        "---\n--otp={v}",
+    ],
+)
+@pytest.mark.parametrize("gap", ["\n", "\n\n"])
+def test_a_value_in_a_run_that_starts_a_later_line_stays_withheld(line: str, gap: str) -> None:
+    text = f"Bearer {_LATER_LINE_SECRET}{gap}{line.format(v=_LATER_LINE_VALUE)}"
+    assert _LATER_LINE_VALUE[:8] not in sanitize_text(text)
+    assert _LATER_LINE_VALUE[:8] not in sanitize({"n": text})["n"]
+    assert _LATER_LINE_VALUE[:8] not in sanitize({"n": text}, redact_short_secrets=True)["n"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Bearer {s}\n--insecure --location https://example.test/x",
+        "auth: Bearer {s}\n---\nnext: doc",
+        "Bearer {s}\n=Section=\nx",
+    ],
+)
+def test_an_inert_run_after_a_scheme_line_is_kept(text: str) -> None:
+    text = text.format(s=_LATER_LINE_SECRET)
+    out = sanitize_text(text)
+    assert out.split("\n")[1:] == text.split("\n")[1:]

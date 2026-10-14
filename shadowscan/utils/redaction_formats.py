@@ -287,6 +287,10 @@ _SCHEME_TAIL = re.compile(
 )
 
 
+# A run that starts a later line and holds no value: dashes or an '=' and at most
+# one name of letters ('--verbose', '---', '=Section='). Only such a run is kept
+# where removing it hides nothing (see redaction._without_later_line_runs).
+_INERT_RUN = re.compile(r"(?:-++|=)(?:[A-Za-z]++(?:[-_.][A-Za-z]++)*+)?[-=]*+")
 # A name of words, as a glued run must be to stay: no digit, so no token's tail.
 _PLAIN_NAME = re.compile(r"[A-Za-z]+(?:[-_.][A-Za-z]+)*")
 _SCHEME_WORDS = frozenset({"bearer", "basic", "ssws"})
@@ -343,7 +347,8 @@ def _withhold_scheme_tails(text: str, *, later_lines: bool = False) -> str:
 
     def withheld(match: re.Match[str]) -> str:
         if _glued_name_kept(match.group("glued"), text, match.end()) or (
-            later_lines and "\n" not in match.group("head")
+            later_lines
+            and ("\n" not in match.group("head") or not _INERT_RUN.fullmatch(match.group("glued")))
         ):
             return match.group()
         if _NEXT_SCHEME_MARKER.match(text, match.end()):
