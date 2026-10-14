@@ -5,6 +5,30 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Repository renamed to Nexus-ShadowScan (October 14)
+
+Documentation and repository metadata only; no scanner behaviour changes.
+
+- Every current document, badge, workflow guard, example, test and tool now
+  names the renamed repository `aisecnomad/Nexus-ShadowScan`: the
+  `pyproject.toml` URLs, `CITATION.cff`, `mkdocs.yml` (including the GitHub
+  Pages site URL, which does not redirect after a rename), the README badges,
+  the `audit.yml` repository guard, the governance-audit and release-evidence
+  tests, and the absolute-link check in
+  `tests/test_repository_consistency.py`. Clone instructions `cd` into the
+  new checkout directory name.
+- Records keep the name they were written under: `archive/`, stored benchmark
+  manifests and reports, and the released sections of `RELEASE_NOTES.md` are
+  unchanged, and GitHub serves the old links through its rename redirect.
+- Wheels attested before the rename record the previous repository name in
+  their provenance, so the `0.1.2` verification commands keep
+  `--repo aisecnomad/Project-Nexus`, and the install and publishing guides
+  state which name verifies which releases. `docs/operations/publishing.md`
+  also warns that PyPI trusted publishing does not follow a GitHub rename:
+  the publisher entries on PyPI and TestPyPI must be edited to
+  `Nexus-ShadowScan` before the next upload.
+- The hero banner's baked-in repository URL is redrawn to the new name.
+
 ### README visual redesign (October 14)
 
 Documentation only; no scanner behaviour changes.
@@ -2669,7 +2693,7 @@ complete and empty. Each has a regression test; finding IDs are unchanged.
   audit, which reads the same way, confirmed the omission. The workflow had
   never been run, so nothing had shown the failure.
 - The workflow takes a required `ruleset_readback` input: an administrator's
-  `gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` output.
+  `gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372` output.
   `python -m tools.release.rules verify --live` accepts it only when it equals
   the job's own read in every field that read returned, `updated_at`
   included, so a stale or edited readback fails and the readback can supply
@@ -3155,7 +3179,7 @@ in `docs/production.md` under "Candidate change history".
   medium) or `note` (low, info), never `error`, which stays reserved for
   connector failures in the tool execution notifications. Each rule's help text
   and `helpUri` link to the new
-  [severity guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/severity.md),
+  [severity guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/severity.md),
   which states what the score is and what enforcement would require. Rule IDs
   and `partialFingerprints` are unchanged.
 
@@ -4409,7 +4433,7 @@ Fixes for defects found by scanning five public agent repositories (see
 ### Completeness, report safety and credential policy (2026-09-28)
 
 Behavior changes to review before upgrading (see
-[production](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#completeness-report-and-credential-changes)):
+[production](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#completeness-report-and-credential-changes)):
 
 - **Credential policy:** the scan-wide `options.allow_instance_credentials`
   now replaces `allow_instance_credentials` in every connector entry. Only
@@ -4798,7 +4822,7 @@ Fixes from the review of the field-review series; each has a regression test.
 ### Field review of public repositories (2026-09-25)
 
 Behavior changes to review before upgrading (see
-[production](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#field-review-changes)):
+[production](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#field-review-changes)):
 
 - **Finding identity:** a CrewAI `agents.yaml` or `langgraph.json` inside a
   reported project is folded into that project's finding (listed under

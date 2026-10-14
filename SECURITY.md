@@ -5,7 +5,7 @@ environment variables, record dumps, incremental state and reports as sensitive
 data. Redaction reduces accidental disclosure; it does not make reports public.
 
 **Reporting a vulnerability:** open a
-[private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new);
+[private GitHub security advisory](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new);
 [Reporting](#reporting) says what to include and
 [Supported versions](#supported-versions) which versions receive fixes. Never
 put credentials, tenant exports or exploit details in a public issue.
@@ -98,7 +98,7 @@ coverage, even when a response includes an empty collection field.
   pseudonyms. Key rotation invalidates cache reuse and collection comparability.
   Resource finding IDs remain stable. Old public credential digests and private
   legacy gateway binding mappings remain sensitive; see the
-  [credential evidence migration](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#credential-evidence-identity-migration).
+  [credential evidence migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#credential-evidence-identity-migration).
 * `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
   to a 120-second cooperative completion deadline. Late connector results are
   discarded and coverage is incomplete. Legacy `connector_timeout` /
@@ -371,9 +371,9 @@ coverage, even when a response includes an empty collection field.
   while scanning. Runtime telemetry attribution does not prove that a particular
   dependency executed.
 
-See [deployment and migration](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md),
-[scan semantics](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/scanning.md),
-and [connector permissions](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors.md).
+See [deployment and migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md),
+[scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md),
+and [connector permissions](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md).
 
 ## Supported versions
 
@@ -384,7 +384,7 @@ Publication does not establish production acceptance for your environment.
 
 ## Reporting
 
-Use a [private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
+Use a [private GitHub security advisory](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new).
 Do not include credentials, private exports or exploit details in public issues.
 
 ### What to report privately
@@ -395,7 +395,7 @@ and malformed inputs that make incomplete coverage look complete. Reports about
 CI or release-evidence integrity also belong in the private channel.
 
 Ordinary false positives, missed integrations and incorrect attribution can use
-the [detection report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml)
+the [detection report form](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=detection_report.yml)
 when the reproduction is safe to publish. A trusted component being compromised
 is outside the scanner's stated trust boundary; explain any demonstrated bypass
 rather than assuming the scanner protects a compromised host.

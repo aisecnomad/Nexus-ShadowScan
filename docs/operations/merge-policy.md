@@ -1,6 +1,6 @@
 # Enforce and verify the merge policy
 
-The versioned [ruleset policy](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/rulesets/require-ci-and-review.json)
+The versioned [ruleset policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/rulesets/require-ci-and-review.json)
 is a desired configuration, not evidence that GitHub is enforcing it. Both
 visible repository rulesets have been enabled and disabled several times since
 2026-09; the dated readbacks are under
@@ -60,9 +60,9 @@ approval counts introduced since the committed examples were prepared.
 
 ```bash
 set -e
-test "$(gh api repos/aisecnomad/Project-Nexus --jq .default_branch)" = main
+test "$(gh api repos/aisecnomad/Nexus-ShadowScan --jq .default_branch)" = main
 for id in 23892853 23913372; do
-  gh api "repos/aisecnomad/Project-Nexus/rulesets/$id" > "/restricted/$id-before.json"
+  gh api "repos/aisecnomad/Nexus-ShadowScan/rulesets/$id" > "/restricted/$id-before.json"
   python -m tools.governance.rulesets plan --ruleset-id "$id" \
     --input "/restricted/$id-before.json" --output "/restricted/$id-update.json"
 done
@@ -83,16 +83,16 @@ evidence and must not replace this preparation.
 set -e
 # Administrator operations: apply only the two payloads just reviewed.
 for id in 23892853 23913372; do
-  gh api --method PUT "repos/aisecnomad/Project-Nexus/rulesets/$id" \
+  gh api --method PUT "repos/aisecnomad/Nexus-ShadowScan/rulesets/$id" \
     --input "/restricted/$id-update.json" > "/restricted/$id-put-response.json"
-  gh api "repos/aisecnomad/Project-Nexus/rulesets/$id" > "/restricted/$id-after.json"
+  gh api "repos/aisecnomad/Nexus-ShadowScan/rulesets/$id" > "/restricted/$id-after.json"
   python -m tools.governance.rulesets verify --ruleset-id "$id" \
     --input "/restricted/$id-after.json" --expected "/restricted/$id-update.json"
 done
 python -m tools.governance_check /restricted/23913372-after.json
 # Inspect the effective rules as well as the individual settings objects.
-gh api repos/aisecnomad/Project-Nexus/rules/branches/main
-gh api repos/aisecnomad/Project-Nexus/branches/main/protection
+gh api repos/aisecnomad/Nexus-ShadowScan/rules/branches/main
+gh api repos/aisecnomad/Nexus-ShadowScan/branches/main/protection
 ```
 
 The two-ruleset verifier compares every managed field of each full readback to
@@ -125,7 +125,7 @@ require weakening the rules or merging the probe.
 
 ## Detect protection drift between commits
 
-The weekly [dependency and governance audit](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/audit.yml)
+The weekly [dependency and governance audit](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/audit.yml)
 has a separate read-only job that fetches both current rulesets and compares
 their repository identities and settings to the reviewed update payloads. It
 also runs on manual dispatch from `main`. A disabled rule, missing aggregate
@@ -187,4 +187,4 @@ Repository administration and independent reviewer availability remain
 external prerequisites. Human-labeled holdouts and live tenant receipts are
 separate acceptance evidence; see [evaluation](../evaluation.md),
 [canaries](../canaries.md) and the
-[production verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+[production verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md).

@@ -1986,7 +1986,7 @@ def test_publication_gate_executes_fail_closed(
     stub.mkdir()
     (stub / "gh").write_text(
         "#!/bin/bash\n"
-        'expected="api repos/aisecnomad/Project-Nexus/commits/refs/tags/v$EXPECTED_VERSION --jq .sha"\n'
+        'expected="api repos/aisecnomad/Nexus-ShadowScan/commits/refs/tags/v$EXPECTED_VERSION --jq .sha"\n'
         '[ "$*" = "$expected" ] || { echo "unexpected gh call: $*" >&2; exit 64; }\n'
         '[ -n "$TAGGED" ] || { echo "HTTP 404: No commit found for SHA" >&2; exit 1; }\n'
         'printf "%s\\n" "$TAGGED"\n',
@@ -2000,7 +2000,7 @@ def test_publication_gate_executes_fail_closed(
             "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}",
             "GH_TOKEN": "not-a-real-token",
             "PUBLISH": target,
-            "GITHUB_REPOSITORY": "aisecnomad/Project-Nexus",
+            "GITHUB_REPOSITORY": "aisecnomad/Nexus-ShadowScan",
             "GITHUB_SHA": _REVIEWED,
             "EXPECTED_VERSION": wheels[-1] if wheels else "",
             "TAGGED": tagged or "",

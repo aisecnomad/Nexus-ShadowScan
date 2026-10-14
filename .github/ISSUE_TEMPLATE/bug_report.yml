@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         **Do not include credentials, JWTs, private exports, or exploit details.**
-        Use a [private security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new) for credential leaks, redaction failures, or anything that could expose sensitive data.
+        Use a [private security advisory](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new) for credential leaks, redaction failures, or anything that could expose sensitive data.
 
   - type: input
     id: version

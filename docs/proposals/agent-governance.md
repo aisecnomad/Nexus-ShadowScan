@@ -3,7 +3,7 @@
 Status: proposal, drafted 2026-10-10; all six items are now implemented,
 unreleased (each section's status line gives the details and what remains
 open). This page expands six roadmap ideas into scoped items. It is intent,
-not a contract, and nothing here is implemented unless an item says so. [ROADMAP.md](https://github.com/aisecnomad/Project-Nexus/blob/main/ROADMAP.md)
+not a contract, and nothing here is implemented unless an item says so. [ROADMAP.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/ROADMAP.md)
 carries the one-line summary of each item.
 
 The six items are:
@@ -39,7 +39,7 @@ documentation.
 
 ## Rules for every item
 
-These restate [AGENTS.md](https://github.com/aisecnomad/Project-Nexus/blob/main/AGENTS.md)
+These restate [AGENTS.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/AGENTS.md)
 for the new work. Each item's acceptance criteria assume them.
 
 - **Declared is not observed.** A registry record, a Capability Card or a

@@ -74,7 +74,7 @@ mailing list, or event the maintainers designate.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported through a
-[private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
+[private GitHub security advisory](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new).
 Mark the report as a code of conduct concern in the advisory title or body so
 it is not treated as a product vulnerability.
 

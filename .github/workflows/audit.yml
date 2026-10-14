@@ -18,7 +18,7 @@ permissions:
 jobs:
   merge-policy:
     name: Verify visible main controls (bypass assurance separate)
-    if: github.repository == 'aisecnomad/Project-Nexus' && github.ref == 'refs/heads/main'
+    if: github.repository == 'aisecnomad/Nexus-ShadowScan' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

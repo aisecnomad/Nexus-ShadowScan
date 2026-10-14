@@ -47,7 +47,7 @@ GITHUB = ROOT / ".github"
 # GitHub runs both YAML spellings; test_repository_policy.py checks the glob.
 WORKFLOWS = sorted(path for path in (GITHUB / "workflows").glob("*.y*ml") if path.is_file())
 FORMS = sorted(path for path in (GITHUB / "ISSUE_TEMPLATE").glob("*.yml") if path.name != "config.yml")
-ADVISORY_URL = "https://github.com/aisecnomad/Project-Nexus/security/advisories/new"
+ADVISORY_URL = "https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new"
 
 # Files GitHub's community profile and the OpenSSF Scorecard look for, plus the
 # project's own governance set. Each must exist and carry content.
@@ -230,7 +230,7 @@ def test_relative_markdown_links_and_anchors_resolve(markdown: Path) -> None:
 
 
 _REPOSITORY_LINK = re.compile(
-    r"https://github\.com/aisecnomad/Project-Nexus/(blob|tree)/main/([^#?]+)(?:#(.+))?"
+    r"https://github\.com/aisecnomad/Nexus-ShadowScan/(blob|tree)/main/([^#?]+)(?:#(.+))?"
 )
 
 

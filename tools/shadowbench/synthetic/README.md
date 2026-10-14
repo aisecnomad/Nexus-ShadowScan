@@ -38,7 +38,7 @@ of active-network cases. `stage.py` is what runs inside the namespaces.
 {
   "tool_root": "/opt/nsb/tools",
   "tools": {
-    "shadowscan": {"bin": "/opt/nsb/venv/bin/python", "repo": "/path/to/Project-Nexus"},
+    "shadowscan": {"bin": "/opt/nsb/venv/bin/python", "repo": "/path/to/Nexus-ShadowScan"},
     "snyk-agent-scan": {"bin": "/opt/nsb/tools/venvs/snyk-agent-scan/bin/snyk-agent-scan"},
     "cisco-mcp-scanner": {"bin": "/opt/nsb/tools/venvs/mcp-scanner/bin/mcp-scanner"},
     "agentmesh-discovery": {"bin": "/opt/nsb/tools/venvs/agentmesh-discovery/bin/agent-discovery"},

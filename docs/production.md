@@ -37,7 +37,7 @@ and executable shims. Freeze repository/family sampling and acceptance
 thresholds before showing scanner results to reviewers. These new authored
 regressions must be excluded from that holdout.
 
-The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+The [acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md)
 supports static code, AWS and Slack. A code change cannot substitute for human
 labels, approved tenant credentials or live acceptance receipts.
 
@@ -85,7 +85,7 @@ PowerShell and cmd continuations, commented or prefixed source argv and an
 executable passed separately from its argument list. Regenerate old reports,
 exports and cached evidence under the reviewed revision; changing the scanner
 cannot erase already retained copies. Continue to protect audit artifacts and
-follow the credential handling policy in [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+follow the credential handling policy in [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md).
 The additive JSON `inventory_present` field distinguishes an explicitly supplied
 empty inventory from a scan without inventory reconciliation. CSV now retains
 the entire sanitized permission list, including permissions beyond position 30.
@@ -105,7 +105,7 @@ ambiguous bindings and registered versus unregistered source agents. Freeze
 sampling, labels and acceptance thresholds before showing results to reviewers;
 exclude the new authored regression fixtures. Follow
 [rollout acceptance](#rollout-acceptance) for complete and permission-denied
-tenant canaries. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+tenant canaries. The [acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md)
 supports static code, AWS and Slack; passing those scopes does not grant
 acceptance to other connectors. Human labels and live receipts remain pending
 until operators supply them.
@@ -175,8 +175,8 @@ a tag that has not been published.
 
 ```bash
 SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
-git clone https://github.com/aisecnomad/Project-Nexus.git
-cd Project-Nexus
+git clone https://github.com/aisecnomad/Nexus-ShadowScan.git
+cd Nexus-ShadowScan
 git checkout --detach "$SHADOWSCAN_REVISION"
 test "$(git rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
 ```
@@ -298,7 +298,7 @@ image, and the daemon falls back to Docker Hub when the mirror fails. A builder
 elsewhere that hits the limit can set the same daemon mirror or authenticate to
 Docker Hub; the digest pin keeps the base image identical either way.
 
-The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml) has a 20-minute
+The [Kubernetes offline Job example](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/k8s-job.yaml) has a 20-minute
 active deadline, a placeholder for a reviewed image digest, and a matching
 NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
 reviewed `/input` volume before running it. For live API collection, use a
@@ -666,7 +666,7 @@ relying on enforcement. Neither the policy file nor this checker updates live
 repository administration settings.
 
 Ruleset
-[23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
+[23913372, Require CI and CodeQL](https://github.com/aisecnomad/Nexus-ShadowScan/rules/23913372)
 is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an
 up-to-date branch, and one approving review from a reviewer with write access,
 alongside `Protect main`. The 2026-10-10 readback below shows the aggregate
@@ -695,12 +695,12 @@ no bypass actors; `CI gate` is not yet among its required checks. `Protect
 main` adds linear history and deletion protection and still names bypass
 actors. At 08:05 UTC on 2026-10-02 both rulesets read back as
 `enforcement: disabled` again (last updated 04:28 UTC), and
-`GET /repos/aisecnomad/Project-Nexus/rules/branches/main` returned no active
+`GET /repos/aisecnomad/Nexus-ShadowScan/rules/branches/main` returned no active
 rules, so nothing enforced review, CI or linear history on `main` at that time.
 At 19:08 UTC on 2026-10-02 both again read back as `enforcement: disabled`
 (last updated 18:39 UTC) with no active rules on `main`. The committed
 snapshots in
-[`.github/rulesets/observed/`](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets/observed)
+[`.github/rulesets/observed/`](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets/observed)
 recorded that 04:28 UTC state until they were refreshed from the 2026-10-10
 readback described below.
 On 2026-10-03 (19:06 UTC), both rulesets read back active again. The review/CI
@@ -778,7 +778,7 @@ own, on two Dependabot updates. A repository administrator can bypass or
 reconfigure rules, so a merged pull request, the
 version string and the internal AI-assisted hardening logs are not evidence of
 independent review. The review and merge policy is in
-[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy).
+[CONTRIBUTING.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#review-and-merge-policy).
 
 Rulesets, branch protection and pull request approvals are repository settings
 that can change at any time, so an
@@ -788,13 +788,13 @@ evidence:
 
 ```bash
 # Rules currently enforced on main; an empty list means nothing is enforced
-gh api repos/aisecnomad/Project-Nexus/rules/branches/main
+gh api repos/aisecnomad/Nexus-ShadowScan/rules/branches/main
 # The ruleset itself, including its enforcement state
-gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 --jq '{name, enforcement, rules: [.rules[].type]}'
+gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372 --jq '{name, enforcement, rules: [.rules[].type]}'
 # Classic branch protection; HTTP 404 means none is configured
-gh api repos/aisecnomad/Project-Nexus/branches/main/protection
+gh api repos/aisecnomad/Nexus-ShadowScan/branches/main/protection
 # Who authored, reviewed and merged the pull request that introduced a change
-gh pr view <number> --repo aisecnomad/Project-Nexus --json author,mergedBy,reviews
+gh pr view <number> --repo aisecnomad/Nexus-ShadowScan --json author,mergedBy,reviews
 ```
 
 The offline rules helper can prepare a reviewed PUT body from a fresh full
@@ -803,17 +803,17 @@ GitHub can omit that field for identities without ruleset write access. Read
 the default branch first and confirm it is `main`:
 
 ```bash
-gh api repos/aisecnomad/Project-Nexus --jq .default_branch
-gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 > /secure/main-rules-before.json
+gh api repos/aisecnomad/Nexus-ShadowScan --jq .default_branch
+gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372 > /secure/main-rules-before.json
 python -m tools.release.rules prepare --input /secure/main-rules-before.json \
-  --output /secure/main-rules-update.json --repository aisecnomad/Project-Nexus \
+  --output /secure/main-rules-update.json --repository aisecnomad/Nexus-ShadowScan \
   --default-branch main
 # Review the generated body before this administrator operation.
-gh api --method PUT repos/aisecnomad/Project-Nexus/rulesets/23913372 \
+gh api --method PUT repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372 \
   --input /secure/main-rules-update.json
-gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 > /secure/main-rules-after.json
+gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372 > /secure/main-rules-after.json
 python -m tools.release.rules verify --input /secure/main-rules-after.json \
-  --output /secure/merge-rule-verification.json --repository aisecnomad/Project-Nexus \
+  --output /secure/merge-rule-verification.json --repository aisecnomad/Nexus-ShadowScan \
   --default-branch main
 ```
 
@@ -832,10 +832,10 @@ governance checker. The release workflow obtains its snapshot
 directly from GitHub; an offline receipt cannot authenticate its own API origin,
 establish historical enforcement or prove an actual human approved the final PR.
 
-The [two-ruleset payload helper](https://github.com/aisecnomad/Project-Nexus/tree/main/tools/governance)
+The [two-ruleset payload helper](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/tools/governance)
 additionally prepares `Protect main` and `Require CI and CodeQL` together,
 removing bypass actors from both. The observed snapshots and proposed PUT
-bodies are in [.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
+bodies are in [.github/rulesets](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets).
 The committed observed snapshots capture the 2026-10-10 readback: active
 rulesets that still list four `always` bypass actors. Refresh
 those observations and regenerate the bodies before applying them; the files
@@ -1845,7 +1845,7 @@ check-provider bindings require administrator review instead of silent
 replacement. The available repository integration cannot apply administration
 writes; versioned payloads are not evidence of active enforcement. Human review,
 a fresh human-labeled holdout and scope-specific live tenant receipts remain
-required evidence. Existing [acceptance tooling](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+required evidence. Existing [acceptance tooling](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md)
 checks supplied evidence; synthetic regression results cannot replace it.
 
 ### October 2 integration of #134 and hygiene review
@@ -2094,7 +2094,7 @@ disappearance of a comment-only finding as a remediation.
 The new regression cases are authored from observed defects. They do not replace
 the [fresh human-reviewed holdout](evaluation.md#build-a-genuinely-held-out-field-set),
 independent review of the final candidate, or [live tenant canaries](canaries.md).
-Run the existing [scope-specific acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+Run the existing [scope-specific acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md)
 on real evidence for the intended population and tenant scopes. Record unmet
 requirements as unmet; do not substitute offline replays or AI-generated labels.
 
@@ -2199,7 +2199,7 @@ Complete AWS/Slack and separately credentialed permission-denied
 [tenant canaries](canaries.md) in the authorized deployment scope. For other
 connectors, retain connector-specific live evidence. Bind those receipts and a
 fresh human-reviewed holdout to this exact source/signature revision with the
-[acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+[acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md).
 Independent human review of the final revision remains required before release.
 Offline replay and the new CI checks cannot supply these attestations.
 
@@ -2421,7 +2421,7 @@ ruleset by declaring a job.
 
 The revised synthetic cases remain regression data. Freeze a fresh population,
 human labels and acceptance policy using [the holdout procedure](evaluation.md#gate-a-frozen-holdout),
-then run the [scope-specific evidence gate](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+then run the [scope-specific evidence gate](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md).
 For AWS or Slack deployments, retain complete and separately credentialed
 permission-denied receipts from [approved tenant canaries](canaries.md).
 Other connectors need their own acceptance evidence. The existing bundled
@@ -2491,7 +2491,7 @@ and locally shadowed execution calls. Reconcile a fresh code
 baseline and review changed finding identities before using `--fail-on` as an
 enforcement gate. Offline source tests establish these paths, not runtime use.
 
-Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
+Use the [offline acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md) to check the
 required evidence for the intended deployment scope. It checks artifact identity,
 freshness and declared review/metric requirements. It does not authenticate
 reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
@@ -2499,7 +2499,7 @@ tests into operational evidence. Keep receipts and human attestations in control
 audit storage and review their origin. Unsupported live connectors still require
 their own acceptance work; they cannot inherit an AWS or Slack result.
 
-The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
+The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/release.yml)
 requires successful main-branch CI and CodeQL runs for the exact selected commit.
 It rejects modified, untracked and ignored checkout files, builds from a clean
 `git archive`, checks the wheel, retains a runtime dependency SBOM and hashes,
@@ -2513,7 +2513,7 @@ After merge and successful push CI, dispatch **Release candidate evidence** on
 `main` with `expected_commit` set to the full current main SHA, `ci_run_id`
 set to that commit's successful CI run ID, `codeql_run_id` set to its
 successful CodeQL run ID, and `ruleset_readback` set to an administrator's
-`gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` output taken just
+`gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372` output taken just
 before dispatch. The workflow rejects stale commits, PR-only runs, failed
 checks and other workflows. GitHub withholds `bypass_actors` from the
 workflow's read-only token, so the build job accepts the readback only when it
@@ -3247,11 +3247,11 @@ against its expected issuer and allowed keys. This is signature evidence, not an
 authorization or token-acceptance decision. Key rotation during the same analysis
 requires a new scan.
 
-See the [consolidated hardening log](https://github.com/aisecnomad/Project-Nexus/blob/main/archive/reviews/consolidated-review-2026-09-24.md)
+See the [consolidated hardening log](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/archive/reviews/consolidated-review-2026-09-24.md)
 for the maintainer's verification notes and implementation choices. It is an
 internal, AI-assisted work log, not an independent review.
 
-The [round 2 production review](https://github.com/aisecnomad/Project-Nexus/blob/main/archive/reviews/production-review-2026-09-24-round2.md), also an
+The [round 2 production review](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/archive/reviews/production-review-2026-09-24-round2.md), also an
 internal AI-assisted work log rather than an independent review, records
 the later verified corrections to export sanitization, Bedrock/IAM/OCI collection,
 JWT classification, gateway detection and report rendering performance.

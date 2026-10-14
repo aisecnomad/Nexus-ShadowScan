@@ -8,7 +8,7 @@ SARIF results are warnings or notes for analyst triage, without a
 
 ## GitHub Actions
 
-Copy the [consumer GitHub Action](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/github-action-code-scan.yml)
+Copy the [consumer GitHub Action](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/github-action-code-scan.yml)
 into your repository and set `SHADOWSCAN_REVISION` to a reviewed full commit SHA.
 The example pins its actions, checks out that exact scanner revision, installs
 the hash-locked runtime and build dependencies, builds a wheel with the locked backend,
@@ -63,8 +63,8 @@ listed class: `inventory`, `capability`, `autonomy`, `governance` or
 reviewed digest (exit 1). `--max-baseline-age-days` makes the comparison
 incomplete (exit 3) when the baseline is too old or cannot be dated.
 
-The [weekly drift workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/github-action-drift.yml)
-and [Kubernetes CronJob](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-drift-cronjob.yaml)
+The [weekly drift workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/github-action-drift.yml)
+and [Kubernetes CronJob](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/k8s-drift-cronjob.yaml)
 templates run this on a schedule. They never run for pull requests and never
 print findings to logs. [Scheduled drift detection](drift.md) covers the drift
 classes, the baseline review process and the record-and-replay alternative.

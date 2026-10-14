@@ -250,7 +250,7 @@ def access_log_records(case: Case) -> list[dict[str, Any]]:
 class ShadowScan(Adapter):
     name = "shadowscan"
     display = "Project Nexus ShadowScan"
-    source = "aisecnomad/Project-Nexus"
+    source = "aisecnomad/Nexus-ShadowScan"
     surfaces = {
         "repo": "code.filesystem on the checkout",
         "endpoint": "code.filesystem on the home directory",

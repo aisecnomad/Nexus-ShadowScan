@@ -149,7 +149,7 @@ class ShadowScan(Adapter):
 
     name = "shadowscan"
     display = "Project Nexus ShadowScan"
-    source = "aisecnomad/Project-Nexus"
+    source = "aisecnomad/Nexus-ShadowScan"
     scope = (
         "code.filesystem on the checkout (signature packs for frameworks, providers, MCP and coding agents)"
     )

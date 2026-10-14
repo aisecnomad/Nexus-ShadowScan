@@ -385,7 +385,7 @@ def build(corpus_path: Path, metrics: dict[str, Any], grades: dict[str, Any], ou
     story.append(Paragraph("5. Reproduction", st["h1"]))
     story.append(
         Paragraph(
-            f"Repository: github.com/aisecnomad/Project-Nexus, benchmarks/shadowbench and tools/shadowbench/synthetic. Corpus SHA-256 "  # noqa: E501
+            f"Repository: github.com/aisecnomad/Nexus-ShadowScan, benchmarks/shadowbench and tools/shadowbench/synthetic. Corpus SHA-256 "  # noqa: E501
             f"{_esc(metrics.get('corpus_sha256'))}. Generator digest {_esc(metrics.get('generator_digest'))}. Run started "  # noqa: E501
             f"{_esc(m.get('started'))}, finished {_esc(m.get('finished'))}, {_esc(m.get('workers'))} parallel workers on "  # noqa: E501
             f"{_esc(m.get('platform'))}, Python {_esc(m.get('python'))}.",

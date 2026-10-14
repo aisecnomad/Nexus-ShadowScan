@@ -1,7 +1,7 @@
 # Maintainer and reviewer onboarding
 
 A checklist for adding a reviewer or co-maintainer, matching the roles in
-[Governance](https://github.com/aisecnomad/Project-Nexus/blob/main/GOVERNANCE.md#path-to-additional-maintainers).
+[Governance](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#path-to-additional-maintainers).
 Publishing uses the protected GitHub environments and PyPI trusted publisher
 described in the [publishing runbook](operations/publishing.md); no long-lived
 package-index token is required. A release remains a manual maintainer action.

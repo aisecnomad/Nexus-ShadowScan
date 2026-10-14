@@ -16,7 +16,10 @@ Releases reach PyPI only through the maintainer-approved
 [publish job](../operations/publishing.md), which uploads the wheel that the
 release-evidence workflow attested. Check a downloaded wheel against this
 repository with
-`gh attestation verify <wheel> --repo aisecnomad/Project-Nexus`.
+`gh attestation verify <wheel> --repo aisecnomad/Nexus-ShadowScan`. A wheel
+attested before the repository's October 2026 rename (release `0.1.2` and
+earlier) records the previous name in its provenance; verify it with
+`--repo aisecnomad/Project-Nexus`.
 
 A plain `pip install` resolves dependencies from the live index. For a
 deployment, prefer the hash-locked install.
@@ -31,8 +34,8 @@ for the release evidence and platform limits.
 
 ```bash
 SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
-git clone https://github.com/aisecnomad/Project-Nexus.git
-cd Project-Nexus
+git clone https://github.com/aisecnomad/Nexus-ShadowScan.git
+cd Nexus-ShadowScan
 git checkout --detach "$SHADOWSCAN_REVISION"
 test "$(git rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
 python -m venv .venv

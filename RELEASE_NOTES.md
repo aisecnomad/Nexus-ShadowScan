@@ -1,17 +1,17 @@
 # Release notes
 
 What changed for people who install, configure or operate ShadowScan, one
-section per release. [CHANGELOG.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CHANGELOG.md)
+section per release. [CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
 is the detailed engineering log, recorded per change, and the
-[deployment and migration guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md)
+[deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
 ## Unreleased
 
 Changes on `main` since 0.1.2, for operators. They are not published or
 tagged; pin a reviewed commit SHA to use them. Details:
-[CHANGELOG.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CHANGELOG.md)
-and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md).
+[CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
+and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md).
 
 ### Before you upgrade
 

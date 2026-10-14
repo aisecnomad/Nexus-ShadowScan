@@ -5,7 +5,7 @@ per-release steps that put a reviewed ShadowScan release on PyPI as
 `NexusShadowScan`, so that `pip install NexusShadowScan` installs it.
 
 Publishing is a manual maintainer action and comes after the
-[release process](https://github.com/aisecnomad/Project-Nexus/blob/main/GOVERNANCE.md#release-process):
+[release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process):
 independent human review of the exact candidate commit and the acceptance
 evidence for its deployment scope. Coding agents prepare candidates. They
 never push a version tag, dispatch the workflow with `publish` set, or approve
@@ -13,7 +13,7 @@ a deployment.
 
 ## How an upload is gated
 
-The [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
+The [release-evidence workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/release.yml)
 (**Release candidate evidence**) is the only path to the package index. No
 package-index token exists: PyPI trusts this repository's workflow and
 environment through OpenID Connect (trusted publishing).
@@ -49,7 +49,7 @@ package.
    |---|---|
    | PyPI project name | `NexusShadowScan` |
    | Owner | `aisecnomad` |
-   | Repository name | `Project-Nexus` |
+   | Repository name | `Nexus-ShadowScan` |
    | Workflow name | `release.yml` |
    | Environment name | `pypi` |
 
@@ -57,7 +57,11 @@ package.
    the environment name `testpypi`. A pending publisher does not reserve the
    name, and someone else can still register it. Publish the first release
    soon after you register the publisher. Do not remove the publisher
-   afterwards; it becomes the project's publisher.
+   afterwards; it becomes the project's publisher. Trusted publishing binds
+   the repository by name and does not follow a GitHub rename: after the
+   October 2026 rename from `Project-Nexus` to `Nexus-ShadowScan`, edit the
+   publisher entries on PyPI and TestPyPI to the new repository name before
+   the next upload, or the publish job is rejected.
 3. **GitHub environments.** Under **Settings → Environments**, create `pypi`
    and `testpypi`:
    - **Required reviewers:** the maintainer. Add a second reviewer and turn on
@@ -77,18 +81,18 @@ package.
    Date the release headings in `CHANGELOG.md` and `RELEASE_NOTES.md` and
    remove "unreleased" from them. Merge through the normal review process.
 2. **Review and accept the exact commit**, as the
-   [release process](https://github.com/aisecnomad/Project-Nexus/blob/main/GOVERNANCE.md#release-process)
+   [release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process)
    requires. A green CI run is not that review.
 3. **Rehearse on TestPyPI.** Dispatch **Release candidate evidence** on `main`
    from an administrator-authenticated GitHub CLI, then approve the
    `testpypi` deployment:
 
    ```bash
-   gh workflow run release.yml --repo aisecnomad/Project-Nexus --ref main \
+   gh workflow run release.yml --repo aisecnomad/Nexus-ShadowScan --ref main \
      -f expected_commit=<reviewed-40-character-sha> \
      -f ci_run_id=<its successful push CI run> \
      -f codeql_run_id=<its successful push CodeQL run> \
-     -f ruleset_readback="$(gh api repos/aisecnomad/Project-Nexus/rulesets/23913372)" \
+     -f ruleset_readback="$(gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372)" \
      -f publish=testpypi
    ```
 
@@ -136,7 +140,11 @@ package.
 
    Compare the wheel's SHA-256 with `SHA256SUMS` in the retained
    `release-candidate-<SHA>` artifact. On PyPI, the file's provenance should
-   name this repository, `release.yml` and the `pypi` environment.
+   name the repository as it was named when the release was attested
+   (`aisecnomad/Project-Nexus` for `0.1.2` and earlier,
+   `aisecnomad/Nexus-ShadowScan` after the October 2026 rename), plus
+   `release.yml` and the `pypi` environment, and `--repo` must match that
+   recorded name.
 
    To confirm the bytes from source rather than from the attestation, rebuild
    the wheel the way `release.yml` does and compare digests. Every archive
@@ -173,4 +181,4 @@ package.
   message and the release notes.
 - **Suspected compromise of the repository or its workflow.** Remove the trusted
   publisher on PyPI first; this stops further uploads with nothing to rotate.
-  Then follow [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+  Then follow [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md).

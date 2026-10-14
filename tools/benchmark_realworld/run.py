@@ -225,7 +225,7 @@ def self_check(root: Path, env: ToolEnv, scratch: Path, raw_dir: Path) -> dict[s
     if outcome.raw:
         _write_raw(raw_dir, "shadowscan-self-check", case.case_id, outcome.raw)
     return {
-        "repo": "aisecnomad/Project-Nexus",
+        "repo": "aisecnomad/Nexus-ShadowScan",
         "status": outcome.status,
         "detected": outcome.detected,
         "items": outcome.items,
