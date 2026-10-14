@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -20,10 +20,15 @@ from requests import RequestException
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import finalize
 from shadowscan.connectors.identity.common import assess_app
+from shadowscan.connectors.offline import OfflineInputBudget
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.identity import atlassian_site_origin
 from shadowscan.utils.text import get_path
+
+# Loader-assigned per-file scope for exports without a configured site. Any
+# value an untrusted export supplies under this key is overwritten.
+_UNRESOLVED_SCOPE_KEY = "_unresolved_scope"
 
 
 class AtlassianConnector(BaseConnector):
@@ -52,15 +57,11 @@ class AtlassianConnector(BaseConnector):
         if site not in (None, "") and self.site is None:
             raise ConnectorError("saas.atlassian: site must be a concrete HTTPS site origin without a path")
         # The same public plugin key in two unscoped exports must not merge
-        # into one installation. Repeat scans of one input retain its IDs.
+        # into one installation. Offline records are scoped per export file
+        # (see _load_offline_file), so a directory holding several sites'
+        # exports keeps them distinct; repeat scans of one file retain IDs.
         source = self.ctx.input_path
-        self._unresolved_scope = (
-            hashlib.sha256(f"{self.name}\0{Path(str(source)).expanduser().absolute()}".encode()).hexdigest()[
-                :32
-            ]
-            if source
-            else secrets.token_hex(16)
-        )
+        self._unresolved_scope = self._scope_for(Path(str(source))) if source else secrets.token_hex(16)
         products = ctx.get("products") or ["jira", "confluence"]
         if isinstance(products, str):
             # A bare string would otherwise be iterated character by character.
@@ -72,6 +73,16 @@ class AtlassianConnector(BaseConnector):
         ):
             raise ConnectorError("saas.atlassian: products must list only 'jira' and/or 'confluence'")
         self.products: list[str] = list(dict.fromkeys(products))
+
+    def _scope_for(self, source: Path) -> str:
+        resolved = source.expanduser().resolve()
+        return hashlib.sha256(f"{self.name}\0{resolved}".encode()).hexdigest()[:32]
+
+    def _load_offline_file(self, source: Path, budget: OfflineInputBudget) -> Iterator[dict[str, Any]]:
+        scope = self._scope_for(source)
+        for record in super()._load_offline_file(source, budget):
+            record[_UNRESOLVED_SCOPE_KEY] = scope
+            yield record
 
     @staticmethod
     def _is_error_record(data: dict[str, Any]) -> bool:
@@ -103,6 +114,7 @@ class AtlassianConnector(BaseConnector):
                     self.ctx.warn(f"saas.atlassian: {product} UPM returned an invalid plugin entry")
                     continue
                 p["_product"] = product
+                p.pop(_UNRESOLVED_SCOPE_KEY, None)
                 yield p
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -146,6 +158,10 @@ class AtlassianConnector(BaseConnector):
             )
         )
 
+    def _record_scope(self, p: dict[str, Any]) -> str:
+        scope = p.get(_UNRESOLVED_SCOPE_KEY)
+        return scope if isinstance(scope, str) and scope else self._unresolved_scope
+
     def _app_finding(self, p: dict[str, Any]) -> Finding | None:
         name = p.get("name") or p.get("key")
         vendor = get_path(p, "vendor.name") or p.get("vendor")
@@ -160,7 +176,7 @@ class AtlassianConnector(BaseConnector):
             provider="atlassian",
             account=self.site,
             identity_discriminator=(
-                "atlassian-app" if self.site else f"atlassian-app:unresolved:{self._unresolved_scope}"
+                "atlassian-app" if self.site else f"atlassian-app:unresolved:{self._record_scope(p)}"
             ),
             metadata={"identity_unresolved": True} if self.site is None else {},
         )

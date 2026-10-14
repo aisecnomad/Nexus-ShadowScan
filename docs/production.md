@@ -35,6 +35,16 @@ leaves `discovery.resources` empty pending identity review. Merely adding that
 stub to an inventory cannot approve the installation. Configure the verified
 site, rescan and regenerate the card before reviewing its exact binding.
 
+Atlassian finding IDs change on upgrade. Exports scanned without a configured
+`site` get a new identity discriminator bound to the resolved path of each
+export file, so renaming or moving the file changes its IDs; two files in one
+directory input stay separate findings even when they share an app key. A
+configured site is canonicalized (host case, an explicit `:443` and a trailing
+slash), so an operator whose `site` used a non-canonical spelling also sees
+new IDs. Configure the canonical `site`, keep one site's exports per scan
+input, rescan and establish a fresh baseline; earlier Atlassian IDs do not
+carry over.
+
 The new tests use offline exports. Live connector acceptance and independently
 labeled field accuracy still require the existing rollout acceptance procedure.
 

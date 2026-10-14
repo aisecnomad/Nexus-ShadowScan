@@ -196,6 +196,53 @@ def test_atlassian_untrusted_record_scope_cannot_supply_or_override_site(tmp_pat
     assert scoped.complete and scoped.findings[0].account == ATLASSIAN_SITE
 
 
+def _atlassian_directory_scan(directory):
+    return Engine(
+        ScanConfig(connectors=[ConnectorSpec("saas.atlassian", {"input": str(directory)})], parallel=1)
+    ).run()
+
+
+@pytest.mark.parametrize("forged_scope", [None, "forged-shared-scope"])
+def test_atlassian_unscoped_directory_keeps_each_site_export_distinct(fixtures, tmp_path, forged_scope):
+    export = json.loads((fixtures / "saas" / "atlassian_shared_app.json").read_text(encoding="utf-8"))
+    if forged_scope is not None:
+        for plugin in export["plugins"]:
+            plugin["_unresolved_scope"] = forged_scope
+    directory = tmp_path / "exports"
+    directory.mkdir()
+    for name in ("site-a.json", "site-b.json"):
+        (directory / name).write_text(json.dumps(export), encoding="utf-8")
+
+    report = _atlassian_directory_scan(directory)
+    repeat = _atlassian_directory_scan(tmp_path / "exports" / ".." / "exports")
+
+    assert not report.complete
+    assert len(report.findings) == 2
+    assert len({finding.id for finding in report.findings}) == 2
+    assert len(merge(report.findings)) == 2
+    assert all(finding.account is None for finding in report.findings)
+    assert forged_scope is None or all(
+        forged_scope not in str(finding.identity_discriminator) for finding in report.findings
+    )
+    # Equivalent spellings of the same input keep the same finding IDs.
+    assert {finding.id for finding in repeat.findings} == {finding.id for finding in report.findings}
+
+
+def test_atlassian_configured_site_ignores_per_file_scope(fixtures, tmp_path):
+    export = (fixtures / "saas" / "atlassian_shared_app.json").read_text(encoding="utf-8")
+    directory = tmp_path / "exports"
+    directory.mkdir()
+    for name in ("one.json", "two.json"):
+        (directory / name).write_text(export, encoding="utf-8")
+    config = {"input": str(directory), "site": ATLASSIAN_SITE}
+
+    report = Engine(ScanConfig(connectors=[ConnectorSpec("saas.atlassian", config)], parallel=1)).run()
+
+    assert report.complete
+    assert len({finding.id for finding in report.findings}) == 1
+    assert all(finding.identity_discriminator == "atlassian-app" for finding in report.findings)
+
+
 def test_slack_same_app_in_same_named_workspaces_stays_separate(tmp_path):
     first = scan(tmp_path, "saas.slack", [{"_kind": "team", "id": "T1", "name": "Engineering"}, SLACK_APP])
     second = scan(tmp_path, "saas.slack", [{"_kind": "team", "id": "T2", "name": "Engineering"}, SLACK_APP])
