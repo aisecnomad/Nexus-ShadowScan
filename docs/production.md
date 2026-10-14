@@ -86,8 +86,13 @@ Regenerate retained reports and comparison baselines that cover MCP inventory.
   descriptors needs the same user or `CAP_SYS_PTRACE`. Denied or truncated
   selected inspection makes coverage incomplete; do not grant root merely to
   erase that limitation. Kernel threads are not inspected, and a source that
-  fails with `ESRCH` on an unchanged process is recorded as `not_applicable`
-  without making coverage incomplete.
+  fails with `ESRCH` on an unchanged zombie with no threads left (state `Z`
+  or `X`, `num_threads` 1) is recorded as `not_applicable` without making
+  coverage incomplete. `ESRCH` from any other process, and an empty maps or
+  descriptor read from a process whose leader thread exited while other
+  threads still run (state `Z` with more than one thread), is `unreadable`
+  and makes coverage incomplete (exit 3); earlier revisions reported such a
+  process as a complete, empty inspection.
 - `network.logs`: `dns_max_ttl_seconds` (default 86,400) and
   `dns_clock_skew_seconds` (default 0) bound DNS attribution. These are on by
   default; the options only tune them.

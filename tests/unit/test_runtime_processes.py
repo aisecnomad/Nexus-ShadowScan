@@ -751,14 +751,72 @@ def test_kernel_threads_are_not_inspected(run_connector, monkeypatch, tmp_path):
     assert findings == [] and not ctx.stats.incomplete and not ctx.stats.warnings
 
 
-def test_esrch_on_an_unchanged_process_is_not_applicable(run_connector, monkeypatch, tmp_path):
-    _inspection_proc(tmp_path, monkeypatch, argv=b"claude\0")
+def _stat(state: str, threads: int) -> str:
+    """A synthetic /proc/<pid>/stat line: state is field 3, num_threads field 20, start time field 22."""
+    return "12 (worker) " + " ".join([state, *(["0"] * 16), str(threads), "0", "12345", "0"])
+
+
+def test_esrch_from_a_zombie_without_threads_is_not_applicable(run_connector, monkeypatch, tmp_path):
+    pid = _inspection_proc(tmp_path, monkeypatch, argv=b"claude\0")
+    (pid / "stat").write_text(_stat("Z", 1))
     _no_such_process(monkeypatch, "environ")
     findings, ctx = run_connector("runtime.processes", inspect_maps=True, inspect_env_keys=["OLLAMA_MODELS"])
     assert len(findings) == 1 and not ctx.stats.incomplete and not ctx.stats.warnings
     (inspection,) = findings[0].metadata["runtime_inspection"]
     assert inspection["status"] == {"maps": "ok", "fds": "not_requested", "environ": "not_applicable"}
     assert inspection["environment_keys"] == []
+
+
+@pytest.mark.parametrize("state", ["S", "R", "D"])
+def test_esrch_from_a_process_that_is_not_a_zombie_is_unreadable(run_connector, monkeypatch, tmp_path, state):
+    """Regression (security220-3): ESRCH was counted as not applicable whatever the process state."""
+    pid = _inspection_proc(tmp_path, monkeypatch, argv=b"claude\0")
+    (pid / "stat").write_text(_stat(state, 1))
+    _no_such_process(monkeypatch, "environ")
+    findings, ctx = run_connector("runtime.processes", inspect_maps=True, inspect_env_keys=["OLLAMA_MODELS"])
+    assert ctx.stats.incomplete
+    assert "runtime.processes: environ inspection unreadable; scope incomplete" in ctx.stats.warnings
+    (inspection,) = findings[0].metadata["runtime_inspection"]
+    assert inspection["status"] == {"maps": "ok", "fds": "not_requested", "environ": "unreadable"}
+
+
+def test_exited_leader_with_live_threads_is_not_a_complete_empty_inspection(
+    run_connector, monkeypatch, tmp_path
+):
+    """Regression (security220-3): a process whose leader exited hid its live threads from inspection.
+
+    Linux shows such a process as state Z with num_threads above one; its
+    environ reports ESRCH and its maps and fd directory read empty, while a
+    live thread still maps and holds a model file.
+    """
+    pid = _inspection_proc(tmp_path, monkeypatch, argv=b"")
+    (pid / "stat").write_text(_stat("Z", 2))
+    (pid / "maps").write_text("")
+    (pid / "fd" / "7").unlink()
+    _no_such_process(monkeypatch, "environ")
+    findings, ctx = run_connector(
+        "runtime.processes", inspect_maps=True, inspect_fds=True, inspect_env_keys=["OLLAMA_MODELS"]
+    )
+    assert findings == []
+    assert ctx.stats.incomplete
+    assert {
+        f"runtime.processes: {source} inspection unreadable; scope incomplete"
+        for source in ("maps", "fds", "environ")
+    } <= set(ctx.stats.warnings)
+
+
+def test_exited_leader_keeps_indicators_read_from_the_live_address_space(
+    run_connector, monkeypatch, tmp_path
+):
+    pid = _inspection_proc(tmp_path, monkeypatch, argv=b"")
+    (pid / "stat").write_text(_stat("Z", 3))
+    (pid / "fd" / "7").unlink()
+    findings, ctx = run_connector("runtime.processes", inspect_maps=True, inspect_fds=True)
+    assert ctx.stats.incomplete
+    (finding,) = findings
+    (inspection,) = finding.metadata["runtime_inspection"]
+    assert inspection["status"] == {"maps": "ok", "fds": "unreadable", "environ": "not_requested"}
+    assert inspection["mapped_libraries"] == ["ggml"]
 
 
 def test_esrch_when_the_process_changed_is_not_attributed(run_connector, monkeypatch, tmp_path):

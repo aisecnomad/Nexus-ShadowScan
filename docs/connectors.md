@@ -1252,8 +1252,9 @@ coverage and whether activity is current, historical or unknown. Unobservable
 scope does not establish dormancy. Optional `inspect_maps`, `inspect_fds` and
 allowlisted `inspect_env_keys` inspect bounded Linux process metadata; they never
 read process memory, open descriptor targets or retain environment values.
-Kernel threads are not inspected, and `ESRCH` on an unchanged process is
-recorded as `not_applicable`.
+Kernel threads are not inspected, and `ESRCH` on an unchanged zombie with no
+threads left is recorded as `not_applicable`; a process whose leader exited
+while other threads run is `unreadable`.
 Generic libraries, model descriptors and packaging do not establish an agent.
 
 Options: `label` (host name for records without one), `max_processes` (live
