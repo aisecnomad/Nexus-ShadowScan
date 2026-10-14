@@ -119,10 +119,16 @@ tracked.
 
 **Erratum (integration, 2026-10-12).** The original pull request named the
 fictional organization *Vantor*, which is also the name a real company
-adopted in 2025, and gave it tenant hostnames on real SaaS domains. Every
-occurrence, in file contents, directory names, the three JWT payloads that
-carried it, `corpus.json` and the recorded predictions in `runs.json`, was
-replaced with the same-length, case-preserving name *Adatum*. The scorer of
+adopted in 2025. Every occurrence, in file contents, directory names, the
+three JWT payloads that carried it, `corpus.json` and the recorded
+predictions in `runs.json`, was replaced with the same-length,
+case-preserving name *Adatum*. The rename kept the tenant hostnames on real
+SaaS parent domains: the artifacts name Adatum tenants on Okta (also a JWT
+issuer), Dynamics, Azure AI and OpenAI, Blob storage and a GCP service
+account, and the ShadowScan harness configuration names Salesforce,
+ServiceNow, Atlassian and Auth0 tenants. They are offline data that no
+harness contacts, but Adatum is a widely used fictitious name, so tenants
+by those names may exist. The scorer of
 that time gave a prediction to the entity with the longest matching anchor,
 and a same-length name keeps every anchor's length, so re-scoring the
 renamed `runs.json` with that scorer gave exactly the renamed

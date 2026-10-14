@@ -60,7 +60,9 @@ These changes were made when the two pull requests were integrated. Each
 track's README and the changelog give the details.
 
 - The tracks moved under `cases/` and `estate/`. The estate's authored files
-  moved to `estate/artifacts/`, with every frozen digest unchanged.
+  moved to `estate/artifacts/` without a change to any frozen digest; the
+  rename and the replaced files below then changed the affected digests,
+  and `FREEZE.json` was recomputed.
 - One estate file was never committed, because `.gitignore` excluded
   `.vscode/`. It was replaced and its digest updated, and a test now fails
   when any frozen file is untracked.
