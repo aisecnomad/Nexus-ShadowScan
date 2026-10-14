@@ -777,6 +777,9 @@ Offline input: Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON
 | `format` | force the input format: zeek\|route53\|vpc-flow\|generic (default auto, per record) |
 | `label` | network or sensor name used in resource ids and as the finding account (default: network) |
 | `max_records` | stop after N records (default 10,000,000) |
+| `live_dns_enrichment` | opt-in live-mode DNS resolution; cannot be used with offline input |
+| `live_log_input` | local log file or directory used only with live\_dns\_enrichment |
+| `dns_hosts` | up to 32 provider-matched hostnames, including resource-specific Azure endpoints |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
@@ -785,7 +788,7 @@ Offline input: Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON
 
 ### `runtime.processes`
 
-AI agents, desktop apps, MCP servers and model servers running on hosts, from process inventories (osquery, EDR exports) or the local /proc.
+AI agents, desktop apps, MCP servers, model servers and mapped AI artifacts, from process inventories (osquery, EDR exports) or the local /proc.
 
 Offline input: JSON / JSONL / CSV process inventories (osquery, Defender, CrowdStrike).
 

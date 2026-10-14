@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from pathlib import Path
 
 import pytest
@@ -84,6 +85,102 @@ def test_generic_dns_csv_keeps_only_ai_hosts(run_connector):
         ("192.168.5.20", "provider.google-gemini"),
         ("192.168.5.20", "provider.openrouter"),
     }
+
+
+def test_opt_in_live_dns_cache_correlates_provider_hostnames_with_flows(tmp_path, monkeypatch):
+    path = tmp_path / "flows.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "client": "192.0.2.10",
+                    "dst_ip": "203.0.113.7",
+                    "dst_port": 443,
+                    "bytes": 512,
+                }
+            ]
+        )
+    )
+
+    def resolve(host, port, *, type):
+        address = "203.0.113.7" if host == "tenant.openai.azure.com" else "203.0.113.20"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port))]
+
+    monkeypatch.setattr(network_logs.socket, "getaddrinfo", resolve)
+    ctx = ConnectorContext(
+        config={
+            "live_log_input": str(path),
+            "live_dns_enrichment": True,
+            "dns_hosts": ["tenant.openai.azure.com"],
+            "format": "generic",
+        }
+    )
+    connector = NetworkLogConnector(ctx)
+    findings = connector.run()
+    assert len(findings) == 1, (ctx.stats, connector._seeded_dns)
+    assert findings[0].metadata["service"] == "provider.azure-openai"
+    assert findings[0].metadata["hosts"] == {"tenant.openai.azure.com": 1}
+    assert findings[0].metadata["flows"] == 1
+    assert not ctx.stats.incomplete
+
+
+def test_opt_in_live_dns_failures_are_reported_in_stats(tmp_path, monkeypatch):
+    path = tmp_path / "flows.json"
+    path.write_text("[]")
+
+    def fail_resolution(*args, **kwargs):
+        raise socket.gaierror("synthetic resolver failure")
+
+    monkeypatch.setattr(network_logs.socket, "getaddrinfo", fail_resolution)
+    ctx = ConnectorContext(
+        config={
+            "live_log_input": str(path),
+            "live_dns_enrichment": True,
+            "dns_hosts": ["tenant.openai.azure.com"],
+        }
+    )
+    assert NetworkLogConnector(ctx).run() == []
+    assert ctx.stats.incomplete
+    assert any("live DNS enrichment failed" in warning for warning in ctx.stats.warnings)
+
+
+def test_offline_network_logs_never_resolve_hostnames(run_connector, tmp_path, monkeypatch):
+    path = tmp_path / "logs.json"
+    path.write_text(json.dumps([{"client": "192.0.2.20", "sni": "api.openai.com"}]))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("offline scan attempted DNS resolution")
+
+    monkeypatch.setattr(network_logs.socket, "getaddrinfo", forbidden)
+    found, stats = scan(run_connector, path)
+    assert ("192.0.2.20", "provider.openai") in found
+    assert not stats.incomplete
+
+
+def test_ja4_fingerprints_only_corroborate_existing_host_findings(run_connector, tmp_path):
+    path = tmp_path / "fingerprints.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "_path": "ssl",
+                    "id.orig_h": "192.0.2.30",
+                    "server_name": "api.openai.com",
+                    "ja4": "t13d1516h2_8daaf6152771_02713d6af862",
+                },
+                {
+                    "client": "192.0.2.31",
+                    "ja4": "t13d1516h2_8daaf6152771_02713d6af862",
+                },
+            ]
+        )
+    )
+    found, stats = scan(run_connector, path)
+    assert set(found) == {("192.0.2.30", "provider.openai")}
+    assert found[("192.0.2.30", "provider.openai")].metadata["tls_fingerprints"] == [
+        "t13d1516h2_8daaf6152771_02713d6af862"
+    ]
+    assert not stats.incomplete
 
 
 def test_zeek_json_and_generic_json_documents(run_connector, tmp_path):

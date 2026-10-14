@@ -75,5 +75,13 @@ Zapier export record needs an `id`, `title`,
 and makes the scan incomplete. A CSV row whose cells are all blank is skipped
 without a diagnostic.
 
+For n8n, exact registered node-type identifiers from the signature pack classify
+AI, inbound-trigger and write-sink roles. Bounded traversal of the actual
+`connections` edges marks an elevated path only when an inbound trigger reaches
+an AI node and then an HTTP, Slack, database or email write sink. Node and edge
+limits, or a missing or malformed connection graph, mark the workflow scan
+incomplete. Other low-code formats retain their existing provider/step
+heuristics; this directed DAG analysis is currently n8n specific.
+
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

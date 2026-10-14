@@ -169,10 +169,14 @@ particular, MCP tool fingerprints are not compared with a rug-pull baseline.
 | `gateway.otel` | OTLP span records with GenAI semantic-convention attributes |
 
 MCP tool definitions are analyzed for risky capability names, prompt-injection
-or exfiltration indicators, missing declared authentication, and duplicate
-tool names across servers. Tool definitions are fingerprinted for downstream
-comparison, but baseline/rug-pull detection is not yet implemented. No tool is
-invoked. With `options.mcp_registries`, a tool finding whose server is an
+or exfiltration indicators, hidden HTML-comment content, invisible/control
+characters, suspicious names that shadow common tools, broad filesystem
+or shell declarations, missing declared authentication, and duplicate tool
+names across servers. Findings use existing threat/control mappings. Existing
+skill and instruction-file content checks are performed by `code.filesystem`.
+Tool definitions are fingerprinted for downstream comparison, but
+baseline/rug-pull detection is not yet implemented. No tool is invoked. With
+`options.mcp_registries`, a tool finding whose server is an
 HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL
 (`metadata.mcp_registry.matches`); a bare server name identifies nothing and
 is counted as `unidentified`, so an approved registry never vouches for it.

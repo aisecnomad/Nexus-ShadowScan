@@ -6,9 +6,11 @@ passes an AI gateway or an HTTP proxy: a laptop resolving `api.anthropic.com`,
 a workload opening TLS connections to Bedrock, a desktop client reaching a
 remote MCP server.
 
-!!! info "Log-based"
-    The network connector reads exported logs. It makes no network request
-    and captures no packets.
+!!! info "Offline by default"
+    Ordinary `input` scans read exported logs and make no network request.
+    A separate, explicit live-DNS mode is available only with
+    `live_dns_enrichment: true` and `live_log_input`; it resolves only
+    signature-matched cloud AI hostnames and captures no packets.
 
 ## `network.logs`
 
@@ -32,14 +34,16 @@ Domain hints weighted below 0.3 are ignored. Only host names that match an AI
 signature are kept; other DNS queries are counted as examined records and
 never stored.
 
-**Flows are attributed only through the same input.** A flow has addresses,
-not names, so it counts towards a service only when:
+**Flows need hostname or connection corroboration.** A flow has addresses, not
+names, so it counts towards a service only when:
 
 - its Zeek `uid` and client address link it to a TLS record whose server
   name is an AI host, with matching server address and port when supplied;
-- the same client resolved an AI host to that address; or
+- the same client resolved an AI host to that address;
 - no client resolved anything else to that address, and some client resolved
-  an AI host to it (weaker evidence, reported as such).
+  an AI host to it (weaker evidence, reported as such); or
+- in explicit live-DNS mode only, a signature-matched service hostname resolved
+  to that address at scan start.
 
 Flow counts and bytes remain separated by connection UID until attribution,
 so one AI connection cannot claim another connection's traffic on the same
@@ -65,14 +69,18 @@ such as `chatgpt.com` are AI use, not agent indicators.
 
 Options:
 
-- `input` (required): a log file or a directory of logs. DNS logs and flow
-  logs that should be attributed to each other must be in the same input.
+- `input` (required for offline runs): a log file or a directory of logs. DNS
+  logs and flow logs that should be attributed to each other must be in the same
+  input.
 - `format`: `zeek`, `route53`, `vpc-flow` or `generic` forces the record
   format; the default `auto` detects it per record.
 - `label`: the network or sensor name used in resource ids and as the finding
   account (default `network`).
 - `max_records`: the number of records read (default 10,000,000). Reaching
   it makes the scan incomplete.
+- `live_dns_enrichment`, `live_log_input`, `dns_hosts`: the opt-in live mode
+  described above. `live_log_input` and `dns_hosts` are rejected unless live
+  enrichment is enabled; `live_dns_enrichment` is rejected with `input`.
 
 Malformed lines, records the connector cannot read as DNS, TLS or flow
 records, and DNS or TLS records without a client address make the scan
@@ -89,6 +97,44 @@ explicit log statuses also make the scan incomplete. `NODATA` means no traffic
 was observed for that interface and interval; it remains a clean empty result.
 Custom exports that omit the status field retain the normal flow handling.
 See [AWS log-status definitions](https://docs.aws.amazon.com/vpc/latest/userguide/flow-log-records.html).
+
+### Opt-in cloud AI DNS enrichment
+
+The provider signatures already match Bedrock runtime/agent-runtime,
+Azure OpenAI and Vertex AI hostnames in DNS and TLS telemetry. Their dated
+endpoint seed subset (reviewed 2026-10-14) also records the provider's official
+IP-range source URLs for operator reference; those ranges are not loaded or
+matched, so broad shared CDN/provider ranges cannot independently create a
+finding. Exact packaged endpoints and up to 32 operator-supplied,
+signature-matched hostnames can be resolved at scan start and used as
+hostname-to-IP corroboration for flow records. Resource-specific Azure
+hostnames may be supplied through `dns_hosts`.
+
+This capability is disabled by default and refuses the ordinary offline `input`
+mode. It requires a separate local log source and explicit live permission:
+
+```yaml
+connectors:
+  - name: network.logs
+    live_dns_enrichment: true
+    live_log_input: ./exports/flows.json
+    dns_hosts:
+      - my-azure-resource.openai.azure.com
+```
+
+Resolution has per-host and total time bounds. A lookup failure or bound hit
+adds a warning and marks coverage incomplete. DNS responses are retained only
+as an in-memory cache for correlating the supplied flow logs; ShadowScan does
+not connect to the resolved addresses.
+
+### JA4 / JA4+ log fields
+
+Zeek and generic TLS exports may carry pre-computed `ja4`, `ja4s`, `ja4x`, or
+related JA4 fields. Values are bounded and attached as metadata only to an
+already hostname-matched network finding. A fingerprint alone never identifies
+AI usage or raises confidence. No sourced AI-SDK fingerprint list is included
+yet, so fingerprint-based corroboration remains a documented stub until such a
+list can be independently sourced and maintained.
 
 Client addresses identify a device or a NAT gateway, not a person. Join
 findings to DHCP, VPN or asset records before assigning an owner.

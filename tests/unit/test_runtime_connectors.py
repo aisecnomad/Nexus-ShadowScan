@@ -153,9 +153,10 @@ def test_mcp_tool_descriptions_and_declared_capabilities_are_audited() -> None:
     assert "tool-poisoning" not in by_server["benign"].tags
     assert {"tool-poisoning", "hidden-instructions"} <= set(by_server["hidden"].tags)
     assert {"tool-poisoning", "invisible-text"} <= set(by_server["invisible"].tags)
-    assert {"tool-name-shadowing", "tool-poisoning"} <= set(by_server["shadow"].tags)
+    assert "tool-name-shadowing" in by_server["shadow"].tags
     assert "mcp-broad-filesystem" in by_server["broad"].tags
     assert "owasp-llm-2026:LLM01" in by_server["hidden"].to_dict()["metadata"]["threats"]
+    assert "owasp-llm-2026:LLM01" in by_server["shadow"].to_dict()["metadata"]["threats"]
 
 
 def test_otel_analyzer_does_not_retain_prompt_content() -> None:

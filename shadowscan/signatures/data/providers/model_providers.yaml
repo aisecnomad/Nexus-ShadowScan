@@ -4,6 +4,10 @@
 #
 # `secret` patterns are matched against file contents; connectors redact the
 # match before storing it as evidence.
+#
+# Cloud AI endpoint seed subset reviewed 2026-10-14. Provider IP-range sources
+# are references only; network attribution uses hostname-to-address DNS results,
+# never broad shared-provider or CDN ranges.
 signatures:
   - id: provider.openai
     name: OpenAI
@@ -336,6 +340,9 @@ signatures:
     category: provider
     vendor: Google Cloud
     homepage: https://cloud.google.com/vertex-ai
+    references:
+      - https://cloud.google.com/vertex-ai/docs/general/accessing-service#service_endpoints
+      - https://www.gstatic.com/ipranges/cloud.json
     signals:
       - type: dependency
         ecosystem: pypi
@@ -422,7 +429,7 @@ signatures:
         weight: 0.5
         description: Claude Code routed through Vertex AI
       - type: domain
-        values: [aiplatform.googleapis.com, "re:^[a-z0-9-]+-aiplatform\\.googleapis\\.com$"]
+        values: [aiplatform.googleapis.com, us-central1-aiplatform.googleapis.com, "re:^[a-z0-9-]+-aiplatform\\.googleapis\\.com$"]
         weight: 0.9
       - type: iac
         values: [google_vertex_ai_endpoint, google_vertex_ai_index, google_vertex_ai_index_endpoint, google_vertex_ai_deployment_resource_pool, google_vertex_ai_feature_online_store, google_vertex_ai_tensorboard, google_vertex_ai_metadata_store]
@@ -441,6 +448,9 @@ signatures:
     category: provider
     vendor: Amazon Web Services
     homepage: https://aws.amazon.com/bedrock/
+    references:
+      - https://docs.aws.amazon.com/bedrock/latest/userguide/endpoints-supported.html
+      - https://ip-ranges.amazonaws.com/ip-ranges.json
     signals:
       - type: dependency
         ecosystem: npm
@@ -529,7 +539,7 @@ signatures:
         weight: 0.6
         description: Bedrock API key (bearer token)
       - type: domain
-        values: ["re:^bedrock(?:-runtime|-agent-runtime|-agent|-agentcore|-data-automation-runtime)?(?:-fips)?\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^bedrock-mantle\\.[a-z0-9-]+\\.api\\.aws$"]
+        values: [bedrock-runtime.us-east-1.amazonaws.com, bedrock-agent-runtime.us-east-1.amazonaws.com, bedrock-runtime.us-west-2.amazonaws.com, bedrock-agent-runtime.us-west-2.amazonaws.com, "re:^bedrock(?:-runtime|-agent-runtime|-agent|-agentcore|-data-automation-runtime)?(?:-fips)?\\.[a-z0-9-]+\\.amazonaws\\.com$", "re:^bedrock-mantle\\.[a-z0-9-]+\\.api\\.aws$"]
         weight: 0.9
       - type: iac
         values: [aws_bedrock_guardrail, aws_bedrock_custom_model, aws_bedrock_model_invocation_logging_configuration, aws_bedrock_provisioned_model_throughput, aws_bedrock_inference_profile, "AWS::Bedrock::Guardrail", "AWS::Bedrock::ApplicationInferenceProfile", "AWS::Bedrock::ModelInvocationLoggingConfiguration"]
@@ -553,6 +563,10 @@ signatures:
     category: provider
     vendor: Microsoft
     homepage: https://learn.microsoft.com/azure/ai-services/openai/
+    references:
+      - https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
+      - https://www.microsoft.com/en-us/download/details.aspx?id=56519
+      - https://learn.microsoft.com/en-us/azure/virtual-network/service-tags-overview
     signals:
       - type: secret
         patterns: ['(?i)\bAZURE_OPENAI_(?:API_)?KEY\s*[=:]\s*["'']?[0-9a-f]{32}\b']

@@ -3130,11 +3130,6 @@ class FilesystemConnector(BaseConnector):
         )
         with open_confined_file(on_disk, label="code artifact", dir_fd=scan.root_fd) as (stream, before):
             if before.st_size > self._size_limit(path.name):
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: artifact header skipped, file exceeds max_file_size; "
-                    "coverage incomplete",
-                    incomplete=True,
-                )
                 return None
             header = stream.read(min(64, before.st_size))
             artifact: str | None = None

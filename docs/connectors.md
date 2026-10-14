@@ -231,6 +231,8 @@ Continue, Kiro, Amazon Q…), coding-agent configs (`CLAUDE.md`, `.claude/agents
 A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
+The scanner also performs bounded, read-only model and packed-binary header
+checks; it never unpacks or executes artifacts.
 
 Supported Go SDK import aliases are resolved before source evidence is
 excerpted; reports remain confidential. Ordinary Rust multiline strings, C raw
@@ -779,6 +781,8 @@ without an ID retain detected AI evidence under an unresolved identity, make
 collection incomplete and cannot be approved by a registry card. Authentication
 uses `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`), against `api_url`
 (env `N8N_API_URL`, for example `https://n8n.example.com/api/v1`).
+The exported directed graph is also checked for inbound-trigger → AI → write
+sink paths using exact node-type signatures and bounded `connections` traversal.
 
 ### `lowcode.make`
 Make scenarios with AI modules and AI Agents; triggers (`scheduling.type` →
@@ -1128,8 +1132,10 @@ from `ca_bundle` (see the
 [A2A Agent Card probe](connectors/endpoint.md#a2a-agent-card-probe)). It never
 fetches a URL declared inside a card and never contacts an MCP server. A job
 that sets both `input` and `agent_card_urls` is refused (exit 3), because a
-replay never probes. Model metadata is not parsed from GGUF/safetensors files,
-and MCP fingerprints have no rug-pull baseline.
+replay never probes. `endpoint.models` still consumes metadata exports; the
+separate `code.filesystem` connector performs bounded GGUF/safetensors/ONNX and
+PyInstaller header checks. MCP tool descriptions reuse static hidden-content
+checks and receive existing threat/control mappings; no tool is invoked.
 
 ## Network
 
@@ -1143,13 +1149,19 @@ A flow is attributed by its connection identity to an AI TLS server name, or
 through unambiguous DNS answers in the same input. Conflicting identities and
 explicit non-AI TLS evidence prevent fallback attribution. Coding-agent, MCP and hosted-agent services
 are tagged `agent-service`; runs of connections to a model API seconds apart
-are tagged `agent-loop`. Malformed or unrecognized records make the scan
+are tagged `agent-loop`. A flow is attributed from its input's DNS/SNI evidence
+or the opt-in live-DNS cache. Malformed or unrecognized records make the scan
 incomplete. VPC `SKIPDATA` and invalid or contradictory logging statuses also
-make coverage incomplete; `NODATA` is a valid no-traffic observation.
+make coverage incomplete; `NODATA` is a valid no-traffic observation. Explicit
+live DNS enrichment is available only with `live_dns_enrichment` and
+`live_log_input`; ordinary offline `input` runs never resolve names. Precomputed
+JA4 fields are retained as metadata on existing host-matched findings only and
+do not trigger detections.
 
 Options: `format` (`zeek`, `route53`, `vpc-flow`, `generic`; default auto),
 `label` (network name; default `network`), `max_records`. See the
-[network guide](connectors/network.md).
+[network guide](connectors/network.md) for opt-in live DNS and JA4 metadata
+plumbing.
 
 ## Runtime
 
@@ -1158,7 +1170,9 @@ Reports AI tools seen running, per host, user and tool: coding-agent CLIs
 (also as npm packages or Python modules), AI desktop apps matched by
 executable and install path, MCP servers launched through `npx`, `uvx`,
 `uv tool run`, `pipx run` or `node`, local model servers and agent dev
-servers. Command lines never enter a finding or a `--dump-records` export:
+servers. Live Linux collection additionally inspects bounded process maps and
+file-descriptor metadata for native AI libraries, signature-index SDK paths,
+model files and PyInstaller mounts. Command lines never enter a finding or a `--dump-records` export:
 only the tool, the executable's base name and an MCP package name are kept.
 Offline, `input` reads osquery `processes` results, Defender
 `DeviceProcessEvents`, CrowdStrike process events or any JSON/CSV with a
@@ -1197,8 +1211,8 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Azure | `Reader` on subscriptions, which also covers the `GET /subscriptions/{id}` read that verifies configured subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
 | OCI | policy `Allow group audit to read all-resources in tenancy` |
 | Endpoint | read access to the inventoried home directories; run as that user, or as an account that can read every listed home on a shared host. Nothing is written |
-| Network | read access to the exported logs; the connector needs no sensor or cloud credentials |
-| Runtime | offline: read access to the process export; live: an account that can read `/proc/<pid>/cmdline` of the processes to inventory. Nothing is written |
+| Network | read access to the exported logs; the opt-in live-DNS mode also needs DNS resolver access, but no sensor or cloud credentials |
+| Runtime | offline: read access to the process export; live: an account that can read process command lines, maps and descriptor links under `/proc`. Nothing is written |
 
 The Azure app-settings permission exposes security-sensitive configuration;
 only grant it for the app resources being audited. Do not grant Website

@@ -30,6 +30,7 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import diagnostic_url
 from shadowscan.utils.jcs import CanonicalizationError
 from shadowscan.utils.jwks import fetch_jwks
+from shadowscan.utils.output import terminal_text
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize, sanitize_text
 
 _MAX_LABEL = 160
@@ -366,9 +367,11 @@ class MCPInventoryConnector(_EndpointConnector):
             desc = _text(tool.get("description"), 4096)
             tags: list[str] = []
             content_hits = inspect_instruction_text(desc)
+            single_line = desc.replace("\n", "")
             if (
                 _POISONING.search(desc)
                 or _ZERO_WIDTH.search(desc)
+                or terminal_text(single_line) != single_line
                 or _TOOL_REF.search(desc)
                 or _HOST.search(desc)
                 or content_hits
@@ -378,7 +381,7 @@ class MCPInventoryConnector(_EndpointConnector):
             if any(name.casefold() in tools for other, tools in names_by_server.items() if other != server):
                 tags.append("tool-name-shadowing")
             if name.casefold() in _WELL_KNOWN_TOOL_NAMES:
-                tags.extend(("tool-name-shadowing", "tool-poisoning"))
+                tags.append("tool-name-shadowing")
             auth = _text(tool.get("auth") or tool.get("auth_mode")).casefold() or server_auth.get(server, "")
             if auth in {"", "none", "unauthenticated"}:
                 tags.append("unauthenticated-mcp")

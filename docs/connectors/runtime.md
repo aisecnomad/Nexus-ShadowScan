@@ -35,7 +35,10 @@ MCP package name are kept.
   `uid`, not a user name: join `users` to report names, as in
   `SELECT u.username, p.* FROM processes p LEFT JOIN users u USING (uid);`.
 - **Live** (no `input`, Linux only): reads `/proc/<pid>/cmdline` without
-  following the `exe` link. Processes of other users are visible only to an
+  following the `exe` link, and bounded `/proc/<pid>/maps` and `/proc/<pid>/fd`
+  metadata. Maps and descriptor links can corroborate loaded native AI libraries
+  or SDK paths from the signature index, model files, and PyInstaller temporary
+  mounts. It never reads process memory or opens discovered artifacts. Processes of other users are visible only to an
   account allowed to read them; unreadable processes are reported and make the
   scan incomplete. Some views do not list other processes at all, and then
   the scan is marked incomplete with a warning that says why: a `/proc` that

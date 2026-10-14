@@ -18,7 +18,9 @@ Host names are matched exactly or by a signature's declared wildcard, never by
 substring, so ``www.anthropologie.com`` is not Anthropic. Only names that
 match an AI signature are kept; other queries are counted, never stored.
 
-The connector is offline: it reads files and makes no network request.
+The connector is offline by default. An explicit live-DNS mode may read a
+separate local log input and resolve only cloud AI service hostnames supplied
+by the packaged signatures or operator; ordinary ``input`` scans never resolve.
 Malformed lines and unrecognised records make the scan incomplete.
 """
 
@@ -26,7 +28,11 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import queue
 import re
+import socket
+import threading
+import time
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
@@ -62,6 +68,14 @@ _MAX_HOSTS_PER_FINDING = 20
 _MAX_TIMES = 1_000
 _MAX_TOTAL_TIMES = 200_000
 _OLLAMA_PORT = 11434
+_MAX_LIVE_DNS_HOSTS = 32
+_MAX_TOTAL_DNS_HOSTS = 64
+_LIVE_DNS_TIMEOUT = 0.75
+_LIVE_DNS_BUDGET_SECONDS = 5.0
+_CLOUD_AI_PROVIDERS = frozenset(
+    {"provider.aws-bedrock", "provider.azure-openai", "provider.google-vertex-ai"}
+)
+_JA4_RX = re.compile(r"^[A-Za-z0-9_,.+-]{1,128}$")
 _VPC_DEFAULT_FIELDS = [
     "version",
     "account-id",
@@ -85,6 +99,9 @@ _HOST = re.compile(
 # Field names of generic exports, in order of preference.
 _QUERY_FIELDS = ("query", "qname", "query_name", "question", "domain", "dns_query")
 _SNI_FIELDS = ("sni", "server_name", "tls_sni", "servername")
+_JA4_FIELDS = frozenset(
+    {"ja4", "ja4_fingerprint", "ja4_client", "ja4s", "ja4x", "ja4t", "ja4h", "ja4q", "ja4l"}
+)
 _CLIENT_FIELDS = (
     "client",
     "client_ip",
@@ -118,6 +135,7 @@ class _Contact:
     first: float | None = None
     last: float | None = None
     times: list[float] = field(default_factory=list)
+    tls_fingerprints: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -169,6 +187,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         "format": "force the input format: zeek|route53|vpc-flow|generic (default auto, per record)",
         "label": "network or sensor name used in resource ids and as the finding account (default: network)",
         "max_records": "stop after N records (default 10,000,000)",
+        "live_dns_enrichment": "opt-in live-mode DNS resolution; cannot be used with offline input",
+        "live_log_input": "local log file or directory used only with live_dns_enrichment",
+        "dns_hosts": "up to 32 provider-matched hostnames, including resource-specific Azure endpoints",
     }
     offline_formats: ClassVar[str] = "Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON / CSV"
 
@@ -182,11 +203,98 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         self._records = 0
         self._limit_reported = False
         self._host_cache: dict[str, Match | None] = {}
+        self.live_dns_enrichment = ctx.get("live_dns_enrichment", False)
+        self.live_log_input = ctx.get("live_log_input")
+        self.dns_hosts = ctx.get("dns_hosts", [])
+        self._seeded_dns: dict[str, set[tuple[str, str]]] = {}
+        if self.live_dns_enrichment is not False and self.live_dns_enrichment is not True:
+            raise ConnectorError("network.logs: live_dns_enrichment must be a boolean")
+        if self.live_dns_enrichment:
+            if self.offline or not isinstance(self.live_log_input, str) or not self.live_log_input:
+                raise ConnectorError(
+                    "network.logs: live DNS enrichment requires live mode and live_log_input"
+                )
+            if not isinstance(self.dns_hosts, list) or len(self.dns_hosts) > _MAX_LIVE_DNS_HOSTS:
+                raise ConnectorError("network.logs: dns_hosts must be a list of at most 32 hostnames")
+        elif self.live_log_input is not None or self.dns_hosts:
+            raise ConnectorError("network.logs: live_log_input and dns_hosts require live_dns_enrichment")
 
     def collect(self) -> Iterable[dict[str, Any]]:
+        if self.live_dns_enrichment:
+            self._resolve_cloud_ai_endpoints()
+            return self.load_offline(str(self.live_log_input))
         raise ConnectorError(
             "network.logs: this connector reads exported logs; set 'input' to a file or directory"
         )
+
+    def _resolve_cloud_ai_endpoints(self) -> None:
+        """Resolve only packaged or operator-supplied AI service hostnames in opt-in live mode."""
+        hosts: dict[str, Match] = {}
+        for signature_id in sorted(_CLOUD_AI_PROVIDERS):
+            signature = self.index.get(signature_id)
+            if signature is None:
+                continue
+            for signal in signature.signals:
+                if signal.type != "domain" or signal.weight < _MIN_HOST_WEIGHT:
+                    continue
+                for value in signal.values:
+                    host = _host(value)
+                    if host is not None and (match := self._service(host)) is not None:
+                        if match.signature.id in _CLOUD_AI_PROVIDERS:
+                            hosts[host] = match
+        for value in self.dns_hosts:
+            host = _host(value)
+            match = self._service(host) if host is not None else None
+            if host is None or match is None or match.signature.id not in _CLOUD_AI_PROVIDERS:
+                self.ctx.warn("network.logs: ignored a dns_hosts entry not matched to a cloud AI provider")
+                continue
+            hosts[host] = match
+        if len(hosts) > _MAX_TOTAL_DNS_HOSTS:
+            self.ctx.warn("network.logs: packaged endpoint host limit reached; DNS coverage incomplete")
+            hosts = dict(sorted(hosts.items())[:_MAX_TOTAL_DNS_HOSTS])
+
+        deadline = time.monotonic() + _LIVE_DNS_BUDGET_SECONDS
+        for host, match in sorted(hosts.items()):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.ctx.warn("network.logs: live DNS enrichment time budget reached")
+                break
+            result: queue.Queue[Any] = queue.Queue(maxsize=1)
+
+            def resolve(query_host: str = host, channel: queue.Queue[Any] = result) -> None:
+                try:
+                    channel.put(socket.getaddrinfo(query_host, 443, type=socket.SOCK_STREAM))
+                except OSError as exc:
+                    channel.put(exc)
+
+            threading.Thread(target=resolve, name="shadowscan-dns", daemon=True).start()
+            try:
+                addresses = result.get(timeout=min(_LIVE_DNS_TIMEOUT, remaining))
+            except queue.Empty:
+                self.ctx.warn(
+                    "network.logs: live DNS enrichment timed out; remaining endpoint lookups were omitted"
+                )
+                break
+            if isinstance(addresses, OSError):
+                self.ctx.warn("network.logs: live DNS enrichment failed for a cloud AI endpoint")
+                continue
+            if len(addresses) > 32:
+                self.ctx.warn("network.logs: live DNS address limit reached for a cloud AI endpoint")
+                addresses = addresses[:32]
+            found = False
+            for record in addresses:
+                try:
+                    address = str(record[4][0])
+                except (IndexError, TypeError):
+                    continue
+                if not _ip(address):
+                    continue
+                found = True
+                self._seeded_dns.setdefault(address, set()).add((match.signature.id, host))
+            if not found:
+                self.ctx.warn(
+                    "network.logs: live DNS enrichment returned no addresses for a cloud AI endpoint"
+                )
 
     # ------------------------------------------------------------------ input
     def load_offline(self, path: str) -> Iterator[dict[str, Any]]:
@@ -334,21 +442,31 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         server = _text(_first(row, _SERVER_FIELDS))
         port = _int(_first(row, _PORT_FIELDS))
         path = str(row.get("_path") or "")
+        fingerprints, malformed_fingerprints = _fingerprints(row)
+        if malformed_fingerprints:
+            self.ctx.warn(f"network.logs: {name}: malformed JA4 fingerprint")
         if query is not None or path == "dns":
             raw = row.get("answers") or []
             values = raw.split(",") if isinstance(raw, str) else raw if isinstance(raw, list) else []
             answers = [text for a in values if (text := _text(a))]
             yield from self._dns(name, client, query, answers, when)
             return
-        if sni is not None or path == "ssl":
+        if sni is not None or path == "ssl" or fingerprints:
             if not client:
                 self.ctx.warn(f"network.logs: {name}: TLS record without a client address")
                 return
             if sni is None:
+                if fingerprints:
+                    yield {
+                        "kind": "tls-fingerprint",
+                        "client": client,
+                        "uid": _text(_first(row, ("uid",))),
+                        "ja4": fingerprints,
+                    }
                 return  # a TLS connection without SNI names nothing
             yield {
                 "kind": "tls", "ts": _seconds(when), "client": client, "server": server, "port": port,
-                "sni": sni, "uid": _text(_first(row, ("uid",))),
+                "sni": sni, "uid": _text(_first(row, ("uid",))), "ja4": fingerprints,
             }  # fmt: skip
             return
         if server and client:
@@ -417,6 +535,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         resolved: dict[tuple[str, str], set[str]] = {}  # (client, address) -> signatures it resolved to
         resolved_any: dict[str, set[str]] = {}  # address -> signatures, any client
         address_hosts: dict[str, set[tuple[str, str]]] = {}  # address -> AI (signature, host) names
+        for address, service_hosts in self._seeded_dns.items():
+            resolved_any[address] = {signature for signature, _ in service_hosts}
+            address_hosts[address] = set(service_hosts)
         sni_by_uid: dict[tuple[str, str], _TLSIdentity] = {}
         pairs: dict[tuple[str, str, int | None, str | None], _Pair] = {}
         times_used = 0
@@ -426,6 +547,8 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             self.ctx.examined()
             kind = rec.get("kind")
             client = str(rec.get("client"))
+            if kind == "tls-fingerprint":
+                continue
             if client not in clients:
                 if len(clients) >= _MAX_CLIENTS:
                     dropped_clients += 1
@@ -457,6 +580,8 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 if match is None:
                     continue
                 c = self._contact(contacts, client, match.signature.id)
+                if kind == "tls":
+                    c.tls_fingerprints.update(rec.get("ja4", [])[:8])
                 if len(c.hosts) < _MAX_HOSTS_PER_FINDING or host in c.hosts:
                     c.hosts[host] += 1
                 if kind == "dns":
@@ -639,10 +764,15 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             if c.flows_by_dns:
                 basis.append(f"{c.flows_by_dns} by this client's DNS answers")
             if c.flows_by_global_dns:
-                basis.append(f"{c.flows_by_global_dns} by another client's DNS answers")
+                source = (
+                    "another client's DNS answers or the opt-in live DNS cache"
+                    if self.live_dns_enrichment
+                    else "another client's DNS answers"
+                )
+                basis.append(f"{c.flows_by_global_dns} by {source}")
             rest = c.flows - c.flows_by_dns - c.flows_by_global_dns
             if rest:
-                basis.append(f"{rest} by TLS server name or service port")
+                basis.append(f"{rest} by TLS server name or opt-in live DNS cache")
             f.add_evidence(
                 Evidence(
                     signal="network:flow",
@@ -654,6 +784,24 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     signature=c.signature,
                 )
             )
+        if self.live_dns_enrichment and c.flows_by_global_dns:
+            seeded_hosts = {item for service_hosts in self._seeded_dns.values() for item in service_hosts}
+            for host in hosts:
+                if (c.signature, host) not in seeded_hosts:
+                    continue
+                match = self._service(host)
+                if match is not None:
+                    f.add_evidence(
+                        Evidence(
+                            signal="network:cloud-ai-dns-enrichment",
+                            description=(
+                                "Provider endpoint hostname resolution corroborates the flow destination"
+                            ),
+                            weight=match.weight,
+                            signature=c.signature,
+                        )
+                    )
+                break
         if sig is not None and sig.agent_indicator and sig.category != "identity-app":
             # A coding agent's, MCP server's or agent platform's own service.
             f.metadata["agent_indicators"] = 1
@@ -687,6 +835,8 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 "network": self.label,
             }
         )
+        if c.tls_fingerprints:
+            f.metadata["tls_fingerprints"] = sorted(c.tls_fingerprints)[:8]
         if cadence.loops:
             f.metadata["loop_cadence"] = {"loops": cadence.loops, "longest": cadence.longest}
         if ambiguous:
@@ -706,6 +856,8 @@ def _detect(row: dict[str, Any]) -> str | None:
         return "zeek"
     keys = set(row)
     if keys & set(_QUERY_FIELDS + _SNI_FIELDS) or (keys & set(_CLIENT_FIELDS) and keys & set(_SERVER_FIELDS)):
+        return "generic"
+    if keys & _JA4_FIELDS and keys & set(_CLIENT_FIELDS):
         return "generic"
     return None
 
@@ -739,6 +891,22 @@ def _ip(value: Any) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _fingerprints(row: dict[str, Any]) -> tuple[list[str], bool]:
+    values = [value for key, value in row.items() if isinstance(key, str) and key.casefold() in _JA4_FIELDS]
+    fingerprints: list[str] = []
+    malformed = False
+    for value in values[:8]:
+        candidates = value[:8] if isinstance(value, list) else [value]
+        for candidate in candidates:
+            if candidate in (None, ""):
+                continue
+            if isinstance(candidate, str) and len(candidate) <= 128 and _JA4_RX.fullmatch(candidate.strip()):
+                fingerprints.append(candidate.strip())
+            else:
+                malformed = True
+    return list(dict.fromkeys(fingerprints))[:8], malformed
 
 
 def _int(value: Any) -> int | None:

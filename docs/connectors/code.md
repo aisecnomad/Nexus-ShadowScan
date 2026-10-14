@@ -55,6 +55,12 @@ A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
+The filesystem connector also checks bounded file headers and a bounded tail
+window for GGUF, ONNX, safetensors and PyInstaller archive markers. It reads no
+model payload beyond those small windows, never unpacks or executes files, and
+counts the checks against the existing file-size and scan budgets. A magic-byte
+match is artifact evidence, not proof that the model is loaded or trusted.
+
 Python and common JavaScript/TypeScript constructors are resolved against imports,
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.

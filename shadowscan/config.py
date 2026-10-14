@@ -95,6 +95,7 @@ _ENV_RX = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 # configuration file, never against the process working directory.
 PATH_KEYS = (
     "input",
+    "live_log_input",
     "path",
     "paths",
     "service_account_file",
@@ -172,6 +173,7 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     ),
     "identity.okta": frozenset({"fetch_tokens", "include_inactive"}),
     "lowcode.power-platform": frozenset({"include_bots"}),
+    "network.logs": frozenset({"live_dns_enrichment"}),
     "saas.generic": frozenset({"keep_all"}),
     "saas.github-apps": frozenset({"include_unrecognized_apps"}),
     "saas.microsoft-teams": frozenset({"include_store"}),
@@ -320,6 +322,30 @@ def normalize_connector_config(name: str, config: Mapping[Any, Any]) -> dict[str
     for key in _BOOLEAN_CONNECTOR_KEYS.get(name, frozenset()):
         if key in normalized:
             normalized[key] = connector_boolean(normalized[key], key)
+    if name == "network.logs":
+        live_dns = normalized.get("live_dns_enrichment", False)
+        live_log_input = normalized.get("live_log_input")
+        dns_hosts = normalized.get("dns_hosts", [])
+        if (
+            not isinstance(dns_hosts, list)
+            or len(dns_hosts) > 32
+            or any(not isinstance(host, str) or not host.strip() for host in dns_hosts)
+        ):
+            raise ConfigValidationError(
+                "connector 'network.logs': dns_hosts must be a list of at most 32 nonempty hostnames"
+            )
+        if live_dns and normalized.get("input"):
+            raise ConfigValidationError(
+                "connector 'network.logs': live_dns_enrichment cannot be used with offline input"
+            )
+        if live_dns and not live_log_input:
+            raise ConfigValidationError(
+                "connector 'network.logs': live_dns_enrichment requires live_log_input"
+            )
+        if not live_dns and (live_log_input or dns_hosts):
+            raise ConfigValidationError(
+                "connector 'network.logs': live_log_input and dns_hosts require live_dns_enrichment"
+            )
     return normalized
 
 

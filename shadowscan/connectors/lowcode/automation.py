@@ -266,7 +266,8 @@ class N8nConnector(_AutomationBase):
 
     def _n8n_graph_chain(self, nodes: list[dict[str, Any]], connections: Any) -> bool | None:
         if connections is None:
-            return False
+            self.ctx.warn("lowcode.n8n: missing connections graph; chain analysis incomplete")
+            return None
         if not isinstance(connections, dict):
             self.ctx.warn("lowcode.n8n: malformed connections graph; chain analysis incomplete")
             return None
@@ -429,6 +430,7 @@ class N8nConnector(_AutomationBase):
             )
             f.metadata["workflow_graph"] = {
                 "node_count": min(len(w["nodes"]), _MAX_N8N_NODES),
+                "analysis_complete": graph_chain is not None,
                 "edge_chain_risk": ("untrusted-trigger-to-ai-to-write-sink" if graph_chain is True else None),
             }
             if graph_chain is True:

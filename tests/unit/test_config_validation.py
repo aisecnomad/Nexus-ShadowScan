@@ -45,6 +45,52 @@ def test_min_confidence_error_is_a_typed_printable_setup_error():
     assert failure.value.__cause__ is None
 
 
+def test_live_network_dns_enrichment_rejects_offline_mode_and_requires_live_log_input():
+    with pytest.raises(ConfigValidationError, match="cannot be used with offline input"):
+        ScanConfig.from_dict(
+            {
+                "connectors": [
+                    {
+                        "name": "network.logs",
+                        "input": "offline.json",
+                        "live_dns_enrichment": True,
+                    }
+                ]
+            }
+        )
+    with pytest.raises(ConfigValidationError, match="requires live_log_input"):
+        ScanConfig.from_dict({"connectors": [{"name": "network.logs", "live_dns_enrichment": True}]})
+    with pytest.raises(ConfigValidationError, match="at most 32 nonempty hostnames"):
+        ScanConfig.from_dict(
+            {
+                "connectors": [
+                    {
+                        "name": "network.logs",
+                        "live_log_input": "flows.json",
+                        "live_dns_enrichment": True,
+                        "dns_hosts": [f"host-{index}.openai.azure.com" for index in range(33)],
+                    }
+                ]
+            }
+        )
+
+
+def test_live_network_dns_enrichment_accepts_separate_mixed_mode_log_input():
+    config = ScanConfig.from_dict(
+        {
+            "connectors": [
+                {
+                    "name": "network.logs",
+                    "live_log_input": "flows.json",
+                    "live_dns_enrichment": True,
+                    "dns_hosts": ["tenant.openai.azure.com"],
+                }
+            ]
+        }
+    )
+    assert config.connectors[0].config["live_dns_enrichment"] is True
+
+
 # ---------------------------------------------------------- connector keys
 @pytest.mark.parametrize(
     "entry",

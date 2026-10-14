@@ -5,6 +5,35 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Independently verified detection gaps (October 14)
+
+- `runtime.processes` already classified processes from command lines; live
+  Linux collection now also reads bounded `/proc/<pid>/maps` and descriptor
+  links for native AI libraries, signature-index SDKs, model files and
+  PyInstaller mounts. It does not read process memory.
+- Existing cloud provider signatures and offline DNS/SNI matching covered
+  Bedrock, Azure OpenAI and Vertex AI hostnames. Their dated signature entries
+  now carry exact seed hosts and official IP-range references; opt-in DNS
+  enrichment is live-only and correlates flows by resolved hostname addresses,
+  never broad IP ranges. Existing network telemetry was offline-only.
+- `code.filesystem` now checks bounded headers and a bounded tail window for
+  GGUF, ONNX, safetensors and PyInstaller markers; no artifact is deserialized,
+  unpacked or executed.
+- n8n already identified AI steps and trigger nodes but did not follow graph
+  edges. Exact signature node types now identify inbound-trigger → AI →
+  write-sink paths, with explicit node/edge bounds and incomplete reporting.
+  Other low-code formats retain their existing step heuristics.
+- `endpoint.mcp` already checked instruction phrases, zero-width controls,
+  cross-server name collisions and authentication. It now also reuses static
+  instruction-content checks for hidden comments, checks common shadowing names
+  and explicit broad filesystem/shell declarations, and reuses existing threat
+  tags. Existing skill and instruction-file content checks remain in
+  `code.filesystem`.
+- `network.logs` now ingests bounded precomputed JA4/JA4+ fields as metadata
+  only on an existing hostname-matched finding. No sourced AI-SDK fingerprint
+  list exists in this change, so fingerprint matching and confidence scoring
+  remain deferred; JA4 alone never triggers a finding.
+
 ### Documentation aligned with the code (October 12)
 
 Documentation only; no scanner behaviour changes.

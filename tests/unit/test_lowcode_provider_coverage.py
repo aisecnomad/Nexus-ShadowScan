@@ -503,7 +503,8 @@ def test_n8n_exact_node_types_and_directed_untrusted_ai_sink_chain(index):
     webhook = {"type": "n8n-nodes-base.webhook", "name": "Inbound", "parameters": {}}
     request = {"type": "n8n-nodes-base.httpRequest", "name": "Send", "parameters": {}}
     workflows = [
-        {"id": "agent", "name": "Agent present", "nodes": [agent]},
+        {"id": "agent", "name": "Agent present", "nodes": [agent], "connections": {}},
+        {"id": "missing-connections", "name": "Unknown graph", "nodes": [agent]},
         {
             "id": "mention-only",
             "name": "Deterministic",
@@ -537,11 +538,15 @@ def test_n8n_exact_node_types_and_directed_untrusted_ai_sink_chain(index):
     findings = connector.run()
 
     by_id = {finding.resource.rsplit(":", 1)[-1]: finding for finding in findings}
-    assert set(by_id) == {"agent", "connected", "disconnected"}
+    assert set(by_id) == {"agent", "connected", "disconnected", "missing-connections"}
     assert by_id["connected"].metadata["workflow_graph"]["edge_chain_risk"] == (
         "untrusted-trigger-to-ai-to-write-sink"
     )
+    assert by_id["connected"].metadata["workflow_graph"]["analysis_complete"] is True
     assert by_id["disconnected"].metadata["workflow_graph"]["edge_chain_risk"] is None
+    assert by_id["disconnected"].metadata["workflow_graph"]["analysis_complete"] is True
+    assert by_id["missing-connections"].metadata["workflow_graph"]["analysis_complete"] is False
+    assert connector.ctx.stats.incomplete
     assert by_id["agent"].kind.value == "agent"
 
 
