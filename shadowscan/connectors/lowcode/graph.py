@@ -171,29 +171,33 @@ def _shape(data: dict[str, Any], provider: str | None) -> tuple[str, Any, Any] |
         if isinstance(workflow, dict) and "graph" in workflow:
             return "dify", None, None
         return None
+    # Recognise the provider before applying the node budget: a long
+    # ``nodes`` list alone (a diagram, a dataset) is not a workflow graph. The
+    # scan stops at the first marker and reads only node types, so an
+    # over-budget n8n or Flowise graph is still recognised and reported.
     nodes = data.get("nodes")
-    if isinstance(nodes, list) and len(nodes) > MAX_GRAPH_NODES:
-        return provider or "unidentified", nodes, _ADJACENCY_ABSENT
-    if isinstance(nodes, list) and any(
+    if not isinstance(nodes, list):
+        return None
+    if any(
         isinstance(n, dict)
         and isinstance(n.get("type"), str)
         and n["type"].startswith(("n8n-nodes-base.", _N8N_PREFIX))
-        for n in nodes[:MAX_GRAPH_NODES]
+        for n in nodes
     ):
         return "n8n", nodes, data.get("connections", _ADJACENCY_ABSENT)
-    if isinstance(nodes, list) and any(
+    if any(
         isinstance(n, dict)
         and isinstance(n.get("data"), dict)
         and isinstance(n["data"].get("name"), str)
         and n["data"]["name"] in _FLOWISE_AI_TYPES
-        for n in nodes[:MAX_GRAPH_NODES]
+        for n in nodes
     ):
         return "flowise", nodes, data.get("edges", _ADJACENCY_ABSENT)
     return None
 
 
 def is_workflow_graph(data: dict[str, Any]) -> bool:
-    """Bounded shape detection without traversing edges or constructing roles."""
+    """Shape detection over node types only, without traversing edges or constructing roles."""
     return _shape(data, None) is not None
 
 

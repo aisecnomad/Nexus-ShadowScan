@@ -88,7 +88,8 @@ where the previous revision completed:
   connections, duplicate node names). The workflow finding is kept with
   `workflow_graph.status: incomplete`. A `null` n8n output slot is valid. A
   graph that fails unexpectedly affects only its own n8n workflow; the rest
-  of the export is still reported.
+  of the export is still reported. A JSON, YAML or TOML document whose
+  `nodes` list identifies no provider is not a graph, however long.
 - A live process command line over 65,536 bytes. The process is still
   classified from its leading complete arguments, with
   `metadata.command_lines_truncated`.

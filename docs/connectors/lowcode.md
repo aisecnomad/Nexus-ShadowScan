@@ -144,8 +144,11 @@ Flowise edges describe dependencies, so a path remains a declaration rather
 than proof of runtime ordering. Model-only Dify configurations remain detectable
 without pretending they contain a workflow graph.
 
-Analysis permits at most 16 graph documents per file, 4,096 nodes per graph and
-16,384 edges/connection-branch
+A document is a graph only when a node type identifies n8n or a node names a
+Flowise AI component, or when it is a Dify app; a long `nodes` list that
+identifies neither (a diagram, a dataset) is not a graph and is never reported
+as over budget. Analysis permits at most 16 graph documents per file, 4,096
+nodes per graph and 16,384 edges/connection-branch
 inspections, with node identifiers capped at 512 characters. A malformed supplied
 graph, dangling edge, duplicate identifier or exhausted budget marks coverage
 incomplete and sets the graph's `status` to `incomplete` with a `null` path, but

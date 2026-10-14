@@ -766,3 +766,30 @@ def test_graph_document_budget_stops_full_analysis(index, monkeypatch):
     )
     assert len(calls) == 1
     assert limits == ["workflow graph export exceeds document budget"]
+
+
+@pytest.mark.parametrize("name", ["graph.json", "graph.yaml", "graph.toml"])
+def test_large_unidentified_nodes_list_is_not_a_workflow_graph(index, tmp_path, name):
+    """Regression (#220 verifier): any document with a long ``nodes`` list was an over-budget graph."""
+    nodes = [{"id": number, "label": f"n{number}"} for number in range(5000)]
+    text = {
+        "graph.json": json.dumps({"nodes": nodes}),
+        "graph.yaml": yaml.safe_dump({"nodes": nodes}),
+        "graph.toml": "".join(f'[[nodes]]\nid = {number}\nlabel = "n{number}"\n' for number in range(5000)),
+    }[name]
+    limits = []
+    structured_code_matches(index, name, text, limit_errors=limits)
+    assert limits == []
+    findings, ctx = _scan(index, tmp_path, {name: text})
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+
+
+def test_large_recognised_workflow_graph_is_still_over_budget(index):
+    nodes = [{"name": f"n{number}", "type": "community.unknown"} for number in range(5000)]
+    nodes.append({"name": "agent", "type": "@n8n/n8n-nodes-langchain.agent"})
+    limits = []
+    matches = structured_code_matches(
+        index, "workflow.json", json.dumps({"nodes": nodes}), limit_errors=limits
+    )
+    assert {match.signature_id for match in matches} == {"platform.n8n"}
+    assert limits == ["workflow graph exceeds node budget"]
