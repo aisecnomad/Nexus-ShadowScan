@@ -65,6 +65,7 @@ from shadowscan.utils.redaction_formats import (
     _PEM,
     _SCHEME_READING,
     _URL,
+    _later_line_runs,
     _redact_authorization,
     _redact_compact_colons,
     _redact_cookie_headers,
@@ -272,16 +273,18 @@ def sanitize_text(text: str) -> str:
 
     A text where no credential stops at such a run is read as the established
     rules read it. The step that withholds the runs then finds only runs that
-    start a line after their scheme's ('Bearer v\\n--verbose'), and they stay
-    unless removing them lets the passes withhold more (see
-    ``_without_later_line_runs``).
+    start a line after their scheme's ('Bearer v\\n--verbose'). Runs that are
+    only a name or a separator stay unless removing them lets the passes
+    withhold more (see ``_without_later_line_runs``); any other run, which
+    holds a value ('--max-time=30'), is withheld. A marker shows where a run
+    was withheld (see ``_marked_later_lines``), as in a text with a glued run.
     """
     text = _checked_text(text)
     reading = _SchemeReading(established=False)
     first = _in_reading(reading, lambda: _redact_extended(_sanitize_established(text)))
     shown = _in_reading(reading, lambda: _without_glued_runs(first))
     if not reading.glued:
-        return first if shown == _without_later_line_runs(first) else shown
+        return first if shown == _without_later_line_runs(first) else _marked_later_lines(first, shown)
     plain = _settled(
         shown,
         lambda again: _in_reading(
@@ -428,6 +431,47 @@ def _without_later_line_runs(text: str) -> str:
             break
         text = cut
     return text
+
+
+def _marked_later_lines(first: str, shown: str) -> str:
+    """``shown``, ``first`` without its runs, with a marker where a run that started a line was.
+
+    A run that starts a line after a scheme credential's marker (see
+    ``_later_line_runs``) and that its line in ``shown`` no longer starts
+    with was withheld; the line then starts with a marker, unless it already
+    does, as ``_merged_line`` marks it in a text with a glued run. Every pass
+    keeps the lines of a text, so the lines of ``first`` and ``shown`` pair up.
+    """
+    runs = _later_line_runs(first)
+    lines = shown.split("\n")
+    if not runs or len(lines) != first.count("\n") + 1:
+        return shown
+    for index, run in runs.items():
+        if not lines[index].startswith((run, REDACTED)):
+            lines[index] = REDACTED + lines[index]
+    return "\n".join(lines)
+
+
+def _marked_copy(first: Any, shown: Any) -> Any:
+    """``shown``, ``first`` without its runs, with each text marked as ``_marked_later_lines`` marks it.
+
+    ``shown`` is ``_without_scheme_tails(first)``: the two hold the same
+    members (see ``_Copy``), and a mapping keeps those its dict keeps.
+    """
+    if isinstance(shown, str):
+        return _marked_later_lines(first, shown) if isinstance(first, str) else shown
+    if isinstance(shown, Mapping) and isinstance(first, Mapping):
+        members, shown_members = _all_members(first), _all_members(shown)
+        view = shown.view if isinstance(shown, _Copy) else range(len(shown_members))
+        marked: dict[str, Any] = {}
+        for index in view:
+            (key, child), (shown_key, shown_child) = members[index], shown_members[index]
+            marked[_marked_copy(key, shown_key)] = _marked_copy(child, shown_child)
+        return marked
+    if isinstance(shown, (list, tuple)) and type(first) is type(shown):
+        items = [_marked_copy(one, other) for one, other in zip(first, shown, strict=True)]
+        return tuple(items) if isinstance(shown, tuple) else items
+    return _dicts(shown)
 
 
 def _checked_text(text: str) -> str:
@@ -1127,7 +1171,8 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     (see ``_merge_copies``). A value where no credential stops at such a run
     keeps the established rules' copy, as ``sanitize_text`` keeps their
     reading, unless removing the runs that start later lines lets the
-    passes withhold more.
+    passes withhold more or a run holds a value; a marker then shows where
+    each run was (see ``_marked_copy``).
 
     A container stays a container of its type: the two readings of a
     mapping pair up member by member even where two of its keys read alike
@@ -1141,7 +1186,9 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     )
     shown = _in_reading(reading, lambda: _without_scheme_tails(first))
     if not reading.glued:
-        return _dicts(first if shown == _without_scheme_tails(first, _without_later_line_runs) else shown)
+        if shown == _without_scheme_tails(first, _without_later_line_runs):
+            return _dicts(first)
+        return _marked_copy(first, shown)
     plain = _settled(
         shown,
         lambda again: _in_reading(

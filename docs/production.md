@@ -1221,7 +1221,10 @@ credential that stays beside it (`<token>--token`), which was read only on the
 next sanitization, or never after `--token` and `--password`. A text with no glued run reads as the earlier rules read
 it, those runs included where each is only a name or separator (`--verbose`,
 `---`, `=Section=`), unless removing them lets the rules withhold a value
-after them; a run holding a value is removed as before. Finding identity does not use
+after them. A run there that holds a value (`--http1.1`, `--max-time=30`) is
+withheld, with a marker in its place: the earlier rules showed it, and until
+this correction it was removed with no marker, so an excerpt lost an option
+without showing that anything was withheld. Finding identity does not use
 evidence text. Regenerate retained reports, as after any change that
 withholds more.
 

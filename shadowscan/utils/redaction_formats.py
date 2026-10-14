@@ -381,6 +381,29 @@ def _withhold_scheme_tails(text: str, *, later_lines: bool = False) -> str:
     return "".join(pieces)
 
 
+def _later_line_runs(text: str) -> dict[int, str]:
+    """The runs ``_withhold_scheme_tails`` can read as starting a line after a scheme credential's marker.
+
+    Keyed by the line each starts: a run after the marker and its line
+    breaks, or after line breaks that follow such a run or the run glued
+    to the marker. One scan, as the step's own.
+    """
+    runs: dict[int, str] = {}
+    if REDACTED not in text:
+        return runs
+    line = counted = position = 0
+    while (match := _SCHEME_TAIL.search(text, position)) is not None:
+        while match is not None:
+            if "\n" in match.group("head"):
+                start = match.start("glued")
+                line += text.count("\n", counted, start)
+                counted = start
+                runs[line] = match.group("glued")
+            position = match.end()
+            match = _LATER_RUN.match(text, position)
+    return runs
+
+
 def _redact_jwts(text: str) -> str:
     """Withhold every JSON Web Token in ``text``, keeping what precedes its 'eyJ'."""
     if "eyJ" not in text:

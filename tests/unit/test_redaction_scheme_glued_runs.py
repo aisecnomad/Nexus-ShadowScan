@@ -695,6 +695,10 @@ shapes = [
     'Bearer token ' + secret + '--' + 'a+' * n, 'Bearer a--' + '__' * n, 'Bearer a--' + 'a/' * n,
     'Bearer a--x-' * (n // 4), (marker + '=') * (n // 4), 'Bearer a--' + 'Bearer' * n,
     marker + '\\n' * n + '--x', 'x\\\\nBearer a=v1= ' * (n // 4), (marker + '\\n') * (n // 4) + '--x',
+    # Runs that start later lines: after the credential, after a name that
+    # stays beside it, and each marked where it goes.
+    'Bearer a\\n' + '--x9\\n' * (n // 2), 'Bearer a--token\\n' + '=a\\n' * (n // 2),
+    'Bearer a\\n--x9 v\\n' * (n // 8), marker + '--token' + '\\n--max-time=30' * (n // 8),
 ]
 for shape in shapes:
     try:
@@ -754,3 +758,38 @@ def test_an_inert_run_after_a_scheme_line_is_kept(text: str) -> None:
     text = text.format(s=_LATER_LINE_SECRET)
     out = sanitize_text(text)
     assert out.split("\n")[1:] == text.split("\n")[1:]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            f"Bearer {_LATER_LINE_SECRET}\n--http1.1 https://api.example.test/v1/models",
+            f"Bearer {REDACTED}\n{REDACTED} https://api.example.test/v1/models",
+        ),
+        (f"Bearer {_LATER_LINE_SECRET}\n--max-time=30", f"Bearer {REDACTED}\n{REDACTED}"),
+        (
+            f"Bearer {_LATER_LINE_SECRET}\n--tlsv1.2 --compressed",
+            f"Bearer {REDACTED}\n{REDACTED} --compressed",
+        ),
+        ("Bearer T\n--x9 V", f"Bearer {REDACTED}\n{REDACTED} V"),
+        # After blank lines, and a separator run after it that goes with it.
+        (
+            f"Basic {_LATER_LINE_SECRET}\n\n--max-time=30\n--r0\nnext",
+            f"Basic {REDACTED}\n\n{REDACTED}\n{REDACTED}\nnext",
+        ),
+    ],
+)
+def test_a_run_holding_a_value_on_a_later_line_is_withheld_with_a_marker(text: str, expected: str) -> None:
+    # In a text with no glued run, the step that withholds the runs removed
+    # a later-line run that holds a value without a marker, so an excerpt
+    # lost a curl option and did not show that anything was withheld. The
+    # earlier rules showed such a run; the run stays withheld, with a marker
+    # in its place, as in a text with a glued run.
+    assert sanitize_text(text) == expected
+    assert sanitize_text(expected) == expected
+    for short in (False, True):
+        assert sanitize({"note": text}, redact_short_secrets=short)["note"] == expected
+        assert sanitize([text], redact_short_secrets=short) == [expected]
+        # A key is a text of the copy as well.
+        assert sanitize({text: 1}, redact_short_secrets=short) == {expected: 1}

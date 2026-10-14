@@ -168,7 +168,8 @@ def test_sanitize_text_shows_nothing_the_established_reading_withholds(text: str
     The established reading is the text as the established rules read it,
     the scheme pass withholding a glued run with its credential (outside any
     reading, see ``_SchemeReading``). A text with no glued run returns it, or
-    what the step that withholds the runs leaves of it.
+    what the step that withholds the runs leaves of it, with a marker where
+    a run that started a line was.
     """
     cleaned, merged = _merged_readings(lambda: sanitize_text(text))
     established = redaction._redact_extended(redaction._sanitize_established(text))
@@ -176,13 +177,14 @@ def test_sanitize_text_shows_nothing_the_established_reading_withholds(text: str
         ((plain, settled),) = merged
         _assert_each_line_shows_only_what_both_readings_show(cleaned, plain, settled)
     else:
-        assert cleaned in (
-            established,
-            redaction._in_reading(
-                redaction._SchemeReading(established=False),
-                lambda: redaction._without_glued_runs(established),
-            ),
+        without = redaction._in_reading(
+            redaction._SchemeReading(established=False),
+            lambda: redaction._without_glued_runs(established),
         )
+        assert cleaned in (established, redaction._marked_later_lines(established, without))
+        if cleaned != established:
+            for line, unmarked in zip(cleaned.split("\n"), without.split("\n"), strict=True):
+                assert line in (unmarked, REDACTED + unmarked)
     for value in (_PLAIN_VALUE, _OPAQUE_VALUE, _SCHEME_CREDENTIAL):
         assert value in established or value not in cleaned
 
