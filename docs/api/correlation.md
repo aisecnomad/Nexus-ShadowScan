@@ -18,6 +18,10 @@ Collection status describes connector runs, not visibility into every device
 or continuous coverage of that window. Process creation timestamps do not
 substitute for an explicit observation time. Samples are capped at 50, with a
 truncation flag and full count; recency considers all available observations.
+Each sample names its process finding by `finding_id`. When `--min-confidence`
+omits a process finding from the report, its sample is removed and counted in
+`observations_omitted`, so a report never links to a finding it omits;
+`observation_count` and the recency assessment still include it.
 
 An old process export may retain the legacy `observed-running` tag and the
 historically observed `running` state, but its assessment reads `historical`.

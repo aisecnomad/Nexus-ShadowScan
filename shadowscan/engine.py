@@ -1470,15 +1470,42 @@ class Engine:
 
 
 def _prune_lifecycle_links(findings: list[Finding]) -> None:
-    """Drop ``metadata['lifecycle']['related']`` identifiers of findings absent from ``findings``."""
+    """Drop lifecycle links to findings absent from ``findings``.
+
+    Covers ``metadata['lifecycle']['related']`` and the sampled process
+    ``finding_id``s of the lifecycle observation, kept both at
+    ``metadata['lifecycle_observation']`` and ``metadata['lifecycle']['observation']``
+    (often one object). ``observation_count`` still counts every recorded
+    observation; ``observations_omitted`` counts samples whose finding the
+    report omits.
+    """
     retained = {f.id for f in findings}
     for f in findings:
         lifecycle = f.metadata.get("lifecycle")
-        if not isinstance(lifecycle, dict):
-            continue
-        related = lifecycle.get("related")
-        if isinstance(related, list):
-            lifecycle["related"] = [link for link in related if link in retained]
+        observations = [f.metadata.get("lifecycle_observation")]
+        if isinstance(lifecycle, dict):
+            related = lifecycle.get("related")
+            if isinstance(related, list):
+                lifecycle["related"] = [link for link in related if link in retained]
+            observations.append(lifecycle.get("observation"))
+        pruned: set[int] = set()
+        for observation in observations:
+            if not isinstance(observation, dict) or id(observation) in pruned:
+                continue
+            pruned.add(id(observation))
+            samples = observation.get("observations")
+            if not isinstance(samples, list):
+                continue
+            kept = [
+                sample
+                for sample in samples
+                if isinstance(sample, dict) and sample.get("finding_id") in retained
+            ]
+            if len(kept) != len(samples):
+                observation["observations"] = kept
+                observation["observations_omitted"] = (
+                    observation.get("observations_omitted", 0) + len(samples) - len(kept)
+                )
 
 
 def _prune_related(findings: list[Finding]) -> None:

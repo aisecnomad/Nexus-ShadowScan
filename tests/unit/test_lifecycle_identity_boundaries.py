@@ -188,3 +188,39 @@ def test_lifecycle_sample_limit_does_not_drop_current_observations():
     assert assessment["status"] == "observed-in-window"
     assert assessment["observation_count"] == 51 and assessment["observations_truncated"]
     assert len(assessment["observations"]) == 50
+
+
+def test_threshold_never_leaves_lifecycle_observations_linking_omitted_findings(index, tmp_path):
+    """Regression (#220 graph review F4): a report must not link to a finding it omits."""
+    source = tmp_path / "processes.json"
+    source.write_text(
+        json.dumps(
+            [
+                {
+                    "hostIdentifier": "dev-laptop-07",
+                    "columns": {"pid": "1", "uid": "1000", "cmdline": "/home/dana/.local/bin/claude"},
+                    "observed_at": "2026-01-01T00:00:00Z",
+                }
+            ]
+        )
+    )
+    connectors = [
+        ConnectorSpec("endpoint.inventory", {"input": "tests/fixtures/endpoint/inventory.jsonl"}),
+        ConnectorSpec("runtime.processes", {"input": str(source)}),
+    ]
+    complete = Engine(ScanConfig(connectors=connectors), index).run()
+    process_ids = {f.id for f in complete.findings if f.connector == "runtime.processes"}
+    linked = [f for f in complete.findings if f.metadata.get("lifecycle_observation", {}).get("observations")]
+    assert process_ids and any(f.connector == "endpoint.inventory" for f in linked)
+    # The runtime finding (confidence 0.85) falls below the threshold; the
+    # endpoint configuration (0.96) stays and keeps its observation count.
+    result = Engine(ScanConfig(connectors=connectors, min_confidence=0.9), index).run()
+    assert result.findings and not any(f.id in process_ids for f in result.findings)
+    encoded = json.dumps([f.to_dict() for f in result.findings])
+    assert not any(process_id in encoded for process_id in process_ids)
+    endpoint = next(
+        f for f in result.findings if f.metadata.get("lifecycle_observation", {}).get("observation_count")
+    )
+    observation = endpoint.metadata["lifecycle_observation"]
+    assert observation["observations"] == [] and observation["observations_omitted"] == 1
+    assert endpoint.metadata["lifecycle"]["observation"] == observation
