@@ -295,13 +295,6 @@ class N8nConnector(_AutomationBase):
         return EVENT
 
     def _n8n_finding(self, w: dict[str, Any]) -> Finding | None:
-        graph = analyze_workflow_graph(w, provider="n8n")
-        assert graph is not None
-        # The graph is non-scoring metadata: a malformed or over-budget graph is
-        # reported (and its status is "incomplete"), but the workflow's AI
-        # inventory below does not depend on it and is kept.
-        for issue in graph.issues:
-            self.ctx.warn(f"lowcode.n8n: {issue}; graph coverage incomplete")
         # Exported blueprints can contain useful AI evidence without a provider
         # object ID. A display name (or the string "None") is not that identity.
         workflow_id = w.get("id")
@@ -323,6 +316,15 @@ class N8nConnector(_AutomationBase):
         ]
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
+        # The graph covers the same nodes as the inventory, so its counts and
+        # path ordinals (positions in this list, in export order) agree with
+        # node_count. It is non-scoring metadata: a malformed or over-budget
+        # graph is reported (status "incomplete"), but the AI inventory below
+        # does not depend on it and is kept.
+        graph = analyze_workflow_graph({**w, "nodes": nodes}, provider="n8n")
+        assert graph is not None
+        for issue in graph.issues:
+            self.ctx.warn(f"lowcode.n8n: {issue}; graph coverage incomplete")
         types = [str(n.get("type", "")) for n in nodes]
         ai_steps = [
             f"{n.get('name')} ({n.get('type')})"

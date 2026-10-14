@@ -985,3 +985,33 @@ def test_n8n_xai_model_registry_uses_actual_registered_name(index, node_type, ai
     (finding,) = connector.run()
     assert finding.metadata["workflow_graph"]["role_counts"]["ai"] == int(ai)
     assert not connector.ctx.stats.incomplete
+
+
+def test_n8n_graph_ordinals_and_counts_use_the_inventoried_node_list(index):
+    """Regression (#220 graph review F8): graph and inventory describe the same nodes."""
+    workflow = {
+        "id": "wf-1",
+        "name": "Mixed",
+        "nodes": [
+            {"name": "Input", "type": "n8n-nodes-base.webhook", "parameters": {}},
+            {"name": "Broken", "type": "n8n-nodes-base.set", "parameters": "not a mapping"},
+            {"name": "AI", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}},
+            {
+                "name": "HTTP",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {"url": "https://example.invalid"},
+            },
+        ],
+        "connections": {
+            "Input": {"main": [[{"node": "AI", "type": "main", "index": 0}]]},
+            "AI": {"main": [[{"node": "HTTP", "type": "main", "index": 0}]]},
+        },
+    }
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    graph = finding.metadata["workflow_graph"]
+    assert graph["node_count"] == finding.metadata["node_count"] == 3
+    # Ordinals index the inventoried nodes in export order: Input, AI, HTTP.
+    assert graph["path_node_indices"] == [0, 1, 2]
+    assert connector.ctx.stats.incomplete  # the invalid node itself is still a coverage gap

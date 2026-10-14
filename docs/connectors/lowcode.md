@@ -151,7 +151,11 @@ An inventory omitting adjacency can still establish AI node presence,
 but its graph status is `unavailable` and its path result is `null`, not `false`.
 Only a supplied and analyzed graph can produce `false`. Output uses node ordinals
 instead of retaining prompts, node names or destination URLs; example paths are
-capped at 32 nodes and explicitly disclose truncation.
+capped at 32 nodes and explicitly disclose truncation. In `lowcode.n8n`
+findings, `workflow_graph.node_count` and `path_node_indices` cover the same
+nodes as `metadata.node_count`: the workflow's valid nodes, disabled ones
+included, by position in export order. In export-file findings they index the
+file's own `nodes` array.
 
 The fixtures in `tests/fixtures/lowcode/graph_cases.json` cover connected,
 disconnected, cyclic, reversed, disabled, non-AI and type-prefix decoy workflows.
