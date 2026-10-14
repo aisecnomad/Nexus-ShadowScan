@@ -266,8 +266,8 @@ _REPOSITORY_LINK = re.compile(
 # The repository was renamed from aisecnomad/Project-Nexus to aisecnomad/Nexus-ShadowScan so
 # that its URL, the NexusShadowScan distribution and the brand match. These paths record
 # history as it happened and keep the former name: retained reviews, frozen benchmark
-# corpora, results and the harnesses that reproduce them, GitHub's recorded ruleset
-# responses, and released changelog entries.
+# corpora, results and the harnesses that reproduce them, and GitHub's recorded ruleset
+# responses. Released changelog entries are history too; the Unreleased section is not.
 _FORMER_NAME_RECORDS = (
     "archive/",
     "benchmarks/",
@@ -276,12 +276,31 @@ _FORMER_NAME_RECORDS = (
     "tools/discovery_benchmark/",
     "tools/shadowbench/",
     ".github/rulesets/observed/",
-    "CHANGELOG.md",
 )
-_FORMER_NAME = re.compile(r"aisecnomad(?:/|\.github\.io/)Project-Nexus", re.IGNORECASE)
-# Elsewhere a line may name the former repository only to say so: 0.1.2 was attested
-# under that name, and the rename runbook and tests describe it.
-_FORMER_NAME_CONTEXT = re.compile(r"0\.1\.2|\brenam|\bformer", re.IGNORECASE)
+_FORMER_NAME = re.compile(r"aisecnomad(?:/|%2F|\.github\.io/)Project-Nexus", re.IGNORECASE)
+# Elsewhere the former name may appear only in these forms, which say that it is the
+# former name: 0.1.2 was attested under it, the rename is described, and one dated
+# observation keeps the request path it recorded. Each form is removed from the line
+# before the check, so a stale link beside one is still caught.
+_FORMER_SLUG = re.escape("aisecnomad/" + "Project-Nexus")  # split so this file passes its own check
+_FORMER_NAME_FORMS = re.compile(
+    "|".join(
+        form.replace("SLUG", _FORMER_SLUG)
+        for form in (
+            r"gh attestation verify \S*-0\.1\.2-\S* --repo SLUG$",
+            r"verify (?:it|0\.1\.2) with `--repo SLUG`",
+            r"attested as `SLUG` before the rename",
+            r"renamed from `?SLUG`? to",
+            r"formerly `?SLUG`?",
+            r"`[^`]*SLUG[^`]*` \(the former name\)",
+            r'^FORMER_REPOSITORY = "SLUG"$',
+        )
+    )
+)
+
+
+def _names_former_repository(line: str) -> bool:
+    return bool(_FORMER_NAME.search(_FORMER_NAME_FORMS.sub("", line.strip())))
 
 
 def test_live_files_name_the_current_repository() -> None:
@@ -297,10 +316,12 @@ def test_live_files_name_the_current_repository() -> None:
             text = (ROOT / name).read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
+        if name == "CHANGELOG.md":
+            text = text[: text.index("\n## 0.")]
         stale.extend(
             f"{name}:{number}"
             for number, line in enumerate(text.splitlines(), start=1)
-            if _FORMER_NAME.search(line) and not _FORMER_NAME_CONTEXT.search(line)
+            if _names_former_repository(line)
         )
     assert not stale, "use aisecnomad/Nexus-ShadowScan:\n  " + "\n  ".join(stale)
 
@@ -311,8 +332,24 @@ def test_former_name_check_flags_unexplained_references() -> None:
     assert _FORMER_NAME.search(f"https://github.com/{slug.lower()}/blob/main/README.md")
     assert _FORMER_NAME.search(f"https://{pages}/")
     assert not _FORMER_NAME.search("https://github.com/aisecnomad/Nexus-ShadowScan")
-    assert _FORMER_NAME_CONTEXT.search(f"gh attestation verify nexusshadowscan-0.1.2.whl --repo {slug}")
-    assert not _FORMER_NAME_CONTEXT.search(f"git clone https://github.com/{slug}.git")
+    for explained in (
+        f"gh attestation verify wheels/nexusshadowscan-0.1.2-py3-none-any.whl --repo {slug}",
+        f"The 0.1.2 wheel was attested before the rename; verify it with `--repo {slug}`.",
+        f"The repository was formerly `{slug}`; GitHub redirects the old links.",
+        f"- The repository is renamed from `{slug}` to",
+        f"`GET /repos/{slug}/rules/branches/main` (the former name) returned no active",
+    ):
+        assert not _names_former_repository(explained), explained
+    for stale in (
+        f"git clone https://github.com/{slug}.git",
+        f'python -m pip install "git+https://github.com/{slug}.git@v0.1.2"',
+        f"[![CI](https://github.com/{slug}/actions/workflows/ci.yml/badge.svg)] <!-- before renaming -->",
+        f"Report at https://github.com/{slug}/security/advisories/new (formerly email)",
+        "https://img.shields.io/badge/x?link=github.com%2F" + slug.replace("/", "%2F"),
+        f"formerly `{slug}`; see https://github.com/{slug}/blob/main/SECURITY.md",
+        f"gh pr create --repo {slug}",
+    ):
+        assert _names_former_repository(stale), stale
 
 
 @pytest.mark.parametrize("markdown", _markdown_files(), ids=_relative)
