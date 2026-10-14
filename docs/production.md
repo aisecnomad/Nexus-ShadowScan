@@ -1118,6 +1118,17 @@ risk, confidence or runtime activity; confidence filtering prunes references to
 omitted findings from all three fields. The HTML and Markdown reports show
 candidates on their own "Possible related (review candidates)" line.
 
+**Gateway access logs.** Ollama-style `/api/chat`, `/api/generate` and
+`/api/tags` requests to a parsed host that is not a known model host are no
+longer callers, so a help-desk chat widget or a container registry stops being
+reported. Requests logged without a parsed host (`localhost:11434`) are still
+callers. If an internal Ollama or text-generation-inference server sits behind
+a reverse proxy with its own hostname, list that hostname in the new
+`gateway.logs` option `internal_model_hosts` before upgrading, or its callers
+disappear. A bare `/generate` route counts only on a declared or known model
+host. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
+setting it changes that source's ids by design, so rebaseline that source.
+
 Permission and machine-identity observations are not proof of agent execution,
 and observations in an offline export are not authenticated publisher evidence.
 

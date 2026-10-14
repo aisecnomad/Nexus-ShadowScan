@@ -712,7 +712,7 @@ hint, never an agent indicator, and a host counts only through the one
 service it belongs to (its highest-weight signature), so browsing
 `chatgpt.com` is AI use while traffic to `api2.cursor.sh` is a coding agent.
 
-Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
+Options: `format`, `min_events`, `llm_hosts_only`, `internal_model_hosts`, `max_records`,
 `correlation_bindings`, and `label` (or `gateway_name` when the entry has no
 label), which names the gateway on findings: it becomes the provider and the
 account of callers without a tenant/account scope.

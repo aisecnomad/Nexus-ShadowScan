@@ -53,6 +53,22 @@ test, and an inference operation with a static suffix
 endpoint) is not a static asset. Static files under an inference-like prefix
 (`/agents/app.js`, `/v1/images/logo.png`) still are.
 
+Ollama-style routes (`/api/chat`, `/api/generate`, `/api/tags`) and bare
+text-generation-inference routes (`/generate`, `/generate_stream`) are ordinary
+paths on other services, such as a help-desk chat widget or a document
+generator. They count as model traffic only when the record names a model, the
+host is a known model host or listed in `internal_model_hosts`, or, for the
+Ollama-style routes only, no host was parsed (a local server logged as
+`localhost:11434`). A parsed host that is not a model host contradicts the
+route. A self-hosted TGI server cannot be told apart from another service by
+its path: list its exact hostname in `internal_model_hosts` (for an internal
+Ollama behind a reverse proxy, too). Entries are validated hostnames, matched
+exactly and case-insensitively, with no DNS lookup; anything else fails the
+connector. Declared hosts also pass the default `llm_hosts_only` filter. Setting
+`internal_model_hosts` changes how a source is read, so that source's finding
+ids change; leaving it unset keeps existing ids. User agents never exclude a
+request: a browser calling a provider API is still attributed to the provider.
+
 A caller is titled **Agentic caller** when at least one agent indicator
 holds: requests carried tool definitions or responses invoked tools; a user
 agent belongs to a coding agent or agent framework; requests targeted a hosted
