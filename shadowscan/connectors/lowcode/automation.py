@@ -60,6 +60,8 @@ _N8N_HUMAN_TRIGGERS = re.compile(
     r"\.(manualTrigger|chatTrigger|manualChatTrigger|formTrigger|evaluationTrigger)$", re.I
 )
 _N8N_SCHEDULE_TRIGGERS = re.compile(r"\.(scheduleTrigger|cron|interval)$", re.I)
+_MAX_N8N_NODES = 500
+_MAX_N8N_EDGES = 5_000
 # Make ``scheduling.type``: an on-demand scenario waits for the Run once button or a call (the
 # API, another scenario, an AI agent or an MCP client), so it records no initiation either way; an
 # instant trigger runs immediately on its webhook, and every other type is a schedule.
@@ -246,6 +248,104 @@ class N8nConnector(_AutomationBase):
             return SCHEDULE
         return EVENT
 
+    def _n8n_node_role(self, node_type: Any) -> str | None:
+        if not isinstance(node_type, str) or len(node_type) > 256:
+            return None
+        signature = self.index.get("heuristic.lowcode.n8n-node-types")
+        if signature is None:
+            return None
+        for signal in signature.signals:
+            for pattern in signal.bounded_compiled:
+                try:
+                    if pattern.fullmatch(node_type, timeout=0.02):
+                        return signal.description
+                except TimeoutError:
+                    self.ctx.warn("lowcode.n8n: node-type matching timed out; graph analysis incomplete")
+                    return None
+        return None
+
+    def _n8n_graph_chain(self, nodes: list[dict[str, Any]], connections: Any) -> bool | None:
+        if connections is None:
+            return False
+        if not isinstance(connections, dict):
+            self.ctx.warn("lowcode.n8n: malformed connections graph; chain analysis incomplete")
+            return None
+        names = {node["name"] for node in nodes if isinstance(node.get("name"), str) and node["name"]}
+        roles = {
+            node["name"]: self._n8n_node_role(node.get("type"))
+            for node in nodes
+            if isinstance(node.get("name"), str) and node["name"]
+        }
+        edges: dict[str, set[str]] = {}
+        edge_count = 0
+        for source, outputs in connections.items():
+            if not isinstance(source, str) or source not in names or not isinstance(outputs, dict):
+                self.ctx.warn("lowcode.n8n: malformed workflow connection; graph analysis incomplete")
+                continue
+            for branches in outputs.values():
+                if not isinstance(branches, list):
+                    self.ctx.warn("lowcode.n8n: malformed workflow connection; graph analysis incomplete")
+                    continue
+                for branch in branches:
+                    if not isinstance(branch, list):
+                        self.ctx.warn("lowcode.n8n: malformed workflow connection; graph analysis incomplete")
+                        continue
+                    for edge in branch:
+                        if not isinstance(edge, dict) or not isinstance(edge.get("node"), str):
+                            self.ctx.warn("lowcode.n8n: malformed workflow edge; graph analysis incomplete")
+                            continue
+                        edge_count += 1
+                        if edge_count > _MAX_N8N_EDGES:
+                            self.ctx.error(
+                                "lowcode.n8n: workflow edge limit reached; chain analysis incomplete"
+                            )
+                            return None
+                        target = edge["node"]
+                        if target not in names:
+                            self.ctx.warn(
+                                "lowcode.n8n: workflow edge names a missing node; graph analysis incomplete"
+                            )
+                            continue
+                        edges.setdefault(source, set()).add(target)
+
+        triggers = {name for name, role in roles.items() if role == "untrusted-trigger"}
+        ai_nodes = {name for name, role in roles.items() if role in {"ai", "agent"}}
+        sinks = {
+            node["name"]
+            for node in nodes
+            if isinstance(node.get("name"), str)
+            and (role := self._n8n_node_role(node.get("type")))
+            in {"http-write-sink", "slack-write-sink", "database-write-sink", "email-write-sink"}
+            and self._n8n_is_write_sink(node, role)
+        }
+        for start in triggers:
+            queue = [(start, False)]
+            visited: set[tuple[str, bool]] = set()
+            while queue:
+                current, saw_ai = queue.pop()
+                saw_ai = saw_ai or current in ai_nodes
+                state = (current, saw_ai)
+                if state in visited:
+                    continue
+                visited.add(state)
+                if current in sinks and saw_ai:
+                    return True
+                queue.extend((target, saw_ai) for target in edges.get(current, ()))
+        return False
+
+    @staticmethod
+    def _n8n_is_write_sink(node: dict[str, Any], role: str) -> bool:
+        if role in {"http-write-sink", "email-write-sink"}:
+            return True
+        operation = get_path(node, "parameters.operation", "parameters.resource.operation")
+        if not isinstance(operation, str):
+            return False
+        if role == "slack-write-sink":
+            return operation.casefold() in {"post", "postmessage", "sendmessage"}
+        if role == "database-write-sink":
+            return operation.casefold() in {"insert", "update", "delete", "upsert"}
+        return False
+
     def _n8n_finding(self, w: dict[str, Any]) -> Finding | None:
         # Exported blueprints can contain useful AI evidence without a provider
         # object ID. A display name (or the string "None") is not that identity.
@@ -256,9 +356,11 @@ class N8nConnector(_AutomationBase):
         if not identified:
             self.ctx.warn("lowcode.n8n: workflow has no valid provider id; identity coverage incomplete")
             workflow_id = hashlib.sha256(json.dumps(w, sort_keys=True, default=str).encode()).hexdigest()
+        if len(w["nodes"]) > _MAX_N8N_NODES:
+            self.ctx.error("lowcode.n8n: workflow node limit reached; graph analysis incomplete")
         nodes = [
             node
-            for node in w["nodes"]
+            for node in w["nodes"][:_MAX_N8N_NODES]
             if self._record_fields_valid(
                 node,
                 required=("type",),
@@ -267,17 +369,13 @@ class N8nConnector(_AutomationBase):
             )
         ]
         if len(nodes) != len(w["nodes"]):
-            self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
+            self.ctx.warn("lowcode.n8n: invalid or over-limit workflow node; definition coverage unknown")
         types = [str(n.get("type", "")) for n in nodes]
+        node_roles = [self._n8n_node_role(node.get("type")) for node in nodes]
         ai_steps = [
             f"{n.get('name')} ({n.get('type')})"
-            for n in nodes
-            if re.search(
-                r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
-                r"|\.agent$|mcp",
-                str(n.get("type", "")),
-                re.I,
-            )
+            for n, role in zip(nodes, node_roles, strict=True)
+            if role in {"ai", "agent"}
         ]
         # 'Respond to Webhook' is the reply step of a chat or form workflow, not a
         # trigger: counting it would read a person-operated workflow as event-run.
@@ -314,11 +412,7 @@ class N8nConnector(_AutomationBase):
             updated=w.get("updatedAt"),
             triggers=triggers,
             ai_steps=ai_steps,
-            kind=(
-                Kind.AGENT
-                if any(t.endswith(".agent") or t.endswith("agentTool") for t in types)
-                else Kind.WORKFLOW
-            ),
+            kind=Kind.AGENT if "agent" in node_roles else Kind.WORKFLOW,
             resource_type="workflow" if identified else "unresolved-workflow",
             extra={
                 "node_count": len(nodes),
@@ -328,6 +422,28 @@ class N8nConnector(_AutomationBase):
             hints=model_matches(self.index, *models),
         )
         if f:
+            graph_chain = (
+                None
+                if len(w["nodes"]) > _MAX_N8N_NODES
+                else self._n8n_graph_chain(nodes, w.get("connections"))
+            )
+            f.metadata["workflow_graph"] = {
+                "node_count": min(len(w["nodes"]), _MAX_N8N_NODES),
+                "edge_chain_risk": ("untrusted-trigger-to-ai-to-write-sink" if graph_chain is True else None),
+            }
+            if graph_chain is True:
+                f.add_evidence(
+                    Evidence(
+                        signal="workflow:untrusted-ai-write-path",
+                        description=(
+                            "Directed workflow path connects an inbound trigger through an AI node "
+                            "to an external write sink"
+                        ),
+                        location=f.resource,
+                        weight=0.9,
+                        signature=self.platform_signature,
+                    )
+                )
             if not identified:
                 f.metadata["identity_unresolved"] = True
                 f.add_tag("unresolved-identity")

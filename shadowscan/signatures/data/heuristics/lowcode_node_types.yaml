@@ -1,0 +1,42 @@
+signatures:
+  - id: heuristic.lowcode.n8n-node-types
+    name: n8n workflow node types
+    category: heuristic
+    description: Exact n8n node types used to classify bounded workflow data flow.
+    signals:
+      - type: code
+        patterns:
+          - '^@n8n/n8n-nodes-langchain\.(?:agent|agentTool|openAiAssistant)$'
+        weight: 0.9
+        description: agent
+      - type: code
+        patterns:
+          - '^@n8n/n8n-nodes-langchain\.(?:agent|agentTool|openAiAssistant|mcpTrigger|mcpClientTool|toolWorkflow|toolCode|toolHttpRequest|chainLlm|lmChatOpenAi|lmChatAnthropic|lmChatGoogleGemini|lmChatGoogleVertex|lmChatAwsBedrock|lmChatAzureOpenAi|lmChatMistralCloud|lmChatGroq|lmChatOpenRouter|lmChatOllama|lmChatXAiGrok|lmChatDeepSeek|lmOpenAi|openAi|memoryBufferWindow|memoryPostgresChat|vectorStoreInMemory|vectorStorePgVector)$'
+          - '^n8n-nodes-base\.openAi$'
+        weight: 0.9
+        description: ai
+      - type: code
+        patterns:
+          - '^n8n-nodes-base\.(?:webhook|emailReadImap|gmailTrigger|imapTrigger)$'
+        weight: 0.9
+        description: untrusted-trigger
+      - type: code
+        patterns:
+          - '^n8n-nodes-base\.httpRequest$'
+        weight: 0.9
+        description: http-write-sink
+      - type: code
+        patterns:
+          - '^n8n-nodes-base\.slack$'
+        weight: 0.9
+        description: slack-write-sink
+      - type: code
+        patterns:
+          - '^n8n-nodes-base\.(?:postgres|mysql|mongoDb)$'
+        weight: 0.9
+        description: database-write-sink
+      - type: code
+        patterns:
+          - '^n8n-nodes-base\.sendEmail$'
+        weight: 0.9
+        description: email-write-sink

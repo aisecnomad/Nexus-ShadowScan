@@ -498,6 +498,68 @@ def test_n8n_empty_graph_is_known_empty(index):
     assert not connector.ctx.stats.incomplete
 
 
+def test_n8n_exact_node_types_and_directed_untrusted_ai_sink_chain(index):
+    agent = {"type": "@n8n/n8n-nodes-langchain.agent", "name": "Agent", "parameters": {}}
+    webhook = {"type": "n8n-nodes-base.webhook", "name": "Inbound", "parameters": {}}
+    request = {"type": "n8n-nodes-base.httpRequest", "name": "Send", "parameters": {}}
+    workflows = [
+        {"id": "agent", "name": "Agent present", "nodes": [agent]},
+        {
+            "id": "mention-only",
+            "name": "Deterministic",
+            "nodes": [
+                {
+                    "type": "n8n-nodes-base.set",
+                    "name": "Set note",
+                    "parameters": {"notes": "AI agent sends data"},
+                }
+            ],
+        },
+        {
+            "id": "connected",
+            "name": "Connected",
+            "nodes": [webhook, agent, request],
+            "connections": {
+                "Inbound": {"main": [[{"node": "Agent", "type": "main", "index": 0}]]},
+                "Agent": {"main": [[{"node": "Send", "type": "main", "index": 0}]]},
+            },
+        },
+        {
+            "id": "disconnected",
+            "name": "Disconnected",
+            "nodes": [agent, request],
+            "connections": {},
+        },
+    ]
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter(workflows))
+
+    findings = connector.run()
+
+    by_id = {finding.resource.rsplit(":", 1)[-1]: finding for finding in findings}
+    assert set(by_id) == {"agent", "connected", "disconnected"}
+    assert by_id["connected"].metadata["workflow_graph"]["edge_chain_risk"] == (
+        "untrusted-trigger-to-ai-to-write-sink"
+    )
+    assert by_id["disconnected"].metadata["workflow_graph"]["edge_chain_risk"] is None
+    assert by_id["agent"].kind.value == "agent"
+
+
+def test_n8n_oversized_workflow_is_incomplete_not_silently_truncated(index):
+    nodes = [
+        {"type": "n8n-nodes-base.set", "name": f"Node {number}", "parameters": {}} for number in range(501)
+    ]
+    nodes[0] = {"type": "@n8n/n8n-nodes-langchain.agent", "name": "Agent", "parameters": {}}
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([{"id": "large", "name": "Large", "nodes": nodes}]))
+
+    findings = connector.run()
+
+    assert findings
+    assert connector.ctx.stats.incomplete
+    assert any("node limit" in error for error in connector.ctx.stats.errors)
+
+
 def context(index, **config):
     ctx = ConnectorContext(config=config, index=index)
     ctx.stats = ScanStats(connector="test", started_at="2026-01-01")
