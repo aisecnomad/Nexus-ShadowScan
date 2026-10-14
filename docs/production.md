@@ -695,8 +695,9 @@ no bypass actors; `CI gate` is not yet among its required checks. `Protect
 main` adds linear history and deletion protection and still names bypass
 actors. At 08:05 UTC on 2026-10-02 both rulesets read back as
 `enforcement: disabled` again (last updated 04:28 UTC), and
-`GET /repos/aisecnomad/Nexus-ShadowScan/rules/branches/main` returned no active
-rules, so nothing enforced review, CI or linear history on `main` at that time.
+`GET /repos/aisecnomad/Project-Nexus/rules/branches/main` (the former name)
+returned no active rules, so nothing enforced review, CI or linear history on
+`main` at that time.
 At 19:08 UTC on 2026-10-02 both again read back as `enforcement: disabled`
 (last updated 18:39 UTC) with no active rules on `main`. The committed
 snapshots in
