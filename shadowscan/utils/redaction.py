@@ -270,9 +270,8 @@ def _merge_readings(plain: str, established: str) -> str:
     without it, a value it hid from the assignment rules ('v=x = password:
     w') is read. Every pass keeps the lines of a text, so the two readings
     are compared line by line (see ``_merged_line``). The established rules
-    joined a line kept after a scheme to the scheme's line; where the
-    readings' lines do not pair up, only the lines both show alike are kept
-    (see ``_unpaired_lines``).
+    joined a line kept after a scheme to the scheme's line; readings whose
+    lines do not pair up withhold the whole text, keeping its line breaks.
 
     So each line of the result shows only what the same line of each
     reading shows: the result shows nothing either reading withholds.
@@ -281,30 +280,9 @@ def _merge_readings(plain: str, established: str) -> str:
         return plain
     plain_lines, established_lines = plain.split("\n"), established.split("\n")
     if len(plain_lines) != len(established_lines):
-        return _unpaired_lines(plain_lines, established_lines)
+        return REDACTED + "\n" * plain.count("\n")
     return "\n".join(
         _merged_line(one, other) for one, other in zip(plain_lines, established_lines, strict=True)
-    )
-
-
-def _unpaired_lines(plain_lines: list[str], established_lines: list[str]) -> str:
-    """Readings whose lines do not pair up, merged (see ``_merge_readings``).
-
-    The lines before a join pair up from the start and the lines after it
-    from the end. A line the same in both readings, counted from the start
-    or from the end, is kept; the lines between them are withheld, keeping
-    the plain reading's line breaks, and at least one line is withheld.
-    """
-    limit = min(len(plain_lines) - 1, len(established_lines))
-    head = 0
-    while head < limit and plain_lines[head] == established_lines[head]:
-        head += 1
-    tail = 0
-    while head + tail < limit and plain_lines[-1 - tail] == established_lines[-1 - tail]:
-        tail += 1
-    withheld = len(plain_lines) - head - tail
-    return "\n".join(
-        [*plain_lines[:head], REDACTED, *[""] * (withheld - 1), *plain_lines[len(plain_lines) - tail :]]
     )
 
 

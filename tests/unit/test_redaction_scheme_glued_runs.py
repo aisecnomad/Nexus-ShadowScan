@@ -623,36 +623,9 @@ def test_a_merged_line_shows_nothing_either_reading_withholds(one: str, other: s
     assert redaction._shows_within(one, merged) and redaction._shows_within(other, merged)
 
 
-@pytest.mark.parametrize(
-    ("plain", "established", "merged"),
-    [
-        ("a\nb", "a\nb", "a\nb"),
-        # The lines the same in both, from the start and from the end, stay.
-        ("a\nb\nc", "a b\nc", f"{REDACTED}\n\nc"),
-        ("a\nb\nc\nd", "a\nb c\nd", f"a\n{REDACTED}\n\nd"),
-        # At least one line is withheld, and the plain reading's line count is kept.
-        ("x\nx", "x", f"x\n{REDACTED}"),
-        ("a", "a\nb", REDACTED),
-        ("a\nb\nc", "a b c", f"{REDACTED}\n\n"),
-    ],
-)
-def test_readings_whose_lines_do_not_pair_up_keep_only_the_lines_both_show_alike(
-    plain: str, established: str, merged: str
-) -> None:
-    assert redaction._merge_readings(plain, established) == merged
-
-
-def test_a_join_in_a_long_text_withholds_only_the_lines_around_it() -> None:
-    # A whole file is sanitized for its excerpts. One credential whose line the
-    # established rules joined to its scheme's withheld every line of the file,
-    # so every excerpt from it was blank.
-    lines = [f"setting_{number} = {number}" for number in range(200)]
-    lines[99] = "auth: Bearer"
-    lines[100] = f"{SECRET}--password {VALUE}"
-    text = "\n".join(lines)
-    expected = [*lines[:99], REDACTED, "", *lines[101:]]
-    assert sanitize_text(text).split("\n") == expected
-    assert sanitize({"source": text})["source"].split("\n") == expected
+def test_readings_whose_lines_do_not_pair_up_withhold_the_whole_text() -> None:
+    assert redaction._merge_readings("a\nb\nc", "a b\nc") == REDACTED + "\n\n"
+    assert redaction._merge_readings("a\nb", "a\nb") == "a\nb"
 
 
 _CAPPED = [
