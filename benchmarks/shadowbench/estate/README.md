@@ -314,6 +314,7 @@ On the endpoint surface, the Cisco MCP Scanner and AgentSight wrapper
 scripts run every step and exit with the status of the first step that
 failed, and the Snyk Agent Scan script exits with the scanner's own
 status. Numbat's script exits with the status of `numbat agents` when that
+status is neither 0 nor 1, even if the step printed a report, or when the
 step leaves no report, and with 0 otherwise (the adapter reads its exit 1
 on an empty inventory as a valid result); its `scan` step only adds
 evidence paths to the prediction text, and its exit status is not checked.
