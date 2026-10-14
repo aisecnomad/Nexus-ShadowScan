@@ -1136,10 +1136,13 @@ the first scan and declare the hosts that are model servers. A bare
 setting it changes that source's ids by design, so rebaseline that source.
 
 **Kubernetes.** Workloads that set `nvidia.com/gpu` only in `limits` are now
-reported as GPU workloads, and private-registry serving images named by an
-engine token (`registry.example/ml/vllm-serving`) are now agent workloads, so
-new findings can appear. A model argument with a GPU but without an AI image or
-AI resource kind is not promoted.
+reported as GPU workloads, and private-registry serving images whose name
+starts with an engine name (`registry.example/ml/vllm-serving`, also when
+pinned by digest) are now agent workloads, so new findings can appear. Engine
+names elsewhere in an image path, exporters and operators named after an
+engine, and NVIDIA Triton images without an LLM backend tag
+(`tritonserver:24.01-py3`) are not. A model argument with a GPU but without an
+AI image or AI resource kind is not promoted.
 
 **Low-code.** ServiceNow flows named only with the generic AI hint (for example
 "Copilot" licence administration) and no ServiceNow AI marker are no longer

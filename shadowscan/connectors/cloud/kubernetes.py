@@ -29,13 +29,21 @@ _AI_IMAGE_MARKERS = (
     "kagent",
 )
 _AI_RESOURCE_NAME = re.compile(r"(?:llm|model|agent|mcp|inference|ollama|vllm)", re.IGNORECASE)
-# Serving-engine names as delimited image tokens, for private-registry rebuilds
-# (registry.example/team/vllm-serving) that the vendor image markers miss.
+# Serving-engine names that start an image's name (its last path component,
+# without tag or digest), for private-registry rebuilds
+# (registry.example/team/vllm-serving) that the vendor image markers miss. An
+# engine name followed by an auxiliary role (ollama-exporter, vllm-operator)
+# is a sidecar or controller, not a model server.
 _AI_IMAGE_NAME = re.compile(
-    r"(?:^|[/.:_-])(?:llama(?:\.cpp|-cpp|cpp)|ollama|sglang|text-generation-inference|tritonserver|vllm)"
-    r"(?:$|[/.:_-])",
+    r"(?:llama(?:\.cpp|-cpp|cpp)|ollama|sglang|text-generation-inference|vllm)"
+    r"(?:$|[._-](?!(?:exporter|operator|metrics|monitor(?:ing)?)(?:$|[._-])))",
     re.IGNORECASE,
 )
+# NVIDIA Triton serves any model type (vision, tabular, ensembles), so its image
+# counts only with an LLM backend in its name or tag (24.05-trtllm-python-py3,
+# 24.05-vllm-python-py3).
+_TRITON_IMAGE_NAME = re.compile(r"tritonserver(?:$|[._-])", re.IGNORECASE)
+_TRITON_LLM_BACKEND = re.compile(r"(?:^|[.:_-])(?:trtllm|tensorrt-llm|vllm)(?:$|[.:_-])", re.IGNORECASE)
 # A Hugging Face-style ``--model org/name`` (or ``--model-id``) argument. Only
 # its presence is recorded, never the value.
 _MODEL_ARGUMENT = re.compile(r"(?:^|\s)--model(?:-id)?(?:=|\s+)[\"']?[\w.-]+/[\w.-]+", re.IGNORECASE)
@@ -87,6 +95,14 @@ _AI_RESOURCE_KINDS = {
 }
 _WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "DeploymentConfig"}
 _MAX_OBJECTS = 10_000
+
+
+def _serving_engine_image(image: str) -> bool:
+    """Whether an image's name starts with a model-serving engine (see _AI_IMAGE_NAME)."""
+    name, _, tag = image.partition("@")[0].rpartition("/")[2].partition(":")
+    if _AI_IMAGE_NAME.match(name):
+        return True
+    return bool(_TRITON_IMAGE_NAME.match(name) and _TRITON_LLM_BACKEND.search(f"{name}:{tag}"))
 
 
 def _name(obj: dict[str, Any]) -> str:
@@ -219,7 +235,7 @@ class KubernetesConnector(BaseConnector):
                 image
                 for image in images
                 if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
-                or _AI_IMAGE_NAME.search(image)
+                or _serving_engine_image(image)
             ]
             tags: list[str] = []
             capabilities: list[str] = []

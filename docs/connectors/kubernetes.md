@@ -18,11 +18,16 @@ and AI workload namespaces without an egress NetworkPolicy. These are
 heuristics, not proof that a workload executed or is reachable from the public
 internet.
 
-Known images are matched by vendor image markers and by serving-engine names as
-delimited image tokens (`vllm`, `ollama`, `sglang`, `llama.cpp`,
-`text-generation-inference`, `tritonserver`), so a private-registry rebuild such
-as `registry.example/ml/vllm-serving` is recognised; a substring inside another
-word is not. A GPU counts whether `nvidia.com/gpu` is set in `requests` or only
+Known images are matched by vendor image markers and by serving-engine names
+(`vllm`, `ollama`, `sglang`, `llama.cpp`, `text-generation-inference`) that
+start the image name, its last path component without tag or digest, so a
+private-registry rebuild such as `registry.example/ml/vllm-serving` is
+recognised. An engine name elsewhere in the path (`registry.example/vllm/server`,
+`serving-vllm`), inside another word, or followed by an auxiliary role
+(`ollama-exporter`, `vllm-operator`, `-metrics`, `-monitor`) is not. NVIDIA
+Triton (`tritonserver`) also serves vision and tabular models, so it counts
+only with an LLM backend in its name or tag (`24.05-trtllm-python-py3`,
+`24.05-vllm-python-py3`). A GPU counts whether `nvidia.com/gpu` is set in `requests` or only
 in `limits`. A `--model org/name` or `--model-id org/name` container argument
 corroborates an AI image or AI resource kind: together they add the
 `self-hosted-model-serving` tag and model-argument and GPU evidence. On their

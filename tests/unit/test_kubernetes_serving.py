@@ -110,3 +110,40 @@ def test_null_container_arguments_are_unset_not_malformed(tmp_path, run_connecto
     findings, ctx = _single_container(tmp_path, run_connector, container)
     assert not ctx.stats.incomplete and not ctx.stats.warnings
     assert len(findings) == 1 and findings[0].kind == Kind.AGENT
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "registry.example/ml/ollama:0.3",
+        "registry.example/ml/sglang",
+        "registry.example/ml/llama-cpp-server:b3000",
+        "registry.example/ml/vllm@sha256:" + "a" * 64,
+        "registry.example:5000/vllm:0.5",
+        # Triton with an LLM backend.
+        "nvcr.io/nvidia/tritonserver:24.05-trtllm-python-py3",
+        "nvcr.io/nvidia/tritonserver:24.05-vllm-python-py3",
+    ],
+)
+def test_serving_engine_image_names_are_agents(tmp_path, run_connector, image):
+    findings, ctx = _single_container(tmp_path, run_connector, {"image": image})
+    assert not ctx.stats.incomplete
+    assert len(findings) == 1 and findings[0].kind == Kind.AGENT and "ai-workload" in findings[0].tags
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        # Triton also serves vision and tabular models.
+        "nvcr.io/nvidia/tritonserver:24.01-py3",
+        # Sidecars and controllers named after an engine.
+        "ghcr.io/acme/ollama-exporter:1.0",
+        "registry.example/ml/vllm-operator:0.2",
+        # An engine name that does not start the image name.
+        "registry.example/vllm/server:1",
+        "registry.example/ml/serving-vllm",
+    ],
+)
+def test_engine_tokens_elsewhere_in_an_image_are_not_serving(tmp_path, run_connector, image):
+    findings, ctx = _single_container(tmp_path, run_connector, {"image": image})
+    assert findings == [] and not ctx.stats.incomplete
