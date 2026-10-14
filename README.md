@@ -1,7 +1,7 @@
 # Project Nexus · ShadowScan
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/shadowscan-hero.webp" alt="ShadowScan — Project Nexus, open-source AI agent discovery. Finds the AI agents nobody registered: then tells you who owns them, what they can do, and whether anyone approved them." width="920">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/readme/shadowscan-hero.webp" alt="ShadowScan — Project Nexus, open-source AI agent discovery. Finds the AI agents nobody registered: then tells you who owns them, what they can do, and whether anyone approved them." width="920">
 </p>
 
 <div align="center">
@@ -91,7 +91,7 @@ advisory; its failures are warnings. See
 for the pipeline, the package layout and the connector contract.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/architecture-dataflow.jpg" alt="Data-flow diagram of one scan: untrusted scan targets (provider APIs over HTTPS, offline exports, repository checkouts) feed records into connectors; trusted inputs (YAML signature packs, configuration, the approved-agent inventory) steer the engine, which merges findings by stable identity, correlates them across surfaces, reconciles them against the inventory and scores risk; reports, sanitized record dumps and scan state are written atomically with private file modes." width="880">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/readme/architecture-dataflow.jpg" alt="Data-flow diagram of one scan: untrusted scan targets (provider APIs over HTTPS, offline exports, repository checkouts) feed records into connectors; trusted inputs (YAML signature packs, configuration, the approved-agent inventory) steer the engine, which merges findings by stable identity, correlates them across surfaces, reconciles them against the inventory and scores risk; reports, sanitized record dumps and scan state are written atomically with private file modes." width="880">
 </p>
 <p align="center"><sub><b>One scan, end to end.</b> Untrusted scan targets enter only through
 connectors; trusted operator inputs — signature packs, configuration, the approved-agent
@@ -104,7 +104,7 @@ counts.</sub></p>
 <summary><b>Prefer the whiteboard view?</b> The same pipeline as an annotated sketch.</summary>
 <br>
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/architecture-sketch.jpg" alt="Annotated sketch of the ShadowScan architecture: YAML signature packs are compiled by a signature indexer into dependency, import, code, file, env, domain, user-agent, image, IaC, name, scope, model, secret and client-ID matchers; multi-surface connectors collect live data or load offline files into records and analyze them into findings; the engine merges, correlates, reconciles with the inventory and scores risk; reporters emit table, JSON, SARIF, CSV, Markdown and HTML." width="880">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/readme/architecture-sketch.jpg" alt="Annotated sketch of the ShadowScan architecture: YAML signature packs are compiled by a signature indexer into dependency, import, code, file, env, domain, user-agent, image, IaC, name, scope, model, secret and client-ID matchers; multi-surface connectors collect live data or load offline files into records and analyze them into findings; the engine merges, correlates, reconciles with the inventory and scores risk; reporters emit table, JSON, SARIF, CSV, Markdown and HTML." width="880">
 </p>
 <p align="center"><sub>Signature packs are plain YAML; the signature indexer compiles them into
 the matchers every connector's <code>analyze()</code> consults, which is why adding a product is
@@ -164,7 +164,7 @@ harnesses, protocols and committed results live in
 [benchmarks](https://github.com/aisecnomad/Project-Nexus/blob/main/benchmarks/README.md).
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/benchmark-estate-recall.webp" alt="Bar chart of estate recall per tool, with a surface-coverage matrix underneath. ShadowScan covers the repo, endpoint and network surfaces of this track; most other tools cover one surface, which caps their estate recall." width="880">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/readme/benchmark-estate-recall.webp" alt="Bar chart of estate recall per tool, with a surface-coverage matrix underneath. ShadowScan covers the repo, endpoint and network surfaces of this track; most other tools cover one surface, which caps their estate recall." width="880">
 </p>
 <p align="center"><sub><b>Estate recall</b> — the share of all expected facts a tool surfaces
 when the surfaces it does not support count as misses — across the three-surface synthetic
@@ -175,7 +175,7 @@ before it is a per-surface precision problem — that is the gap ShadowScan is b
 close.</sub></p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Project-Nexus/main/docs/assets/readme/benchmark-surface-leaderboard.png" alt="Benchmark dashboard: a nine-surface cross-tool leaderboard with per-surface filter chips, listing F1, recall, precision and MCC per tool, with a multi-tool reference ensemble at the top." width="760">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/readme/benchmark-surface-leaderboard.png" alt="Benchmark dashboard: a nine-surface cross-tool leaderboard with per-surface filter chips, listing F1, recall, precision and MCC per tool, with a multi-tool reference ensemble at the top." width="760">
 </p>
 <p align="center"><sub>A nine-surface iteration of the same program, rendered as a filterable
 dashboard; the top row is a reference ensemble of four single-surface tools combined, not a
