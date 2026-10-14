@@ -6,6 +6,7 @@ private-address bypass path for instance metadata credentials."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -57,6 +58,20 @@ def test_gcp_cloud_function_handler_ignores_functions_without_ai_signal(index):
         "serviceConfig": {"environmentVariables": {"BUCKET": "images"}},
     }
     assert connector._h_cloud_function(rec) is None
+
+
+def test_gcp_gemini_exchange_cloud_run_name_is_not_google_ai(run_connector):
+    root = Path(__file__).resolve().parents[2]
+    findings, ctx = run_connector(
+        "cloud.gcp",
+        input=str(root / "benchmarks/shadowbench/estate/artifacts/cloud/gcp_records.jsonl"),
+    )
+    anchor = "geminisettlementsyncd8r"
+    assert not ctx.stats.errors
+    assert not any(
+        anchor in "".join(char for char in finding.title + finding.resource if char.isalnum()).casefold()
+        for finding in findings
+    )
 
 
 def test_gcp_vertex_endpoint_handler_flags_deployed_model(index):

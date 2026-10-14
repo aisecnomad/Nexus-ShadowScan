@@ -29,7 +29,17 @@ _AI_IMAGE_MARKERS = (
     "kagent",
 )
 _AI_RESOURCE_NAME = re.compile(r"(?:llm|model|agent|mcp|inference|ollama|vllm)", re.IGNORECASE)
+_AI_IMAGE_NAME = re.compile(
+    r"(?:^|[/.:_-])(?:llama(?:\.cpp|-cpp|cpp)|ollama|sglang|text-generation-inference|tritonserver|vllm)"
+    r"(?:$|[/.:_-])",
+    re.IGNORECASE,
+)
 _ENV_MARKERS = ("API_KEY", "TOKEN", "BASE_URL", "ENDPOINT", "MODEL")
+_AGENT_ENV_NAME = re.compile(
+    r"(?:^|_)(?:AGENT|AUTOGEN|CREWAI|LANGCHAIN|LANGGRAPH|LLAMAINDEX|SEMANTIC_KERNEL|SMOLAGENT)(?:_|$)",
+    re.IGNORECASE,
+)
+_MODEL_MOUNT_PATH = re.compile(r"(?:^|/)(?:model|models|weights|checkpoints)(?:/|$)", re.IGNORECASE)
 _RECOGNIZED = {
     "Deployment",
     "StatefulSet",
@@ -206,10 +216,14 @@ class KubernetesConnector(BaseConnector):
                 continue
             images = _workload_images(obj)
             selected = [
-                image for image in images if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
+                image
+                for image in images
+                if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
+                or _AI_IMAGE_NAME.search(image)
             ]
             tags: list[str] = []
             capabilities: list[str] = []
+            agent_framework_configured = False
             if selected:
                 tags.append("ai-workload")
             template = workload_spec.get("template")
@@ -258,6 +272,20 @@ class KubernetesConnector(BaseConnector):
                         key = env.get("name")
                         if isinstance(key, str) and any(marker in key.upper() for marker in _ENV_MARKERS):
                             tags.append("provider-config-present")
+                        if isinstance(key, str) and _AGENT_ENV_NAME.search(key):
+                            agent_framework_configured = True
+                    mounts = container.get("volumeMounts", [])
+                    if not isinstance(mounts, list):
+                        self.ctx.warn(f"{self.name}: workload has malformed volume mounts")
+                        continue
+                    if len(mounts) > 100:
+                        self.ctx.warn(f"{self.name}: volume mount limit reached")
+                    for mount in mounts[:100]:
+                        if not isinstance(mount, dict) or not isinstance(mount.get("mountPath"), str):
+                            self.ctx.warn(f"{self.name}: malformed volume mount")
+                            continue
+                        if _MODEL_MOUNT_PATH.search(mount["mountPath"]):
+                            tags.append("model-path-mounted")
                     resources = container.get("resources")
                     requests = resources.get("requests") if isinstance(resources, dict) else {}
                     if isinstance(requests, dict) and requests.get("nvidia.com/gpu"):
@@ -315,6 +343,8 @@ class KubernetesConnector(BaseConnector):
                     tags.append("cluster-admin")
             if kind in {"Agent", "ToolServer"}:
                 capabilities.append("tool-use")
+            if agent_framework_configured:
+                tags.append("agent-framework-configured")
             if not tags and not selected and kind not in _AI_RESOURCE_KINDS:
                 self.ctx.examined()
                 continue
@@ -324,7 +354,11 @@ class KubernetesConnector(BaseConnector):
             finding = Finding(
                 surface=Surface.CLOUD,
                 connector=self.name,
-                kind=Kind.AGENT if selected or kind in _AI_RESOURCE_KINDS else Kind.CLOUD_RESOURCE,
+                kind=(
+                    Kind.AGENT
+                    if selected or kind in _AI_RESOURCE_KINDS or agent_framework_configured
+                    else Kind.CLOUD_RESOURCE
+                ),
                 title=f"Kubernetes {kind} {resource_name}",
                 resource=resource,
                 resource_type=f"kubernetes/{kind}",

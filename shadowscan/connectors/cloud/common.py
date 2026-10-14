@@ -334,7 +334,7 @@ def done(finding: Finding, index: SignatureIndex, kind: Kind) -> Finding:
     return finding
 
 
-def name_hint(index: SignatureIndex, finding: Finding, *names: str | None) -> None:
+def name_hint(index: SignatureIndex, finding: Finding, *names: str | None, weak: bool = False) -> None:
     for n in names:
         if n:
-            apply_matches(finding, index.match_name(str(n)), weight_scale=0.5)
+            apply_matches(finding, index.match_name(str(n)), weight_scale=0.5, establish=not weak)

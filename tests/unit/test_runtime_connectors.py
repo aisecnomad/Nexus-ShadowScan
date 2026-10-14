@@ -300,6 +300,17 @@ def test_ollama_models_and_ebpf_negative_and_malformed_cases() -> None:
     assert len(list(ebpf.analyze([{"process": {"binary": "agent"}, "hostname": "api.openai.com"}]))) == 1
 
 
+def test_kubernetes_detects_estate_vllm_image_layout(run_connector):
+    root = Path(__file__).resolve().parents[2]
+    findings, ctx = run_connector(
+        "cloud.kubernetes",
+        input=str(root / "benchmarks/shadowbench/estate/artifacts/cloud/kubernetes_workloads.json"),
+        cluster="vantor-prod",
+    )
+    assert not ctx.stats.errors
+    assert any("eta-vllm-serving-q9z" in finding.resource for finding in findings)
+
+
 def test_kubernetes_security_and_exposure_signals() -> None:
     connector = KubernetesConnector(ConnectorContext(config={"cluster": "demo"}))
     findings = list(
