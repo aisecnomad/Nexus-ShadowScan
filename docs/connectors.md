@@ -870,7 +870,8 @@ offline exports. Options: `site`
 (`jira`, `confluence`; default both).
 
 ### `saas.notion`
-Notion bot users with an established AI product or provider. A missing or repeated pagination cursor, or reaching the live
+Notion bot users with an established AI product or provider, or an AI-name
+hint other than the word "bot". A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete. Provider error
 envelopes make collection incomplete even when they include empty record arrays;
 valid observations from other pages remain available. The same rule applies to

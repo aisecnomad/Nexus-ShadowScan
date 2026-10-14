@@ -20,6 +20,25 @@ from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient
 from shadowscan.utils.text import get_path
 
+_GENERIC_AI_NAME = "identity-app.generic-ai-name"
+
+
+def _ai_name_hint(finding: Finding) -> bool:
+    """Whether a bot's name is an AI-name hint ("Support GPT", "AI Assistant", a Gemini name).
+
+    Every Notion integration is a bot user, so the word "bot" alone ("Jira
+    Bot") restates the object type and is not a hint here. Names are matched
+    once per signature, most specific pattern first, so a generic match whose
+    value is "bot" means no other generic AI word was found.
+    """
+    if "ai-name-hint" not in finding.tags:
+        return False
+    return any(
+        ev.attributes.get("ambiguous_name") is True
+        or (ev.signature == _GENERIC_AI_NAME and str(ev.attributes.get("value", "")).strip().lower() != "bot")
+        for ev in finding.evidence
+    )
+
 
 class NotionConnector(BaseConnector):
     name: ClassVar[str] = "saas.notion"
@@ -131,10 +150,13 @@ class NotionConnector(BaseConnector):
             account=bot.get("workspace_name"),
             owner=owner,
         )
-        assess_app(self.index, f, name=name)
+        # A bot's id is not a display name and is never matched as one.
+        assess_app(self.index, f, name=u.get("name"))
         # A bot's existence and owner do not identify AI. Inventory a bot only
-        # when its name or other evidence establishes an AI product or provider.
-        if not f.frameworks and not f.model_providers:
+        # when its name or other evidence establishes an AI product or provider,
+        # or its name is an AI-name hint, as GitHub Apps do. A hint alone stays
+        # an unattributed app: its non-AI observations are bounded at possible.
+        if not f.frameworks and not f.model_providers and not _ai_name_hint(f):
             return None
         f.add_evidence(
             Evidence(

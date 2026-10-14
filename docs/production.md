@@ -1152,9 +1152,12 @@ counts as its own token: custom `mcpClient` or `MCPServer` nodes are AI
 steps, and node types that merely contain `mcp` inside another word or part
 number are not.
 
-**SaaS, identity and cloud inventory.** Notion bots without an established AI
-product or provider (nameless bots, sync integrations) are no longer
-inventoried. Slack apps can now match `client_id` rule-pack signals by their
+**SaaS, identity and cloud inventory.** Notion bots are inventoried only with
+an established AI product or provider, or an AI-name hint in their name (a
+generic AI word such as "LLM", "GPT" or "AI Assistant", or an ambiguous product
+name such as Gemini, which stays a possible-product hint). Nameless bots,
+sync integrations and bots named only "... Bot" are no longer inventoried;
+hint-only bots keep a bounded, possible-level confidence. Slack apps can now match `client_id` rule-pack signals by their
 app id, and Wudpecker and Tactiq apps are recognised as meeting note-takers.
 Auth0 non-machine clients attributed only by a model provider are now kept.
 GCP Cloud Run services and Cloud Functions whose only AI evidence was their own

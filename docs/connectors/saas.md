@@ -48,10 +48,16 @@ are SaaS write actions.
 UPM user-installed apps for Jira and Confluence.
 
 ## `saas.notion`
-Notion bot users. A bot is inventoried only when its name or other evidence
-establishes an AI product or provider; a nameless bot or an ordinary sync
-integration is not reported, because a bot's existence and owner do not
-identify AI. A missing or repeated pagination cursor, or reaching the live
+Notion bot users. A bot is inventoried when its name or other evidence
+establishes an AI product or provider, or when its name is an AI-name hint, as
+for GitHub Apps: a generic AI word ("Internal LLM Agent", "Acme AI Assistant",
+"Support GPT") or an ambiguous product name such as Gemini. Every Notion
+integration is a bot user, so the word "bot" alone ("Jira Bot") is not a hint
+here. A hint never attributes a product: the bot's own observation is bounded
+at possible confidence and an ambiguous product stays under
+`metadata.potential_frameworks`. A nameless bot (its id is never matched as a
+name) or an ordinary sync integration is not reported, because a bot's
+existence and owner do not identify AI. A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete.
 
 ## `saas.zoom`
