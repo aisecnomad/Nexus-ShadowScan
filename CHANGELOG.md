@@ -20,9 +20,15 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Bounded discovery evidence and attribution (October 14)
 
-- Low-code: shared exact node semantics and bounded, cycle-safe graph reachability
-  for supported n8n, Flowise and Dify exports. Declared paths remain non-scoring
-  metadata and do not prove execution or private-data access.
+- Low-code: bounded, cycle-safe graph reachability for supported n8n, Flowise
+  and Dify exports, with an exact node registry deciding graph roles. Declared
+  paths remain non-scoring metadata and do not prove execution or private-data
+  access. The registry does not replace the inventory rules: every workflow
+  the previous rules reported is still reported (namespace, provider-name,
+  `mcp`-token, HTTP model-call and parameter-text evidence are unchanged), a
+  disabled node stays counted, and a malformed or over-budget graph marks
+  coverage incomplete on a finding that is kept, never dropped. The agent kinds
+  gain `openAiAssistant`.
 - Source inventory: bounded uv, Poetry, pnpm and Cargo lockfile parsing records
   AI dependencies and only established dependency relationships. Optional raw
   artifact inspection handles GGUF, safetensors, ONNX metadata and modern

@@ -117,16 +117,22 @@ prompt injection or exfiltration; it does not by itself establish a "lethal
 trifecta."
 
 The graph adapter uses exact supported node identifiers, not display names or
-serialized parameter searches. n8n agent, model and auxiliary types are shared
-with its export reader; disabled nodes do not connect paths. Literal HTTP URLs
-are parsed into hostnames, so `api.openai.com.example.invalid` does not establish
-an OpenAI destination. Expressions and environment-variable references are not
-resolved. Unknown/community types retain their graph position without inferred
-roles. Flowise Agent Flows use their declared `startInputType` and HTTP node
-`inputs.url`; scheduled starts are not treated as untrusted inputs.
-An ordinary n8n Set node storing a prompt library produces no AI workflow
-finding solely from its prose. Repeated actual AI node declarations retain
-the existing grouped confidence; their prompts do not add independent signals.
+serialized parameter searches, and those identifiers decide graph roles only:
+the inventory rules above (namespace, provider name, `mcp` token, HTTP model
+call, parameter text) still decide whether a workflow is reported, so no
+workflow the previous rules found disappears. An unregistered type in the
+LangChain namespace, a spoofed `agentPretend` type or a Set node whose
+parameters name a model host still yield the inventory finding they did
+before; the graph gives such nodes no role, and only an agent or agent-tool
+type (now including `openAiAssistant`) makes the finding an agent. A disabled
+node stays in the inventory (`metadata.disabled_node_count` counts them) and
+does not connect paths. Literal HTTP URLs are parsed into hostnames, so
+`api.openai.com.example.invalid` does not establish an OpenAI destination.
+Expressions and environment-variable references are not resolved. Flowise
+Agent Flows use their declared `startInputType` and HTTP node `inputs.url`;
+scheduled starts are not treated as untrusted inputs. A malformed or
+over-budget graph marks coverage incomplete and the finding records
+`workflow_graph.status: incomplete`; it is never dropped.
 
 Directed traversal handles cycles and joins. n8n `main` edges establish declared
 order; `ai_tool`, model and memory attachments do not establish that order.
