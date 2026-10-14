@@ -3137,7 +3137,9 @@ class FilesystemConnector(BaseConnector):
         if path.name.lower() in LOCKFILE_NAMES:
             manifest = parse_manifest(rel, text)
             if manifest is not None:
-                self._file_errors(rel, manifest.errors)
+                # A rejected lockfile is reported like a malformed package.json: one
+                # fixed reason scoped to the file, and the scan stays incomplete.
+                self._file_errors(rel, manifest.errors, defect=True)
                 if manifest.lockfile is not None:
                     self._lockfile_inventory(scan, rel, manifest.lockfile)
             return

@@ -21,7 +21,7 @@ from typing import Any
 import regex as re
 import yaml
 
-from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES, LockInventory, parse_lockfile
+from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES, LockfileError, LockInventory, parse_lockfile
 from shadowscan.signatures.matcher import _run_regex, pattern_timeout
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, strict_bounded_safe_load
@@ -1101,6 +1101,20 @@ def parse_modelfile(text: str) -> ManifestResult:
     return res
 
 
+def parse_lockfile_manifest(name: str, text: str) -> ManifestResult:
+    """Inventory a supported lockfile; a rejected one carries a single fixed reason."""
+    res = ManifestResult()
+    try:
+        inventory = parse_lockfile(name, text)
+    except LockfileError as exc:
+        # Limits, unsupported versions and malformed content: the reason never quotes the file.
+        res.errors.append(str(exc))
+        return res
+    res.deps = [Dep(p.ecosystem, p.name, p.version) for p in inventory.packages if not p.root]
+    res.lockfile = inventory
+    return res
+
+
 def parse_manifest(relpath: str, text: str, document: Any = None) -> ManifestResult | None:
     """Parse untrusted input, reporting malformed input without losing the scan.
 
@@ -1122,11 +1136,7 @@ def _parse_manifest(relpath: str, text: str, document: Any = None) -> ManifestRe
     name = p.name
     lower = name.lower()
     if lower in LOCKFILE_NAMES:
-        inventory = parse_lockfile(lower, text)
-        return ManifestResult(
-            deps=[Dep(p.ecosystem, p.name, p.version) for p in inventory.packages if not p.root],
-            lockfile=inventory,
-        )
+        return parse_lockfile_manifest(lower, text)
     parts = [x.lower() for x in p.parts]
     if (
         lower.startswith("requirements")

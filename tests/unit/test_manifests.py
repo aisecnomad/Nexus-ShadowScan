@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
 
@@ -594,8 +595,6 @@ def test_shared_document_equals_a_fresh_parse_and_is_refused_for_jsonc(tmp_path,
 
 @pytest.mark.parametrize("name", ["uv.lock", "poetry.lock", "pnpm-lock.yaml", "Cargo.lock"])
 def test_lockfile_inventory_fixtures(name):
-    from pathlib import Path
-
     source = Path("tests/fixtures/code/lockfiles") / name
     result = parse_manifest(name, source.read_text())
     assert result and not result.errors and result.lockfile
@@ -676,18 +675,90 @@ packages:
 def test_lockfile_parser_resource_limits(monkeypatch):
     from shadowscan.connectors.code import lockfiles
 
-    with pytest.raises(ValueError, match="unsupported"):
+    with pytest.raises(lockfiles.LockfileError, match="unsupported"):
         lockfiles.parse_lockfile("unknown.lock", "")
-    with pytest.raises(ValueError, match="byte limit"):
-        lockfiles.parse_lockfile("uv.lock", " " * (lockfiles.MAX_LOCKFILE_BYTES + 1))
     monkeypatch.setattr(lockfiles, "MAX_PACKAGES", 1)
     result = parse_manifest(
         "uv.lock", 'version=1\n[[package]]\nname="a"\nversion="1"\n[[package]]\nname="b"\nversion="1"'
     )
-    assert result and result.errors
+    assert result and result.errors == ["lockfile package limit exceeded"]
     monkeypatch.setattr(lockfiles, "MAX_STRUCTURE_NODES", 2)
     result = parse_manifest("uv.lock", "version=1\npackage=[]")
-    assert result and result.errors
+    assert result and result.errors == ["lockfile structure limit exceeded"]
+    monkeypatch.setattr(lockfiles, "MAX_LOCKFILE_BYTES", 8)
+    with pytest.raises(lockfiles.LockfileError, match="byte limit"):
+        lockfiles.parse_lockfile("uv.lock", " " * 9)
+
+
+def test_lockfile_limits_admit_common_lockfiles():
+    from shadowscan.connectors.code import lockfiles
+
+    # pnpm v9 records a snapshot per package; 2,100 of each tripped the old shared 4,096 cap.
+    names = [f"p{i}@1.0.0" for i in range(2100)]
+    text = "lockfileVersion: '9.0'\npackages:\n" + "".join(f"  {name}: {{}}\n" for name in names)
+    text += "snapshots:\n" + "".join(f"  {name}: {{}}\n" for name in names)
+    result = parse_manifest("pnpm-lock.yaml", text)
+    assert result and not result.errors and result.lockfile
+    assert len(result.lockfile.packages) == 2100
+    # The reader's max_file_size bounds the bytes it hands over; the parser's own ceiling
+    # is the strict YAML loader's, so a lockfile over the old 1,000,000-byte cap parses.
+    padded = "version = 1\n# " + "x" * 1_000_000 + '\n[[package]]\nname = "crewai"\nversion = "1"\n'
+    result = parse_manifest("uv.lock", padded)
+    assert result and not result.errors and result.lockfile
+    assert [p.name for p in result.lockfile.packages] == ["crewai"]
+    assert lockfiles.MAX_LOCKFILE_BYTES >= 64 * 1024 * 1024
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "reason"),
+    [
+        ("uv.lock", "version = SENTINEL", "invalid TOML"),
+        ("poetry.lock", "[[package]\nname = SENTINEL", "invalid TOML"),
+        ("Cargo.lock", 'version = 4\n[[package]]\nname = "SENTINEL', "invalid TOML"),
+        ("pnpm-lock.yaml", "lockfileVersion: [SENTINEL", "invalid YAML"),
+        ("pnpm-lock.yaml", "SENTINEL", "lockfile object expected"),
+        (
+            "pnpm-lock.yaml",
+            "lockfileVersion: 5.4\npackages: {SENTINEL: {}}",
+            "unsupported pnpm lockfile version (supported: 6 and 9)",
+        ),
+        ("pnpm-lock.yaml", "lockfileVersion: 9.0\npackages: {SENTINEL: {}}", "unsupported pnpm package key"),
+        ("uv.lock", 'version = 999\n[[package]]\nname = "SENTINEL"', "unsupported uv lockfile version"),
+        ("Cargo.lock", 'version = 2\n[[package]]\nname = "SENTINEL"', "unsupported Cargo lockfile version"),
+        ("poetry.lock", '[metadata]\nlock-version = "SENTINEL"', "unsupported Poetry lockfile version"),
+        (
+            "uv.lock",
+            'version = 1\n[[package]]\nname = "SENTINEL"\nversion = "https://SENTINEL.invalid"',
+            "invalid locked package version",
+        ),
+    ],
+)
+def test_rejected_lockfile_reason_is_fixed_and_never_quotes_the_file(name, text, reason):
+    result = parse_manifest(name, text.replace("SENTINEL", "zq7quoted"))
+    assert result is not None and result.errors == [reason]
+    assert "zq7quoted" not in " ".join(result.errors)
+
+
+def test_rejected_lockfile_is_scoped_to_the_file_and_keeps_the_scan_incomplete(
+    tmp_path, run_connector, monkeypatch
+):
+    from shadowscan.connectors.code import lockfiles
+
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    (tmp_path / "uv.lock").write_text("version = zq7quoted\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    # A malformed lockfile is an input defect like a malformed package.json: reported
+    # per file, the other findings kept, and the scan incomplete (exit 3).
+    assert findings and not ctx.stats.errors
+    assert ctx.stats.warnings == ["code.filesystem: uv.lock: input defect: invalid TOML"]
+    assert ctx.stats.incomplete
+    # A limit names itself instead of the exception type, and never quotes the file.
+    monkeypatch.setattr(lockfiles, "MAX_PACKAGES", 1)
+    (tmp_path / "uv.lock").write_text(Path("tests/fixtures/code/lockfiles/uv.lock").read_text())
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.errors == ["code.filesystem: uv.lock: lockfile package limit exceeded"]
+    assert ctx.stats.incomplete and not ctx.stats.warnings
+    assert not any(f.resource_type == "lockfile-inventory" for f in findings)
 
 
 def test_pnpm_peer_snapshots_cannot_union_transitive_reachability():
