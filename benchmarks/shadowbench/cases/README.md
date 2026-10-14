@@ -1,10 +1,10 @@
-# ShadowBench: the nine-surface shadow AI agent discovery benchmark
+# ShadowBench: a nine-surface shadow AI agent discovery benchmark
 
-A standardized, tool-neutral benchmark that asks one question on every surface
-where shadow AI agents leave evidence: *given what an operator can actually
-collect from this surface, which AI agents and which plain AI uses are present,
-and can a discovery tool find them without flagging the things that merely
-sound like AI?*
+An author-written benchmark, with tool-neutral entity keys, that asks one
+question on every surface where shadow AI agents leave evidence: *given what
+an operator can actually collect from this surface, which AI agents and which
+plain AI uses are present, and can a discovery tool find them without flagging
+the things that merely sound like AI?*
 
 It covers nine surfaces: code repositories, identity providers, LLM gateways,
 low-code platforms, SaaS workspaces, cloud accounts (including Kubernetes),
