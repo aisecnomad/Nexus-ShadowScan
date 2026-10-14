@@ -16,6 +16,7 @@ from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.code.instruction_content import inspect_instruction_text
 from shadowscan.connectors.code.semantic_config import (
     a2a_card_metadata,
     a2a_card_tags,
@@ -45,6 +46,24 @@ _HOST = re.compile(
     r"(?:https?://)?[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com|googleapis\.com)\b",
     re.IGNORECASE,
 )
+_WELL_KNOWN_TOOL_NAMES = frozenset(
+    {
+        "execute_command",
+        "fetch",
+        "fetch_url",
+        "list_directory",
+        "read_file",
+        "read_resource",
+        "run_command",
+        "search",
+        "search_files",
+        "write_file",
+    }
+)
+_BROAD_FILESYSTEM_CAPABILITIES = frozenset(
+    {"*", "filesystem:*", "filesystem:all", "filesystem:root", "filesystem:/"}
+)
+_SHELL_CAPABILITIES = frozenset({"shell", "command", "execute", "code-exec", "terminal"})
 
 
 def _text(value: object, limit: int = _MAX_LABEL) -> str:
@@ -346,18 +365,36 @@ class MCPInventoryConnector(_EndpointConnector):
             name = _text(tool.get("name")) or "unnamed-tool"
             desc = _text(tool.get("description"), 4096)
             tags: list[str] = []
+            content_hits = inspect_instruction_text(desc)
             if (
                 _POISONING.search(desc)
                 or _ZERO_WIDTH.search(desc)
                 or _TOOL_REF.search(desc)
                 or _HOST.search(desc)
+                or content_hits
             ):
                 tags.append("tool-poisoning")
+            tags.extend(hit.tag for hit in content_hits)
             if any(name.casefold() in tools for other, tools in names_by_server.items() if other != server):
                 tags.append("tool-name-shadowing")
+            if name.casefold() in _WELL_KNOWN_TOOL_NAMES:
+                tags.extend(("tool-name-shadowing", "tool-poisoning"))
             auth = _text(tool.get("auth") or tool.get("auth_mode")).casefold() or server_auth.get(server, "")
             if auth in {"", "none", "unauthenticated"}:
                 tags.append("unauthenticated-mcp")
+            declared = tool.get("capabilities", tool.get("permissions", tool.get("scopes")))
+            if isinstance(declared, str):
+                declared_values = {declared.strip().casefold()}
+            elif isinstance(declared, list):
+                declared_values = {value.strip().casefold() for value in declared if isinstance(value, str)}
+            else:
+                declared_values = set()
+            if declared_values & _BROAD_FILESYSTEM_CAPABILITIES or any(
+                value.startswith(("filesystem:/", "filesystem:*")) for value in declared_values
+            ):
+                tags.append("mcp-broad-filesystem")
+            if declared_values & _SHELL_CAPABILITIES:
+                tags.append("mcp-shell-command")
             words = set(re.findall(r"[a-z]+", name.casefold()))
             capabilities = []
             if words & {"exec", "execute", "shell", "command", "terminal"}:
