@@ -89,6 +89,8 @@ def _http_node_calls_llm(node: dict[str, Any]) -> bool:
         if isinstance(body, dict) and {str(name).casefold() for name in body} & _LLM_BODY_KEYS:
             return True
     return False
+
+
 _N8N_SCHEDULE_TRIGGERS = re.compile(r"\.(scheduleTrigger|cron|interval)$", re.I)
 # Make ``scheduling.type``: an on-demand scenario waits for the Run once button or a call (the
 # API, another scenario, an AI agent or an MCP client), so it records no initiation either way; an
@@ -310,9 +312,7 @@ class N8nConnector(_AutomationBase):
             )
         ]
         ai_steps.extend(
-            f"{node.get('name')} (HTTP Request LLM API)"
-            for node in nodes
-            if _http_node_calls_llm(node)
+            f"{node.get('name')} (HTTP Request LLM API)" for node in nodes if _http_node_calls_llm(node)
         )
         # 'Respond to Webhook' is the reply step of a chat or form workflow, not a
         # trigger: counting it would read a person-operated workflow as event-run.

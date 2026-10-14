@@ -75,5 +75,9 @@ Zapier export record needs an `id`, `title`,
 and makes the scan incomplete. A CSV row whose cells are all blank is skipped
 without a diagnostic.
 
+For n8n, an HTTP Request node is also treated as an AI step when its URL path is
+an OpenAI/Anthropic-compatible inference route or its JSON request body contains
+`messages`, `prompt`, `model` or `max_tokens`. This works with internal hosts
+and does not retain request-body values in finding metadata.
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

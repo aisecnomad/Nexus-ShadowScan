@@ -10,6 +10,29 @@ approved records of any vendor registry you explicitly
 
 ## Formats
 
+### Exact non-AI exceptions
+
+An operator may add a `not_ai:` list beside `agents:` in a YAML or JSON
+inventory. Each rule needs a lowercase `id` and at least one exact identifier:
+`client_id`, `app_id`, `name`, or `resource_ids` (connector-qualified finding
+resource IDs). Names match case-insensitively and exactly; IDs and resource IDs
+match exactly. These rules suppress only findings whose AI evidence is
+name-only. A verified non-name signature or behavioral evidence is never
+suppressed, and the exception does not register or approve a finding.
+
+```yaml
+agents: []
+not_ai:
+  - id: gemini-exchange
+    name: Gemini Trading Desk
+    resource_ids:
+      - okta:app:exchange-client
+```
+
+Suppression counts and rule IDs appear in the `engine.inventory` scan stats.
+Malformed `not_ai` entries are not applied and make the scan incomplete. CSV
+inventories continue to contain sanctioned-agent entries only.
+
 ### Agent Capability Cards (one YAML per agent)
 
 A Capability Card is not an A2A Agent Card. You write a Capability Card

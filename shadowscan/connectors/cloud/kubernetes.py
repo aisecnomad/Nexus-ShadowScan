@@ -219,7 +219,9 @@ class KubernetesConnector(BaseConnector):
                 image for image in images if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
             ]
             serving_images = [
-                image for image in images if any(marker in image.lower() for marker in _SELF_HOSTED_IMAGE_MARKERS)
+                image
+                for image in images
+                if any(marker in image.lower() for marker in _SELF_HOSTED_IMAGE_MARKERS)
             ]
             tags: list[str] = []
             capabilities: list[str] = []
@@ -263,7 +265,9 @@ class KubernetesConnector(BaseConnector):
                         self.ctx.warn(f"{self.name}: container has malformed image")
                     for field in ("args", "command"):
                         arguments = container.get(field, [])
-                        if not isinstance(arguments, list) or any(not isinstance(arg, str) for arg in arguments):
+                        if not isinstance(arguments, list) or any(
+                            not isinstance(arg, str) for arg in arguments
+                        ):
                             self.ctx.warn(f"{self.name}: workload has malformed command arguments")
                             continue
                         argument_text = " ".join(arguments)

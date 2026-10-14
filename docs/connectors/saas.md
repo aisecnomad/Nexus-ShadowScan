@@ -20,6 +20,8 @@ collection arrays and malformed pagination are incomplete coverage. Later
 network failures retain already collected observations; provider error text is
 not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.
+Known meeting-note apps include Wudpecker; its Slack app ID is matched as a
+verified identifier in addition to vendor name and domain signals.
 
 ## `saas.microsoft-teams`
 Graph app catalog (custom apps with bot definitions and RSC permissions) and

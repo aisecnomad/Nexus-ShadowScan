@@ -1721,8 +1721,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         # Generic vendor hosts (a general REST API, a dataset site) carry hint weights below
         # the threshold and do not identify inference traffic by themselves.
         normalized = host.lower().rstrip(".") if host else ""
-        return normalized in self.internal_model_hosts or bool(host) and any(
-            m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host or "")
+        return (
+            normalized in self.internal_model_hosts
+            or bool(host)
+            and any(m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host or ""))
         )
 
     def _untrusted_host_is_llm(self, ev: Event, rec: dict[str, Any]) -> bool:

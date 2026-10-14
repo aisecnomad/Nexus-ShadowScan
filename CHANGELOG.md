@@ -5,6 +5,24 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Detection precision and self-hosted model coverage
+
+- Name-only application evidence is now grouped and capped at weak confidence.
+  Signature packs can use negative context to suppress clear near-misses, and
+  MCP names match token boundaries instead of alphanumeric substrings.
+- Added the strict `not_ai` inventory exception for exact client, app, name and
+  connector resource identifiers. It suppresses only name-only evidence, records
+  rule counts in `engine.inventory` stats, and makes malformed rules incomplete.
+- Kubernetes workload analysis now corroborates self-hosted serving images,
+  Hugging Face model arguments and GPU requests/limits without retaining argument
+  or environment values. n8n HTTP Request nodes recognize compatible inference
+  paths and JSON bodies on internal hosts.
+- Gateway access logs recognize compatible inference routes on any host, accept
+  the `internal_model_hosts` setting for exact internal hostnames, classify
+  browser requests as low-confidence human usage and exclude management/audit
+  reads from agent traffic.
+- Added Wudpecker's Slack app identifier and meeting-notetaker signature coverage.
+
 ### Documentation aligned with the code (October 12)
 
 Documentation only; no scanner behaviour changes.

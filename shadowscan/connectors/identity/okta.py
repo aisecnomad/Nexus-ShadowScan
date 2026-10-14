@@ -183,7 +183,7 @@ class OktaConnector(BaseConnector):
                 location=(
                     f"{self.org_url}/admin/app/{app.get('name')}/instance/{app_id}" if self.org_url else None
                 ),
-                weight=0.15 if not machine else 0.35,
+                weight=0.05 if not machine else 0.35,
             )
         )
         if users:
@@ -191,7 +191,7 @@ class OktaConnector(BaseConnector):
                 Evidence(
                     signal="okta:user-consent",
                     description=f"{len(users)} user(s) issued tokens to this app",
-                    weight=0.2,
+                    weight=0.05,
                 )
             )
         if (

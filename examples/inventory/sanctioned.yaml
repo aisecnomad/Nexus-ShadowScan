@@ -1,10 +1,16 @@
-# Sanctioned inventory as a bare list of entries. `shadowscan code --inventory`
-# also accepts the `agents:` mapping in agents.yaml, Agent Capability Cards
-# (metadata.agent_id) and CSV. A name without a `resources` pattern only
-# suggests a match for review; it never marks a finding sanctioned.
-- id: sanctioned-copilot
-  name: GitHub Copilot
-  owner: platform
-  autonomy_level: 2
-  frameworks: []
-  providers: []
+# `agents` contains sanctioned findings; names alone only suggest matches.
+# `not_ai` suppresses name-only findings by exact operator-declared identity.
+agents:
+  - id: sanctioned-copilot
+    name: GitHub Copilot
+    owner: platform
+    autonomy_level: 2
+    frameworks: []
+    providers: []
+not_ai:
+  - id: reporting-dashboard
+    client_id: reporting-dashboard-client
+    app_id: reporting-dashboard-app
+    name: Finance Reporting Dashboard
+    resource_ids:
+      - google-marketplace:app:reporting-dashboard

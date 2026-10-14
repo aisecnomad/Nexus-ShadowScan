@@ -5,7 +5,7 @@ import json
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.common import apply_matches
 from shadowscan.engine import Engine
-from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.models import Evidence, Finding, Kind, Likelihood, Surface
 from shadowscan.registry import Inventory, InventoryValidationError
 
 
@@ -43,9 +43,7 @@ def test_name_negative_context_and_mcp_token_boundary(index):
             for match in matches
         )
 
-    assert "protocol.mcp" not in {
-        match.signature_id for match in index.match_name("mcp2515-canbus-bridge")
-    }
+    assert "protocol.mcp" not in {match.signature_id for match in index.match_name("mcp2515-canbus-bridge")}
     assert "protocol.mcp" in {match.signature_id for match in index.match_name("Model Context Protocol")}
 
 
@@ -53,13 +51,12 @@ def test_identity_false_positives_and_verified_positives(run_connector, fixtures
     findings, _ = run_connector(
         "identity.okta", input=str(fixtures / "identity" / "okta_gemini_exchange.json")
     )
-    assert not any("Gemini Trading Desk" in f.title for f in findings)
+    gemini = next(f for f in findings if "Gemini Trading Desk" in f.title)
+    assert gemini.likelihood == Likelihood.WEAK
     fireflies = next(f for f in findings if "Fireflies.ai Notetaker" in f.title)
     assert any(e.signal.startswith("domain:") for e in fireflies.evidence)
 
-    findings, _ = run_connector(
-        "identity.auth0", input=str(fixtures / "identity" / "auth0_mcp2515.json")
-    )
+    findings, _ = run_connector("identity.auth0", input=str(fixtures / "identity" / "auth0_mcp2515.json"))
     assert not findings
 
     findings, _ = run_connector(
@@ -106,9 +103,7 @@ def test_saas_name_nearmisses_and_wudpecker_positive(run_connector, fixtures):
 
 
 def test_gcp_and_servicenow_name_nearmisses_stay_clean(run_connector, fixtures):
-    findings, _ = run_connector(
-        "cloud.gcp", input=str(fixtures / "cloud" / "gcp_gemini_settlement.jsonl")
-    )
+    findings, _ = run_connector("cloud.gcp", input=str(fixtures / "cloud" / "gcp_gemini_settlement.jsonl"))
     assert not findings
 
     findings, _ = run_connector(
@@ -131,9 +126,7 @@ def test_kubernetes_model_serving_corroboration_keeps_billing_control_clean(run_
 
 
 def test_n8n_internal_model_http_node_and_control(run_connector, fixtures):
-    findings, _ = run_connector(
-        "lowcode.n8n", input=str(fixtures / "lowcode" / "n8n_internal_model.json")
-    )
+    findings, _ = run_connector("lowcode.n8n", input=str(fixtures / "lowcode" / "n8n_internal_model.json"))
     qa = next(f for f in findings if f.title.endswith("Dock manifest QA"))
     assert "HTTP Request LLM API" in " ".join(qa.metadata["ai_steps"])
     assert not any("Backup rate sheets" in f.title for f in findings)
@@ -196,13 +189,10 @@ def test_not_ai_inventory_is_exact_and_never_overrides_verified_evidence(tmp_pat
 def test_not_ai_suppression_is_reported_and_malformed_rules_incomplete(tmp_path):
     source = tmp_path / "apps.csv"
     source.write_text(
-        "App Name,Publisher,Permissions,Users,Installed By,Status,Domain\n"
-        "ChatGPT,Finance,,1,ops,active,\n"
+        "App Name,Publisher,Permissions,Users,Installed By,Status,Domain\nChatGPT,Finance,,1,ops,active,\n"
     )
     inventory_path = tmp_path / "inventory.yaml"
-    inventory_path.write_text(
-        "agents: []\nnot_ai:\n  - id: non-ai-chatgpt\n    name: ChatGPT\n"
-    )
+    inventory_path.write_text("agents: []\nnot_ai:\n  - id: non-ai-chatgpt\n    name: ChatGPT\n")
     config = ScanConfig(
         connectors=[
             ConnectorSpec(

@@ -18,6 +18,14 @@ and AI workload namespaces without an egress NetworkPolicy. These are
 heuristics, not proof that a workload executed or is reachable from the public
 internet.
 
+Self-hosted serving stacks (including vLLM, TGI, Triton, llama.cpp, LocalAI,
+LMDeploy, SGLang, OpenLLM and Ray Serve) are corroborated with a Hugging
+Face-style `--model <org>/<name>` or `--model-id` argument and GPU resources.
+An image name, model argument, GPU request/limit, or serving environment
+variable is not sufficient by itself to establish likely model serving. The
+connector inspects argument and environment names only; it never retains their
+values.
+
 `cloud.kubernetes` and `cloud.openshift` use no credentials and accept no
 credential option: `allow_instance_credentials` is rejected on their entries.
 The offline analyzers make no credential or tenant requests. Live Kubernetes

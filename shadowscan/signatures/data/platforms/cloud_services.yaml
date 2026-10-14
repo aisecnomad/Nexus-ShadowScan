@@ -238,5 +238,5 @@ signatures:
       - type: image
         # Images of products with their own signature (LiteLLM, LocalAI,
         # llama.cpp, LM Studio) are attributed there, not here.
-        patterns: ['kagent-dev/kagent', 'ghcr\.io/kagent-dev', 'agentgateway/agentgateway', 'kgateway', 'ghcr\.io/nvidia/nemo', 'nvcr\.io/nvidia/nemo', 'ghcr\.io/kubeflow/', 'ray-project/ray', 'tritonserver', 'sagemaker-tritonserver', 'text-generation-inference', '(^|[/_-])tgi([/_:-]|$)', 'vllm', 'llama\.cpp', 'llama-cpp', 'localai', 'lmdeploy', 'sglang', 'openllm', 'ray-serve', 'ghcr\.io/open-webui', 'ghcr\.io/coollabsio', 'anythingllm', 'langgenius', 'flowiseai', 'langflowai', 'n8nio', 'portkeyai']
+        patterns: ['kagent-dev/kagent', 'ghcr\.io/kagent-dev', 'agentgateway/agentgateway', 'kgateway', 'ghcr\.io/nvidia/nemo', 'nvcr\.io/nvidia/nemo', 'ghcr\.io/kubeflow/', 'ray-project/ray', 'tritonserver', 'text-generation-inference', '(^|[/_-])tgi([/_:-]|$)', 'vllm', 'llama\.cpp', 'llama-cpp', 'localai', 'lmdeploy', 'sglang', 'openllm', 'ray-serve', 'ghcr\.io/open-webui', 'ghcr\.io/coollabsio', 'anythingllm', 'langgenius', 'flowiseai', 'langflowai', 'n8nio', 'portkeyai']
         weight: 0.85

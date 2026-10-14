@@ -71,6 +71,10 @@ produced a change cannot supply its independent approval.
 - **Breaking changes:** document the reason, affected behavior and migration
   steps in the changelog and deployment guide. Preserve finding identity where
   possible; explain when comparisons or cached evidence need to be regenerated.
+- **Name-only exceptions:** an operator's `not_ai` inventory entries are exact,
+  reviewed configuration that can suppress only name-only AI evidence. They do
+  not sanction an agent and cannot override verified identifiers or behavioral
+  evidence; malformed entries make the scan incomplete.
 
 State relevant conflicts of interest. A disputed technical decision can be
 revisited in the original issue with new evidence, alternatives or a narrower

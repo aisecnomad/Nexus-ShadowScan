@@ -1271,13 +1271,18 @@ class SignatureIndex:
                         continue
                 elif not _hints_present(rest, text, present):
                     continue
-            def positive_context(match: Any) -> bool:
-                if signal_type != "name" or not s.negative_context:
+
+            def positive_context(
+                match: Any,
+                current_signal_type: str = signal_type,
+                negative_context: tuple[str, ...] = tuple(s.negative_context),
+            ) -> bool:
+                if current_signal_type != "name" or not negative_context:
                     return True
                 line_start = text.rfind("\n", 0, match.start()) + 1
                 line_end = text.find("\n", match.end())
                 line = text[line_start : len(text) if line_end < 0 else line_end].casefold()
-                return not any(context.casefold() in line for context in s.negative_context)
+                return not any(context.casefold() in line for context in negative_context)
 
             for m in _finditer(
                 rx,

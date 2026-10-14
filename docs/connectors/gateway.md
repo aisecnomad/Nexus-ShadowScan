@@ -30,6 +30,18 @@ not individual timestamped transaction events. Log fields for environment
 and caller identity are evidence from the supplied export; assess the
 producer and delivery chain before treating them as verified production facts.
 
+Access logs recognize OpenAI/Anthropic-compatible inference routes, including
+`/v1/chat/completions`, `/v1/completions`, `/v1/messages`,
+`/v1/embeddings`, `/api/generate` and `/api/chat`, on any host as possible
+inference traffic. Add exact operator-declared hostnames in
+`internal_model_hosts: [model.internal.example]` to recognize other requests
+to an internal model server; this setting does not perform DNS or network
+lookups. Browser user agents making AI-compatible requests are emitted as
+low-confidence `ai-app` human web usage, not as gateway agent callers. GET/HEAD
+management and audit reads such as `/v1/threads/<id>/runs` are excluded.
+Programmatic SDK callers on inference routes remain eligible for caller-level
+agent analysis.
+
 For text (combined-format) access logs the host is read only from a
 `host=`, `authority=`, `upstream_host=` or `server_name=` token that follows
 the final quoted field, as in `... "ua" host=api.openai.com`. The request line,

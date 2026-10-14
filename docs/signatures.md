@@ -210,6 +210,22 @@ values) fail loading. Lists must contain strings; booleans cannot be strings.
 Overrides are allowed only between separate pack directories, in the order
 configured.
 
+### Name signals and negative context
+
+Name signals identify candidates, not verified application identity. When
+connectors attach name matches, the evidence is capped at weight `0.2` and all
+name matches on the same finding share `confidence_group: name-only`; the name
+alone therefore cannot move a finding above weak confidence or promote it to an
+agent. Verified identifiers, scopes, domains, and behavioral evidence retain
+their declared weights.
+
+A `name` signal may declare `negative_context: [exchange, cleanup]`. If one of
+those case-insensitive literal terms occurs on the same line as a match, that
+match is discarded. This is intended for clear disambiguating context, not as a
+replacement for a stronger identifier. For example, `Gemini Exchange Portal`
+does not establish Google Gemini. The MCP name matcher uses token boundaries:
+`MCP2515` does not match `MCP`.
+
 The schema also pins the closed vocabularies the matcher and the risk engine
 key on, so a typo fails loading instead of silently never matching:
 
