@@ -152,7 +152,17 @@ def _assert_each_line_shows_only_what_both_readings_show(cleaned: str, plain: st
     lines, plain_lines, established_lines = cleaned.split("\n"), plain.split("\n"), established.split("\n")
     assert len(lines) == len(plain_lines)
     if len(plain_lines) != len(established_lines):
-        assert cleaned == REDACTED + "\n" * plain.count("\n")
+        # Only lines the same in both readings, counted from the start or the end, are shown.
+        shift = len(plain_lines) - len(established_lines)
+        for number, line in enumerate(lines):
+            if line in (REDACTED, ""):
+                continue
+            assert line == plain_lines[number]
+            assert line in (
+                established_lines[number] if number < len(established_lines) else None,
+                established_lines[number - shift] if 0 <= number - shift < len(established_lines) else None,
+            )
+        assert REDACTED in lines
         return
     for line, one, other in zip(lines, plain_lines, established_lines, strict=True):
         # A line of one reading, the plain line with a marker where a run was, or a withheld line.
