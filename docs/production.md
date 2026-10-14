@@ -1327,7 +1327,11 @@ a reverse proxy with its own hostname, list that hostname in the new
 disappear. Such excluded requests are reported in an advisory warning (not an
 incomplete scan) with their count and up to five host names; read it after
 the first scan and declare the hosts that are model servers. A bare
-`/generate` route counts only on a declared or known model host. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
+`/generate` route counts only on a declared or known model host; such
+requests with no logged host are counted in the same warning. In text access
+logs a single-label or address host (`host=tgi:8080`, `host=10.20.0.5:8080`)
+now matches a declared `tgi` or `10.20.0.5` entry, as it already did in JSON
+logs. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
 setting it changes that source's ids by design, so rebaseline that source.
 
 **Kubernetes.** Workloads that set `nvidia.com/gpu` only in `limits` are now
