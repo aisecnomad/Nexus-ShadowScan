@@ -165,6 +165,7 @@ The same gates as individual commands:
 
 ```bash
 python -m pip install -e ".[cloud,dev]"
+python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m shadowscan.signatures.validate
 python -m shadowscan.mappings.validate
 make secrets
@@ -179,8 +180,10 @@ make evaluate
 
 The cloud SDKs (`boto3`, `google-auth`, `azure-identity`, `oci`) are optional
 extras for users, but the test suite is gated with them installed, so use
-`".[cloud,dev]"` as shown above. CI installs the hash-locked
-`requirements.lock`, which contains every cloud SDK. Offline fixtures cover the
+`".[cloud,dev]"` as shown above. The release-evidence tests record the
+version of the `build` frontend, which only `requirements-build.lock` provides.
+CI installs the hash-locked `requirements.lock`, which contains every cloud SDK,
+together with the CI and build locks. Offline fixtures cover the
 cloud connectors; do not commit live tenant exports.
 
 Dependabot updates the version ranges in `pyproject.toml` and the reviewed

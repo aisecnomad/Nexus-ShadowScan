@@ -885,6 +885,28 @@ def test_ci_toolchain_is_exactly_pinned_and_hash_locked_everywhere() -> None:
     assert "-r requirements-ci.lock" in _read(GITHUB / "workflows" / "release.yml")
 
 
+def test_every_suite_environment_installs_the_build_frontend_lock() -> None:
+    # Release evidence records the version of the build frontend, which only
+    # requirements-build.lock provides. A test job or documented environment
+    # without it fails tests/test_release_evidence.py.
+    jobs = _load_yaml(GITHUB / "workflows" / "ci.yml")["jobs"]
+    expected = ["requirements-build.lock", "requirements-ci.lock", "requirements.lock"]
+    for name in ("test", "test-macos"):
+        (install,) = [
+            step["run"]
+            for step in jobs[name]["steps"]
+            if "--require-hashes" in step.get("run", "") and "-r requirements-ci.lock" in step["run"]
+        ]
+        assert sorted(re.findall(r"-r (requirements[\w-]*\.lock)", install)) == expected, name
+    makefile = _read(ROOT / "Makefile")
+    for target in ("install", "install-dev"):
+        (recipe,) = re.findall(rf"^{target}:.*\n((?:\t.*\n)+)", makefile, re.MULTILINE)
+        assert "-r requirements-build.lock" in recipe, target
+    gates = _read(ROOT / "CONTRIBUTING.md").split("The same gates as individual commands:", 1)[1]
+    assert "-r requirements-build.lock" in gates.split("```", 2)[1]
+    assert "`requirements-build.lock`" in _read(ROOT / "docs" / "testing.md").split("## ", 2)[1]
+
+
 _USES_LINE = re.compile(r"^\s*-?\s*uses:\s*(?P<ref>[^#\s]+)\s*(?P<comment>#.*)?$")
 _PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@(?P<sha>[0-9a-f]{40})$")
 
