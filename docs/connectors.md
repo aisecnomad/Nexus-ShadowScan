@@ -629,7 +629,8 @@ eligible for collection.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
-audiences and scopes, AI-named apps. Auth: M2M client for the Management API
+audiences and scopes, AI-named apps, and other clients with an established AI
+product or model provider. Auth: M2M client for the Management API
 (`read:clients`, `read:client_grants`) or `token`.
 Options: `domain` (tenant domain such as `acme.eu.auth0.com`, env
 `AUTH0_DOMAIN`) and the M2M application's `client_id` and `client_secret` (env
@@ -818,7 +819,8 @@ models. Live pagination is bounded by
 
 ### `saas.slack`
 `users.list` (bots), `admin.apps.approved.list` / `restricted` / `requests`
-(scopes, pending requests), `team.integrationLogs` (who installed what).
+(scopes, pending requests), `team.integrationLogs` (who installed what). The
+app id is matched as the app's client id.
 `team.info` must return an authenticated workspace identity. If `team_id` is
 configured, it must match exactly before inventory calls begin. Missing/null
 collection arrays and malformed pagination are incomplete coverage. Later
@@ -867,7 +869,7 @@ offline exports. Options: `site`
 (`jira`, `confluence`; default both).
 
 ### `saas.notion`
-Notion bot users. A missing or repeated pagination cursor, or reaching the live
+Notion bot users with an established AI product or provider. A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete. Provider error
 envelopes make collection incomplete even when they include empty record arrays;
 valid observations from other pages remain available. The same rule applies to
@@ -1015,7 +1017,8 @@ Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
 and endpoints per location, Dialogflow CX agents, Discovery Engine /
 Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,
 service accounts (user-managed keys), API keys restricted to Gemini, Secret
-Manager names, optional Cloud Audit Log callers (`audit_days`). Auth: ADC via
+Manager names, optional Cloud Audit Log callers (`audit_days`). Cloud Run and
+Cloud Functions names are hints only. Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows potential access, not observed agent execution. Project IAM collection

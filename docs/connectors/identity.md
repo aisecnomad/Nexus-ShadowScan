@@ -336,7 +336,11 @@ older Google Workspace inventory cards with the explicit customer in
 
 ## `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
-audiences and scopes, AI-named apps. Auth: M2M client for the Management API
+audiences and scopes, AI-named apps. A non-machine client is kept when an AI
+product or a model provider is established for it (an origin or API audience
+on a provider host, say); machine clients are kept by policy, bounded as
+[unattributed applications](#unattributed-applications) when nothing AI is
+established. Auth: M2M client for the Management API
 (`read:clients`, `read:client_grants`) or `token`.
 
 ## `identity.jwt`

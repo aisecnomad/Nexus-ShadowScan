@@ -260,7 +260,9 @@ class Auth0Connector(BaseConnector):
             apply_matches(
                 f, name_matches(self.index, " ".join(f"{k}={v}" for k, v in meta.items())), weight_scale=0.6
             )
-        if not f.frameworks and not machine:
+        # A client attributed only by a model provider (an API audience or
+        # origin on a provider's host, say) is AI evidence too.
+        if not f.frameworks and not f.model_providers and not machine:
             return None
         f.add_evidence(
             Evidence(

@@ -25,6 +25,10 @@ collection arrays and malformed pagination are incomplete coverage. Later
 network failures retain already collected observations; provider error text is
 not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.
+The Slack app id is passed to signature matching as the app's client id, so a
+rule pack's `client_id` signal can bind a reviewed Slack app. AI meeting
+note-takers include Wudpecker and Tactiq by name and by their `wudpecker.io`
+and `tactiq.io` homepage domains.
 
 ## `saas.microsoft-teams`
 Graph app catalog (custom apps with bot definitions and RSC permissions) and
@@ -44,7 +48,10 @@ are SaaS write actions.
 UPM user-installed apps for Jira and Confluence.
 
 ## `saas.notion`
-Notion bot users. A missing or repeated pagination cursor, or reaching the live
+Notion bot users. A bot is inventoried only when its name or other evidence
+establishes an AI product or provider; a nameless bot or an ordinary sync
+integration is not reported, because a bot's existence and owner do not
+identify AI. A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete.
 
 ## `saas.zoom`

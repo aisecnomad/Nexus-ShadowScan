@@ -142,7 +142,12 @@ def test_correlation_provenance_is_rendered_not_dumped(make_finding) -> None:
             "related": ["ss-exact"],
             "related_details": [{"finding_id": "ss-exact", "assurance": "exact-identifier", "matches": []}],
             "related_candidates": [
-                {"finding_id": "ss-<candidate>", "assurance": "candidate", "matches": [], "limitation": "hint"},
+                {
+                    "finding_id": "ss-<candidate>",
+                    "assurance": "candidate",
+                    "matches": [],
+                    "limitation": "hint",
+                },
                 {"finding_id": 7},
                 "malformed",
             ],

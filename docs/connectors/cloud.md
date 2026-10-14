@@ -255,7 +255,11 @@ Discovery Engine uses `discoveryengine.googleapis.com` for `global` and
 `us-` / `eu-discoveryengine.googleapis.com` for the `us` and `eu` multi-regions.
 Cloud Run discovery enumerates project locations and then lists services in each
 concrete region (`run.locations.list` and `run.services.list` permissions).
-Unreachable locations reported by GCP make the scan incomplete. `max_projects`
+Unreachable locations reported by GCP make the scan incomplete. A Cloud Run
+service or Cloud Function name or description is a hint only: it never
+establishes an AI product, so a service named after a product with no AI image,
+environment variable or secret is not reported, and a reported one keeps the
+product under `metadata.potential_frameworks`. `max_projects`
 limits discovery without loading all projects first; `max_pages` (default and
 maximum 1000) bounds every paginated call; resource lists stop at 500 pages and audit-log
 queries at 50 pages regardless.

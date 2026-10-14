@@ -334,7 +334,13 @@ def done(finding: Finding, index: SignatureIndex, kind: Kind) -> Finding:
     return finding
 
 
-def name_hint(index: SignatureIndex, finding: Finding, *names: str | None) -> None:
+def name_hint(index: SignatureIndex, finding: Finding, *names: str | None, weak: bool = False) -> None:
+    """Match resource names and descriptions; ``weak`` keeps them as potential hints only.
+
+    A resource name chosen by its owner never establishes a product by itself
+    on a surface where any service can carry any name (Cloud Run, Cloud
+    Functions): with ``weak`` the matches stay under ``metadata.potential_*``.
+    """
     for n in names:
         if n:
-            apply_matches(finding, index.match_name(str(n)), weight_scale=0.5)
+            apply_matches(finding, index.match_name(str(n)), weight_scale=0.5, establish=not weak)

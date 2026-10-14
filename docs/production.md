@@ -1142,6 +1142,14 @@ n8n workflows whose only AI step is an HTTP Request POST to a model API are
 now reported as AI workflows, and node types that merely contain `mcp` inside
 another word are no longer AI steps.
 
+**SaaS, identity and cloud inventory.** Notion bots without an established AI
+product or provider (nameless bots, sync integrations) are no longer
+inventoried. Slack apps can now match `client_id` rule-pack signals by their
+app id, and Wudpecker and Tactiq apps are recognised as meeting note-takers.
+Auth0 non-machine clients attributed only by a model provider are now kept.
+GCP Cloud Run services and Cloud Functions whose only AI evidence was their own
+name or description are no longer reported.
+
 Permission and machine-identity observations are not proof of agent execution,
 and observations in an offline export are not authenticated publisher evidence.
 

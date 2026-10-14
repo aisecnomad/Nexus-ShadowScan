@@ -132,6 +132,10 @@ class NotionConnector(BaseConnector):
             owner=owner,
         )
         assess_app(self.index, f, name=name)
+        # A bot's existence and owner do not identify AI. Inventory a bot only
+        # when its name or other evidence establishes an AI product or provider.
+        if not f.frameworks and not f.model_providers:
+            return None
         f.add_evidence(
             Evidence(
                 signal="notion:bot",
