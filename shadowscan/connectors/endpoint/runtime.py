@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.code.instruction_content import inspect_instruction_text
 from shadowscan.connectors.code.semantic_config import (
     a2a_card_metadata,
     a2a_card_tags,
@@ -361,6 +362,12 @@ class MCPInventoryConnector(_EndpointConnector):
                 )
             if audit.incomplete:
                 self.ctx.warn("endpoint.mcp: tool description instruction audit incomplete")
+            content_hits = inspect_instruction_text(description)
+            # Terminal control characters (ESC sequences, a lone carriage
+            # return, C1 controls) can conceal or overwrite what an operator
+            # reads. Line breaks and tabs are ordinary formatting.
+            plain = description.replace("\r\n", "\n").replace("\n", "").replace("\t", "")
+            terminal_escape = any(ord(ch) < 32 or 0x7F <= ord(ch) <= 0x9F for ch in plain)
             desc = _text(description, 4096)
             tags: list[str] = []
             if (
@@ -369,8 +376,13 @@ class MCPInventoryConnector(_EndpointConnector):
                 or _TOOL_REF.search(desc)
                 or _HOST.search(desc)
                 or audit.indicators
+                or any(hit.rule != "invisible-characters" for hit in content_hits)
+                or terminal_escape
             ):
                 tags.append("tool-poisoning")
+            for content_tag in dict.fromkeys(hit.tag for hit in content_hits):
+                if content_tag not in tags:
+                    tags.append(content_tag)
             if any(name.casefold() in tools for other, tools in names_by_server.items() if other != server):
                 tags.append("tool-name-shadowing")
             auth = _text(tool.get("auth") or tool.get("auth_mode")).casefold() or server_auth.get(server, "")
@@ -414,6 +426,26 @@ class MCPInventoryConnector(_EndpointConnector):
                         location=f"description:{indicator.line}",
                         weight=0.0,
                         attributes={"category": "static-instruction-audit", "rule": indicator.rule},
+                    )
+                )
+            for hit in content_hits:
+                finding.add_evidence(
+                    Evidence(
+                        signal=f"instruction:{hit.rule}",
+                        description=hit.detail,
+                        location=f"description:{hit.line}",
+                        weight=0.0,
+                        attributes={"category": "static-instruction-audit", "rule": hit.rule},
+                    )
+                )
+            if terminal_escape:
+                finding.add_evidence(
+                    Evidence(
+                        signal="instruction:terminal-escape",
+                        description="Tool description holds terminal control or concealing characters",
+                        location="description",
+                        weight=0.0,
+                        attributes={"category": "static-instruction-audit", "rule": "terminal-escape"},
                     )
                 )
             yield finding

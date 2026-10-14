@@ -59,6 +59,14 @@ fingerprint changes; keep previous reports as historical observations and build
 a fresh comparison baseline. A reduced flow count is not proof that an agent
 stopped running.
 
+MCP inventory findings change score and metadata: tool descriptions are
+additionally screened for hidden HTML-comment content, fetch-and-execute
+phrasing and terminal control sequences, supported lockfiles are
+credential-scanned like every other read file, and a tool name duplicating
+another installed server's tool now carries the `tool-name-shadowing` threat
+mapping with a default risk weight of 10 (a default-weights change).
+Regenerate retained reports and comparison baselines that cover MCP inventory.
+
 **New opt-in settings** (all default off or to the values shown):
 
 - `code.filesystem` (and `code.github` / `code.gitlab` checkouts):

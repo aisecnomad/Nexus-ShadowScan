@@ -12,6 +12,19 @@ give the same predictions before and after. The new tests are author-written
 synthetic fixtures; they establish implementation behavior, not independent
 review, live tenant acceptance or production precision.
 
+Also carried, from the reviewed parts of #217: MCP tool descriptions are
+screened with the code surface's bounded instruction-content rules (hidden
+HTML-comment content, fetch-and-execute or decode-and-execute phrasing) and
+for terminal control sequences, each a tool-poisoning review candidate with
+zero-weight explanatory evidence; the `tool-name-shadowing` tag gains its
+missing threat rule (OWASP LLM01/ASI01, ATLAS AML.T0051.001) and a default
+risk weight of 10 (a default-weights change; see the migration notes);
+supported lockfiles are credential-scanned like every other read file, with
+detected values redacted and never retained in the dependency inventory; and
+the Vertex AI, Bedrock and Azure OpenAI provider signatures record their
+endpoint and IP-range source references. Live DNS enrichment stays deferred
+(#210): an offline network scan performs no DNS resolution.
+
 - Low-code: a shared bounded, cycle-safe graph core for n8n, Flowise and Dify
   exports adds non-scoring `workflow_graph` metadata: node and edge counts,
   role counts and an example input → AI → outbound path by node ordinal. Exact

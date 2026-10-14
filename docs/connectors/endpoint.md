@@ -174,9 +174,17 @@ names across servers. The `tool-poisoning` tag keeps its description rules: an
 `<IMPORTANT>` tag, "ignore previous instructions" wording, sending or forwarding
 data, secrets, credentials or prompts, an invisible or bidirectional control
 character, a URL, a "use/call/invoke the ..." tool reference, or a model
-provider host name, anywhere in the first 4,096 characters. These rules also
+provider host name, anywhere in the first 4,096 characters. Descriptions are
+also screened with the code surface's bounded instruction-content rules —
+content concealed in raw HTML comments, fetch-and-execute or decode-and-execute
+phrasing — and for terminal control sequences that can conceal or overwrite
+what an operator reads; each hit raises `tool-poisoning` with zero-weight
+explanatory evidence, and content-rule hits add their own tags
+(`hidden-instructions`, `remote-code-fetch`, `invisible-text`). These rules also
 match documentation links, quoted examples and prohibitions, so the tag
-describes a review candidate, not verified intent or execution.
+describes a review candidate, not verified intent or execution. A tool name
+duplicating another installed server's tool carries the `tool-name-shadowing`
+tag, which maps to threat references and a default risk weight of 10.
 
 A bounded static sentence audit adds explanation on top of those rules. It
 reports direct instruction-override and sensitive-value disclosure candidates

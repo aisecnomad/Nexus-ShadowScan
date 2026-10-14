@@ -99,6 +99,7 @@ TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "exposed-llm-server": (15, "LLM inference service is reachable beyond loopback or cluster scope"),
     "unauthenticated-mcp": (15, "MCP server does not declare an authentication mechanism"),
     "tool-poisoning": (15, "MCP tool description contains prompt-injection or exfiltration indicators"),
+    "tool-name-shadowing": (10, "MCP tool name duplicates another installed server's tool name"),
     "unsafe-serialization": (15, "model artifact uses an unsafe serialization format"),
     "privileged-pod": (15, "workload requests privileged host access"),
     "cluster-admin": (20, "workload service account is bound to cluster-admin"),
