@@ -313,12 +313,14 @@ recorded in the header); never use `legacy` for a new corpus.
   exchange clients, embedding batches that look like agent loops, classic
   chatbots, flows and workflows whose names mention AI.
 * Every tool runs as uid and gid 65534 with `no_new_privs`, in fresh network,
-  PID and mount namespaces: no network beyond loopback (where active-network
-  cases serve their mocks), no view of host processes (live-runtime cases show
-  only the case's inert processes), `/root` and `/home` hidden under empty
-  tmpfs mounts, and an environment built from scratch with a case-local `HOME`
-  and no inherited credentials. This is not a sandbox: a tool can still read
-  world-readable files elsewhere on the host. The
+  PID, mount and IPC namespaces: no network beyond loopback (where
+  active-network cases serve their mocks), no view of host processes
+  (live-runtime cases show only the case's inert processes), `/root` and
+  `/home` hidden under empty tmpfs mounts, a fresh `/var/tmp` and `/dev/shm`
+  for each case, and an environment built from scratch with a case-local
+  `HOME` and no inherited credentials. This is not a sandbox: a tool can still
+  read world-readable files elsewhere on the host, and what it writes to the
+  host's `/tmp` stays there for later cases and tools to read. The
   [harness README](../../../tools/shadowbench/cases/README.md) gives the
   details. This is the current harness: the 2026-10-11 rows were recorded
   under weaker isolation, described under Integration changes. No tool is

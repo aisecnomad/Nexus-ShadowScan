@@ -5,8 +5,8 @@
 
 For each (tool, case) the runner materializes the case under a scratch
 directory, asks the adapter for its invocations, and executes them through
-``stage.py`` inside fresh network, PID and mount namespaces (``unshare``), with
-the case's mock services and inert processes present. The adapter then
+``stage.py`` inside fresh network, PID, mount and IPC namespaces (``unshare``),
+with the case's mock services and inert processes present. The adapter then
 normalizes the output into entities. One JSONL row per (tool, case) goes to
 ``<out>/<tool>.jsonl``; verbatim tool output goes to ``<out>/raw/<tool>/``.
 
@@ -16,7 +16,8 @@ the tool's tree, which belongs to uid/gid 65534 for the run, and ``control/``
 tool's reach. Tools run as 65534 with ``/root`` and ``/home`` hidden (see
 ``stage.py``), so the scratch directory, ``tool_root`` (by default the
 directory holding ``tools.json``) and every path in ``tools.json`` must lie
-outside those and be reachable by that uid. Every run's ``work/`` belongs to
+outside those, and outside ``/var/tmp`` and ``/dev/shm``, which the stage
+replaces with an empty tmpfs, and be reachable by that uid. Every run's ``work/`` belongs to
 the same uid, so the scratch directory must also belong to the runner and give
 group and other nothing but search (0711, as the runner creates it), or a tool
 could list it and reach a concurrent run's tree. The runner refuses to start
@@ -88,7 +89,7 @@ from tools.shadowbench.cases.contract import (
 )
 from tools.shadowbench.cases.corpus import Case, Corpus, corpus_digest, load_corpus
 from tools.shadowbench.cases.fetch_code import checkout_problem
-from tools.shadowbench.cases.stage import HIDDEN, build_fakeproc
+from tools.shadowbench.cases.stage import HIDDEN, PRIVATE_TMP, build_fakeproc
 
 STAGE_TIMEOUT_GRACE = 120
 KILL_GRACE = 10.0
@@ -261,8 +262,11 @@ def prepare_scratch(scratch: Path | None) -> Path:
 
 
 def isolation_problems(scratch: Path, env: ToolEnv) -> list[str]:
-    """Why tools running as uid 65534 with ``/root`` and ``/home`` hidden could not run from here."""
-    hidden = [Path(p).resolve() for p in HIDDEN]
+    """Why tools running as uid 65534 with ``/root`` and ``/home`` hidden could not run from here.
+
+    The stage also replaces ``/var/tmp`` and ``/dev/shm`` with an empty tmpfs, which hides them alike.
+    """
+    hidden = [Path(p).resolve() for p in (*HIDDEN, *PRIVATE_TMP)]
 
     def hidden_root(path: Path) -> Path | None:
         resolved = path.resolve()
@@ -303,7 +307,7 @@ def isolation_problems(scratch: Path, env: ToolEnv) -> list[str]:
 
 
 def stage_command(spec_path: Path, out_path: Path) -> list[str]:
-    """The stage's command line: no network, its own PID and mount namespaces, gone when unshare dies.
+    """The stage's command line: no network, its own PID, mount and IPC namespaces, gone when unshare dies.
 
     ``-P`` keeps the working directory off ``sys.path``; the stage is found through ``PYTHONPATH``.
     """
@@ -317,6 +321,7 @@ def stage_command(spec_path: Path, out_path: Path) -> list[str]:
         "--propagation",
         "private",
         "--mount-proc",
+        "--ipc",
         "--",
         sys.executable,
         "-P",

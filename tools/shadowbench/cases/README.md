@@ -9,11 +9,13 @@ independent: the same maintainer wrote ShadowScan, the harness, the rubrics
 and every other tool's adapter.
 
 Third-party tools run as uid and gid 65534 with `no_new_privs`, inside fresh
-network, PID and mount namespaces, with an environment built from scratch and
-`/root` and `/home` hidden under empty tmpfs mounts (see Isolation below).
-That is still not a sandbox: a tool can read any world-readable file elsewhere
-on the host. Run the benchmark only on a disposable, externally isolated
-machine with no credentials.
+network, PID, mount and IPC namespaces, with an environment built from scratch,
+`/root` and `/home` hidden under empty tmpfs mounts and a fresh tmpfs over
+`/var/tmp` and `/dev/shm` for each case (see Isolation below). That is still
+not a sandbox: a tool can read any world-readable file elsewhere on the host,
+and the host's `/tmp`, which holds the default scratch directory, stays shared
+with the host and with other cases and tools. Run the benchmark only on a
+disposable, externally isolated machine with no credentials.
 
 ## Entry points
 
@@ -45,14 +47,15 @@ For each (tool, case) the runner creates `<scratch>/<tool>-<case>-XXXX/`
 and the tool's output and is handed to uid 65534 for the run, and `control/`,
 which only root can enter and which holds the stage's spec and result. It then
 starts `stage.py` as root under `unshare --net --pid --fork --kill-child
---mount --propagation private --mount-proc`, from `/` and with a fixed
+--mount --propagation private --mount-proc --ipc`, from `/` and with a fixed
 `PATH`.
 
 Before anything from the case runs, the stage checks that it is the init of a
 fresh PID namespace and not in the runner's mount namespace, sets
 `no_new_privs`, brings loopback up, mounts an empty tmpfs over `/root` and
-`/home`, and moves to `/`, so no process it starts inherits a working directory
-under a hidden path. It then serves the case's mock services on `127.0.0.1`,
+`/home` and a fresh, world-writable one over `/var/tmp` and `/dev/shm`, and
+moves to `/`, so no process it starts inherits a working directory under a
+hidden path. It then serves the case's mock services on `127.0.0.1`,
 starts the case's inert processes as uid 65534 with `work/` as their working
 directory, and runs the adapter's invocations as uid 65534 with no
 supplementary groups and exactly the environment each invocation declares.
@@ -73,9 +76,9 @@ unless:
   a listable scratch directory would let one tool reach a concurrent run's
   tree;
 * the scratch directory, `tool_root` (by default the directory holding
-  `tools.json`) and every absolute path in `tools.json` lie outside `/root`
-  and `/home`, which the stage hides, and uid 65534 can traverse to the
-  scratch directory;
+  `tools.json`) and every absolute path in `tools.json` lie outside `/root`,
+  `/home`, `/var/tmp` and `/dev/shm`, which the stage hides or replaces, and
+  uid 65534 can traverse to the scratch directory;
 * `gcc` can compile and statically link the inert process binary, which needs
   gcc and the C library's static archive (`glibc-static` or `libc6-dev`,
   depending on the distribution). A missing compiler or a failed link is

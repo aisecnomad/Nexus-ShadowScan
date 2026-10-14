@@ -283,7 +283,9 @@ def test_stage_runs_in_its_own_process_group_and_dies_with_unshare(
 ) -> None:
     runner._stage({"work": str(tmp_path), "invocations": []}, tmp_path, ROOT, 30)
     (call,) = fake_popen.calls
-    assert {"--net", "--pid", "--fork", "--kill-child", "--mount", "--mount-proc"} <= set(call["args"])
+    assert {"--net", "--pid", "--fork", "--kill-child", "--mount", "--mount-proc", "--ipc"} <= set(
+        call["args"]
+    )
     assert call["start_new_session"] is True
 
 
@@ -541,6 +543,17 @@ def test_isolation_problems_refuse_hidden_paths() -> None:
     assert any("scratch directory /root/shadowbench-scratch" in p for p in problems)
     assert any("tools.shadowscan.repo = /home/op/Project-Nexus" in p for p in problems)
     assert not any("tools.shadowscan.bin" in p for p in problems)
+
+
+@pytest.mark.skipif(not os.path.isdir("/var/tmp"), reason="needs /var/tmp")
+def test_isolation_problems_refuse_paths_under_the_temp_dirs_the_stage_replaces() -> None:
+    """The stage mounts an empty tmpfs over /var/tmp and /dev/shm, which would hide a run's tree there."""
+    config = {"tools": {"vet": {"bin": "/var/tmp/tools/vet"}}}
+    problems = runner.isolation_problems(
+        Path("/var/tmp/shadowbench-scratch"), ToolEnv(Path("/opt/nsb"), config)
+    )
+    assert any("scratch directory /var/tmp/shadowbench-scratch lies under /var/tmp" in p for p in problems)
+    assert any("tools.vet.bin = /var/tmp/tools/vet" in p for p in problems)
 
 
 @functools.cache
@@ -1145,3 +1158,28 @@ def test_run_one_reads_tool_output_that_no_other_process_can_relink_after_the_sw
     assert row["status"] == "ok", row
     assert "ROOT-ONLY-MARKER" not in json.dumps(row)
     assert {e["key"] for e in row["entities"]} == {"app:tool-output"}
+
+
+@needs_namespaces
+@pytest.mark.skipif(
+    shutil.which("ipcmk") is None or shutil.which("ipcs") is None, reason="needs ipcmk and ipcs"
+)
+def test_stage_gives_each_case_its_own_var_tmp_dev_shm_and_ipc(scratch: Path) -> None:
+    """What one tool left in /var/tmp, /dev/shm or System V IPC stayed on the host for the next case to read."""
+    mark = f"sb-left-{os.getpid()}"
+    leave = f"echo x > /var/tmp/{mark}; echo x > /dev/shm/{mark}; ipcmk -M 4096 >/dev/null; echo left"
+    look = f"ls /var/tmp/{mark} /dev/shm/{mark} 2>/dev/null | wc -l; ipcs -m | grep -c '^0x' || true"
+    try:
+        work, control = _dirs(scratch)
+        first = runner._stage(_spec(work, [_inv(work, leave)]), control, ROOT, 60)
+        assert first["error"] is None and first["runs"][0]["stdout"].strip() == "left", first
+        shutil.rmtree(work.parent)
+        work, control = _dirs(scratch)
+        second = runner._stage(_spec(work, [_inv(work, look)]), control, ROOT, 60)
+        assert second["error"] is None, second
+        assert second["runs"][0]["stdout"].split() == ["0", "0"]
+        assert not os.path.exists(f"/var/tmp/{mark}") and not os.path.exists(f"/dev/shm/{mark}")
+    finally:
+        for leftover in (f"/var/tmp/{mark}", f"/dev/shm/{mark}"):
+            if os.path.exists(leftover):
+                os.unlink(leftover)
