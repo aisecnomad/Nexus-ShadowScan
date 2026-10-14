@@ -12,13 +12,26 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from shadowscan.utils.safe_yaml import strict_bounded_safe_load
+import yaml
+
+from shadowscan.utils.safe_yaml import YAMLResourceLimitError, strict_bounded_safe_load
 
 LOCKFILE_NAMES = frozenset({"uv.lock", "poetry.lock", "pnpm-lock.yaml", "cargo.lock"})
 MAX_LOCKFILE_BYTES = 1_000_000
 MAX_PACKAGES = 4096
 MAX_EDGES = 16384
 MAX_STRUCTURE_NODES = 50000
+
+
+class LockfileError(ValueError):
+    """A lockfile the bounded parser does not inventory.
+
+    The message is always one of this module's fixed reasons, never input
+    text, so callers may show it to operators.
+    """
+
+
+_MALFORMED = "malformed lockfile content"
 
 
 @dataclass
@@ -56,7 +69,7 @@ def _bounded_structure(document: Any) -> None:
         value, depth = stack.pop()
         count += 1
         if count > MAX_STRUCTURE_NODES or depth > 64:
-            raise ValueError("lockfile structure limit exceeded")
+            raise LockfileError("lockfile structure limit exceeded")
         if isinstance(value, dict):
             stack.extend((v, depth + 1) for v in value.values())
         elif isinstance(value, list):
@@ -65,25 +78,25 @@ def _bounded_structure(document: Any) -> None:
 
 def _mapping(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or any(not isinstance(k, str) for k in value):
-        raise ValueError("lockfile object expected")
+        raise LockfileError("lockfile object expected")
     return value
 
 
 def _list(value: Any) -> list[Any]:
     if not isinstance(value, list):
-        raise ValueError("lockfile array expected")
+        raise LockfileError("lockfile array expected")
     return value
 
 
 def _name(value: Any) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[@A-Za-z0-9][@A-Za-z0-9_./+-]{0,255}", value):
-        raise ValueError("invalid lockfile package name")
+        raise LockfileError("invalid lockfile package name")
     return value
 
 
 def _version(value: Any) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+!-]{0,127}", value):
-        raise ValueError("invalid locked package version")
+        raise LockfileError("invalid locked package version")
     return value
 
 
@@ -105,15 +118,15 @@ def _toml_inventory(name: str, data: dict[str, Any]) -> LockInventory:
     result = LockInventory(name)
     packages = _list(data.get("package", []))
     if len(packages) > MAX_PACKAGES:
-        raise ValueError("lockfile package limit exceeded")
+        raise LockfileError("lockfile package limit exceeded")
     if name == "uv.lock" and (type(data.get("version")) is not int or data.get("version") != 1):
-        raise ValueError("unsupported uv lockfile version")
+        raise LockfileError("unsupported uv lockfile version")
     if name == "cargo.lock" and (type(data.get("version")) is not int or data.get("version") not in {3, 4}):
-        raise ValueError("unsupported Cargo lockfile version")
+        raise LockfileError("unsupported Cargo lockfile version")
     if name == "poetry.lock":
         version = _mapping(data.get("metadata", {})).get("lock-version")
         if version not in {"1.1", "2.0", "2.1"}:
-            raise ValueError("unsupported Poetry lockfile version")
+            raise LockfileError("unsupported Poetry lockfile version")
     for entry in packages:
         item = _mapping(entry)
         source = item.get("source")
@@ -135,7 +148,7 @@ def _toml_inventory(name: str, data: dict[str, Any]) -> LockInventory:
         elif name == "cargo.lock":
             for dependency in _list(item.get("dependencies", [])):
                 if not isinstance(dependency, str):
-                    raise ValueError("invalid Cargo dependency")
+                    raise LockfileError("invalid Cargo dependency")
                 parts = dependency.split(" ", 2)
                 package.dependencies.append((_name(parts[0]), _version(parts[1]) if len(parts) > 1 else None))
         else:
@@ -144,7 +157,7 @@ def _toml_inventory(name: str, data: dict[str, Any]) -> LockInventory:
                 package.dependencies.append((_name(dependency), None))
         result.edge_count += len(package.dependencies)
         if result.edge_count > MAX_EDGES:
-            raise ValueError("lockfile edge limit exceeded")
+            raise LockfileError("lockfile edge limit exceeded")
         result.packages.append(package)
     result.roots_known = any(p.root for p in result.packages)
     return result
@@ -155,7 +168,7 @@ def _pnpm_key(key: str) -> tuple[str, str]:
     # v6 /name@version and v9 name@version, including @scope/name.
     name, separator, version = key.rpartition("@")
     if not separator or not name:
-        raise ValueError("unsupported pnpm package key")
+        raise LockfileError("unsupported pnpm package key")
     return _name(name), _version(version)
 
 
@@ -176,12 +189,12 @@ def _pnpm_reference(name: str, reference: str) -> tuple[str, str] | None:
 def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
     version = str(data.get("lockfileVersion"))
     if version not in {"6", "6.0", "9", "9.0"}:
-        raise ValueError("unsupported pnpm lockfile version (supported: 6 and 9)")
+        raise LockfileError("unsupported pnpm lockfile version (supported: 6 and 9)")
     result = LockInventory("pnpm-lock.yaml")
     entries = _mapping(data.get("packages", {}))
     snapshots = _mapping(data.get("snapshots", {}))
     if len(entries) + len(snapshots) > MAX_PACKAGES:
-        raise ValueError("lockfile package limit exceeded")
+        raise LockfileError("lockfile package limit exceeded")
     grouped_snapshots: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for key, value in snapshots.items():
         identity = _pnpm_key(key)
@@ -200,13 +213,13 @@ def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
             for section in ("dependencies", "optionalDependencies"):
                 for dep_name, reference in _mapping(record.get(section, {})).items():
                     if not isinstance(reference, str):
-                        raise ValueError("invalid pnpm dependency reference")
+                        raise LockfileError("invalid pnpm dependency reference")
                     resolved = _pnpm_reference(dep_name, reference)
                     if resolved is not None:
                         package.dependencies.append(resolved)
         result.edge_count += len(package.dependencies)
         if result.edge_count > MAX_EDGES:
-            raise ValueError("lockfile edge limit exceeded")
+            raise LockfileError("lockfile edge limit exceeded")
         result.packages.append(package)
     importers = _mapping(data.get("importers", {}))
     # v6 permits a single root importer at the document level.
@@ -218,13 +231,13 @@ def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
             for dep_name, spec in _mapping(_mapping(importer).get(section, {})).items():
                 reference = _mapping(spec).get("version")
                 if not isinstance(reference, str):
-                    raise ValueError("invalid pnpm importer version")
+                    raise LockfileError("invalid pnpm importer version")
                 resolved = _pnpm_reference(dep_name, reference)
                 if resolved is not None:
                     roots.append(resolved)
     result.edge_count += len(roots)
     if result.edge_count > MAX_EDGES:
-        raise ValueError("lockfile edge limit exceeded")
+        raise LockfileError("lockfile edge limit exceeded")
     if importers:
         result.packages.append(LockedPackage("npm", "workspace", "0", "local", dependencies=roots, root=True))
         result.roots_known = True
@@ -254,15 +267,33 @@ def _relationships(result: LockInventory) -> None:
 
 
 def parse_lockfile(name: str, text: str) -> LockInventory:
-    """Parse a supported bounded lockfile, rejecting malformed/unsupported inputs."""
+    """Parse a supported bounded lockfile, rejecting malformed/unsupported inputs.
+
+    Every rejection is a :class:`LockfileError` whose message is a fixed
+    reason; parser messages, which can quote the input, are never passed on.
+    """
     name = name.lower()
     if name not in LOCKFILE_NAMES:
-        raise ValueError("unsupported lockfile")
-    if len(text.encode("utf-8")) > MAX_LOCKFILE_BYTES:
-        raise ValueError("lockfile byte limit exceeded")
-    data = strict_bounded_safe_load(text) if name == "pnpm-lock.yaml" else tomllib.loads(text)
-    data = _mapping(data)
-    _bounded_structure(data)
-    result = _pnpm_inventory(data) if name == "pnpm-lock.yaml" else _toml_inventory(name, data)
-    _relationships(result)
+        raise LockfileError("unsupported lockfile")
+    if len(text.encode("utf-8", errors="replace")) > MAX_LOCKFILE_BYTES:
+        raise LockfileError("lockfile byte limit exceeded")
+    try:
+        data = strict_bounded_safe_load(text) if name == "pnpm-lock.yaml" else tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        raise LockfileError("lockfile is not valid TOML") from None
+    except YAMLResourceLimitError:
+        raise LockfileError("lockfile YAML exceeds safety limits") from None
+    except (yaml.YAMLError, ValueError, TypeError):
+        raise LockfileError("lockfile is not valid YAML") from None
+    except RecursionError:
+        raise LockfileError("lockfile structure limit exceeded") from None
+    try:
+        data = _mapping(data)
+        _bounded_structure(data)
+        result = _pnpm_inventory(data) if name == "pnpm-lock.yaml" else _toml_inventory(name, data)
+        _relationships(result)
+    except LockfileError:
+        raise
+    except (ValueError, TypeError, AttributeError, KeyError, RecursionError):
+        raise LockfileError(_MALFORMED) from None
     return result

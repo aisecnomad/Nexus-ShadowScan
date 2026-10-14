@@ -300,7 +300,7 @@ def test_malformed_selected_lockfile_marks_scan_incomplete(tmp_path, index, name
     (tmp_path / name).write_text("small")
     result = Engine(_engine_config(tmp_path), index).run()
     assert not result.complete and result.findings
-    assert any(name in error and "manifest parsing failed" in error for error in result.stats[0].errors)
+    assert any(name in error and "lockfile parsing failed (" in error for error in result.stats[0].errors)
 
 
 def test_oversize_source_file_marks_coverage_incomplete_by_default(tmp_path, index):

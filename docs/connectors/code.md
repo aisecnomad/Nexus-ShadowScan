@@ -1050,9 +1050,28 @@ Nothing installs dependencies or launches a package manager. Presence in a lock
 file does not establish installation, execution, agency or authorization.
 
 Parsing is limited to the smaller of `max_file_size` and 1,000,000 UTF-8 bytes,
-4,096 packages, 16,384 dependency edges and 50,000 structural nodes/depth 64.
-Malformed inputs, unsupported format versions and exceeded limits are incomplete.
-The supported lockfiles no longer bypass analysis through oversize skip globs;
+4,096 packages (pnpm counts `packages` and `snapshots` entries together),
+16,384 dependency edges and 50,000 structural nodes/depth 64. A supported
+lockfile that is not inventoried (malformed or non-registry content, an
+unsupported format version such as `Cargo.lock` v1/v2 or `pnpm-lock.yaml` 5.x,
+an exceeded limit, a file over `max_file_size` or a symbolic link, which is
+never followed) is reported against that lockfile with a fixed reason, for
+example `Cargo.lock: lockfile inventory skipped (unsupported Cargo lockfile
+version)`. Diagnostics never quote lockfile content. How that gap counts
+depends on what else declares the dependencies:
+
+- Beside its own manifest in the same directory (`pyproject.toml` for
+  `uv.lock` and `poetry.lock`, `package.json` for `pnpm-lock.yaml`,
+  `Cargo.toml` for `Cargo.lock`), the gap is a warning and the scan stays
+  complete. The manifest's declared dependencies are still parsed, failing
+  closed as before; only the locked versions and transitive packages are
+  missing. Earlier revisions never read these lockfiles, so this keeps their
+  coverage claim.
+- Without that manifest (or with it excluded from the walk), the lockfile is
+  the directory's only dependency record. The gap is an error and the scan is
+  incomplete, as it is for an unparseable manifest.
+
+The supported lockfiles therefore no longer pass through `oversize_skip_globs`;
 other lockfile formats retain the documented exclusions.
 
 ## Optional model and packaged-binary inventory

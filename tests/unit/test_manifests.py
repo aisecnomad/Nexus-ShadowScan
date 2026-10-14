@@ -613,6 +613,18 @@ def test_lockfile_inventory_fixtures(name):
     assert all("http" not in p.source for p in inventory.packages)
 
 
+def _lockfile_reasons():
+    """Every fixed LockfileError reason in lockfiles.py."""
+    import re
+    from pathlib import Path
+
+    source = Path("shadowscan/connectors/code/lockfiles.py").read_text()
+    return frozenset(re.findall(r'LockfileError\("([^"]+)"\)', source))
+
+
+_LOCKFILE_REASONS = _lockfile_reasons()
+
+
 @pytest.mark.parametrize(
     ("name", "text"),
     [
@@ -637,8 +649,13 @@ def test_lockfile_inventory_fixtures(name):
     ],
 )
 def test_malformed_or_unsupported_lockfiles_are_explicit(name, text):
+    from shadowscan.connectors.code import lockfiles
+
     result = parse_manifest(name, text)
-    assert result is not None and result.errors
+    assert result is not None and result.lockfile is None and not result.deps
+    # A fixed reason from lockfiles.py; the filesystem connector scopes it.
+    assert result.lockfile_issue
+    assert result.lockfile_issue == lockfiles._MALFORMED or result.lockfile_issue in _LOCKFILE_REASONS
 
 
 def test_lockfile_cycles_ambiguous_versions_and_aliases():
@@ -684,10 +701,30 @@ def test_lockfile_parser_resource_limits(monkeypatch):
     result = parse_manifest(
         "uv.lock", 'version=1\n[[package]]\nname="a"\nversion="1"\n[[package]]\nname="b"\nversion="1"'
     )
-    assert result and result.errors
+    assert result and result.lockfile_issue == "lockfile package limit exceeded"
     monkeypatch.setattr(lockfiles, "MAX_STRUCTURE_NODES", 2)
     result = parse_manifest("uv.lock", "version=1\npackage=[]")
-    assert result and result.errors
+    assert result and result.lockfile_issue == "lockfile structure limit exceeded"
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "reason"),
+    [
+        ("uv.lock", "version = [", "lockfile is not valid TOML"),
+        ("pnpm-lock.yaml", "lockfileVersion: '9.0'\npackages: [unclosed", "lockfile is not valid YAML"),
+        ("pnpm-lock.yaml", "a: &a [*a]", "lockfile YAML exceeds safety limits"),
+        ("Cargo.lock", "version = 4\npackage = [" + "[" * 2000 + "]" * 2000 + "]", None),
+    ],
+)
+def test_lockfile_parser_errors_become_fixed_reasons(name, text, reason):
+    """Regression (#220 review F6): parser messages, which can quote input, are never passed on."""
+    from shadowscan.connectors.code.lockfiles import LockfileError, parse_lockfile
+
+    with pytest.raises(LockfileError) as raised:
+        parse_lockfile(name, text)
+    assert str(raised.value) in _LOCKFILE_REASONS | {"malformed lockfile content"}
+    if reason is not None:
+        assert str(raised.value) == reason
 
 
 def test_pnpm_peer_snapshots_cannot_union_transitive_reachability():

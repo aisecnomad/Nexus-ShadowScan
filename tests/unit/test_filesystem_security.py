@@ -1502,13 +1502,109 @@ def test_lockfile_inventory_is_separate_and_cannot_establish_agent(tmp_path, run
 
 
 @pytest.mark.parametrize("name", ["uv.lock", "poetry.lock", "Cargo.lock", "pnpm-lock.yaml"])
-def test_lockfile_oversize_is_incomplete_even_with_skip_glob(tmp_path, run_connector, name):
+def test_lone_lockfile_oversize_is_incomplete_even_with_skip_glob(tmp_path, run_connector, name):
+    # No adjacent manifest declares these dependencies: the lockfile is the
+    # directory's only dependency record, as an unparseable manifest would be.
     (tmp_path / name).write_text(" " * 256)
     findings, ctx = run_connector(
         "code.filesystem", path=str(tmp_path), max_file_size=128, oversize_skip_globs=["*"]
     )
     assert not findings
     assert ctx.stats.incomplete
+    assert any(name in error and "file exceeds max_file_size" in error for error in ctx.stats.errors)
+
+
+# Each supported lockfile beside the manifest that declares its direct dependencies.
+_LOCKFILE_MANIFESTS = {
+    "uv.lock": ("pyproject.toml", '[project]\nname = "app"\nversion = "1"\ndependencies = ["crewai"]\n'),
+    "poetry.lock": ("pyproject.toml", '[project]\nname = "app"\nversion = "1"\ndependencies = ["crewai"]\n'),
+    "pnpm-lock.yaml": ("package.json", '{"name": "app", "dependencies": {"@langchain/langgraph": "^0.2.0"}}'),
+    "Cargo.lock": (
+        "Cargo.toml",
+        '[package]\nname = "app"\nversion = "0.1.0"\n[dependencies]\nrig-core = "0.5"\n',
+    ),
+}
+
+
+def _beside_manifest(tmp_path, name, text):
+    manifest, content = _LOCKFILE_MANIFESTS[name]
+    (tmp_path / manifest).write_text(content)
+    (tmp_path / name).write_text(text)
+
+
+def _lockfile_warning(ctx, name):
+    (warning,) = [item for item in ctx.stats.warnings if f": {name}: " in item]
+    return warning
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "reason"),
+    [
+        # Cargo.lock v1 and v2 carry no version field.
+        (
+            "Cargo.lock",
+            '[[package]]\nname = "app"\nversion = "0.1.0"\n',
+            "unsupported Cargo lockfile version",
+        ),
+        ("Cargo.lock", "version = 2\n", "unsupported Cargo lockfile version"),
+        ("pnpm-lock.yaml", "lockfileVersion: 5.4\n", "unsupported pnpm lockfile version"),
+        (
+            "pnpm-lock.yaml",
+            "lockfileVersion: '9.0'\npackages:\n  app@https://example.invalid/app.tgz: {}\n",
+            "invalid locked package version",
+        ),
+        ("poetry.lock", '[metadata]\nlock-version = "99"\n', "unsupported Poetry lockfile version"),
+        ("uv.lock", "version = [\n", "lockfile is not valid TOML"),
+    ],
+)
+def test_unsupported_lockfile_beside_its_manifest_is_a_scoped_warning(
+    tmp_path, run_connector, name, text, reason
+):
+    """Regression (#220 review F2/F6): an unreadable lockfile must not make a complete scan exit 3."""
+    _beside_manifest(tmp_path, name, text)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    warning = _lockfile_warning(ctx, name)
+    assert f"lockfile inventory skipped ({reason}" in warning
+    assert _LOCKFILE_MANIFESTS[name][0] in warning
+    # The manifest's own dependency evidence still stands.
+    assert any(f.resource_type != "lockfile-inventory" for f in findings)
+    assert not any(f.resource_type == "lockfile-inventory" for f in findings)
+
+
+def test_lockfile_over_its_package_limit_beside_its_manifest_is_a_scoped_warning(tmp_path, run_connector):
+    packages = "".join(f"  pkg{i}@1.0.0: {{}}\n" for i in range(5000))
+    _beside_manifest(tmp_path, "pnpm-lock.yaml", "lockfileVersion: '9.0'\npackages:\n" + packages)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    assert "(lockfile package limit exceeded" in _lockfile_warning(ctx, "pnpm-lock.yaml")
+
+
+@pytest.mark.parametrize("name", sorted(_LOCKFILE_MANIFESTS))
+def test_oversize_lockfile_beside_its_manifest_is_a_scoped_warning(tmp_path, run_connector, name):
+    _beside_manifest(tmp_path, name, " " * 256)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), max_file_size=128)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    assert "(file exceeds max_file_size" in _lockfile_warning(ctx, name)
+
+
+def test_lockfile_beside_an_excluded_manifest_stays_incomplete(tmp_path, run_connector):
+    _beside_manifest(tmp_path, "Cargo.lock", "version = 2\n")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), exclude=["*.toml"])
+    assert ctx.stats.incomplete
+    assert any(
+        "Cargo.lock" in error and "unsupported Cargo lockfile version" in error for error in ctx.stats.errors
+    )
+
+
+def test_lockfile_failure_names_a_fixed_reason_without_input_text(tmp_path, run_connector):
+    sentinel = "lockfile-sensitive-sentinel"
+    (tmp_path / "pnpm-lock.yaml").write_text(f"lockfileVersion: '9.0'\npackages: [{sentinel}\n")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert ctx.stats.incomplete
+    (error,) = [item for item in ctx.stats.errors if "pnpm-lock.yaml" in item]
+    assert "lockfile parsing failed (lockfile is not valid YAML)" in error
+    assert sentinel not in json.dumps(ctx.stats.errors + ctx.stats.warnings)
 
 
 @pytest.mark.parametrize(
@@ -1734,6 +1830,18 @@ def test_supported_lockfile_symlink_is_not_silently_omitted(tmp_path, run_connec
     (tmp_path / "pnpm-lock.yaml").symlink_to(hidden)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert ctx.stats.incomplete
+    assert any("pnpm-lock.yaml" in error and "symbolic link" in error for error in ctx.stats.errors)
+
+
+def test_lockfile_symlink_beside_its_manifest_is_a_scoped_warning(tmp_path, run_connector):
+    hidden = tmp_path / "node_modules" / "lock.yaml"
+    hidden.parent.mkdir()
+    hidden.write_text("lockfileVersion: 9.0")
+    (tmp_path / "package.json").write_text(_LOCKFILE_MANIFESTS["pnpm-lock.yaml"][1])
+    (tmp_path / "pnpm-lock.yaml").symlink_to(hidden)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path))
+    assert not ctx.stats.incomplete
+    assert "(symbolic link is not followed" in _lockfile_warning(ctx, "pnpm-lock.yaml")
 
 
 def test_artifact_global_budget_is_charged_before_read(tmp_path):

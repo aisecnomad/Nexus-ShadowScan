@@ -490,6 +490,17 @@ _ANY_FILE_NAME = "\x00"
 _LFS_POINTER_TEXT = LFS_POINTER_PREFIX.decode("ascii")
 
 
+# The manifest that declares a supported lockfile's direct dependencies, in the
+# same directory. A lockfile beside it adds locked (largely transitive)
+# inventory; without it the lockfile is the directory's only dependency record.
+_LOCKFILE_MANIFESTS = {
+    "uv.lock": "pyproject.toml",
+    "poetry.lock": "pyproject.toml",
+    "pnpm-lock.yaml": "package.json",
+    "cargo.lock": "Cargo.toml",
+}
+
+
 def _never_read_by_name(name: str) -> bool:
     """Whether the walker skips ``name`` silently because it never carries evidence."""
     return name.lower() not in LOCKFILE_NAMES and (name in LOCK_FILES or name.endswith(_NEVER_READ_SUFFIXES))
@@ -2090,6 +2101,9 @@ class FilesystemConnector(BaseConnector):
         self._ownership_steps_remaining: dict[Path, int] = {}
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
         self._symlink_warnings: set[Path] = set()
+        # Supported lockfiles of the current root's walk -> whether their own
+        # manifest sits beside them (see _lockfile_gap).
+        self._lockfile_governed: dict[str, bool] = {}
         # (project root, path) of settings files the walk skipped (a link gap or a non-regular entry).
         self._unread_settings: list[tuple[str, str]] = []
         # Settings files of the scanned tree that a remote API snapshot did not include (set by
@@ -2273,6 +2287,44 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
+    def _lockfile_gap(self, rel: str, reason: str) -> None:
+        """Report a supported lockfile that was not inventoried, scoped to that lockfile.
+
+        ``reason`` is fixed text (a lockfiles.py reason or a walker condition),
+        never file content. Beside the manifest that declares its direct
+        dependencies, the manifest is still scanned and only the locked
+        inventory is missing: a warning that leaves the scan complete, as an
+        unread lockfile always did. Without that manifest the lockfile is the
+        directory's only dependency record, so the failure hides dependency
+        evidence and leaves coverage incomplete, as an unparseable manifest
+        does.
+        """
+        manifest = _LOCKFILE_MANIFESTS[PurePosixPath(rel).name.lower()]
+        if self._lockfile_governed.get(rel, False):
+            self.ctx.warn(
+                f"code.filesystem: {rel}: lockfile inventory skipped ({reason}); the dependencies "
+                f"declared in the adjacent {manifest} are still scanned, locked versions and "
+                "transitive dependencies are not inventoried",
+                incomplete=False,
+            )
+        else:
+            self.ctx.error(
+                f"code.filesystem: {rel}: lockfile parsing failed ({reason}); no adjacent {manifest} "
+                "declares these dependencies, so they are unscanned"
+            )
+
+    def _lockfile_manifest_beside(self, rel_dir: str, lockfile: str, filenames: Iterable[str]) -> bool:
+        """Whether the walk selects ``lockfile``'s own manifest in the same directory."""
+        manifest = _LOCKFILE_MANIFESTS[lockfile.lower()].lower()
+        for name in filenames:
+            if name.lower() != manifest:
+                continue
+            shown = _report_name(name)
+            rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
+            if not self._excluded_file(rel) and self._included(rel):
+                return True
+        return False
+
     def _skip_oversize(self, rel: str, size: int, reason: str | None = None) -> None:
         reason = reason or "generated or binary content is never analyzed"
         self.ctx.warn(
@@ -2321,8 +2373,11 @@ class FilesystemConnector(BaseConnector):
         """
         # Selected inventories must be checked or explicitly incomplete. Binary
         # payload size is unrelated to the bounded metadata read budget.
-        if self._model_artifact_name(name) or name.lower() in LOCKFILE_NAMES:
+        if self._model_artifact_name(name):
             return False
+        if name.lower() in LOCKFILE_NAMES:
+            self._lockfile_gap(rel, "file exceeds max_file_size")
+            return True
         if self._oversize_skippable(rel, name):
             self._skip_oversize(rel, size)
             return True
@@ -2580,6 +2635,8 @@ class FilesystemConnector(BaseConnector):
                 if self._excluded_file(rel) or not self._included(rel):
                     continue
                 p = Path(dirpath) / fn
+                if fn.lower() in LOCKFILE_NAMES:
+                    self._lockfile_governed[rel] = self._lockfile_manifest_beside(rel_dir, fn, filenames)
                 try:
                     if p.is_symlink():
                         gaps = walk.link_gaps
@@ -2710,6 +2767,10 @@ class FilesystemConnector(BaseConnector):
         # the target is scanned at its real path.
         target = _resolved_link_target(link, resolved_root)
         if target is not None and self._link_target_is_scanned(rel, target, resolved_root, walk):
+            return True
+        if PurePosixPath(rel).name.lower() in LOCKFILE_NAMES:
+            # Never followed; scoped like any other lockfile that was not inventoried.
+            self._lockfile_gap(rel, "symbolic link is not followed")
             return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names.
@@ -2966,6 +3027,7 @@ class FilesystemConnector(BaseConnector):
         entries: list[tuple[str, Path, str, int]] = []
         try:
             self._unread_settings = []
+            self._lockfile_governed = {}
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
             # Enumeration hit max_entries or its share of the deadline: the
@@ -3125,6 +3187,8 @@ class FilesystemConnector(BaseConnector):
         if path.name.lower() in LOCKFILE_NAMES:
             manifest = parse_manifest(rel, text)
             if manifest is not None:
+                if manifest.lockfile_issue is not None:
+                    self._lockfile_gap(rel, manifest.lockfile_issue)
                 self._file_errors(rel, manifest.errors)
                 if manifest.lockfile is not None:
                     self._lockfile_inventory(scan, rel, manifest.lockfile)
