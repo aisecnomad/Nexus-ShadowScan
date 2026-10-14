@@ -68,7 +68,7 @@ def test_keep_all_preserves_weak_hints_without_vendor_claims(run_connector, fixt
         "https://gemini.google.com@portal.example/app",
         # Python reads "portal.example\\" as userinfo; a browser goes to portal.example.
         "https://portal.example\\@gemini.google.com/cb",
-        "https://user:secret@gemini.google.com/cb",
+        "https://reviewer@gemini.google.com/cb",
         "https://gemini.google.com\\@portal.example/cb",
         "custom://gemini.google.com/app",
         "https://[invalid/app",
