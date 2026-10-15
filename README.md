@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/hero-banner.svg" alt="Nexus ShadowScan — open-source AI agent discovery" width="100%">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/hero-banner.svg" alt="Nexus ShadowScan — World-class open-source Shadow AI Agent discovery" width="100%">
 </p>
 
 # Nexus ShadowScan
@@ -12,6 +12,48 @@
 [![Coverage ≥80%](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#quality-gates)
 [![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/docs)
 [![PyPI: NexusShadowScan](https://img.shields.io/pypi/v/NexusShadowScan.svg)](https://pypi.org/project/NexusShadowScan/)
+
+## The Why - Why NexusShadowScan?
+
+Agents are no longer only Python scripts.
+They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
+Bedrock Agents provisioned by Terraform, MCP servers wired into every
+developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim.
+ShadowScan normalizes these observations into one finding model with evidence,
+so investigators or auditors can ask: 
+*Who owns this AI Agent? What can it do, and is it registered in the agent registry supplied for this scan?*
+
+| Observation | What it establishes | Next check |
+|---|---|---|
+| Source dependency, import, or configuration | A repository contains a potential integration. | Inspect executable code and deployment; comments, examples, and unused dependencies can mislead. |
+| Cloud or SaaS resource | The collector observed a configured resource within its granted scope. | Check resource state and authenticated runtime telemetry before claiming execution. |
+| Gateway event | The supplied log contains a request or tool-use signal. | Verify the log's origin, caller binding, and observation window before attributing it to a deployed agent. |
+| `shadow: true` | No single explicit binding in the **supplied** inventory matched the finding. | Confirm the inventory's scope and freshness; an unmatched finding alone does not prove unauthorized use. |
+
+## The How - How it works
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/architecture-data-flow.svg" alt="Nexus ShadowScan architecture: connectors collect per surface, analysis and correlation score findings, reconciliation compares them with the sanctioned inventory" width="95%">
+</p>
+
+```
+connectors ── live API (collect) or offline export (input) ──► records
+records ── analyze() against YAML signature packs ──► findings with evidence
+findings ── merge ─► correlate across surfaces ─► reconcile with inventory and trusted
+            registries ─► classify autonomy ─► score risk ─► (opt-in) LLM triage
+report ──── table · json · sarif · csv · markdown · html · cyclonedx · ocsf
+JSON reports ── diff · merge (fleet) · dashboard · controls · inventory stubs
+```
+
+Detection knowledge lives in YAML signature packs and threat and control
+references in YAML mapping catalogs, so adding a product is a data change, not
+a code change. Collection and analysis fail closed: an API error, a timeout, a
+limit, or a malformed export marks the scan incomplete (exit 3) rather than
+producing a smaller report that looks clean. Only the opt-in LLM triage is
+advisory; its failures are warnings, and it never changes scores. See
+[architecture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md)
+for the pipeline, the package layout, and the connector contract.
+
 
 **Discover evidence of shadow AI agents across your organization and reconcile it against your approved agent registry.**
 
@@ -183,13 +225,8 @@ such as an agent executor or tool-calling agent, rather than plain LLM calls.
 | LlamaIndex | ✓ | ✓ |  |  |  |  | agent constructs |
 | Pydantic AI | ✓ |  |  |  |  |  | any use |
 | Hugging Face smolagents | ✓ |  |  |  |  |  | any use |
-| Mastra |  | ✓ |  |  |  |  | any use |
-| Vercel AI SDK |  | ✓ |  |  |  |  | agent constructs |
-| LangChain4j |  |  | ✓ |  |  |  | agent constructs |
-| Spring AI |  |  | ✓ |  |  |  | agent constructs |
-| LangChainGo |  |  |  |  | ✓ |  | agent constructs |
 
-The grid shows 18 of 79 framework signatures; `shadowscan signatures list --category framework` lists all of them.
+The grid shows 13 of 79 framework signatures; `shadowscan signatures list --category framework` lists all of them.
 
 ### MCP servers and clients
 
@@ -243,9 +280,9 @@ endpoint and runtime connectors are in [Surfaces & connectors](#surfaces--connec
 
 ## Benchmarks
 
-Offline results from this repository's own benchmarks. The maintainer wrote
-ShadowScan, both corpora, their labels and the harnesses, so these numbers are
-regression evidence about the listed inputs. They are **not** independent review
+Offline results from this repository's own benchmarks. The maintainer and AI Agents (Claude, Codex, Grok, AntiGravity, etc.) as assistants wrote
+ShadowBench & Shadow AI Discovery, both corpora, their labels and the harnesses, so these numbers are
+regression evidence about the listed inputs. They are **not** independent reviews
 and **not** measured production precision or recall.
 
 | Track (run, version) | Inputs | ShadowScan result | Limits |
@@ -253,57 +290,9 @@ and **not** measured production precision or recall.
 | [ShadowBench estate, nine surfaces](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (2026-10-11, 0.1.2) | 137 authored vendor-format entities for one fictional estate: 87 positive, 27 control, 23 near-miss | Entity precision / recall / F1 91.2% / 95.4% / 93.3%; 83 of 87 positives found; 8 of 50 controls and near-misses flagged | Authored artifacts; frozen after one label-completeness pass in which every runnable tool ran once (it added one secondary anchor and one tolerated pair and changed no label); later ShadowScan runs on it are in-sample (below) |
 | [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision / recall / F1 99.8% / 94.8% / 97.2%; 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
 
-Each report also runs other open-source tools on their declared scope, which is
-narrower than nine surfaces; compare their in-scope columns in the report, not
-these headline numbers. After the 2026-10-11 estate run, ShadowScan's
-detection rules were changed with that run's errors in view (ambiguous Gemini
-names, Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
-serving-engine images, n8n HTTP model calls, ServiceNow flow names, and the
-Wudpecker note-taker). A ShadowScan run on the estate after those changes is
-in-sample: fewer errors on it are not evidence of better field accuracy. The
-[benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
+The[benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
 lists every benchmark with its protocol and limits.
 
-## The Why
-
-Agents are no longer only Python scripts.
-They are Copilot Studio bots built by HR, `n8n` flows with an *AI Agent* node, OAuth grants to meeting note-takers,
-Bedrock Agents provisioned by Terraform, MCP servers wired into every
-developer's editor, service principals with `Mail.ReadWrite` acting on behalf of nobody, and JWTs carrying an `act` claim.
-ShadowScan normalizes these observations into one finding model with evidence,
-so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
-registered in the agent registry supplied for this scan?*
-
-| Observation | What it establishes | Next check |
-|---|---|---|
-| Source dependency, import, or configuration | A repository contains a potential integration. | Inspect executable code and deployment; comments, examples, and unused dependencies can mislead. |
-| Cloud or SaaS resource | The collector observed a configured resource within its granted scope. | Check resource state and authenticated runtime telemetry before claiming execution. |
-| Gateway event | The supplied log contains a request or tool-use signal. | Verify the log's origin, caller binding, and observation window before attributing it to a deployed agent. |
-| `shadow: true` | No single explicit binding in the **supplied** inventory matched the finding. | Confirm the inventory's scope and freshness; an unmatched finding alone does not prove unauthorized use. |
-
-## How it works
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/architecture-data-flow.svg" alt="Nexus ShadowScan architecture: connectors collect per surface, analysis and correlation score findings, reconciliation compares them with the sanctioned inventory" width="95%">
-</p>
-
-```
-connectors ── live API (collect) or offline export (input) ──► records
-records ── analyze() against YAML signature packs ──► findings with evidence
-findings ── merge ─► correlate across surfaces ─► reconcile with inventory and trusted
-            registries ─► classify autonomy ─► score risk ─► (opt-in) LLM triage
-report ──── table · json · sarif · csv · markdown · html · cyclonedx · ocsf
-JSON reports ── diff · merge (fleet) · dashboard · controls · inventory stubs
-```
-
-Detection knowledge lives in YAML signature packs and threat and control
-references in YAML mapping catalogs, so adding a product is a data change, not
-a code change. Collection and analysis fail closed: an API error, a timeout, a
-limit or a malformed export marks the scan incomplete (exit 3) rather than
-producing a smaller report that looks clean. Only the opt-in LLM triage is
-advisory; its failures are warnings and it never changes scores. See
-[architecture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md)
-for the pipeline, the package layout and the connector contract.
 
 ## Surfaces & connectors
 
@@ -464,7 +453,7 @@ for where the code, tests, docs, tooling and benchmarks live.
 ## Evidence and assurance limits
 
 - **Evaluation corpora** are author-written regression cases, not independent field-precision estimates. See [evaluation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/evaluation.md).
-- **Benchmarks against other tools** use inputs and labels the same maintainer wrote. They show behaviour on those inputs, not field accuracy, and none is independent. See the [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md).
+- **Benchmarks against other tools** use inputs and labels the same maintainer wrote. They show behavior on those inputs, not field accuracy, and none is independent. See the [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md).
 - **Assurance results** use a frozen corpus of 42 public files labeled by two AI reviewers, not independent human ground truth; only the baseline run is out of sample.
 - **Canaries** validate named tenant controls when credentials are supplied; offline replay does not establish live acceptance. See [canaries](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/canaries.md).
 - **The acceptance verifier** validates supplied holdout and tenant evidence but cannot authenticate reviewer independence or manufacture tenant acceptance. See the [verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md).
@@ -502,9 +491,9 @@ for where the code, tests, docs, tooling and benchmarks live.
 Use synthetic, minimal examples in public reports. Scan results can contain
 credentials, personal data, and sensitive inventory even after redaction.
 
-## Safety notes
+## Safety & Security notes
 
-* Known credential formats, sensitive configuration fields, and credential-bearing URLs are **redacted** before findings or sanitized record exports are persisted. Redaction cannot identify every arbitrary secret; reports still contain security-sensitive inventory data.
+* Known credential formats, sensitive configuration fields, and credential-bearing URLs are **redacted** before findings or sanitized record exports are persisted. Redaction cannot identify every arbitrary secret; reports may still contain security-sensitive inventory data.
 * Secret stores (Secrets Manager, Key Vault, Secret Manager, OCI Vault) are read for **names only**.
 * JWTs are never persisted; findings reference a truncated hash.
 * Built-in collectors inspect provider resources using read operations. Scope the audit identity to the documented read permissions and review any enabled third-party plugin separately.
