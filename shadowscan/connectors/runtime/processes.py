@@ -654,6 +654,10 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
     # --------------------------------------------------------------- analyse
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         runs: dict[tuple[str, str, str], _Run] = {}
+        # Records stream in while collect() is still enumerating /proc. Findings carry the
+        # kernel-thread count in their inspection limitations, so none is built before the
+        # loop has consumed every record and that count is final.
+        indicated: list[dict[str, Any]] = []
         for raw in records:
             self.ctx.examined()
             rec = self._normalise(raw)
@@ -663,7 +667,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             if match is None:
                 inspection = rec["inspection"]
                 if inspection and (inspection["mapped_libraries"] or inspection["open_model_formats"]):
-                    yield self._inspection_finding(rec)
+                    del rec["argv"]  # unused by the finding; not retained past its record
+                    indicated.append(rec)
                 continue
             rule, package = match
             key = (rec["host"], rec["user"], rule.tool)
@@ -689,6 +694,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 run.inspections.append({"pid": rec["pid"], **rec["inspection"]})
             if rec["truncated"]:
                 run.truncated += 1
+        for rec in indicated:
+            yield self._inspection_finding(rec)
         for run in sorted(runs.values(), key=lambda r: (r.host, r.user, r.rule.tool)):
             yield self._finding(run)
 

@@ -747,6 +747,19 @@ def test_large_maps_truncate_only_their_own_source(run_connector, monkeypatch, t
     assert not any("inspection omitted" in w for w in ctx.stats.warnings)
 
 
+def _kernel_thread(proc, name):
+    """A kernel thread's /proc entry: PF_KTHREAD in the stat flags, no exe link, no user-space state."""
+    kthread = proc / name
+    (kthread / "ns").mkdir(parents=True)
+    (kthread / "ns" / "pid").write_text("namespace")
+    (kthread / "stat").write_text(f"{name} (kthreadd) S 0 0 0 0 -1 2129984 " + " ".join(["0"] * 12) + " 2 0")
+    (kthread / "cmdline").write_bytes(b"")
+    (kthread / "maps").write_bytes(b"")
+    (kthread / "fd").mkdir()
+    (kthread / "environ").write_bytes(b"")
+    return kthread
+
+
 @pytest.mark.parametrize("view", ["root", "non-root"])
 @pytest.mark.parametrize(
     "options", [{"inspect_env_keys": ["OLLAMA_MODELS"]}, {"inspect_maps": True}, {"inspect_fds": True}]
@@ -755,15 +768,7 @@ def test_kernel_threads_are_skipped_without_marking_the_scan_incomplete(
     run_connector, monkeypatch, tmp_path, view, options
 ):
     pid = _inspection_proc(tmp_path, monkeypatch, argv=b"claude\0")
-    kthread = pid.parent / "2"
-    (kthread / "ns").mkdir(parents=True)
-    (kthread / "ns" / "pid").write_text("namespace")
-    # PF_KTHREAD in the stat flags; no exe link, an empty command line and no user-space state.
-    (kthread / "stat").write_text("2 (kthreadd) S 0 0 0 0 -1 2129984 " + " ".join(["0"] * 12) + " 2 0")
-    (kthread / "cmdline").write_bytes(b"")
-    (kthread / "maps").write_bytes(b"")
-    (kthread / "fd").mkdir()
-    (kthread / "environ").write_bytes(b"")
+    kthread = _kernel_thread(pid.parent, "2")
     if view == "non-root":  # every per-process source of a kernel thread is EACCES to other accounts
         original = runtime_processes.os.open
         inode = kthread.stat().st_ino
@@ -832,3 +837,27 @@ def test_decided_launcher_command_lines_past_the_limit_are_complete(run_connecto
 )
 def test_classification_complete_reports_whether_packages_finished_deciding(argv, complete):
     assert runtime_processes._classification_complete(argv) is complete
+
+
+def test_inspection_findings_report_the_final_kernel_thread_count(run_connector, monkeypatch, tmp_path):
+    # An unclassified process with model indicators, enumerated between two kernel threads:
+    # /proc directory order is not numeric, so one is counted before it and one after.
+    pid = _inspection_proc(tmp_path, monkeypatch)
+    proc = pid.parent
+    _kernel_thread(proc, "2")
+    _kernel_thread(proc, "3")
+    original = runtime_processes.os.scandir
+
+    def ordered(path=".", *args, **kwargs):
+        if path != proc:
+            return original(path, *args, **kwargs)
+        with original(path) as entries:
+            return sorted(entries, key=lambda e: ["2", "12", "3"].index(e.name) if e.name.isdigit() else -1)
+
+    monkeypatch.setattr(runtime_processes.os, "scandir", ordered)
+    findings, ctx = run_connector("runtime.processes", label="box", inspect_fds=True)
+    assert len(findings) == 1 and not ctx.stats.incomplete
+    assert findings[0].kind == Kind.LOCAL_MODEL and findings[0].metadata["pids"] == [12]
+    kernel = [line for line in findings[0].metadata["inspection_limitations"] if "kernel thread" in line]
+    assert len(kernel) == 1 and kernel[0].startswith("2 kernel thread(s) were skipped")
+    assert "argv" not in json.dumps(findings[0].to_dict())
