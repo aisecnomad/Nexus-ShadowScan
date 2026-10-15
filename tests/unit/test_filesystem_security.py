@@ -1841,6 +1841,50 @@ def test_gguf_hostile_array_counts_fail_fast_without_reading(tmp_path, payload):
         inspect_artifact(artifact)
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        struct.pack("<I", 8) + _gguf_bytes(b"32"),  # a string, not uint32
+        struct.pack("<I", 4) + struct.pack("<I", 0),  # uint32 outside the valid range
+        struct.pack("<I", 4) + struct.pack("<I", 48),  # uint32, not a power of two
+    ],
+)
+def test_gguf_alignment_of_the_wrong_kind_or_value_is_rejected(tmp_path, payload):
+    from shadowscan.connectors.code.model_artifacts import inspect_artifact
+
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(b"GGUF" + struct.pack("<IQQ", 3, 0, 1) + _gguf_bytes(b"general.alignment") + payload)
+    with pytest.raises(ValueError, match="alignment"):
+        inspect_artifact(artifact)
+
+
+def test_gguf_alignment_as_an_over_long_string_array_is_rejected_not_truncated(tmp_path):
+    from shadowscan.connectors.code.model_artifacts import MAX_ARRAY_STRINGS, inspect_artifact
+
+    # A string array longer than the walk bound in the alignment's place used to
+    # raise the truncation signal before the alignment check ran, so the file was
+    # inventoried as a truncated GGUF instead of rejected.
+    count = MAX_ARRAY_STRINGS + 976
+    metadata = (
+        _gguf_bytes(b"general.alignment") + struct.pack("<IIQ", 9, 8, count) + _gguf_bytes(b"t") * count
+    )
+    descriptor = _gguf_bytes(b"x") + struct.pack("<IQIQ", 1, 1, 0, 0)
+    data = b"GGUF" + struct.pack("<IQQ", 3, 1, 1) + metadata + descriptor
+    data += b"\0" * (-len(data) % 32) + b"\0" * 4
+    artifact = tmp_path / "model.gguf"
+    artifact.write_bytes(data)
+    with pytest.raises(ValueError, match="invalid GGUF alignment"):
+        inspect_artifact(artifact)
+    # The same array under another key is still the bounded, reported truncation.
+    other = metadata.replace(_gguf_bytes(b"general.alignment"), _gguf_bytes(b"tokenizer.ggml.tokens"))
+    data = b"GGUF" + struct.pack("<IQQ", 3, 1, 1) + other + descriptor
+    data += b"\0" * (-len(data) % 32) + b"\0" * 4
+    artifact.write_bytes(data)
+    result = inspect_artifact(artifact)
+    assert result and result.metadata["metadata_truncated"] is True
+    assert any("that array, the keys after it" in limitation for limitation in result.limitations)
+
+
 def test_extensionless_text_candidates_cost_only_a_probe(tmp_path):
     from shadowscan.connectors.code import model_artifacts
 

@@ -169,9 +169,14 @@ def _gguf(reader: _Reader) -> ArtifactInspection:
                 raise ValueError("duplicate GGUF metadata key")
             keys.add(key)
             kind = reader.unpack("<I")[0]
+            # The alignment's kind is checked before its value is walked: a
+            # string array in its place must not end the walk as a truncation
+            # and leave the invalid alignment unreported.
+            if key == b"general.alignment" and kind != 4:
+                raise ValueError("invalid GGUF alignment")
             value = _gguf_value(reader, kind)
             if key == b"general.alignment":
-                if kind != 4 or value is None or not 1 <= value <= 65536 or value & (value - 1):
+                if value is None or not 1 <= value <= 65536 or value & (value - 1):
                     raise ValueError("invalid GGUF alignment")
                 alignment = value
     except _MetadataTruncated:
@@ -206,7 +211,7 @@ def _gguf(reader: _Reader) -> ArtifactInspection:
     if truncated:
         result.limitations.append(
             "GGUF metadata was truncated at a string array longer than the walk bound; "
-            "later keys and the tensor descriptors were not read or validated."
+            "that array, the keys after it and the tensor descriptors were not read or validated."
         )
     return result
 
