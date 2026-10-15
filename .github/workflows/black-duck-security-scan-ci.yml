@@ -10,9 +10,12 @@ name: Black Duck
 # action gets no GitHub token, so it neither comments on pull requests nor
 # uploads SARIF; either would need a write scope that
 # tests/test_repository_policy.py must allow for this job explicitly.
-# Only the wrapper action is pinned: at run time it downloads the current
-# Bridge CLI. Pin that too with `bridgecli_download_version` once a reviewed
-# version is chosen.
+# The wrapper action is pinned by commit SHA, and the Bridge CLI it downloads
+# at run time must be pinned too: the job also requires the repository
+# variable BRIDGECLI_DOWNLOAD_VERSION, set to a reviewed Bridge CLI version,
+# and passes it as `bridgecli_download_version`. Configuring a service
+# without that pin keeps the job skipped, so an unreviewed current CLI is
+# never downloaded.
 on:
   push:
     branches: [main]
@@ -37,6 +40,7 @@ jobs:
     if: >-
       (vars.BLACKDUCKSCA_URL != '' || vars.COVERITY_URL != '' ||
        vars.POLARIS_SERVER_URL != '' || vars.SRM_URL != '') &&
+      vars.BRIDGECLI_DOWNLOAD_VERSION != '' &&
       github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
@@ -51,6 +55,7 @@ jobs:
       - name: Black Duck security scan
         uses: blackduck-inc/black-duck-security-scan@152247222aa9cd38124acd5c0cf60f4db71adc3f # v2.11.0
         with:
+          bridgecli_download_version: ${{ vars.BRIDGECLI_DOWNLOAD_VERSION }}
           blackducksca_url: ${{ vars.BLACKDUCKSCA_URL }}
           blackducksca_token: ${{ secrets.BLACKDUCKSCA_TOKEN }}
           coverity_url: ${{ vars.COVERITY_URL }}
