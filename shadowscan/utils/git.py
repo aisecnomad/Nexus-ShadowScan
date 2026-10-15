@@ -772,6 +772,68 @@ def git_config_overlay(pairs: list[tuple[str, str]]) -> dict[str, str]:
     return env
 
 
+def validate_clone_destination(url: str, *, allow_private: bool | None = None) -> None:
+    """Resolve the clone URL and reject private, metadata, and loopback addresses.
+
+    Git resolves hostnames independently of the scanner's HTTP stack, so the
+    preflight DNS check in ``validate_url`` cannot cover git's own HTTPS
+    transport.  This narrows the TOCTOU gap by validating the destination
+    immediately before the clone starts.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+
+    from shadowscan.utils.http import _allow_private_origin, _blocked_host, _blocked_ip
+
+    allow = _allow_private_origin.get() if allow_private is None else allow_private
+
+    try:
+        parsed = urlsplit(url)
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("Invalid clone URL") from None
+
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Clone URL has no hostname")
+
+    host = host.strip("[]")
+    port = parsed.port or 443
+
+    if not allow and _blocked_host(host):
+        raise ValueError("Refusing clone from loopback, link-local, private, or cloud-metadata destination")
+
+    if allow:
+        return
+
+    is_literal = False
+    try:
+        addr = ipaddress.ip_address(host)
+        is_literal = True
+    except ValueError:
+        pass
+
+    if is_literal:
+        if _blocked_ip(addr):
+            raise ValueError(
+                "Refusing clone from loopback, link-local, private, or cloud-metadata destination"
+            )
+    else:
+        try:
+            infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        except socket.gaierror:
+            infos = []
+        for info in infos:
+            try:
+                addr = ipaddress.ip_address(info[4][0])
+            except (ValueError, TypeError, IndexError):
+                continue
+            if _blocked_ip(addr):
+                raise ValueError(
+                    "Refusing clone from loopback, link-local, private, or cloud-metadata destination"
+                ) from None
+
+
 def clone_environment(origin: str, token: str | None, username: str) -> dict[str, str]:
     """Scope authentication to a verified HTTPS origin and disable redirects."""
     import base64

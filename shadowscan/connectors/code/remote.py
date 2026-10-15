@@ -47,6 +47,7 @@ from shadowscan.utils.git import (
     register_checkout,
     run_bounded_clone,
     unregister_checkout,
+    validate_clone_destination,
     validate_git_ref,
 )
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
@@ -618,6 +619,7 @@ class RemoteRepositoryConnector(BaseConnector):
         path = urlsplit(url).path.rstrip("/").removesuffix(".git").lower()
         if not isinstance(name, str) or path != f"{self._clone_path_prefix()}/{name.strip('/')}".lower():
             raise ValueError("clone URL does not name the listed repository")
+        validate_clone_destination(url)
         env = clone_environment(origin, self.token, self.clone_username)
         cmd = [
             *git_argv_prefix(),

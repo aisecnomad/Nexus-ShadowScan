@@ -20,6 +20,7 @@ from shadowscan.utils.git import (
     git_argv_prefix,
     git_config_overlay,
     safe_git_env,
+    validate_clone_destination,
     validate_git_ref,
 )
 
@@ -66,6 +67,56 @@ def test_clone_environment_ignores_system_config_and_sets_hooks(monkeypatch):
     assert os.devnull in values
     assert any(k.startswith("http.https://github.com/.extraheader") for k in keys)
     assert git_argv_prefix()[1:3] == ["-c", f"core.hooksPath={os.devnull}"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://127.0.0.1/repo.git",
+        "https://169.254.169.254/repo.git",
+        "https://[::1]/repo.git",
+        "https://metadata.google.internal/repo.git",
+        "https://localhost/repo.git",
+        "https://10.0.0.1/repo.git",
+    ],
+)
+def test_validate_clone_destination_rejects_private_addresses(url):
+    with pytest.raises(ValueError, match="Refusing clone"):
+        validate_clone_destination(url)
+
+
+def test_validate_clone_destination_accepts_public_url(monkeypatch):
+    import socket
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))],
+    )
+    validate_clone_destination("https://github.com/acme/repo.git")
+
+
+def test_validate_clone_destination_rejects_dns_to_private(monkeypatch):
+    import socket
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))],
+    )
+    with pytest.raises(ValueError, match="Refusing clone"):
+        validate_clone_destination("https://evil.example.com/repo.git")
+
+
+def test_validate_clone_destination_allows_private_when_permitted(monkeypatch):
+    import socket
+
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 443))],
+    )
+    validate_clone_destination("https://internal.corp/repo.git", allow_private=True)
 
 
 def test_github_clone_skips_hostile_branch(index, monkeypatch):

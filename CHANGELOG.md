@@ -152,6 +152,24 @@ summarizes each release for people who install and operate ShadowScan.
 - `terminal_text` and saved reports escape every Unicode format character, the
   variation selectors and other blank characters.
 
+### Security hardening: plugin isolation, git DNS pinning, exit watchdog (October 15)
+
+- **Plugin process isolation by default.** `plugin_execution` now defaults
+  to `process` so third-party plugins run in isolated child processes
+  instead of sharing the scanner's address space.  Operators can still set
+  `plugin_execution: thread` in configuration to restore the previous
+  behavior.
+- **Pre-clone DNS validation.** `validate_clone_destination()` resolves the
+  clone URL hostname and rejects private, loopback, link-local, and
+  cloud-metadata addresses before handing the URL to git, narrowing the
+  TOCTOU gap between the HTTP-layer preflight check and git's own DNS
+  resolution.
+- **Bounded exit watchdog for abandoned workers.** When the engine detects
+  timed-out connector workers, a 30-second daemon-thread watchdog arms
+  automatically so the CLI process cannot hang indefinitely during report
+  emission or clone cleanup.  The watchdog calls `os._exit()` as a last
+  resort if the normal exit path blocks.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

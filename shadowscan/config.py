@@ -505,7 +505,7 @@ class ScanConfig:
     incremental: bool = False
     state_dir: str | None = None
     plugins: list[str] = field(default_factory=list)
-    plugin_execution: str = "thread"
+    plugin_execution: str = "process"
     allow_signature_override: bool = False
     allow_private_origin: bool = False
     allow_instance_credentials: bool = False
@@ -701,7 +701,7 @@ class ScanConfig:
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
-            plugin_execution=opts.get("plugin_execution", "thread"),
+            plugin_execution=opts.get("plugin_execution", "process"),
             allow_signature_override=_boolean_option(
                 opts.get("allow_signature_override", False), "allow_signature_override"
             ),
