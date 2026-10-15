@@ -750,3 +750,30 @@ def test_cloudtrail_trace_reads_only_the_hops_that_can_match_on_a_large_export(m
     assert len(result["observations"]) == 100
     assert {o["assumption_status"] for o in result["observations"]} == {"linked"}
     assert {o["assumption"]["eventID"] for o in result["observations"]} == {"assumption-17"}
+
+
+@pytest.mark.parametrize("stamp", ["0001-01-01T00:00:00+14:00", "9999-12-31T23:59:59-14:00"])
+@pytest.mark.parametrize("field", ["eventTime", "sessionCreatedAt", "sessionExpiresAt"])
+def test_cloudtrail_timestamp_outside_the_utc_range_is_invalid_not_a_crash(index, field, stamp):
+    # The value parses, but shifting it to UTC overflows datetime; that is an invalid
+    # timestamp for this event, never an exception that abandons the rest of the export.
+    from shadowscan.connectors.cloud.aws_lineage import _parse_time
+
+    assert _parse_time(stamp) is None
+    assumption, invocation, _ = _lineage_records()
+    broken = json.loads(json.dumps(assumption if field == "sessionExpiresAt" else invocation))
+    broken["eventID"] = "overflow-1"
+    if field == "eventTime":
+        broken["eventTime"] = stamp
+    elif field == "sessionCreatedAt":
+        broken["userIdentity"]["sessionContext"]["attributes"]["creationDate"] = stamp
+    else:
+        broken["responseElements"]["credentials"]["expiration"] = stamp
+    findings, ctx = _lineage(index, [broken, assumption, invocation])
+    assert ctx.stats.incomplete
+    (finding,) = findings
+    assert finding.metadata["events"] == (1 if field == "sessionExpiresAt" else 2)
+    lineage = finding.metadata["cloudtrail_lineage"]
+    assert "invalid-timestamp" in lineage["limits"]
+    # The record after the overflowing one was still analyzed.
+    assert any(o["eventID"] == "invocation-17" for o in lineage["observations"])

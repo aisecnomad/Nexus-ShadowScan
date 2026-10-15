@@ -91,13 +91,25 @@ def normalize_detail(detail: dict[str, Any], region: str | None = None) -> dict[
 
 
 def _parse_time(value: Any) -> datetime | None:
-    """CloudTrail's display format first: ``parse_timestamp`` reads it as RFC 2822 and drops the meridian."""
+    """A UTC timestamp, or None when no accepted spelling reads the value.
+
+    CloudTrail's display format comes first: ``parse_timestamp`` reads it as
+    RFC 2822 and drops the meridian. A value that parses but cannot be
+    expressed in UTC (an offset pushing it outside the datetime range) is
+    invalid, not a crash that abandons the rest of the export.
+    """
     if isinstance(value, str):
         try:
             return datetime.strptime(value, _CLOUDTRAIL_TIME_FORMAT).replace(tzinfo=UTC)
         except ValueError:
             pass
-    return parse_timestamp(value)
+    stamp = parse_timestamp(value)
+    if stamp is None:
+        return None
+    try:
+        return stamp.astimezone(UTC)
+    except (OverflowError, ValueError):
+        return None
 
 
 def _usable(value: Any) -> TypeGuard[str]:
