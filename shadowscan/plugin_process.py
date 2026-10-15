@@ -29,6 +29,9 @@ from typing import TYPE_CHECKING, Any
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import Signature, SignatureIndex
+from shadowscan.utils.credential_identity import (
+    _DOMAIN as _CREDENTIAL_IDENTITY_DOMAIN,
+)
 from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
 from shadowscan.utils.crypto import (
     MAX_IDENTITY_MATERIAL_BYTES,
@@ -305,17 +308,23 @@ class _WorkerHandle:
             _stop(self._process)
 
 
-def _rewrite_identity_values(value: Any, replacements: dict[str, str]) -> Any:
+def _rewrite_identity_values(
+    value: Any, replacements: dict[str, str], *, deadline: float | None = None
+) -> Any:
     if not replacements:
         return value
 
     def rewrite(item: Any, depth: int = 0) -> Any:
+        if deadline is not None:
+            _remaining(deadline)
         if depth > 128:
             raise ValueError("plugin identity nesting exceeds safety limit")
         if isinstance(item, str):
             chunks: list[str] = []
             end = 0
-            for match in _IDENTITY_TEXT_WINDOW.finditer(item):
+            for number, match in enumerate(_IDENTITY_TEXT_WINDOW.finditer(item)):
+                if deadline is not None and number % 1024 == 0:
+                    _remaining(deadline)
                 replacement = replacements.get(match[1])
                 if replacement is not None and match.start() >= end:
                     chunks.extend((item[end : match.start()], replacement))
@@ -336,7 +345,67 @@ def _rewrite_identity_values(value: Any, replacements: dict[str, str]) -> Any:
     return rewrite(value)
 
 
-def _rekey_result(data: dict[str, Any], run_key: bytes, worker_key: bytes) -> dict[str, Any]:
+def _allowed_identity_message(message: bytes) -> bool:
+    if message.startswith(_CREDENTIAL_IDENTITY_DOMAIN):
+        return True
+    try:
+        fields = strict_json_loads(message)
+    except (ValueError, UnicodeError, RecursionError):
+        return False
+    if not isinstance(fields, list) or not fields or not isinstance(fields[0], str):
+        return False
+    domains = {
+        "shadowscan.gateway.scope.v1": 3,
+        "shadowscan.gateway.credential.v1": 3,
+        "shadowscan.gateway.caller.v1": 2,
+    }
+    if fields[0] in domains:
+        return len(fields) == domains[fields[0]] and all(isinstance(value, str) for value in fields[1:])
+    # Legacy gateway source IDs have no prefix. Permit only their exact shape
+    # and absolute-path/empty source slot, never arbitrary unprefixed messages.
+    if (
+        len(fields) not in {7, 8}
+        or (fields[0] != "" and not os.path.isabs(fields[0]))
+        or (fields[1] is not None and not isinstance(fields[1], str))
+        or (fields[2] is not None and not isinstance(fields[2], str))
+        or type(fields[3]) is not int
+        or fields[3] <= 0
+        or type(fields[4]) is not bool
+        or type(fields[5]) is not int
+        or fields[5] <= 0
+        or not isinstance(fields[6], list)
+    ):
+        return False
+    for binding in fields[6]:
+        if (
+            not isinstance(binding, dict)
+            or not {"code_resource", "caller", "scope"} <= set(binding)
+            or not isinstance(binding["code_resource"], str)
+            or not isinstance(binding["caller"], str)
+            or not isinstance(binding["scope"], dict)
+            or any(
+                key not in {"tenant", "account", "project", "workspace"} or not isinstance(value, str)
+                for key, value in binding["scope"].items()
+            )
+        ):
+            return False
+    return len(fields) == 7 or (
+        isinstance(fields[7], list) and all(isinstance(value, str) for value in fields[7])
+    )
+
+
+def _decode_findings(records: list[Any], deadline: float | None) -> list[Finding]:
+    findings = []
+    for item in records:
+        if deadline is not None:
+            _remaining(deadline)
+        findings.append(Finding.from_dict(item))
+    return findings
+
+
+def _rekey_result(
+    data: dict[str, Any], run_key: bytes, worker_key: bytes, *, deadline: float | None = None
+) -> dict[str, Any]:
     """Validate ephemeral identity inputs and restore the thread-mode public identity."""
     material = data.pop("identity_material")
     if not isinstance(material, list) or len(material) > MAX_IDENTITY_MATERIAL_ENTRIES:
@@ -349,6 +418,8 @@ def _rekey_result(data: dict[str, Any], run_key: bytes, worker_key: bytes) -> di
     seen = set()
     size = 0
     for entry in material:
+        if deadline is not None:
+            _remaining(deadline)
         if not isinstance(entry, dict) or set(entry) != {"digest", "message"}:
             raise ValueError("invalid plugin identity material entry")
         digest, encoded = entry["digest"], entry["message"]
@@ -368,11 +439,18 @@ def _rekey_result(data: dict[str, Any], run_key: bytes, worker_key: bytes) -> di
         if digest.startswith("ss-"):
             if not hmac.compare_digest(digest, finding_identity_digest(message)):
                 raise ValueError("invalid plugin finding identity material authentication")
-        elif not hmac.compare_digest(digest, hmac.digest(worker_key, message, "sha256").hex()):
-            raise ValueError("invalid plugin identity material authentication")
+        else:
+            if not _allowed_identity_message(message):
+                raise ValueError("unsupported plugin identity domain")
+            if not hmac.compare_digest(digest, hmac.digest(worker_key, message, "sha256").hex()):
+                raise ValueError("invalid plugin identity material authentication")
         verified.append((digest, message))
     for digest, message in verified:
-        restored_message = _rewrite_identity_message(message, ascii_replacements, binary_replacements)
+        if deadline is not None:
+            _remaining(deadline)
+        restored_message = _rewrite_identity_message(
+            message, ascii_replacements, binary_replacements, deadline=deadline
+        )
         if digest.startswith("ss-"):
             finding_messages[digest] = message
             restored_id = finding_identity_digest(restored_message)
@@ -385,11 +463,13 @@ def _rekey_result(data: dict[str, Any], run_key: bytes, worker_key: bytes) -> di
         replacements[digest] = hmac.digest(run_key, restored_message, "sha256").hex()
         ascii_replacements[digest.encode("ascii")] = replacements[digest].encode("ascii")
         binary_replacements[bytes.fromhex(digest)] = bytes.fromhex(replacements[digest])
-    original = [Finding.from_dict(item) for item in data["findings"]]
-    restored: dict[str, Any] = _rewrite_identity_values(data, replacements)
-    changed = [Finding.from_dict(item) for item in restored["findings"]]
+    original = _decode_findings(data["findings"], deadline)
+    restored: dict[str, Any] = _rewrite_identity_values(data, replacements, deadline=deadline)
+    changed = _decode_findings(restored["findings"], deadline)
     finding_ids = {}
     for before, after, item in zip(original, changed, restored["findings"], strict=True):
+        if deadline is not None:
+            _remaining(deadline)
         if before.compute_id() != after.compute_id() and before.id not in finding_messages:
             if before.id != before.compute_id():
                 # A mixed raw-redacted/keyed identity cannot be reconstructed
@@ -397,18 +477,24 @@ def _rekey_result(data: dict[str, Any], run_key: bytes, worker_key: bytes) -> di
                 raise ValueError("plugin finding identity cannot be safely rekeyed")
             item["id"] = after.compute_id()
             finding_ids[before.id] = item["id"]
-    result: dict[str, Any] = _rewrite_identity_values(restored, finding_ids)
+    result: dict[str, Any] = _rewrite_identity_values(restored, finding_ids, deadline=deadline)
     return result
 
 
 def _rewrite_identity_message(
-    message: bytes, ascii_replacements: dict[bytes, bytes], binary_replacements: dict[bytes, bytes]
+    message: bytes,
+    ascii_replacements: dict[bytes, bytes],
+    binary_replacements: dict[bytes, bytes],
+    *,
+    deadline: float | None = None,
 ) -> bytes:
     if not ascii_replacements:
         return message
     chunks: list[bytes] = []
     end = 0
-    for match in _IDENTITY_BYTES_WINDOW.finditer(message):
+    for number, match in enumerate(_IDENTITY_BYTES_WINDOW.finditer(message)):
+        if deadline is not None and number % 1024 == 0:
+            _remaining(deadline)
         if match.start() < end:
             continue
         window = match[1]
@@ -427,8 +513,13 @@ def _decode_result(
     spec: ConnectorSpec,
     *,
     identity_keys: tuple[bytes, bytes] | None = None,
+    deadline: float | None = None,
 ) -> tuple[list[Finding], ScanStats, list[dict[str, Any]]]:
+    if deadline is not None:
+        _remaining(deadline)
     data = strict_json_loads(payload)
+    if deadline is not None:
+        _remaining(deadline)
     fields = {"findings", "stats", "exports"}
     if identity_keys is not None:
         fields.add("identity_material")
@@ -437,7 +528,7 @@ def _decode_result(
     if not isinstance(data["findings"], list) or not isinstance(data["exports"], list):
         raise ValueError("invalid plugin result arrays")
     if identity_keys is not None:
-        data = _rekey_result(data, *identity_keys)
+        data = _rekey_result(data, *identity_keys, deadline=deadline)
     raw = data["stats"]
     if not isinstance(raw, dict) or set(raw) != set(asdict(ScanStats("", ""))):
         raise ValueError("invalid plugin statistics")
@@ -459,7 +550,7 @@ def _decode_result(
     stats = ScanStats(**sanitize(raw))
     stats.connector = spec.id
     stats.incomplete = stats.incomplete or stats.skipped or bool(stats.errors)
-    findings = [Finding.from_dict(item) for item in data["findings"]]
+    findings = _decode_findings(data["findings"], deadline)
     if any(finding.connector != spec.name for finding in findings) or stats.findings != len(findings):
         raise ValueError("invalid plugin finding attribution or count")
     exports = data["exports"]
@@ -487,6 +578,8 @@ def _decode_result(
         if type(entry["complete"]) is not bool or type(entry["exported"]) is not bool:
             raise ValueError("invalid plugin export flags")
         entry["label"] = spec.label
+    if deadline is not None:
+        _remaining(deadline)
     return findings, stats, exports
 
 
@@ -551,7 +644,11 @@ def _run_plugin_process(
         token = set_credential_identity_key(runner._run_identity_key)
         try:
             findings, stats, entries = _decode_result(
-                payload, number, spec, identity_keys=(runner._run_identity_key, worker_key)
+                payload,
+                number,
+                spec,
+                identity_keys=(runner._run_identity_key, worker_key),
+                deadline=deadline,
             )
         finally:
             reset_credential_identity_key(token)
