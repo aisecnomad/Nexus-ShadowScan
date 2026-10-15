@@ -74,8 +74,10 @@ passing unit suite does not establish complete coverage of a particular estate.
     which only an application building `ScanConfig` itself can pass (YAML and
     command-line values are plain data);
   - an embedding script without an `if __name__ == "__main__":` guard, which
-    runs again in each plugin worker as it starts, repeating its side effects,
-    and fails the plugin when that run uses up the connector deadline;
+    runs again in each plugin worker before the plugin starts, repeating its
+    side effects, including output, which the worker does not discard; the
+    plugin fails if that run exits or raises at module level (for example
+    `sys.exit(main())`) or uses up the connector deadline;
   - a plugin that starts `multiprocessing` or `ProcessPoolExecutor` children,
     which the daemonic worker refuses.
 - **Exit after an abandoned connector worker.** Without a job deadline, a CLI
@@ -957,7 +959,9 @@ incomplete. When that exit fires, the report may be missing or truncated
 (standard output can stop mid-document), an existing `-o` file may still hold
 the previous report, and a private temporary file may remain beside it; treat
 none of them as this scan's result. With a job deadline set, that deadline bounds
-report output instead and the 30-second limit is not armed. A completed
+report output instead and the 30-second limit is not armed. Ctrl-C (SIGINT)
+during report output also disarms the job deadline, so the 30-second limit is
+armed then, and the CLI does not wait for the abandoned worker. A completed
 invocation disarms it.
 
 Code scans follow a documented coverage policy. Links whose own names are never

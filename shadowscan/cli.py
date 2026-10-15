@@ -324,11 +324,16 @@ def _run_and_emit_with_deadline(
                 f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]",
             )
         sys.exit(code)
-    except SystemExit:
+    except KeyboardInterrupt:
+        # Interpreter exit would join the blocked workers, so keep an exit
+        # armed. The callers cancel any job deadline while this unwinds.
+        if engine.abandoned_workers and exit_guard is None:
+            arm_job_deadline(_ABANDONED_WORKER_EXIT_GRACE_SECONDS, message=_ABANDONED_WORKER_EXIT_MESSAGE)
+        raise
+    except BaseException:
         # With abandoned workers, only a replaced hard exit (tests, in-process
         # callers) returns here: disarm the watchdog so it cannot exit the
-        # process after the call. A KeyboardInterrupt keeps it armed, since
-        # interpreter exit would join the blocked workers.
+        # process after the call.
         if exit_guard is not None:
             exit_guard.cancel()
         raise

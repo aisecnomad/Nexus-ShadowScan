@@ -153,8 +153,10 @@ summarizes each release for people who install and operate ShadowScan.
   configuration or signature objects that Python cannot pickle, which only an
   application building `ScanConfig` itself can pass; an embedding script
   without an `if __name__ == "__main__":` guard, which runs again in each plugin
-  worker as it starts, repeating its side effects, and fails the plugin when
-  that run uses up the connector deadline; and a plugin that starts
+  worker before the plugin starts, repeating its side effects, including output,
+  which the worker does not discard, and fails the plugin if that run exits or
+  raises at module level (for example `sys.exit(main())`) or uses up the
+  connector deadline; and a plugin that starts
   `multiprocessing` or `ProcessPoolExecutor` children, which the daemonic
   worker refuses. The worker also discards the plugin's standard output,
   standard error and logging. `options.plugin_execution: thread` or
@@ -174,12 +176,16 @@ summarizes each release for people who install and operate ShadowScan.
   hard exit is replaced (the test suite, in-process callers), it fired 30
   seconds after the call had returned, called the exit again and stopped any
   clone running at that moment. It is now armed only when no job deadline is
-  set, is cancelled when the call ends with `SystemExit`, and its message says
-  that coverage is incomplete, that the report may be missing or truncated and
-  that an existing output file may not have been replaced. Affects CLI scans in
-  which a connector timed out; `docs/production.md` documents the limit.
-  Regression tests cover a set job deadline, the cancelled watchdog and the
-  message.
+  set, or when Ctrl-C interrupts report output: the interrupt also cancels the
+  job deadline, and interpreter exit would then wait for the blocked worker
+  indefinitely. It is cancelled when the call ends with any other exception,
+  including a failed report, and its message says that coverage is incomplete,
+  that the report may be missing or truncated and that an existing output file
+  may not have been replaced. Affects CLI scans in which a connector timed out;
+  `docs/production.md` documents the limit, and `docs/scanning.md` now gives
+  exit 1 when the report could not be written. Regression tests cover a set job
+  deadline, Ctrl-C during output with and without one, the cancelled watchdog
+  after a written and a failed report, and the message.
 - **A whitespace-header JWT after a long dotted segment was kept (#237).**
   #237's second reading, which withholds a JWT whose header JSON is written
   with whitespace (`IHsi…`, `eyAi…`, `ewoi…`), took three dotted segments from
