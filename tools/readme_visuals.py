@@ -218,8 +218,8 @@ def render_data_flow() -> str:
     targets = (
         ("Provider APIs", "HTTPS, read-only (collect)"),
         ("Offline exports", "JSONL, CSV, logs (input)"),
-        ("Repository checkouts", "local or cloned, never executed"),
-        ("Hosts and processes", "home dirs, /proc, inventories"),
+        ("Repository checkouts", "local or cloned, never run"),
+        ("Hosts and processes", "home dirs and /proc"),
     )
     for index, (name, detail) in enumerate(targets):
         x = 336 + 210 * index
