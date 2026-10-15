@@ -1243,12 +1243,32 @@ credential on the line after its scheme is withheld whole, keeping its line
 breaks. In such a text a run that starts the line after a scheme credential
 (`--verbose`, `---`), or a later line after only blank lines or other such
 runs, is withheld as well, with a marker in its place where the rest of the
-line is unchanged. A text with no glued run reads as the earlier rules read
-it, those runs included where each is only a name or separator (`--verbose`,
-`---`, `=Section=`), unless removing them lets the rules withhold a value
-after them; a run holding a value is removed as before. Finding identity does not use
-evidence text. Regenerate retained reports, as after any change that
-withholds more.
+line is unchanged; so is a run that starts the line after a name glued to the
+credential that stays beside it (`<token>--token`), which was read only on the
+next sanitization, or never after `--token` and `--password`. Each run of a
+chain of such lines goes in its own reading, and the rest of a chain longer
+than three goes at once before one more reading: the value after the fourth
+run was withheld only on the next sanitization, and the value after the fifth
+on none. A text with no glued run reads as the earlier rules read it, those
+runs included where each is only a name or separator (`--verbose`, `---`,
+`=Section=`), unless removing them lets the rules withhold a value after them.
+A run there that holds a value (`--http1.1`, `--max-time=30`) is withheld,
+with a marker in its place: the earlier rules showed it, and until this
+correction it was removed with no marker, so an excerpt lost an option without
+showing that anything was withheld. Finding identity does not use evidence
+text. Regenerate retained reports, as after any change that withholds more.
+
+A record read this way keeps its shape. A mapping whose keys read alike once
+their credentials are withheld in one reading and not in the other
+(`SSWS a--auth` and `SSWS b`) stays a mapping: each member is merged with its
+own copy in the other reading, and only the members both readings keep are
+shown, a key two members share keeping one value as before. Such a mapping
+was withheld as one string, so agent definition front matter lost its fields
+(`tools`, `permissionMode`) with the scan still complete, an agent card
+stopped the connector's analysis of that file, and a finding with such keys in
+its metadata or evidence attributes failed to report. Readings of one value
+that do not pair up stop with a sanitization limit error, which marks the scan
+incomplete (exit 3), instead of changing a container into a string.
 
 Plugin approvals can pin the import target and the providing release
 (`--allow-plugin name=module:Class@distribution==version`); a pin is checked

@@ -632,7 +632,11 @@ definitions write them, is not valid YAML but is read by coding agents, which
 quote it and parse again. So does the scanner, through the same strict loader:
 the definition is read and the warning `agent definition front matter quoted to
 parse (a plain value contained ': ')` records it. Repeated fields, explicit tags and
-structure that quoting cannot repair stay errors.
+structure that quoting cannot repair stay errors. The front matter, like an
+agent card, is sanitized as a whole before its fields are read; keys that
+hold a scheme credential and read alike once it is withheld (`SSWS a--auth`,
+`SSWS b`) no longer turn it into one withheld string, so `tools`, `model` and
+`permissionMode` are still read beside them.
 
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server
