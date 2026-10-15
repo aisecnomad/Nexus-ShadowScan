@@ -7356,7 +7356,7 @@
      "fact": "lowcode:dify",
      "evidence": [
       "lowcode:DSL/AgentFlow.yml (Dify DSL export)",
-      "lowcode:DSL/Agent\u5de5\u5177\u8c03\u7528.yml (Dify DSL export)",
+      "lowcode:DSL/Agent工具调用.yml (Dify DSL export)",
       "lowcode:DSL/Artifact.yml (Dify DSL export)"
      ]
     },
@@ -7365,7 +7365,7 @@
      "evidence": [
       "idiom:DSL/Claude3 Code Translation.yml:198 (claude-3)",
       "idiom:DSL/Claude3 Code Translation.yml:198 (anthropic.claude-3-5-sonnet-20240620-v1:0)",
-      "idiom:DSL/Dify \u8fd0\u8425\u4e00\u6761\u9f99.yml:1916 (claude-3)"
+      "idiom:DSL/Dify 运营一条龙.yml:1916 (claude-3)"
      ]
     },
     {
@@ -7393,7 +7393,7 @@
      "fact": "provider:openai",
      "evidence": [
       "idiom:DSL/AgentFlow.yml:123 (gpt-4)",
-      "idiom:DSL/Agent\u5de5\u5177\u8c03\u7528.yml:110 (gpt-4)",
+      "idiom:DSL/Agent工具调用.yml:110 (gpt-4)",
       "idiom:DSL/Demo-tod_agent.yml:154 (o1-mini)"
      ]
     }
@@ -7671,6 +7671,30 @@
     "provider:mistral"
    ],
    "notes": ""
+  },
+  {
+   "id": "aisecnomad__Nexus-ShadowScan",
+   "host": "github",
+   "path": "aisecnomad/Nexus-ShadowScan",
+   "commit": "785fb44a208d5c822ab79383a314a33f6b2d1e24",
+   "default_branch": "main",
+   "class": "positive",
+   "languages": [
+    "python",
+    "shell"
+   ],
+   "size_kb": 41588,
+   "file_count": 1475,
+   "expected": [
+    {
+     "fact": "agent-config:agents-md",
+     "evidence": [
+      "config:AGENTS.md (AGENTS.md)"
+     ]
+    }
+   ],
+   "tolerated": [],
+   "notes": "NexusShadowScan: shadow AI agent discovery tool. Contains AI/agent vocabulary in signature packs and scanner code but the tool itself is a scanner, not an AI integration."
   },
   {
    "id": "BurntSushi__ripgrep",

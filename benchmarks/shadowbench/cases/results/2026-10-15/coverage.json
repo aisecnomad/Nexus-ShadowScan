@@ -1,0 +1,307 @@
+{
+  "corpus": {
+    "seed": 20261015,
+    "per_surface": 50,
+    "stream_scheme": null,
+    "total_cases": 450,
+    "total_entities": 1162,
+    "total_decoys": 975,
+    "generator_digest": "5642770d209c28f49633ccfbb5f13b3395088b0912c5fd1e3d78a63afb819916",
+    "corpus_digest": null
+  },
+  "surfaces": {
+    "code/checkout": {
+      "cases": 50,
+      "entities": 362,
+      "decoys": 0
+    },
+    "identity/okta-export": {
+      "cases": 25,
+      "entities": 57,
+      "decoys": 103
+    },
+    "identity/entra-export": {
+      "cases": 25,
+      "entities": 60,
+      "decoys": 102
+    },
+    "gateway/litellm-export": {
+      "cases": 25,
+      "entities": 84,
+      "decoys": 0
+    },
+    "gateway/bedrock-export": {
+      "cases": 25,
+      "entities": 78,
+      "decoys": 0
+    },
+    "lowcode/powerplatform-export": {
+      "cases": 25,
+      "entities": 50,
+      "decoys": 70
+    },
+    "lowcode/n8n-export": {
+      "cases": 25,
+      "entities": 46,
+      "decoys": 81
+    },
+    "saas/slack-export": {
+      "cases": 25,
+      "entities": 64,
+      "decoys": 82
+    },
+    "saas/github-export": {
+      "cases": 25,
+      "entities": 51,
+      "decoys": 81
+    },
+    "cloud/aws-export": {
+      "cases": 25,
+      "entities": 50,
+      "decoys": 68
+    },
+    "cloud/k8s-export": {
+      "cases": 25,
+      "entities": 52,
+      "decoys": 94
+    },
+    "endpoint/home": {
+      "cases": 50,
+      "entities": 31,
+      "decoys": 0
+    },
+    "network/passive": {
+      "cases": 25,
+      "entities": 15,
+      "decoys": 0
+    },
+    "network/active": {
+      "cases": 25,
+      "entities": 36,
+      "decoys": 60
+    },
+    "runtime/snapshot": {
+      "cases": 25,
+      "entities": 71,
+      "decoys": 122
+    },
+    "runtime/live": {
+      "cases": 25,
+      "entities": 55,
+      "decoys": 112
+    }
+  },
+  "tools": [
+    {
+      "name": "agentdiscover",
+      "display": "AgentDiscover Scanner (DefendAI)",
+      "cases": 100,
+      "entities": 393,
+      "decoys": 0,
+      "surfaces": [
+        "code/checkout",
+        "endpoint/home"
+      ],
+      "surface_count": 2
+    },
+    {
+      "name": "agentmesh-discovery",
+      "display": "Agent Discovery (Microsoft Agent Governance Toolkit)",
+      "cases": 125,
+      "entities": 448,
+      "decoys": 112,
+      "surfaces": [
+        "code/checkout",
+        "endpoint/home",
+        "runtime/live"
+      ],
+      "surface_count": 3
+    },
+    {
+      "name": "ai-infra-guard",
+      "display": "AI-Infra-Guard scan (Tencent Zhuque Lab)",
+      "cases": 25,
+      "entities": 36,
+      "decoys": 60,
+      "surfaces": [
+        "network/active"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "bbot",
+      "display": "BBOT network reconnaissance (Black Lantern Security)",
+      "cases": 25,
+      "entities": 36,
+      "decoys": 60,
+      "surfaces": [
+        "network/active"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "bifrost",
+      "display": "Bifrost AI gateway analyzer",
+      "cases": 50,
+      "entities": 162,
+      "decoys": 0,
+      "surfaces": [
+        "gateway/litellm-export",
+        "gateway/bedrock-export"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "cisco-mcp-scanner",
+      "display": "Cisco MCP Scanner",
+      "cases": 50,
+      "entities": 31,
+      "decoys": 0,
+      "surfaces": [
+        "endpoint/home"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "fleet-ai-tools",
+      "display": "Fleet ai_tools osquery table (fleetdm/fleet)",
+      "cases": 75,
+      "entities": 86,
+      "decoys": 112,
+      "surfaces": [
+        "endpoint/home",
+        "runtime/live"
+      ],
+      "surface_count": 2
+    },
+    {
+      "name": "mcpproxy",
+      "display": "MCPProxy (MCP protocol scanner)",
+      "cases": 75,
+      "entities": 67,
+      "decoys": 60,
+      "surfaces": [
+        "endpoint/home",
+        "network/active"
+      ],
+      "surface_count": 2
+    },
+    {
+      "name": "numbat",
+      "display": "numbat agents (Perplexity)",
+      "cases": 50,
+      "entities": 31,
+      "decoys": 0,
+      "surfaces": [
+        "endpoint/home"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "openshadowai",
+      "display": "Open Shadow AI (community scanner)",
+      "cases": 50,
+      "entities": 115,
+      "decoys": 163,
+      "surfaces": [
+        "saas/slack-export",
+        "saas/github-export"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "osquery-ai",
+      "display": "osquery AI process discovery (Meta/Kolide)",
+      "cases": 25,
+      "entities": 71,
+      "decoys": 122,
+      "surfaces": [
+        "runtime/snapshot"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "provenza",
+      "display": "Provenza (Spectro Labs cloud scanner)",
+      "cases": 50,
+      "entities": 102,
+      "decoys": 162,
+      "surfaces": [
+        "cloud/aws-export",
+        "cloud/k8s-export"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "shadow-ai-detect",
+      "display": "Shadow AI Detection Framework",
+      "cases": 50,
+      "entities": 117,
+      "decoys": 205,
+      "surfaces": [
+        "identity/okta-export",
+        "identity/entra-export"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "shadow-ai-detector",
+      "display": "shadow-ai-detector (code scanner)",
+      "cases": 50,
+      "entities": 362,
+      "decoys": 0,
+      "surfaces": [
+        "code/checkout"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "shadowscan",
+      "display": "ShadowScan (Project Nexus)",
+      "cases": 425,
+      "entities": 1126,
+      "decoys": 915,
+      "surfaces": [
+        "code/checkout",
+        "identity/okta-export",
+        "identity/entra-export",
+        "gateway/litellm-export",
+        "gateway/bedrock-export",
+        "lowcode/powerplatform-export",
+        "lowcode/n8n-export",
+        "saas/slack-export",
+        "saas/github-export",
+        "cloud/aws-export",
+        "cloud/k8s-export",
+        "endpoint/home",
+        "network/passive",
+        "runtime/snapshot",
+        "runtime/live"
+      ],
+      "surface_count": 9
+    },
+    {
+      "name": "snyk-agent-scan",
+      "display": "Snyk Agent Scan",
+      "cases": 50,
+      "entities": 31,
+      "decoys": 0,
+      "surfaces": [
+        "endpoint/home"
+      ],
+      "surface_count": 1
+    },
+    {
+      "name": "vet",
+      "display": "SafeDep vet ai discover",
+      "cases": 100,
+      "entities": 393,
+      "decoys": 0,
+      "surfaces": [
+        "code/checkout",
+        "endpoint/home"
+      ],
+      "surface_count": 2
+    }
+  ]
+}

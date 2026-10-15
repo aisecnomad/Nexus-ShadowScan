@@ -53,17 +53,28 @@ from tools.shadowbench.cases.families import (
 
 DEFAULT_SEED = 20261011
 CODE_CORPUS = Path(__file__).resolve().parents[3] / "benchmarks" / "shadow-ai-discovery" / "corpus.json"
-# A stratified subset of the pinned code-surface corpus (benchmarks/shadow-ai-discovery): 16 positive,
-# 4 control and 6 near-miss repositories, chosen before any tool ran and bounded in size.
+# A stratified subset of the pinned code-surface corpus (benchmarks/shadow-ai-discovery): 31 positive,
+# 8 control and 11 near-miss repositories, chosen before any tool ran and bounded in size.
 CODE_REPOS: tuple[str, ...] = (
+    # --- positive (31) ---
     "anthropics__claude-agent-sdk-python", "openai__openai-agents-python", "crewAIInc__crewAI-examples",
     "langchain-ai__react-agent", "modelcontextprotocol__servers", "github__github-mcp-server",
     "microsoft__playwright-mcp", "aws-ia__terraform-aws-bedrock", "n8n-io__self-hosted-ai-starter-kit",
     "google__adk-samples", "vercel__ai-chatbot", "jlowin__fastmcp", "huggingface__smolagents",
     "gitlab-org__gitlab-runner", "anthropics__skills", "awslabs__amazon-bedrock-agent-samples",
+    "anthropics__claude-code", "microsoft__autogen", "cline__cline", "openai__codex",
+    "pydantic__pydantic-ai", "browser-use__browser-use", "block__goose",
+    "langchain-ai__chat-langchain", "awslabs__mcp", "a2aproject__a2a-samples",
+    "firebase__genkit", "Portkey-AI__gateway", "SWE-agent__SWE-agent",
+    "strands-agents__samples", "aisecnomad__Nexus-ShadowScan",
+    # --- control (8) ---
     "encode__httpx", "pallets__flask", "spf13__cobra", "terraform-aws-modules__terraform-aws-vpc",
+    "BurntSushi__ripgrep", "expressjs__express", "psf__requests", "lodash__lodash",
+    # --- near-miss (11) ---
     "autowp__arduino-mcp2515", "faisalman__ua-parser-js", "jenkinsci__docker-agent",
     "PrismarineJS__bedrock-protocol", "e2b-dev__awesome-ai-agents", "brianc__node-pg-cursor",
+    "codex-team__editor.js", "Farama-Foundation__Gymnasium", "jpadilla__pyjwt",
+    "prompt-toolkit__python-prompt-toolkit", "makew0rld__amfora",
 )  # fmt: skip
 QUOTAS = (("agent", 0.45), ("llm", 0.15), ("none", 0.40))
 Family = Callable[[Rand], Draft]

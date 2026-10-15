@@ -373,7 +373,8 @@ recorded in the header); never use `legacy` for a new corpus.
 * **Small per-surface samples.** Twenty cases per modality on most surfaces
   (40 endpoint homes in its one modality, 26 code repositories) give wide
   intervals; the report prints them. Regenerate at a larger `--per-surface`
-  for narrower ones.
+  for narrower ones. The 2026-10-15 expanded corpus uses `--per-surface 50`
+  for narrower intervals.
 
 ## Tools
 
@@ -580,3 +581,56 @@ product.
   (60), p = 0.080, not significant at 0.05. AI-Infra-Guard shares no case with
   ShadowScan, so it has no test. These tests measure agreement with the
   author's rubric on the author's corpus.
+
+## Expanded corpus (2026-10-15)
+
+`corpus-450.json` is a 450-case expansion generated with `--seed 20261015
+--per-surface 50 --stream-scheme sha256`. It broadens the code surface from 26
+to 50 public repositories (31 positive, 8 control, 11 near-miss) and raises
+every other modality from 20 to 25 cases for narrower confidence intervals.
+
+| Surface | Modality | Cases | Expected entities | Decoys |
+|---|---|---|---|---|
+| code | checkout | 50 | 362 | 0 |
+| identity | okta-export | 25 | 57 | 103 |
+| identity | entra-export | 25 | 60 | 102 |
+| gateway | litellm-export | 25 | 84 | 0 |
+| gateway | bedrock-export | 25 | 78 | 0 |
+| lowcode | powerplatform-export | 25 | 50 | 70 |
+| lowcode | n8n-export | 25 | 46 | 81 |
+| saas | slack-export | 25 | 64 | 82 |
+| saas | github-export | 25 | 51 | 81 |
+| cloud | aws-export | 25 | 50 | 68 |
+| cloud | k8s-export | 25 | 52 | 94 |
+| endpoint | home | 50 | 31 | 0 |
+| network | passive | 25 | 15 | 0 |
+| network | active | 25 | 36 | 60 |
+| runtime | snapshot | 25 | 71 | 122 |
+| runtime | live | 25 | 55 | 112 |
+
+450 cases, 1162 expected entities, 975 decoys.
+
+### New tool adapters
+
+Eight adapter stubs were added to cover additional shadow AI discovery tools.
+These adapters define invocation and normalization logic but the tools are
+**not installed** and have **no measured results**. They are provided so the
+benchmark can evaluate these tools once installed:
+
+| Tool | Adapter | Surfaces |
+|---|---|---|
+| BBOT (Black Lantern Security) | `bbot.py` | network/active |
+| osquery AI process discovery | `osquery_ai.py` | runtime/snapshot |
+| Bifrost AI gateway analyzer | `bifrost.py` | gateway/litellm-export, gateway/bedrock-export |
+| Shadow AI Detection Framework | `shadow_ai_detect.py` | identity/okta-export, identity/entra-export |
+| Open Shadow AI | `open_shadow_ai.py` | saas/slack-export, saas/github-export |
+| shadow-ai-detector (code scanner) | `shadow_ai_detector.py` | code/checkout |
+| Provenza (cloud scanner) | `provenza.py` | cloud/aws-export, cloud/k8s-export |
+| MCPProxy (MCP protocol scanner) | `mcpproxy.py` | network/active, endpoint/home |
+
+Combined with the nine existing adapters, ShadowBench now has 17 tool
+adapters covering all nine surfaces. See
+[`results/2026-10-15/REPORT.md`](results/2026-10-15/REPORT.md) for the
+coverage evaluation and
+[`results/2026-10-15/coverage.json`](results/2026-10-15/coverage.json) for
+the machine-readable data.
