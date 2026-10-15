@@ -45,6 +45,29 @@ passing unit suite does not establish complete coverage of a particular estate.
 - **Human-read output.** Table, Markdown, HTML and CSV show every Unicode format
   character, variation selector and other blank character as a `\uXXXX`
   escape. Emoji presentation selectors (`U+FE0F`) are among them.
+- **Plugins run in spawned workers by default.** `plugin_execution` now
+  defaults to `process`, so an allowlisted third-party connector runs in a
+  spawned worker the scanner can stop at its deadline, and the worker discards
+  the plugin's standard output, standard error and logging. Built-in connectors
+  are unaffected. `options.plugin_execution: thread` or
+  `--plugin-execution thread` keeps a plugin in the scanner process, where it
+  cannot be stopped at its deadline. With `plugin_execution` unset, these now
+  make the scan incomplete (exit 3) where the thread backend completed:
+  - a plugin result above the 16 MiB JSON transport limit;
+  - connector configuration or signature objects that Python cannot pickle,
+    which only an application building `ScanConfig` itself can pass (YAML and
+    command-line values are plain data);
+  - an embedding script without an `if __name__ == "__main__":` guard, which
+    runs again in each plugin worker as it starts, repeating its side effects,
+    and fails the plugin when that run uses up the connector deadline;
+  - a plugin that starts `multiprocessing` or `ProcessPoolExecutor` children,
+    which the daemonic worker refuses.
+- **Exit after an abandoned connector worker.** Without a job deadline, a CLI
+  scan that abandoned a timed-out connector worker now exits `3` if report
+  output and clone cleanup take more than 30 seconds; the report may then be
+  missing or truncated and an existing `-o` file may still hold the previous
+  report. A job deadline, when set, bounds output instead. See
+  [resource limits](#resource-limits-and-incomplete-scans).
 
 ## Unreleased Kubernetes and Atlassian migration
 
@@ -618,7 +641,7 @@ intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
 ```yaml
 options:
   plugins: []
-  plugin_execution: thread
+  plugin_execution: process
   allow_signature_override: false
   allow_private_origin: false
   allow_credential_mixing: false
@@ -637,10 +660,12 @@ Approved plugins still run trusted Python code. `shadowscan connectors` lists
 installed plugin metadata without importing it. A plugin must be explicitly
 allowed on each scan, even if a prior scan imported it.
 
-Use `options.plugin_execution: process` or `--plugin-execution process` to run
-approved third-party connectors in dedicated spawned workers. Built-in
-connectors keep their existing thread execution; the default for plugins also
-remains `thread`. Plugin import and execution happen in the child. The original
+Approved third-party connectors run in dedicated spawned workers by default
+(`options.plugin_execution: process`, `--plugin-execution process`); built-in
+connectors always run on threads. `options.plugin_execution: thread` or
+`--plugin-execution thread` runs plugins in the scanner process (the previous
+default), where a blocked plugin cannot be stopped at its deadline.
+In process mode, plugin import and execution happen in the child. The original
 connector deadline includes worker startup and result transfer, and the worker
 exits as soon as its result is sent (plugin `atexit` handlers do not run); expired results
 are discarded, and termination escalates from TERM to KILL with bounded cleanup.
@@ -657,7 +682,8 @@ descendants. Continue to use an external job deadline and disposable workers
 with appropriately restricted credentials and filesystem/network access.
 Embedded Python entry points must use the usual `if __name__ == "__main__"`
 guard for spawning. Plugin workers are daemonic and cannot themselves start
-`multiprocessing.Process` children. See [connectors](connectors.md) for the
+`multiprocessing.Process` children. A worker discards the plugin's standard
+output, standard error and logging. See [connectors](connectors.md) for the
 plugin execution contract.
 
 Keep scans of repository content separate from jobs holding live cloud, identity,
@@ -853,7 +879,8 @@ risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be 
 finite number. It starts when the connector worker begins, and split filesystem
 roots share that connector's deadline. The engine stops accepting a connector's
 results after the deadline and records incomplete coverage. Python
-worker threads (the default backend) cannot safely be killed: a blocked SDK call can continue after
+worker threads (built-in connectors, and plugins under `plugin_execution: thread`)
+cannot safely be killed: a blocked SDK call can continue after
 that soft deadline. The CLI normally exits after emitting an incomplete report,
 but a filesystem replacement already in progress can finish after the timeout
 report. Such cache or record artifacts are unaccepted even if present; timed-out
@@ -882,6 +909,16 @@ invocations disarm their watchdog. `Engine` embedding does not arm it: the host
 application owns process supervision. Keep the external job deadline and process
 group/container cleanup to reap child processes and bound native code that holds
 the interpreter lock indefinitely.
+
+Without a job deadline, a CLI scan that abandoned a timed-out connector worker
+still cannot hang while it writes the report: the CLI allows 30 seconds for
+report output and clone cleanup, then exits `3` with a message that coverage is
+incomplete. When that exit fires, the report may be missing or truncated
+(standard output can stop mid-document), an existing `-o` file may still hold
+the previous report, and a private temporary file may remain beside it; treat
+none of them as this scan's result. With a job deadline set, that deadline bounds
+report output instead and the 30-second limit is not armed. A completed
+invocation disarms it.
 
 Code scans follow a documented coverage policy. Links whose own names are never
 read, source-file links whose real targets are analyzed in the same project

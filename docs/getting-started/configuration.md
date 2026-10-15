@@ -27,7 +27,7 @@ options:
   allow_credential_mixing: false      # permit repo + live tenant in one scan
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
   plugins: []                         # exact-name allowlist for third-party connectors
-  plugin_execution: thread            # or process: killable spawned plugin workers
+  plugin_execution: process           # or thread: in-process plugins (previous default)
 
 connectors:
   - name: code.github
@@ -46,11 +46,13 @@ file. Place it on a volume with room for the largest repository you scan.
 the highest-risk findings to a model you name and stores an advisory verdict.
 See [LLM triage](../operations/llm-triage.md) for its keys and what is sent.
 
-`plugin_execution: process` (or `--plugin-execution process`) runs each
-allowlisted third-party connector in its own spawned worker that the scanner
-can terminate at the connector deadline. Built-in connectors always use the
-thread backend. Workers keep the scanner's privileges and credentials: this is
-lifecycle isolation, not a sandbox. See
+`plugin_execution: process`, the default, runs each allowlisted third-party
+connector in its own spawned worker that the scanner can terminate at the
+connector deadline; `plugin_execution: thread` (or `--plugin-execution thread`)
+runs plugins in the scanner process instead, where a blocked plugin cannot be
+stopped. Built-in connectors always use the thread backend. Workers keep the
+scanner's privileges and credentials: this is lifecycle isolation, not a
+sandbox. See
 [third-party plugin execution](../connectors.md#third-party-plugin-execution).
 
 ## Reaching an internal destination

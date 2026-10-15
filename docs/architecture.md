@@ -78,9 +78,9 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
 2. **Collection.** Each connector entry runs as one job in a thread pool of
    `options.parallel` workers. A supervisor enforces each job's
    `connector_timeout_seconds` deadline. A live job calls `collect()`; an entry
-   with `input` calls `load_offline()`. With `plugin_execution: process`, an
-   allowlisted plugin runs in a spawned worker that can be killed at its
-   deadline (`plugin_process.py`). `--incremental` reuses a cached result for an
+   with `input` calls `load_offline()`. With `plugin_execution: process`, the
+   default, an allowlisted plugin runs in a spawned worker that can be killed at
+   its deadline (`plugin_process.py`). `--incremental` reuses a cached result for an
    unchanged `code.filesystem` checkout or an unchanged `input` export of a code
    or cloud connector (`incremental.py`); a diff-scoped or `include` scan always
    runs in full. `--dump-records` publishes sanitized records for offline
@@ -205,7 +205,7 @@ Options are keys under `options:`; most also have a command-line flag.
 | `parallel` | 4 | worker threads shared by all connector jobs |
 | `connector_timeout_seconds` | 120 | each connector's completion deadline; an expired job's results are discarded and the scan is incomplete ([deadlines and parallelism](scanning.md#connector-deadlines-and-parallelism)) |
 | `job_deadline_seconds`, `--job-deadline-seconds` | off | the CLI process and its output from the moment the deadline is armed: the flag while the command line is parsed, the option once the configuration is read; expiry exits 3 |
-| `plugin_execution` | `thread` | `process` runs each allowlisted plugin in a spawned worker that is killed at its deadline; built-in connectors always use threads ([plugin execution](connectors.md#third-party-plugin-execution)) |
+| `plugin_execution` | `process` | each allowlisted plugin runs in a spawned worker that is killed at its deadline; `thread` runs plugins in-process; built-in connectors always use threads ([plugin execution](connectors.md#third-party-plugin-execution)) |
 | `allow_private_origin` | `false` | HTTPS clients refuse loopback, link-local, private and cloud-metadata destinations (`utils/http.py`); every connector accepts the same key to grant itself the exception alone, which the engine prefers over this scan-wide setting; `--deny-private-origin` (`ScanConfig.deny_private_origin`) overrides both ([threat model](security/threat-model.md)) |
 | `allow_credential_mixing` | `false` | repository scans and live tenant collection run as separate scans |
 | `allow_instance_credentials` | `false` | cloud connectors use an explicit audit identity, not instance or managed-identity credentials |

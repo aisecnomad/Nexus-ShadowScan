@@ -21,7 +21,13 @@ from typing import Any
 from shadowscan import __version__
 from shadowscan.autonomy import apply_autonomy
 from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
-from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, validate_min_confidence
+from shadowscan.config import (
+    ConfigValidationError,
+    ConnectorSpec,
+    ScanConfig,
+    plugin_names,
+    validate_min_confidence,
+)
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.correlation import correlate, correlate_lifecycle, correlate_runtime
@@ -1211,12 +1217,15 @@ class Engine:
         scopes: _ScopeLedger | None = None,
     ) -> tuple[dict[int, _JobResult], set[int]]:
         """Run every selected connector under deadline supervision."""
-        plugin_names = frozenset(entry.partition("=")[0].strip() for entry in self.config.plugins)
+        # A name the allowlist does not approve cannot resolve to a plugin and
+        # fails closed in either backend; keeping it in-thread only avoids
+        # spawning a worker for that refused lookup.
+        approved = plugin_names(self.config.plugins)
         states = {
             number: _JobState(
                 isolated_process=self.config.plugin_execution == "process"
                 and spec.name not in builtin_connector_names()
-                and spec.name in plugin_names
+                and spec.name in approved
             )
             for number, spec in jobs
         }

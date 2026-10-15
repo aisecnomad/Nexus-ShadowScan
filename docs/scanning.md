@@ -475,9 +475,13 @@ when listing and scanning together would have finished; raise
 On expiry, the engine discards that connector's results, records incomplete
 coverage and the reason, retains other completed connectors' findings, and
 returns an incomplete scan (CLI exit 3). Cancellation is cooperative: Python
-cannot forcibly interrupt a thread blocked in a vendor SDK or plugin call. Such
-a call may outlive `Engine.run()`; once timeout handling returns, the CLI writes
-the incomplete report and exits without joining the abandoned thread. A worker
+cannot forcibly interrupt a thread blocked in a vendor SDK call, or in a plugin
+call under `plugin_execution: thread` (a plugin in its default spawned worker is
+killed). Such a call may outlive `Engine.run()`; once timeout handling returns,
+the CLI writes the incomplete report and exits without joining the abandoned
+thread. Without a job deadline it gives that output 30 seconds, then exits 3
+whether or not the report was written
+([resource limits](production.md#resource-limits-and-incomplete-scans)). A worker
 already publishing a cache or record artifact can delay timeout handling while
 its filesystem replacement finishes. Embedded callers must supervise their
 process, and a reusable Engine refuses another scan while an abandoned worker

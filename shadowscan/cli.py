@@ -105,6 +105,14 @@ log = logging.getLogger("shadowscan.cli")
 LEVELS = ["critical", "high", "medium", "low", "info"]
 SETUP_FAILED = "scan setup failed; check connector configuration, signature packs and inventory"
 _JOB_DEADLINE_CONTEXT_KEY = "shadowscan.cli.job_deadline_watchdog"
+# Without a job deadline, nothing else bounds report output and clone cleanup
+# once a timed-out connector worker has been abandoned.
+_ABANDONED_WORKER_EXIT_GRACE_SECONDS = 30.0
+_ABANDONED_WORKER_EXIT_MESSAGE = (
+    f"report output did not finish within {_ABANDONED_WORKER_EXIT_GRACE_SECONDS:g} seconds after a"
+    " connector timed out; exiting (scan coverage is incomplete; the report may be missing or"
+    " truncated, and an existing output file may not have been replaced)"
+)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -284,36 +292,46 @@ def _run_and_emit_with_deadline(
         _log_masked_failure("scan setup failed", exc)
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
     result.stats.extend(extra_stats or [])
-    # When abandoned workers exist, arm a bounded exit watchdog so the process
-    # cannot hang indefinitely during report emission or clone cleanup.
-    _exit_guard: JobDeadline | None = None
-    if engine.abandoned_workers:
-        _exit_guard = arm_job_deadline(
-            30,
-            message="abandoned-worker exit deadline exceeded; forcing process exit",
+    # With abandoned workers, arm a bounded exit watchdog so the process cannot
+    # hang indefinitely during report emission or clone cleanup. An armed job
+    # deadline already bounds both, and its report time must not be cut short.
+    exit_guard: JobDeadline | None = None
+    if engine.abandoned_workers and job_deadline is None:
+        exit_guard = arm_job_deadline(
+            _ABANDONED_WORKER_EXIT_GRACE_SECONDS, message=_ABANDONED_WORKER_EXIT_MESSAGE
         )
     try:
-        # The scan's own index names custom-pack signatures in the CycloneDX output.
-        index = getattr(engine, "index", None)
-        _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows, index=index)
-    except Exception:  # any emission failure must still release an abandoned CLI worker
+        try:
+            # The scan's own index names custom-pack signatures in the CycloneDX output.
+            index = getattr(engine, "index", None)
+            _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows, index=index)
+        except Exception:  # any emission failure must still release an abandoned CLI worker
+            if engine.abandoned_workers:
+                _exit_abandoned_workers(
+                    1,
+                    "[red]could not emit the incomplete report; exiting without waiting for timed-out"
+                    " workers[/red]",
+                )
+            raise
+        code = _exit_code(result, cfg.fail_on)
         if engine.abandoned_workers:
+            # A timed-out connector's thread may still be blocked in an SDK call.
+            # Python joins worker threads at interpreter exit, which would hold the
+            # process (and its CI job) open indefinitely. The report is written.
+            abandoned = len(engine.abandoned_workers)
             _exit_abandoned_workers(
-                1,
-                "[red]could not emit the incomplete report; exiting without waiting for timed-out"
-                " workers[/red]",
+                code,
+                f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]",
             )
+        sys.exit(code)
+    except SystemExit:
+        # With abandoned workers, only a replaced hard exit (tests, in-process
+        # callers) returns here: disarm the watchdog so it cannot exit the
+        # process after the call. A KeyboardInterrupt keeps it armed, since
+        # interpreter exit would join the blocked workers.
+        if exit_guard is not None:
+            exit_guard.cancel()
         raise
-    code = _exit_code(result, cfg.fail_on)
-    if engine.abandoned_workers:
-        # A timed-out connector's thread may still be blocked in an SDK call.
-        # Python joins worker threads at interpreter exit, which would hold the
-        # process (and its CI job) open indefinitely. The report is written.
-        abandoned = len(engine.abandoned_workers)
-        _exit_abandoned_workers(
-            code, f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]"
-        )
-    sys.exit(code)
 
 
 def _min_confidence_option(ctx: click.Context, param: click.Parameter, value: float) -> float:

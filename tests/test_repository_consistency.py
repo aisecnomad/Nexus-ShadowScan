@@ -7,8 +7,8 @@ OpenSSF Scorecard look for exist, `CITATION.cff` matches `pyproject.toml`, the
 CI matrix matches the classifiers, the Makefile and pre-commit hooks run what CI
 runs, every CodeQL action step is pinned to the same release, the docs toolchain
 comes from its lock everywhere, and documented counts, the README's demo output,
-CSV report markers and the HTTP read deadline match the shipped code. Run both
-modules with ``make policy``.
+CSV report markers, the HTTP read deadline and the plugin execution default match
+the shipped code. Run both modules with ``make policy``.
 """
 
 from __future__ import annotations
@@ -1378,6 +1378,32 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
     for path, match in claims:
         claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
+
+
+_PLUGIN_EXECUTION_ROW = re.compile(r"^\| `plugin_execution` \| `(\w+)` \|", re.MULTILINE)
+_PLUGIN_EXECUTION_DEFAULT_CLAIM = re.compile(
+    r"\bdefaults?\b[^.;`]{0,40}`(?:options\.)?(?:plugin_execution: )?(thread|process)`"
+)
+
+
+def test_documented_plugin_execution_default_matches_the_config() -> None:
+    # A page that still names the former thread default tells operators that
+    # plugins run in the scanner process, where they cannot be stopped.
+    default = ScanConfig().plugin_execution
+    assert ScanConfig.from_dict({"options": {}}).plugin_execution == default
+    [row] = _PLUGIN_EXECUTION_ROW.findall(_read(ROOT / "docs" / "architecture.md"))
+    assert row == default, f"docs/architecture.md lists {row!r}; the default is {default!r}"
+    claims = [
+        (path, match)
+        for path in _current_docs()
+        for paragraph in _paragraphs(path)
+        for match in _PLUGIN_EXECUTION_DEFAULT_CLAIM.finditer(paragraph)
+    ]
+    assert {"production.md", "connectors.md"} <= {path.name for path, _ in claims}
+    for path, match in claims:
+        assert match.group(1) == default, (
+            f"{_relative(path)} says {match.group(0)!r}; the default is {default!r}"
+        )
 
 
 _FIXTURE_CLAIM = re.compile(r"(\d+) of (\d+) connectors ship fixtures")

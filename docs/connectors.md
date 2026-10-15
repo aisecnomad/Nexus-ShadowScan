@@ -94,21 +94,23 @@ normalizes them, and an entry point without distribution metadata is refused.
 These checks read installed metadata before import. They bind a reviewed
 release, not file contents, so keep the plugin itself in a hash-locked install.
 
-The default `options.plugin_execution: thread` retains
-existing behavior. For reviewed plugins that can block inside an SDK or native
-extension, select a dedicated spawned process per connector:
+By default (`options.plugin_execution: process`) each allowlisted plugin runs
+in a dedicated spawned process per connector, so a plugin that blocks inside an
+SDK or native extension can be stopped at its deadline:
 
 ```yaml
 options:
   plugins: [platform.example=example_connectors.platform:ExampleConnector]
-  plugin_execution: process
+  plugin_execution: process   # the default; thread runs plugins in-process
   connector_timeout_seconds: 120
 connectors:
   - name: platform.example
 ```
 
-The equivalent CLI override is `--plugin-execution process`. Built-in connectors
-continue to use the existing thread backend. A plugin is imported only inside
+`options.plugin_execution: thread` or `--plugin-execution thread` runs plugins
+in the scanner process instead (the previous default), where a blocked plugin
+cannot be stopped. Built-in connectors always use the thread backend. In process
+mode a plugin is imported only inside
 its child process, and its original completion deadline includes import,
 collection, result serialization and transfer. The worker exits with
 `os._exit` as soon as its result is sent: plugin `atexit` handlers do not run,
@@ -145,7 +147,10 @@ applications must call the scanner behind Python's usual
 `if __name__ == "__main__":` guard. Plugin configuration and supplied signature
 objects must be serializable by Python's spawn machinery. Workers are daemonic,
 so a plugin cannot start its own `multiprocessing.Process` children. Choose the
-thread backend or an external supervised scanner process for such plugins.
+thread backend (`plugin_execution: thread`) or an external supervised scanner
+process for such plugins. The worker discards the plugin's standard output,
+standard error and logging, which may contain credentials; diagnostics reach the
+report only through the worker's sanitized result.
 Neither backend enforces CPU/memory quotas or prevents deliberate malicious
 filesystem or network activity.
 

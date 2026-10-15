@@ -99,6 +99,46 @@ summarizes each release for people who install and operate ShadowScan.
   configured origin, like any other failed clone. Affects `code.github` and
   `code.gitlab` scans whose provider returns such URLs; a regression test covers
   both providers and both refusals.
+- **Plugin isolation default: documentation and compatibility (#234).** #234
+  changed the `plugin_execution` default from `thread` to `process`, but
+  `docs/production.md` (its security-policy example, and a paragraph saying the
+  default "remains `thread`"), `docs/connectors.md`, `docs/architecture.md` and
+  `docs/getting-started/configuration.md` still gave `thread` as the default,
+  and the changelog listed none of the new failure modes. The pages now give
+  `process` as the default and `thread` as the opt-out, and
+  `docs/production.md` carries an upgrade note. With `plugin_execution` unset,
+  these now make a scan incomplete (exit 3) where the thread backend completed:
+  a plugin result above the 16 MiB JSON transport limit; connector
+  configuration or signature objects that Python cannot pickle, which only an
+  application building `ScanConfig` itself can pass; an embedding script
+  without an `if __name__ == "__main__":` guard, which runs again in each plugin
+  worker as it starts, repeating its side effects, and fails the plugin when
+  that run uses up the connector deadline; and a plugin that starts
+  `multiprocessing` or `ProcessPoolExecutor` children, which the daemonic
+  worker refuses. The worker also discards the plugin's standard output,
+  standard error and logging. `options.plugin_execution: thread` or
+  `--plugin-execution thread` keeps such a plugin in the scanner process. The
+  engine's allowlist check now calls `shadowscan.config.plugin_names()` instead
+  of repeating its parsing; behavior is unchanged. Affects operators and
+  embedding applications with allowlisted third-party plugins. A repository
+  consistency test ties the documented default to `ScanConfig`.
+- **The abandoned-worker exit watchdog cut a job deadline short and outlived
+  its call (#234).** After a connector worker was abandoned, the CLI armed a
+  30-second process exit for report output even when `--job-deadline-seconds`
+  or `job_deadline_seconds` was set, so output the operator's deadline allowed
+  (a slow disk under `-o`, a slow reader of standard output) was cut off at 30
+  seconds: standard output stopped mid-document and an existing `-o` file kept
+  the previous report, while the message ("abandoned-worker exit deadline
+  exceeded") said neither. The watchdog was also never cancelled: where the
+  hard exit is replaced (the test suite, in-process callers), it fired 30
+  seconds after the call had returned, called the exit again and stopped any
+  clone running at that moment. It is now armed only when no job deadline is
+  set, is cancelled when the call ends with `SystemExit`, and its message says
+  that coverage is incomplete, that the report may be missing or truncated and
+  that an existing output file may not have been replaced. Affects CLI scans in
+  which a connector timed out; `docs/production.md` documents the limit.
+  Regression tests cover a set job deadline, the cancelled watchdog and the
+  message.
 
 ### Cap runtime dep ranges at the next major (October 15)
 
@@ -256,7 +296,8 @@ summarizes each release for people who install and operate ShadowScan.
   to `process` so third-party plugins run in isolated child processes
   instead of sharing the scanner's address space.  Operators can still set
   `plugin_execution: thread` in configuration to restore the previous
-  behavior.
+  behavior. Some plugins and embedding scripts now fail closed (exit 3) under
+  the new default; the integration review fixes above list them.
 - **Pre-clone DNS validation.** `validate_clone_destination()` resolved the
   clone URL hostname and rejected private, loopback, link-local, and
   cloud-metadata addresses before handing the URL to git. It did not pin Git
@@ -264,10 +305,12 @@ summarizes each release for people who install and operate ShadowScan.
   `validate_url`'s check; the integration review fixes above replace it with
   `clone_pins()`, which does pin Git.
 - **Bounded exit watchdog for abandoned workers.** When the engine detects
-  timed-out connector workers, a 30-second daemon-thread watchdog arms
+  timed-out connector workers and no job deadline is set (see the integration
+  review fixes above), a 30-second daemon-thread watchdog arms
   automatically so the CLI process cannot hang indefinitely during report
   emission or clone cleanup.  The watchdog calls `os._exit()` as a last
-  resort if the normal exit path blocks.
+  resort if the normal exit path blocks; the report may then be missing or
+  truncated.
 
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
