@@ -928,5 +928,68 @@
         }
       }
     }
+  },
+  {
+    "case": "null-output-slot",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "If",
+          "type": "n8n-nodes-base.if",
+          "typeVersion": 2.2
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "Out",
+          "type": "n8n-nodes-base.emailSend"
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "If",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "If": {
+          "main": [
+            null,
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Out",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
   }
 ]

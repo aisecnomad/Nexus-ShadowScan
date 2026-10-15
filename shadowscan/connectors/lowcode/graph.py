@@ -382,7 +382,14 @@ def analyze_workflow_graph(data: dict[str, Any], *, provider: str | None = None)
                     return invalid("workflow graph has invalid or oversized connection branches")
                 for branch in branches:
                     inspected += 1
-                    if inspected > MAX_GRAPH_EDGES or not isinstance(branch, list):
+                    if inspected > MAX_GRAPH_EDGES:
+                        return invalid("workflow graph has invalid or oversized connection branches")
+                    # n8n declares each output slot as IConnection[] | null and
+                    # its own traversal skips a null slot: an output nothing is
+                    # wired to, not a malformed export.
+                    if branch is None:
+                        continue
+                    if not isinstance(branch, list):
                         return invalid("workflow graph has invalid or oversized connection branches")
                     for item in branch:
                         if not isinstance(item, dict):

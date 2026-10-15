@@ -843,7 +843,6 @@ def test_n8n_graph_relationship_fixture(index, case):
         {"Missing": {}},
         {"Input": []},
         {"Input": {"main": "bad"}},
-        {"Input": {"main": [None]}},
         {"Input": {"main": [[None]]}},
         {"Input": {"main": [[{"node": "Missing"}]]}},
         {"Input": {"main": [[{"node": []}]]}},
@@ -866,6 +865,46 @@ def test_n8n_malformed_graph_marks_incomplete_and_preserves_neighbors(index, con
     assert findings[0].metadata["workflow_graph"]["potential_input_ai_egress_path"] is None
     assert findings[1].metadata["workflow_graph"]["status"] == "analyzed"
     assert connector.ctx.stats.incomplete and connector.ctx.stats.warnings
+
+
+# n8n's connection schema is Array<IConnection[] | null>: an output slot
+# nothing is wired to may be exported as null, and n8n's traversal skips it.
+@pytest.mark.parametrize(
+    "connections,expected",
+    [
+        ({"Input": {"main": [None]}}, False),
+        ({"Input": {"main": [None, [{"node": "AI"}]]}, "AI": {"main": [[{"node": "HTTP"}], None]}}, True),
+    ],
+)
+def test_n8n_null_output_slot_is_an_unwired_output_not_a_malformed_graph(index, connections, expected):
+    from copy import deepcopy
+
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    workflow = deepcopy(_graph_cases()[0]["workflow"])
+    workflow["connections"] = connections
+    result = analyze_workflow_graph(workflow, provider="n8n")
+    assert result is not None and not result.issues
+    assert result.metadata["status"] == "analyzed"
+    assert result.metadata["potential_input_ai_egress_path"] is expected
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"] == result.metadata
+    assert not connector.ctx.stats.incomplete and not connector.ctx.stats.warnings
+
+
+def test_n8n_null_output_slots_still_count_toward_the_inspection_budget(monkeypatch):
+    from copy import deepcopy
+
+    from shadowscan.connectors.lowcode import graph
+
+    workflow = deepcopy(_graph_cases()[0]["workflow"])
+    workflow["connections"] = {"Input": {"main": [None] * 8}}
+    monkeypatch.setattr(graph, "MAX_GRAPH_EDGES", 4)
+    result = graph.analyze_workflow_graph(workflow, provider="n8n")
+    assert result.issues == ["workflow graph has invalid or oversized connection branches"]
+    assert result.metadata["potential_input_ai_egress_path"] is None
 
 
 @pytest.mark.parametrize("limit,value", [("MAX_GRAPH_NODES", 2), ("MAX_GRAPH_EDGES", 1)])
