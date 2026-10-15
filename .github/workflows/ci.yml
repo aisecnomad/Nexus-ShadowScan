@@ -75,7 +75,9 @@ jobs:
       - run: pytest -q
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # The coverage-traced 3.11 leg runs the full suite serially and takes about
+    # 40 minutes; the untraced legs finish in about 20.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
