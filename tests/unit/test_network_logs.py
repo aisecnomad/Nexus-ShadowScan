@@ -1060,6 +1060,31 @@ def test_malformed_dns_record_scopes_lost_attribution_to_its_client(run_connecto
     )
 
 
+def test_dns_defect_limitation_is_scoped_to_the_defective_context(run_connector, tmp_path):
+    # A malformed Anthropic answer under sensor "a"; clean OpenAI DNS and a
+    # flow under sensor "b". Attribution is gated per context and client, so
+    # the OpenAI contact, attributed through sensor "b", must not claim that
+    # DNS attribution was disabled while its evidence says DNS attributed it.
+    disabled = (
+        "DNS and service-port attribution disabled because this client's DNS records were "
+        "malformed or incomplete"
+    )
+    rows = [{**row, "sensor": "b"} for row in _temporal_rows()]
+    rows.append({**rows[0], "sensor": "a", "query": "api.anthropic.com", "TTLs": ["bad"]})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    assert any("malformed or incomplete DNS records from 1 client(s)" in w for w in stats.warnings)
+    openai = found[("192.0.2.10", "provider.openai")]
+    assert openai.metadata["flows"] == 1 and "limitations" not in openai.metadata
+    anthropic = found[("192.0.2.10", "provider.anthropic")]
+    assert anthropic.metadata["flows"] == 0 and disabled in anthropic.metadata["limitations"]
+    # Observed under the defective sensor as well, the OpenAI contact keeps the limitation.
+    rows.append({**rows[0], "sensor": "a"})
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    openai = found[("192.0.2.10", "provider.openai")]
+    assert openai.metadata["flows"] == 1 and disabled in openai.metadata["limitations"]
+
+
 def test_dns_defect_storage_bound_falls_back_to_the_input_wide_gate(run_connector, tmp_path, monkeypatch):
     monkeypatch.setattr(network_logs, "_MAX_CLIENTS", 1)
     rows = _temporal_rows()

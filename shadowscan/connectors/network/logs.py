@@ -867,7 +867,12 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             )
             defective = {client for _, client in dns_defects}
             for contact in contacts.values():
-                if contact.client in defective:
+                # Attribution was gated per (context, client): say so only
+                # where it applied. A contact spanning contexts records its
+                # first only, so any defect of its client counts there.
+                if (contact.context, contact.client) in dns_defects or (
+                    contact.mixed_contexts and contact.client in defective
+                ):
                     contact.limitations.add(
                         "DNS and service-port attribution disabled because this client's DNS records were "
                         "malformed or incomplete"
