@@ -24,7 +24,7 @@ from shadowscan.connectors.code.semantic_config import (
     a2a_unsupported_protocol_version,
     validate_agent_manifest,
 )
-from shadowscan.connectors.code.skill_audit import audit_skill_text
+from shadowscan.connectors.code.skill_audit import MAX_TEXT_BYTES, audit_skill_text
 from shadowscan.connectors.common import apply_matches, failure_summary, finalize
 from shadowscan.connectors.endpoint import a2a
 from shadowscan.connectors.mcp_risk import _broad_root
@@ -396,9 +396,10 @@ class MCPInventoryConnector(_EndpointConnector):
             malformed_description = not isinstance(description, str)
             if malformed_description:
                 description = ""
-            # The floor reads the same bounded, sanitized prefix it always has; the audit
-            # reads the whole text under its own limits and adds evidence on top.
-            desc = _text(description, 4096)
+            # The floor's linear patterns read the whole sanitized prefix the audit inspects,
+            # so an instruction past the 4,096th character of a line the sentence audit skips
+            # is still a review candidate; the audit adds evidence on top under its own limits.
+            desc = _text(description, MAX_TEXT_BYTES)
             audit = audit_skill_text(description)
             if malformed_description:
                 audit = replace(

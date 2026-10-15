@@ -124,8 +124,9 @@ def audit_skill_text(text: str) -> InstructionAudit:
 
     The caller reports ``incomplete`` through its connector statistics. Input
     size, malformed front matter and unclosed fences must not certify a clean
-    audit. An overlong line is skipped and recorded as a limitation, not as an
-    incomplete audit, and a ``---`` that opens no front matter is body text.
+    audit. An overlong line is skipped by the sentence rules, so it is recorded
+    as a limitation and marks the audit incomplete while every other line is
+    still inspected; a ``---`` that opens no front matter is body text.
     No evidence weight or agent classification is assigned here.
     """
     limitations = list(_LIMITATIONS)
@@ -164,8 +165,12 @@ def audit_skill_text(text: str) -> InstructionAudit:
     counts: dict[str, int] = {}
 
     def overlong(raw_line: str) -> bool:
+        # The sentence rules are skipped on an overlong line to stay bounded; the line is
+        # then uninspected here, which is a limit hit and never a clean audit of it.
+        nonlocal incomplete
         if len(raw_line) <= MAX_LINE_CHARACTERS:
             return False
+        incomplete = True
         if _OVERLONG_LINE not in limitations:
             limitations.append(_OVERLONG_LINE)
         return True
