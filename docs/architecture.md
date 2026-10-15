@@ -287,6 +287,10 @@ reports (`--format json`). None contacts a provider except
 
 ### Connectors by surface
 
+![Built-in connectors grouped by surface](assets/architecture-detailed.svg)
+
+The diagram is generated from the connector registry by `python -m tools.readme_visuals`.
+
 | package | connectors | notes |
 |---|---|---|
 | `connectors/code/` | `code.filesystem`, `code.github`, `code.gitlab` | see [code scanner internals](#code-scanner-internals) |

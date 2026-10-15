@@ -1,0 +1,436 @@
+"""Render the README banner and the architecture diagrams as SVG from the code.
+
+The images under ``docs/assets/`` are generated so that what they show cannot
+drift from what ShadowScan ships: the surfaces come from ``Surface``, the
+connector names from the built-in connector registry, the report formats from
+the reporters and the package name from ``pyproject.toml``. No image carries a
+version, a count or the repository slug, which no text check could read once
+they were baked into pixels. Regenerate after adding a surface, a connector or
+a report format::
+
+    python -m tools.readme_visuals          # rewrite the SVG files
+    python -m tools.readme_visuals --check  # exit 1 when one is stale
+"""
+
+from __future__ import annotations
+
+import sys
+import textwrap
+import tomllib
+from collections.abc import Iterable
+from pathlib import Path
+from xml.sax.saxutils import escape
+
+from shadowscan.connectors import builtin_connector_names
+from shadowscan.models import Surface
+from shadowscan.reporters import FORMATS
+
+ROOT = Path(__file__).resolve().parents[1]
+ASSETS = ROOT / "docs" / "assets"
+BANNER = ASSETS / "hero-banner.svg"
+DATA_FLOW = ASSETS / "architecture-data-flow.svg"
+CONNECTORS = ASSETS / "architecture-detailed.svg"
+
+SANS = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
+MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+INK = "#17212b"
+MUTED = "#4a5661"
+FLOW = "#1f7a8c"
+
+# Every surface, in Surface order: a reader-facing name for the banner and
+# what its connectors read, for the diagrams. The tests require one entry per
+# Surface member.
+SURFACES: dict[Surface, tuple[str, str]] = {
+    Surface.CODE: ("code", "repositories, manifests, configs, keys"),
+    Surface.IDENTITY: ("identity", "OAuth apps, service principals, JWTs"),
+    Surface.GATEWAY: ("gateways", "LLM gateway logs, OTel GenAI spans"),
+    Surface.LOWCODE: ("low-code", "platform agents and AI flows"),
+    Surface.SAAS: ("SaaS", "bots, apps, scopes, install requests"),
+    Surface.CLOUD: ("cloud", "managed AI, IAM, workload exports"),
+    Surface.ENDPOINT: ("endpoints", "AI clients, MCP servers, model stores"),
+    Surface.NETWORK: ("network logs", "DNS, TLS and flow logs"),
+    Surface.RUNTIME: ("running processes", "process inventories"),
+}
+# Fill and stroke of each surface's box, shared by both diagrams.
+SURFACE_COLOURS: dict[Surface, tuple[str, str]] = {
+    Surface.CODE: ("#efe6fb", "#c9b6e8"),
+    Surface.IDENTITY: ("#e4f5ea", "#a9dcbd"),
+    Surface.GATEWAY: ("#fde8e6", "#f0b6b1"),
+    Surface.LOWCODE: ("#e8f1e4", "#b7d3ab"),
+    Surface.SAAS: ("#ebe7fa", "#c0b6ea"),
+    Surface.CLOUD: ("#fdf1dc", "#ecd09a"),
+    Surface.ENDPOINT: ("#e3eef9", "#9db9d6"),
+    Surface.NETWORK: ("#e9f4f6", "#a9d1d9"),
+    Surface.RUNTIME: ("#f3f3e6", "#d2d2a6"),
+}
+# The engine stages after collection, in order, as docs/architecture.md lists them.
+ENGINE_STAGES = (
+    ("Merge", "stable identity"),
+    ("Correlate", "across surfaces"),
+    ("Reconcile", "registry: shadow?"),
+    ("Assess", "autonomy tier"),
+    ("Score", "risk, confidence"),
+)
+# Commands that read JSON reports after a scan; the tests require each to be a CLI command.
+REPORT_COMMANDS = ("diff", "merge", "dashboard", "controls")
+
+
+def _package_name() -> str:
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        return str(tomllib.load(handle)["project"]["name"])
+
+
+def _license() -> str:
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        return str(tomllib.load(handle)["project"]["license"])
+
+
+def connectors_by_surface() -> dict[Surface, list[str]]:
+    """Built-in connector names grouped by surface, each group sorted."""
+    grouped: dict[Surface, list[str]] = {surface: [] for surface in Surface}
+    for name in builtin_connector_names():
+        grouped[Surface(name.split(".", 1)[0])].append(name)
+    return {surface: sorted(names) for surface, names in grouped.items()}
+
+
+def _t(
+    x: float, y: float, text: str, *, size: int = 13, weight: str = "", fill: str = INK, **attrs: str
+) -> str:
+    extra = "".join(f' {key.replace("_", "-")}="{value}"' for key, value in attrs.items())
+    bold = ' font-weight="700"' if weight == "bold" else ""
+    return f'<text x="{x:g}" y="{y:g}" font-size="{size}"{bold} fill="{fill}"{extra}>{escape(text)}</text>'
+
+
+def _rect(
+    x: float, y: float, w: float, h: float, fill: str, stroke: str, *, rx: int = 8, dash: str = ""
+) -> str:
+    dashed = f' stroke-dasharray="{dash}"' if dash else ""
+    return (
+        f'<rect x="{x:g}" y="{y:g}" width="{w:g}" height="{h:g}" rx="{rx}" '
+        f'fill="{fill}" stroke="{stroke}" stroke-width="1.5"{dashed}/>'
+    )
+
+
+def _svg(width: int, height: int, title: str, desc: str, body: Iterable[str], *, defs: str = "") -> str:
+    head = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" '
+        f'height="{height}" role="img" aria-labelledby="title desc" font-family="{SANS}">'
+    )
+    lines = [
+        "<!-- Generated by `python -m tools.readme_visuals`; do not edit by hand. -->",
+        head,
+        f'  <title id="title">{escape(title)}</title>',
+        f'  <desc id="desc">{escape(desc)}</desc>',
+    ]
+    if defs:
+        lines.append(f"  <defs>{defs}</defs>")
+    lines.extend(f"  {line}" for line in body)
+    lines.append("</svg>")
+    return "\n".join(lines) + "\n"
+
+
+_ARROW = (
+    '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" '
+    f'orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="{FLOW}"/></marker>'
+)
+
+
+def _surface_sentence() -> str:
+    labels = [SURFACES[surface][0] for surface in Surface]
+    return ", ".join(labels[:-1]) + f" and {labels[-1]}"
+
+
+def render_banner() -> str:
+    """The README hero banner: name, purpose and install command, no figures."""
+    sentence = (
+        f"Discovers evidence of AI agents across {_surface_sentence()}, "
+        "then reconciles it against the agent registry you supply."
+    )
+    body = [
+        _rect(0, 0, 1600, 480, "url(#bg)", "none", rx=0),
+        '<g stroke="#223a66" stroke-width="1.5" fill="none">',
+        *(f'  <circle cx="1330" cy="240" r="{r}"/>' for r in (60, 120, 180, 240)),
+        '  <line x1="1090" y1="240" x2="1570" y2="240"/>',
+        '  <line x1="1330" y1="0" x2="1330" y2="480"/>',
+        "</g>",
+        '<path d="M1330 240 L1330 0 A240 240 0 0 1 1538 120 Z" fill="url(#sweep)"/>',
+        '<g fill="#f4b942">',
+        *(
+            f'  <circle cx="{x}" cy="{y}" r="6"/>'
+            for x, y in ((1252, 150), (1412, 192), (1472, 300), (1198, 318))
+        ),
+        "</g>",
+        '<circle cx="1368" cy="262" r="10" fill="#3ddc97"/>',
+        '<circle cx="1368" cy="262" r="18" fill="none" stroke="#3ddc97" stroke-width="2"/>',
+        _t(
+            90,
+            112,
+            "OPEN-SOURCE AI AGENT DISCOVERY",
+            size=20,
+            fill="#f4b942",
+            font_family=MONO,
+            letter_spacing="4",
+        ),
+        _t(84, 226, "Nexus ShadowScan", size=104, weight="bold", fill="#eef3ff", letter_spacing="-3"),
+        *(
+            _t(90, 290 + 36 * index, line, size=27, fill="#c9d4ea")
+            for index, line in enumerate(textwrap.wrap(sentence, 70, break_on_hyphens=False))
+        ),
+        f'<g font-family="{MONO}" font-size="19">',
+        f"  {_rect(90, 396, 150, 44, '#162544', '#2b4270', rx=22)}",
+        f"  {_t(165, 424, _license(), size=19, fill='#c9d4ea', text_anchor='middle')}",
+        f"  {_rect(256, 396, 360, 44, '#2a2210', '#6b4e12', rx=22)}",
+        f"  {_t(436, 424, f'pip install {_package_name()}', size=19, fill='#f4b942', text_anchor='middle')}",
+        "</g>",
+    ]
+    defs = (
+        '<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0" stop-color="#0b1020"/><stop offset="1" stop-color="#101a33"/></linearGradient>'
+        '<linearGradient id="sweep" x1="0" y1="0" x2="1" y2="1">'
+        '<stop offset="0" stop-color="#f4b942" stop-opacity="0.35"/>'
+        '<stop offset="1" stop-color="#f4b942" stop-opacity="0"/></linearGradient>'
+    )
+    return _svg(1600, 480, "Nexus ShadowScan", sentence, body, defs=defs)
+
+
+def render_data_flow() -> str:
+    """One scan end to end: trusted inputs, untrusted targets, connectors, engine, outputs."""
+    body: list[str] = [
+        _rect(0, 0, 1200, 820, "#fbfaf7", "none", rx=0),
+        _t(
+            24,
+            34,
+            "One scan, end to end: evidence in, scored and registry-reconciled findings out",
+            size=22,
+            weight="bold",
+        ),
+        _t(
+            24,
+            58,
+            "Tinted: trusted operator inputs · dashed: untrusted scan targets · arrows: data flow",
+            size=14,
+            fill=MUTED,
+        ),
+        # Untrusted scan targets.
+        _rect(320, 76, 856, 104, "none", "#8a94a0", rx=12, dash="7 5"),
+        _t(336, 100, "Untrusted scan targets", size=15, weight="bold"),
+    ]
+    targets = (
+        ("Provider APIs", "HTTPS, read-only (collect)"),
+        ("Offline exports", "JSONL, CSV, logs (input)"),
+        ("Repository checkouts", "local or cloned, never run"),
+        ("Hosts and processes", "home dirs and /proc"),
+    )
+    for index, (name, detail) in enumerate(targets):
+        x = 336 + 210 * index
+        body += [
+            _rect(x, 110, 196, 56, "#ffffff", "#c4ccd4"),
+            _t(x + 12, 131, name, weight="bold"),
+            _t(x + 12, 151, detail),
+        ]
+    # Trusted operator inputs.
+    body += [
+        _rect(24, 200, 272, 600, "#e3eef9", "#9db9d6", rx=12),
+        _t(40, 226, "Trusted operator inputs", size=15, weight="bold"),
+    ]
+    inputs = (
+        (
+            "Signature packs",
+            ("YAML: frameworks, providers,", "protocols, agents, platforms,", "identity apps, permissions"),
+        ),
+        ("Configuration", ("shadowscan.yaml, credentials", "from the environment, risk policy")),
+        ("Agent registry", ("Agent Cards or CSV: the agents", "you approved, with their owners")),
+        ("Mapping catalogs", ("YAML threat and control", "references (OWASP, MITRE ATLAS)")),
+    )
+    y = 240
+    for name, lines in inputs:
+        height = 38 + 18 * len(lines)
+        body += [_rect(40, y, 240, height, "#ffffff", "#9db9d6"), _t(52, y + 21, name, weight="bold")]
+        body += [_t(52, y + 41 + 18 * row, line) for row, line in enumerate(lines)]
+        y += height + 16
+    # Connectors, one box per surface.
+    body += [
+        _rect(320, 200, 856, 236, "#ffffff", "#8a94a0", rx=12),
+        _t(
+            336,
+            226,
+            "Connectors, one or more per surface (plus allow-listed plugins)",
+            size=15,
+            weight="bold",
+        ),
+    ]
+    for index, surface in enumerate(Surface):
+        x, y = 336 + 280 * (index % 3), 240 + 52 * (index // 3)
+        fill, stroke = SURFACE_COLOURS[surface]
+        body += [
+            _rect(x, y, 266, 44, fill, stroke),
+            _t(x + 12, y + 18, surface.value, weight="bold", font_family=MONO),
+            _t(x + 12, y + 36, SURFACES[surface][1]),
+        ]
+    body.append(
+        _t(
+            336,
+            416,
+            "each: collect() live or load_offline() export, records, analyze() against the signatures",
+            fill=MUTED,
+        )
+    )
+    # Engine.
+    body += [
+        _rect(320, 470, 856, 150, "#ffffff", "#8a94a0", rx=12),
+        _t(336, 496, "Engine", size=15, weight="bold"),
+        _t(
+            400,
+            496,
+            "supervised jobs: bounded worker pool, a deadline per connector; plugins are not sandboxed",
+            fill=MUTED,
+        ),
+    ]
+    for index, (name, detail) in enumerate(ENGINE_STAGES):
+        x = 336 + 166 * index
+        body += [
+            _rect(x, 512, 150, 56, "#fdf1dc", "#ecd09a"),
+            _t(x + 12, 533, name, weight="bold"),
+            _t(x + 12, 553, detail),
+        ]
+        if index:
+            body.append(
+                f'<line x1="{x - 16}" y1="540" x2="{x - 2}" y2="540" '
+                f'stroke="{FLOW}" stroke-width="2" marker-end="url(#arrow)"/>'
+            )
+    body.append(
+        _t(
+            336,
+            600,
+            "fail closed: an API error, a timeout, a limit or a malformed export "
+            "marks the scan incomplete (exit 3)",
+            fill=MUTED,
+        )
+    )
+    # Outputs.
+    formats = list(FORMATS)
+    body += [
+        _rect(320, 654, 856, 146, "#ffffff", "#8a94a0", rx=12),
+        _t(336, 680, "Outputs, written atomically with private file modes", size=15, weight="bold"),
+        _rect(336, 694, 824, 44, "#f1f5f9", "#c4ccd4"),
+        _t(348, 714, "Report formats", weight="bold"),
+        _t(348, 731, " · ".join(formats), font_family=MONO),
+        _rect(336, 746, 404, 44, "#f1f5f9", "#c4ccd4"),
+        _t(348, 766, "Record dumps", weight="bold"),
+        _t(348, 783, "sanitized, credentials redacted"),
+        _rect(756, 746, 404, 44, "#f1f5f9", "#c4ccd4"),
+        _t(768, 766, "Commands on JSON reports", weight="bold"),
+        _t(768, 783, " · ".join(REPORT_COMMANDS), font_family=MONO),
+    ]
+    # Flows.
+    body += [
+        f'<g stroke="{FLOW}" stroke-width="2.5" fill="none" marker-end="url(#arrow)">',
+        '  <line x1="748" y1="180" x2="748" y2="198"/>',
+        '  <line x1="748" y1="436" x2="748" y2="468"/>',
+        '  <line x1="748" y1="620" x2="748" y2="652"/>',
+        '  <line x1="280" y1="300" x2="318" y2="300"/>',
+        '  <line x1="280" y1="385" x2="318" y2="385"/>',
+        '  <path d="M280 475 L306 475 L306 540 L318 540"/>',
+        '  <path d="M280 590 L300 590 L300 716 L334 716"/>',
+        "</g>",
+        _t(758, 194, "records", size=12, fill=FLOW),
+        _t(758, 456, "findings with evidence", size=12, fill=FLOW),
+        _t(758, 640, "ScanResult", size=12, fill=FLOW),
+    ]
+    desc = (
+        "Trusted operator inputs (signature packs, configuration, the agent registry and mapping catalogs) "
+        "and untrusted scan targets (provider APIs, offline exports, repository checkouts, hosts and "
+        f"processes) feed the connectors of {_surface_sentence()}; the engine merges, correlates, "
+        "reconciles, assesses and scores the findings; reporters and the JSON report commands publish them."
+    )
+    return _svg(1200, 820, "Data flow of one Nexus ShadowScan scan", desc, body, defs=_ARROW)
+
+
+def render_connectors() -> str:
+    """Every built-in connector, grouped by surface, around the shared connector contract."""
+    grouped = connectors_by_surface()
+    rows = max(len(names) for names in grouped.values())
+    card = 56 + 20 * rows
+    top = 128
+    height = top + 3 * (card + 16) + 92
+    body: list[str] = [
+        _rect(0, 0, 1200, height, "#fbfaf7", "none", rx=0),
+        _t(24, 34, "Built-in connectors by surface", size=22, weight="bold"),
+        _t(
+            24,
+            58,
+            "Each connector reads one provider, export or host source and emits findings with evidence;",
+            size=14,
+            fill=MUTED,
+        ),
+        _t(
+            24,
+            78,
+            "third-party connectors join only through the options.plugins allowlist "
+            "and cannot replace these names.",
+            size=14,
+            fill=MUTED,
+        ),
+        _rect(24, 92, 1152, 26, "#ffffff", "#c4ccd4"),
+        _t(
+            36,
+            110,
+            "BaseConnector:  collect() live API  |  load_offline() export  "
+            "->  records  ->  analyze()  ->  findings",
+            font_family=MONO,
+        ),
+    ]
+    for index, surface in enumerate(Surface):
+        x, y = 24 + 384 * (index % 3), top + (card + 16) * (index // 3)
+        fill, stroke = SURFACE_COLOURS[surface]
+        body += [
+            _rect(x, y, 368, card, fill, stroke, rx=10),
+            _t(x + 14, y + 24, surface.value, size=15, weight="bold", font_family=MONO),
+            _t(x + 14, y + 42, SURFACES[surface][1], size=12, fill=MUTED),
+        ]
+        body += [
+            _t(x + 22, y + 66 + 20 * row, name, font_family=MONO) for row, name in enumerate(grouped[surface])
+        ]
+    footer = top + 3 * (card + 16) + 10
+    body += [
+        _rect(24, footer, 1152, 64, "#ffffff", "#c4ccd4"),
+        _t(36, footer + 24, "Shared by every connector", weight="bold"),
+        _t(
+            36,
+            footer + 46,
+            "confined offline readers (no symlinks, byte limits) · HTTPS clients "
+            "that refuse private and metadata addresses · fail closed: exit 3",
+        ),
+    ]
+    desc = (
+        "The built-in connectors of each surface: "
+        + "; ".join(f"{surface.value}: {', '.join(grouped[surface])}" for surface in Surface)
+        + "."
+    )
+    return _svg(1200, height, "Nexus ShadowScan built-in connectors by surface", desc, body)
+
+
+def rendered() -> dict[Path, str]:
+    return {BANNER: render_banner(), DATA_FLOW: render_data_flow(), CONNECTORS: render_connectors()}
+
+
+def main(argv: list[str]) -> int:
+    if argv not in ([], ["--check"]):
+        print("usage: python -m tools.readme_visuals [--check]", file=sys.stderr)
+        return 2
+    stale = [
+        path
+        for path, text in rendered().items()
+        if not path.is_file() or path.read_text(encoding="utf-8") != text
+    ]
+    if argv == ["--check"]:
+        for path in stale:
+            print(f"{path.relative_to(ROOT)} is stale; run python -m tools.readme_visuals", file=sys.stderr)
+        return 1 if stale else 0
+    for path, text in rendered().items():
+        path.write_text(text, encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

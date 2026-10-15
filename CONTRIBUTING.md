@@ -290,6 +290,8 @@ contract. In brief:
    connector's summary row to [docs/connectors.md](docs/connectors.md). Run
    `make readme-matrix` too: the README detection matrix lists the identity,
    gateway, low-code, SaaS and network connectors, and a test fails when it is
+   stale. Run `make readme-visuals` as well: the connector diagram under
+   `docs/assets/` names every built-in connector, and a test fails when it is
    stale.
 
 `BaseConnector.load_offline` already reads `input` exports. Declare an
