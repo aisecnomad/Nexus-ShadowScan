@@ -343,3 +343,17 @@ def test_reported_file_names_cannot_forge_a_report_line_or_a_workflow_command(tm
     out = capsys.readouterr().out
     assert out.count("\n") == 1 and "\\x0a::error::forged" in out
     assert display("plain/name.py") == "plain/name.py"
+
+
+@pytest.mark.parametrize(
+    "header", [b' {"alg":"HS256"}', b'{ "alg":"HS256"}', b'{\n "alg":"RS256"}', b'\t{"alg":"none"}']
+)
+def test_jwt_with_whitespace_header_is_reported(header):
+    import base64
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    token = b64(header) + "." + b64(b'{"sub":"synthetic-subject"}') + "." + b64(bytes(range(40)))
+    ((_, family, value),) = findings(f"auth = {token}\n")
+    assert family == "JSON Web Token" and value == token

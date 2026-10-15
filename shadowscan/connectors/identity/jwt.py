@@ -50,6 +50,10 @@ from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import parse_timestamp, to_iso
 
+# Report bounds for claim values copied from an unverified token.
+_MAX_CLAIM_CHARS = 200
+_MAX_CLAIM_NAME_CHARS = 64
+_MAX_CLAIM_NAMES = 100
 _JWT_RX = re.compile(r"^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*$")
 USER_CLAIMS = (
     "upn",
@@ -198,6 +202,12 @@ class JwtConnector(BaseConnector, _NoDump):
             expected_issuer = self.ctx.get("expected_issuer")
             if expected_issuer is not None and (not isinstance(expected_issuer, str) or not expected_issuer):
                 raise ValueError("expected_issuer must be a nonempty string")
+            # Without a key set nothing is verified, so an issuer or algorithm
+            # policy would be silently inert: refuse it, as the CLI does.
+            if not jwks_url and (
+                expected_issuer is not None or self.ctx.get("allowed_algorithms") is not None
+            ):
+                raise ValueError("expected_issuer and allowed_algorithms require jwks_url")
         except ValueError as exc:
             raise ConnectorError(f"identity.jwt: {exc}") from exc
         self._jwks_cache: dict[str, Any] = {}
@@ -324,16 +334,20 @@ class JwtConnector(BaseConnector, _NoDump):
                 "identity_type": identity_type,
                 "reasons": reasons,
                 "algorithm": alg,
-                "kid": header.get("kid"),
+                "kid": header["kid"][:_MAX_CLAIM_CHARS] if isinstance(header.get("kid"), str) else None,
                 "lifetime_hours": round(lifetime_h, 1) if lifetime_h else None,
                 "scopes": scopes[:40],
                 # Sanitize before shortening: a nested token loses its
                 # recognizable three-segment shape once truncated.
                 "agent_claims": {
-                    k: (v if isinstance(v, (str, int, bool)) else sanitize_text(json.dumps(v))[:200])
+                    k: (
+                        v
+                        if isinstance(v, (int, bool))
+                        else sanitize_text(v if isinstance(v, str) else json.dumps(v))[:_MAX_CLAIM_CHARS]
+                    )
                     for k, v in agent_hints.items()
                 },
-                "claim_names": sorted(claims.keys()),
+                "claim_names": sorted(name[:_MAX_CLAIM_NAME_CHARS] for name in claims)[:_MAX_CLAIM_NAMES],
                 "context": context,
             }
         )
@@ -349,12 +363,16 @@ class JwtConnector(BaseConnector, _NoDump):
         try:
             # PyJWT uses permissive JSON decoding. Reject ambiguous signed
             # fields before either classification or signature verification.
-            for segment in token.split(".")[:2]:
-                strict_json_loads(pyjwt.utils.base64url_decode(segment))
-            header = pyjwt.get_unverified_header(token)
-            claims = pyjwt.decode(
-                token, options={"verify_signature": False, "verify_exp": False, "verify_aud": False}
-            )
+            # Classification reads the strictly decoded header itself: PyJWT's
+            # header checks (a string 'kid', no unknown 'crit' entry) belong to
+            # verification, and a token that fails them would otherwise vanish
+            # from the report instead of being classified as unverified.
+            header_segment, payload_segment, signature_segment = token.split(".")
+            header = strict_json_loads(pyjwt.utils.base64url_decode(header_segment))
+            claims = strict_json_loads(pyjwt.utils.base64url_decode(payload_segment))
+            pyjwt.utils.base64url_decode(signature_segment)
+            if not isinstance(header, dict) or not isinstance(claims, dict):
+                raise pyjwt.DecodeError("token header and payload must be JSON objects")
         except (pyjwt.PyJWTError, RecursionError, ValueError) as exc:
             self.ctx.warn(f"identity.jwt: cannot decode token ({type(exc).__name__})")
             return None

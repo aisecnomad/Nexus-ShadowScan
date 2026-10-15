@@ -55,6 +55,15 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "JSON Web Token",
         re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
     ),
+    (
+        # A header written with whitespace (' {"', '{ "', '{\n', '\t{"', '\n{"') does not start
+        # with 'eyJ', and token libraries accept it.
+        "JSON Web Token",
+        re.compile(
+            r"(?<![\w-])(?:IHsi|eyAi|eyAg|eyAK|ewo|CXsi|Cnsi)[A-Za-z0-9_-]{10,}"
+            r"\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+        ),
+    ),
     ("private key", re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")),
     (
         "Azure account or shared access key",

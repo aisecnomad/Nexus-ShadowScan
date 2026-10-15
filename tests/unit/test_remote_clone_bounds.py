@@ -26,6 +26,12 @@ from shadowscan.utils.git import CloneTimeoutError, run_bounded_clone
 from shadowscan.utils.http import HttpError
 
 
+@pytest.fixture(autouse=True)
+def _supported_clone_git(monkeypatch):
+    """These tests exercise clone bounds, not the Git version floor (see test_code_remote)."""
+    monkeypatch.setattr(git_module, "git_version", lambda: (2, 45, 0))
+
+
 @pytest.mark.parametrize(
     "cls,record",
     [

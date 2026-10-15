@@ -12,7 +12,14 @@ from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
 from shadowscan.models import ScanStats
+from shadowscan.utils import git as git_module
 from shadowscan.utils.git import CloneSizeError, _clone_disk_usage, run_bounded_clone
+
+
+@pytest.fixture(autouse=True)
+def _supported_clone_git(monkeypatch):
+    """These tests exercise clone bounds, not the Git version floor (see test_code_remote)."""
+    monkeypatch.setattr(git_module, "git_version", lambda: (2, 45, 0))
 
 
 @pytest.mark.parametrize(

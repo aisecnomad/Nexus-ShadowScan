@@ -27,6 +27,7 @@ threats first, each group sorted, up to GitHub's limit of 20 tags per rule.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
@@ -56,6 +57,7 @@ _LOC = re.compile(r"^(?P<path>.+?)(?::(?P<line>\d+))?$")
 _RANK = {RiskLevel.INFO: 0, RiskLevel.LOW: 1, RiskLevel.MEDIUM: 2, RiskLevel.HIGH: 3, RiskLevel.CRITICAL: 4}
 _RULE_NAME_CHARS = re.compile(r"[^A-Za-z0-9_]")
 _SNIPPET_LIMIT = 200
+_MAX_LINE = 2**31 - 1
 _MAX_LOCATIONS = 20
 # GitHub code scanning accepts at most 20 tags on a rule.
 _MAX_RULE_TAGS = 20
@@ -101,21 +103,36 @@ def _rule_name(rule_id: str) -> str:
     return name if re.match(r"[A-Za-z_]", name) else "_" + name
 
 
-def _artifact_location(path: str, root: str) -> dict[str, str]:
+def _uri_path(path: str) -> str:
+    # A lone surrogate (valid in a JSON report) has no UTF-8 encoding; show it escaped.
+    return quote(path, safe="/", errors="backslashreplace")
+
+
+def _artifact_location(path: str, root: str) -> dict[str, str] | None:
     """A SARIF artifactLocation whose ``uri`` is a valid, percent-encoded URI reference.
 
     Paths are made relative to the scan root only on a path-segment boundary
     ('/repo' must not strip '/repo2/...'). Characters such as ' ', '#', '?'
     and '%' are encoded so code-scanning UIs map alerts to the right file.
+    Locations come from reports, which may be merged from untrusted sources:
+    '.' and '..' segments are resolved, and a relative location that climbs
+    above the scan root or a network path ('//host/share', a UNC path) has
+    no artifact location (None) rather than one a consumer would resolve
+    outside the checkout or on another host.
     """
     normalized = path.replace("\\", "/")
+    if normalized.startswith("//"):
+        return None
     base = root.replace("\\", "/").rstrip("/")
     if base and (normalized == base or normalized.startswith(base + "/")):
-        return {"uri": quote(normalized[len(base) :].lstrip("/") or ".", safe="/"), "uriBaseId": "%SRCROOT%"}
-    if PurePosixPath(normalized).is_absolute():
+        normalized = normalized[len(base) :].lstrip("/") or "."
+    elif PurePosixPath(normalized).is_absolute():
         # Outside the scan root: an absolute URI must not carry a uriBaseId.
-        return {"uri": "file://" + quote(normalized, safe="/")}
-    return {"uri": quote(normalized, safe="/"), "uriBaseId": "%SRCROOT%"}
+        return {"uri": "file://" + _uri_path(posixpath.normpath(normalized))}
+    relative = posixpath.normpath(normalized)
+    if relative == ".." or relative.startswith("../") or relative.startswith("/"):
+        return None
+    return {"uri": _uri_path(relative), "uriBaseId": "%SRCROOT%"}
 
 
 def _rule_id(f: Finding) -> str:
@@ -159,7 +176,13 @@ def _physical_locations(f: Finding) -> list[dict[str, Any]]:
         if not m:
             continue
         artifact = _artifact_location(m.group("path"), root)
-        line = int(m.group("line") or 0)
+        if artifact is None:
+            continue
+        line_text = m.group("line") or "0"
+        # SARIF line numbers are 32-bit; a longer number is no line of a real file.
+        line = int(line_text) if len(line_text) <= 10 else 0
+        if line > _MAX_LINE:
+            line = 0
         key = (artifact["uri"], line)
         if key in seen:
             continue
@@ -178,7 +201,9 @@ def _physical_locations(f: Finding) -> list[dict[str, Any]]:
             break
     metadata_path = f.metadata.get("path")
     if not locs and isinstance(metadata_path, str) and not _is_resource_location(metadata_path):
-        locs.append({"physicalLocation": {"artifactLocation": _artifact_location(metadata_path, root)}})
+        artifact = _artifact_location(metadata_path, root)
+        if artifact is not None:
+            locs.append({"physicalLocation": {"artifactLocation": artifact}})
     return locs
 
 

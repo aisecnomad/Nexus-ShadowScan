@@ -149,7 +149,7 @@ class TriageSettings:
         if not isinstance(enabled, bool):
             raise TriageConfigError("llm_triage.enabled must be a YAML boolean")
         provider = value.get("provider", "anthropic")
-        if provider not in PROVIDERS:
+        if not isinstance(provider, str) or provider not in PROVIDERS:
             raise TriageConfigError(f"llm_triage.provider must be one of {sorted(PROVIDERS)}")
         model = value.get("model", "")
         if not isinstance(model, str) or (enabled and not model.strip()):
@@ -168,7 +168,7 @@ class TriageSettings:
         ):
             raise TriageConfigError("llm_triage.max_findings must be an integer from 1 to 500")
         min_level = value.get("min_level", "medium")
-        if min_level not in {level.value for level in RiskLevel}:
+        if not isinstance(min_level, str) or min_level not in {level.value for level in RiskLevel}:
             raise TriageConfigError("llm_triage.min_level must be critical, high, medium, low or info")
         timeout = value.get("timeout_seconds", 30)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 300:

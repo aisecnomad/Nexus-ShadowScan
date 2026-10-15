@@ -1778,7 +1778,7 @@ def _as_of_option(ctx: click.Context, param: click.Parameter, value: str | None)
     "--output",
     required=True,
     type=click.Path(dir_okay=False),
-    help="write the dashboard HTML to this file (mode 0600, never through a symbolic link)",
+    help="write the dashboard HTML to this file (mode 0600, never through a symbolic link another user owns)",
 )
 @click.option(
     "--inventory-json",

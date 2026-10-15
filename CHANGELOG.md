@@ -5,6 +5,40 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Review hardening: redaction, clone mode, output paths, SARIF and diagnostics (October 15)
+
+- Redaction withholds JWTs whose header JSON is written with whitespace and so
+  does not encode to `eyJ` (`IHsi`, `eyAi`, `ewo`...); PyJWT and the
+  identity.jwt decoder accept them, and a nested one in a claim was persisted
+  verbatim. A second, budgeted reading accepts a dotted run when its first
+  segment decodes to a JSON object with an `alg` member. `tools/check_secrets.py`
+  and the AI review sanitizer recognize the same headers.
+- Clone mode requires Git 2.45 (`MINIMUM_CLONE_GIT`): the clone's metadata
+  reads pass `--no-lazy-fetch`, which older Git rejects, so every clone on 2.32
+  to 2.44 ended incomplete without provenance while the docs promised a scan.
+  The three doc passages are corrected and the version tests assert 2.43 and
+  2.44 fall back to API mode.
+- A provider clone URL must name the listed repository, not just the API
+  origin; GitLab under a relative URL root is supported.
+- `write_private_text` refuses a path through a directory link owned by another
+  user and creates and renames the temporary file relative to the opened real
+  directory, matching the documented "never through a symbolic link" claim,
+  which now states that rule. Long legal output names no longer fail.
+- SARIF artifact locations resolve `.`/`..`, drop locations that climb above
+  the root or name a network path, cap `startLine` at the 32-bit limit and
+  escape lone surrogates instead of failing the render.
+- identity.jwt refuses `expected_issuer`/`allowed_algorithms` without
+  `jwks_url`, classifies tokens with a non-string `kid` or a `crit` header as
+  unverified instead of dropping them, and bounds agent claim values and claim
+  names.
+- Configuration diagnostics quote an unknown key or connector name only when it
+  is a lowercase name of at most 40 characters with at most three digits, so an
+  unprefixed token pasted as a key is not echoed; an unreadable, oversized or
+  special configuration file gets a read diagnostic; `llm_triage.provider` and
+  `min_level` of the wrong type raise `TriageConfigError`.
+- `terminal_text` and saved reports escape every Unicode format character, the
+  variation selectors and other blank characters.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

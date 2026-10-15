@@ -365,7 +365,13 @@ lifetime and algorithm hygiene are flagged. Optional `jwks_url` verification
 fetches a bounded JWKS through the shared HTTPS client and accepts only RS256,
 ES256, EdDSA and PS256 by default. `allowed_algorithms` may narrow that list.
 `expected_issuer` binds verification to an operator-supplied exact issuer; the
-unverified token's issuer does not choose or authorize a key source. The JWKS URL
+unverified token's issuer does not choose or authorize a key source. Both options
+require `jwks_url`, in a configuration file as on the command line: without a key
+set nothing is verified, so the connector stops with an error (exit 3) rather than
+apply an inert policy. A header with a non-string `kid` or a `crit` list is
+still classified, as unverified; verification refuses it. Agent claim values in
+`metadata.agent_claims` are sanitized and cut at 200 characters, and
+`metadata.claim_names` keeps at most 100 names of up to 64 characters. The JWKS URL
 is configured by the operator, so legitimate providers may host keys separately.
 Audience and historical-token expiry are not authorization checks here. Read
 `metadata.verified` as signature evidence, not permission to act.

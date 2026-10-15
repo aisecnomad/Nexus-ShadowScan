@@ -321,3 +321,17 @@ def test_entra_account_is_the_scanned_tenant_not_the_app_owner(run_connector, tm
     assert without_tenant.account is None
     assert without_tenant.metadata["owner_tenant"] == "vendor-tenant"
     assert with_tenant.account == "scanned-tenant" and with_tenant.metadata["owner_tenant"] == "vendor-tenant"
+
+
+def test_jwt_nested_token_with_whitespace_header_is_never_persisted(run_connector, tmp_path):
+    import base64
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    inner = b64(b' {"alg":"none"}') + "." + b64(b'{"sub":"alice@example.test"}') + "."
+    outer = _token(iss=_OKTA, sub=inner, cid="svc", agent_id=inner)
+    (finding,) = _jwt_findings(run_connector, tmp_path, outer)
+    report = json.dumps(finding.to_dict())
+    assert inner[:30] not in report and outer not in report
+    assert inner[:30] not in finding.title

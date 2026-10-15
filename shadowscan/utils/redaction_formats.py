@@ -9,8 +9,12 @@ fields.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextvars
+import json
 import re
+from collections.abc import Callable
 from urllib.parse import unquote
 
 from shadowscan.utils.redaction_assignments import _wordy
@@ -20,6 +24,7 @@ from shadowscan.utils.redaction_rules import (
     _REFERENCE,
     _VALUE_SEMICOLON,
     REDACTED,
+    SanitizationLimitError,
     _credential_name,
     _kept_value,
     _redact_value,
@@ -109,6 +114,26 @@ _JWT = re.compile(
     r"(?<![A-Za-z0-9_-])(?P<lead>(?:(?!" + _JWT_HEADER + r")[A-Za-z0-9_-])*+)"
     r"(?P<jwt>" + _JWT_HEADER + r"[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+)"
 )
+# 'eyJ' is the base64url of '{"': a header written with whitespace does not start with
+# it (' {"alg"' is 'IHsi', '{ "alg"' is 'eyCi', a pretty-printed '{\n"' is 'ewoi'), and
+# PyJWT and the identity.jwt decoder accept such a token. Every run of three dotted
+# base64url segments is therefore read as well (``_dotted_token_reader``): its first
+# segment is withheld as a header, from the run's start or from any boundary the 'eyJ'
+# rule admits before a token (a non-letter, or an escape before the run), when it
+# decodes to a JSON object with an ``alg`` member. The candidate starts are many; each
+# costs one cheap reading of the first bytes (JSON whitespace, '{', whitespace, '"'),
+# only a start that passes it is decoded and parsed, and the decoded text is charged
+# against a budget, so a hostile run is read in linear time.
+_DOTTED_RUN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<header>[A-Za-z0-9_-]{16,}+)\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+"
+)
+_JSON_WHITESPACE = frozenset(b" \t\r\n")
+# JSON whitespace tolerated around the opening braces of all the headers in one text: a
+# run that decodes to more is no ordinary value and is withheld without a parse.
+_JWT_HEADER_WHITESPACE_BYTES = 4096
+# Likewise a header longer than this is withheld without a parse.
+_JWT_HEADER_MAX_CHARS = 16 * 1024
+_HEX_PAIR = re.compile(r"[0-9A-Fa-f]{2}")
 # Private key blocks, to the end of the text when unterminated: PEM ('BEGIN PRIVATE KEY',
 # 'BEGIN OPENSSH PRIVATE KEY', PGP's '... PRIVATE KEY BLOCK'), RFC 4716's
 # '---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----' and a PuTTY key file, whose private part
@@ -410,11 +435,90 @@ def _later_line_runs(text: str) -> dict[int, str]:
     return runs
 
 
+def _base64url_bytes(segment: str) -> bytes | None:
+    try:
+        return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _dotted_token_reader(text: str) -> Callable[[re.Match[str]], str]:
+    """The replacement for ``_DOTTED_RUN`` matches in ``text`` (see the pattern's comment)."""
+    whitespace = _JWT_HEADER_WHITESPACE_BYTES
+    budget = 8 * len(text) + 65_536
+
+    def opens_object(header: str, start: int) -> bool:
+        """Whether the segment from ``start`` decodes to whitespace, '{', whitespace and '"'."""
+        nonlocal whitespace
+        brace = False
+        position = start
+        while position < len(header):
+            chunk = header[position : position + 4]
+            position += 4
+            data = _base64url_bytes(chunk) if len(chunk) != 1 else None
+            if data is None:
+                return False
+            for byte in data:
+                if byte in _JSON_WHITESPACE:
+                    whitespace -= 1
+                    if whitespace < 0:
+                        return True
+                elif byte == 0x7B and not brace:
+                    brace = True
+                else:
+                    return brace and byte == 0x22
+        return False
+
+    def is_header(header: str, start: int) -> bool:
+        nonlocal budget
+        if len(header) - start < 16 or not opens_object(header, start):
+            return False
+        segment = header[start:]
+        if len(segment) > _JWT_HEADER_MAX_CHARS:
+            return True
+        budget -= len(segment)
+        if budget < 0:
+            raise SanitizationLimitError("credential replacement work limit exceeded")
+        data = _base64url_bytes(segment)
+        if data is None:
+            return False
+        try:
+            parsed = json.loads(data)
+        except (ValueError, RecursionError):
+            return False
+        return isinstance(parsed, dict) and "alg" in parsed
+
+    def read(match: re.Match[str]) -> str:
+        header = match.group("header")
+        starts = {0}
+        before = text[match.start() - 1] if match.start() else ""
+        # The boundaries of the 'eyJ' rule: an escaped line break, byte or code point
+        # ('\n', '\x2e', '.'), a percent escape, and any non-letter.
+        if before == "\\":
+            if header[0] in "nrt":
+                starts.add(1)
+            if header[0] == "x" and _HEX_PAIR.fullmatch(header[1:3]):
+                starts.add(3)
+            if header[0] == "u" and _HEX_PAIR.fullmatch(header[1:3]) and _HEX_PAIR.fullmatch(header[3:5]):
+                starts.add(5)
+        elif before == "%" and _HEX_PAIR.fullmatch(header[:2]):
+            starts.add(2)
+        starts.update(position for position in range(1, len(header)) if not header[position - 1].isalpha())
+        for start in sorted(starts):
+            if is_header(header, start):
+                return match.group()[:start] + REDACTED
+        return match.group()
+
+    return read
+
+
 def _redact_jwts(text: str) -> str:
-    """Withhold every JSON Web Token in ``text``, keeping what precedes its 'eyJ'."""
-    if "eyJ" not in text:
-        return text
-    return _JWT.sub(lambda match: match.group("lead") + REDACTED, text)
+    """Withhold every JSON Web Token in ``text``, keeping what precedes its header."""
+    if "eyJ" in text:
+        text = _JWT.sub(lambda match: match.group("lead") + REDACTED, text)
+    if "." in text:
+        text = _DOTTED_RUN.sub(_dotted_token_reader(text), text)
+    return text
 
 
 def _url_host(authority: str) -> str:

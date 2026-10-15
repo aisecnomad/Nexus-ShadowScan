@@ -25,6 +25,7 @@ from abc import abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, failure_summary
 from shadowscan.connectors.code.filesystem import FilesystemConnector
@@ -542,7 +543,7 @@ class RemoteRepositoryConnector(BaseConnector):
         elif self.mode == "clone" and shutil.which("git"):
             # An older (or unreadable) Git ignores protections that keep the clone on its origin.
             self.ctx.warn(
-                f"{self.name}: Git 2.32 or newer is required to clone {full}; using sampled API mode",
+                f"{self.name}: Git 2.45 or newer is required to clone {full}; using sampled API mode",
                 incomplete=True,
             )
         elif self.mode == "clone":
@@ -599,6 +600,10 @@ class RemoteRepositoryConnector(BaseConnector):
             **snapshot,
         }
 
+    def _clone_path_prefix(self) -> str:
+        """The path an instance serves repositories under ('' at the root of its origin)."""
+        return ""
+
     def _clone(self, repo: dict[str, Any], dest: str) -> bool:
         target = self._clone_target(repo)
         if target is None:
@@ -607,6 +612,12 @@ class RemoteRepositoryConnector(BaseConnector):
         # The token is scoped to the API origin: a clone URL from provider JSON
         # must stay on it, and git may not follow redirects away from it.
         url = validate_url(candidate, origin)
+        # It must also name the listed repository: findings from another
+        # repository on the same origin would be attributed to this one.
+        name = repo.get(self.name_field)
+        path = urlsplit(url).path.rstrip("/").removesuffix(".git").lower()
+        if not isinstance(name, str) or path != f"{self._clone_path_prefix()}/{name.strip('/')}".lower():
+            raise ValueError("clone URL does not name the listed repository")
         env = clone_environment(origin, self.token, self.clone_username)
         cmd = [
             *git_argv_prefix(),

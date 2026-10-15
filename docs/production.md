@@ -7,6 +7,35 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## Unreleased review hardening
+
+- **Git 2.45 for clone mode.** `code.github` and `code.gitlab` clone only with
+  Git 2.45 or newer. With 2.32 to 2.44 every clone used to end incomplete
+  without a recorded revision; it now uses sampled API mode, which is also
+  incomplete. Install Git 2.45+ on the worker (the container image has it).
+- **Clone URLs must name the listed repository.** A provider `clone_url` or
+  `http_url_to_repo` whose path is not the repository's `full_name` or
+  `path_with_namespace` is refused, and the repository falls back to sampled
+  API mode (incomplete).
+- **Report paths.** `-o` refuses a path through a directory link owned by
+  another user; links owned by root or by the current user are followed. Point
+  `-o` at a real directory if a scan now fails with that message.
+- **Redaction.** JWTs whose header is written with whitespace (encoded as
+  `IHsi…`, `eyAi…`, `ewo…` rather than `eyJ…`) are withheld everywhere. Report
+  text that held such a token changes, and so may finding ids derived from it.
+- **identity.jwt.** `expected_issuer` or `allowed_algorithms` without
+  `jwks_url` is an error (exit 3) in a configuration file, as it was on the
+  command line. Tokens whose header has a non-string `kid` or a `crit` list are
+  now reported as unverified instead of being dropped. Agent claim values are
+  cut at 200 characters and `claim_names` at 100 names.
+- **SARIF.** Evidence locations that climb above the scan root or name a
+  network path (`//host/share`) get no physical location, and a line number
+  beyond 2,147,483,647 drops the region; a merged report with such locations
+  no longer produces an upload GitHub rejects or a URI outside the checkout.
+- **Human-read output.** Table, Markdown, HTML and CSV show every Unicode format
+  character, variation selector and other blank character as a `\uXXXX`
+  escape. Emoji presentation selectors (`U+FE0F`) are among them.
+
 ## Unreleased Kubernetes and Atlassian migration
 
 Rescan Kubernetes and OpenShift exports after upgrading. Earlier observations
@@ -507,11 +536,10 @@ cannot filter destinations by DNS name, and ShadowScan's HTTP client ignores
 proxy environment variables and rejects an explicit proxy. See [operational controls](operations/operational-controls.md).
 
 Opt-in Git history enrichment requires Git 2.45+;
-verify the distribution Git version if that feature is needed. Cloning requires
-Git 2.32 or newer; with an older or unidentifiable Git the scan uses sampled API mode
-and is incomplete. The gitlink inventory of a clone additionally needs Git 2.45; with
-Git 2.32 to 2.44 a clone is scanned but reports `could not inventory gitlinks safely;
-submodule coverage unknown`. Keep runtime secrets out of the build context.
+verify the distribution Git version if that feature is needed. Cloning also requires
+Git 2.45 or newer, because the clone's revision and gitlink inventory are read with
+`--no-lazy-fetch`; with an older or unidentifiable Git (Ubuntu 24.04 ships 2.43) the
+scan uses sampled API mode and is incomplete. Keep runtime secrets out of the build context.
 
 For record replay, read `exports/manifest.json` and use the `filename` for the
 intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
@@ -1508,7 +1536,7 @@ author-written reports.
 
 | Area | Changed behavior | Migration check |
 | --- | --- | --- |
-| Dashboard confidentiality | `shadowscan dashboard` writes a page and, with `--inventory-json`, a JSON document holding resource identifiers, owners, accounts and registry identifiers. Both are mode 0600 and never written through a symbolic link. Credential findings are left out, and no evidence, permissions or raw metadata is included. | Store and share both files as you store the reports behind them. Do not publish them to a public site or an unrestricted share. |
+| Dashboard confidentiality | `shadowscan dashboard` writes a page and, with `--inventory-json`, a JSON document holding resource identifiers, owners, accounts and registry identifiers. Both are mode 0600, never written to a symbolic link, and never written through a directory link that another user owns. Credential findings are left out, and no evidence, permissions or raw metadata is included. | Store and share both files as you store the reports behind them. Do not publish them to a public site or an unrestricted share. |
 | Dashboard exit code | Exit 3 when an input or source is incomplete or the `--baseline` comparison is not comparable; the files are still written. History never changes the exit code. | Treat exit 3 as "incomplete", as for `scan`, `merge` and `diff`; do not let a pipeline ignore it. |
 | Fleet source schema | `collection_scope.fleet.schema` is `shadowscan.fleet-merge/v2`. Each source adds `started_at`, `finished_at`, `inventory_present` and `connectors` (each run's `complete`, `cached`, `incomplete` or `skipped` status). The merged report's `inventory_present` is true when any source supplied an inventory; a source written before that key existed counts as having one when its `inventory_size` is above zero or a finding has a shadow status. The scope fingerprint and comparability are unchanged. | Consumers that require an exact key set or the v1 schema string must accept v2. The dashboard reads a v1 fleet report and shows its connector coverage as unknown. |
 | Earlier fleet reports | A v1 fleet report recorded findings without an inventory as shadow and never `inventory_present: true`. Read by `merge` or `dashboard` (including `--history`), its findings have no shadow status, and the dashboard says why. | Merge the source reports again with this version rather than reading a v1 fleet report; the dashboard's `legacy_fleet` field marks one. |
@@ -3367,10 +3395,8 @@ Remote collection changes to review:
   most recently active N to the first N by name (GitHub) or id (GitLab); the scan
   is incomplete either way. A bare string for `topics`, `repos` or `projects`, or
   a non-integer cap, is an error (exit 3) where it used to scan nothing.
-- **Git.** Cloning needs Git 2.32 or newer, and the gitlink inventory of a clone
-  needs 2.45: with 2.32 to 2.44 a clone is scanned but every repository reports
-  `could not inventory gitlinks safely`, and with older or unidentifiable Git the
-  connector uses sampled API mode. Both end incomplete. Clones that hold Git LFS
+- **Git.** Cloning needs Git 2.45 or newer; with older or unidentifiable Git the
+  connector uses sampled API mode and ends incomplete. Clones that hold Git LFS
   pointer files are incomplete, and a repository with malformed objects at its tip
   is refused by `fsckObjects` and scanned through the sampled API fallback.
 - **Termination.** SIGINT, SIGTERM, SIGHUP and the job deadline now stop live
