@@ -328,9 +328,13 @@ withheld when the block holds an opaque value. Previously only the single-line
 `key: <opaque>` form was withheld, so a Kubernetes secret or Helm value written
 as `key: |` over a base64 blob kept its text unless the value itself had a
 recognizable format such as an `sk-` prefix or a PEM header. A comment such as
-`# rotate quarterly` or a sentence inside the block does not hide the value,
-and a bare `key:` over a nested mapping leaves each entry to be read under its
-own name. A path, a sentence, a placeholder and a block under a name that does
+`# rotate quarterly`, a sentence, a URL or a path beside the value does not hide
+it, nor does a trailing ` # note` on its line, a `- ` sequence marker or a
+leading `#` in a `|` or `>` block. A bare `key:` over a nested mapping leaves
+its entries to be read under their own names when the first one is read that
+way (`algorithm: RS256`, or a nested `key:` block); over an entry that nothing
+reads again (`stringData:` over an opaque line) the whole block is read as one
+value. A path, a sentence, a placeholder and a block under a name that does
 not name a credential (`data: |`) still keep their text. Regenerate retained
 reports, exports and cached evidence under the reviewed revision: changing the
 scanner cannot erase copies already written. Redaction remains best-effort — it

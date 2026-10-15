@@ -15,23 +15,39 @@ summarizes each release for people who install and operate ShadowScan.
   seconds and 200 KB of them over blank lines about twenty, so one file in an
   untrusted repository could exhaust its matching budget and leave the scan
   incomplete (exit 3). A conditional name inside a block already kept is no
-  longer read again, and a bare `key:` over a nested mapping is left to the
-  mapping's own entries, so the pass is linear again (milliseconds for the
-  same inputs). Names that always carry a credential (`password`, `api_key`)
-  are read as before. Timing regressions pin the staircase shapes.
+  longer read again, and a bare `key:` whose first nested entry is read again
+  under its own name is left to the mapping's own entries, so the pass is
+  linear again (milliseconds for the same inputs and for a 1 MB staircase of
+  alternating `key:` and `x:` lines). Names that always carry a credential
+  (`password`, `api_key`) are read as before. Timing regressions pin the
+  staircase shapes.
 - **A note inside a block scalar kept its credential (#235).** `key: |` over an
   opaque value kept it when a `# rotate quarterly` comment or a sentence sat
   in the block, before or after the value: every line was joined into one
-  value, and the note's whitespace failed the opaque test. Each run of lines
-  without whitespace is now joined and tested, and each line on its own, with a
-  `#` note or a sentence ending a run. A bare `key:` over a nested mapping
-  (`key:` then `id:` over an opaque line) no longer withholds an opaque value
-  under a child name that does not name a credential, which #235 did by
-  joining across the mapping line; that matches the single-line `id: <opaque>`.
-  Regression tests cover a note before and after the value and a wrapped
-  value followed by a note. Operators with Kubernetes secrets or Helm values
-  written this way should regenerate retained reports and cached evidence and
-  rotate any key they show.
+  value, and the note's whitespace failed the opaque test. The lines that can
+  be part of a wrapped value (no whitespace, no leading `#`, not a URL or a
+  path) are now joined at each indentation, those on either side of a note,
+  sentence, URL or path apart and together, and each line is also tested on
+  its own: as written, since a block scalar's leading `#` is content
+  (`pwd: |` over `#<opaque>`), without a trailing ` # note` (`tlsKey:` over
+  `<opaque>  # rotated 2026-01`, or the same line in `key: |`) and without a
+  `- ` sequence marker (`key:` over `- <opaque>`). A change of indentation ends
+  the joining, so a nested `key:` or `pwd:` block inside a kept outer block is
+  read as it is on its own, and an outer URL, path or placeholder line no
+  longer hides its wrapped value. A bare `key:` is left to its nested mapping
+  only when the first entry is read again under its own name: one with its
+  value on its line (`algorithm: RS256`), or one over its own block whose name
+  this pass reads (`key:`, `password:`). Over an entry that nothing reads
+  again (`private:`, `stringData:` or `value: |` over an opaque line, or any
+  entry after a lone carriage return) the whole block is read, as #235 did.
+  Regression tests cover a note before, between and after the wrapped lines,
+  a trailing note, a sequence entry, a `#`-prefixed value in `|`, `|-` and
+  `>-` blocks, a path or URL beside the value, nested blocks inside a kept
+  block, a bare conditional name over `private:`, `stringData:` and `value:`
+  with LF and CRLF line ends and over a nested `key:` after a lone carriage
+  return, through `sanitize_text` and `sanitize`. Operators with Kubernetes secrets or Helm values written this
+  way should regenerate retained reports and cached evidence and rotate any
+  key they show.
 - **`--deny-private-origin` lost to a connector grant (#235).** The flag only
   set `allow_private_origin` to false, which is also the default, and the
   engine preferred a connector's own `allow_private_origin: true`, so a
@@ -392,10 +408,10 @@ summarizes each release for people who install and operate ShadowScan.
   always-sensitive name test alone, so `key: |` over a Kubernetes secret's
   base64 blob kept its text while the single-line `key: <opaque>` beside it was
   withheld by the assignment pass; only a value with a recognizable format
-  (`sk-`, a PEM header) was caught in the block form. Each run of the block's
-  dedented lines without whitespace is joined without a separator, and each
-  line is read on its own (see Integration review fixes above), with the same
-  `_credential_literal` test the single-line pass uses, so a wrapped base64
+  (`sk-`, a PEM header) was caught in the block form. The block's lines
+  without whitespace are joined without a separator at each indentation, and
+  each line is read on its own (see Integration review fixes above), with the
+  same `_credential_literal` test the single-line pass uses, so a wrapped base64
   blob is tested as the one value it encodes, while a path, a sentence, a
   placeholder and a name that does not name a credential (`data: |`) keep their
   text. Regression tests cover every block marker, the quoted spellings of the

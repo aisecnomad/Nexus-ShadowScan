@@ -14,6 +14,7 @@ import re
 from shadowscan.utils.redaction_rules import (
     _CLI_WORD,
     _COMPARISONS,
+    _FILE_PATH,
     _FINGERPRINT,
     _OPERATOR,
     _VALUE_SEMICOLON,
@@ -120,33 +121,123 @@ _YAML_MAPPING_LINE = re.compile(
     re.MULTILINE,
 )
 _YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")
+# A comment after a plain scalar on its line (' # rotated 2026-01') starts at
+# the blank before its '#'. Searched as '[ \t]+#', a long run of blanks would
+# be read again from each of its blanks. Then the markers of a block sequence
+# entry ('- ', '- - ').
+_YAML_TRAILING_NOTE = re.compile(r"[ \t]#")
+_YAML_ENTRY_MARKERS = re.compile(r"(?:-[ \t]+)+")
+# What follows 'name:' when the entry's value is on the lines below: nothing,
+# a block scalar header ('|', '>-', '|2+') or only a comment.
+_YAML_VALUE_BELOW = re.compile(r"(?:[|>][0-9+-]*)?(?:[ \t]*#[^\r\n]*)?[ \t]*")
+
+
+def _line_readings(line: str) -> list[str]:
+    """A dedented block line, then the same line without a trailing note and sequence markers.
+
+    The line itself is always read: in a '|' or '>' block a '#' is content.
+    """
+    readings = [line]
+    note = _YAML_TRAILING_NOTE.search(line)
+    if note is not None:
+        line = line[: note.start()].rstrip()
+        readings.append(line)
+    markers = _YAML_ENTRY_MARKERS.match(line)
+    if markers is not None:
+        readings.append(line[markers.end() :])
+    return readings
+
+
+def _value_part(text: str) -> bool:
+    """Whether a dedented block line can be part of a wrapped value.
+
+    A line starting with '#', a sentence, a URL and a path cannot: joined
+    into the value, each kept the credential beside it.
+    """
+    return not (
+        text.startswith("#")
+        or any(char.isspace() for char in text)
+        or "://" in text
+        or _FILE_PATH.fullmatch(text) is not None
+    )
+
+
+def _joined_values(groups: list[list[str]]) -> list[str]:
+    """Each group of value lines joined, then all of them joined when there are several."""
+    values = ["".join(group) for group in groups if group]
+    if len(values) > 1:
+        values.append("".join(values))
+    return values
 
 
 def _opaque_block_credential(lines: list[str]) -> bool:
     """Whether a block scalar's own content is an opaque credential.
 
     Read for a name that carries a credential only when its value is opaque
-    ('key'), the way the single-line assignment pass reads one. Each run of
-    consecutive dedented lines without whitespace is joined without a
+    ('key'), the way the single-line assignment pass reads one. ``lines`` are
+    the block's non-blank lines with their indentation. Consecutive lines at
+    one indentation that can be part of a value are joined without a
     separator so a wrapped base64 blob is tested as the one value it encodes;
-    prose, paths and placeholders keep their text, since ``_credential_literal``
-    rejects whitespace, a path and a placeholder.
+    prose, paths and placeholders keep their text, since
+    ``_credential_literal`` rejects whitespace, a path and a placeholder.
 
     Joining can also read a few short lines as one opaque value ('Alpha1' over
     'Beta2'). That withholds a little more than a line-by-line test would under
     a name like 'key', which is the safer direction here: testing each line on
     its own would keep every wrapped credential, the case this pass exists for.
-    Each line is tested on its own as well, and a '#' note or a sentence only
-    ends a run: joined into the value, one kept the credential beside it.
+
+    Each line is also tested on its own: as it is (in a '|' block a leading
+    '#' is content), without a trailing ' # note' and without leading '- '
+    markers ('key:' over '- <opaque>'). A note, a sentence, a URL or a path is
+    never joined (``_value_part``): the value lines before and after one are
+    joined apart and together. A change of indentation ends the joining, so
+    a nested block's lines are joined as that block joins them when read
+    alone, and a kept outer block never shows a value that a nested 'key:'
+    inside it would withhold.
     """
-    runs: list[list[str]] = [[]]
+    candidates: list[str] = []
+    # The value lines at the current indentation, in groups split by lines
+    # that cannot be part of a value.
+    groups: list[list[str]] = [[]]
+    depth = -1
     for line in lines:
-        if line.startswith("#") or any(char.isspace() for char in line):
-            runs.append([])
-        else:
-            runs[-1].append(line)
-    candidates = ["".join(run) for run in runs if run] + [line for run in runs for line in run]
+        text = line.lstrip()
+        candidates.extend(_line_readings(text))
+        indent = len(line[: len(line) - len(text)].expandtabs(8))
+        if indent != depth:
+            candidates.extend(_joined_values(groups))
+            groups = [[]]
+            depth = indent
+        if _value_part(text):
+            groups[-1].append(text)
+        elif groups[-1]:
+            groups.append([])
+    candidates.extend(_joined_values(groups))
     return any(_credential_literal(value, positional=False) for value in candidates)
+
+
+def _entry_read_on_its_own(text: str, line_start: int, content: str) -> bool:
+    """Whether the first line under a bare conditional name is an entry read under its own name.
+
+    A bare 'key:' over a nested mapping holds a collection, not an opaque
+    scalar, and is left to its entries when each is read again: an entry with
+    its value on its line by the line pass, one whose value is on the lines
+    below ('id:', 'id: |') only when this pass reads its name. Otherwise the
+    whole block is read here, as an entry like 'stringData:' over an opaque
+    line is never read again. A colon followed by text ('sha256:<opaque>')
+    makes a plain scalar, not an entry. The mapping pattern starts no line
+    after a lone carriage return, so an entry there is never read again either.
+    """
+    nested = _YAML_MAPPING_LINE.match(content)
+    if nested is None or (line_start > 0 and text[line_start - 1] != "\n"):
+        return False
+    value = nested.group("value")
+    if value and content[nested.start("value") - 1] not in " \t":
+        return False
+    if not _YAML_VALUE_BELOW.fullmatch(value):
+        return True
+    name = nested.group("quoted") or nested.group("plain")
+    return _credential_name(name) or _sensitive_assignment_key(name)
 
 
 def _redact_yaml_multiline_values(text: str) -> str:
@@ -201,18 +292,17 @@ def _redact_yaml_multiline_values(text: str) -> str:
             whitespace = len(content) - len(content.lstrip(" \t"))
             if content.strip() and len(content[:whitespace].expandtabs(8)) <= indent:
                 break
-            if not always_sensitive and not value and not has_continuation and content.strip():
-                # A bare 'key:' over a nested mapping holds a collection, not
-                # an opaque scalar; each entry is read under its own name. A
-                # colon followed by text ('sha256:<opaque>') is a plain scalar.
-                nested = _YAML_MAPPING_LINE.match(content)
-                if nested is not None and (
-                    not nested.group("value") or content[nested.start("value") - 1] in " \t"
-                ):
-                    break
+            if (
+                not always_sensitive
+                and not value
+                and not has_continuation
+                and content.strip()
+                and _entry_read_on_its_own(text, position, content)
+            ):
+                break
             has_continuation = has_continuation or bool(content.strip())
             if content.strip():
-                content_lines.append(content.strip())
+                content_lines.append(content.rstrip())
             end = line.end()
             position = end
         if not has_continuation:
