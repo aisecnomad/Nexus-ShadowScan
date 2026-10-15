@@ -188,6 +188,10 @@ connector-reference: ## Regenerate docs/connectors/reference.md from the connect
 readme-matrix: ## Regenerate the README detection matrix from the signature packs and connector classes
 	python -m tools.readme_matrix
 
+.PHONY: readme-visuals
+readme-visuals: ## Regenerate the README banner and architecture diagrams (docs/assets/*.svg) from the code
+	python -m tools.readme_visuals
+
 .PHONY: mapping-reference
 mapping-reference: ## Regenerate docs/concepts/mappings-reference.md from the mapping catalogs
 	python -m tools.mapping_reference

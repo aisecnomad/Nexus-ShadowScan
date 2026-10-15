@@ -5,6 +5,23 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### README visuals generated from the code (October 15)
+
+- The README banner and the architecture diagrams are now SVG files that
+  `python -m tools.readme_visuals` (`make readme-visuals`) generates from the
+  code: the surfaces from `Surface`, every built-in connector from the
+  connector registry, the report formats from the reporters and the package
+  name from `pyproject.toml`. A test fails when a committed image is stale,
+  when a surface, connector, report format or report command is missing from
+  them, or when an image carries a version, a count or the repository slug.
+  `docs/architecture.md` shows the new connectors-by-surface diagram.
+- The raster images #222 added are replaced: the banner showed the former
+  repository slug, `v0.1.2` and connector counts, and both architecture
+  diagrams showed six surfaces, 27 connectors and 215 signatures.
+- `docs/assets/discovery-tool-scorecard.png` is removed. It gave letter grades
+  to 11 named third-party tools from a benchmark this repository does not
+  contain, which #199 had already ruled out.
+
 ### Redaction review fixes, second round (October 14)
 
 - `sanitize` keeps every container of a record a container of its type. A
