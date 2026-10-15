@@ -1024,6 +1024,12 @@ Cloning requires Git 2.45 or newer (older versions ignore the environment
 settings that confine a clone, or reject the `--no-lazy-fetch` option the
 clone's metadata reads use); with an older or unidentifiable Git the
 connector uses sampled API mode and the scan is incomplete.
+A clone connects directly (proxy variables are ignored) and only to the
+addresses ShadowScan resolved for the clone host and checked like any API
+destination: Git is pinned to them with `http.curloptResolve`, so it does not
+resolve the name again. A clone host with no answer in time, or a clone URL that
+is refused (off the API origin, naming another repository, or resolving to a
+refused address), falls back to sampled API mode and makes the scan incomplete.
 
 ## `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
@@ -1044,8 +1050,8 @@ The group listing is ordered by project `id`, read to the end before the first
 project is cloned, and compared with the `X-Total` / `X-Total-Pages` totals GitLab
 reports (it omits them for very large groups); a mismatch makes the scan
 incomplete. LFS pointer files are reported as for GitHub.
-GitLab clones use the same observed `clone_max_bytes` and timeout behavior as
-GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
+GitLab clones use the same observed `clone_max_bytes` and timeout behavior,
+address pinning and fallback as GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
 it does not replace a filesystem/container disk quota.
 
 

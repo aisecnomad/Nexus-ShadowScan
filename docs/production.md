@@ -16,7 +16,17 @@ passing unit suite does not establish complete coverage of a particular estate.
 - **Clone URLs must name the listed repository.** A provider `clone_url` or
   `http_url_to_repo` whose path is not the repository's `full_name` or
   `path_with_namespace` is refused, and the repository falls back to sampled
-  API mode (incomplete).
+  API mode (incomplete). A clone URL off the API origin now falls back the same
+  way; it used to end that repository with an error and scan none of it.
+- **Clones connect only to checked addresses, and directly.** ShadowScan
+  resolves the clone host once, refuses loopback, private, link-local and
+  cloud-metadata answers (unless the connector may reach private origins), and
+  pins Git to the answers with `http.curloptResolve`, so Git does not resolve the
+  name again. Git ignores `HTTPS_PROXY`, `ALL_PROXY` and the other proxy
+  variables for clones, as the HTTP client already does: allow the worker
+  direct HTTPS egress to the Git host, which API listing already needs. A clone
+  host that does not resolve in time, or whose name is not plain ASCII, is not
+  cloned; the repository uses sampled API mode (incomplete).
 - **Report paths.** `-o` refuses a path through a directory link owned by
   another user; links owned by root or by the current user are followed. Point
   `-o` at a real directory if a scan now fails with that message.
@@ -314,9 +324,10 @@ scan-wide grant. An in-file `options.allow_private_origin: false` is only that
 default, so the connector grant above overrides it. The key takes a YAML boolean
 or the strings `true`/`false`, so an interpolated `"false"` cannot enable it,
 and any other value fails closed without echoing itself. The grant covers this
-scanner's HTTPS clients only: git and the cloud SDKs carry their own egress
-controls, so keep restricting egress at the network where that matters. No
-default changes, so a configuration that set neither key behaves as before.
+scanner's HTTPS clients and the addresses a `code.github` or `code.gitlab` clone
+is pinned to; the cloud SDKs carry their own egress controls, so keep
+restricting egress at the network where that matters. No default changes, so a
+configuration that set neither key behaves as before.
 
 `--deny-private-origin` on the command line (or
 `ScanConfig(deny_private_origin=True)` for a library caller) is a scan-wide
@@ -589,8 +600,9 @@ NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
 reviewed `/input` volume before running it. For live API collection, use a
 separate Job and enforce a network path through an approved transparent egress
 gateway or firewall that filters by name; a standard Kubernetes NetworkPolicy
-cannot filter destinations by DNS name, and ShadowScan's HTTP client ignores
-proxy environment variables and rejects an explicit proxy. See [operational controls](operations/operational-controls.md).
+cannot filter destinations by DNS name, and ShadowScan's HTTP client and its Git
+clones ignore proxy environment variables (the client also rejects an explicit
+proxy). See [operational controls](operations/operational-controls.md).
 
 Opt-in Git history enrichment requires Git 2.45+;
 verify the distribution Git version if that feature is needed. Cloning also requires

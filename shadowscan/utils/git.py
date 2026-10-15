@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import math
 import os
 import re
@@ -18,6 +19,7 @@ from configparser import ConfigParser
 from configparser import Error as ConfigError
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from shadowscan.utils.files import open_confined_directory, open_confined_file
 
@@ -727,8 +729,12 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 # another host and finishes the scan. The metadata reads of the finished clone (its
 # immutable revision and gitlink inventory) pass --no-lazy-fetch, which Git 2.45 added:
 # with 2.32 to 2.44 every clone was scanned without provenance and reported incomplete,
-# so cloning requires at least 2.45.
+# so cloning requires at least 2.45. Clones are also pinned to the addresses the scanner checked with
+# http.curloptResolve (clone_pins), which Git 2.37 added; an older Git ignores the key and resolves
+# the name itself, so the floor must never drop below it.
 MINIMUM_CLONE_GIT = (2, 45)
+_CURLOPT_RESOLVE_GIT = (2, 37)
+assert MINIMUM_CLONE_GIT >= _CURLOPT_RESOLVE_GIT, "clone pinning needs http.curloptResolve"
 _GIT_VERSION_RX = re.compile(rb"git version (\d+)\.(\d+)(?:\.(\d+))?")
 _git_version_cache: tuple[int, int, int] | None = None
 
@@ -772,75 +778,64 @@ def git_config_overlay(pairs: list[tuple[str, str]]) -> dict[str, str]:
     return env
 
 
-def validate_clone_destination(url: str, *, allow_private: bool | None = None) -> None:
-    """Resolve the clone URL and reject private, metadata, and loopback addresses.
+# Git compares an http.curloptResolve entry with the host as libcurl reads the URL: percent-decoded
+# and converted to IDNA, and an entry that starts with "-" or "+" means something else. On any
+# mismatch the pin is unused and Git resolves the name itself, so only a host that every reader spells
+# the same way is pinned: lowercase ASCII letters, digits, "_", "." and "-" (urlsplit lowercases it;
+# libcurl matches entries case-insensitively), not starting with "-" or ".".
+_PINNABLE_HOST = re.compile(r"[a-z0-9_][a-z0-9_.-]*\Z")
 
-    Git resolves hostnames independently of the scanner's HTTP stack, so the
-    preflight DNS check in ``validate_url`` cannot cover git's own HTTPS
-    transport.  This narrows the TOCTOU gap by validating the destination
-    immediately before the clone starts.
+
+def clone_pins(url: str) -> list[tuple[str, str]]:
+    """Git configuration that connects a clone of *url* only to the addresses checked here.
+
+    ``validate_url`` checks the answers of its own lookup, but Git resolves the name again before it
+    connects, so an answer that changes in between (DNS rebinding) would reach an address nothing
+    checked. The host is resolved once with ``resolve_destination`` (bounded by the worker's request
+    deadline; a loopback, private or metadata answer is refused unless private origins are allowed
+    for this connector) and Git is pinned to those answers with ``http.curloptResolve``. The entry
+    keeps the URL's spelling of the host, trailing dot included: libcurl matches it literally, and a
+    miss sends Git back to DNS. An IP literal needs no pin. Raises ``DestinationUnresolved`` when the
+    name gives no address, and ``ValueError`` when an answer is refused.
     """
-    import ipaddress
-    import socket
-    from urllib.parse import urlsplit
-
-    from shadowscan.utils.http import _allow_private_origin, _blocked_host, _blocked_ip
-
-    allow = _allow_private_origin.get() if allow_private is None else allow_private
+    from shadowscan.utils.http import resolve_destination
 
     try:
         parsed = urlsplit(url)
+        host = parsed.hostname
+        port = parsed.port or 443
     except (TypeError, ValueError, UnicodeError):
         raise ValueError("Invalid clone URL") from None
-
-    host = parsed.hostname
     if not host:
         raise ValueError("Clone URL has no hostname")
-
-    host = host.strip("[]")
-    port = parsed.port or 443
-
-    if not allow and _blocked_host(host):
-        raise ValueError("Refusing clone from loopback, link-local, private, or cloud-metadata destination")
-
-    if allow:
-        return
-
-    is_literal = False
     try:
-        addr = ipaddress.ip_address(host)
-        is_literal = True
+        ipaddress.ip_address(host)
     except ValueError:
         pass
-
-    if is_literal:
-        if _blocked_ip(addr):
-            raise ValueError(
-                "Refusing clone from loopback, link-local, private, or cloud-metadata destination"
-            )
     else:
-        try:
-            infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-        except socket.gaierror:
-            infos = []
-        for info in infos:
-            try:
-                addr = ipaddress.ip_address(info[4][0])
-            except (ValueError, TypeError, IndexError):
-                continue
-            if _blocked_ip(addr):
-                raise ValueError(
-                    "Refusing clone from loopback, link-local, private, or cloud-metadata destination"
-                ) from None
+        return []
+    if not _PINNABLE_HOST.match(host):
+        raise ValueError("Clone host must be an ASCII DNS name or an IP address")
+    addresses = resolve_destination(host, port)
+    pinned = ",".join(f"[{address}]" if ":" in address else address for address in addresses)
+    return [("http.curloptResolve", f"{host}:{port}:{pinned}")]
 
 
-def clone_environment(origin: str, token: str | None, username: str) -> dict[str, str]:
-    """Scope authentication to a verified HTTPS origin and disable redirects."""
+def clone_environment(
+    origin: str, token: str | None, username: str, *, pins: list[tuple[str, str]] | None = None
+) -> dict[str, str]:
+    """Scope authentication to a verified HTTPS origin and disable redirects.
+
+    *pins* (``clone_pins``) hold Git to the addresses the scanner resolved and checked.
+    """
     import base64
 
     config = [
         ("core.hooksPath", os.devnull),
         ("http.followRedirects", "false"),
+        # Connect directly, as HttpClient does: a proxy from HTTPS_PROXY or ALL_PROXY would resolve
+        # the host itself and route around the pinned addresses.
+        ("http.proxy", ""),
         ("credential.helper", ""),
         ("protocol.allow", "never"),
         ("protocol.https.allow", "always"),
@@ -853,6 +848,7 @@ def clone_environment(origin: str, token: str | None, username: str) -> dict[str
     if token:
         basic = base64.b64encode(f"{username}:{token}".encode()).decode()
         config.append((f"http.{origin.rstrip('/')}/.extraheader", f"Authorization: Basic {basic}"))
+    config.extend(pins or ())
     extra.update(git_config_overlay(config))
     return safe_git_env(extra)
 

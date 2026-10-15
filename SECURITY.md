@@ -136,8 +136,10 @@ coverage, even when a response includes an empty collection field.
 * Azure App Service settings and OCI Function configuration are exported under
   `environment`, so record dumps redact every value; Salesforce token
   values are never requested.
-* Cloud SDKs and Git use separate transports. Network egress rules remain needed
-  for those paths. URL preflight checks alone do not pin Git's later DNS lookup.
+* Cloud SDKs and Git use separate transports. A clone is pinned to the addresses
+  ShadowScan resolved and checked (`http.curloptResolve`, proxy variables
+  ignored), so Git does not resolve the clone host again; the cloud SDKs get no
+  such pin. Network egress rules remain needed for those paths.
   Custom non-Requests transport doubles remain trusted extension/test mechanisms.
 * JWT classification remains unverified by default. Optional `jwks_url` signature
   verification uses the shared transport with a bounded JWKS body and key count.

@@ -82,8 +82,9 @@ operator's scan-wide refusal: it also overrides every connector-level
 
 The key takes a YAML boolean or the strings `true`/`false`, so an interpolated
 `"false"` cannot enable it. The grant covers this scanner's HTTPS clients
-only — git and the cloud SDKs carry their own egress controls, so restrict
-egress at the network when that matters.
+and the addresses a `code.github` or `code.gitlab` clone is pinned to — the
+cloud SDKs carry their own egress controls, so restrict egress at the network
+when that matters.
 
 ## Trusted vendor registries
 

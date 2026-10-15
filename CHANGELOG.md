@@ -66,6 +66,39 @@ summarizes each release for people who install and operate ShadowScan.
   and `O_DIRECTORY` with a full-width vertical line (U+FF5C) that neither
   pastes nor greps as the ASCII flag operator; it is now an escaped `|` outside
   the code spans, which keeps the table intact.
+- **Clone host pinning (#234, #236, #237).** #234's
+  `validate_clone_destination()` resolved the clone host again before Git ran
+  and refused private answers, but it pinned nothing: Git resolved the name
+  itself afterwards, so an answer that changed in between (DNS rebinding) still
+  reached an unchecked address, and an inherited `HTTPS_PROXY` resolved it
+  elsewhere. It also passed when the name did not resolve, and its
+  `getaddrinfo` had no time limit, bringing back the unbounded lookup #236
+  removed. It is replaced by `clone_pins()`: the host is resolved once with
+  #236's bounded resolver (`resolve_destination` in `utils/http.py`), every
+  answer is checked, and Git is pinned to the answers with
+  `http.curloptResolve` under the URL's own spelling of the host (trailing dot
+  included), with `http.proxy` empty so proxy variables are ignored. A host
+  with no answer in time is not cloned and the repository uses sampled API mode
+  (incomplete); a refused answer is refused like `validate_url`'s, and a host
+  libcurl would spell differently from the pin (non-ASCII, percent-encoded or
+  starting with `-`) is refused rather than left unpinned. Git 2.37 added the
+  option, below #237's 2.45 floor, and `MINIMUM_CLONE_GIT` asserts the tie.
+  Operators whose workers reached Git hosts only through a proxy variable need
+  direct HTTPS egress to them, which API listing already required. Regression
+  tests drive a real Git clone of an unresolvable `.invalid` host to a loopback
+  listener (mixed case and trailing dot, with a proxy variable set) and cover a
+  rebinding between the lookups, an unresolvable or stalled lookup, IPv6
+  brackets and refused spellings.
+- **A refused clone URL ended the repository (#237).** `_clone` raises
+  `ValueError` for a provider clone URL off the API origin or naming another
+  repository (and now for a clone host that resolves to a refused address), and
+  `_fetch` did not catch it, so the repository was recorded as an error and none
+  of it was scanned, while `docs/production.md` said it fell back to sampled API
+  mode. `_fetch` now warns with the reason, marks the scan incomplete and falls
+  back to API mode, which reads the listed repository by its own name from the
+  configured origin, like any other failed clone. Affects `code.github` and
+  `code.gitlab` scans whose provider returns such URLs; a regression test covers
+  both providers and both refusals.
 
 ### Cap runtime dep ranges at the next major (October 15)
 
@@ -217,18 +250,19 @@ summarizes each release for people who install and operate ShadowScan.
 - `terminal_text` and saved reports escape every Unicode format character, the
   variation selectors and other blank characters.
 
-### Security hardening: plugin isolation, git DNS pinning, exit watchdog (October 15)
+### Security hardening: plugin isolation, pre-clone DNS check, exit watchdog (October 15)
 
 - **Plugin process isolation by default.** `plugin_execution` now defaults
   to `process` so third-party plugins run in isolated child processes
   instead of sharing the scanner's address space.  Operators can still set
   `plugin_execution: thread` in configuration to restore the previous
   behavior.
-- **Pre-clone DNS validation.** `validate_clone_destination()` resolves the
-  clone URL hostname and rejects private, loopback, link-local, and
-  cloud-metadata addresses before handing the URL to git, narrowing the
-  TOCTOU gap between the HTTP-layer preflight check and git's own DNS
-  resolution.
+- **Pre-clone DNS validation.** `validate_clone_destination()` resolved the
+  clone URL hostname and rejected private, loopback, link-local, and
+  cloud-metadata addresses before handing the URL to git. It did not pin Git
+  to those addresses or narrow the gap to Git's own lookup, and it repeated
+  `validate_url`'s check; the integration review fixes above replace it with
+  `clone_pins()`, which does pin Git.
 - **Bounded exit watchdog for abandoned workers.** When the engine detects
   timed-out connector workers, a 30-second daemon-thread watchdog arms
   automatically so the CLI process cannot hang indefinitely during report

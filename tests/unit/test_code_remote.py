@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import shutil
+import socket
 import subprocess
 from pathlib import Path
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -33,7 +35,13 @@ from shadowscan.connectors.code.remote import (
 from shadowscan.models import Kind, ScanStats
 from shadowscan.utils import git as git_module
 from shadowscan.utils.git import checkout_has_lfs_pointers, safe_git_env
-from shadowscan.utils.http import HttpError
+from shadowscan.utils.http import (
+    HttpError,
+    reset_allow_private_origin,
+    reset_request_deadline,
+    set_allow_private_origin,
+    set_request_deadline,
+)
 
 COMMIT = "a" * 40
 PROVIDERS = [GitHubConnector, GitLabConnector]
@@ -295,6 +303,200 @@ def test_github_enterprise_clone_stays_on_the_api_origin(tmp_path, index, monkey
     assert cmd[-3:] == ["--", "https://ghe.example.com/acme/app.git", str(tmp_path / "repo")]
     keys = [env[f"GIT_CONFIG_KEY_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))]
     assert "http.https://ghe.example.com/.extraheader" in keys
+
+
+def _git_settings(env):
+    return {
+        env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+
+
+def _resolving(monkeypatch, host, *answers, stall=None):
+    """Answer the n-th lookup of *host* with answers[n] (the last answer from then on).
+
+    Other names get a public address. With *stall*, every lookup of *host* after the
+    answers run out waits for that event instead. Returns the names looked up, in order.
+    """
+    calls: list[str] = []
+
+    def getaddrinfo(name, port, *args, **kwargs):
+        calls.append(name)
+        address = "93.184.216.34"
+        if name == host:
+            seen = calls.count(host)
+            if stall is not None and seen > len(answers):
+                stall.wait(10)
+            address = answers[min(seen, len(answers)) - 1]
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return calls
+
+
+def _clone_mode(index, monkeypatch, cls, **config):
+    """A connector whose _fetch clones: Git 2.45 present, git itself never run."""
+    monkeypatch.setattr(git_module, "git_version", lambda: (2, 45, 0))
+    monkeypatch.setattr(remote.shutil, "which", lambda name: "/usr/bin/git")
+    return _connector(index, cls, mode="clone", token="synthetic", **config)
+
+
+def test_clone_runs_git_pinned_to_the_address_it_checked(tmp_path, index, monkeypatch):
+    # validate_url's preflight, then the pin's own lookup. Git connects only to the pinned answer,
+    # so a later rebinding to loopback (every further answer here) never reaches it.
+    calls = _resolving(monkeypatch, "github.com", "93.184.216.34", "93.184.216.35", "127.0.0.1")
+    run = Mock(return_value=True)
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    assert _connector(index, GitHubConnector, token="synthetic")._clone(
+        {"full_name": "acme/app"}, str(tmp_path)
+    )
+    settings = _git_settings(run.call_args.args[1])
+    assert settings["http.curloptResolve"] == "github.com:443:93.184.216.35"
+    assert settings["http.proxy"] == ""  # an inherited HTTPS_PROXY cannot route around the pin
+    assert calls.count("github.com") == 2
+
+
+@pytest.mark.parametrize(
+    "cls,host,answers",
+    [
+        # Every lookup before the pin's own (the API origin's, then the clone URL preflight) is public.
+        (GitHubConnector, "github.com", ("93.184.216.34", "127.0.0.1")),
+        (GitLabConnector, "gitlab.com", ("93.184.216.34", "93.184.216.34", "127.0.0.1")),
+    ],
+)
+def test_clone_host_rebound_to_a_private_address_falls_back_to_api_mode(
+    tmp_path, index, monkeypatch, cls, host, answers
+):
+    calls = _resolving(monkeypatch, host, *answers)
+    connector = _clone_mode(index, monkeypatch, cls)
+    run = Mock(side_effect=AssertionError("a refused address must not reach git"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    api = Mock(return_value=str(tmp_path / "api"))
+    monkeypatch.setattr(connector, "_fetch_via_api", api)
+    record = _record(
+        size=1, statistics={"repository_size": 1}, http_url_to_repo="https://gitlab.com/acme/app.git"
+    )
+    assert getattr(connector, _fetch_name(cls))(record, str(tmp_path)) == str(tmp_path / "api")
+    run.assert_not_called()
+    assert calls.count(host) == len(answers)  # refused at the pin's lookup, the last one
+    stats = connector.ctx.stats
+    assert stats.incomplete and stats.errors == []
+    assert any("Refusing loopback" in warning for warning in stats.warnings)
+    assert f"{cls.name}: clone failed for acme/app; using sampled API mode" in stats.warnings
+
+
+def test_unresolvable_clone_host_falls_back_to_api_mode_without_git(tmp_path, index, monkeypatch):
+    # The preflight lets a name that does not resolve pass (HttpClient refuses it at connect), but
+    # there is nothing to pin Git to, so Git is not run and the scan is incomplete.
+    connector = _clone_mode(index, monkeypatch, GitHubConnector, api_url="https://ghe.invalid/api/v3")
+    run = Mock(side_effect=AssertionError("an unresolved host must not reach git"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    api = Mock(return_value=str(tmp_path / "api"))
+    monkeypatch.setattr(connector, "_fetch_via_api", api)
+    assert not connector._clone({"full_name": "acme/app"}, str(tmp_path / "repo"))
+    assert connector._fetch({"full_name": "acme/app", "size": 1}, str(tmp_path)) == str(tmp_path / "api")
+    run.assert_not_called()
+    stats = connector.ctx.stats
+    assert stats.incomplete and stats.errors == []
+    assert stats.warnings == ["code.github: clone failed for acme/app; using sampled API mode"]
+
+
+def test_stalled_clone_lookup_stops_at_the_request_deadline(tmp_path, index, monkeypatch):
+    release = Event()
+    _resolving(monkeypatch, "github.com", "93.184.216.34", stall=release)
+    run = Mock(side_effect=AssertionError("git must not run without a pinned address"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    connector = _connector(index, GitHubConnector)
+    token = set_request_deadline(monotonic() + 1, None)
+    started = monotonic()
+    try:
+        assert not connector._clone({"full_name": "acme/app"}, str(tmp_path / "repo"))
+    finally:
+        reset_request_deadline(token)
+        release.set()
+    assert monotonic() - started < 5  # the request deadline, not the resolver, ended the wait
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "cls,record,reason",
+    [
+        (
+            GitHubConnector,
+            {"full_name": "acme/app", "size": 1, "clone_url": "https://github.com/other/repo.git"},
+            "clone URL does not name the listed repository",
+        ),
+        (
+            GitLabConnector,
+            {
+                "path_with_namespace": "acme/app",
+                "id": 7,
+                "statistics": {"repository_size": 1},
+                "http_url_to_repo": "https://gitlab.com/other/repo.git",
+            },
+            "clone URL does not name the listed repository",
+        ),
+        (
+            GitHubConnector,
+            {"full_name": "acme/app", "size": 1, "clone_url": "https://evil.example/acme/app.git"},
+            "outside the configured credential origin",
+        ),
+    ],
+)
+def test_refused_clone_url_falls_back_to_incomplete_api_mode(
+    tmp_path, index, monkeypatch, cls, record, reason
+):
+    # Like any other failed clone; it used to end the repository with an error and scan none of it.
+    connector = _clone_mode(index, monkeypatch, cls)
+    run = Mock(side_effect=AssertionError("a refused clone URL must not reach git"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    api = Mock(return_value=str(tmp_path / "api"))
+    monkeypatch.setattr(connector, "_fetch_via_api", api)
+    assert getattr(connector, _fetch_name(cls))(dict(record), str(tmp_path)) == str(tmp_path / "api")
+    run.assert_not_called()
+    api.assert_called_once()
+    stats = connector.ctx.stats
+    assert stats.incomplete and stats.errors == []
+    assert any(reason in warning for warning in stats.warnings)
+    assert f"{cls.name}: clone failed for acme/app; using sampled API mode" in stats.warnings
+
+
+@pytest.mark.parametrize("host", ["pinned.invalid", "PINNED.invalid", "pinned.invalid."])
+def test_real_git_clone_connects_only_to_the_pinned_address(tmp_path, index, monkeypatch, host):
+    version = git_module.git_version()
+    if shutil.which("git") is None or version is None or version[:2] < (2, 37):
+        pytest.skip("needs Git 2.37 or newer (http.curloptResolve)")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(4)
+    port = listener.getsockname()[1]
+    first: list[bytes] = []
+
+    def accept():
+        with contextlib.suppress(OSError):
+            conn, _ = listener.accept()
+            with conn:
+                conn.settimeout(30)
+                first.append(conn.recv(1))
+
+    # Only this process resolves the name; real DNS cannot (.invalid), and the proxy below is a
+    # closed port. Git reaches the listener only through the pin, under the exact URL spelling.
+    _resolving(monkeypatch, host.lower(), "127.0.0.1")
+    for name in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    server = Thread(target=accept, daemon=True)
+    server.start()
+    token = set_allow_private_origin(True)  # the listener is on loopback
+    try:
+        connector = _connector(index, GitHubConnector, api_url=f"https://{host}:{port}/api/v3")
+        cloned = connector._clone({"full_name": "acme/app"}, str(tmp_path / "repo"))
+    finally:
+        reset_allow_private_origin(token)
+        listener.close()
+        server.join(10)
+    assert not cloned  # the listener is no Git server
+    assert first == [b"\x16"]  # Git's TLS ClientHello reached the pinned address
 
 
 # ------------------------------------------------------------ GitHub API
@@ -1545,9 +1747,9 @@ def test_clone_url_must_name_the_listed_repository(tmp_path, index, monkeypatch,
             GitLabConnector,
             {
                 "path_with_namespace": "grp/sub/app",
-                "http_url_to_repo": "https://git.example/gitlab/grp/sub/app.git",
+                "http_url_to_repo": "https://git.example.com/gitlab/grp/sub/app.git",
             },
-            "https://git.example/gitlab/api/v4",
+            "https://git.example.com/gitlab/api/v4",
         ),
     ],
 )

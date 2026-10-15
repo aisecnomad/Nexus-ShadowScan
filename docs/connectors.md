@@ -468,6 +468,12 @@ clone's revision and submodule inventory are read on the hardened metadata path
 with `--no-lazy-fetch`, which Git 2.45 added. With an older or unidentifiable Git
 (`git --version` is read once per process) the connector uses sampled API mode and
 the scan is incomplete.
+A clone connects directly (proxy variables are ignored) and only to the
+addresses ShadowScan resolved for the clone host and checked like any API
+destination: Git is pinned to them with `http.curloptResolve`, so it does not
+resolve the name again. A clone host with no answer in time, or a clone URL that
+is refused (off the API origin, naming another repository, or resolving to a
+refused address), falls back to sampled API mode and marks the scan incomplete.
 The provider's size is an estimate, and polling can overshoot between samples.
 Neither check limits network transfer or guarantees a hard disk ceiling. Run
 remote scans with a host/container wall-clock limit and a writable disk quota.
@@ -523,7 +529,8 @@ findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable
 commit before downloading files.
 `clone_max_bytes` and `clone_timeout_seconds` have the same defaults, sampled
-checkout measurement and incomplete-scan semantics as `code.github`. GitLab
+checkout measurement and incomplete-scan semantics as `code.github`, and clones
+are pinned to checked addresses in the same way. GitLab
 project details are queried for size statistics when the listing omits them.
 Without a usable estimate, the connector falls back to sampled API mode
 without launching Git.

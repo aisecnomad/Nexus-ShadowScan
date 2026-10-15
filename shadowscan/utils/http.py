@@ -452,6 +452,47 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     return url
 
 
+class DestinationUnresolved(ValueError):
+    """A destination name gave no address to check: a resolver error, a stalled resolver or no answer."""
+
+
+def resolve_destination(host: str, port: int, *, allow_private: bool | None = None) -> list[str]:
+    """Resolve *host* once and return the numeric addresses an external transport may be pinned to.
+
+    Git resolves names itself; pinning it to these addresses (``utils.git.clone_pins``) makes it
+    connect only where this check looked. Every answer is checked as in ``_PublicHTTPSConnection``:
+    one loopback, link-local, private, reserved or cloud-metadata answer refuses the destination
+    unless ``allow_private`` (or the current worker's policy) is true. The lookup is bounded like the
+    ``validate_url`` preflight, but unlike it a resolver error, a resolver stalled past the budget or
+    an empty answer raises ``DestinationUnresolved``: an empty list would leave the transport to
+    resolve the name again, unchecked.
+    """
+    allow = _allow_private_origin.get() if allow_private is None else allow_private
+    if not isinstance(allow, bool):
+        raise TypeError("allow_private must be a boolean")
+    if (_blocked_host(host) or "%" in host) and not allow:
+        raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
+    deadline, _ = _request_limits.get()
+    budget = _RESOLVE_TIMEOUT if deadline is None else min(_RESOLVE_TIMEOUT, deadline - time.monotonic())
+    try:
+        infos = _resolve_bounded(host, port, budget, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):  # socket.gaierror and TimeoutError are OSErrors
+        raise DestinationUnresolved("DNS resolution for the destination gave no address") from None
+    addresses: list[str] = []
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except (ValueError, TypeError, IndexError):
+            continue  # nothing to pin; the transport connects only to the addresses returned
+        if _blocked_ip(addr) and not allow:
+            raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
+        if str(addr) not in addresses:
+            addresses.append(str(addr))
+    if not addresses:
+        raise DestinationUnresolved("DNS resolution for the destination gave no address")
+    return addresses
+
+
 def _join_url(origin: str, path: str) -> str:
     """Resolve a continuation without exposing malformed URL text in parser errors."""
     try:

@@ -58,6 +58,7 @@ Grouped by boundary, in STRIDE terms where the category is meaningful.
 |---|---|---|
 | SSRF to cloud metadata and internal services | HTTPS is required; loopback, link-local, private, multicast, unspecified, reserved and cloud-metadata destinations are refused, including obfuscated spellings. | `validate_url`, `utils/http.py` |
 | DNS rebinding between validation and connect | Addresses are validated inside `_new_conn` and the socket connects to the numeric result, while TLS keeps the original hostname for SNI and certificate verification. *Every* answer is checked, so a mixed public/private result is refused rather than only the first record. | `_PublicHTTPSConnection` |
+| DNS rebinding between the clone URL check and Git's connect | Git resolves names itself, so the clone host is resolved once more, every answer is checked, and Git is pinned to those answers with `http.curloptResolve`, proxy variables ignored. A host with no answer in time, or whose spelling libcurl would read differently from the pin (non-ASCII, percent-encoded), is not cloned. | `clone_pins`, `resolve_destination` |
 | URL parser differentials | A URL containing whitespace or a control character is refused rather than normalised, because `urlsplit`, git and libcurl disagree about them. | `validate_url` |
 | A server-supplied link leaving the credential's origin | Pagination and continuation links are pinned to the configured origin, including its port. | `validate_url(origin=...)` |
 | Credential theft via git configuration of untrusted content | `url.*.insteadOf`, credential helpers and smudge filters cannot act: system and global configuration are disabled, inherited `GIT_CONFIG_*` is stripped, and the terminal prompt is off. | `safe_git_env`, `utils/git.py` |
@@ -119,8 +120,9 @@ Stated plainly, because the controls above do not cover them:
   examples in public reports.
 - **A plugin is not sandboxed**, as above.
 - **External transports carry their own egress controls.** The HTTPS client's
-  private-address policy does not extend to git or the cloud SDKs; restrict
-  egress at the network when that matters.
+  private-address policy does not extend to the cloud SDKs, and reaches Git
+  only through the addresses a clone is pinned to; restrict egress at the
+  network when that matters.
 - **An allowed private origin is a real grant.** It disables the
   private-address refusal for whatever it covers.
 - **Offline replay is not live acceptance.** Canaries validate named tenant
