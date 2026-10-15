@@ -8,6 +8,13 @@ false-positive cost?* It answers from two directions, as two tracks that share
 the name and the question but nothing else. Each track has its own corpus
 model, adapters, runner and scorer.
 
+ShadowBench lives in this repository
+([aisecnomad/Nexus-ShadowScan](https://github.com/aisecnomad/Nexus-ShadowScan)).
+[LANDSCAPE.md](LANDSCAPE.md) is a reader's map: current corpus footprint,
+the real-world code repositories pinned across the project, and how each
+open-source "shadow AI agent discovery" tool a reader is likely to
+encounter maps onto a ShadowBench adapter (or doesn't).
+
 > **Read this first.** ShadowBench is not independent. The same maintainer
 > wrote ShadowScan, both harnesses, every corpus, every label and every
 > adapter for the other tools. Every estate file is authored, and eight of

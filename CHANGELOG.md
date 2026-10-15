@@ -5,6 +5,26 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### ShadowBench LANDSCAPE page: open-source landscape and real-world footprint (October 15)
+
+- New [`benchmarks/shadowbench/LANDSCAPE.md`](benchmarks/shadowbench/LANDSCAPE.md)
+  pulls three things into one reader's map: the current corpus scope on
+  both ShadowBench tracks (346 cases, 139 estate files); the real public
+  repositories pinned across the project (26 ShadowBench code cases, 87 in
+  shadow-ai-discovery, 326 sampled real-world, 34 earlier cohort); and a
+  table mapping each open-source shadow AI agent discovery tool a reader
+  is likely to encounter today onto the ShadowBench adapter that runs it,
+  including the four tools that have no offline entry point and the
+  projects not verified in this repository. The page restates ShadowBench's
+  caveats so a reader cannot miss them: conflict of interest, synthetic
+  data on eight of nine surfaces, later ShadowScan runs on the estate are
+  in-sample, no letter grades, and no claim of field precision. It is a
+  reader's map, not a leaderboard: it adds no new measurements beyond what
+  each track's results already publish.
+- `benchmarks/shadowbench/README.md` points at the new page and names the
+  repository's current GitHub URL
+  ([aisecnomad/Nexus-ShadowScan](https://github.com/aisecnomad/Nexus-ShadowScan)).
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead
