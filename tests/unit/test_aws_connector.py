@@ -915,3 +915,26 @@ def test_cloudtrail_display_time_variants_link_the_session(index, expiration):
     (observation,) = findings[0].metadata["cloudtrail_lineage"]["observations"]
     assert observation["assumption_status"] == "unlinked"
     assert "invalid-timestamp" in findings[0].metadata["cloudtrail_lineage"]["limits"]
+
+
+def test_cloudtrail_sourceless_normalized_record_with_an_unlisted_operation_still_counts(index):
+    # The normalized export contract has no eventSource; a record with an operation outside
+    # CLOUDTRAIL_EVENTS used to vanish with no warning instead of counting for its caller.
+    record = {
+        "_kind": "cloudtrail-event",
+        "_region": "us-east-1",
+        "eventName": "Retrieve",
+        "eventTime": "2025-09-10T14:00:00Z",
+        "principal": "arn:aws:iam::123456789012:user/bob",
+        "identityType": "IAMUser",
+        "userAgent": "aws-cli/2.17",
+        "sourceIp": "203.0.113.9",
+    }
+    listed = {**record, "eventName": "InvokeModel", "eventTime": "2025-09-10T14:05:00Z"}
+    findings, ctx = _lineage(index, [record, listed])
+    assert not ctx.stats.incomplete
+    (finding,) = findings
+    assert finding.metadata["events"] == 2
+    assert finding.metadata["operations"] == {"Retrieve": 1, "InvokeModel": 1}
+    assert [o["eventName"] for o in finding.metadata["cloudtrail_lineage"]["observations"]] == ["InvokeModel"]
+    assert any("1 CloudTrail AI event(s) outside the lineage operation list" in w for w in ctx.stats.warnings)

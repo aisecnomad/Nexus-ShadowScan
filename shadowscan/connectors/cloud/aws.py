@@ -151,7 +151,7 @@ CLOUDTRAIL_EVENTS = [
 ]
 # CloudTrail event sources whose API calls the caller tally counts, as every
 # cloudtrail-event record did before session lineage. Only CLOUDTRAIL_EVENTS
-# carry a session trace; a normalized record without a source is one of those.
+# carry a session trace; a normalized record without a source always counts.
 _LLM_EVENT_SOURCES = frozenset(
     {
         "bedrock",
@@ -380,7 +380,10 @@ def _is_llm_event(rec: dict[str, Any]) -> bool:
     """Whether a CloudTrail event is an AI-service call the caller tally counts."""
     source = rec.get("eventSource")
     if not source:
-        return rec.get("eventName") in CLOUDTRAIL_EVENTS
+        # The normalized export contract carries no eventSource: such a record was
+        # collected as an AI-service event and counts for its caller, listed
+        # operation or not, as every cloudtrail-event record did before lineage.
+        return True
     service = source.partition(".")[0].lower()
     return service in _LLM_EVENT_SOURCES or service.partition("-")[0] in {"bedrock", "sagemaker"}
 
