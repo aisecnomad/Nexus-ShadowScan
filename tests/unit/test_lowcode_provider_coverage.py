@@ -1024,11 +1024,13 @@ def test_n8n_xai_model_registry_uses_actual_registered_name(index, node_type, ai
         ("n8n-nodes-base.postgres", "select", False),
         ("n8n-nodes-base.postgres", "delete", False),
         ("n8n-nodes-base.postgres", "Insert", False),
-        ("n8n-nodes-base.postgres", None, False),
+        ("n8n-nodes-base.postgres", None, True),
         ("n8n-nodes-base.mySql", "insert", True),
         ("n8n-nodes-base.mySql", "executeQuery", True),
         ("n8n-nodes-base.mySql", "select", False),
+        ("n8n-nodes-base.mySql", None, True),
         ("n8n-nodes-base.mysql", "insert", False),
+        ("n8n-nodes-base.mongoDb", None, False),
         ("n8n-nodes-base.mongoDb", "insert", True),
         ("n8n-nodes-base.mongoDb", "update", True),
         ("n8n-nodes-base.mongoDb", "delete", True),
@@ -1044,10 +1046,12 @@ def test_n8n_xai_model_registry_uses_actual_registered_name(index, node_type, ai
         ("n8n-nodes-base.slack", "postMessage", False),
         ("n8n-nodes-base.slack", "sendMessage", False),
         ("n8n-nodes-base.slack", "send", False),
+        ("n8n-nodes-base.slack", None, True),
         ("n8n-nodes-base.gmail", "send", True),
         ("n8n-nodes-base.gmail", "reply", True),
         ("n8n-nodes-base.gmail", "getAll", False),
         ("n8n-nodes-base.gmail", "post", False),
+        ("n8n-nodes-base.gmail", None, False),
     ],
 )
 def test_n8n_sink_registry_uses_declared_node_and_operation_names(node_type, operation, egress):
@@ -1060,6 +1064,66 @@ def test_n8n_sink_registry_uses_declared_node_and_operation_names(node_type, ope
     assert ("egress" in roles) is egress
     assert "ai" not in roles and "untrusted-input" not in roles
     assert not n8n_node_roles({**node, "disabled": True})
+
+
+# n8n saves a parameter only when it differs from the node's declared default,
+# so an exported Slack post, Gmail send or Postgres/MySQL insert node carries no
+# operation key. The absent key means the declared default; an explicit null,
+# another resource or a Gmail v1 node (default resource draft) does not.
+@pytest.mark.parametrize(
+    "node_type,version,parameters,egress",
+    [
+        ("n8n-nodes-base.slack", 2.2, {"channel": "#ops", "text": "hi"}, True),
+        ("n8n-nodes-base.slack", 1, {}, True),
+        ("n8n-nodes-base.slack", 2.2, {"resource": "message"}, True),
+        ("n8n-nodes-base.slack", 2.2, {"resource": "channel"}, False),
+        ("n8n-nodes-base.slack", 2.2, {"resource": None}, False),
+        ("n8n-nodes-base.slack", 2.2, {"operation": None}, False),
+        ("n8n-nodes-base.slack", 2.2, {"operation": "={{ $json.op }}"}, False),
+        ("n8n-nodes-base.gmail", 2.1, {}, True),
+        ("n8n-nodes-base.gmail", 2, {"resource": "message"}, True),
+        ("n8n-nodes-base.gmail", 2.1, {"resource": "draft"}, False),
+        ("n8n-nodes-base.gmail", 1, {}, False),
+        ("n8n-nodes-base.gmail", 1, {"resource": "message"}, True),
+        ("n8n-nodes-base.gmail", True, {}, False),
+        ("n8n-nodes-base.gmail", "2.1", {}, False),
+        ("n8n-nodes-base.gmail", None, {}, False),
+        ("n8n-nodes-base.postgres", 2.4, {"table": "t"}, True),
+        ("n8n-nodes-base.postgres", 1, {}, True),
+        ("n8n-nodes-base.postgres", 2.4, {"operation": None}, False),
+        ("n8n-nodes-base.mySql", 2.4, {}, True),
+        ("n8n-nodes-base.mongoDb", 1.1, {}, False),
+        ("n8n-nodes-base.mongoDb", 1.1, {"operation": "insert"}, True),
+        ("n8n-nodes-base.httpRequest", 4.2, {}, False),
+    ],
+)
+def test_n8n_absent_operation_means_the_declared_default(node_type, version, parameters, egress):
+    from shadowscan.connectors.lowcode.graph import n8n_node_roles
+
+    node = {"name": "sink", "type": node_type, "parameters": parameters}
+    if version is not None:
+        node["typeVersion"] = version
+    assert ("egress" in n8n_node_roles(node)) is egress
+    assert not n8n_node_roles({**node, "disabled": True})
+    # Malformed parameters are not n8n's omission of a default.
+    assert "egress" not in n8n_node_roles({**node, "parameters": "post"})
+
+
+def test_n8n_corpus_slack_post_without_operation_key_is_a_sink():
+    from pathlib import Path
+
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    source = Path(__file__).parents[2] / "benchmarks" / "shadowbench" / "estate" / "artifacts"
+    workflow = json.loads(
+        (source / "code" / "repo-n8n-flows" / "workflows" / "pod-summary-agent.json").read_text()
+    )
+    slack = [node for node in workflow["nodes"] if node["type"] == "n8n-nodes-base.slack"]
+    assert slack and all("operation" not in node["parameters"] for node in slack)
+    result = analyze_workflow_graph(workflow, provider="n8n")
+    assert result is not None and not result.issues
+    assert result.metadata["role_counts"]["egress"] == 1
+    assert result.metadata["potential_input_ai_egress_path"] is True
 
 
 @pytest.mark.parametrize(

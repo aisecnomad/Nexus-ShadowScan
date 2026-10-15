@@ -81,9 +81,9 @@ _N8N_HTTP_TYPES = frozenset({"n8n-nodes-base.httpRequest", _N8N_PREFIX + "toolHt
 # selector; v2 offers send and sendAndWait), so the type alone is a sink.
 _N8N_SEND_TYPES = frozenset({"n8n-nodes-base.emailSend"})
 # Operations that carry workflow data out, keyed by the node type n8n registers
-# and named as each node declares them. An omitted, expression-valued or
-# unlisted operation gives no role: reads (select, find, aggregate, getAll,
-# search), updates of a node's own earlier message and deletions are not egress.
+# and named as each node declares them. An expression-valued or unlisted
+# operation gives no role: reads (select, find, aggregate, getAll, search),
+# updates of a node's own earlier message and deletions are not egress.
 # Postgres and MySQL v2 name their delete operation deleteTable (v1 only has
 # executeQuery, insert and update); executeQuery runs SQL the projection does
 # not parse, so it counts as a potential write. MongoDB names its delete
@@ -98,6 +98,25 @@ _N8N_EGRESS_OPERATIONS: dict[str, frozenset[str]] = {
         {"delete", "findOneAndReplace", "findOneAndUpdate", "insert", "update"}
     ),
 }
+# n8n saves a parameter only when it differs from the node's declared default,
+# so the canonical form of each sink carries no operation key at all. An absent
+# operation is the one the node declares for its default resource: Slack v1
+# and v2 post a message, Gmail v2 sends one, Postgres and MySQL v1 and v2
+# insert, MongoDB finds (not egress). Gmail v1 defaults to the draft resource,
+# whose create operation is not egress, so without a resource it gets no
+# default. An explicit null or non-string operation is not n8n's omission and
+# gives no role.
+_N8N_DEFAULT_OPERATIONS: dict[str, str] = {
+    "n8n-nodes-base.slack": "post",
+    "n8n-nodes-base.gmail": "send",
+    "n8n-nodes-base.postgres": "insert",
+    "n8n-nodes-base.mySql": "insert",
+    "n8n-nodes-base.mongoDb": "find",
+}
+# Slack and Gmail scope operations under a resource whose default is message;
+# an explicit other resource (channel, draft, label, ...) declares no post or
+# send operation, so the operation default does not apply to it.
+_N8N_MESSAGE_RESOURCE_TYPES = frozenset({"n8n-nodes-base.slack", "n8n-nodes-base.gmail"})
 FLOWISE_AGENT_TYPES = frozenset(
     {
         "toolAgent",
@@ -141,6 +160,24 @@ def literal_http_host(value: Any) -> str | None:
         return None
 
 
+def _n8n_operation(kind: str, node: dict[str, Any]) -> Any:
+    """The node's declared operation, or the default n8n stripped on export."""
+    params = node.get("parameters", {})
+    if not isinstance(params, dict):
+        return None
+    if "operation" in params:
+        return params["operation"]
+    if kind in _N8N_MESSAGE_RESOURCE_TYPES:
+        if "resource" in params:
+            if params["resource"] != "message":
+                return None
+        elif kind == "n8n-nodes-base.gmail":
+            version = node.get("typeVersion")
+            if isinstance(version, bool) or not isinstance(version, (int, float)) or version < 2:
+                return None
+    return _N8N_DEFAULT_OPERATIONS.get(kind)
+
+
 def n8n_node_roles(node: dict[str, Any]) -> set[str]:
     if "disabled" in node and node["disabled"] is not False:
         return set()
@@ -163,8 +200,7 @@ def n8n_node_roles(node: dict[str, Any]) -> set[str]:
         roles.add("egress")
     operations = _N8N_EGRESS_OPERATIONS.get(kind)
     if operations is not None:
-        params = node.get("parameters")
-        operation = params.get("operation") if isinstance(params, dict) else None
+        operation = _n8n_operation(kind, node)
         if isinstance(operation, str) and operation in operations:
             roles.add("egress")
     return roles

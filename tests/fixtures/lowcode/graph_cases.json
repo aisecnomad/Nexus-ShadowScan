@@ -624,5 +624,309 @@
         }
       }
     }
+  },
+  {
+    "case": "slack-default-post",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.emailReadImap"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "Slack",
+          "type": "n8n-nodes-base.slack",
+          "typeVersion": 2.2,
+          "parameters": {
+            "channel": "#summaries",
+            "text": "={{ $json.output }}"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Slack",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "slack-channel-resource",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "Slack",
+          "type": "n8n-nodes-base.slack",
+          "typeVersion": 2.2,
+          "parameters": {
+            "resource": "channel",
+            "channelId": "C123"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Slack",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "gmail-default-send",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "Gmail",
+          "type": "n8n-nodes-base.gmail",
+          "typeVersion": 2.1,
+          "parameters": {
+            "sendTo": "ops@example.invalid",
+            "subject": "Summary"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Gmail",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "gmail-v1-default-draft",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "Gmail",
+          "type": "n8n-nodes-base.gmail",
+          "typeVersion": 1,
+          "parameters": {
+            "subject": "Summary"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Gmail",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "database-default-insert",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "DB",
+          "type": "n8n-nodes-base.postgres",
+          "typeVersion": 2.4,
+          "parameters": {
+            "schema": "public",
+            "table": "summaries"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "DB",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "mongodb-default-find",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "DB",
+          "type": "n8n-nodes-base.mongoDb",
+          "typeVersion": 1.1,
+          "parameters": {
+            "collection": "summaries"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "DB",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
   }
 ]
