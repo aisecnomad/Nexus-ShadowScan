@@ -1059,7 +1059,9 @@ variants, remote sources, ambiguous versions, optional conditions and environmen
 Nothing installs dependencies or launches a package manager. Presence in a lock
 file does not establish installation, execution, agency or authorization.
 pnpm git and tarball dependencies are inventoried from the entry's recorded name
-and version with `source_type` `git` or `url`; references to them are remote
+and version with `source_type` `git` or `url` (a recorded `name` is
+authoritative, so a scoped registry tarball or a git id with userinfo in its
+key never yields a host fragment as the name); references to them are remote
 sources, so their relationship is `unknown`. A `uv.lock` entry without a
 `version` (a virtual root or a dynamic-version workspace member) is listed with
 `version: null` and matched by name only.
@@ -1070,8 +1072,9 @@ ceiling is the strict YAML loader's 64 MiB input bound, which also caps a
 snapshots counted separately), 262,144 dependency edges and 1,000,000
 structural nodes at depth 64. A lockfile that cannot be inventoried is reported
 with a fixed reason scoped to the file and the scan is incomplete: malformed
-content is an input defect (`input defect: invalid TOML`, `invalid YAML`), the
-same path a malformed `package.json` takes; an exceeded limit, an unsupported
+content is an input defect (`input defect: invalid TOML`, `invalid YAML`,
+including a `pnpm-lock.yaml` that is not valid YAML), the same path a
+malformed `package.json` takes; an exceeded limit, an unsupported
 format version or an unexpected shape is an error naming itself. Nothing from
 the file is quoted. The supported lockfiles still do not bypass analysis through
 oversize skip globs; other lockfile formats retain the documented exclusions.
@@ -1089,7 +1092,8 @@ selected include/exclude scope. This is off by default. `code.github` and
 65,536, allowed 128–1,048,576); each root also has a 32 MiB aggregate metadata-read
 budget, the ordinary entry/deadline budgets and an 8,192-field limit. An
 extensionless candidate is first probed by its first 64 bytes, charged at that
-size; only a file with a NUL byte among them (an ELF, PE or Mach-O bootloader)
+size and nothing more (the Git LFS pointer check of a text candidate reads the
+same head); only a file with a NUL byte among them (an ELF, PE or Mach-O bootloader)
 gets the bounded PyInstaller tail read, and text goes on to ordinary source
 analysis.
 
@@ -1097,8 +1101,10 @@ analysis.
   descriptors. Arrays of fixed-size elements are seeked past and string arrays
   are walked up to 1,024 elements by their length prefixes, never loaded; a
   longer string array (a tokenizer vocabulary) ends metadata parsing, and the
-  finding carries `metadata_truncated: true` with a limitation that later keys
-  and the tensor descriptors were not read or validated. Tensor payloads and
+  finding carries `metadata_truncated: true` with a limitation that the
+  truncating array, the keys after it and the tensor descriptors were not read
+  or validated; a `general.alignment` whose kind is not uint32 is rejected
+  before its value is walked. Tensor payloads and
   quantization semantics are not validated.
 - safetensors: bounded length-prefixed strict JSON, shape/dtype sizes and contiguous
   payload offsets; metadata values and tensor names are not included in output.

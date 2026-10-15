@@ -199,6 +199,17 @@ a second verification; each has a regression test.
   strings) and attribution provenance stops being built once a contact's
   sample is full; analysis of the synthetic day drops from 10.2 s to 3.9 s
   with no finding change.
+- Source inventory: a syntactically broken `pnpm-lock.yaml` (or an
+  `environment.yml` the conda parser labels `invalid YAML`) takes the same
+  input-defect route as a broken TOML lockfile (a warning that keeps the scan
+  incomplete, an error under `strict_coverage`); a pnpm v6 remote entry with
+  `@` in its URL path (a scoped registry tarball, a git id with userinfo) is
+  inventoried under its recorded `name`, never a host fragment, so the real
+  package is matched.
+- Model artifacts: a GGUF `general.alignment` of the wrong kind is rejected
+  before its value is walked, the truncation limitation names the
+  truncating array, and an extensionless text candidate costs exactly its
+  64-byte probe (the LFS pointer check reads the same head).
 - Model artifacts: GGUF inspection seeks past fixed-size metadata arrays and
   walks string arrays up to 1,024 elements by their length prefixes; a longer
   string array (a tokenizer vocabulary) ends metadata parsing with
