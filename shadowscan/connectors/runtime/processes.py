@@ -164,9 +164,11 @@ _ENV_KEYS = {
 }
 _INSPECTION_STATUSES = {"ok", "denied", "unreadable", "truncated", "not_requested", "not_applicable"}
 # Statuses that leave inspection scope complete: read, not asked for, or a
-# source the process does not have (ESRCH from a process whose identity is
-# unchanged, such as a zombie without an address space).
+# source the process does not have (ESRCH from a zombie whose threads have all
+# exited, so no address space or descriptor table is left).
 _COMPLETE_STATUSES = {"ok", "not_requested", "not_applicable"}
+# /proc/<pid>/stat states of a process whose leader thread has exited.
+_EXITED_STATES = {"Z", "X"}
 # PF_KTHREAD in the flags field of /proc/<pid>/stat.
 _PF_KTHREAD = 0x00200000
 _MAP_LINE = re.compile(
@@ -227,7 +229,8 @@ class _InspectionBudget:
             os.close(fd)
 
 
-def _proc_identity(directory: int, budget: _InspectionBudget) -> dict[str, str]:
+def _stat_fields(directory: int, budget: _InspectionBudget) -> list[str]:
+    """The /proc/<pid>/stat fields after the command name (``fields[0]`` is the state)."""
     raw = budget.read(directory, "stat", 4096).decode("ascii", "replace")
     end = raw.rfind(")")
     fields = raw[end + 1 :].split() if end >= 0 else []
@@ -239,6 +242,19 @@ def _proc_identity(directory: int, budget: _InspectionBudget) -> dict[str, str]:
         or not fields[6].isdecimal()
     ):
         raise ValueError("malformed process stat")
+    return fields
+
+
+def _proc_state(directory: int, budget: _InspectionBudget) -> tuple[str, int]:
+    """The process state and its thread count (``num_threads``)."""
+    fields = _stat_fields(directory, budget)
+    if not fields[17].isascii() or not fields[17].isdecimal():
+        raise ValueError("malformed process stat")
+    return fields[0], int(fields[17])
+
+
+def _proc_identity(directory: int, budget: _InspectionBudget) -> dict[str, str]:
+    fields = _stat_fields(directory, budget)
     if int(fields[6]) & _PF_KTHREAD:
         raise _KernelThread
     namespace = os.open("ns", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
@@ -584,6 +600,8 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             "environment_keys": [],
             "status": {"maps": "not_requested", "fds": "not_requested", "environ": "not_requested"},
         }
+        # Whether a read source yielded any indicator.
+        found: dict[str, bool] = {}
         for source, enabled in (
             ("maps", self.inspect_maps),
             ("fds", self.inspect_fds),
@@ -598,10 +616,12 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                     )
                     result["mapped_libraries"] = libraries
                     result["packaging"].extend(packaging)
+                    found[source] = bool(libraries or packaging)
                 elif source == "fds":
                     formats, packaging = _fd_indicators(directory, budget, self.max_fds)
                     result["open_model_formats"] = formats
                     result["packaging"].extend(packaging)
+                    found[source] = bool(formats or packaging)
                 else:
                     raw = budget.read(directory, "environ", self.max_inspection_bytes)
                     names = set()
@@ -611,12 +631,12 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                         if name in self.inspect_env_keys:
                             names.add(name)
                     result["environment_keys"] = sorted(names)
+                    found[source] = bool(names)
                 result["status"][source] = "ok"
             except PermissionError:
                 result["status"][source] = "denied"
             except ProcessLookupError:
-                # ESRCH: the process has no such source (no address space). The
-                # identity check that follows tells this from a process exit.
+                # ESRCH: no address space. Settled below from the process state.
                 result["status"][source] = "not_applicable"
             except FileNotFoundError:
                 # The following identity check identifies process exit. A missing source
@@ -626,8 +646,37 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 result["status"][source] = "truncated"
             except (OSError, ValueError):
                 result["status"][source] = "unreadable"
+        self._settle_exited_leader(directory, budget, result["status"], found)
         result["packaging"] = sorted(set(result["packaging"]))
         return result
+
+    @staticmethod
+    def _settle_exited_leader(
+        directory: int, budget: _InspectionBudget, status: dict[str, str], found: dict[str, bool]
+    ) -> None:
+        """Keep ESRCH and empty reads complete only for a zombie with no threads left.
+
+        A process whose leader thread has exited while other threads still run
+        shows state Z with ``num_threads`` above one: its environ reports
+        ESRCH and its maps and fd directory read empty, although the live
+        threads keep the address space and descriptors (visible only under
+        /proc/<pid>/task/<tid>). The start time and namespace are unchanged,
+        so the identity re-check cannot tell it from a real zombie. Such
+        sources, and ESRCH from a process that is not a zombie or whose
+        state is unknown, are unreadable scope; a source that yielded
+        indicators was read from the live address space and stays ``ok``.
+        """
+        try:
+            state, threads = _proc_state(directory, budget)
+        except (_InspectionLimit, OSError, ValueError):
+            state, threads = "", 0
+        exited = state in _EXITED_STATES
+        threads_left = exited and threads > 1
+        for source, outcome in status.items():
+            unproven_esrch = outcome == "not_applicable" and not (exited and threads <= 1)
+            emptied_by_exit = outcome == "ok" and threads_left and not found.get(source)
+            if unproven_esrch or emptied_by_exit:
+                status[source] = "unreadable"
 
     # --------------------------------------------------------------- analyse
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:

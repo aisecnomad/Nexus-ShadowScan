@@ -922,9 +922,12 @@ line, with zero-weight evidence and no excerpts. The front matter `name` and
 session, are audited with the same rules and reported at their key's line;
 other front matter fields are not. Quoted examples, fenced and indented code,
 block quotes and explicit prohibitions are excluded. An audited line over
-4,096 characters is audited in its first and last 4,096 characters; its
-middle is not, so the audit is marked `partial: true` (status `partial` when
-nothing was found) and the scan stays complete. Text over 64 KiB, malformed
+4,096 characters is audited sentence by sentence (the rules match only at a
+line start or after sentence punctuation), so an instruction in its middle is
+reported. A single sentence over 4,096 characters is audited in its first and
+last 4,096 characters; its middle is not, so the audit is marked
+`partial: true` (status `partial` when nothing was found) and the scan stays
+complete. Text over 64 KiB, malformed
 or oversized YAML front matter and an unclosed fence make the audit and the
 scan incomplete.
 
@@ -1060,10 +1063,15 @@ explicit roots and unambiguous package/version references (uv root packages or
 pnpm importers). Cargo and Poetry without a root manifest remain `unknown`.
 Aliases resolve to their recorded package name; workspace links, peer-qualified
 variants, remote sources, ambiguous versions, optional conditions and environment markers are not resolved.
-A pnpm package from a git, tarball or URL source (`name@https://...`,
-`name@git+ssh://...`, a v6 `github.com/<owner>/<repo>/<commit>` key) has no
-registry identity: it is skipped and counted in a limitation, its edges have
-unknown reachability, and the rest of the lockfile is inventoried. A `uv.lock`
+A pnpm package from a git, tarball, URL or local source (`name@https://...`,
+`name@git+ssh://...`, `name@file:...`, a v6 `github.com/<owner>/<repo>/<commit>`
+key) has no registry version. It is inventoried by name with `version: null`
+and a `source_type` of `git`, `tarball`, `url` or `local`, so it still matches
+AI signatures; the source URL is not kept, its edges have unknown
+reachability, and a limitation counts these packages. The name comes from the
+key (`name@<source>`) or, for a v6 key that does not carry it, the entry's
+`name` field; an entry with neither is malformed and reported as
+`unsupported pnpm package key`. A `uv.lock`
 package without a `version` (a workspace member or a dynamic version) is
 inventoried with `version: null`.
 Nothing installs dependencies or launches a package manager. Presence in a lock
@@ -1135,7 +1143,12 @@ inspected as artifacts: an extensionless file still gets the normal text
 analysis, and one warning per root counts the uninspected files and marks
 coverage incomplete. All reads use
 confined regular-file handles; symlinks, FIFOs and device files are never opened
-as model payloads. Headers are an inventory aid, not a guarantee that an artifact
+as model payloads. A link with an artifact suffix to a scanned artifact with the
+same suffix in the same project and test classification (`latest.gguf` to
+`model-q4.gguf`) loses nothing, since the target is inventoried at its real
+path, and leaves coverage complete; a link to an artifact outside the root, in
+an excluded directory, under a test path or with another suffix is an unscanned
+symbolic link (coverage incomplete). Headers are an inventory aid, not a guarantee that an artifact
 is safe to load. No deserializer, inference engine or scanned executable runs.
 
 Known limitation: a Hugging Face cache (`snapshots/<revision>/model.safetensors`

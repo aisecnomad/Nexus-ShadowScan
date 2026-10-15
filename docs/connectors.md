@@ -245,12 +245,13 @@ only when their roots and edges establish them. Locked packages do not establish
 installation, execution or agency. A lockfile that cannot be inventoried is
 reported against that lockfile with a fixed reason; it leaves the scan
 incomplete only when no manifest beside it declares its dependencies. A pnpm
-git, tarball or URL package is skipped with a limitation, and a `uv.lock`
-package without a version is kept without one. `SKILL.md` adds a bounded static
-instruction review of the body and the front matter `name` and `description`,
-with fixed rule explanations and locations; quoted examples and ordinary URLs
-are not direct suspicious instructions, and a line over 4,096 characters is
-audited at both ends and marks the audit `partial`. Optional
+git, tarball, URL or local package and a `uv.lock` package without a version
+are inventoried by name with `version: null` and a limitation. `SKILL.md` adds
+a bounded static instruction review of the body and the front matter `name`
+and `description`, with fixed rule explanations and locations; quoted examples
+and ordinary URLs are not direct suspicious instructions, and a line over 4,096
+characters is audited sentence by sentence; only a sentence over 4,096
+characters is audited at both ends and marks the audit `partial`. Optional
 `inspect_model_artifacts` adds read-only, format-specific model and
 packaged-binary metadata inspection; GGUF vocabularies are skipped under their
 own bounds.
@@ -1255,8 +1256,9 @@ coverage and whether activity is current, historical or unknown. Unobservable
 scope does not establish dormancy. Optional `inspect_maps`, `inspect_fds` and
 allowlisted `inspect_env_keys` inspect bounded Linux process metadata; they never
 read process memory, open descriptor targets or retain environment values.
-Kernel threads are not inspected, and `ESRCH` on an unchanged process is
-recorded as `not_applicable`.
+Kernel threads are not inspected, and `ESRCH` on an unchanged zombie with no
+threads left is recorded as `not_applicable`; a process whose leader exited
+while other threads run is `unreadable`.
 Generic libraries, model descriptors and packaging do not establish an agent.
 
 Options: `label` (host name for records without one), `max_processes` (live

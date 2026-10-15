@@ -46,7 +46,10 @@ _POISONING = re.compile(
     r"(?:exfiltrat|send|forward)\w*\s+(?:the\s+)?(?:data|secret|credential|prompt)|https?://",
     re.IGNORECASE,
 )
-_ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060\ufeff\U000e0000-\U000e007f]")
+# Invisible and bidirectional control characters, the set skill_audit treats
+# as invisible: zero-width and directional marks, embeddings and overrides,
+# word joiner and invisible operators, isolates, BOM and tag characters.
+_ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")
 _TOOL_REF = re.compile(r"\b(?:use|call|invoke)\s+the\s+[`\"']?([A-Za-z][\w.-]{0,63})", re.IGNORECASE)
 _HOST = re.compile(
     r"(?:https?://)?[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com|googleapis\.com)\b",
@@ -355,7 +358,8 @@ class MCPInventoryConnector(_EndpointConnector):
             malformed_description = not isinstance(description, str)
             if malformed_description:
                 description = ""
-            audit = audit_skill_text(description)
+            # A description is not a SKILL.md: a leading "---" is text, not front matter.
+            audit = audit_skill_text(description, front_matter=False)
             if malformed_description:
                 audit = replace(
                     audit, incomplete=True, limitations=(*audit.limitations, "Tool description is not text.")

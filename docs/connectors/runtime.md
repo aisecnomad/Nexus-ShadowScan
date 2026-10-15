@@ -99,9 +99,15 @@ incomplete. No root privileges are requested; restricted non-root visibility
 is reported through the existing incomplete-scan mechanism.
 Kernel threads (`PF_KTHREAD` in `/proc/<pid>/stat`) run no user program and
 are not inspected. When a selected source fails with `ESRCH` while the
-process identity stays unchanged (a process without an address space, such as
-a zombie), that source's status is `not_applicable`, which leaves coverage
-complete.
+process identity stays unchanged and `/proc/<pid>/stat` shows a zombie with no
+threads left (state `Z` or `X`, `num_threads` 1, so no address space or
+descriptor table remains), that source's status is `not_applicable`, which
+leaves coverage complete. A leader thread that exits while other threads keep
+running also shows state `Z`, but with `num_threads` above one: its `environ`
+reports `ESRCH` and its maps and descriptor directory read empty, although the
+live threads still map and hold files. Those sources, and `ESRCH` from a
+process in any other state, are `unreadable` and leave coverage incomplete; a
+source that yielded indicators before the leader exited stays `ok`.
 If only inspection identity or its budget is unavailable, independent readable
 command-line detections are retained without inspection attribution. Actual
 process exit or changed namespace/start identity omits that process observation.

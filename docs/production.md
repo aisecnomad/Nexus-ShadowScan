@@ -87,8 +87,13 @@ Regenerate retained reports and comparison baselines that cover MCP inventory.
   descriptors needs the same user or `CAP_SYS_PTRACE`. Denied or truncated
   selected inspection makes coverage incomplete; do not grant root merely to
   erase that limitation. Kernel threads are not inspected, and a source that
-  fails with `ESRCH` on an unchanged process is recorded as `not_applicable`
-  without making coverage incomplete.
+  fails with `ESRCH` on an unchanged zombie with no threads left (state `Z`
+  or `X`, `num_threads` 1) is recorded as `not_applicable` without making
+  coverage incomplete. `ESRCH` from any other process, and an empty maps or
+  descriptor read from a process whose leader thread exited while other
+  threads still run (state `Z` with more than one thread), is `unreadable`
+  and makes coverage incomplete (exit 3); earlier revisions reported such a
+  process as a complete, empty inspection.
 - `network.logs`: `dns_max_ttl_seconds` (default 86,400) and
   `dns_clock_skew_seconds` (default 0) bound DNS attribution. These are on by
   default; the options only tune them.
@@ -102,9 +107,13 @@ where the previous revision completed:
   `pyproject.toml`, `package.json` or `Cargo.toml` sits beside it. Beside its
   manifest the same gap is a warning naming the lockfile and the reason, and
   the scan stays complete; earlier revisions never read these files. A pnpm
-  git, tarball or URL package is skipped with a limitation rather than
-  rejecting the file, and a `uv.lock` package without a version is
-  inventoried with `version: null`.
+  git, tarball, URL or local package is inventoried by name with
+  `version: null`, its source kind and a limitation rather than rejecting
+  the file, so an AI package locked from a tarball still produces a
+  `lockfile-inventory` finding; an entry whose name cannot be told
+  (a v6 `github.com/...` key without a `name` field) is still a lockfile
+  gap. A `uv.lock` package without a version is inventoried with
+  `version: null`.
 - A malformed or over-budget n8n, Flowise or Dify graph (dangling or invalid
   connections, duplicate node names). The workflow finding is kept with
   `workflow_graph.status: incomplete`. A `null` n8n output slot is valid. A
@@ -115,10 +124,18 @@ where the previous revision completed:
   classified from its leading complete arguments, with
   `metadata.command_lines_truncated`.
 - `SKILL.md` and MCP description audits over 64 KiB, with malformed front
-  matter or an unclosed fence. A line over 4,096 characters does not end the
-  scan incomplete: its first and last 4,096 characters are audited and the
-  audit is marked `partial` (`static_instruction_audit.partial`, status
-  `partial` when nothing was found).
+  matter (`SKILL.md` only) or an unclosed fence. An MCP description that
+  starts with a `---` line is audited as text: earlier revisions read it as
+  front matter, so lines after it other than `name` and `description` went
+  unaudited and an unclosed `---` made the scan incomplete. A line over 4,096 characters does not end the
+  scan incomplete: it is audited sentence by sentence, so an instruction in
+  its middle is reported. Only a single sentence over 4,096 characters is
+  audited in its first and last 4,096 characters and marks the audit
+  `partial` (`static_instruction_audit.partial`, status `partial` when
+  nothing was found). Earlier revisions audited only the two ends of the
+  line, so a long line that hid an instruction in its middle, and that the
+  audit marked `partial`, now reports `indicators-observed`, and a long line
+  of short sentences is no longer `partial`.
 - Network records with a malformed observation context, TTL, timestamp or JA4
   value, or over 32 DNS answers. A malformed context in any record other
   than a VPC flow record, an invalid JA4 value, or an answer list over 32
@@ -765,8 +782,10 @@ the interpreter lock indefinitely.
 
 Code scans follow a documented coverage policy. Links whose own names are never
 read, source-file links whose real targets are analyzed in the same project
-with the same test classification, and coding-agent instruction-document links
-to another instruction document under the same condition, are skipped because
+with the same test classification, coding-agent instruction-document links
+to another instruction document under the same condition, and (with
+`inspect_model_artifacts`) model-artifact links to a scanned artifact with the
+same suffix under the same condition, are skipped because
 nothing at the alias path is lost (see [scan semantics](scanning.md) for the
 exact rule). Directory
 links, configuration aliases, links into excluded or unread content, links

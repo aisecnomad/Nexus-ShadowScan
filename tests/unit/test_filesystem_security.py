@@ -1901,6 +1901,42 @@ def test_model_link_into_excluded_directory_remains_incomplete(tmp_path, run_con
     assert ctx.stats.incomplete
 
 
+def test_model_alias_to_a_scanned_artifact_keeps_the_scan_complete(tmp_path, run_connector):
+    """Regression (C220-2): latest.gguf -> model-q4.gguf made an opted-in model scan exit 3."""
+    (tmp_path / "model-q4.gguf").write_bytes(
+        Path("tests/fixtures/model_artifacts/header-only.gguf").read_bytes()
+    )
+    (tmp_path / "latest.gguf").symlink_to("model-q4.gguf")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), inspect_model_artifacts=True)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+    assert [f.title for f in findings if f.resource_type == "binary-artifact"] == [
+        "gguf artifact inventory: model-q4.gguf"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("target", "link"),
+    [
+        ("outside", "latest.gguf"),  # outside the scanned root
+        ("node_modules/weights.gguf", "latest.gguf"),  # excluded directory
+        ("weights.safetensors", "latest.gguf"),  # another artifact type
+        ("tests/model-q4.gguf", "latest.gguf"),  # test path changes evidence weight
+    ],
+    ids=["outside-root", "excluded", "other-suffix", "test-path"],
+)
+def test_model_alias_to_an_unscanned_or_different_artifact_stays_a_gap(tmp_path, run_connector, target, link):
+    root = tmp_path / "repo"
+    root.mkdir()
+    data = Path("tests/fixtures/model_artifacts/header-only.gguf").read_bytes()
+    real = tmp_path / "outside.gguf" if target == "outside" else root / target
+    real.parent.mkdir(parents=True, exist_ok=True)
+    real.write_bytes(data)
+    (root / link).symlink_to(real)
+    _, ctx = run_connector("code.filesystem", path=str(root), inspect_model_artifacts=True)
+    assert ctx.stats.incomplete
+    assert any(link in issue and "symbolic link" in issue for issue in ctx.stats.warnings + ctx.stats.errors)
+
+
 @pytest.mark.parametrize("provider", ["github", "gitlab"])
 def test_remote_code_connectors_forward_artifact_options(provider):
     from shadowscan.connectors.code.github import GitHubConnector
