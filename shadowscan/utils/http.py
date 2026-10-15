@@ -1,6 +1,25 @@
 """Small HTTP helper with retries, rate-limit handling and pagination helpers.
 
-Kept deliberately thin so connectors read like the API docs they implement.
+Transport invariants:
+
+* URL validation is preflight only. The HTTPS connection resolves the host once,
+  rejects every private or metadata address in the answer set, then connects to
+  a numeric address while retaining the hostname for TLS verification.
+* Each client owns a copied urllib3 pool-class mapping. Proxies and replacement
+  adapters are refused so an origin-specific pool cannot bypass destination
+  checks.
+* The acquisition deadline covers DNS completion, TCP/TLS, request transmission
+  and response headers. DNS itself cannot be interrupted; a late answer cannot
+  start a connection. Socket operations use the remaining monotonic budget.
+* The whole-body read deadline is separate from the per-read socket timeout.
+  Expiry shuts down a still-owned response socket, and the response must never
+  be treated as complete after that shutdown.
+* urllib3 returns a keep-alive connection to its pool during the body-ending
+  read. The watchdog and release wrapper therefore coordinate before a socket
+  is interrupted; changing that release contract can affect another request.
+
+Keep ``tests/unit/test_http_contracts.py`` in sync with any urllib3 upgrade:
+these checks are intentional tripwires for private transport hooks used here.
 """
 
 from __future__ import annotations
