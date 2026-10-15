@@ -154,6 +154,18 @@ a second verification; each has a regression test.
   client's contacts carry a limitation and one warning marks the scan
   incomplete. Records without a client address, unrecognised records,
   malformed context and the record limit still gate the whole input.
+- Network: a DNS answer whose validity reached two or more later windows of
+  the same host merged into only one, leaving overlapping windows so a lookup
+  could miss a retained answer; attribution then depended on record order,
+  and a flow to a shared address could be attributed to the other service
+  with no ambiguity warning. Bridging answers now absorb every window they
+  reach. Flow attribution checks the completion deadline every 1,024
+  timestamp groups within a connection; an address holds at most 64 distinct
+  hosts per context and client, with overflow disabling that address's
+  attribution and marking the scan incomplete; timestamp groups are capped
+  at 2,000,000 across all connections through the existing dropped-flow
+  warning; and the per-client defect limitation is attached only to contacts
+  observed in the defective context or spanning contexts.
 - Network: IP address parsing is cached (one bounded cache of 100,000
   strings) and attribution provenance stops being built once a contact's
   sample is full; analysis of the synthetic day drops from 10.2 s to 3.9 s

@@ -137,20 +137,24 @@ Malformed lines, records the connector cannot read as DNS, TLS or flow
 records, and DNS or TLS records without a client address make the scan
 incomplete. Analysis keeps at most 50,000 client addresses, 500,000
 connections (context, client, server address, port and UID) with 100,000
-timestamp groups per connection, 500,000 TLS identities (context, client and
-UID), 500,000 DNS observations with at most 4,096 windows per
-context/client/address, and 32 JA4 observations per contact. Records beyond
+timestamp groups per connection and 2,000,000 timestamp groups in total,
+500,000 TLS identities (context, client and UID), 500,000 DNS observations
+with at most 4,096 windows and 64 distinct hosts per context/client/address,
+and 32 JA4 observations per contact. Flow attribution checks the completion
+deadline every 1,024 timestamp groups within a connection. Records beyond
 any bound are reported and make the scan incomplete. If TLS identity storage
 fills, flows with an unretained UID are left unattributed because a discarded
 TLS record could contradict DNS. If the global DNS bound fills, DNS and
 service-port attribution are disabled for the input because a discarded answer
-could contradict retained evidence; if only one address's window bound fills,
+could contradict retained evidence; if only one address's window or host bound fills,
 attribution is disabled for that context, client and address, with a
 limitation on the client's contacts. Directly linked TLS remains usable in
 both cases. A malformed TTL, an invalid timestamp, an answer list over the
 limit or an unparseable query name in a DNS record whose client is known
 disables DNS and service-port attribution for that client only, with a
-limitation on its contacts and an incomplete scan; malformed context, explicit
+limitation on the contacts observed in the defective context (or spanning
+contexts; a contact attributed through another context's clean DNS does not
+carry it) and an incomplete scan; malformed context, explicit
 JA4 values, records without a client and unrecognised records still make the
 whole input incomplete, and malformed or truncated input then suppresses flow
 attribution, since a discarded record might contradict the retained DNS or
