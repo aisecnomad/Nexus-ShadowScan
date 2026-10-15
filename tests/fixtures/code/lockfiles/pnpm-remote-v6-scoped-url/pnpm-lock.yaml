@@ -1,0 +1,30 @@
+lockfileVersion: '6.0'
+
+dependencies:
+  '@langchain/core':
+    specifier: https://registry.npmjs.org/@langchain/core/-/core-0.3.0.tgz
+    version: '@registry.npmjs.org/@langchain/core/-/core-0.3.0.tgz'
+  lib:
+    specifier: git+ssh://deploy@gitlab.example/org/lib.git#0123456789abcdef0123456789abcdef01234567
+    version: deploy@gitlab.example/org/lib/0123456789abcdef0123456789abcdef01234567
+  wrapper:
+    specifier: ^1
+    version: 1.0.0
+
+packages:
+
+  /wrapper@1.0.0:
+    dependencies:
+      '@langchain/core': '@registry.npmjs.org/@langchain/core/-/core-0.3.0.tgz'
+    dev: false
+
+  '@registry.npmjs.org/@langchain/core/-/core-0.3.0.tgz':
+    resolution: {tarball: https://registry.npmjs.org/@langchain/core/-/core-0.3.0.tgz}
+    name: '@langchain/core'
+    version: 0.3.0
+    dev: false
+
+  deploy@gitlab.example/org/lib/0123456789abcdef0123456789abcdef01234567:
+    resolution: {type: git, repo: ssh://deploy@gitlab.example/org/lib.git, commit: 0123456789abcdef0123456789abcdef01234567}
+    name: lib
+    dev: false

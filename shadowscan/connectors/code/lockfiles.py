@@ -179,7 +179,10 @@ def _pnpm_key(key: str) -> tuple[str | None, str | None]:
     v6 ``/name@version`` and v9 ``name@version`` prove both, ``@scope/name``
     included. A git or tarball key proves at most the name: v9 ``name@<url>``
     does; v6 ``github.com/org/repo/<commit>`` or ``@host/path.tgz`` does not,
-    so the entry's own ``name`` and ``version`` fields are consulted.
+    so the entry's own ``name`` and ``version`` fields are consulted. A v6 id
+    whose URL path holds an ``@`` (``@host/@scope/pkg/-/pkg-1.0.0.tgz``,
+    ``user@host/org/repo/<commit>``) parses here as a name and a path; the
+    entry's recorded ``name`` overrides that in :func:`_pnpm_inventory`.
     """
     key = _pnpm_identity(key)
     scoped = key.startswith("@")
@@ -242,6 +245,12 @@ def _pnpm_inventory(data: dict[str, Any]) -> LockInventory:
     for key, entry in entries.items():
         package_name, package_version = _pnpm_key(key)
         item = _mapping(entry)
+        if "name" in item:
+            # pnpm records a name only when the key does not encode one (a v6
+            # git or tarball id). The ``@`` of a scoped registry tarball's URL
+            # path or of a ``user@host`` git id would otherwise be read as the
+            # name separator and a host fragment inventoried in the package's place.
+            package_name, package_version = None, None
         if package_name is not None and package_version is not None:
             package = LockedPackage("npm", package_name, package_version, "registry")
         else:

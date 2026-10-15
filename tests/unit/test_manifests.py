@@ -785,6 +785,37 @@ def test_pnpm_v6_git_and_tarball_entries_are_inventoried_without_reachability():
     assert "example.com" not in retained and "github.com" not in retained and "0f1e2d3c" not in retained
 
 
+def test_pnpm_v6_remote_keys_with_an_at_in_the_url_path_inventory_the_recorded_name(tmp_path, run_connector):
+    # pnpm's v6 tarball id is '@' plus the URL without its scheme, and its git id
+    # the URL without the scheme or a 'git@' prefix: a scoped registry tarball
+    # and a 'deploy@host' id both carry an '@' that is not the name separator.
+    text = (LOCKFILE_FIXTURES / "pnpm-remote-v6-scoped-url/pnpm-lock.yaml").read_text()
+    result = parse_manifest("pnpm-lock.yaml", text)
+    assert result and not result.errors and result.lockfile
+    packages = {p.name: p for p in result.lockfile.packages}
+    assert set(packages) == {"@langchain/core", "lib", "wrapper", "workspace"}
+    core = packages["@langchain/core"]
+    assert (core.version, core.source, core.relationship) == ("0.3.0", "url", "unknown")
+    assert (packages["lib"].version, packages["lib"].source, packages["lib"].relationship) == (
+        None,
+        "git",
+        "unknown",
+    )
+    assert sorted(d.name for d in result.deps) == ["@langchain/core", "lib", "wrapper"]
+    retained = repr(result.lockfile)
+    assert "registry.npmjs.org" not in retained and "deploy" not in retained and "example" not in retained
+    # The AI package is matched by the name pnpm recorded, not hidden behind a host fragment.
+    (tmp_path / "pnpm-lock.yaml").write_text(text)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    inventory = next(f for f in findings if f.resource_type == "lockfile-inventory")
+    assert [
+        (m["name"], m["version"]) for m in inventory.metadata["lockfile_inventory"]["matched_packages"]
+    ] == [("@langchain/core", "0.3.0")]
+    serialized = json.dumps(inventory.to_dict())
+    assert "registry.npmjs.org" not in serialized and "deploy" not in serialized
+
+
 def test_pnpm_v9_git_and_tarball_keys_are_inventoried_without_reachability():
     text = (LOCKFILE_FIXTURES / "pnpm-remote-v9/pnpm-lock.yaml").read_text()
     result = parse_manifest("pnpm-lock.yaml", text)
