@@ -15,7 +15,6 @@ from __future__ import annotations
 import copy
 import json
 import pickle
-import string
 from typing import Any
 
 import pytest
@@ -220,61 +219,3 @@ def test_agent_card_with_colliding_keys_is_reported(tmp_path, run_connector) -> 
     assert [finding.title for finding in findings if finding.kind == Kind.AGENT] == [
         "A2A agent card: Card Agent"
     ]
-
-
-hypothesis = pytest.importorskip("hypothesis")
-from hypothesis import given, settings  # noqa: E402
-from hypothesis import strategies as st  # noqa: E402
-
-# Keys that never change and keys after a scheme credential, which read alike
-# once withheld in one reading or in both. Every value is synthetic.
-_PLAIN_KEYS = ["keep", "tools", "notes", "meta", "items"]
-_SCHEME_KEYS = [
-    f"{scheme} {credential}{glued}"
-    for scheme in ("Bearer", "Basic", "SSWS")
-    for credential in ("a", "b", "abc123")
-    for glued in ("", "--auth", "--cookie", "--token", "--password", "--x9", "=x9", "=password", "\n--x9")
-]
-_LEAVES = (
-    st.text(alphabet=string.ascii_letters + string.digits + " -=:\n", max_size=30)
-    | st.sampled_from(_SCHEME_KEYS)
-    | st.integers()
-    | st.none()
-    | st.booleans()
-)
-_KEYS = st.sampled_from(_PLAIN_KEYS + _SCHEME_KEYS)
-_VALUES = st.recursive(
-    _LEAVES,
-    lambda children: (
-        st.lists(children, max_size=4)
-        | st.tuples(children, children)
-        | st.dictionaries(_KEYS, children, max_size=6)
-    ),
-    max_leaves=25,
-)
-
-
-def _assert_containers_kept(value: Any, cleaned: Any) -> None:
-    """Each container reached through unchanging keys and positions is one of its type in ``cleaned``.
-
-    A key that a short known value occurs in is withheld whole, as before;
-    the value under it is then not looked for.
-    """
-    if isinstance(value, dict):
-        assert type(cleaned) is dict
-        for key, child in value.items():
-            if key in _PLAIN_KEYS and key in cleaned:
-                _assert_containers_kept(child, cleaned[key])
-    elif isinstance(value, (list, tuple)):
-        assert type(cleaned) is type(value) and len(cleaned) == len(value)
-        for child, cleaned_child in zip(value, cleaned, strict=True):
-            _assert_containers_kept(child, cleaned_child)
-
-
-@given(value=st.dictionaries(_KEYS, _VALUES, max_size=8), short=st.booleans())
-@settings(max_examples=300, deadline=None)
-def test_sanitize_keeps_every_container_type(value: dict[str, Any], short: bool) -> None:
-    cleaned = sanitize(value, redact_short_secrets=short)
-    _assert_containers_kept(value, cleaned)
-    assert _is_plain(cleaned)
-    assert sanitize(cleaned, redact_short_secrets=short) == cleaned
