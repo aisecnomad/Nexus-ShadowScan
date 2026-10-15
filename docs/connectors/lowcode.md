@@ -125,8 +125,9 @@ LangChain namespace, a spoofed `agentPretend` type or a Set node whose
 parameters name a model host still yield the inventory finding they did
 before; the graph gives such nodes no role, and only an agent or agent-tool
 type (now including `openAiAssistant`) makes the finding an agent. A disabled
-node stays in the inventory (`metadata.disabled_node_count` counts them) and
-does not connect paths. Literal HTTP URLs are parsed into hostnames, so
+node stays in the `lowcode.n8n` inventory (`metadata.disabled_node_count` on
+those findings counts them; the filesystem export reader skips disabled nodes
+as before) and does not connect paths. Literal HTTP URLs are parsed into hostnames, so
 `api.openai.com.example.invalid` does not establish an OpenAI destination.
 Expressions and environment-variable references are not resolved. Flowise
 Agent Flows use their declared `startInputType` and HTTP node `inputs.url`;

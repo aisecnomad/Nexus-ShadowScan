@@ -84,7 +84,7 @@ a second verification; each has a regression test.
   `credential`/`prompt` phrase, quoted or not) as the floor for the
   `tool-poisoning` tag; the bounded sentence audit adds
   `metadata.static_instruction_audit` and zero-weight `instruction:<rule>`
-  evidence on top and never removes the tag. YAML front matter values of
+  evidence on top; an audit indicator also sets the tag, and nothing removes it. YAML front matter values of
   `SKILL.md` files and MCP descriptions are audited line by line with their
   line numbers. One line over 4,096 characters is skipped and listed under
   `limitations` instead of marking the scan incomplete, and a text that opens

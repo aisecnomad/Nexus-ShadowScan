@@ -185,7 +185,9 @@ or not the phrase is quoted or negated. On top of that floor, a bounded static
 audit of the whole description reports direct instruction-override or
 sensitive-value-disclosure candidates with rule identifiers and line numbers in
 `metadata.static_instruction_audit` and as zero-weight `instruction:<rule>`
-evidence; it retains no excerpt. The tag describes a review candidate, not
+evidence; it retains no excerpt. An audit indicator also sets the
+`tool-poisoning` tag, so the audit widens the tag beyond the floor and never
+narrows it. The tag describes a review candidate, not
 verified intent or execution. Quoted text and fenced code are excluded from the
 audit; YAML front matter values are read line by line. Descriptions over 64 KiB,
 malformed or oversized front matter, an unclosed fence and a description that is
