@@ -3139,6 +3139,9 @@ class FilesystemConnector(BaseConnector):
             if manifest is not None:
                 # A rejected lockfile is reported like a malformed package.json: one
                 # fixed reason scoped to the file, and the scan stays incomplete.
+                # Malformed TOML or YAML is the input-defect diagnostic (a warning,
+                # an error under strict_coverage); a limit, unsupported version or
+                # shape error is an error naming itself.
                 self._file_errors(rel, manifest.errors, defect=True)
                 if manifest.lockfile is not None:
                     self._lockfile_inventory(scan, rel, manifest.lockfile)
@@ -3379,6 +3382,7 @@ class FilesystemConnector(BaseConnector):
     _SYNTAX_DEFECT_PREFIXES = (
         "invalid TOML",
         "invalid JSON",
+        "invalid YAML",
         "invalid structured configuration syntax",
         "invalid agent manifest syntax",
         "MCP servers must be an object or array",

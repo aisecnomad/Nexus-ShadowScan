@@ -739,26 +739,61 @@ def test_rejected_lockfile_reason_is_fixed_and_never_quotes_the_file(name, text,
     assert "zq7quoted" not in " ".join(result.errors)
 
 
+@pytest.mark.parametrize(
+    ("name", "text", "reason"),
+    [
+        ("uv.lock", "version = zq7quoted\n", "invalid TOML"),
+        ("pnpm-lock.yaml", "lockfileVersion: [zq7quoted\n", "invalid YAML"),
+    ],
+)
 def test_rejected_lockfile_is_scoped_to_the_file_and_keeps_the_scan_incomplete(
-    tmp_path, run_connector, monkeypatch
+    tmp_path, run_connector, monkeypatch, name, text, reason
 ):
     from shadowscan.connectors.code import lockfiles
 
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    (tmp_path / "uv.lock").write_text("version = zq7quoted\n")
+    (tmp_path / name).write_text(text)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     # A malformed lockfile is an input defect like a malformed package.json: reported
     # per file, the other findings kept, and the scan incomplete (exit 3).
     assert findings and not ctx.stats.errors
-    assert ctx.stats.warnings == ["code.filesystem: uv.lock: input defect: invalid TOML"]
+    assert ctx.stats.warnings == [f"code.filesystem: {name}: input defect: {reason}"]
     assert ctx.stats.incomplete
+    # Strict coverage keeps the error severity, with the same fixed reason.
+    findings, strict = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=True
+    )
+    assert findings and strict.stats.errors == [f"code.filesystem: {name}: input defect: {reason}"]
+    assert strict.stats.incomplete and not strict.stats.warnings
     # A limit names itself instead of the exception type, and never quotes the file.
     monkeypatch.setattr(lockfiles, "MAX_PACKAGES", 1)
-    (tmp_path / "uv.lock").write_text(Path("tests/fixtures/code/lockfiles/uv.lock").read_text())
+    (tmp_path / name).write_text(Path("tests/fixtures/code/lockfiles", name).read_text())
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert ctx.stats.errors == ["code.filesystem: uv.lock: lockfile package limit exceeded"]
+    assert ctx.stats.errors == [f"code.filesystem: {name}: lockfile package limit exceeded"]
     assert ctx.stats.incomplete and not ctx.stats.warnings
     assert not any(f.resource_type == "lockfile-inventory" for f in findings)
+
+
+def test_malformed_conda_environment_is_an_input_defect(tmp_path, run_connector):
+    # environment.yml shares the `invalid YAML` reason, so a syntactically broken
+    # one takes the same input-defect route as a broken package.json or lockfile.
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    (tmp_path / "environment.yml").write_text("dependencies: [zq7quoted\n")
+    defect = "code.filesystem: environment.yml: input defect: invalid YAML"
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    # The structured-configuration pass adds its own skip warning for the same file.
+    assert findings and not ctx.stats.errors and ctx.stats.incomplete
+    assert defect in ctx.stats.warnings
+    _, strict = run_connector("code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=True)
+    assert defect in strict.stats.errors and strict.stats.incomplete
+    assert not any("input defect" in message for message in strict.stats.warnings)
+    # A well-formed document of the wrong shape is still an error naming the shape.
+    (tmp_path / "environment.yml").write_text("dependencies: 42\n")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.errors and ctx.stats.incomplete
+    assert all(message.startswith("code.filesystem: environment.yml: ") for message in ctx.stats.errors)
+    assert not any("input defect" in message for message in ctx.stats.errors + ctx.stats.warnings)
+    assert "zq7quoted" not in " ".join(ctx.stats.errors + ctx.stats.warnings)
 
 
 LOCKFILE_FIXTURES = Path("tests/fixtures/code/lockfiles")

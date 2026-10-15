@@ -294,17 +294,27 @@ def test_oversize_unselected_lockfile_is_a_warning_and_the_scan_stays_complete(t
     assert all("over max_file_size" in warning for warning in stats.warnings)
 
 
-@pytest.mark.parametrize("name", ["uv.lock", "poetry.lock", "pnpm-lock.yaml", "Cargo.lock"])
-def test_malformed_selected_lockfile_marks_scan_incomplete(tmp_path, index, name):
+@pytest.mark.parametrize(
+    ("name", "text", "reason"),
+    [
+        ("uv.lock", "small", "input defect: invalid TOML"),
+        ("poetry.lock", "small", "input defect: invalid TOML"),
+        ("Cargo.lock", "small", "input defect: invalid TOML"),
+        ("pnpm-lock.yaml", "lockfileVersion: [", "input defect: invalid YAML"),
+        ("pnpm-lock.yaml", "small", "lockfile object expected"),
+    ],
+)
+def test_malformed_selected_lockfile_marks_scan_incomplete(tmp_path, index, name, text, reason):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    (tmp_path / name).write_text("small")
+    (tmp_path / name).write_text(text)
     result = Engine(_engine_config(tmp_path), index).run()
     assert not result.complete and result.findings
-    # A rejected lockfile names its reason per file: malformed content is an
+    # A rejected lockfile names its reason per file: malformed TOML or YAML is an
     # input defect (a warning that keeps the scan incomplete), a shape error an error.
     stats = result.stats[0]
-    reason = "lockfile object expected" if name == "pnpm-lock.yaml" else "input defect: invalid TOML"
-    assert any(f"{name}: {reason}" in message for message in stats.errors + stats.warnings)
+    channel = stats.warnings if reason.startswith("input defect") else stats.errors
+    assert any(f"{name}: {reason}" in message for message in channel)
+    assert not any(name in message for message in stats.errors + stats.warnings if message not in channel)
 
 
 def test_oversize_source_file_marks_coverage_incomplete_by_default(tmp_path, index):
