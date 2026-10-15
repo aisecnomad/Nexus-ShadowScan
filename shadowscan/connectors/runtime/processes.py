@@ -28,7 +28,7 @@ import socket
 import stat
 import time
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Generator, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -315,7 +315,7 @@ def _classification_complete(argv: list[str]) -> bool:
     """Whether the leading arguments of a longer command line already decide its classification.
 
     A launcher is classified by its first positional arguments; until ``_packages``
-    has seen them all, the package it runs may still lie past the read limit.
+    has finished deciding, the package it runs may still lie past the read limit.
     """
     if not argv:
         return False
@@ -324,7 +324,12 @@ def _classification_complete(argv: list[str]) -> bool:
         return len(argv) >= 3  # classify() decides `ollama` from its first two arguments
     if base not in _LAUNCHERS and not _PYTHON.match(base):
         return True
-    return sum(1 for _ in _packages(base, argv[1:])) >= _PACKAGE_ARGS
+    packages = _packages(base, argv[1:])
+    try:
+        while True:
+            next(packages)
+    except StopIteration as stop:
+        return bool(stop.value)
 
 
 def classify(executable: str | None, argv: list[str]) -> tuple[ProcessRule, str | None] | None:
@@ -356,8 +361,12 @@ def classify(executable: str | None, argv: list[str]) -> tuple[ProcessRule, str 
     return None
 
 
-def _packages(launcher: str, args: list[str]) -> Iterator[str]:
-    """Candidate package or module names in a launcher's arguments (the first few positional ones)."""
+def _packages(launcher: str, args: list[str]) -> Generator[str, None, bool]:
+    """Candidate package or module names in a launcher's arguments (the first few positional ones).
+
+    Returns whether the arguments decided the classification: every positional argument
+    it reads was present, or a subcommand showed that nothing after it is running.
+    """
     seen = 0
     i = 0
     while i < len(args) and seen < _PACKAGE_ARGS:
@@ -371,7 +380,7 @@ def _packages(launcher: str, args: list[str]) -> Iterator[str]:
         if arg.startswith("-") or arg in _SKIP_ARGS:
             continue
         if arg in _NOT_RUNNING:
-            return
+            return True
         seen += 1
         name = arg.replace("\\", "/")
         if "/node_modules/" in name:
@@ -381,6 +390,7 @@ def _packages(launcher: str, args: list[str]) -> Iterator[str]:
         elif _PYTHON.match(launcher) and name.endswith(".py"):
             continue
         yield name
+    return seen >= _PACKAGE_ARGS
 
 
 @dataclass

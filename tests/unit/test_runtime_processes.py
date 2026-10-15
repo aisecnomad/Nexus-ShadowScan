@@ -796,3 +796,39 @@ def test_truncated_ollama_subcommand_past_the_limit_is_incomplete(run_connector,
     assert any("command line byte limit" in w for w in ctx.stats.warnings)
     assert not runtime_processes._classification_complete(["ollama"])
     assert runtime_processes._classification_complete(["ollama", "list", "--verbose"])
+
+
+def test_decided_launcher_command_lines_past_the_limit_are_complete(run_connector, monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    tail = b"Z" * (2 * runtime_processes._MAX_CMDLINE_BYTES)
+    for pid, argv in {
+        "11": [b"python", b"app.py", b"alpha", b"beta", b"--data=" + tail],  # every positional read
+        "12": [b"python", b"-m", b"pip", b"install", tail],  # nothing after `install` is running
+        "13": [b"npm", b"install", tail],
+        "14": [b"node", b"--stack-trace-limit=" + tail, b"/usr/lib/node_modules/x/cli.js"],  # undecided
+    }.items():
+        (proc / pid).mkdir(parents=True)
+        (proc / pid / "cmdline").write_bytes(b"\0".join(argv) + b"\0")
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert findings == [] and ctx.stats.incomplete
+    assert [w for w in ctx.stats.warnings if "command line byte limit" in w] == [
+        "runtime.processes: command line byte limit reached before a classifying argument"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("argv", "complete"),
+    [
+        (["python", "app.py", "alpha", "beta"], True),
+        (["python", "app.py", "alpha"], False),
+        (["python", "-m", "pip", "install", "a"], True),
+        (["npm", "install", "a", "b", "c"], True),
+        (["npx", "-y"], False),
+        (["node", "a.js", "b", "c"], True),
+    ],
+)
+def test_classification_complete_reports_whether_packages_finished_deciding(argv, complete):
+    assert runtime_processes._classification_complete(argv) is complete
