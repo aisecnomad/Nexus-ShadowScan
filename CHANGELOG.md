@@ -216,6 +216,28 @@ summarizes each release for people who install and operate ShadowScan.
   tokens that carry such a header or claim: their `metadata.kid` and
   `metadata.claim_names` change. A regression test places a token across both
   cuts.
+- **HTTP transport contracts carried from draft #231; the private-address
+  claim is qualified.** Copilot's commit 82093b7 is cherry-picked with its
+  authorship: `docs/api/http.md` and the `shadowscan/utils/http.py` module
+  docstring state the transport's invariants, and
+  `tests/unit/test_http_contracts.py` fails when a urllib3 upgrade changes the
+  request hook, the response shutdown and release methods or the per-client
+  pool-class mapping the transport relies on. As written, both texts called the
+  refusal of private and cloud-metadata addresses unconditional, although the
+  trusted `allow_private_origin` opt-in (scan-wide, or per connector since
+  #235) lifts it and `--deny-private-origin` overrides both, and they predated
+  #236's bounded DNS resolution. They now call the refusal the default, name
+  the opt-in and its override, say that the numeric connection and TLS hostname
+  verification still apply under it, and describe the bounded lookup (at most
+  20 seconds, less under the client timeout, the acquisition deadline or the
+  connector deadline) and the refused duck-typed `session`. A contract
+  assertion pins that the private connection class differs from the public one
+  only in that flag. Documentation and tests only; runtime behavior is
+  unchanged. Affects readers of the API reference and contributors who change
+  the urllib3 constraint or lock. The rest of #231 (the process plugin default,
+  schema-aware `--set` coercion, the `engine_state.py` and `http_transport.py`
+  split and the Docker Python pin guard) is not carried, and the draft stays
+  open for it.
 
 ### Cap runtime dep ranges at the next major (October 15)
 

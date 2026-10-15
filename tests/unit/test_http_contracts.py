@@ -29,6 +29,11 @@ def test_destination_policy_pool_classes_use_urllib3_connection_hook() -> None:
     assert _PublicHTTPSConnectionPool.ConnectionCls is _PublicHTTPSConnection
     assert _PrivateHTTPSConnectionPool.ConnectionCls is _PrivateHTTPSConnection
     assert callable(_AcquisitionHTTPSConnectionPool._make_request)
+    # allow_private_origin lifts only the address check: the private class keeps
+    # the public numeric connect and urllib3's TLS hostname verification.
+    assert {name for name in vars(_PrivateHTTPSConnection) if not name.startswith("__")} == {
+        "allow_private_origin"
+    }
 
 
 def test_destination_policy_adapters_isolate_pool_class_mapping() -> None:

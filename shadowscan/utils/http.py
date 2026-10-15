@@ -2,15 +2,23 @@
 
 Transport invariants:
 
-* URL validation is preflight only. The HTTPS connection resolves the host once,
-  rejects every private or metadata address in the answer set, then connects to
-  a numeric address while retaining the hostname for TLS verification.
+* URL validation is preflight only. The HTTPS connection resolves the host
+  once and connects to a numeric address while retaining the hostname for TLS
+  verification. By default it rejects every private or metadata address in
+  the answer set. The trusted ``allow_private_origin`` opt-in (scan-wide or
+  for one connector; the operator's ``--deny-private-origin`` overrides both)
+  lifts only that rejection: the numeric connection and TLS hostname
+  verification still apply.
 * Each client owns a copied urllib3 pool-class mapping. Proxies and replacement
   adapters are refused so an origin-specific pool cannot bypass destination
-  checks.
+  checks. An injected session that is neither a ``requests.Session`` nor a
+  ``unittest.mock`` double is refused, since it would skip those checks.
 * The acquisition deadline covers DNS completion, TCP/TLS, request transmission
-  and response headers. DNS itself cannot be interrupted; a late answer cannot
-  start a connection. Socket operations use the remaining monotonic budget.
+  and response headers. DNS itself cannot be interrupted, so it runs in a
+  worker the request waits on for at most ``_RESOLVE_TIMEOUT``, less when the
+  client timeout or the remaining budget is shorter; a late answer is
+  discarded and cannot start a connection. Socket operations use the remaining
+  monotonic budget.
 * The whole-body read deadline is separate from the per-read socket timeout.
   Expiry shuts down a still-owned response socket, and the response must never
   be treated as complete after that shutdown.
