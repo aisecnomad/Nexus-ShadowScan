@@ -19,15 +19,13 @@
 |---|---|---|
 | [`aisecnomad/Nexus-ShadowScan`](https://github.com/aisecnomad/Nexus-ShadowScan) | [`NexusShadowScan`](https://pypi.org/project/NexusShadowScan/) | `shadowscan` |
 
-The repository was formerly `aisecnomad/Project-Nexus`; GitHub redirects the old links.
-The unrelated `shadowscan` package on PyPI is not this project.
 
 It inspects nine surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, cloud accounts, endpoints (developer workstations and
 host/runtime inventories), network logs, and running processes. It fingerprints frameworks and
 model providers, scores findings, and reconciles discoveries against your approved
 agent registry of
-[Agent Cards](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/agent-card.yaml).
+[Agent Cards](https://agent2agent.info/docs/concepts/agentcard/
 
 Example output, abridged to the first columns (totals vary as signatures evolve;
 `--max-rows 5` shows the five highest-risk rows of the bundled offline demo):
@@ -103,7 +101,6 @@ such as an agent executor or tool-calling agent, rather than plain LLM calls.
 | LangChain | ✓ | ✓ |  |  |  |  | agent constructs |
 | LangGraph | ✓ | ✓ |  |  |  |  | any use |
 | CrewAI | ✓ |  |  |  |  |  | any use |
-| AutoGen / AG2 | ✓ |  |  | ✓ |  |  | any use |
 | Microsoft Agent Framework | ✓ |  |  | ✓ |  |  | any use |
 | Semantic Kernel | ✓ |  | ✓ | ✓ |  |  | agent constructs |
 | OpenAI Agents SDK | ✓ | ✓ |  |  |  |  | any use |
@@ -113,13 +110,8 @@ such as an agent executor or tool-calling agent, rather than plain LLM calls.
 | LlamaIndex | ✓ | ✓ |  |  |  |  | agent constructs |
 | Pydantic AI | ✓ |  |  |  |  |  | any use |
 | Hugging Face smolagents | ✓ |  |  |  |  |  | any use |
-| Mastra |  | ✓ |  |  |  |  | any use |
-| Vercel AI SDK |  | ✓ |  |  |  |  | agent constructs |
-| LangChain4j |  |  | ✓ |  |  |  | agent constructs |
-| Spring AI |  |  | ✓ |  |  |  | agent constructs |
-| LangChainGo |  |  |  |  | ✓ |  | agent constructs |
 
-The grid shows 18 of 79 framework signatures; `shadowscan signatures list --category framework` lists all of them.
+The grid shows 12 of 79 framework signatures; `shadowscan signatures list --category framework` lists all of them.
 
 ### MCP servers and clients
 
@@ -142,10 +134,10 @@ host), and `runtime.processes` adds MCP servers seen running.
 |---|---|---|---|
 | Identity | `identity.auth0` | Auth0 applications and machine-to-machine client grants. | JSON export of clients / client-grants |
 | Identity | `identity.entra` | Entra ID service principals, OAuth consent grants, app-only permissions, app registrations, Agent ID agent identities and Microsoft Agent 365 packages via Microsoft Graph. | JSON export of Graph objects |
-| Identity | `identity.google-workspace` | OAuth apps authorised by Google Workspace users (Admin SDK tokens), aggregated per client. | JSON export of token objects |
+| Identity | `identity.google-workspace` | OAuth apps authorized by Google Workspace users (Admin SDK tokens), aggregated per client. | JSON export of token objects |
 | Identity | `identity.jwt` | Classify JWTs as human, service or agent (delegated) identities and assess their privileges. | file with one token per line or JSON list / objects with `token` |
 | Identity | `identity.okta` | Okta applications, OAuth service apps, admin/user consent grants. | JSON export of /api/v1/apps (with optional \_grants/\_tokens) |
-| Gateway | `gateway.logs` | Reconstruct LLM callers (API keys, principals, services, user agents) from AI gateway / provider / proxy logs. | log file or directory (JSONL / JSON / CSV / nginx-envoy text) |
+| Gateway | `gateway.logs` | Reconstruct LLM callers (API keys, principals, services, user agents) from AI gateway/provider / proxy logs. | log file or directory (JSONL / JSON / CSV / nginx-envoy text) |
 | Gateway | `gateway.otel` | Aggregate OpenTelemetry GenAI span exports without retaining prompt content. | OTLP JSON / JSONL span export |
 | Low-code | `lowcode.make` | Make (Integromat) scenarios with AI modules and Make AI Agents. | scenarios JSON (with blueprint) / ai-agents JSON / blueprint files |
 | Low-code | `lowcode.n8n` | n8n workflows using AI Agent / LLM / MCP nodes. | workflow list JSON or directory of exported workflows |
@@ -155,15 +147,15 @@ host), and `runtime.processes` adds MCP servers seen running.
 | Low-code | `lowcode.workato` | Workato recipes using GenAI / LLM connectors and agentic recipes. | /api/recipes JSON |
 | Low-code | `lowcode.zapier` | Zaps with AI steps (ChatGPT, Claude, Gemini, AI by Zapier) and Zapier Agents from account exports. | Zapier for Companies CSV/JSON export of Zaps or Agents |
 | SaaS | `saas.atlassian` | Marketplace / Forge apps installed on Jira & Confluence Cloud (AI assistants, Rovo agents, automation bots). | UPM plugins JSON |
-| SaaS | `saas.generic` | Offline app-inventory export from any SaaS admin console or CASB (column mapping via `fields`). | CSV / JSON export (required) |
-| SaaS | `saas.github-apps` | GitHub Apps installed on an organisation (AI reviewers, coding agents), Copilot seats and approved fine-grained PATs. | installations JSON |
+| SaaS | `saas.generic` | Offline app inventory export from any SaaS admin console or CASB (column mapping via `fields`). | CSV / JSON export (required) |
+| SaaS | `saas.github-apps` | GitHub Apps installed on an organization (AI reviewers, coding agents), Copilot seats and approved fine-grained PATs. | installations JSON |
 | SaaS | `saas.microsoft-teams` | Teams apps (custom + store) with bots, message extensions and Copilot agents, plus their installations. | JSON export of teamsApps / installedApps |
 | SaaS | `saas.notion` | Notion integrations (bot users) connected to the workspace. | /v1/users JSON |
-| SaaS | `saas.slack` | Slack apps, bot users, approved/restricted apps and install logs. | JSON export of users / apps / integration logs |
+| SaaS | `saas.slack` | Slack apps, bot users, approved/restricted apps and install logs. | JSON export of users/apps/integration logs |
 | SaaS | `saas.zoom` | Zoom Marketplace approved and account-created apps (not a per-user installation inventory). | marketplace apps JSON |
-| Network | `network.logs` | AI services contacted per client address, from DNS, TLS SNI and flow logs (Zeek, Route 53 Resolver, VPC Flow Logs, generic exports). | log file or directory: Zeek dns/ssl/conn logs (TSV or JSON), Route 53 Resolver query logs, VPC Flow Logs or generic JSON/CSV DNS and SNI records |
+| Network | `network.logs` | AI services contacted per client address, from DNS, TLS SNI, and flow logs (Zeek, Route 53 Resolver, VPC Flow Logs, generic exports). | log file or directory: Zeek dns/ssl/conn logs (TSV or JSON), Route 53 Resolver query logs, VPC Flow Logs or generic JSON/CSV DNS and SNI records |
 
-Identity coverage is each provider's application, consent-grant and token inventory,
+Identity coverage is each provider's application, consent-grant, and token inventory,
 plus JWTs you supply; ShadowScan does not parse IdP sign-in or audit logs.
 `gateway.logs` auto-detects these log schemas: `access-log`, `anthropic-usage`, `azure-openai`, `bedrock`, `cloudflare`, `generic`, `helicone`, `kong`, `langfuse`, `litellm`, `openai-usage`, `portkey`, `vertex`.
 This table lists 22 of the 38 connectors; the code, cloud,
@@ -180,8 +172,8 @@ and **not** measured production precision or recall.
 
 | Track (run, version) | Inputs | ShadowScan result | Limits |
 |---|---|---|---|
-| [ShadowBench estate, nine surfaces](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (2026-10-11, 0.1.2) | 137 authored vendor-format entities for one fictional estate: 87 positive, 27 control, 23 near-miss | Entity precision / recall / F1 91.2% / 95.4% / 93.3%; 83 of 87 positives found; 8 of 50 controls and near-misses flagged | Authored artifacts; frozen after one label-completeness pass in which every runnable tool ran once (it added one secondary anchor and one tolerated pair and changed no label); later ShadowScan runs on it are in-sample (below) |
-| [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision / recall / F1 99.8% / 94.8% / 97.2%; 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
+| [ShadowBench estate, nine surfaces](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (2026-10-11, 0.1.2) | 137 authored vendor-format entities for one fictional estate: 87 positive, 27 control, 23 near-miss | Entity precision/recall / F1 91.2% / 95.4% / 93.3%; 83 of 87 positives found; 8 of 50 controls and near-misses flagged | Authored artifacts; frozen after one label-completeness pass in which every runnable tool ran once (it added one secondary anchor and one tolerated pair and changed no label); later ShadowScan runs on it are in-sample (below) |
+| [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision/recall / F1 99.8% / 94.8% / 97.2%; 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
 
 Each report also runs other open-source tools on their declared scope, which is
 narrower than nine surfaces; compare their in-scope columns in the report, not
@@ -308,7 +300,7 @@ upload a universal `py3-none-any` wheel and the source distribution
 either file with `--repo aisecnomad/Nexus-ShadowScan`.
 
 A plain `pip install` resolves dependencies from the live index. For a
-deployment, prefer the hash-locked install.
+Deployment: prefer the hash-locked install.
 
 ### Deployment install (reviewed revision, hash-locked)
 
@@ -464,7 +456,7 @@ accept `enabled` (default `true`) and `label` (a distinct ID when a connector ru
 more than once). See [connector keys and least-privilege scopes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md).
 Run repository scans separately from live tenant collection. Mixing these
 credential boundaries requires the explicit `allow_credential_mixing` exception;
-keep them separate for untrusted repositories. Cloud instance-metadata credentials
+Keep them separate for untrusted repositories. Cloud instance-metadata credentials
 require `allow_instance_credentials: true`; use an explicit audit identity by default.
 
 #### Coverage and exit codes
@@ -636,7 +628,7 @@ declares `autonomy_profile.level` (0 to 5); an older card's level is ignored
 with a warning. Such a card may also declare governance facts the scanner
 cannot observe (`governance:`: EU AI Act risk class, intended purpose,
 oversight measures, AIUC-1 certificate, ISO/IEC 42001 scope); reports label
-them declared. `shadowscan inventory stubs`
+them as declared. `shadowscan inventory stubs.`
 turns shadow findings into card skeletons for review. See
 [docs/inventory.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/inventory.md).
 
@@ -702,7 +694,7 @@ for where the code, tests, docs, tooling and benchmarks live.
   [benchmarks](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md),
   including the nine-surface ShadowBench, compare ShadowScan with other
   discovery tools on inputs and labels the same maintainer wrote. They show
-  behaviour on those inputs, not field accuracy, and none is independent.
+  behavior on those inputs, not field accuracy, and none is independent.
 - **Assurance results:** The baseline and later results use a frozen corpus of
   42 public files (30 negatives), labeled by two AI reviewers before evaluation.
   The labelers share model capabilities, so these are not independent human
@@ -731,7 +723,7 @@ for where the code, tests, docs, tooling and benchmarks live.
   [GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.2)
   before installing from the production index; publication does not establish
   independent review or deployment acceptance. Commits on `main` after the tag
-  are unreleased. The package classifier is `Development Status :: 3 - Alpha`.
+  are unreleased. The package classifier is `Development Status:: 3 - Alpha`.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/archive/reviews) are AI-assisted, not third-party reviews.
