@@ -18,6 +18,10 @@ from shadowscan.utils.redaction import REDACTED
 from shadowscan.utils.text import parse_timestamp, to_iso
 
 MAX_LINEAGE_EVENTS = 10000  # per principal; the caller's invocation tally is never bounded by it
+# Exact-duplicate suppression spans the whole export, past the per-principal
+# retention limit, so a repeated event never inflates a tally; this bound keeps
+# the digest map finite and is disclosed as a coverage gap when reached.
+MAX_SEEN_EVENTS = 500000
 MAX_CALLER_OBSERVATIONS = 100
 MAX_ASSUMPTION_HOPS = 8
 ASSUME_OPERATIONS = frozenset({"AssumeRole", "AssumeRoleWithSAML", "AssumeRoleWithWebIdentity"})
@@ -132,7 +136,9 @@ class CloudTrailLineage:
 
     def __init__(self, warn: Callable[..., None]) -> None:
         self.warn = warn
-        self.seen: dict[tuple[str, str, str], str] = {}
+        # Scope digest (recipient, region, eventID) to content digest for every
+        # usable event seen, retained or not.
+        self.seen: dict[bytes, bytes] = {}
         self.limits: set[str] = set()
         self.retained: dict[str, int] = {}
         # Principals whose ancestry the per-principal event limit bounded: a disclosed
@@ -187,19 +193,21 @@ class CloudTrailLineage:
         principal = caller_key(observation.get("principal"))
         retained = self.retained.get(principal, 0)
         if all(_usable(observation.get(k)) for k in ("eventID", "recipientAccountId", "_region")):
-            key = (
-                str(observation["recipientAccountId"]),
-                str(observation["_region"]),
-                str(observation["eventID"]),
-            )
-            digest = hashlib.sha256(json.dumps(observation, sort_keys=True).encode()).hexdigest()
+            scope = (observation["recipientAccountId"], observation["_region"], observation["eventID"])
+            key = hashlib.sha256(json.dumps(scope).encode()).digest()
+            digest = hashlib.sha256(json.dumps(observation, sort_keys=True).encode()).digest()
             previous = self.seen.get(key)
             if previous == digest:
                 return False
             if previous is not None:
                 self._gap("conflicting-event-id")
-            elif retained < MAX_LINEAGE_EVENTS:
+            elif len(self.seen) < MAX_SEEN_EVENTS:
+                # Recorded whether or not the event is retained: a duplicate beyond the
+                # per-principal limit must still be recognized for the tally to be complete.
                 self.seen[key] = digest
+            else:
+                # Later duplicates can no longer be told from new events.
+                self._gap("event-id-limit")
         if retained >= MAX_LINEAGE_EVENTS:
             self._bound(observation)
             return True

@@ -838,3 +838,38 @@ def test_cloudtrail_sanitized_or_absent_principal_keys_the_tally_and_the_lineage
     lineage = finding.metadata["cloudtrail_lineage"]
     assert [o["eventID"] for o in lineage["observations"]] == ["sanitized-1"]
     assert lineage["coverage"] == "partial" and "event-limit" in lineage["limits"]
+
+
+def test_cloudtrail_duplicates_beyond_the_per_principal_limit_still_do_not_inflate_counts(index, monkeypatch):
+    # The digest was only recorded while events were retained, so once a principal hit
+    # the limit an exact duplicate counted again while the warning said counts were complete.
+    from shadowscan.connectors.cloud import aws_lineage
+
+    monkeypatch.setattr(aws_lineage, "MAX_LINEAGE_EVENTS", 1)
+    assumption, invocation, _ = _lineage_records()
+    later = {**invocation, "eventID": "another-call", "eventTime": "2026-01-01T00:20:00Z"}
+    findings, ctx = _lineage(index, [assumption, invocation, later, later, invocation])
+    assert not ctx.stats.incomplete
+    (finding,) = findings
+    assert finding.metadata["events"] == 2
+    lineage = finding.metadata["cloudtrail_lineage"]
+    assert lineage["coverage"] == "partial" and "event-limit" in lineage["limits"]
+    assert any("invocation counts are complete" in w for w in ctx.stats.warnings)
+
+
+def test_cloudtrail_duplicate_suppression_has_its_own_disclosed_bound(index, monkeypatch):
+    from shadowscan.connectors.cloud import aws_lineage
+
+    monkeypatch.setattr(aws_lineage, "MAX_SEEN_EVENTS", 2)
+    assumption, invocation, _ = _lineage_records()
+    later = {**invocation, "eventID": "another-call", "eventTime": "2026-01-01T00:20:00Z"}
+    findings, ctx = _lineage(index, [assumption, invocation, later, later])
+    assert ctx.stats.incomplete
+    (finding,) = findings
+    lineage = finding.metadata["cloudtrail_lineage"]
+    assert lineage["coverage"] == "incomplete" and "event-id-limit" in lineage["limits"]
+    assert any("CloudTrail lineage event-id-limit" in w for w in ctx.stats.warnings)
+    # Within the bound the same export deduplicates and stays complete.
+    monkeypatch.setattr(aws_lineage, "MAX_SEEN_EVENTS", 3)
+    findings, ctx = _lineage(index, [assumption, invocation, later, later])
+    assert not ctx.stats.incomplete and findings[0].metadata["events"] == 2
