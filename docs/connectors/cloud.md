@@ -75,9 +75,12 @@ failed or denied `LookupEvents` call does mark it incomplete.
 CloudTrail exports can include normalized `cloudtrail-event` records or raw
 CloudTrail event objects with `_kind: cloudtrail-event`. Model invocation events
 (including `ConverseStream`) and STS assumption events may be replayed together.
-Every event from a `bedrock`, `sagemaker` or Amazon Q event source counts
-toward its caller's invocation, operation and region tallies; events of other
-services in a full trail export are not LLM callers. Only the operations in
+Every event from a `bedrock`, `sagemaker`, Amazon Q (`q`, `qbusiness`,
+`qapps`, `qdeveloper`, `qconnect`, `codewhisperer`, `wisdom`), `lex` or
+`kendra` event source counts toward its caller's invocation, operation and
+region tallies, and so does every normalized `cloudtrail-event` record without
+an `eventSource`; events of other services in a full trail export are not LLM
+callers. Only the operations in
 `CLOUDTRAIL_EVENTS` carry a session trace: events counted without one are
 reported in a single warning (`N CloudTrail AI event(s) outside the lineage
 operation list counted for callers without session lineage`) that does not
@@ -88,6 +91,12 @@ bodies and credential identifiers/values are never retained. STS records supply
 context only and never independently produce an AI finding. Exact duplicate
 event IDs within the same recipient/region scope do not inflate invocation
 counts; conflicting IDs make coverage incomplete and prevent lineage binding.
+Duplicate suppression continues past the per-principal retention limit and is
+itself bounded at 500,000 distinct event IDs per scan; reaching that bound
+records `event-id-limit` and marks the scan incomplete, since later duplicates
+can no longer be recognized. The caller tally and `cloudtrail_lineage` share
+one principal key (the sanitized ARN, or `unknown`), so a redacted session name
+or a record without a principal still reports its observations and limits.
 
 A parent assumption is linked only when its returned session ARN and role ARN
 exactly match the invocation's principal and session issuer, its target account
@@ -116,8 +125,11 @@ and a limitation sentence, and the connector warns once without marking the
 scan incomplete. Malformed metadata or invalid event timestamps still mark
 coverage incomplete; valid invocation evidence is preserved. STS
 `credentials.expiration` values in CloudTrail's display format
-(`Jan 20, 2024, 3:16:07 PM`, UTC) are parsed before the generic timestamp
-formats; a value no format accepts records `invalid-timestamp`. The synthetic
+(`Jan 20, 2024, 3:16:07 PM`, the older `Jan 20, 2024 3:16:07 PM` without the
+year comma, either with a trailing `UTC`) parse as UTC. Any other 12-hour
+spelling (another zone word, a locale variant) and any timestamp that cannot be
+expressed in UTC records `invalid-timestamp`; neither is read as RFC 2822 with
+the meridian dropped. The synthetic
 fixture `tests/fixtures/cloud/lineage/assumed_session.jsonl` exercises a
 cross-account assumption, cross-region `ConverseStream`, and a non-AI control;
 `assumed_session_display_time.jsonl` exercises the display-format expiration.

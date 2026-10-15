@@ -52,9 +52,23 @@ a second verification; each has a regression test.
   counted without one are reported in a single warning that does not mark
   the scan incomplete.
 - AWS: STS `credentials.expiration` values in CloudTrail's display format
-  (`Jan 20, 2024, 3:16:07 PM`) parse as UTC, so those sessions link instead
-  of silently staying unlinked; a value no format accepts records
-  `invalid-timestamp`.
+  (`Jan 20, 2024, 3:16:07 PM`, without the year comma, or with a trailing
+  `UTC`) parse as UTC, so those sessions link instead of silently staying
+  unlinked; any other 12-hour spelling records `invalid-timestamp` instead
+  of being read as RFC 2822 twelve hours early, and a timestamp that cannot
+  be expressed in UTC records `invalid-timestamp` instead of aborting the
+  analysis of the remaining records.
+- AWS: CloudTrail lineage traces read only the STS hops keyed by the exact
+  session ARN and creation time an observation names, so exports with many
+  `AssumeRole` events into one session no longer cost observations times
+  hops. `codewhisperer` (Amazon Q Developer), `wisdom` (Q in Connect), `lex`
+  and `kendra` events count for their callers, as do normalized records
+  without an `eventSource` whose operation is outside the lineage list. The
+  caller tally and `cloudtrail_lineage` share one principal key, so a
+  redacted session name or a record without a principal reports its
+  observations and limits. Exact duplicates are suppressed past the
+  per-principal retention limit (bounded at 500,000 event IDs per scan;
+  `event-id-limit` and an incomplete scan beyond that).
 - Engine: lifecycle links to findings omitted by the confidence threshold or
   output caps are pruned from the `metadata.lifecycle_observation` samples
   and `metadata.lifecycle.related`, as `metadata.related` already was; the
