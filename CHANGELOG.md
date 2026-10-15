@@ -281,6 +281,89 @@ summarizes each release for people who install and operate ShadowScan.
   carried, and left in the open draft: the clone credential temporary file,
   plugin worker key separation, triage `allow_custom_base_url`, the Python pin
   CI probe, the parser fuzz tests and the `validate_url` `is not None` change.
+- **A spent DNS budget raced the resolver, and stalled lookups piled up
+  threads (#236).** `_resolve_bounded` started its worker before looking at
+  the budget, so once a connector deadline had passed each lookup still
+  started a thread and then waited zero seconds: a fast answer could win that
+  race and the lookup went ahead (its answer still checked), a slower one was
+  refused, so the outcome after the deadline depended on scheduling. Nothing
+  limited the abandoned workers either, and connectors that check one endpoint
+  per project or repository (Azure Foundry, remote repositories) keep calling
+  `validate_url` after their deadline: in a probe, 500 lookups against a
+  stalled resolver left 500 live threads. A spent (or NaN) budget now refuses
+  before any thread starts, and at most 32 workers (`_MAX_RESOLVER_THREADS`)
+  run at once; a lookup waits within its budget for a free slot and otherwise
+  fails closed, and a worker frees its slot when the resolver returns. The
+  clone pin lookup (`resolve_destination`) shares the resolver and gains both
+  bounds. Every new refusal is the `TimeoutError` callers already turn into a
+  refusal (`ValueError` in the preflight, `NameResolutionError` at connection,
+  `DestinationUnresolved` for a clone), so no lookup goes ahead without an
+  answer to check. Affects scans whose resolver stalls or whose connector
+  deadline passes during collection, which were already incomplete.
+  Regression tests cover a spent budget with an instant resolver (no thread
+  and a refusal every time, directly, through `validate_url` and through
+  `resolve_destination`), 20 lookups against a stalled resolver with three
+  slots, a lookup that waits for a slot, slots freed once the resolver
+  returns, and a worker thread that cannot start.
+- **The late-DNS test was flaky and left the post-resolution check
+  untested (#236).** The test gave the acquisition deadline 50 ms and the
+  resolver a 100 ms sleep, so a scheduler stall raised the guard's
+  `ValueError` instead of the expected `NameResolutionError` (45 of 300 runs
+  under CPU load). And since the bounded wait gives up on that resolver first,
+  deleting the check after resolution in `_new_conn`, which keeps a late
+  answer from opening a connection, failed no test. Two deterministic tests
+  replace it: a resolver that fires the acquisition timer's callback and then
+  answers, which only that check refuses, and a guard pinned at 50 ms with a
+  resolver blocked on an event, where a spy requires the DNS wait budget to be
+  exactly the guard's. Deleting either guard line in `_new_conn` now fails a
+  test. Tests only.
+- **The URL preflight ignored the client timeout and deadline (#236).**
+  `SECURITY.md` said the `validate_url` preflight applied the same bound as the
+  connection-time lookup, tightened by the client timeout and the acquisition
+  deadline, but only the worker's connector deadline tightened it: a request
+  from `HttpClient(timeout=5)`, or from a client with its own `deadline` (LLM
+  triage sets its budget that way), waited up to 20 seconds on a stalled
+  resolver before its connection-time lookup. `validate_url` gains a
+  keyword-only `dns_budget`, and `HttpClient` passes its timeout, cut to its
+  remaining deadline, for the request, redirect and Link and OData pagination
+  preflights. Other callers (Git clone checks, SDK, MCP registry and JWKS
+  preflights) and the clone pin lookup still get only the connector deadline;
+  `SECURITY.md`, `docs/production.md`, `docs/api/http.md` and the LLM triage
+  guide (which still called the resolver unbounded) now say so, and that one
+  request can wait on DNS twice. Affects `HttpClient` requests whose resolver
+  stalls. Regression tests spy on the budget of every preflight with and
+  without a deadline, end a stalled preflight at the client timeout and at
+  the deadline, and pin the client timeout at connection, which no test
+  covered.
+- **A Black Duck service without a Bridge CLI pin skipped the job (#236).**
+  #236 put `vars.BRIDGECLI_DOWNLOAD_VERSION != ''` in the job's `if:`, so a
+  configured service without the pin skipped the job, and a skipped job
+  reports success: a misconfigured integration looked like an unconfigured
+  one. The job is gated on the service variables alone again, and its first
+  step, before checkout, fails with an `::error::` unless the variable holds
+  an `x.y.z` version (an empty, blank or `latest` value would let the action
+  download the vendor's current CLI). The pin fixes a version, not content:
+  the action downloads that version's bundle from `repo.blackduck.com` over
+  HTTPS with no checksum check, and tools the Bridge CLI fetches for a scan are
+  not covered. The workflow comment, the workflow README and the #236 entry
+  below now say so instead of claiming that unpinned vendor code can no longer
+  run. Affects maintainers who enable Black Duck. Policy tests check that the
+  job requires and passes the pin, and run the committed check against empty,
+  blank, padded, partial, pre-release and valid values.
+- **Names importable from `filesystem.py` before the helper move were dropped
+  (#236).** The move left 40 names that
+  `shadowscan.connectors.code.filesystem` exposed on main unimportable from
+  it, among them `NegativeContext`, `negative_context`, the `*_WEIGHT_SCALE`
+  constants and the docs, example and generated path predicates; main's own
+  `tests/unit/test_negative_context.py` no longer imported, while ADR-005 and
+  the #236 entry said the moved names were re-imported. `filesystem.py` now
+  re-imports each of them from its defining module, the names it had only
+  imported for itself (`ast`, `tomllib`, `has_template_markers`, the CI
+  pipeline name sets and the marked JSONC loader) included, so the module's
+  names match main again. Patch such a name in its defining module: rebinding
+  it in `filesystem.py` does not change the helpers. Affects plugins and
+  scripts that import these names from `filesystem`. A regression test pins
+  each name to its defining module's object.
 
 ### Cap runtime dep ranges at the next major (October 15)
 
@@ -350,7 +433,8 @@ summarizes each release for people who install and operate ShadowScan.
   `source_text.py` (offset-preserving text shaping and the structured
   credential context for excerpt redaction) and `excerpts.py`. The
   connector class is unchanged and `filesystem.py` (now about 5,200 lines)
-  re-imports every moved name that tests or other modules use.
+  re-imports every name that was importable from it before the move,
+  including those it no longer uses (see Integration review fixes above).
   `_LazyExcerpt` takes the connector's redacted-lines reader instead of the
   connector, which removes the helper module's dependency on the class.
 - No behaviour change: with a fixed `SHADOWSCAN_IDENTITY_KEY`, the offline
@@ -365,17 +449,23 @@ summarizes each release for people who install and operate ShadowScan.
 - `shadowscan.utils.http` now resolves names in a bounded worker
   (`_resolve_bounded`): `socket.getaddrinfo` has no timeout of its own, so a
   stalled system resolver could previously hold a connector worker past every
-  cooperative deadline check. The connection path and the `validate_url`
-  preflight wait at most 20 seconds (`_RESOLVE_TIMEOUT`), tightened by the
-  client timeout, the acquisition deadline and the connector deadline where
-  they apply; on expiry the request fails closed (`NameResolutionError` at
-  connection, `ValueError` in the preflight, so transports such as git that
-  rely on the preflight stop too) and the abandoned worker's late answer is
-  discarded, never connected to. A name that does not resolve (NXDOMAIN)
-  keeps its existing meaning at both sites. The late-DNS regression test now
-  pins the stronger contract (the wait ends at the deadline, not after the
-  resolver returns), and `tests/unit/test_http_dns_deadline.py` covers the
-  stalled-resolver, expired-deadline, late-answer and NXDOMAIN cases.
+  cooperative deadline check. Each wait is at most 20 seconds
+  (`_RESOLVE_TIMEOUT`): at connection it is tightened by the client timeout
+  and the acquisition deadline, and in the `validate_url` preflight by the
+  connector deadline and, for `HttpClient`, by the client timeout and
+  deadline (see Integration review fixes above; as first merged, the
+  preflight followed the connector deadline alone). On expiry the request
+  fails closed (`NameResolutionError` at connection, `ValueError` in the
+  preflight, so transports such as git that rely on the preflight stop too)
+  and the abandoned worker's late answer is discarded, never connected to. A
+  name that does not resolve (NXDOMAIN) keeps its existing meaning at both
+  sites. The late-DNS regression tests in
+  `tests/unit/test_http_response_integrity.py` pin the DNS wait budget to the
+  acquisition deadline and refuse an answer that arrives after it (as first
+  merged, one timing-dependent test stood for both and asserted no timing),
+  and `tests/unit/test_http_dns_deadline.py` covers the stalled-resolver,
+  expired-deadline, late-answer, NXDOMAIN, client-timeout, client-deadline
+  and worker-cap cases.
   SECURITY.md and the production resource-limit notes describe the bounded
   wait; a process/job supervisor is still the only hard execution limit.
 - `HttpClient` refuses a duck-typed `session` at construction with
@@ -394,9 +484,13 @@ summarizes each release for people who install and operate ShadowScan.
   but at run time it downloads the Bridge CLI, and the committed
   configuration would have fetched the vendor's current, unreviewed CLI
   the moment a service variable was set. Configuring a service without
-  the pin now keeps the job skipped, so enabling the integration can no
-  longer execute unpinned vendor code; the workflow README documents the
-  second variable.
+  an `x.y.z` pin now fails the job at its first step, before checkout (as
+  first merged, it skipped the job, which reports success; see Integration
+  review fixes above). The variable pins the Bridge CLI by version, not by
+  content: the action downloads that version's bundle from
+  `repo.blackduck.com` over HTTPS with no checksum check, and tools the
+  Bridge CLI fetches for a scan are not covered. The workflow README
+  documents the second variable.
 
 ### Review hardening: redaction, clone mode, output paths, SARIF and diagnostics (October 15)
 

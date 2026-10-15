@@ -2685,3 +2685,60 @@ def test_workflow_image_check_reads_every_use_of_one_digest(tmp_path: Path) -> N
         f"        image: {digest}\n"
     )
     assert [comment.strip() for _, comment, _ in _workflow_images(workflow)] == ["# postgres:16.4", "db:"]
+
+
+BLACK_DUCK_WORKFLOW = GITHUB / "workflows" / "black-duck-security-scan-ci.yml"
+_BRIDGE_PIN = "${{ vars.BRIDGECLI_DOWNLOAD_VERSION }}"
+
+
+def _black_duck_job() -> dict[str, Any]:
+    return _load(BLACK_DUCK_WORKFLOW)["jobs"]["build"]
+
+
+def test_black_duck_requires_and_passes_a_bridge_cli_pin_without_skipping() -> None:
+    # The action downloads the Bridge CLI at run time; without bridgecli_download_version
+    # it fetches the vendor's current one. A configured service with no pin must fail
+    # visibly: a job skipped by its `if:` reports success and looks unconfigured.
+    job = _black_duck_job()
+    assert not any("BRIDGECLI_DOWNLOAD_VERSION" in clause for clause in _if_clauses(job)), (
+        "gate the job on the service variables only and check the pin in its first step"
+    )
+    first, *rest = job["steps"]
+    assert "uses" not in first
+    assert first.get("env") == {"BRIDGECLI_DOWNLOAD_VERSION": _BRIDGE_PIN}
+    assert "::error::" in first.get("run", "")
+    (scan,) = [
+        step
+        for step in rest
+        if str(step.get("uses", "")).startswith("blackduck-inc/black-duck-security-scan@")
+    ]
+    assert scan["with"]["bridgecli_download_version"] == _BRIDGE_PIN
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+@pytest.mark.parametrize(
+    "pin,passes",
+    [
+        ("", False),
+        (" ", False),
+        (" 3.5.1", False),
+        ("3.5.1\n", False),
+        ("latest", False),
+        ("3.5", False),
+        ("3.5.1-rc1", False),
+        ("3.5.1", True),
+        ("10.0.12", True),
+    ],
+)
+def test_black_duck_pin_check_executes_fail_closed(pin: str, passes: bool) -> None:
+    script = _black_duck_job()["steps"][0].get("run", "exit 0")
+    # Execute the committed step as the runner's default shell would (bash -e).
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={**os.environ, "BRIDGECLI_DOWNLOAD_VERSION": pin},
+    )
+    assert (result.returncode == 0) is passes, result.stdout + result.stderr
+    assert ("::error::" in result.stdout) is not passes, result.stdout

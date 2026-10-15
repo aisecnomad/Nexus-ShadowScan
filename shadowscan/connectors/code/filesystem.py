@@ -60,6 +60,12 @@ Precision safeguards
 
 from __future__ import annotations
 
+# Every name importable from this module before its helpers moved into
+# path_context, project_evidence, model_identifiers, source_text and excerpts
+# (ADR-005) stays importable: the imports marked `noqa: F401 - re-exported`
+# carry names this module does not use itself. Patch such a name in its
+# defining module; rebinding it here does not change what the helpers use.
+import ast  # noqa: F401 - re-exported
 import errno
 import fnmatch
 import hashlib
@@ -68,6 +74,7 @@ import re
 import stat
 import subprocess
 import time
+import tomllib  # noqa: F401 - re-exported
 from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from collections.abc import Set as AbstractSet
@@ -80,7 +87,9 @@ import regex
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.code.catalogs import (
+from shadowscan.connectors.code.catalogs import (  # noqa: F401 - re-exported
+    _PIPELINE_DIRECTORIES,
+    _PIPELINE_NAMES,
     CATALOG_MIN_SIGNATURES,
     LOADER_EXTENSIONS,
     HostLineFilter,
@@ -119,12 +128,18 @@ from shadowscan.connectors.code.model_artifacts import (
     ArtifactBudgetExhausted,
     inspect_artifact,
 )
-from shadowscan.connectors.code.model_identifiers import (
+from shadowscan.connectors.code.model_identifiers import (  # noqa: F401 - re-exported
+    _MODEL_FAMILY_SHAPES,
+    _MODEL_FILE_NAME_RE,
     _MODEL_KEY_VALUE_RE,
     _MODEL_LITERAL_CONFIG_EXTENSIONS,
     _MODEL_QUOTED_RE,
     _MODEL_ROUTE_PREFIXES,
+    _MODEL_SEGMENT_RE,
+    _MODEL_STEM_RE,
     _MODEL_STEMS,
+    _MODEL_TOOLING_NAMES,
+    _MODEL_TOOLING_SEGMENTS,
     MAX_MODEL_LITERALS_PER_FILE,
     MAX_MODEL_MATCHES_PER_SIGNATURE,
     MODEL_IDS_ONLY_MAX_CONFIDENCE,
@@ -142,16 +157,33 @@ from shadowscan.connectors.code.ownership import (
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
 )
-from shadowscan.connectors.code.path_context import (
+from shadowscan.connectors.code.path_context import (  # noqa: F401 - re-exported
+    _DOCS_DIR_NAMES,
+    _EXAMPLE_DIR_NAMES,
+    _GENERATED_FILE_RE,
+    _TEST_DIR_NAMES,
+    _TEST_FILE_RE,
     DOCS_MAX_CONFIDENCE,
+    DOCS_WEIGHT_SCALE,
     EXAMPLE_PATH_MAX_CONFIDENCE,
+    EXAMPLE_PATH_WEIGHT_SCALE,
     GENERATED_MAX_CONFIDENCE,
+    GENERATED_WEIGHT_SCALE,
+    NegativeContext,
+    _is_docs_path,
+    _is_example_path,
+    _is_generated_path,
     _is_pipeline_file,
     _is_test_path,
+    negative_context,
 )
-from shadowscan.connectors.code.project_evidence import (
+from shadowscan.connectors.code.project_evidence import (  # noqa: F401 - re-exported
+    _CORROBORATING_SIGNALS,
+    _MENTION_SIGNAL_TYPES,
     ENV_ONLY_MAX_CONFIDENCE,
+    ENV_ONLY_WEIGHT_SCALE,
     WEAK_MENTION_WEIGHT,
+    _corroborates,
     _mention,
     _Observation,
     _ProjectEvidence,
@@ -168,11 +200,12 @@ from shadowscan.connectors.code.python_reexports import (
     project_path,
 )
 from shadowscan.connectors.code.rule_packs import detection_rule_format
-from shadowscan.connectors.code.semantic_config import (
+from shadowscan.connectors.code.semantic_config import (  # noqa: F401 - re-exported
     a2a_card_metadata,
     a2a_card_tags,
     a2a_unsupported_protocol_version,
     agent_manifest_kind,
+    has_template_markers,
     is_agent_config_path,
     parse_agent_manifest,
     structured_code_matches,
@@ -187,10 +220,18 @@ from shadowscan.connectors.code.source_semantics import (
     SourceNotParsed,
     bound_source_matches,
 )
-from shadowscan.connectors.code.source_text import (
+from shadowscan.connectors.code.source_text import (  # noqa: F401 - re-exported
+    _COMMENT_OPENERS,
+    _COMMENT_START,
+    _CRAWLER_UA_MARK,
     _FRONTMATTER,
+    _GLOB_KEYS,
+    _IPYTHON_LINE,
     _JSON_SUFFIXES,
+    _LINE_BREAK,
     _NO_STRUCTURE,
+    _QUOTE_START,
+    _QUOTED_VALUE,
     _YAML_SUFFIXES,
     _cell_noncode_ranges,
     _CellSpans,
@@ -199,9 +240,12 @@ from shadowscan.connectors.code.source_text import (
     _notebook_binder_source,
     _quote_glob_values,
     _quote_plain_values,
+    _quoted_values,
     _redacted_source,
+    _strip_comment,
     _structured_context,
     _within,
+    _without_ipython_lines,
     _without_xml_comments,
 )
 from shadowscan.connectors.code.tool_attribution import ToolRegions
@@ -264,6 +308,9 @@ from shadowscan.utils.git import (
     run_bounded_metadata,
 )
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
+from shadowscan.utils.jsonc import (
+    load_json_lenient_marked as _load_json_lenient_marked,  # noqa: F401 - re-exported
+)
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError

@@ -23,10 +23,14 @@ Name resolution is bounded. `socket.getaddrinfo` has no timeout of its own, so
 it runs in a worker thread and the caller waits at most 20 seconds
 (`_RESOLVE_TIMEOUT`): at connection time also no longer than the client timeout
 or the remaining acquisition deadline, and in the `validate_url` preflight no
-longer than the connector deadline. A lookup that does not finish in time
-fails the request closed (`NameResolutionError` at connection, `ValueError` in
-the preflight), and the abandoned worker's late answer is discarded, never
-connected to.
+longer than the connector deadline or its `dns_budget`, which `HttpClient`
+sets to its timeout cut to its remaining deadline. A lookup that does not
+finish in time fails the request closed (`NameResolutionError` at connection,
+`ValueError` in the preflight), and the abandoned worker's late answer is
+discarded, never connected to. A spent budget refuses without starting a
+worker, and at most 32 workers (`_MAX_RESOLVER_THREADS`) run at once: a lookup
+waits within its budget for a free one and otherwise fails closed, so a
+stalled resolver cannot accumulate threads.
 
 Two deadlines protect different phases. The acquisition deadline covers DNS
 completion, TCP/TLS, request transmission and response headers; the resolver

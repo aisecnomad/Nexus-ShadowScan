@@ -338,3 +338,75 @@ def test_generated_file_is_discounted_but_keeps_capabilities(tmp_path, run_conne
     assert "generated-code-only" in agent.tags
     assert agent.confidence <= GENERATED_MAX_CONFIDENCE + 0.001
     assert {"code-exec", "tool-use"} <= set(agent.capabilities)
+
+
+# Every name that was importable from filesystem.py before its helpers moved
+# (main at 785fb44) and that the move took out of it, by defining module: without
+# the re-exports, dir() of the module lacks exactly these and ast and tomllib.
+_MOVED_FROM_FILESYSTEM = {
+    "shadowscan.connectors.code.path_context": (
+        "DOCS_WEIGHT_SCALE",
+        "EXAMPLE_PATH_WEIGHT_SCALE",
+        "GENERATED_WEIGHT_SCALE",
+        "NegativeContext",
+        "negative_context",
+        "_DOCS_DIR_NAMES",
+        "_EXAMPLE_DIR_NAMES",
+        "_GENERATED_FILE_RE",
+        "_TEST_DIR_NAMES",
+        "_TEST_FILE_RE",
+        "_is_docs_path",
+        "_is_example_path",
+        "_is_generated_path",
+    ),
+    "shadowscan.connectors.code.project_evidence": (
+        "ENV_ONLY_WEIGHT_SCALE",
+        "_CORROBORATING_SIGNALS",
+        "_MENTION_SIGNAL_TYPES",
+        "_corroborates",
+    ),
+    "shadowscan.connectors.code.model_identifiers": (
+        "_MODEL_FAMILY_SHAPES",
+        "_MODEL_FILE_NAME_RE",
+        "_MODEL_SEGMENT_RE",
+        "_MODEL_STEM_RE",
+        "_MODEL_TOOLING_NAMES",
+        "_MODEL_TOOLING_SEGMENTS",
+    ),
+    "shadowscan.connectors.code.source_text": (
+        "_COMMENT_OPENERS",
+        "_COMMENT_START",
+        "_CRAWLER_UA_MARK",
+        "_GLOB_KEYS",
+        "_IPYTHON_LINE",
+        "_LINE_BREAK",
+        "_QUOTED_VALUE",
+        "_QUOTE_START",
+        "_quoted_values",
+        "_strip_comment",
+        "_without_ipython_lines",
+    ),
+    # Importable before only because filesystem.py imported them itself.
+    "shadowscan.connectors.code.catalogs": ("_PIPELINE_DIRECTORIES", "_PIPELINE_NAMES"),
+    "shadowscan.connectors.code.semantic_config": ("has_template_markers",),
+    "shadowscan.utils.jsonc": ("_load_json_lenient_marked",),
+}
+
+
+def test_names_moved_out_of_filesystem_stay_importable_from_it():
+    # The helper move must not break importers of filesystem.py: each name is
+    # re-exported as the defining module's own object (patch it there).
+    import ast
+    import importlib
+    import tomllib
+
+    from shadowscan.connectors.code import filesystem
+
+    for module_name, names in _MOVED_FROM_FILESYSTEM.items():
+        module = importlib.import_module(module_name)
+        for name in names:
+            # utils.jsonc defines the marked loader without the underscore alias.
+            source = "load_json_lenient_marked" if name == "_load_json_lenient_marked" else name
+            assert getattr(filesystem, name) is getattr(module, source), name
+    assert filesystem.ast is ast
+    assert filesystem.tomllib is tomllib

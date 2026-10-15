@@ -17,8 +17,9 @@ Transport invariants:
   and response headers. DNS itself cannot be interrupted, so it runs in a
   worker the request waits on for at most ``_RESOLVE_TIMEOUT``, less when the
   client timeout or the remaining budget is shorter; a late answer is
-  discarded and cannot start a connection. Socket operations use the remaining
-  monotonic budget.
+  discarded and cannot start a connection. A spent budget refuses without
+  starting a worker, and at most ``_MAX_RESOLVER_THREADS`` workers run at once.
+  Socket operations use the remaining monotonic budget.
 * The whole-body read deadline is separate from the per-read socket timeout.
   Expiry shuts down a still-owned response socket, and the response must never
   be treated as complete after that shutdown.
@@ -211,9 +212,17 @@ def _read_deadline(timeout: float) -> float:
 
 # getaddrinfo has no timeout or cancellation interface of its own: a stalled
 # system resolver would otherwise hold the calling worker past every
-# cooperative deadline check. This bounds the wait; the client timeout and the
-# acquisition deadline tighten it further where they apply.
+# cooperative deadline check. This bounds the wait. At connection the client
+# timeout and the acquisition deadline tighten it; in the validate_url
+# preflight the connector deadline and, for HttpClient, its timeout and
+# deadline (``dns_budget``) do.
 _RESOLVE_TIMEOUT = 20.0
+# An abandoned worker keeps its thread until the system resolver returns. The
+# cap stops a stalled resolver from accumulating them without bound: once every
+# slot is held, a lookup waits for one within its budget, then fails closed.
+_MAX_RESOLVER_THREADS = 32
+_resolver_slots = threading.BoundedSemaphore(_MAX_RESOLVER_THREADS)
+_RESOLVE_EXPIRED = "DNS resolution did not complete within the deadline"
 
 
 def _resolve_bounded(host: str, port: int, budget: float, **kwargs: Any) -> list[Any]:
@@ -223,7 +232,21 @@ def _resolve_bounded(host: str, port: int, budget: float, **kwargs: Any) -> list
     abandoned (it holds only its arguments and ends with the call) and
     ``TimeoutError`` is raised, so a result that arrives late is discarded
     with the worker, never used. A resolver error is re-raised in the caller.
+    A spent (or NaN) budget, or no free worker slot within it, raises
+    ``TimeoutError`` before any thread starts, so an expired deadline never
+    races a fast answer.
     """
+    if not budget > 0:
+        raise TimeoutError(_RESOLVE_EXPIRED)
+    end = time.monotonic() + budget
+    # Bound to a local so the worker releases the semaphore it acquired.
+    slots = _resolver_slots
+    if not slots.acquire(timeout=budget):
+        raise TimeoutError(_RESOLVE_EXPIRED)
+    remaining = end - time.monotonic()
+    if remaining <= 0:
+        slots.release()
+        raise TimeoutError(_RESOLVE_EXPIRED)
     answers: list[list[Any]] = []
     failures: list[BaseException] = []
     done = threading.Event()
@@ -235,15 +258,20 @@ def _resolve_bounded(host: str, port: int, budget: float, **kwargs: Any) -> list
             failures.append(exc)
         finally:
             done.set()
+            slots.release()
 
     worker = threading.Thread(target=resolve, name="shadowscan-http-resolve", daemon=True)
-    worker.start()
-    if not done.wait(max(0.0, budget)):
-        raise TimeoutError("DNS resolution did not complete within the deadline")
+    try:
+        worker.start()
+    except RuntimeError:  # "can't start new thread": no worker will release the slot
+        slots.release()
+        raise
+    if not done.wait(remaining):
+        raise TimeoutError(_RESOLVE_EXPIRED)
     if failures:
         raise failures[0]
     if not answers:  # the worker died without an answer or an error
-        raise TimeoutError("DNS resolution did not complete within the deadline")
+        raise TimeoutError(_RESOLVE_EXPIRED)
     return answers[0]
 
 
@@ -416,7 +444,13 @@ def _blocked_host(hostname: str) -> bool:
         return False
 
 
-def validate_url(url: str, origin: str | None = None, *, allow_private: bool | None = None) -> str:
+def validate_url(
+    url: str,
+    origin: str | None = None,
+    *,
+    allow_private: bool | None = None,
+    dns_budget: float | None = None,
+) -> str:
     """Require HTTPS and, for server-supplied links, the credential origin.
 
     Destinations that resolve to loopback, link-local, private, multicast,
@@ -424,6 +458,8 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     ``allow_private`` (or the current worker's policy) is true. DNS checks here
     are preflight only; HttpClient also enforces the policy at socket connection.
     External transports such as git and cloud SDKs need their own egress controls.
+    The DNS wait is at most ``_RESOLVE_TIMEOUT``, tightened by ``dns_budget``
+    (seconds) and by the current worker's connector deadline.
     """
     # urlsplit drops tabs and line breaks and strips leading blanks before parsing, while git and
     # libcurl reject them (and HTTP stacks differ on the rest). Anything the validator does not see
@@ -456,7 +492,9 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
         ipaddress.ip_address(host)
     except ValueError:
         deadline, _ = _request_limits.get()
-        budget = _RESOLVE_TIMEOUT if deadline is None else min(_RESOLVE_TIMEOUT, deadline - time.monotonic())
+        budget = _RESOLVE_TIMEOUT if dns_budget is None else min(dns_budget, _RESOLVE_TIMEOUT)
+        if deadline is not None:
+            budget = min(deadline - time.monotonic(), budget)
         try:
             infos = _resolve_bounded(host, port, budget, proto=socket.IPPROTO_TCP)
         except socket.gaierror:
@@ -832,7 +870,14 @@ class HttpClient:
             url = _join_url(self.base_url, path)
         else:
             url = f"{self.base_url}/{path.lstrip('/')}"
-        return validate_url(url, self.base_url or None, allow_private=self.allow_private_origin)
+        return self._validate(url, self.base_url or None)
+
+    def _validate(self, url: str, origin: str | None) -> str:
+        """Preflight ``url``; its DNS wait ends with the client timeout and never passes the deadline."""
+        budget = float(self.timeout)
+        if self.deadline is not None:
+            budget = min(self.deadline - time.monotonic(), budget)
+        return validate_url(url, origin, allow_private=self.allow_private_origin, dns_budget=budget)
 
     def request(
         self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any
@@ -897,7 +942,7 @@ class HttpClient:
                 resp.close()
                 if not location or redirects >= 5:
                     raise HttpError(resp.status_code, url, "Invalid or excessive redirect")
-                url = validate_url(_join_url(url, location), origin, allow_private=self.allow_private_origin)
+                url = self._validate(_join_url(url, location), origin)
                 redirects += 1
                 # Do not carry original query parameters onto a redirect target.
                 kwargs.pop("params", None)
@@ -1121,7 +1166,7 @@ class HttpClient:
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:
-            url = validate_url(_join_url(origin, url), origin, allow_private=self.allow_private_origin)
+            url = self._validate(_join_url(origin, url), origin)
             if url in seen:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)
@@ -1146,7 +1191,7 @@ class HttpClient:
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:
-            url = validate_url(_join_url(origin, url), origin, allow_private=self.allow_private_origin)
+            url = self._validate(_join_url(origin, url), origin)
             if url in seen:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)

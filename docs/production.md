@@ -817,10 +817,15 @@ transmission, status line and headers. TCP candidates and TLS handshakes share
 the remaining acquisition time. The active socket is interrupted on expiry;
 the watchdog is cancelled and joined before the response can leave its checked-out
 connection. System DNS runs in a bounded worker: the resolver call itself
-cannot be cancelled, but the request stops waiting at its budget (20 seconds,
-tightened by the client timeout and the acquisition deadline), fails closed,
-and a late resolution is discarded before connection. A process/job supervisor
-is still needed for a hard time limit.
+cannot be cancelled, but each wait fails closed at its budget, at most 20
+seconds. The connection-time lookup is tightened by the client timeout and the
+acquisition deadline, and a late resolution is discarded before connection.
+The `validate_url` preflight that precedes it is tightened by the connector
+deadline and, for `HttpClient`, by the client timeout and deadline, so one
+request can wait on DNS twice. A spent budget refuses without starting a
+lookup, and at most 32 lookups wait on the resolver at once; when a stalled
+resolver holds them all, further lookups fail closed at their budget. A
+process/job supervisor is still needed for a hard time limit.
 
 Each response body has a separate budget of twice the client timeout.
 The 30-second client timeout also bounds individual socket reads, so without

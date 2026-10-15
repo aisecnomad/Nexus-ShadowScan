@@ -10,12 +10,16 @@ name: Black Duck
 # action gets no GitHub token, so it neither comments on pull requests nor
 # uploads SARIF; either would need a write scope that
 # tests/test_repository_policy.py must allow for this job explicitly.
-# The wrapper action is pinned by commit SHA, and the Bridge CLI it downloads
-# at run time must be pinned too: the job also requires the repository
-# variable BRIDGECLI_DOWNLOAD_VERSION, set to a reviewed Bridge CLI version,
-# and passes it as `bridgecli_download_version`. Configuring a service
-# without that pin keeps the job skipped, so an unreviewed current CLI is
-# never downloaded.
+# The wrapper action is pinned by commit SHA; the Bridge CLI it downloads at
+# run time is pinned by version only. Once a service is configured, the job
+# requires the repository variable BRIDGECLI_DOWNLOAD_VERSION, set to a
+# reviewed Bridge CLI version (x.y.z), and passes it as
+# `bridgecli_download_version`. Without it the first step fails, before
+# checkout, rather than skipping the job (a skipped job reports success) or
+# letting the action download the vendor's current CLI. The action fetches
+# that version's bundle from repo.blackduck.com over HTTPS with no checksum
+# check, so the pin fixes a version, not its content, and it does not cover
+# tools the Bridge CLI fetches for a scan.
 on:
   push:
     branches: [main]
@@ -40,7 +44,6 @@ jobs:
     if: >-
       (vars.BLACKDUCKSCA_URL != '' || vars.COVERITY_URL != '' ||
        vars.POLARIS_SERVER_URL != '' || vars.SRM_URL != '') &&
-      vars.BRIDGECLI_DOWNLOAD_VERSION != '' &&
       github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
@@ -49,6 +52,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Require a reviewed Bridge CLI version
+        env:
+          BRIDGECLI_DOWNLOAD_VERSION: ${{ vars.BRIDGECLI_DOWNLOAD_VERSION }}
+        run: |
+          if [[ ! "$BRIDGECLI_DOWNLOAD_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::A Black Duck service is configured but the repository variable BRIDGECLI_DOWNLOAD_VERSION is not a reviewed Bridge CLI version (x.y.z)."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

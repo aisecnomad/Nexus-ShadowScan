@@ -76,12 +76,19 @@ coverage, even when a response includes an empty collection field.
 * The shared HTTPS adapter bounds response acquisition, including status/header
   delivery, separately from body reads. Cancellation interrupts the active socket
   before it can be pooled for another request. System DNS resolution runs in a
-  bounded worker: the resolver call itself cannot be cancelled, but the request
-  stops waiting at its budget (20 seconds, tightened by the client timeout and
-  the acquisition deadline), fails closed, and discards a late result before
-  any connection. The URL preflight applies the same bound, so a stalled
-  resolver cannot hold a worker. A process/job supervisor remains necessary for
-  a hard execution limit, including external SDK transports.
+  bounded worker: the resolver call itself cannot be cancelled, but each wait
+  fails closed at its budget, at most 20 seconds, and a late result is
+  discarded before any connection. At connection the client timeout and the
+  acquisition deadline tighten the budget. The `validate_url` preflight is
+  tightened by the connector deadline and, for `HttpClient` requests, by the
+  client timeout and the client's deadline; its other callers (Git clone
+  checks, SDK, MCP registry and JWKS preflights) and the clone pin lookup get
+  only the connector deadline. A spent budget refuses without starting a
+  lookup, and at most 32 lookups wait on the resolver at once; further ones
+  fail closed once their budget passes without a free slot. A stalled resolver
+  therefore holds a worker for a bounded time and cannot pile up threads. A
+  process/job supervisor remains necessary for a hard execution limit,
+  including external SDK transports.
 * Default shared HTTP responses and JSON/pagination helpers are limited to 16 MiB
   of decoded bytes, and each body must arrive within twice the client timeout
   (60 seconds by default). Oversized, slow and malformed collection responses
