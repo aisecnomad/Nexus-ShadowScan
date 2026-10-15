@@ -71,7 +71,7 @@
   <text x="336" y="416" font-size="13" fill="#4a5661">each: collect() live or load_offline() export, records, analyze() against the signatures</text>
   <rect x="320" y="470" width="856" height="150" rx="12" fill="#ffffff" stroke="#8a94a0" stroke-width="1.5"/>
   <text x="336" y="496" font-size="15" font-weight="700" fill="#17212b">Engine</text>
-  <text x="400" y="496" font-size="13" fill="#4a5661">supervised jobs: bounded worker pool, a deadline per connector, isolated plugins</text>
+  <text x="400" y="496" font-size="13" fill="#4a5661">supervised jobs: bounded worker pool, a deadline per connector; plugins are not sandboxed</text>
   <rect x="336" y="512" width="150" height="56" rx="8" fill="#fdf1dc" stroke="#ecd09a" stroke-width="1.5"/>
   <text x="348" y="533" font-size="13" font-weight="700" fill="#17212b">Merge</text>
   <text x="348" y="553" font-size="13" fill="#17212b">stable identity</text>

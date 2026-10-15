@@ -282,7 +282,7 @@ def render_data_flow() -> str:
         _t(
             400,
             496,
-            "supervised jobs: bounded worker pool, a deadline per connector, isolated plugins",
+            "supervised jobs: bounded worker pool, a deadline per connector; plugins are not sandboxed",
             fill=MUTED,
         ),
     ]

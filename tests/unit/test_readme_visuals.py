@@ -68,6 +68,13 @@ def test_data_flow_names_every_surface_report_format_and_report_command() -> Non
     assert set(REPORT_COMMANDS) <= set(cli.commands)
 
 
+def test_data_flow_does_not_present_plugins_as_isolated() -> None:
+    """An allowlisted plugin keeps the scanner's privileges; the process backend is not a sandbox."""
+    text = _text(render_data_flow())
+    assert "plugins are not sandboxed" in text
+    assert "isolated plugins" not in text
+
+
 def test_banner_names_every_surface() -> None:
     text = _text(render_banner())
     assert all(label in text for label, _ in SURFACES.values())
