@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
-from shadowscan.utils.redaction import REDACTED, sanitize_text
+from shadowscan.utils.redaction import REDACTED, _redact_yaml_multiline_values, sanitize_text
 
 SECRET = "opaque-synthetic-credential"
 TAIL = "opaque-private-tail"
@@ -118,3 +119,58 @@ def test_yaml_unrelated_name_block_keeps_an_opaque_value():
     source = f"data: |\n  {OPAQUE}\nmodel: langchain\n"
     clean = sanitize_text(source)
     assert OPAQUE in clean and REDACTED not in clean
+
+
+@pytest.mark.parametrize("note", ["# rotate quarterly", "rotated by the platform team"])
+@pytest.mark.parametrize("after", [True, False])
+def test_yaml_conditional_name_block_with_a_note_withholds_an_opaque_value(note, after):
+    """A comment or a sentence beside the value does not make the block prose."""
+    lines = [OPAQUE, note] if after else [note, OPAQUE]
+    source = "key: |\n" + "".join(f"  {line}\n" for line in lines) + "model: langchain\n"
+    clean = sanitize_text(source)
+    assert OPAQUE not in clean
+    assert REDACTED in clean and "model: langchain" in clean
+    assert clean.count("\n") == source.count("\n")
+    assert sanitize_text(clean) == clean
+
+
+def test_yaml_conditional_name_block_with_a_note_withholds_a_wrapped_value():
+    body = "".join(f"    {part}\n" for part in WRAPPED) + "    # rotate quarterly\n"
+    source = f"data:\n  key: |\n{body}kind: Secret\n"
+    clean = sanitize_text(source)
+    assert all(part not in clean for part in WRAPPED)
+    assert REDACTED in clean and "kind: Secret" in clean
+    assert clean.count("\n") == source.count("\n")
+    assert sanitize_text(clean) == clean
+
+
+@pytest.mark.parametrize("parent", ["key", "tlsKey"])
+def test_yaml_conditional_name_over_a_mapping_leaves_each_entry_to_its_own_name(parent):
+    """A bare 'key:' over nested entries is a mapping; its 'key: |' entry is read."""
+    body = "".join(f"    {part}\n" for part in WRAPPED)
+    source = f"{parent}:\n  algorithm: RS256\n  key: |\n{body}  use: sig\nmodel: langchain\n"
+    clean = sanitize_text(source)
+    assert all(part not in clean for part in WRAPPED)
+    assert "algorithm: RS256" in clean and "use: sig" in clean and "model: langchain" in clean
+    assert clean.count("\n") == source.count("\n")
+
+
+def test_yaml_conditional_name_reads_a_plain_scalar_holding_a_colon():
+    """'sha256:<opaque>' has no blank after its colon, so it is a value, not a nested key."""
+    source = f"key:\n  sha256:{OPAQUE}\nmodel: langchain\n"
+    clean = sanitize_text(source)
+    assert OPAQUE not in clean and "model: langchain" in clean
+
+
+@pytest.mark.parametrize(
+    ("header", "depth", "blank_lines"),
+    [("key:", 1000, 0), ("key: |", 1000, 0), ("'key': x", 1000, 0), ("key:", 300, 50_000)],
+)
+def test_yaml_nested_conditional_names_are_read_in_linear_time(header, depth, blank_lines):
+    # A kept 'key' block was read again from every 'key' line nested in it, and
+    # blank lines below the deepest key were read once per key above them:
+    # these inputs of 100 to 500 KB took five to twenty seconds.
+    source = "".join(" " * level + header + "\n" for level in range(depth)) + "\n" * blank_lines
+    started = time.perf_counter()
+    assert _redact_yaml_multiline_values(source) == source
+    assert time.perf_counter() - started < 1.0

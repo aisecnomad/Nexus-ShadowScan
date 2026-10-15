@@ -126,18 +126,27 @@ def _opaque_block_credential(lines: list[str]) -> bool:
     """Whether a block scalar's own content is an opaque credential.
 
     Read for a name that carries a credential only when its value is opaque
-    ('key'), the way the single-line assignment pass reads one. The dedented
-    lines are joined without a separator so a wrapped base64 blob is tested as
-    the one value it encodes; prose, paths and placeholders keep their text,
-    since ``_credential_literal`` rejects whitespace, a path and a placeholder.
+    ('key'), the way the single-line assignment pass reads one. Each run of
+    consecutive dedented lines without whitespace is joined without a
+    separator so a wrapped base64 blob is tested as the one value it encodes;
+    prose, paths and placeholders keep their text, since ``_credential_literal``
+    rejects whitespace, a path and a placeholder.
 
     Joining can also read a few short lines as one opaque value ('Alpha1' over
     'Beta2'). That withholds a little more than a line-by-line test would under
     a name like 'key', which is the safer direction here: testing each line on
     its own would keep every wrapped credential, the case this pass exists for.
+    Each line is tested on its own as well, and a '#' note or a sentence only
+    ends a run: joined into the value, one kept the credential beside it.
     """
-    joined = "".join(lines)
-    return bool(joined) and _credential_literal(joined, positional=False)
+    runs: list[list[str]] = [[]]
+    for line in lines:
+        if line.startswith("#") or any(char.isspace() for char in line):
+            runs.append([])
+        else:
+            runs[-1].append(line)
+    candidates = ["".join(run) for run in runs if run] + [line for run in runs for line in run]
+    return any(_credential_literal(value, positional=False) for value in candidates)
 
 
 def _redact_yaml_multiline_values(text: str) -> str:
@@ -156,13 +165,17 @@ def _redact_yaml_multiline_values(text: str) -> str:
     """
     pieces: list[str] = []
     cursor = 0
+    # The end of the last conditionally named block that was kept. A mapping
+    # line inside it is that block's text, already read; reading it again from
+    # every 'key' line nested in it took seconds on a few hundred kilobytes.
+    kept_until = 0
     for match in _YAML_MAPPING_LINE.finditer(text):
         key = match.group("quoted") or match.group("plain")
         if match.start() < cursor:
             continue
         always_sensitive = _sensitive_assignment_key(key)
         # A conditionally sensitive name is decided by the block's content below.
-        if not always_sensitive and not _credential_name(key):
+        if not always_sensitive and (not _credential_name(key) or match.start() < kept_until):
             continue
         value = match.group("value").strip()
         # Quoted and flow-style values are consumed by the mapping lexer.
@@ -188,6 +201,15 @@ def _redact_yaml_multiline_values(text: str) -> str:
             whitespace = len(content) - len(content.lstrip(" \t"))
             if content.strip() and len(content[:whitespace].expandtabs(8)) <= indent:
                 break
+            if not always_sensitive and not value and not has_continuation and content.strip():
+                # A bare 'key:' over a nested mapping holds a collection, not
+                # an opaque scalar; each entry is read under its own name. A
+                # colon followed by text ('sha256:<opaque>') is a plain scalar.
+                nested = _YAML_MAPPING_LINE.match(content)
+                if nested is not None and (
+                    not nested.group("value") or content[nested.start("value") - 1] in " \t"
+                ):
+                    break
             has_continuation = has_continuation or bool(content.strip())
             if content.strip():
                 content_lines.append(content.strip())
@@ -196,6 +218,7 @@ def _redact_yaml_multiline_values(text: str) -> str:
         if not has_continuation:
             continue
         if not always_sensitive and not _opaque_block_credential(content_lines):
+            kept_until = end
             continue
         pieces.append(text[cursor:start])
         pieces.append('"' + REDACTED + '"' + "\n" * text[start:end].count("\n"))

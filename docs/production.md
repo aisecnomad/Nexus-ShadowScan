@@ -277,14 +277,16 @@ carries a credential only when its value is opaque — bare `key`, unlike
 withheld when the block holds an opaque value. Previously only the single-line
 `key: <opaque>` form was withheld, so a Kubernetes secret or Helm value written
 as `key: |` over a base64 blob kept its text unless the value itself had a
-recognizable format such as an `sk-` prefix or a PEM header. A path, a sentence,
-a placeholder and a block under a name that does not name a credential
-(`data: |`) still keep their text. Regenerate retained reports, exports and
-cached evidence under the reviewed revision: changing the scanner cannot erase
-copies already written. Redaction remains best-effort — it recognizes credential
-formats and credential-bearing names, so an arbitrary secret with neither can
-still survive, and reports hold sensitive inventory regardless. See the
-[threat model](security/threat-model.md).
+recognizable format such as an `sk-` prefix or a PEM header. A comment such as
+`# rotate quarterly` or a sentence inside the block does not hide the value,
+and a bare `key:` over a nested mapping leaves each entry to be read under its
+own name. A path, a sentence, a placeholder and a block under a name that does
+not name a credential (`data: |`) still keep their text. Regenerate retained
+reports, exports and cached evidence under the reviewed revision: changing the
+scanner cannot erase copies already written. Redaction remains best-effort — it
+recognizes credential formats and credential-bearing names, so an arbitrary
+secret with neither can still survive, and reports hold sensitive inventory
+regardless. See the [threat model](security/threat-model.md).
 
 **Private-origin grants.** Every connector now accepts `allow_private_origin`,
 which lifts the loopback, link-local, private and cloud-metadata refusal for
