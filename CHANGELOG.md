@@ -94,9 +94,13 @@ endpoint and IP-range source references. Live DNS enrichment stays deferred
   storage and attribution looks intervals up by bisection. A storage bound
   withholds DNS attribution only for the affected client/address, with a
   limitation on its findings and a warning that leaves the scan complete; the
-  Ollama port rule does not depend on DNS storage. A defective record
-  withholds flow attribution only for the client it names; a record limit or
-  a defect with no known client withholds it for the whole input. Zeek JA4
+  Ollama port rule does not depend on DNS storage. A record defect that could
+  hide DNS or TLS evidence (a malformed context outside VPC flow records, an
+  invalid JA4 value, an answer list over 32, a record without a usable client)
+  withholds flow attribution only for the client it names, or for the whole
+  input when no client is known or the record limit is reached; a malformed
+  TTL or timestamp keeps the record with that field unknown and withholds
+  nothing. Zeek JA4
   values are validated,
   non-scoring context. Offline scans make no DNS or fingerprint queries. In the
   bundled demo one finding is removed (a client borrowing another client's
@@ -156,8 +160,9 @@ and #204, into one design. Rollout and migration notes are in the
   bound is stored in evidence weights, so merging duplicate observations
   reproduces it, and a generic AI-name hint stays separate so it never lowers a
   score. In the bundled demo, five findings change risk score, all within their
-  previous severity level; the demo stays at 133 findings (16 critical, 63
-  high, 54 medium).
+  previous severity level; this change keeps the demo at 133 findings (16
+  critical, 63 high, 54 medium), and the network change in the bounded
+  evidence entry above then removes one (132 findings, 62 high).
 - Correlation: `metadata.related` holds only exact identifier links, with
   `metadata.related_details` provenance (identifier type, fields, scope).
   Fully qualified ARNs, GCP resource names, Azure resource IDs and OCI OCIDs
@@ -222,7 +227,9 @@ and #204, into one design. Rollout and migration notes are in the
   integration is a bot user, and a bot's id is not matched as a name.
   `saas.slack` matches the app ID as the app's client ID, so a rule pack can
   bind a reviewed Slack app. Wudpecker and Tactiq are recognised as meeting
-  note-takers by name and domain. `identity.auth0` keeps a client attributed
+  note-takers by name and domain (benchmark-derived: Wudpecker is the
+  ShadowBench estate positive the 2026-10-11 run missed, and Tactiq was added
+  with it). `identity.auth0` keeps a client attributed
   only by a model provider. A GCP Cloud Run service or Cloud Function name or
   description establishes an unambiguous product (a function described as
   using Anthropic Claude); an ambiguous Gemini name there stays a hint.
@@ -240,8 +247,15 @@ and #204, into one design. Rollout and migration notes are in the
 - The bundled evaluation corpora and the ShadowBench estate replay are
   author-written offline inputs. They show the intended behaviour on known
   cases; they are not measured production precision, independent review or
-  live tenant acceptance. Rescan and rebuild comparison baselines after
-  upgrading: signature and scanner fingerprints change.
+  live tenant acceptance. Several of these changes (ambiguous Gemini names,
+  Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
+  serving-engine images, n8n HTTP model calls, ServiceNow flow names,
+  Wudpecker) were made with the 2026-10-11 ShadowBench estate run's
+  ShadowScan errors in view, so a ShadowScan run on that estate after them is
+  in-sample: replayed on it, seven of that run's twelve ShadowScan errors no
+  longer occur, which is no evidence of better field accuracy. Rescan and
+  rebuild comparison baselines after upgrading: signature and scanner
+  fingerprints change.
 
 ### Kubernetes discovery and Atlassian approval scope (October 14)
 
@@ -313,7 +327,8 @@ and #204, into one design. Rollout and migration notes are in the
 
 ### ShadowBench review fixes (October 14)
 
-Fixes from the verified review of #199, carried on the integration branch.
+Fixes from the agent-run review of #199, carried on the integration branch.
+That review is not independent human review.
 
 - Cases scoring: on the code surface a negative case where a tool reported
   anything outside the fact taxonomy is now a case-level false alarm instead
@@ -331,9 +346,9 @@ Fixes from the verified review of #199, carried on the integration branch.
   control (`code-checkout-017`) are now its one code false alarm: code case
   specificity 90% (9 of 10; was 100%), in-scope case specificity 25 of 26
   (was 26 of 26), case-level balanced accuracy 62% (was 64%), and the McNemar
-  comparison with ShadowScan 23 against 1 (was 22 against 1). This replaces
-  the earlier statement that out-of-taxonomy code keys are neither credited
-  nor charged at case level.
+  comparison with ShadowScan 23 against 1 (was 22 against 1). The October 12
+  entry below now limits the statement that out-of-taxonomy code keys are
+  neither true nor false positives to entity level.
 - The run manifest now records each `<tool>.jsonl`'s SHA-256
   (`rows_sha256`), and `score` refuses a results file whose digest differs
   unless `--force`; before, only per-status row counts were checked, so an
@@ -557,8 +572,10 @@ Fixes from the verified review of #199, carried on the integration branch.
   case is always refused. A
   reported directory no longer earns credit for the files under it, a
   positive case counts as found only with a true positive, code keys
-  outside the fact taxonomy are neither credited nor charged (246 of
-  AgentDiscover's 247 code "false positives" were such keys), and McNemar
+  outside the fact taxonomy are neither true nor false positives at entity
+  level (246 of AgentDiscover's 247 code "false positives" were such keys;
+  the review fixes above make one on a negative case a case-level false
+  alarm), and McNemar
   with no shared case reads n/a. Decoys an adapter declares it never passes
   to the tool (AWS IAM roles for ShadowScan) earn that tool no true
   negative. `verify` always rebuilds the corpus and compares the cases (it
