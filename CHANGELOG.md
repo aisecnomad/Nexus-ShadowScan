@@ -5,6 +5,23 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Cap runtime dep ranges at the next major (October 15)
+
+- `pyproject.toml` now caps `click`, `rich`, `PyYAML`, `requests`,
+  `PyJWT[crypto]` and `regex` at the next major (or the next calendar
+  year for `regex`), and does the same for the optional cloud SDKs
+  (`boto3`, `google-auth`, `azure-identity`, `oci`) in `aws`, `gcp`,
+  `azure`, `oci` and the aggregate `cloud` extra. `urllib3` already
+  carried `<3`.
+- The caps protect the unlocked `pip install NexusShadowScan` path from
+  silently resolving a user into an untested upstream major; deployment
+  and CI continue to install the hash-locked `requirements.lock`, so
+  the reviewed version set does not change.
+- All current `requirements.lock` pins sit inside the new caps (click
+  8.5.0, rich 15.0.0, PyYAML 6.0.3, requests 2.34.2, PyJWT 2.15.0,
+  regex 2026.9.10, boto3 1.43.101, google-auth 2.58.0, azure-identity
+  1.25.3, oci 2.187.0); the lock does not need regeneration.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead
