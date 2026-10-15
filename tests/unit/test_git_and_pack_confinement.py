@@ -181,18 +181,24 @@ def test_stalled_clone_resolver_fails_closed_at_the_request_deadline(monkeypatch
 
 
 @pytest.mark.parametrize(
-    "url",
+    "url,reason",
     [
-        "https://bücher.acme.com/acme/app.git",  # libcurl looks up the IDNA form
-        "https://a%62c.acme.com/acme/app.git",  # libcurl looks up the percent-decoded form
-        "https://-x.acme.com/acme/app.git",  # a "-host:port" entry removes a pin instead
+        ("https://bücher.acme.com/acme/app.git", "ASCII DNS name"),  # libcurl looks up the IDNA form
+        ("https://a%62c.acme.com/acme/app.git", "ASCII DNS name"),  # libcurl looks up "abc..."
+        ("https://-x.acme.com/acme/app.git", "ASCII DNS name"),  # a "-host:port" entry removes a pin
+        # urlsplit lowercases U+212A KELVIN SIGN to an ASCII "k", but Git hands libcurl the sign: a
+        # libcurl without IDN looks it up as written and misses a pin for "git.kube.example".
+        ("https://git.\u212aube.example/acme/app.git", "ASCII DNS name"),
+        # "port or 443" keyed the pin to 443, while libcurl looked "host:0" up itself.
+        ("https://git.acme.com:0/acme/app.git", "Invalid clone URL"),
+        ("https://93.184.216.34:00/acme/app.git", "Invalid clone URL"),
     ],
 )
-def test_clone_host_git_would_spell_differently_is_refused(monkeypatch, url):
+def test_clone_host_git_would_spell_differently_is_refused(monkeypatch, url, reason):
     monkeypatch.setattr(socket, "getaddrinfo", Mock(side_effect=AssertionError("not resolved")))
     token = set_allow_private_origin(True)  # refused for its spelling, not for its address
     try:
-        with pytest.raises(ValueError, match="ASCII DNS name"):
+        with pytest.raises(ValueError, match=reason):
             clone_pins(url)
     finally:
         reset_allow_private_origin(token)

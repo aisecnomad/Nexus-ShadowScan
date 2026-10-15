@@ -786,7 +786,8 @@ def git_config_overlay(pairs: list[tuple[str, str]]) -> dict[str, str]:
 # and converted to IDNA, and an entry that starts with "-" or "+" means something else. On any
 # mismatch the pin is unused and Git resolves the name itself, so only a host that every reader spells
 # the same way is pinned: lowercase ASCII letters, digits, "_", "." and "-" (urlsplit lowercases it;
-# libcurl matches entries case-insensitively), not starting with "-" or ".".
+# libcurl matches entries case-insensitively), not starting with "-" or ".". The URL's own spelling
+# must be ASCII too: urlsplit lowercases U+212A KELVIN SIGN to "k", but Git hands libcurl the sign.
 _PINNABLE_HOST = re.compile(r"[a-z0-9_][a-z0-9_.-]*\Z")
 
 
@@ -807,18 +808,20 @@ def clone_pins(url: str) -> list[tuple[str, str]]:
     try:
         parsed = urlsplit(url)
         host = parsed.hostname
-        port = parsed.port or 443
+        port = 443 if parsed.port is None else parsed.port
     except (TypeError, ValueError, UnicodeError):
         raise ValueError("Invalid clone URL") from None
     if not host:
         raise ValueError("Clone URL has no hostname")
+    if port == 0:  # names no service; validate_url refuses it as well
+        raise ValueError("Invalid clone URL")
     try:
         ipaddress.ip_address(host)
     except ValueError:
         pass
     else:
         return []
-    if not _PINNABLE_HOST.match(host):
+    if not parsed.netloc.isascii() or not _PINNABLE_HOST.match(host):
         raise ValueError("Clone host must be an ASCII DNS name or an IP address")
     addresses = resolve_destination(host, port)
     pinned = ",".join(f"[{address}]" if ":" in address else address for address in addresses)

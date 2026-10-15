@@ -18,15 +18,23 @@ passing unit suite does not establish complete coverage of a particular estate.
   `path_with_namespace` is refused, and the repository falls back to sampled
   API mode (incomplete). A clone URL off the API origin now falls back the same
   way; it used to end that repository with an error and scan none of it.
-- **Clones connect only to checked addresses, and directly.** ShadowScan
-  resolves the clone host once, refuses loopback, private, link-local and
-  cloud-metadata answers (unless the connector may reach private origins), and
-  pins Git to the answers with `http.curloptResolve`, so Git does not resolve the
-  name again. Git ignores `HTTPS_PROXY`, `ALL_PROXY` and the other proxy
-  variables for clones, as the HTTP client already does: allow the worker
-  direct HTTPS egress to the Git host, which API listing already needs. A clone
-  host that does not resolve in time, or whose name is not plain ASCII, is not
-  cloned; the repository uses sampled API mode (incomplete).
+- **Clones connect only to checked addresses, and directly.** After the clone
+  URL check's own lookup, ShadowScan resolves the clone host once more just
+  before the clone, refuses loopback, private, link-local and cloud-metadata
+  answers of that lookup (unless the connector may reach private origins), and
+  pins Git to those answers with `http.curloptResolve`, so Git does not resolve
+  the name again; the first lookup's answers never reach Git. Git ignores
+  `HTTPS_PROXY`, `ALL_PROXY` and the other proxy variables for clones, as the
+  HTTP client already does, so allow the worker direct HTTPS egress to the
+  clone host. For `code.github` on github.com the clone host is `github.com`,
+  which API listing (`api.github.com`) never needed: allow direct egress to
+  both. A worker that reaches `github.com` only through a proxy variable now
+  clones nothing and scans every repository in sampled API mode (incomplete).
+  For GitHub Enterprise Server and `code.gitlab` the clone host is the API
+  origin's host, which API listing already reaches directly. A clone host that
+  does not resolve in time, or whose name is not plain ASCII as written in the
+  URL, is not cloned, nor is a clone URL naming port 0; the repository uses
+  sampled API mode (incomplete).
 - **Report paths.** `-o` refuses a path through a directory link owned by
   another user; links owned by root or by the current user are followed. Point
   `-o` at a real directory if a scan now fails with that message. Every link on

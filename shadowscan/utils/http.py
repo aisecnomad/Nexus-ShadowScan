@@ -468,15 +468,23 @@ def validate_url(
         raise ValueError("API URL must not contain whitespace or control characters")
     try:
         parsed = urlsplit(url)
-        port = parsed.port or 443
+        port = 443 if parsed.port is None else parsed.port
     except (TypeError, ValueError, UnicodeError):
         raise ValueError("Invalid API URL") from None
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("API URL must use HTTPS without embedded credentials")
+    # Port 0 names no service. Read as the default port it matched the origin and keyed the checks
+    # to 443, while libcurl looks up the port written (a clone pin for :443 went unused).
+    if port == 0:
+        raise ValueError("Invalid API URL")
     if origin:
         try:
             expected = urlsplit(origin)
-            expected_origin = (expected.scheme, expected.hostname, expected.port or 443)
+            expected_origin = (
+                expected.scheme,
+                expected.hostname,
+                443 if expected.port is None else expected.port,
+            )
         except (TypeError, ValueError, UnicodeError):
             raise ValueError("Invalid API origin") from None
         actual_origin = (parsed.scheme, parsed.hostname, port)

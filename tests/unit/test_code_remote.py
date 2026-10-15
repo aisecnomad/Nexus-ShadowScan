@@ -441,6 +441,13 @@ def test_stalled_clone_lookup_stops_at_the_request_deadline(tmp_path, index, mon
             {"full_name": "acme/app", "size": 1, "clone_url": "https://evil.example/acme/app.git"},
             "outside the configured credential origin",
         ),
+        (
+            # Read as the default port, :0 matched the origin, while Git looked "github.com:0" up
+            # itself and missed the pin keyed to 443.
+            GitHubConnector,
+            {"full_name": "acme/app", "size": 1, "clone_url": "https://github.com:0/acme/app.git"},
+            "Invalid API URL",
+        ),
     ],
 )
 def test_refused_clone_url_falls_back_to_incomplete_api_mode(
@@ -469,6 +476,7 @@ def test_real_git_clone_connects_only_to_the_pinned_address(tmp_path, index, mon
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(4)
+    listener.settimeout(60)  # bounds the accept thread where shutdown() below does not wake it
     port = listener.getsockname()[1]
     first: list[bytes] = []
 
@@ -494,6 +502,10 @@ def test_real_git_clone_connects_only_to_the_pinned_address(tmp_path, index, mon
         cloned = connector._clone({"full_name": "acme/app"}, str(tmp_path / "repo"))
     finally:
         reset_allow_private_origin(token)
+        # When Git never connects (a missed pin), accept() is still waiting: close() alone does not
+        # wake it on Linux, so the test would wait out the join and leave the thread behind.
+        with contextlib.suppress(OSError):
+            listener.shutdown(socket.SHUT_RDWR)
         listener.close()
         server.join(10)
     assert not cloned  # the listener is no Git server

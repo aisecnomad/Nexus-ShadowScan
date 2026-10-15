@@ -952,6 +952,22 @@ def test_urls_with_whitespace_or_control_characters_are_refused_not_cleaned(url)
         validate_url(url, "https://api.example.com", allow_private=True)
 
 
+@pytest.mark.parametrize(
+    "url", ["https://api.example.com:0/x", "https://api.example.com:000/x", "https://8.8.8.8:0/x"]
+)
+def test_port_zero_is_refused(url, monkeypatch):
+    # "port or 443" read port 0 as the default port, so the URL matched the origin and its checks
+    # were keyed to 443, while libcurl looks up the port written: a clone pin for :443 went unused.
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(side_effect=AssertionError))
+    with pytest.raises(ValueError, match="Invalid API URL"):
+        validate_url(url)
+    with pytest.raises(ValueError, match="Invalid API URL"):
+        validate_url(url, "https://api.example.com", allow_private=True)
+    # An origin written with port 0 matches no URL either.
+    with pytest.raises(ValueError, match="outside the configured credential origin"):
+        validate_url("https://api.example.com/x", "https://api.example.com:0")
+
+
 def test_a_valid_url_is_returned_exactly_as_validated():
     url = "https://api.example.com/v1/items?per_page=100&q=a%20b#frag"
     assert validate_url(url, "https://api.example.com") == url

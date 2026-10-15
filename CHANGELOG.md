@@ -99,22 +99,37 @@ summarizes each release for people who install and operate ShadowScan.
   reached an unchecked address, and an inherited `HTTPS_PROXY` resolved it
   elsewhere. It also passed when the name did not resolve, and its
   `getaddrinfo` had no time limit, bringing back the unbounded lookup #236
-  removed. It is replaced by `clone_pins()`: the host is resolved once with
-  #236's bounded resolver (`resolve_destination` in `utils/http.py`), every
-  answer is checked, and Git is pinned to the answers with
+  removed. It is replaced by `clone_pins()`: after `validate_url`'s preflight
+  the host is resolved once more with #236's bounded resolver
+  (`resolve_destination` in `utils/http.py`), every answer of that second
+  lookup is checked, and Git is pinned to those answers with
   `http.curloptResolve` under the URL's own spelling of the host (trailing dot
-  included), with `http.proxy` empty so proxy variables are ignored. A host
-  with no answer in time is not cloned and the repository uses sampled API mode
-  (incomplete); a refused answer is refused like `validate_url`'s, and a host
-  libcurl would spell differently from the pin (non-ASCII, percent-encoded or
-  starting with `-`) is refused rather than left unpinned. Git 2.37 added the
-  option, below #237's 2.45 floor, and `MINIMUM_CLONE_GIT` asserts the tie.
-  Operators whose workers reached Git hosts only through a proxy variable need
-  direct HTTPS egress to them, which API listing already required. Regression
+  included), with `http.proxy` empty so proxy variables are ignored; the
+  preflight's answers never reach Git. A host with no answer in time is not
+  cloned and the repository uses sampled API mode (incomplete); a refused
+  answer is refused like `validate_url`'s, and a host libcurl would spell
+  differently from the pin (non-ASCII as written in the URL, percent-encoded or
+  starting with `-`) is refused rather than left unpinned. The ASCII check
+  reads the URL's own host, not urlsplit's lowercased one, which turns U+212A
+  KELVIN SIGN into an ASCII `k` that a libcurl without IDN never looks up.
+  `validate_url` and `clone_pins` refuse port 0: read as the default port
+  (`port or 443`), `https://host:0/...` matched the origin and the pin was
+  keyed to 443 while libcurl looked up `host:0` itself. `validate_url` refuses
+  port 0 in every API URL, and an origin written with it matches no URL. Git
+  2.37 added the option, below #237's 2.45 floor, and `MINIMUM_CLONE_GIT`
+  asserts the tie. Clones need direct HTTPS egress to the clone host. For
+  `code.github` on github.com that is `github.com`, which API listing
+  (`api.github.com`) never needed, so a worker that reached `github.com` only
+  through a proxy variable now scans every repository in sampled API mode
+  (incomplete); for GitHub Enterprise Server and GitLab the clone host is the
+  API origin's host, which API listing already reaches directly. Regression
   tests drive a real Git clone of an unresolvable `.invalid` host to a loopback
   listener (mixed case and trailing dot, with a proxy variable set) and cover a
   rebinding between the lookups, an unresolvable or stalled lookup, IPv6
-  brackets and refused spellings.
+  brackets, refused spellings (the Kelvin sign included) and port 0. The real
+  Git test bounds its listener's `accept()` and wakes it on the way out, so a
+  run whose pin is missed fails at once instead of waiting out its join and
+  leaving the thread behind.
 - **A refused clone URL ended the repository (#237).** `_clone` raises
   `ValueError` for a provider clone URL off the API origin or naming another
   repository (and now for a clone host that resolves to a refused address), and

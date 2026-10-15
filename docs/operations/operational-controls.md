@@ -39,23 +39,26 @@ a timed-out or incomplete report as an authoritative inventory.
 
 The shared HTTP client enforces HTTPS, origin pinning and private, link-local
 and metadata address denial at connect time. A `code.github` or `code.gitlab`
-clone runs Git, which uses its own transport: ShadowScan resolves the clone
-host once, applies the same address denial to every answer, and pins Git to
-those addresses (`http.curloptResolve`) with proxy variables ignored, so Git
-connects directly and only where the check looked. Cloud SDKs (`boto3`,
-`google-auth`, `azure-identity`, `oci`) use their own transports and do not
-inherit these controls, so enforce egress outside the process as well.
+clone runs Git, which uses its own transport: after the clone URL check's own
+lookup, ShadowScan resolves the clone host once more just before the clone,
+applies the same address denial to every answer of that lookup, and pins Git
+to those addresses (`http.curloptResolve`) with proxy variables ignored, so Git
+connects directly and only where the check looked; the first lookup's answers
+never reach Git. Cloud SDKs (`boto3`, `google-auth`, `azure-identity`, `oci`)
+use their own transports and do not inherit these controls, so enforce egress
+outside the process as well.
 
 - **Offline scans** need no network. The offline Job example pairs the Job with
   a NetworkPolicy that denies all egress.
 - **Live collection** needs named API hosts. A standard Kubernetes
   NetworkPolicy matches addresses, not DNS names, so it cannot express "only
   `graph.microsoft.com`". Enforce the allowlist of the enabled connectors' hosts
-  in a layer that sees names: a transparent egress gateway or firewall that
-  filters on TLS SNI, or a CNI with FQDN policies. ShadowScan's HTTP client
-  and its Git clones ignore proxy environment variables (`HTTPS_PROXY` and
-  similar), and the client rejects an explicitly configured proxy, so that a
-  proxy cannot route around their destination checks. The
+  (`code.github` on github.com needs `github.com` for clones as well as
+  `api.github.com`) in a layer that sees names: a transparent egress gateway or
+  firewall that filters on TLS SNI, or a CNI with FQDN policies. ShadowScan's
+  HTTP client and its Git clones ignore proxy environment variables
+  (`HTTPS_PROXY` and similar), and the client rejects an explicitly configured
+  proxy, so that a proxy cannot route around their destination checks. The
   [live egress example](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/k8s-network-policy.yaml)
   is the address-level baseline underneath that allowlist. It denies all
   egress to every pod labelled `app.kubernetes.io/name: shadowscan`, and
