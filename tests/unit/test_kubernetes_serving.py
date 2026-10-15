@@ -93,6 +93,44 @@ def _single_container(tmp_path, run_connector, container):
     return run_connector("cloud.kubernetes", input=str(source), cluster="test")
 
 
+@pytest.mark.parametrize(
+    "resources",
+    [
+        {"limits": {"nvidia.com/gpu": "0"}},
+        {"requests": {"nvidia.com/gpu": 0}, "limits": {"nvidia.com/gpu": "0"}},
+        {"requests": {"nvidia.com/gpu": "0.0"}},
+        {"limits": {"nvidia.com/gpu": None}},
+    ],
+)
+def test_zero_gpu_quantity_is_not_a_gpu_workload(tmp_path, run_connector, resources):
+    """Regression (F19): a GPU count of 0 requests no GPU."""
+    container = {"image": "registry.example/ml/vllm-serving:1.4", "resources": resources}
+    findings, ctx = _single_container(tmp_path, run_connector, container)
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert len(findings) == 1 and "gpu-workload" not in findings[0].tags
+    assert "kubernetes:gpu-resource" not in {ev.signal for ev in findings[0].evidence}
+
+
+@pytest.mark.parametrize("quantity", [1, "1", "2", 4.0])
+def test_positive_gpu_quantity_is_a_gpu_workload(tmp_path, run_connector, quantity):
+    container = {"image": "nginx:1.25", "resources": {"limits": {"nvidia.com/gpu": quantity}}}
+    findings, ctx = _single_container(tmp_path, run_connector, container)
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert len(findings) == 1 and "gpu-workload" in findings[0].tags
+
+
+@pytest.mark.parametrize("quantity", ["lots", -1, "-1", True, {"count": 1}])
+def test_malformed_gpu_quantity_marks_the_scan_incomplete(tmp_path, run_connector, quantity):
+    container = {
+        "image": "registry.example/ml/vllm-serving:1.4",
+        "resources": {"limits": {"nvidia.com/gpu": quantity}},
+    }
+    findings, ctx = _single_container(tmp_path, run_connector, container)
+    assert ctx.stats.incomplete
+    assert any("malformed GPU quantity" in warning for warning in ctx.stats.warnings)
+    assert len(findings) == 1 and "gpu-workload" not in findings[0].tags
+
+
 @pytest.mark.parametrize("field", ["args", "command"])
 @pytest.mark.parametrize("value", ["--model example-org/chat-7b", ["--model", 7]])
 def test_malformed_container_arguments_mark_the_scan_incomplete(tmp_path, run_connector, field, value):

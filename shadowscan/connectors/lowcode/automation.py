@@ -82,21 +82,24 @@ _WORKBOT_HUMAN_TRIGGERS = re.compile(r"command|menu|modal|button|action|shortcut
 # route is versioned or namespaced (/v1/chat/completions, /v1/completions,
 # /openai/deployments/.../chat/completions, /api/generate) and the host is not
 # a known messaging API. /v1/messages, /v1/responses and /api/chat are also
-# WhatsApp Business, messaging and help-desk chat routes, so on an unknown
-# host they count only with request corroboration: an anthropic-version
-# header, or a JSON body with a model key and a messages, prompt or input key.
-# A bare /messages, /responses or /completions on an unknown host never counts.
+# WhatsApp Business, messaging and help-desk chat routes, and a bare
+# /chat/completions is unversioned, so on an unknown host they count only with
+# request corroboration: an anthropic-version header, or a JSON body with a
+# model key and a messages, prompt or input key. A bare /messages, /responses
+# or /completions on an unknown host never counts.
 _N8N_AI_NODE = re.compile(
     r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace|\.agent$", re.I
 )
-# ``mcp`` as its own token in a node type: mcpClient, MCPServer, mcp_bridge, but
-# not a word or part number that contains it (smcpDecoder, mcp9808Sensor). The
-# token ends at a capital letter, a separator or the end, never a lower-case
-# letter or a digit, so the match is case-sensitive after the token.
-_N8N_MCP_NODE = re.compile(r"(?<![A-Za-z0-9])[Mm][Cc][Pp](?![a-z0-9])")
+# ``mcp`` as its own token in a node type: mcpClient, MCPServer, mcp_bridge, and
+# a camelCase word after another word (githubMcpClient, acmeMCPTool, zapierMcp),
+# but not a word or part number that contains it (smcpDecoder, mcp9808Sensor).
+# The token starts after a non-alphanumeric character, or as ``Mcp``/``MCP``
+# after a lower-case letter, and ends at a capital letter, a separator or the
+# end, never a lower-case letter or a digit.
+_N8N_MCP_NODE = re.compile(r"(?:(?<![A-Za-z0-9])[Mm][Cc][Pp]|(?<=[a-z])(?:Mcp|MCP))(?![a-z0-9])")
 _N8N_HTTP_NODE = "n8n-nodes-base.httpRequest"
-_UNQUALIFIED_GENERATION_ROUTE = re.compile(r"/(?:messages|responses|completions|chat/completions)/?", re.I)
-_CORROBORATED_GENERATION_ROUTE = re.compile(r"/v1/(?:messages|responses)|/api/chat", re.I)
+_UNQUALIFIED_GENERATION_ROUTE = re.compile(r"/(?:messages|responses|completions)/?", re.I)
+_CORROBORATED_GENERATION_ROUTE = re.compile(r"/v1/(?:messages|responses)|/api/chat|/chat/completions", re.I)
 _MODEL_REQUEST_KEYS = frozenset({"messages", "prompt", "input"})
 # A request key in a template that is not plain JSON: an n8n expression outside
 # a string, or JSON.stringify of an object literal ({ model: ..., messages: ... }).
@@ -145,8 +148,8 @@ def _model_request(params: dict[str, Any]) -> bool:
     """Whether an HTTP Request node's headers or body describe a model API call.
 
     An ``anthropic-version`` header, or a JSON or key-value body with a
-    ``model`` key and a ``messages``, ``prompt`` or ``input`` key (v4 and
-    v1-v3 parameter layouts). Headers or a body the node does not send never
+    ``model`` key and a ``messages``, ``prompt`` or ``input`` key (v3-v4 and
+    v1-v2 parameter layouts). Headers or a body the node does not send never
     count.
     """
     headers: set[str] = set()
@@ -301,16 +304,23 @@ class N8nConnector(_AutomationBase):
         params = node.get("parameters")
         if node.get("type") != _N8N_HTTP_NODE or not isinstance(params, dict):
             return False
-        method, url = params.get("method"), params.get("url")
+        # HTTP Request v1-v2 name the method ``requestMethod``; v3 and later ``method``.
+        method = params.get("method")
+        if method is None:
+            method = params.get("requestMethod")
+        url = params.get("url")
         if not isinstance(method, str) or method.upper() != "POST" or not isinstance(url, str):
             return False
         try:
-            parsed = urlsplit(url.strip())
+            # An expression-mode URL starts with "="; its {{ }} parts are not resolved.
+            parsed = urlsplit(url.strip().removeprefix("=").strip())
             host = parsed.hostname
         except ValueError:
             return False
         if parsed.scheme not in {"http", "https"} or not host:
             return False
+        if "{{" in host or "}}" in host:
+            return False  # a host chosen at run time cannot be classified
         path = parsed.path.rstrip("/") or "/"
         if not is_generation(path, method="POST"):
             return False

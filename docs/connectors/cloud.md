@@ -114,7 +114,9 @@ leaves the scan complete. Malformed metadata, invalid event timestamps and
 conflicting event IDs mark coverage incomplete (`coverage: incomplete`); valid
 invocation evidence is preserved. Offline `cloudtrail-event` records whose
 `eventName` is neither a collected invocation operation nor an STS assumption
-are ignored rather than reported as LLM callers. The synthetic fixture
+are ignored rather than reported as LLM callers. A record with no `eventName`
+(absent, `null` or empty) is malformed, not an ignored operation: it is skipped
+with a warning that marks the scan incomplete (exit 3). The synthetic fixture
 `tests/fixtures/cloud/lineage/assumed_session.jsonl` exercises a cross-account
 assumption, cross-region `ConverseStream`, and a non-AI control.
 

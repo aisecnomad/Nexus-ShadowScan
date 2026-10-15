@@ -86,19 +86,27 @@ without a diagnostic.
 
 An n8n step counts as AI when its node type is a LangChain, model-provider,
 agent or MCP node (`mcp` matched as its own token: custom `mcpClient`,
-`MCPServer` and `mcp_bridge` node types count, `mcp9808` sensor and `smcp`
-decoder nodes do not), or when it is an HTTP Request node that calls a model
-API. The HTTP rule: the node POSTs to a generation route (OpenAI, Anthropic,
-Azure OpenAI, Bedrock, Vertex or Ollama style) and either the host is a known
+`MCPServer` and `mcp_bridge` node types count, and so do camelCase types that
+put `Mcp` or `MCP` after another word, such as `githubMcpClient` or
+`zapierMcp`; `mcp9808` sensor and `smcp` decoder nodes do not), or when it is
+an HTTP Request node that calls a model API. The HTTP rule: the node POSTs to
+a generation route (OpenAI, Anthropic, Azure OpenAI, Bedrock, Vertex or Ollama
+style) and either the host is a known
 model host, or the route is versioned or namespaced (`/v1/chat/completions`,
 `/v1/completions`, `/api/generate`) on a host that is not a known SMS or
 messaging API (Vonage, MessageBird, Twilio, Sinch, Plivo, Telnyx).
 `/v1/messages`, `/v1/responses` and `/api/chat` are also WhatsApp Business,
-messaging and help-desk chat routes, so on an unknown host they count only
-when the node sends an `anthropic-version` header, or a JSON or key-value
-body with a `model` key and a `messages`, `prompt` or `input` key. A bare
+messaging and help-desk chat routes, and a bare `/chat/completions` is
+unversioned, so on an unknown host they count only when the node sends an
+`anthropic-version` header, or a JSON or key-value body with a `model` key and
+a `messages`, `prompt` or `input` key. A bare
 `/messages`, `/responses` or `/completions` on an unknown host, a GET, and a
-request body on any other route never count. An HTTP model step makes the
+request body on any other route never count. The method is read from `method`
+(HTTP Request v3 and later) or `requestMethod` (v1 and v2); a node with
+neither uses n8n's default, GET. An expression-mode URL
+(`=https://llm.example/v1/chat/completions?user={{ $json.u }}`) is read
+without its leading `=`; a host that contains an expression is chosen at run
+time and never counts. An HTTP model step makes the
 workflow AI use, not an agent: only an agent or agent-tool node makes an n8n
 workflow an agent.
 

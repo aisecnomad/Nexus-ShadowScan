@@ -408,6 +408,13 @@ _HOST_VALUE = re.compile(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 # written. Analysis never attributes traffic to it, only reports when it would
 # have made a request LLM traffic.
 _UNTRUSTED_HOST_FIELD = "_untrusted_host"
+# A parsed access-log record field holding the server-written host token when
+# it is not a dotted hostname: a single-label name or an IPv4 address, with or
+# without a port (host=tgi:8080, host=10.20.0.5:8080). It is the request's host
+# only when it names a declared internal model host.
+_BARE_HOST_FIELD = "_bare_host"
+# The undeclared-route tally label for requests with no logged host.
+_NO_LOGGED_HOST = "<none>"
 
 
 # Field names that the gateway schemas read event times from.
@@ -487,6 +494,20 @@ def _host_field(pairs: dict[str, str]) -> str | None:
     return None
 
 
+def _bare_host_name(value: str) -> str | None:
+    """The lower-case name of a host token without its port, when it is a plain host name or IPv4 address."""
+    host = (host_of(value) or "").rstrip(".")
+    return host if len(host) <= 253 and _INTERNAL_HOST.fullmatch(host) else None
+
+
+def _bare_host_field(pairs: dict[str, str]) -> str | None:
+    """The first host pair whose value is a single-label name or address that _host_field does not read."""
+    for key, value in pairs.items():
+        if key.lower() in _TRAILER_HOST_KEYS and len(value) <= 300 and _bare_host_name(value):
+            return value
+    return None
+
+
 def parse_text_line(line: str) -> dict[str, Any] | None:
     line = line.strip()
     if not line:
@@ -507,7 +528,8 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
         # as logfmt: an unterminated quote (a truncated line) or a repeated key
         # makes the line malformed, and text inside a value is never a key.
         trailer = _logfmt_pairs(line[m.end() :])
-        host = _host_field(_logfmt_pairs(line.rpartition('"')[2]))
+        server_pairs = _logfmt_pairs(line.rpartition('"')[2])
+        host = _host_field(server_pairs)
         rec = {
             "remote_addr": d["ip"],
             "remote_user": None if d["user"] == "-" else d["user"],
@@ -524,6 +546,12 @@ def parse_text_line(line: str) -> dict[str, Any] | None:
         untrusted = _host_field(trailer) if host is None else None
         if untrusted is not None:
             rec[_UNTRUSTED_HOST_FIELD] = untrusted
+        # A server-written single-label or address host is not parsed as the
+        # host (a local Ollama logged as localhost:11434 keeps its route
+        # meaning), but kept so a declared internal model host can match it.
+        bare = _bare_host_field(server_pairs) if host is None else None
+        if bare is not None:
+            rec[_BARE_HOST_FIELD] = bare
         return rec
     # key=value logfmt
     if "=" in line and " " in line:
@@ -1091,7 +1119,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         ),
         "min_events": "ignore callers with fewer events, a positive integer (default 1)",
         "llm_hosts_only": "for access logs, keep only requests to known LLM/agent hosts (default true)",
-        "internal_model_hosts": "exact internal model-server hostnames to recognize (default [])",
+        "internal_model_hosts": (
+            "exact internal model-server hostnames to recognize, a list or one hostname (default [])"
+        ),
         "max_records": "stop after N records (default 5,000,000)",
         "label": (
             "gateway name recorded as the finding provider and as the account of unscoped callers (defaults "
@@ -1119,6 +1149,9 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         self.min_events = _positive_limit(ctx.get("min_events", 1), "min_events")
         self.llm_hosts_only = config_boolean(ctx.get("llm_hosts_only", True), "llm_hosts_only")
         internal_hosts = ctx.get("internal_model_hosts", [])
+        if isinstance(internal_hosts, str):
+            # One hostname, as YAML or ``--set internal_model_hosts=host`` gives it.
+            internal_hosts = [internal_hosts]
         if not isinstance(internal_hosts, list) or any(
             not isinstance(host, str) or len(host) > 253 or not _INTERNAL_HOST.fullmatch(host.strip().lower())
             for host in internal_hosts
@@ -1445,6 +1478,8 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                     continue
                 if ev.request_count == 0:
                     continue
+                if ev.host is None and (declared := self._declared_bare_host(rec)) is not None:
+                    ev.host = declared
                 if (
                     schema in {"access-log", "generic"}
                     and self.llm_hosts_only
@@ -1452,8 +1487,10 @@ class GatewayLogConnector(BaseConnector, _NoDump):
                 ):
                     skipped += 1
                     static_excluded += _is_static_or_probe(ev.path)
-                    untrusted_host_requests += self._untrusted_host_is_llm(ev, rec)
-                    self._tally_undeclared_route_host(ev, undeclared_route_hosts)
+                    if self._untrusted_host_is_llm(ev, rec):
+                        untrusted_host_requests += 1
+                    else:
+                        self._tally_undeclared_route_host(ev, rec, undeclared_route_hosts)
                     continue
                 unusable_usage += _discard_unusable_usage(ev)
                 if ev.timestamp is None and _has_unparsed_timestamp(rec):
@@ -1738,33 +1775,53 @@ class GatewayLogConnector(BaseConnector, _NoDump):
             return True
         return any(m.weight >= _MIN_LLM_HOST_WEIGHT for m in self.index.match_domain(host))
 
+    def _declared_bare_host(self, rec: dict[str, Any]) -> str | None:
+        """The record's single-label or address host token when it names a declared internal model host."""
+        bare = rec.get(_BARE_HOST_FIELD)
+        if isinstance(bare, str) and _bare_host_name(bare) in self.internal_model_hosts:
+            return bare
+        return None
+
     @staticmethod
-    def _tally_undeclared_route_host(ev: Event, tally: Counter[str]) -> None:
-        """Count an excluded self-hosted-route request whose parsed host is not a model host.
+    def _tally_undeclared_route_host(ev: Event, rec: dict[str, Any], tally: Counter[str]) -> None:
+        """Count an excluded self-hosted-route request whose host is not a model host.
 
         Called only for requests already excluded as non-LLM traffic. A host
-        that is not a plain hostname is counted without being named.
+        that is not a plain hostname is counted without being named; a request
+        with no parsed host is named by its single-label or address host token
+        when it has one, and otherwise counted as having no logged host.
         """
-        if not ev.path or ev.host is None or _is_static_or_probe(ev.path):
+        if not ev.path or _is_static_or_probe(ev.path):
             return
         if not _SELF_HOSTED_ROUTE.search(ev.path.partition("?")[0]):
             return
-        host = (host_of(ev.host) or "").rstrip(".")
-        label = host if len(host) <= 253 and _INTERNAL_HOST.fullmatch(host) else ""
+        if ev.host is not None:
+            label = _bare_host_name(ev.host) or ""
+        else:
+            bare = rec.get(_BARE_HOST_FIELD)
+            label = (_bare_host_name(bare) if isinstance(bare, str) else None) or _NO_LOGGED_HOST
         if label not in tally and len(tally) >= _MAX_UNDECLARED_ROUTE_HOSTS:
             label = ""
         tally[label] += ev.request_count
 
     def _warn_undeclared_route_hosts(self, tally: Counter[str]) -> None:
-        named = sorted(((count, host) for host, count in tally.items() if host), key=lambda x: (-x[0], x[1]))
+        hostless = tally.get(_NO_LOGGED_HOST, 0)
+        named = sorted(
+            ((count, host) for host, count in tally.items() if host and host != _NO_LOGGED_HOST),
+            key=lambda x: (-x[0], x[1]),
+        )
         shown = ", ".join(f"{host} ({count})" for count, host in named[:_NAMED_UNDECLARED_ROUTE_HOSTS])
         others = len(named) - _NAMED_UNDECLARED_ROUTE_HOSTS
         if others > 0 or "" in tally:
             shown = f"{shown}; and other hosts" if shown else "unnamed hosts"
+        advice = "List internal model servers among them in internal_model_hosts"
+        if hostless:
+            shown = f"{shown}; {hostless} with no logged host" if shown else f"{hostless} with no logged host"
+            advice += "; log the requested host so a declared host can match"
         self.ctx.warn(
             "gateway.logs: requests to Ollama-style or text-generation-inference routes on hosts that are "
             f"not known or declared model hosts were not counted as LLM traffic: {sum(tally.values())} "
-            f"({shown}). List internal model servers among them in internal_model_hosts",
+            f"({shown}). {advice}",
             incomplete=False,
         )
 

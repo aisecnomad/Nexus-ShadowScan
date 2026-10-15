@@ -8,7 +8,16 @@ load a kubeconfig; collect an inventory separately with read-only `kubectl get
 Every connector entry requires a stable `cluster` label. Resource identities
 use `k8s:<cluster>/<namespace>/<kind>/<name>`. Export Kubernetes `List`
 envelopes or individual objects. Never include Secret values; this analyzer
-does not need them. Provider environment values are not retained: only
+does not need them.
+
+kubectl writes each object's `kind`. A raw API list (`kubectl get --raw
+/api/v1/pods`, or a client library's list call) is a typed `List` such as
+`PodList` whose items carry no `kind`; each such item takes the kind its
+envelope names (`PodList` items are Pods), and an item's own `kind` is never
+replaced. An object with no `kind` outside a typed `List` (in an untyped
+`List`, a JSON array or JSONL), or with a `kind` that is not a non-empty
+string, cannot be analyzed: it is skipped with a warning that marks the scan
+incomplete (exit 3). Provider environment values are not retained: only
 configuration-presence tags are emitted. Secret references are not dereferenced.
 
 Resource identities retain complete object names, including names longer than
@@ -52,8 +61,10 @@ recognised. An engine name elsewhere in the path (`registry.example/vllm/server`
 (`ollama-exporter`, `vllm-operator`, `-metrics`, `-monitor`) is not. NVIDIA
 Triton (`tritonserver`) also serves vision and tabular models, so it counts
 only with an LLM backend in its name or tag (`24.05-trtllm-python-py3`,
-`24.05-vllm-python-py3`). A GPU counts whether `nvidia.com/gpu` is set in `requests` or only
-in `limits`. A `--model org/name` or `--model-id org/name` container argument
+`24.05-vllm-python-py3`). A GPU counts when `nvidia.com/gpu` is above zero in
+`requests` or only in `limits`; `0` or `"0"` requests no GPU, and a value that
+is not a resource quantity (a word, a negative number) is skipped with a
+warning that marks the scan incomplete. A `--model org/name` or `--model-id org/name` container argument
 corroborates an AI image or AI resource kind: together they add the
 `self-hosted-model-serving` tag and model-argument and GPU evidence. On their
 own, a model argument and a GPU never make a workload an agent, because

@@ -64,15 +64,37 @@ route. A self-hosted TGI server cannot be told apart from another service by
 its path: list its exact hostname in `internal_model_hosts` (for an internal
 Ollama behind a reverse proxy, too). Entries are validated hostnames, matched
 exactly and case-insensitively, with or without a logged port and with no DNS
-lookup; anything else fails the connector. Declared hosts also pass the default
-`llm_hosts_only` filter. Requests to these routes that are not counted because
-their parsed host is neither known nor declared are reported in one advisory
-warning with their total and up to five of the busiest hosts; the warning does
-not make the scan incomplete, and it names the hosts to review for
-`internal_model_hosts`. Setting
+lookup; anything else fails the connector. A single-label name or IPv4
+address entry (`tgi`, `10.20.0.5`) also matches a text access log's unquoted
+`host=` token after the last quoted field (`host=tgi:8080`,
+`host=10.20.0.5:8080`); such a token is read only to match a declared entry, so
+an undeclared `localhost:11434` keeps the no-parsed-host Ollama rule. Declared
+hosts also pass the default `llm_hosts_only` filter. Requests to these routes
+that are not counted because their host is neither known nor declared are
+reported in one advisory warning with their total and up to five of the
+busiest hosts, and requests with no logged host are counted in the same
+warning; the warning does not make the scan incomplete, and it names the hosts
+to review for `internal_model_hosts`. Setting
 `internal_model_hosts` changes how a source is read, so that source's finding
 ids change; leaving it unset keeps existing ids. User agents never exclude a
 request: a browser calling a provider API is still attributed to the provider.
+
+Declare internal model hosts as a YAML list or as one hostname:
+
+```yaml
+connectors:
+  - name: gateway.logs
+    input: /var/log/nginx/llm-access.log
+    internal_model_hosts: [tgi.internal.example, gpu01.corp.example]
+    # or, for one host: internal_model_hosts: tgi.internal.example
+```
+
+On the command line, repeat `--internal-model-host` on the gateway command
+(`shadowscan gateway access.log --internal-model-host tgi.internal.example
+--internal-model-host gpu01.corp.example`), or pass one hostname or a
+comma-separated list to a single connector run
+(`shadowscan run gateway.logs --input access.log --set
+internal_model_hosts=tgi.internal.example`).
 
 A caller is titled **Agentic caller** when at least one agent indicator
 holds: requests carried tool definitions or responses invoked tools; a user

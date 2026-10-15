@@ -615,6 +615,16 @@ def _http_node(url, method="POST", name="Call", **parameters):
     }
 
 
+def _http_v2_node(url, method="POST", **parameters):
+    """An HTTP Request v1-v2 node, whose method parameter is ``requestMethod``."""
+    return {
+        "name": "Call",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 2,
+        "parameters": {"requestMethod": method, "url": url, **parameters},
+    }
+
+
 _WEBHOOK = {"name": "Hook", "type": "n8n-nodes-base.webhook", "parameters": {}}
 
 
@@ -660,6 +670,47 @@ def test_n8n_http_request_to_other_apis_is_not_an_ai_step(index, node):
     assert findings == [] and not stats.incomplete
 
 
+@pytest.mark.parametrize(
+    "node",
+    [
+        # Regression (F8): HTTP Request v1-v2 name the method requestMethod.
+        _http_v2_node("https://llm.internal.example/v1/chat/completions"),
+        _http_v2_node("http://ollama.internal.example:11434/api/generate"),
+        # Expression-mode URLs start with "=" and may template the query or port.
+        _http_node("=https://llm.internal.example/v1/chat/completions?user={{ $json.u }}"),
+        _http_node("= https://llm.internal.example:{{ $env.PORT }}/v1/completions"),
+        _http_v2_node("=https://llm.internal.example/v1/chat/completions"),
+    ],
+)
+def test_n8n_http_request_versions_and_expression_urls_are_ai_steps(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert len(findings) == 1 and not stats.incomplete
+    assert any("model API" in step for step in findings[0].metadata["ai_steps"])
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        _http_v2_node("https://llm.internal.example/v1/chat/completions", method="GET"),
+        # The n8n default method is GET: no method parameter is not a POST.
+        {
+            "name": "Call",
+            "type": "n8n-nodes-base.httpRequest",
+            "parameters": {"url": "https://x.example/v1/completions"},
+        },
+        # A host chosen at run time cannot be classified.
+        _http_node("=https://{{ $json.host }}/v1/chat/completions"),
+        _http_node("=https://llm-{{ $env.REGION }}.internal.example/v1/chat/completions"),
+        _http_node("={{ $json.base }}/v1/chat/completions"),
+        # Expression-mode URLs keep the messaging-route rules.
+        _http_node("=https://sms.example/messages?to={{ $json.phone }}"),
+    ],
+)
+def test_n8n_http_request_unresolvable_or_non_post_versions_are_not_ai_steps(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert findings == [] and not stats.incomplete
+
+
 _ANTHROPIC_HEADER = {"parameters": [{"name": "anthropic-version", "value": "2023-06-01"}]}
 _WHATSAPP_BODY = '={"messaging_product": "whatsapp", "to": "{{ $json.phone }}", "type": "text"}'
 
@@ -670,7 +721,7 @@ _WHATSAPP_BODY = '={"messaging_product": "whatsapp", "to": "{{ $json.phone }}", 
         _http_node(
             "https://llm.internal.example/v1/messages", sendHeaders=True, headerParameters=_ANTHROPIC_HEADER
         ),
-        _http_node(
+        _http_v2_node(
             "https://llm.internal.example/v1/messages",
             headerParametersUi={"parameter": [{"name": "Anthropic-Version", "value": "2023-06-01"}]},
         ),
@@ -691,7 +742,7 @@ _WHATSAPP_BODY = '={"messaging_product": "whatsapp", "to": "{{ $json.phone }}", 
             },
         ),
         # Templates that are not plain JSON: an expression outside a string, JSON.stringify.
-        _http_node(
+        _http_v2_node(
             "https://llm.internal.example/v1/messages",
             jsonParameters=True,
             bodyParametersJson='{"model": "chat-7b", "messages": {{ JSON.stringify($json.m) }} }',
@@ -699,6 +750,18 @@ _WHATSAPP_BODY = '={"messaging_product": "whatsapp", "to": "{{ $json.phone }}", 
         _http_node(
             "https://ollama.internal.example/api/chat",
             jsonBody="={{ JSON.stringify({ model: 'llama3', prompt: $json.text }) }}",
+        ),
+        # Regression (F18): an unversioned /chat/completions with a model request.
+        _http_node(
+            "https://llm.internal.example/chat/completions",
+            sendBody=True,
+            jsonBody='{"model": "chat-7b", "messages": [{"role": "user", "content": "hi"}]}',
+        ),
+        _http_node(
+            "https://gateway.internal.example/chat/completions/",
+            bodyParameters={
+                "parameters": [{"name": "model", "value": "m"}, {"name": "messages", "value": "x"}]
+            },
         ),
     ],
 )
@@ -718,6 +781,10 @@ def test_n8n_ambiguous_generation_route_counts_with_model_request_corroboration(
         _http_node("https://forms.internal.example/v1/responses", jsonBody='{"form": "nps", "input": 9}'),
         # A model key alone, or a model request the node does not send.
         _http_node("https://catalog.example/api/chat", jsonBody='{"model": "Model S"}'),
+        _http_node("https://llm.internal.example/chat/completions"),
+        _http_node("https://courses.example/chat/completions", jsonBody='{"model": "Model S"}'),
+        # A bare /completions still never counts, even with a model request.
+        _http_node("https://llm.internal.example/completions", jsonBody='{"model": "m", "prompt": "x"}'),
         _http_node(
             "https://llm.internal.example/v1/messages",
             sendBody=False,
@@ -743,6 +810,11 @@ def test_n8n_ambiguous_generation_route_without_corroboration_is_not_an_ai_step(
         "n8n-nodes-base.mcpClient",
         "CUSTOM.MCPServer",
         "acme.mcp_bridge",
+        # Regression (F7): camelCase MCP nodes after another word.
+        "CUSTOM.githubMcpClient",
+        "n8n-nodes-acme.acmeMcpTool",
+        "CUSTOM.zapierMcp",
+        "CUSTOM.acmeMCPClient",
     ],
 )
 def test_n8n_named_ai_and_mcp_nodes_are_still_detected(index, node_type):
@@ -750,7 +822,17 @@ def test_n8n_named_ai_and_mcp_nodes_are_still_detected(index, node_type):
     assert len(findings) == 1
 
 
-@pytest.mark.parametrize("node_type", ["n8n-nodes-base.mcp9808Sensor", "n8n-nodes-community.smcpDecoder"])
+@pytest.mark.parametrize(
+    "node_type",
+    [
+        "n8n-nodes-base.mcp9808Sensor",
+        "n8n-nodes-community.smcpDecoder",
+        "CUSTOM.Mcp9808",
+        "CUSTOM.acmeMcp9808",
+        "CUSTOM.SMCPDecoder",
+        "CUSTOM.trackMcpherson",
+    ],
+)
 def test_n8n_mcp_is_matched_as_a_token(index, node_type):
     findings, _ = _n8n_run(index, _WEBHOOK, {"name": "Step", "type": node_type, "parameters": {}})
     assert findings == []

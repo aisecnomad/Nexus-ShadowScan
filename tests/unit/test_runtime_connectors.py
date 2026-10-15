@@ -916,6 +916,61 @@ def test_kubernetes_final_list_page_stays_complete(tmp_path, connector_type, lay
 
 
 @pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize("layout", ["single", "array", "jsonl"])
+@pytest.mark.parametrize(
+    "metadata,complete",
+    [({"resourceVersion": "42"}, True), ({"resourceVersion": "42", "continue": "next-chunk"}, False)],
+)
+def test_kubernetes_raw_api_list_items_take_the_list_kind(
+    tmp_path, connector_type, layout, metadata, complete
+):
+    """Regression (F10): the API server strips item kinds from a typed List; kubectl adds them back."""
+    envelope = json.loads((FIXTURES / "kubernetes/raw_api_list.json").read_text())
+    envelope["metadata"] = metadata
+    source = _write_kubernetes_layout(tmp_path, layout, envelope)
+
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+
+    # Items of a chunked page are analyzed while the scan stays incomplete.
+    assert ctx.stats is not None and ctx.stats.incomplete is not complete, ctx.stats.warnings
+    assert [finding.resource for finding in findings] == ["k8s:synthetic/ai/Pod/local-model"]
+    assert {"ai-workload", "gpu-workload"} <= set(findings[0].tags)
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        # An untyped List names no item kind, and neither does a bare object.
+        {"kind": "List", "items": [{"metadata": {"name": "local-model", "namespace": "ai"}, "spec": {}}]},
+        {"metadata": {"name": "local-model", "namespace": "ai"}, "spec": {}},
+        {"kind": "PodList", "items": [{"kind": 7, "metadata": {"name": "local-model"}, "spec": {}}]},
+        {"kind": "PodList", "items": [{"kind": "", "metadata": {"name": "local-model"}, "spec": {}}]},
+    ],
+)
+def test_kubernetes_object_without_a_kind_is_incomplete(tmp_path, connector_type, envelope):
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps(envelope))
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+    assert findings == []
+    assert ctx.stats is not None and ctx.stats.incomplete
+    assert any("kind" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
+def test_kubernetes_typed_list_never_replaces_an_item_kind(tmp_path, connector_type):
+    envelope = json.loads((FIXTURES / "kubernetes/raw_api_list.json").read_text())
+    envelope["kind"] = "ConfigMapList"
+    envelope["items"].append({**envelope["items"][0], "kind": "Pod"})
+    source = tmp_path / "inventory.json"
+    source.write_text(json.dumps(envelope))
+    findings, ctx = _run_offline(connector_type, {"cluster": "synthetic"}, source)
+    # The kind-less item is a ConfigMap, which is not analyzed; the Pod keeps its kind.
+    assert ctx.stats is not None and not ctx.stats.incomplete, ctx.stats.warnings
+    assert [finding.resource for finding in findings] == ["k8s:synthetic/ai/Pod/local-model"]
+
+
+@pytest.mark.parametrize("connector_type", [KubernetesConnector, OpenShiftConnector])
 def test_kubernetes_long_namespaces_are_rejected_without_colliding(tmp_path, connector_type):
     workload = json.loads((FIXTURES / "kubernetes/object_limit_boundary.json").read_text())[1]["items"][0]
     records = []

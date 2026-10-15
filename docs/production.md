@@ -178,7 +178,10 @@ where the previous revision completed:
 - `cloud.aws` CloudTrail callers no longer count exact duplicate event IDs
   twice, and offline `cloudtrail-event` records whose `eventName` is neither a
   collected invocation operation nor an STS assumption are ignored instead of
-  reported as LLM callers.
+  reported as LLM callers. A record with no `eventName` (absent, `null` or
+  empty) is not ignored: it is skipped as malformed and the scan is incomplete
+  (exit 3). Regenerate such exports with the event name before relying on exit
+  codes.
 - MCP tools keep the `tool-poisoning` rules of the previous revision; a
   bounded sentence audit adds zero-weight `instruction:*` evidence and
   `metadata.static_instruction_audit`, and can also raise the tag. The
@@ -1372,14 +1375,27 @@ reported. Requests logged without a parsed host (`localhost:11434`) are still
 callers. If an internal Ollama or text-generation-inference server sits behind
 a reverse proxy with its own hostname, list that hostname in the new
 `gateway.logs` option `internal_model_hosts` before upgrading, or its callers
-disappear. Such excluded requests are reported in an advisory warning (not an
+disappear. The option takes a list or one hostname in a scan configuration
+or `--set internal_model_hosts=...`, and `shadowscan gateway` takes it as a
+repeatable `--internal-model-host`. Such excluded requests are reported in an advisory warning (not an
 incomplete scan) with their count and up to five host names; read it after
 the first scan and declare the hosts that are model servers. A bare
-`/generate` route counts only on a declared or known model host. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
+`/generate` route counts only on a declared or known model host; such
+requests with no logged host are counted in the same warning. In text access
+logs a single-label or address host (`host=tgi:8080`, `host=10.20.0.5:8080`)
+now matches a declared `tgi` or `10.20.0.5` entry, as it already did in JSON
+logs. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
 setting it changes that source's ids by design, so rebaseline that source.
 
-**Kubernetes.** Workloads that set `nvidia.com/gpu` only in `limits` are now
-reported as GPU workloads, and private-registry serving images whose name
+**Kubernetes.** Items of a raw API list (`kubectl get --raw /api/v1/pods`),
+which carry no `kind`, now take the kind their typed `List` names (`PodList`
+items are Pods) and are analyzed, so new findings can appear; earlier they were
+skipped without a warning. An object without a `kind` anywhere else, or with a
+non-string or empty `kind`, now makes a `cloud.kubernetes` or `cloud.openshift`
+scan incomplete (exit 3). Workloads that set `nvidia.com/gpu` only in `limits` are now
+reported as GPU workloads, while an `nvidia.com/gpu` of `0` or `"0"` no longer
+makes a GPU workload and a value that is not a resource quantity makes the scan
+incomplete. Private-registry serving images whose name
 starts with an engine name (`registry.example/ml/vllm-serving`, also when
 pinned by digest) are now agent workloads, so new findings can appear. Engine
 names elsewhere in an image path, exporters and operators named after an
@@ -1388,7 +1404,8 @@ engine, and NVIDIA Triton images without an LLM backend tag
 AI image or AI resource kind is not promoted. A container `command` or `args` field that is
 not a list of strings (a string, or a list with a non-string item) now makes a
 `cloud.kubernetes` or `cloud.openshift` scan incomplete (exit 3) with a
-"malformed container command/args" warning; the workload is still reported
+"workload has malformed container command" or "workload has malformed
+container args" warning for each malformed field; the workload is still reported
 from its image, without the model-argument check. A `null` field is unset, as
 kubectl exports it. Regenerate exports that fail this way before relying on
 exit codes.
@@ -1400,14 +1417,19 @@ flows named for an unambiguous AI product or provider (Claude, OpenAI), or
 with a marker, are. A genuine AI flow named only with a generic word or
 Gemini and no marker is a known false negative.
 n8n workflows whose only AI step is an HTTP Request POST to a model API are
-now reported as AI workflows. On a host that is not a known model host,
-`/v1/messages`, `/v1/responses` and `/api/chat` count only with an
+now reported as AI workflows, including HTTP Request v1 and v2 nodes (method
+in `requestMethod`) and expression-mode URLs whose host is literal; a host
+written as an expression is never classified. On a host that is not a known
+model host,
+`/v1/messages`, `/v1/responses`, `/api/chat` and a bare `/chat/completions`
+count only with an
 `anthropic-version` header or a body with `model` and `messages`, `prompt` or
 `input`, so WhatsApp Business and help-desk chat calls are not AI steps; a
 self-hosted model called without either is missed. `mcp` in a node type
-counts as its own token: custom `mcpClient` or `MCPServer` nodes are AI
-steps, and node types that merely contain `mcp` inside another word or part
-number are not.
+counts as its own token: custom `mcpClient` or `MCPServer` nodes, and
+camelCase types with `Mcp` or `MCP` after another word (`githubMcpClient`,
+`zapierMcp`), are AI steps, and node types that merely contain `mcp` inside
+another word or part number are not.
 
 **SaaS, identity and cloud inventory.** Notion bots are inventoried only with
 an established AI product or provider, or an AI-name hint in their name (a

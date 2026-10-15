@@ -840,6 +840,12 @@ GATEWAY_LOG_FORMATS = [
     is_flag=True,
     help="for access logs, keep traffic to every host (default: LLM/agent hosts only)",
 )
+@click.option(
+    "--internal-model-host",
+    "internal_model_hosts",
+    multiple=True,
+    help="exact internal model-server hostname to count as model traffic (repeatable)",
+)
 @click.option("--label", help="gateway name used as the findings' account/provider")
 @scan_options
 def gateway(
@@ -847,6 +853,7 @@ def gateway(
     log_format: str,
     min_events: int,
     all_hosts: bool,
+    internal_model_hosts: tuple[str, ...],
     label: str | None,
     opts: ScanOptions,
 ) -> None:
@@ -856,6 +863,9 @@ def gateway(
         conf: dict[str, Any] = {"input": path, "min_events": min_events, "llm_hosts_only": not all_hosts}
         if log_format != "auto":
             conf["format"] = log_format
+        if internal_model_hosts:
+            # Set only when given: an unset option keeps the source's finding ids.
+            conf["internal_model_hosts"] = list(internal_model_hosts)
         if label:
             conf["label"] = label
         instance = f"gateway.logs#{i + 1}" if len(logs) > 1 else None
