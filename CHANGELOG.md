@@ -5,6 +5,64 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Filesystem connector helpers move into bounded modules (October 15)
+
+- The module-level helpers of `connectors/code/filesystem.py` (6,249 lines)
+  moved, verbatim, into five modules beside it: `path_context.py` (test,
+  documentation, example, generated and CI-pipeline paths and their
+  discounts), `project_evidence.py` (`_ProjectEvidence`, corroboration and
+  weak mentions), `model_identifiers.py` (model-id literal recognition),
+  `source_text.py` (offset-preserving text shaping and the structured
+  credential context for excerpt redaction) and `excerpts.py`. The
+  connector class is unchanged and `filesystem.py` (now about 5,200 lines)
+  re-imports every moved name that tests or other modules use.
+  `_LazyExcerpt` takes the connector's redacted-lines reader instead of the
+  connector, which removes the helper module's dependency on the class.
+- No behaviour change: with a fixed `SHADOWSCAN_IDENTITY_KEY`, the offline
+  demo report before and after the move is identical apart from timestamps
+  and `collection_scope.fingerprint`, which covers the scanner source digest
+  by design; the evaluation corpora and the full test suite are unchanged.
+  ADR-005 records this as continuing its beside-the-class pattern; its four
+  collaborator-class moves remain open.
+
+### Bounded DNS resolution and a typed HttpClient session seam (October 15)
+
+- `shadowscan.utils.http` now resolves names in a bounded worker
+  (`_resolve_bounded`): `socket.getaddrinfo` has no timeout of its own, so a
+  stalled system resolver could previously hold a connector worker past every
+  cooperative deadline check. The connection path and the `validate_url`
+  preflight wait at most 20 seconds (`_RESOLVE_TIMEOUT`), tightened by the
+  client timeout, the acquisition deadline and the connector deadline where
+  they apply; on expiry the request fails closed (`NameResolutionError` at
+  connection, `ValueError` in the preflight, so transports such as git that
+  rely on the preflight stop too) and the abandoned worker's late answer is
+  discarded, never connected to. A name that does not resolve (NXDOMAIN)
+  keeps its existing meaning at both sites. The late-DNS regression test now
+  pins the stronger contract (the wait ends at the deadline, not after the
+  resolver returns), and `tests/unit/test_http_dns_deadline.py` covers the
+  stalled-resolver, expired-deadline, late-answer and NXDOMAIN cases.
+  SECURITY.md and the production resource-limit notes describe the bounded
+  wait; a process/job supervisor is still the only hard execution limit.
+- `HttpClient` refuses a duck-typed `session` at construction with
+  `TypeError`: the proxy, adapter-identity and verify checks assume requests
+  semantics, and a stand-in that is neither a `requests.Session` nor a
+  `unittest.mock` double (the documented test seam, which carries no real
+  transport) would previously have sent requests with those checks silently
+  skipped.
+
+### Black Duck job requires a reviewed Bridge CLI pin (October 15)
+
+- The optional Black Duck workflow job now also requires the repository
+  variable `BRIDGECLI_DOWNLOAD_VERSION` and passes it to the action as
+  `bridgecli_download_version` (an input verified against the pinned
+  action revision). The wrapper action was already pinned by commit SHA,
+  but at run time it downloads the Bridge CLI, and the committed
+  configuration would have fetched the vendor's current, unreviewed CLI
+  the moment a service variable was set. Configuring a service without
+  the pin now keeps the job skipped, so enabling the integration can no
+  longer execute unpinned vendor code; the workflow README documents the
+  second variable.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead
