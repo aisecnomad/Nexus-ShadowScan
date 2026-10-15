@@ -56,6 +56,7 @@ _FRONT_MATTER_KEY = re.compile(r"^[A-Za-z_][\w.-]*\s*:(?:\s|$)")
 _FRONT_MATTER_SYNTAX = re.compile(r"^(?:[-+*]\s+)*(?:[A-Za-z_][\w.-]*\s*:\s*)?")
 _BLOCK_SCALAR = re.compile(r"^[|>](?:[+-]?\d?|\d?[+-]?)$")
 _WHOLE_SCALAR_QUOTED = re.compile(r"^(?:\"(.*)\"|'(.*)')$")
+_FRONT_MATTER_LIST_ITEM = re.compile(r"^-(?:\s|$)")
 
 
 @dataclass(frozen=True)
@@ -91,13 +92,19 @@ class InstructionAudit:
 
 
 def _opens_front_matter(lines: list[str]) -> bool:
-    """Whether the text under a ``---`` opener starts like YAML front matter: with a ``key:`` line.
+    """Whether the text under a ``---`` opener starts like YAML front matter.
 
-    A ``---`` followed by prose or a heading is a Markdown thematic break, not an unclosed header.
+    Blank lines and ``#`` lines (a YAML comment, or a Markdown heading) are skipped, so the
+    first line that decides is a ``key:`` line or a ``- `` sequence item, both of which open
+    front matter: a closed sequence header is already reported as malformed, so an unclosed
+    one must not be read as body text, where its indented block scalars would be skipped as
+    code. A ``---`` followed by prose is a Markdown thematic break, not an unclosed header.
     """
     for line in lines:
-        if line.strip():
-            return bool(_FRONT_MATTER_KEY.match(line.strip()))
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        return bool(_FRONT_MATTER_KEY.match(stripped) or _FRONT_MATTER_LIST_ITEM.match(stripped))
     return False
 
 
