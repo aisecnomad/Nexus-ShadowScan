@@ -44,8 +44,20 @@ _FIELDS = (
     "errorCode",
 )
 _ARN = re.compile(r"arn:(aws(?:-[a-z-]+)?):(iam|sts)::([0-9]{12}):(role|assumed-role)/(.+)")
-# CloudTrail renders STS credential expirations as "Jan 20, 2024, 3:16:07 PM" (UTC).
-_CLOUDTRAIL_TIME_FORMAT = "%b %d, %Y, %I:%M:%S %p"
+# CloudTrail renders STS credential expirations as "Jan 20, 2024, 3:16:07 PM" (UTC);
+# older JDK-formatted trail records omit the comma after the year, and some
+# renderings append the zone word. Every member of this 12-hour display family
+# is read by an explicit format or rejected: ``parse_timestamp`` would accept
+# the rest as RFC 2822 and silently drop the meridian (a 12-hour shift).
+_CLOUDTRAIL_TIME_FORMATS = (
+    "%b %d, %Y, %I:%M:%S %p",
+    "%b %d, %Y %I:%M:%S %p",
+    "%b %d, %Y, %I:%M:%S %p UTC",
+    "%b %d, %Y %I:%M:%S %p UTC",
+)
+_DISPLAY_TIME_FAMILY = re.compile(
+    r"[A-Za-z]{3,9}\.? +\d{1,2},? +\d{4},? +\d{1,2}:\d{2}(?::\d{2})? *[AaPp]\.?[Mm]\.?\b.*"
+)
 
 
 def _object(value: Any) -> dict[str, Any]:
@@ -114,10 +126,15 @@ def _parse_time(value: Any) -> datetime | None:
     invalid, not a crash that abandons the rest of the export.
     """
     if isinstance(value, str):
-        try:
-            return datetime.strptime(value, _CLOUDTRAIL_TIME_FORMAT).replace(tzinfo=UTC)
-        except ValueError:
-            pass
+        for display_format in _CLOUDTRAIL_TIME_FORMATS:
+            try:
+                return datetime.strptime(value, display_format).replace(tzinfo=UTC)
+            except ValueError:
+                continue
+        if _DISPLAY_TIME_FAMILY.fullmatch(value.strip()):
+            # A 12-hour spelling no explicit format reads (another zone word, a
+            # locale variant): invalid, never the RFC 2822 reading minus 12 hours.
+            return None
     stamp = parse_timestamp(value)
     if stamp is None:
         return None

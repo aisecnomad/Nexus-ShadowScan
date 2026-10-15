@@ -873,3 +873,45 @@ def test_cloudtrail_duplicate_suppression_has_its_own_disclosed_bound(index, mon
     monkeypatch.setattr(aws_lineage, "MAX_SEEN_EVENTS", 3)
     findings, ctx = _lineage(index, [assumption, invocation, later, later])
     assert not ctx.stats.incomplete and findings[0].metadata["events"] == 2
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Jan 1, 2026, 1:00:00 PM", "2026-01-01T13:00:00+00:00"),
+        ("Jan 1, 2026 1:00:00 PM", "2026-01-01T13:00:00+00:00"),  # older JDK rendering, no comma
+        ("Jan 1, 2026, 1:00:00 PM UTC", "2026-01-01T13:00:00+00:00"),
+        ("Jan 1, 2026 1:00:00 PM UTC", "2026-01-01T13:00:00+00:00"),
+        ("Jan 1, 2026, 1:00:00 AM", "2026-01-01T01:00:00+00:00"),
+        ("Jan 1, 2026, 1:00:00 PM PST", None),  # a zone no format reads is never guessed
+        ("Jan 1, 2026, 1:00 PM", None),
+        ("Jan 1, 2026, 13:00:00 PM", None),
+        ("Thu, 01 Jan 2026 13:00:00 +0000", "2026-01-01T13:00:00+00:00"),  # RFC 2822 still reads
+        ("2026-01-01T13:00:00Z", "2026-01-01T13:00:00+00:00"),
+    ],
+)
+def test_cloudtrail_display_time_variants_parse_exactly_or_are_invalid(value, expected):
+    # The RFC 2822 fallback accepted near-variants of the display format with the meridian
+    # dropped, recording a PM expiration twelve hours early and leaving the session unlinked.
+    from shadowscan.connectors.cloud.aws_lineage import _parse_time
+    from shadowscan.utils.text import to_iso
+
+    assert to_iso(_parse_time(value)) == expected
+
+
+@pytest.mark.parametrize("expiration", ["Jan 1, 2026 1:00:00 PM", "Jan 1, 2026, 1:00:00 PM UTC"])
+def test_cloudtrail_display_time_variants_link_the_session(index, expiration):
+    path = Path(__file__).parents[1] / "fixtures/cloud/lineage/assumed_session_display_time.jsonl"
+    assumption, invocation = (json.loads(line) for line in path.read_text().splitlines())
+    assumption["responseElements"]["credentials"]["expiration"] = expiration
+    findings, ctx = _lineage(index, [assumption, invocation])
+    assert not ctx.stats.incomplete
+    (observation,) = findings[0].metadata["cloudtrail_lineage"]["observations"]
+    assert observation["assumption_status"] == "linked"
+    assert observation["assumption"]["sessionExpiresAt"] == "2026-01-01T13:00:00+00:00"
+    assumption["responseElements"]["credentials"]["expiration"] = "Jan 1, 2026, 1:00:00 PM PST"
+    findings, ctx = _lineage(index, [assumption, invocation])
+    assert ctx.stats.incomplete
+    (observation,) = findings[0].metadata["cloudtrail_lineage"]["observations"]
+    assert observation["assumption_status"] == "unlinked"
+    assert "invalid-timestamp" in findings[0].metadata["cloudtrail_lineage"]["limits"]
