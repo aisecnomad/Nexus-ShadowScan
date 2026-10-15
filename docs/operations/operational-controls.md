@@ -4,7 +4,7 @@ These controls apply to any production, CI or unattended use of ShadowScan.
 They complement the in-process limits in
 [production deployment](../production.md#resource-limits-and-incomplete-scans)
 and the trust model in
-[SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+[SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md).
 
 ## External process supervision
 
@@ -30,7 +30,7 @@ a timed-out or incomplete report as an authoritative inventory.
   ```
 
 - **Kubernetes**: set `activeDeadlineSeconds` and `backoffLimit: 0` on the Job,
-  as the [offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml)
+  as the [offline Job example](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/k8s-job.yaml)
   does.
 - **CI or a wrapper script**: `timeout --kill-after=30s 900 shadowscan scan -c config.yaml`,
   together with the CI system's job timeout.
@@ -52,7 +52,7 @@ not inherit these controls, so enforce egress outside the process as well.
   ignores proxy environment variables (`HTTPS_PROXY` and similar) and rejects
   an explicitly configured proxy, so that a proxy cannot route around its
   destination checks. The
-  [live egress example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-network-policy.yaml)
+  [live egress example](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/k8s-network-policy.yaml)
   is the address-level baseline underneath that allowlist. It denies all
   egress to every pod labelled `app.kubernetes.io/name: shadowscan`, and
   allows cluster DNS and HTTPS to public addresses only to pods that also
@@ -94,10 +94,10 @@ agents exist or that they ran.
 
 ## SBOM and provenance
 
-The [release-evidence workflow](publishing.md) builds the wheel from the
-selected commit, writes a CycloneDX SBOM of the locked runtime dependencies
-(`runtime-sbom.cdx.json`) and attests the wheel's provenance and that SBOM.
-Retain those attestations with the wheel digest you deploy.
+The [release-evidence workflow](publishing.md) builds the sdist and the wheel
+from the selected commit, writes a CycloneDX SBOM of the locked runtime
+dependencies (`runtime-sbom.cdx.json`) and attests both files' provenance and
+that SBOM. Retain those attestations with the wheel or sdist digest you deploy.
 
 The workflow does not build or attest a container image. If you build the
 worker image yourself, generate its SBOM from the pushed digest and keep it with

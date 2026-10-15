@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
@@ -29,6 +30,24 @@ _AI_IMAGE_MARKERS = (
     "kagent",
 )
 _AI_RESOURCE_NAME = re.compile(r"(?:llm|model|agent|mcp|inference|ollama|vllm)", re.IGNORECASE)
+# Serving-engine names that start an image's name (its last path component,
+# without tag or digest), for private-registry rebuilds
+# (registry.example/team/vllm-serving) that the vendor image markers miss. An
+# engine name followed by an auxiliary role (ollama-exporter, vllm-operator)
+# is a sidecar or controller, not a model server.
+_AI_IMAGE_NAME = re.compile(
+    r"(?:llama(?:\.cpp|-cpp|cpp)|ollama|sglang|text-generation-inference|vllm)"
+    r"(?:$|[._-](?!(?:exporter|operator|metrics|monitor(?:ing)?)(?:$|[._-])))",
+    re.IGNORECASE,
+)
+# NVIDIA Triton serves any model type (vision, tabular, ensembles), so its image
+# counts only with an LLM backend in its name or tag (24.05-trtllm-python-py3,
+# 24.05-vllm-python-py3).
+_TRITON_IMAGE_NAME = re.compile(r"tritonserver(?:$|[._-])", re.IGNORECASE)
+_TRITON_LLM_BACKEND = re.compile(r"(?:^|[.:_-])(?:trtllm|tensorrt-llm|vllm)(?:$|[.:_-])", re.IGNORECASE)
+# A Hugging Face-style ``--model org/name`` (or ``--model-id``) argument. Only
+# its presence is recorded, never the value.
+_MODEL_ARGUMENT = re.compile(r"(?:^|\s)--model(?:-id)?(?:=|\s+)[\"']?[\w.-]+/[\w.-]+", re.IGNORECASE)
 _ENV_MARKERS = ("API_KEY", "TOKEN", "BASE_URL", "ENDPOINT", "MODEL")
 _RECOGNIZED = {
     "Deployment",
@@ -79,20 +98,66 @@ _WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "
 _MAX_OBJECTS = 10_000
 
 
+def _serving_engine_image(image: str) -> bool:
+    """Whether an image's name starts with a model-serving engine (see _AI_IMAGE_NAME)."""
+    name, _, tag = image.partition("@")[0].rpartition("/")[2].partition(":")
+    if _AI_IMAGE_NAME.match(name):
+        return True
+    return bool(_TRITON_IMAGE_NAME.match(name) and _TRITON_LLM_BACKEND.search(f"{name}:{tag}"))
+
+
 def _name(obj: dict[str, Any]) -> str:
     metadata = obj.get("metadata")
     if not isinstance(metadata, dict):
         return ""
     value = metadata.get("name")
-    return value[:160] if isinstance(value, str) else ""
+    return value if isinstance(value, str) else ""
 
 
-def _namespace(obj: dict[str, Any]) -> str:
+# A namespace is an RFC 1123 DNS label. Without "/" in it, and with the kind
+# from a fixed set, a resource identity reads one way even when names contain "/".
+_NAMESPACE_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+
+
+def _namespace(obj: dict[str, Any]) -> str | None:
+    """Return the full namespace, or None when it cannot be a distinct identity.
+
+    Namespaces are DNS labels of at most 63 characters. Any other value is
+    malformed; shortening, defaulting or accepting it would merge distinct
+    objects into one resource identity.
+    """
     metadata = obj.get("metadata")
     if not isinstance(metadata, dict):
+        return None
+    if "namespace" not in metadata:
         return "default"
-    value = metadata.get("namespace", "default")
-    return value[:160] if isinstance(value, str) else "default"
+    value = metadata["namespace"]
+    if not isinstance(value, str) or not _NAMESPACE_LABEL.fullmatch(value):
+        return None
+    return value
+
+
+def _list_pagination_issue(data: dict[str, Any]) -> str | None:
+    """Detect a chunked Kubernetes List page (``metadata.continue``).
+
+    The API server returns ``continue`` and ``remainingItemCount`` on every
+    page but the last when a client lists with ``limit``. Such a page is a
+    partial collection and must never be reported as complete.
+    """
+    metadata = data.get("metadata")
+    if metadata is None:
+        return None
+    if not isinstance(metadata, dict):
+        return "offline export has invalid pagination metadata"
+    token = metadata.get("continue")
+    remaining = metadata.get("remainingItemCount")
+    if token is not None and not isinstance(token, str):
+        return "offline export has invalid pagination metadata"
+    if remaining is not None and (type(remaining) is not int or remaining < 0):
+        return "offline export has invalid pagination metadata"
+    if token or (remaining is not None and remaining > 0):
+        return "offline export contains an uncollected next page"
+    return None
 
 
 def _kind(obj: dict[str, Any]) -> str:
@@ -100,10 +165,58 @@ def _kind(obj: dict[str, Any]) -> str:
     return value[:100] if isinstance(value, str) else ""
 
 
-def _workload_images(obj: dict[str, Any]) -> list[str]:
-    spec = obj.get("spec")
-    if not isinstance(spec, dict):
-        return []
+# A typed List kind (PodList, DeploymentList), which names the kind of its items.
+_TYPED_LIST_KIND = re.compile(r"([A-Z][A-Za-z0-9]{0,99})List")
+
+
+def _with_list_item_kinds(data: Any) -> Any:
+    """Fill a missing item ``kind`` from a typed List envelope.
+
+    The API server strips each item's kind and apiVersion from a typed list
+    (``GET /api/v1/pods`` returns a ``PodList`` whose items have none); kubectl
+    adds them back. The envelope's kind names the kind of every item, so an
+    item without one takes it. An item's own kind is never replaced, and an
+    untyped ``List`` names no item kind.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        return data
+    envelope_kind = data.get("kind")
+    typed = _TYPED_LIST_KIND.fullmatch(envelope_kind) if isinstance(envelope_kind, str) else None
+    if typed is None:
+        return data
+    item_kind = typed.group(1)
+    return {
+        **data,
+        "items": [
+            {**item, "kind": item_kind} if isinstance(item, dict) and "kind" not in item else item
+            for item in data["items"]
+        ],
+    }
+
+
+# A Kubernetes resource quantity: a decimal number with an optional binary or
+# decimal SI suffix or exponent (1, "2", "500m", "1Ki", "1e3").
+_QUANTITY = re.compile(r"\s*\+?(\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+|[KMGTPE]i|[numkMGTPE])?\s*")
+
+
+def _positive_quantity(value: Any) -> bool | None:
+    """Whether a resource quantity is above zero; None when it is not a quantity.
+
+    An unset (absent or null) quantity is zero. A GPU count of ``0`` or ``"0"``
+    requests no GPU, so only a positive count makes a GPU workload.
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return value > 0 if math.isfinite(value) and value >= 0 else None
+    if isinstance(value, str) and len(value) <= 64 and (match := _QUANTITY.fullmatch(value)):
+        return float(match.group(1)) > 0
+    return None
+
+
+def _workload_images(spec: dict[str, Any]) -> list[str]:
     template = spec.get("template", spec)
     if not isinstance(template, dict):
         return []
@@ -135,6 +248,15 @@ class KubernetesConnector(BaseConnector):
         super().__init__(ctx)
         self.cluster = ctx.get("cluster")
 
+    @staticmethod
+    def _offline_pagination_issue(data: dict[str, Any]) -> str | None:
+        return BaseConnector._offline_pagination_issue(data) or _list_pagination_issue(data)
+
+    @classmethod
+    def _unwrap(cls, data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
+        # The shared loader unwraps a top-level List, so its kind must reach the items first.
+        return super()._unwrap(_with_list_item_kinds(data), on_error)
+
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError(
             "cloud.kubernetes: live API collection is unavailable; provide an offline kubectl export"
@@ -148,25 +270,33 @@ class KubernetesConnector(BaseConnector):
         egress_policies: set[str] = set()
         for record in records:
             if "items" in record:
+                record = _with_list_item_kinds(record)
+                # A List envelope inside a JSON array is not unwrapped by the
+                # shared loader, so check its continuation here. Observed
+                # items are still analyzed.
+                pagination_issue = self._offline_pagination_issue(record)
+                if pagination_issue:
+                    self.ctx.warn(f"{self.name}: {pagination_issue}")
                 items = record["items"]
                 if not isinstance(items, list):
-                    self.ctx.warn("cloud.kubernetes: malformed object list")
+                    self.ctx.warn(f"{self.name}: malformed object list")
                     continue
-                for item in items:
-                    if len(accepted) >= _MAX_OBJECTS:
-                        self.ctx.warn("cloud.kubernetes: object limit reached")
-                        break
-                    if not isinstance(item, dict):
-                        self.ctx.warn("cloud.kubernetes: malformed object")
-                        continue
-                    accepted.append(item)
+            else:
+                items = [record]
+            limit_exceeded = False
+            for item in items:
+                # Reaching the cap is complete only if no further object is
+                # present, including objects in a subsequent List envelope.
                 if len(accepted) >= _MAX_OBJECTS:
+                    self.ctx.warn(f"{self.name}: object limit reached")
+                    limit_exceeded = True
                     break
-                continue
-            if len(accepted) >= _MAX_OBJECTS:
-                self.ctx.warn("cloud.kubernetes: object limit reached")
+                if not isinstance(item, dict):
+                    self.ctx.warn(f"{self.name}: malformed object")
+                    continue
+                accepted.append(item)
+            if limit_exceeded:
                 break
-            accepted.append(record)
         for obj in accepted:
             if _kind(obj) == "NetworkPolicy":
                 spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
@@ -174,9 +304,20 @@ class KubernetesConnector(BaseConnector):
                 if isinstance(spec, dict) and (
                     (isinstance(policy_types, list) and "Egress" in policy_types) or "egress" in spec
                 ):
-                    egress_policies.add(_namespace(obj))
+                    policy_namespace = _namespace(obj)
+                    if policy_namespace is not None:
+                        egress_policies.add(policy_namespace)
         for obj in accepted:
             kind = _kind(obj)
+            if not kind:
+                # Without a kind the object cannot be analyzed or ignored as
+                # another kind: it could be any workload.
+                self.ctx.warn(
+                    f"{self.name}: object has malformed kind"
+                    if "kind" in obj
+                    else f"{self.name}: object without kind outside a typed List"
+                )
+                continue
             if kind not in _RECOGNIZED | (_OPENSHIFT if self.name == "cloud.openshift" else set()):
                 continue
             metadata_value = obj.get("metadata")
@@ -187,12 +328,30 @@ class KubernetesConnector(BaseConnector):
             if not resource_name:
                 self.ctx.warn(f"{self.name}: object without metadata.name")
                 continue
+            if len(resource_name) > 253:
+                self.ctx.warn(f"{self.name}: object has oversized metadata.name")
+                continue
             namespace = _namespace(obj)
+            if namespace is None:
+                self.ctx.warn(f"{self.name}: object has malformed metadata.namespace")
+                continue
             spec_value = obj.get("spec")
             if spec_value is not None and not isinstance(spec_value, dict):
                 self.ctx.warn(f"{self.name}: object has malformed spec")
                 continue
             workload_spec = spec_value if isinstance(spec_value, dict) else {}
+            if kind == "CronJob":
+                job_template = workload_spec.get("jobTemplate")
+                if not isinstance(job_template, dict):
+                    self.ctx.warn(f"{self.name}: workload has malformed job template")
+                    continue
+                job_spec = job_template.get("spec")
+                if not isinstance(job_spec, dict):
+                    self.ctx.warn(f"{self.name}: workload has malformed job spec")
+                    continue
+                # Image detection and posture checks must inspect the same
+                # nested Job template, never a top-level template lookalike.
+                workload_spec = job_spec
             if kind in _WORKLOAD_KINDS and not isinstance(workload_spec.get("template"), dict):
                 self.ctx.warn(f"{self.name}: workload has malformed pod template")
                 continue
@@ -204,9 +363,12 @@ class KubernetesConnector(BaseConnector):
             if kind == "Pod" and not isinstance(spec_value, dict):
                 self.ctx.warn(f"{self.name}: pod has malformed spec")
                 continue
-            images = _workload_images(obj)
+            images = _workload_images(workload_spec)
             selected = [
-                image for image in images if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
+                image
+                for image in images
+                if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
+                or _serving_engine_image(image)
             ]
             tags: list[str] = []
             capabilities: list[str] = []
@@ -233,6 +395,8 @@ class KubernetesConnector(BaseConnector):
             if isinstance(pod_security, dict) and pod_security.get("privileged") is True:
                 tags.append("privileged-pod")
             containers = pod_spec.get("containers", [])
+            model_argument = False
+            gpu_workload = False
             if isinstance(containers, list):
                 if len(containers) > 100:
                     self.ctx.warn(f"{self.name}: container limit reached")
@@ -242,6 +406,15 @@ class KubernetesConnector(BaseConnector):
                         continue
                     if "image" in container and not isinstance(container["image"], str):
                         self.ctx.warn(f"{self.name}: container has malformed image")
+                    for field in ("command", "args"):
+                        arguments = container.get(field)
+                        # kubectl and serializers emit an unset field as null.
+                        if arguments is None:
+                            continue
+                        if not isinstance(arguments, list) or not all(isinstance(a, str) for a in arguments):
+                            self.ctx.warn(f"{self.name}: workload has malformed container {field}")
+                            continue
+                        model_argument = model_argument or bool(_MODEL_ARGUMENT.search(" ".join(arguments)))
                     security = container.get("securityContext")
                     if isinstance(security, dict) and security.get("privileged") is True:
                         tags.append("privileged-pod")
@@ -260,8 +433,18 @@ class KubernetesConnector(BaseConnector):
                             tags.append("provider-config-present")
                     resources = container.get("resources")
                     requests = resources.get("requests") if isinstance(resources, dict) else {}
-                    if isinstance(requests, dict) and requests.get("nvidia.com/gpu"):
+                    limits = resources.get("limits") if isinstance(resources, dict) else {}
+                    # A GPU can be set in limits alone (Kubernetes then copies it to requests).
+                    gpus = [
+                        _positive_quantity(r.get("nvidia.com/gpu"))
+                        for r in (requests, limits)
+                        if isinstance(r, dict)
+                    ]
+                    if None in gpus:
+                        self.ctx.warn(f"{self.name}: container has malformed GPU quantity")
+                    if True in gpus:
                         tags.append("gpu-workload")
+                        gpu_workload = True
             volumes = pod_spec.get("volumes", [])
             if not isinstance(volumes, list):
                 self.ctx.warn(f"{self.name}: workload has malformed volumes")
@@ -270,6 +453,12 @@ class KubernetesConnector(BaseConnector):
                 self.ctx.warn(f"{self.name}: volume limit reached")
             if any(isinstance(volume, dict) and "hostPath" in volume for volume in volumes[:100]):
                 tags.append("privileged-pod")
+            # A model argument corroborates an AI image or AI resource kind. It
+            # never makes a workload AI by itself: GPU training and computer
+            # vision jobs take ``--model org/name`` too.
+            serving = model_argument and bool(selected or kind in _AI_RESOURCE_KINDS)
+            if serving:
+                tags.append("self-hosted-model-serving")
             if kind in {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"} and selected:
                 if namespace not in egress_policies:
                     tags.append("no-egress-policy")
@@ -344,6 +533,27 @@ class KubernetesConnector(BaseConnector):
             )
             image_matches = [match for image in selected for match in self.index.match_image(image)]
             apply_matches(finding, image_matches, weight_scale=0.75)
+            # Additive corroboration of an AI image or AI resource kind only:
+            # neither signal changes the kind or scores a non-AI workload.
+            if model_argument:
+                finding.add_evidence(
+                    Evidence(
+                        signal="kubernetes:model-argument",
+                        description=(
+                            "Container arguments name a Hugging Face-style model identifier"
+                            + ("" if serving else " (not AI evidence without an AI image or resource kind)")
+                        ),
+                        weight=0.7 if serving else 0.0,
+                    )
+                )
+            if serving and gpu_workload:
+                finding.add_evidence(
+                    Evidence(
+                        signal="kubernetes:gpu-resource",
+                        description="Model-serving container requests or limits an NVIDIA GPU",
+                        weight=0.45,
+                    )
+                )
             self.ctx.examined()
             yield finalize(finding, self.index)
 

@@ -51,12 +51,13 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python }}
-      - name: Install the hash-locked runtime, cloud and development toolchain
+      - name: Install the hash-locked build, runtime, cloud and development toolchain
         run: |
           # The runtime lock lists every published wheel hash, so the cloud SDKs
           # install from it here too and the suite exercises their code paths on
-          # this platform as well.
-          python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements.lock
+          # this platform as well. The build lock matches the Linux job: release
+          # evidence records the build frontend version.
+          python -m pip install --require-hashes --only-binary=:all: -r requirements-ci.lock -r requirements-build.lock -r requirements.lock
           python -m pip install --no-deps --no-build-isolation -e .
           python -m pip check
       - name: Check native file confinement and plugin worker lifecycle
@@ -74,7 +75,9 @@ jobs:
       - run: pytest -q
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # The coverage-traced 3.11 leg runs the full suite serially and takes about
+    # 40 minutes; the untraced legs finish in about 20.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -178,16 +181,17 @@ jobs:
           python -m tools.evaluation.evaluate --corpus tools/evaluation/independent_corpus.json \
             --annotations tools/evaluation/independent_annotations.json \
             --output "$RUNNER_TEMP/shadowscan-independent-evaluation.json"
-      - name: Build distributable wheel
+      - name: Build the sdist and the wheel from it
         run: |
-          # Re-assert the hash-locked backend so the wheel generator matches
-          # pyproject.toml [build-system] after the combined locked install.
+          # Re-assert the hash-locked backend and frontend so the distributions
+          # match pyproject.toml [build-system] after the combined locked install.
           python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
-          # Stamp the archive entries with the commit time, as release.yml does,
-          # so a rebuild of the same commit reproduces the same bytes.
+          # Stamp the wheel entries with the commit time, as release.yml does,
+          # so a rebuild of the same commit reproduces the same wheel bytes.
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
           export SOURCE_DATE_EPOCH
-          python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+          python -m build --no-isolation --outdir dist .
+          python -m tools.release.distributions --directory dist
       - name: Validate installed wheel outside the checkout
         run: |
           python -m venv "$RUNNER_TEMP/shadowscan-wheel"
@@ -201,14 +205,14 @@ jobs:
           "$RUNNER_TEMP/shadowscan-wheel/bin/shadowscan" --help
       - name: Self-scan (demo, offline)
         run: shadowscan scan -c examples/shadowscan.offline.yaml --format sarif -o shadowscan.sarif
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: shadowscan-evaluation-${{ matrix.python }}
           path: ${{ runner.temp }}/shadowscan-*-evaluation.json
           if-no-files-found: ignore
           retention-days: 14
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && hashFiles('shadowscan.sarif') != ''
         with:
           name: shadowscan-sarif-${{ matrix.python }}
@@ -420,7 +424,7 @@ jobs:
             --scan-exit "$scan_exit" --os-type wolfi
       - name: Retain container evidence including blocked scans
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shadowscan-container-${{ github.sha }}
           path: ${{ runner.temp }}/container-evidence/*

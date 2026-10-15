@@ -11,6 +11,7 @@ from shadowscan.models import Finding, ScanResult
 from shadowscan.reporters._publication import (
     has_inventory,
     publication_stats,
+    related_candidate_ids,
     related_finding_ids,
     unassessed_count,
     without_connector_prefix,
@@ -256,6 +257,9 @@ def _finding_section(f: Finding) -> list[str]:
     related = related_finding_ids(f.metadata)
     if related:
         out.append(f"- **Related findings:** {', '.join(_code(r) for r in related)}  ")
+    candidates = related_candidate_ids(f.metadata)
+    if candidates:
+        out.append(f"- **Possible related (review candidates):** {', '.join(_code(r) for r in candidates)}  ")
     factors = [x for x in f.risk.factors if x.weight]
     if factors:
         out.append("")

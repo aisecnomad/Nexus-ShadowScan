@@ -13,7 +13,7 @@ from shadowscan.connectors.lowcode import automation, salesforce, servicenow
 from shadowscan.connectors.lowcode.automation import MakeConnector, N8nConnector
 from shadowscan.connectors.lowcode.salesforce import SalesforceConnector
 from shadowscan.connectors.lowcode.servicenow import ServiceNowConnector
-from shadowscan.models import ScanStats
+from shadowscan.models import Kind, ScanStats
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpError
 
@@ -595,3 +595,740 @@ def test_automation_page_limits_must_be_positive_integers(index, max_pages):
     assert connector.run() == []
     assert connector.ctx.stats.skipped and connector.ctx.stats.incomplete
     assert "max_pages must be a positive integer" in (connector.ctx.stats.skip_reason or "")
+
+
+def _n8n_run(index, *nodes, connections=None):
+    workflow = {"id": "wf-1", "name": "Ticket routing", "nodes": list(nodes)}
+    if connections is not None:
+        workflow["connections"] = connections
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    findings = connector.run()
+    return findings, connector.ctx.stats
+
+
+def _http_node(url, method="POST", name="Call", **parameters):
+    return {
+        "name": name,
+        "type": "n8n-nodes-base.httpRequest",
+        "parameters": {"method": method, "url": url, **parameters},
+    }
+
+
+def _http_v2_node(url, method="POST", **parameters):
+    """An HTTP Request v1-v2 node, whose method parameter is ``requestMethod``."""
+    return {
+        "name": "Call",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 2,
+        "parameters": {"requestMethod": method, "url": url, **parameters},
+    }
+
+
+_WEBHOOK = {"name": "Hook", "type": "n8n-nodes-base.webhook", "parameters": {}}
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://llm.internal.example/v1/chat/completions",
+        "https://llm.internal.example/v1/completions",
+        "http://ollama.internal.example:11434/api/generate",
+        "https://api.openai.com/v1/chat/completions",
+        "https://api.anthropic.com/v1/messages",
+    ],
+)
+def test_n8n_http_request_to_a_model_generation_route_is_an_ai_step(index, url):
+    findings, stats = _n8n_run(index, _WEBHOOK, _http_node(url))
+    assert len(findings) == 1 and not stats.incomplete
+    assert findings[0].kind == Kind.WORKFLOW
+    assert any("model API" in step for step in findings[0].metadata["ai_steps"])
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        # SMS and messaging APIs share generation-like paths.
+        _http_node("https://api.nexmo.com/v1/messages"),
+        _http_node("https://rest.messagebird.com/messages"),
+        _http_node("https://sms.example/messages"),
+        _http_node("https://forms.example/responses"),
+        _http_node("https://docgen.example.com/generate"),
+        _http_node("https://helpdesk.example/chat"),
+        # A body with model or messages keys is not a model API.
+        _http_node("https://inventory.example/cars", jsonBody='{"model": "Model S"}'),
+        _http_node("https://sms.example/batch", jsonBody='{"messages": [{"to": "+10000000000"}]}'),
+        # Not a POST, or not an HTTP(S) URL.
+        _http_node("https://llm.internal.example/v1/chat/completions", method="GET"),
+        _http_node("ftp://llm.internal.example/v1/chat/completions"),
+        _http_node("https://[invalid/v1/chat/completions"),
+        {"name": "Call", "type": "n8n-nodes-base.httpRequest", "parameters": {"method": "POST"}},
+    ],
+)
+def test_n8n_http_request_to_other_apis_is_not_an_ai_step(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert findings == [] and not stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        # Regression (F8): HTTP Request v1-v2 name the method requestMethod.
+        _http_v2_node("https://llm.internal.example/v1/chat/completions"),
+        _http_v2_node("http://ollama.internal.example:11434/api/generate"),
+        # Expression-mode URLs start with "=" and may template the query or port.
+        _http_node("=https://llm.internal.example/v1/chat/completions?user={{ $json.u }}"),
+        _http_node("= https://llm.internal.example:{{ $env.PORT }}/v1/completions"),
+        _http_v2_node("=https://llm.internal.example/v1/chat/completions"),
+    ],
+)
+def test_n8n_http_request_versions_and_expression_urls_are_ai_steps(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert len(findings) == 1 and not stats.incomplete
+    assert any("model API" in step for step in findings[0].metadata["ai_steps"])
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        _http_v2_node("https://llm.internal.example/v1/chat/completions", method="GET"),
+        # The n8n default method is GET: no method parameter is not a POST.
+        {
+            "name": "Call",
+            "type": "n8n-nodes-base.httpRequest",
+            "parameters": {"url": "https://x.example/v1/completions"},
+        },
+        # A host chosen at run time cannot be classified.
+        _http_node("=https://{{ $json.host }}/v1/chat/completions"),
+        _http_node("=https://llm-{{ $env.REGION }}.internal.example/v1/chat/completions"),
+        _http_node("={{ $json.base }}/v1/chat/completions"),
+        # Expression-mode URLs keep the messaging-route rules.
+        _http_node("=https://sms.example/messages?to={{ $json.phone }}"),
+    ],
+)
+def test_n8n_http_request_unresolvable_or_non_post_versions_are_not_ai_steps(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert findings == [] and not stats.incomplete
+
+
+_ANTHROPIC_HEADER = {"parameters": [{"name": "anthropic-version", "value": "2023-06-01"}]}
+_WHATSAPP_BODY = '={"messaging_product": "whatsapp", "to": "{{ $json.phone }}", "type": "text"}'
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        _http_node(
+            "https://llm.internal.example/v1/messages", sendHeaders=True, headerParameters=_ANTHROPIC_HEADER
+        ),
+        _http_v2_node(
+            "https://llm.internal.example/v1/messages",
+            headerParametersUi={"parameter": [{"name": "Anthropic-Version", "value": "2023-06-01"}]},
+        ),
+        _http_node(
+            "https://gateway.internal.example/v1/responses",
+            sendBody=True,
+            specifyBody="json",
+            jsonBody='={"model": "gpt-4.1", "input": "{{ $json.text }}"}',
+        ),
+        _http_node(
+            "https://ollama.internal.example/api/chat",
+            sendBody=True,
+            bodyParameters={
+                "parameters": [
+                    {"name": "model", "value": "llama3"},
+                    {"name": "messages", "value": "={{ $json.m }}"},
+                ]
+            },
+        ),
+        # Templates that are not plain JSON: an expression outside a string, JSON.stringify.
+        _http_v2_node(
+            "https://llm.internal.example/v1/messages",
+            jsonParameters=True,
+            bodyParametersJson='{"model": "chat-7b", "messages": {{ JSON.stringify($json.m) }} }',
+        ),
+        _http_node(
+            "https://ollama.internal.example/api/chat",
+            jsonBody="={{ JSON.stringify({ model: 'llama3', prompt: $json.text }) }}",
+        ),
+        # Regression (F18): an unversioned /chat/completions with a model request.
+        _http_node(
+            "https://llm.internal.example/chat/completions",
+            sendBody=True,
+            jsonBody='{"model": "chat-7b", "messages": [{"role": "user", "content": "hi"}]}',
+        ),
+        _http_node(
+            "https://gateway.internal.example/chat/completions/",
+            bodyParameters={
+                "parameters": [{"name": "model", "value": "m"}, {"name": "messages", "value": "x"}]
+            },
+        ),
+    ],
+)
+def test_n8n_ambiguous_generation_route_counts_with_model_request_corroboration(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert len(findings) == 1 and not stats.incomplete
+    assert any("model API" in step for step in findings[0].metadata["ai_steps"])
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        # WhatsApp Business API (a hosted provider and an on-premises client) and a help-desk chat.
+        _http_node("https://waba.360dialog.io/v1/messages", sendBody=True, jsonBody=_WHATSAPP_BODY),
+        _http_node("https://whatsapp.corp.example/v1/messages", sendBody=True, jsonBody=_WHATSAPP_BODY),
+        _http_node("https://helpdesk.example/api/chat"),
+        _http_node("https://forms.internal.example/v1/responses", jsonBody='{"form": "nps", "input": 9}'),
+        # A model key alone, or a model request the node does not send.
+        _http_node("https://catalog.example/api/chat", jsonBody='{"model": "Model S"}'),
+        _http_node("https://llm.internal.example/chat/completions"),
+        _http_node("https://courses.example/chat/completions", jsonBody='{"model": "Model S"}'),
+        # A bare /completions still never counts, even with a model request.
+        _http_node("https://llm.internal.example/completions", jsonBody='{"model": "m", "prompt": "x"}'),
+        _http_node(
+            "https://llm.internal.example/v1/messages",
+            sendBody=False,
+            jsonBody='{"model": "chat-7b", "messages": []}',
+            sendHeaders=False,
+            headerParameters=_ANTHROPIC_HEADER,
+        ),
+    ],
+)
+def test_n8n_ambiguous_generation_route_without_corroboration_is_not_an_ai_step(index, node):
+    findings, stats = _n8n_run(index, _WEBHOOK, node)
+    assert findings == [] and not stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "node_type",
+    [
+        "n8n-nodes-base.mistralAi",
+        "n8n-nodes-mcp.mcpClient",
+        "@n8n/n8n-nodes-langchain.mcpClientTool",
+        # Custom and community MCP nodes: the token is followed by a capital or a separator.
+        "CUSTOM.mcpClient",
+        "n8n-nodes-base.mcpClient",
+        "CUSTOM.MCPServer",
+        "acme.mcp_bridge",
+        # Regression (F7): camelCase MCP nodes after another word.
+        "CUSTOM.githubMcpClient",
+        "n8n-nodes-acme.acmeMcpTool",
+        "CUSTOM.zapierMcp",
+        "CUSTOM.acmeMCPClient",
+    ],
+)
+def test_n8n_named_ai_and_mcp_nodes_are_still_detected(index, node_type):
+    findings, _ = _n8n_run(index, {"name": "Step", "type": node_type, "parameters": {}})
+    assert len(findings) == 1
+
+
+@pytest.mark.parametrize(
+    "node_type",
+    [
+        "n8n-nodes-base.mcp9808Sensor",
+        "n8n-nodes-community.smcpDecoder",
+        "CUSTOM.Mcp9808",
+        "CUSTOM.acmeMcp9808",
+        "CUSTOM.SMCPDecoder",
+        "CUSTOM.trackMcpherson",
+    ],
+)
+def test_n8n_mcp_is_matched_as_a_token(index, node_type):
+    findings, _ = _n8n_run(index, _WEBHOOK, {"name": "Step", "type": node_type, "parameters": {}})
+    assert findings == []
+
+
+def test_n8n_chat_agent_with_tools_stays_an_agent_and_missing_connections_is_complete(index):
+    agent = {"name": "Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}
+    tool = {"name": "Lookup", "type": "@n8n/n8n-nodes-langchain.toolHttpRequest", "parameters": {}}
+    findings, stats = _n8n_run(index, agent, tool)
+    assert [f.kind for f in findings] == [Kind.AGENT] and not stats.incomplete
+
+
+def _servicenow_flows(tmp_path, run_connector, *flows):
+    source = tmp_path / "servicenow.json"
+    source.write_text(
+        json.dumps(
+            [{"_table": "sys_hub_flow", "sys_id": f"flow-{n}", **flow} for n, flow in enumerate(flows)]
+        )
+    )
+    findings, ctx = run_connector("lowcode.servicenow", input=str(source))
+    assert not ctx.stats.incomplete
+    return {finding.resource: finding for finding in findings}
+
+
+def test_servicenow_copilot_license_flow_is_not_ai_from_its_name_alone(tmp_path, run_connector):
+    findings = _servicenow_flows(
+        tmp_path,
+        run_connector,
+        {"name": "Copilot seat reclamation", "description": "Reclaim unused licences monthly"},
+        {"name": "Gemini account sync", "description": "Sync settlement accounts"},
+    )
+    assert findings == {}
+
+
+def test_servicenow_provider_named_and_marked_flows_are_kept(tmp_path, run_connector):
+    findings = _servicenow_flows(
+        tmp_path,
+        run_connector,
+        {"name": "Claude ticket summary", "description": "Summarise incident notes"},
+        {"name": "OpenAI incident triage", "description": "Route incidents"},
+        {"name": "Now Assist summarise ticket", "description": "Summarise the ticket"},
+    )
+    assert set(findings) == {f"servicenow:sys_hub_flow:flow-{n}" for n in range(3)}
+    assert "identity-app.anthropic-claude" in findings["servicenow:sys_hub_flow:flow-0"].frameworks
+    assert "platform.servicenow-now-assist" in findings["servicenow:sys_hub_flow:flow-2"].frameworks
+
+
+# Declared graph relationships are supporting metadata; they do not prove
+# runtime execution, private-data access, or a prompt-injection vulnerability.
+def _graph_cases():
+    from pathlib import Path
+
+    source = Path(__file__).parents[1] / "fixtures" / "lowcode" / "graph_cases.json"
+    return json.loads(source.read_text())
+
+
+@pytest.mark.parametrize("case", _graph_cases(), ids=lambda case: case["case"])
+def test_n8n_graph_relationship_fixture(index, case):
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    workflow = case["workflow"]
+    result = analyze_workflow_graph(workflow, provider="n8n")
+    assert result is not None and not result.issues
+    assert result.metadata["potential_input_ai_egress_path"] is case["expected_path"]
+    assert result.metadata["scoring"] is False
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    findings = connector.run()
+    assert not connector.ctx.stats.incomplete
+    # Inventory keeps the connector's existing detection as its floor: a
+    # disabled agent, an unregistered langchain type and AI text in a Set node
+    # are still reported as before, but they receive no graph role, so no path
+    # is claimed through them. Graph metadata never adds evidence or weight.
+    (finding,) = findings
+    assert finding.metadata["workflow_graph"] == result.metadata
+    assert all("graph" not in evidence.signal for evidence in finding.evidence)
+    if case["case"] in {"non-ai", "spoofed-type", "disabled"}:
+        assert result.metadata["role_counts"]["ai"] == 0
+    else:
+        assert finding.confidence == pytest.approx(0.99)
+
+
+@pytest.mark.parametrize(
+    "connections",
+    [
+        None,
+        [],
+        {"Missing": {}},
+        {"Input": []},
+        {"Input": {"main": "bad"}},
+        {"Input": {"main": [[None]]}},
+        {"Input": {"main": [[{"node": "Missing"}]]}},
+        {"Input": {"main": [[{"node": []}]]}},
+    ],
+)
+def test_n8n_malformed_graph_marks_incomplete_and_keeps_the_workflow(index, connections):
+    """Regression (#220 graph review F2): a graph defect limits the graph, not the inventory."""
+    from copy import deepcopy
+
+    bad = deepcopy(_graph_cases()[0]["workflow"])
+    bad["connections"] = connections
+    good = deepcopy(_graph_cases()[0]["workflow"])
+    good["id"] = "good"
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([bad, good]))
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == ["n8n:workflow:graph-demo", "n8n:workflow:good"]
+    assert [finding.kind for finding in findings] == [Kind.AGENT, Kind.AGENT]
+    graph = findings[0].metadata["workflow_graph"]
+    assert graph["status"] == "incomplete" and graph["potential_input_ai_egress_path"] is None
+    assert findings[1].metadata["workflow_graph"]["status"] == "analyzed"
+    assert connector.ctx.stats.incomplete and connector.ctx.stats.warnings
+
+
+def _agent_with(connections, *extra_nodes):
+    agent = {"name": "A", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}
+    return {"id": "wf-1", "name": "Agent", "nodes": [agent, *extra_nodes], "connections": connections}
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        # A connection left behind by a deleted or renamed node.
+        _agent_with({"Deleted": {"main": [[{"node": "A", "type": "main", "index": 0}]]}}),
+        # Two nodes with one name.
+        _agent_with({}, {"name": "A", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}),
+    ],
+    ids=["dangling-source", "duplicate-names"],
+)
+def test_n8n_graph_defects_keep_the_agent_inventory(index, workflow):
+    """Regression (#220 graph review F2): the base detected these agents; graph metadata must not hide them."""
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    assert finding.kind == Kind.AGENT
+    assert finding.metadata["workflow_graph"]["status"] == "incomplete"
+    assert connector.ctx.stats.incomplete
+
+
+def test_n8n_null_output_slot_is_an_unconnected_branch(index):
+    """n8n exports an unconnected If/Switch output as null; that is valid, not a defect."""
+    branch = {"name": "B", "type": "n8n-nodes-base.if", "parameters": {}}
+    workflow = _agent_with({"B": {"main": [None, [{"node": "A", "type": "main", "index": 0}]]}}, branch)
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    assert finding.kind == Kind.AGENT
+    assert finding.metadata["workflow_graph"]["status"] == "analyzed"
+    assert finding.metadata["workflow_graph"]["edge_count"] == 1
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {
+            "name": "H",
+            "type": "n8n-nodes-base.httpRequest",
+            "parameters": {"url": "https://api.openai.com/v1/chat/completions"},
+        },
+        {
+            "name": "M",
+            "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+            "parameters": {"model": "openai/gpt-4o"},
+        },
+        {"name": "E", "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi", "parameters": {}},
+        {"name": "C", "type": "n8n-nodes-mcp.mcpClient", "parameters": {}},
+    ],
+    ids=["http-to-openai", "openrouter-model", "embeddings", "community-mcp"],
+)
+def test_n8n_inventory_is_not_limited_to_the_graph_type_registry(index, node):
+    """Regression (#220 graph review F1): AI workflows outside the exact registry stay detected."""
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([{"id": "w1", "name": "wf", "nodes": [node]}]))
+    (finding,) = connector.run()
+    assert finding.kind == Kind.WORKFLOW
+    assert finding.metadata["workflow_graph"]["status"] == "unavailable"
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("limit,value", [("MAX_GRAPH_NODES", 2), ("MAX_GRAPH_EDGES", 1)])
+def test_n8n_graph_resource_limits_are_incomplete(index, monkeypatch, limit, value):
+    from shadowscan.connectors.lowcode import graph
+
+    monkeypatch.setattr(graph, limit, value)
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([_graph_cases()[0]["workflow"]]))
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["status"] == "incomplete"
+    assert connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("bad_id", [None, "", "x" * 513, "Input", []])
+def test_n8n_graph_rejects_missing_duplicate_or_oversized_identifiers(bad_id):
+    from copy import deepcopy
+
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    workflow = deepcopy(_graph_cases()[0]["workflow"])
+    workflow["nodes"][1]["name"] = bad_id
+    result = analyze_workflow_graph(workflow, provider="n8n")
+    assert result.issues
+    assert result.metadata["potential_input_ai_egress_path"] is None
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://api.openai.com/v1/responses", True),
+        ("https://API.OPENAI.COM./v1/responses", True),
+        ("https://api.openai.com.attacker.invalid/v1", False),
+        ("https://api.openai.com@attacker.invalid/v1", False),
+        ("https://example.invalid/api.openai.com", False),
+        ("={{ $env.LLM_ENDPOINT }}", False),
+        ("https://api.openai.com:99999/v1", False),
+        ("file:///api.openai.com", False),
+        ("https://[broken", False),
+        (None, False),
+    ],
+)
+def test_n8n_literal_api_sink_uses_host_boundaries(url, expected):
+    from shadowscan.connectors.lowcode.graph import n8n_node_roles
+
+    node = {"type": "n8n-nodes-base.httpRequest", "parameters": {"url": url}}
+    assert ("ai" in n8n_node_roles(node)) is expected
+
+
+def test_graph_missing_adjacency_is_unknown_not_disconnected(index):
+    workflow = _graph_cases()[0]["workflow"]
+    workflow.pop("connections")
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["status"] == "unavailable"
+    assert finding.metadata["workflow_graph"]["potential_input_ai_egress_path"] is None
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("provider", ["flowise", "dify"])
+@pytest.mark.parametrize("edges", [{}, [None], [{"source": "start", "target": "missing"}]])
+def test_other_workflow_graphs_reject_malformed_edges(provider, edges):
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    graph = {"nodes": [{"id": "start", "data": {"type": "start", "name": "startAgentflow"}}], "edges": edges}
+    data = {"kind": "app", "workflow": {"graph": graph}} if provider == "dify" else graph
+    result = analyze_workflow_graph(data, provider=provider)
+    assert result.issues
+    assert result.metadata["potential_input_ai_egress_path"] is None
+
+
+def test_graph_long_path_output_is_bounded_and_loops_do_not_expand_work():
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    nodes = [{"name": str(i), "type": "n8n-nodes-base.set"} for i in range(60)]
+    nodes[0]["type"] = "n8n-nodes-base.webhook"
+    nodes[1]["type"] = "@n8n/n8n-nodes-langchain.agent"
+    nodes[-1].update({"type": "n8n-nodes-base.httpRequest", "parameters": {"url": "https://example.invalid"}})
+    connections = {str(i): {"main": [[{"node": str((i + 1) % 60)}]]} for i in range(60)}
+    result = analyze_workflow_graph({"nodes": nodes, "connections": connections})
+    assert result.metadata["potential_input_ai_egress_path"] is True
+    assert result.metadata["path_length"] == 60
+    assert len(result.metadata["path_node_indices"]) == 32
+    assert result.metadata["path_truncated"] is True
+
+
+@pytest.mark.parametrize("value", [None, [], {}, True, 1])
+def test_workflow_roles_handle_malformed_provider_values(value):
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph, n8n_node_roles
+
+    assert not n8n_node_roles({"type": value})
+    assert "egress" not in n8n_node_roles(
+        {"type": "n8n-nodes-base.slack", "parameters": {"operation": value}}
+    )
+    workflow = {
+        "nodes": [{"id": "a", "data": {"name": "startAgentflow", "inputs": {"startInputType": value}}}],
+        "edges": [],
+    }
+    result = analyze_workflow_graph(workflow, provider="flowise")
+    assert result.metadata["role_counts"]["untrusted-input"] == 0
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("type", "ai_tool"), ("type", []), ("index", True), ("index", -1), ("index", "0"), ("index", [])],
+)
+def test_n8n_connection_fields_cannot_turn_attachment_into_execution_order(index, field, value):
+    from copy import deepcopy
+
+    from shadowscan.connectors.lowcode.graph import analyze_workflow_graph
+
+    workflow = deepcopy(_graph_cases()[0]["workflow"])
+    workflow["connections"]["Input"]["main"][0][0][field] = value
+    result = analyze_workflow_graph(workflow)
+    assert result.issues
+    assert result.metadata["potential_input_ai_egress_path"] is None
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["potential_input_ai_egress_path"] is None
+    assert connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("node_type,ai", [("lmChatXAiGrok", True), ("lmChatXAi", False)])
+def test_n8n_xai_model_registry_uses_actual_registered_name(index, node_type, ai):
+    from shadowscan.connectors.lowcode.graph import n8n_node_roles
+
+    node = {"name": "model", "type": "@n8n/n8n-nodes-langchain." + node_type}
+    assert ("ai" in n8n_node_roles(node)) is ai
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([{"id": "xai", "nodes": [node], "connections": {}}]))
+    # The exact registry decides graph roles only; inventory still reports any
+    # langchain node, as the connector did before the graph core.
+    (finding,) = connector.run()
+    assert finding.metadata["workflow_graph"]["role_counts"]["ai"] == int(ai)
+    assert not connector.ctx.stats.incomplete
+
+
+def test_n8n_graph_ordinals_and_counts_use_the_inventoried_node_list(index):
+    """Regression (#220 graph review F8): graph and inventory describe the same nodes."""
+    workflow = {
+        "id": "wf-1",
+        "name": "Mixed",
+        "nodes": [
+            {"name": "Input", "type": "n8n-nodes-base.webhook", "parameters": {}},
+            {"name": "Broken", "type": "n8n-nodes-base.set", "parameters": "not a mapping"},
+            {"name": "AI", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}},
+            {
+                "name": "HTTP",
+                "type": "n8n-nodes-base.httpRequest",
+                "parameters": {"url": "https://example.invalid"},
+            },
+        ],
+        "connections": {
+            "Input": {"main": [[{"node": "AI", "type": "main", "index": 0}]]},
+            "AI": {"main": [[{"node": "HTTP", "type": "main", "index": 0}]]},
+        },
+    }
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    graph = finding.metadata["workflow_graph"]
+    assert graph["node_count"] == finding.metadata["node_count"] == 3
+    # Ordinals index the inventoried nodes in export order: Input, AI, HTTP.
+    assert graph["path_node_indices"] == [0, 1, 2]
+    assert connector.ctx.stats.incomplete  # the invalid node itself is still a coverage gap
+
+
+def _ai_workflow(number):
+    return {
+        "id": f"wf{number}",
+        "name": f"Agent {number}",
+        "nodes": [
+            {"name": "Webhook", "type": "n8n-nodes-base.webhook", "parameters": {}},
+            {"name": "AI Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}},
+        ],
+        "connections": {"Webhook": {"main": [[{"node": "AI Agent", "type": "main", "index": 0}]]}},
+    }
+
+
+def test_n8n_workflow_with_dify_like_fields_keeps_every_workflow(index):
+    """Regression (#220 verifier): an n8n record shaped like a Dify app crashed the whole export."""
+    odd = {
+        "id": "wf0",
+        "name": "Odd",
+        "kind": "app",
+        "workflow": {},
+        "nodes": [{"name": "AI Agent", "type": "@n8n/n8n-nodes-langchain.agent", "parameters": {}}],
+        "connections": {},
+    }
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([odd, *(_ai_workflow(n) for n in range(1, 5))]))
+    findings = connector.run()
+    assert not connector.ctx.stats.errors and not connector.ctx.stats.incomplete
+    assert {f.metadata["workflow_graph"]["provider"] for f in findings} == {"n8n"}
+    assert sorted(f.resource for f in findings) == [f"n8n:workflow:wf{n}" for n in range(5)]
+
+
+@pytest.mark.parametrize("failure", ["none", "raises"])
+def test_n8n_graph_failure_is_contained_to_its_workflow(index, monkeypatch, failure):
+    original = automation.analyze_workflow_graph
+
+    def flaky(data, *, provider=None):
+        if data.get("id") == "wf1":
+            if failure == "none":
+                return None
+            raise RuntimeError("unexpected graph defect")
+        return original(data, provider=provider)
+
+    monkeypatch.setattr(automation, "analyze_workflow_graph", flaky)
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([_ai_workflow(n) for n in range(1, 5)]))
+    findings = connector.run()
+    assert len(findings) == 4 and not connector.ctx.stats.errors
+    assert connector.ctx.stats.incomplete
+    assert any("graph coverage incomplete" in warning for warning in connector.ctx.stats.warnings)
+    statuses = {f.resource: f.metadata["workflow_graph"]["status"] for f in findings}
+    assert statuses == {
+        "n8n:workflow:wf1": "incomplete",
+        **{f"n8n:workflow:wf{n}": "analyzed" for n in range(2, 5)},
+    }
+
+
+# Sink and trigger registry entries use the node type and operation names n8n
+# declares (packages/nodes-base/nodes/<Node>/*.node.ts and their resource
+# descriptions); #217's spellings that n8n never registers get no role.
+@pytest.mark.parametrize(
+    "node_type,operation,egress",
+    [
+        ("n8n-nodes-base.emailSend", None, True),
+        ("n8n-nodes-base.emailSend", "send", True),
+        ("n8n-nodes-base.emailSend", "sendAndWait", True),
+        ("n8n-nodes-base.sendEmail", None, False),
+        ("n8n-nodes-base.postgres", "insert", True),
+        ("n8n-nodes-base.postgres", "update", True),
+        ("n8n-nodes-base.postgres", "upsert", True),
+        ("n8n-nodes-base.postgres", "deleteTable", True),
+        ("n8n-nodes-base.postgres", "executeQuery", True),
+        ("n8n-nodes-base.postgres", "select", False),
+        ("n8n-nodes-base.postgres", "delete", False),
+        ("n8n-nodes-base.postgres", "Insert", False),
+        ("n8n-nodes-base.postgres", None, False),
+        ("n8n-nodes-base.mySql", "insert", True),
+        ("n8n-nodes-base.mySql", "executeQuery", True),
+        ("n8n-nodes-base.mySql", "select", False),
+        ("n8n-nodes-base.mysql", "insert", False),
+        ("n8n-nodes-base.mongoDb", "insert", True),
+        ("n8n-nodes-base.mongoDb", "update", True),
+        ("n8n-nodes-base.mongoDb", "delete", True),
+        ("n8n-nodes-base.mongoDb", "findOneAndUpdate", True),
+        ("n8n-nodes-base.mongoDb", "findOneAndReplace", True),
+        ("n8n-nodes-base.mongoDb", "find", False),
+        ("n8n-nodes-base.mongoDb", "aggregate", False),
+        ("n8n-nodes-base.mongoDb", "deleteTable", False),
+        ("n8n-nodes-base.slack", "post", True),
+        ("n8n-nodes-base.slack", "sendAndWait", True),
+        ("n8n-nodes-base.slack", "update", False),
+        ("n8n-nodes-base.slack", "search", False),
+        ("n8n-nodes-base.slack", "postMessage", False),
+        ("n8n-nodes-base.slack", "sendMessage", False),
+        ("n8n-nodes-base.slack", "send", False),
+        ("n8n-nodes-base.gmail", "send", True),
+        ("n8n-nodes-base.gmail", "reply", True),
+        ("n8n-nodes-base.gmail", "getAll", False),
+        ("n8n-nodes-base.gmail", "post", False),
+    ],
+)
+def test_n8n_sink_registry_uses_declared_node_and_operation_names(node_type, operation, egress):
+    from shadowscan.connectors.lowcode.graph import n8n_node_roles
+
+    node = {"name": "sink", "type": node_type}
+    if operation is not None:
+        node["parameters"] = {"operation": operation}
+    roles = n8n_node_roles(node)
+    assert ("egress" in roles) is egress
+    assert "ai" not in roles and "untrusted-input" not in roles
+    assert not n8n_node_roles({**node, "disabled": True})
+
+
+@pytest.mark.parametrize(
+    "node_type,untrusted",
+    [("n8n-nodes-base.emailReadImap", True), ("n8n-nodes-base.imapTrigger", False)],
+)
+def test_n8n_imap_trigger_registry_uses_actual_registered_name(node_type, untrusted):
+    from shadowscan.connectors.lowcode.graph import n8n_node_roles
+
+    assert ("untrusted-input" in n8n_node_roles({"name": "mail", "type": node_type})) is untrusted
+
+
+@pytest.mark.parametrize(
+    "operation,expected", [("insert", True), ("select", False), ({"op": "insert"}, False)]
+)
+def test_n8n_database_sink_role_depends_on_the_declared_operation(index, operation, expected):
+    from copy import deepcopy
+
+    workflow = deepcopy(next(case for case in _graph_cases() if case["case"] == "database-write")["workflow"])
+    workflow["nodes"][2]["parameters"]["operation"] = operation
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([workflow]))
+    (finding,) = connector.run()
+    graph = finding.metadata["workflow_graph"]
+    assert graph["status"] == "analyzed" and not connector.ctx.stats.incomplete
+    assert graph["role_counts"]["egress"] == int(expected)
+    assert graph["potential_input_ai_egress_path"] is expected
+    # The sink changes graph metadata only: the inventory finding, its kind
+    # and its evidence come from the agent node either way.
+    assert finding.kind == Kind.AGENT
+    assert all("graph" not in evidence.signal for evidence in finding.evidence)
+
+
+def test_n8n_openai_assistant_node_is_an_agent(index):
+    # openAiAssistant is n8n's registered OpenAI Assistant agent node.
+    wf = {
+        "id": "a",
+        "nodes": [{"name": "A", "type": "@n8n/n8n-nodes-langchain.openAiAssistant", "parameters": {}}],
+    }
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([wf]))
+    (finding,) = connector.run()
+    assert finding.kind == Kind.AGENT

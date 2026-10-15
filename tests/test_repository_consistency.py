@@ -47,7 +47,7 @@ GITHUB = ROOT / ".github"
 # GitHub runs both YAML spellings; test_repository_policy.py checks the glob.
 WORKFLOWS = sorted(path for path in (GITHUB / "workflows").glob("*.y*ml") if path.is_file())
 FORMS = sorted(path for path in (GITHUB / "ISSUE_TEMPLATE").glob("*.yml") if path.name != "config.yml")
-ADVISORY_URL = "https://github.com/aisecnomad/Project-Nexus/security/advisories/new"
+ADVISORY_URL = "https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new"
 
 # Files GitHub's community profile and the OpenSSF Scorecard look for, plus the
 # project's own governance set. Each must exist and carry content.
@@ -110,7 +110,7 @@ _FROZEN_MARKDOWN = ROOT / "benchmarks" / "shadowbench" / "estate" / "artifacts"
 
 def _markdown_files() -> list[Path]:
     files = sorted(ROOT.glob("*.md"))
-    for folder in (".github", "benchmarks", "docs", "examples", "tools"):
+    for folder in (".github", "archive", "benchmarks", "docs", "examples", "tools"):
         files.extend(sorted((ROOT / folder).rglob("*.md")))
     return [path for path in files if not path.is_relative_to(_FROZEN_MARKDOWN)]
 
@@ -204,9 +204,29 @@ def _mkdocs_slug(heading: str) -> str:
     return re.sub(r"[-\s]+", "-", re.sub(r"[^\w\s-]", "", heading).strip().lower())
 
 
+_SNIPPET = re.compile(r'^--8<-- "([^"]+)"$', re.MULTILINE)
+
+
+@functools.cache
+def _site_pages() -> frozenset[Path]:
+    """Top-level documents the docs site includes as snippets; docs/ itself is rendered too."""
+    return frozenset(
+        (ROOT / name).resolve()
+        for page in (ROOT / "docs").rglob("*.md")
+        for name in _SNIPPET.findall(_read(page))
+    )
+
+
 @functools.cache
 def _anchors(path: Path) -> frozenset[str]:
-    """Heading anchors GitHub or MkDocs would generate for a Markdown file."""
+    """Heading anchors that every renderer of a Markdown file generates.
+
+    GitHub renders every file. docs/ pages and the snippets the site includes are
+    also rendered by MkDocs, so a linked anchor there must be one both generate:
+    GitHub keeps "--" where MkDocs collapses it, they number repeated headings
+    differently, and `{#id}` works on the site only (GitHub shows it as text).
+    """
+    on_site = path.resolve().is_relative_to((ROOT / "docs").resolve()) or path.resolve() in _site_pages()
     anchors: set[str] = set()
     seen: dict[str, int] = {}
     for _, line in _prose_lines(_read(path)):
@@ -216,15 +236,16 @@ def _anchors(path: Path) -> frozenset[str]:
         heading = match.group(1)
         explicit = _ATTR_ID.search(heading)
         if explicit is not None:
-            anchors.add(explicit.group(1).lower())
             heading = heading[: explicit.start()]
         heading = _MARKDOWN_LINK_TEXT.sub(r"\1", heading)
         heading = heading.replace("`", "").replace("*", "").strip()
         slug = _github_slug(heading)
         count = seen.get(slug, 0)
         seen[slug] = count + 1
-        anchors.add(slug if count == 0 else f"{slug}-{count}")
-        anchors.add(_mkdocs_slug(heading))
+        if not on_site:
+            anchors.add(slug if count == 0 else f"{slug}-{count}")
+        elif count == 0 and _mkdocs_slug(heading) == slug:
+            anchors.add(slug)
     return frozenset(anchors)
 
 
@@ -259,8 +280,99 @@ def test_markdown_checks_cover_benchmarks_but_not_the_frozen_estate() -> None:
 
 
 _REPOSITORY_LINK = re.compile(
-    r"https://github\.com/aisecnomad/Project-Nexus/(blob|tree)/main/([^#?]+)(?:#(.+))?"
+    r"https://github\.com/aisecnomad/Nexus-ShadowScan/(blob|tree)/main/([^#?]+)(?:#(.+))?"
 )
+
+
+# The repository was renamed from aisecnomad/Project-Nexus to aisecnomad/Nexus-ShadowScan so
+# that its URL, the NexusShadowScan distribution and the brand match. These paths record
+# history as it happened and keep the former name: retained reviews, frozen benchmark
+# corpora, results and the harnesses that reproduce them, and GitHub's recorded ruleset
+# responses. Released changelog entries are history too; the Unreleased section is not.
+_FORMER_NAME_RECORDS = (
+    "archive/",
+    "benchmarks/",
+    "tools/benchmark/",
+    "tools/benchmark_realworld/",
+    "tools/discovery_benchmark/",
+    "tools/shadowbench/",
+    ".github/rulesets/observed/",
+)
+_FORMER_NAME = re.compile(r"aisecnomad(?:/|%2F|\.github\.io/)Project-Nexus", re.IGNORECASE)
+# Elsewhere the former name may appear only in these forms, which say that it is the
+# former name: 0.1.2 was attested under it, the rename is described, and one dated
+# observation keeps the request path it recorded. Each form is removed from the line
+# before the check, so a stale link beside one is still caught.
+_FORMER_SLUG = re.escape("aisecnomad/" + "Project-Nexus")  # split so this file passes its own check
+_FORMER_NAME_FORMS = re.compile(
+    "|".join(
+        form.replace("SLUG", _FORMER_SLUG)
+        for form in (
+            r"gh attestation verify \S*-0\.1\.2-\S* --repo SLUG$",
+            r"verify (?:it|0\.1\.2) with `--repo SLUG`",
+            r"attested as `SLUG` before the rename",
+            r"renamed from `?SLUG`? to",
+            r"formerly `?SLUG`?(?![\w.%/-])",
+            r"`GET /repos/SLUG/[^`]*` \(the former name\)",
+            r'^FORMER_REPOSITORY = "SLUG"$',
+        )
+    )
+)
+
+
+def _names_former_repository(line: str) -> bool:
+    return bool(_FORMER_NAME.search(_FORMER_NAME_FORMS.sub("", line.strip())))
+
+
+def test_live_files_name_the_current_repository() -> None:
+    """Regression: links, badges, clone commands and policy checks follow the repository rename."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True, timeout=60
+    ).stdout.decode("utf-8")
+    stale = []
+    for name in filter(None, tracked.split("\0")):
+        if name.startswith(_FORMER_NAME_RECORDS) or not (ROOT / name).is_file():
+            continue
+        try:
+            text = (ROOT / name).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if name == "CHANGELOG.md":
+            text = text[: text.index("\n## 0.")]
+        stale.extend(
+            f"{name}:{number}"
+            for number, line in enumerate(text.splitlines(), start=1)
+            if _names_former_repository(line)
+        )
+    assert not stale, "use aisecnomad/Nexus-ShadowScan:\n  " + "\n  ".join(stale)
+
+
+def test_former_name_check_flags_unexplained_references() -> None:
+    # Assembled from parts so that this test's own lines do not trip the check above.
+    slug, pages = "aisecnomad/" + "Project-Nexus", "aisecnomad.github.io/" + "Project-Nexus"
+    assert _FORMER_NAME.search(f"https://github.com/{slug.lower()}/blob/main/README.md")
+    assert _FORMER_NAME.search(f"https://{pages}/")
+    assert not _FORMER_NAME.search("https://github.com/aisecnomad/Nexus-ShadowScan")
+    for explained in (
+        f"gh attestation verify wheels/nexusshadowscan-0.1.2-py3-none-any.whl --repo {slug}",
+        f"The 0.1.2 wheel was attested before the rename; verify it with `--repo {slug}`.",
+        f"The repository was formerly `{slug}`; GitHub redirects the old links.",
+        f"- The repository is renamed from `{slug}` to",
+        f"`GET /repos/{slug}/rules/branches/main` (the former name) returned no active",
+    ):
+        assert not _names_former_repository(explained), explained
+    for stale in (
+        f"git clone https://github.com/{slug}.git",
+        f'python -m pip install "git+https://github.com/{slug}.git@v0.1.2"',
+        f"[![CI](https://github.com/{slug}/actions/workflows/ci.yml/badge.svg)] <!-- before renaming -->",
+        f"Report at https://github.com/{slug}/security/advisories/new (formerly email)",
+        "https://img.shields.io/badge/x?link=github.com%2F" + slug.replace("/", "%2F"),
+        f"formerly `{slug}`; see https://github.com/{slug}/blob/main/SECURITY.md",
+        f"gh pr create --repo {slug}",
+        f"`git clone https://github.com/{slug}.git` (the former name)",
+        f"It was formerly {slug}.git; clone it from there",
+    ):
+        assert _names_former_repository(stale), stale
 
 
 @pytest.mark.parametrize("markdown", _markdown_files(), ids=_relative)
@@ -833,6 +945,29 @@ def test_ci_toolchain_is_exactly_pinned_and_hash_locked_everywhere() -> None:
     assert "-r requirements-ci.lock" in _read(GITHUB / "workflows" / "release.yml")
 
 
+def test_every_suite_environment_installs_the_build_frontend_lock() -> None:
+    # Release evidence records the version of the build frontend, which only
+    # requirements-build.lock provides. A test job or documented environment
+    # without it fails tests/test_release_evidence.py.
+    jobs = _load_yaml(GITHUB / "workflows" / "ci.yml")["jobs"]
+    expected = ["requirements-build.lock", "requirements-ci.lock", "requirements.lock"]
+    for name in ("test", "test-macos"):
+        (install,) = [
+            step["run"]
+            for step in jobs[name]["steps"]
+            if "--require-hashes" in step.get("run", "") and "-r requirements-ci.lock" in step["run"]
+        ]
+        assert sorted(re.findall(r"-r (requirements[\w-]*\.lock)", install)) == expected, name
+    makefile = _read(ROOT / "Makefile")
+    for target in ("install", "install-dev"):
+        (recipe,) = re.findall(rf"^{target}:.*\n((?:\t.*\n)+)", makefile, re.MULTILINE)
+        assert "-r requirements-build.lock" in recipe, target
+    gates = _read(ROOT / "CONTRIBUTING.md").split("The same gates as individual commands:", 1)[1]
+    # The documented gates start from make install, whose recipe is checked above.
+    assert re.search(r"^make install$", gates.split("```", 2)[1], re.MULTILINE)
+    assert "`requirements-build.lock`" in _read(ROOT / "docs" / "testing.md").split("## ", 2)[1]
+
+
 _USES_LINE = re.compile(r"^\s*-?\s*uses:\s*(?P<ref>[^#\s]+)\s*(?P<comment>#.*)?$")
 _PINNED = re.compile(r"^[\w.-]+/[\w.-]+(?:/[\w./-]+)?@(?P<sha>[0-9a-f]{40})$")
 
@@ -1307,6 +1442,148 @@ def test_readme_demo_output_matches_the_offline_demo(index) -> None:
     assert shown == expected, "README demo rows are stale; rerun the command it shows"
 
 
+def _abridged(excerpt: Any, actual: Any) -> bool:
+    """Whether ``excerpt`` abridges ``actual``: lists keep a subset, text ending in "…" a prefix."""
+    if isinstance(excerpt, dict):
+        return isinstance(actual, dict) and all(
+            key in actual and _abridged(value, actual[key]) for key, value in excerpt.items()
+        )
+    if isinstance(excerpt, list):
+        return isinstance(actual, list) and all(
+            any(_abridged(item, candidate) for candidate in actual) for item in excerpt
+        )
+    if isinstance(excerpt, str) and excerpt.endswith("…"):
+        return isinstance(actual, str) and actual.startswith(excerpt[:-1])
+    return type(excerpt) is type(actual) and excerpt == actual
+
+
+def test_abridged_excerpt_check_rejects_values_the_output_lacks() -> None:
+    actual = {"a": [1, 2, 3], "text": "one two three", "n": 1}
+    assert _abridged({"a": [3, 1], "text": "one two…"}, actual)
+    assert not _abridged({"a": [4]}, actual)
+    assert not _abridged({"text": "two…"}, actual)
+    assert not _abridged({"n": True}, actual)
+    assert not _abridged({"missing": 1}, actual)
+
+
+def test_readme_sarif_excerpt_is_the_first_result_of_the_offline_demo(index) -> None:
+    """The README's abridged SARIF result is current output of the demo the CLI example shows."""
+    from shadowscan.reporters.sarif import render_sarif
+
+    readme = _read(ROOT / "README.md")
+    start = readme.index("The same scan as SARIF")
+    fence = readme.index("```json\n", start) + len("```json\n")
+    excerpt = json.loads(readme[fence : readme.index("```", fence)])
+    result = Engine(ScanConfig.from_yaml(ROOT / "examples" / "shadowscan.offline.yaml"), index).run()
+    first = json.loads(render_sarif(result))["runs"][0]["results"][0]
+    assert _abridged(excerpt, first), "README SARIF excerpt is stale; rerun the demo with --format sarif"
+
+
+def test_readme_detection_matrix_is_current() -> None:
+    """The README detection matrix is generated from the signature packs and connector classes."""
+    from tools.readme_matrix import README, render, replace_block
+
+    text = README.read_text(encoding="utf-8")
+    assert replace_block(text, render()) == text, "README detection matrix is stale; run `make readme-matrix`"
+
+
+_BENCHMARKS = ROOT / "benchmarks"
+
+
+def _percentages(level: dict[str, Any]) -> str:
+    return " / ".join(f"{level[key]:.1%}" for key in ("precision", "recall", "f1"))
+
+
+def test_readme_benchmark_table_quotes_the_committed_results() -> None:
+    """Every number in the README benchmark table comes from the committed metrics files."""
+    readme = _read(ROOT / "README.md")
+    section = readme[readme.index("## Benchmarks") : readme.index("## The Why")]
+    estate_run = "shadowbench/estate/results/2026-10-11"
+    estate_metrics = json.loads((_BENCHMARKS / estate_run / "metrics.json").read_text(encoding="utf-8"))
+    corpus, tool = estate_metrics["corpus"], estate_metrics["tools"]["shadowscan"]
+    entity = tool["entity_level"]
+    negatives = corpus["control"] + corpus["nearmiss"]
+    assert entity["fp"] + entity["tn"] == negatives
+    estate = [
+        f"blob/main/benchmarks/{estate_run}/REPORT.md",
+        f"(2026-10-11, {tool['version']})",
+        f"{corpus['entities']} authored vendor-format entities",
+        f"{corpus['positive']} positive, {corpus['control']} control, {corpus['nearmiss']} near-miss",
+        f"Entity precision / recall / F1 {_percentages(entity)}",
+        f"{entity['positives_detected']} of {entity['positives']} positives found",
+        f"{entity['fp']} of {negatives} controls and near-misses flagged",
+    ]
+    code_run = "shadow-ai-discovery/results/2026-10-09"
+    code_metrics = json.loads((_BENCHMARKS / code_run / "metrics.json").read_text(encoding="utf-8"))
+    corpus, tool = code_metrics["corpus"], code_metrics["tools"]["shadowscan"]
+    repos = tool["repo_level"]
+    # An incomplete run left content unread, so its clean control or near-miss
+    # is not a clean result and the README has to say how many there were.
+    labels = {
+        entry["id"]: entry["class"]
+        for entry in json.loads(
+            (_BENCHMARKS / "shadow-ai-discovery" / "corpus.json").read_text(encoding="utf-8")
+        )["repos"]
+    }
+    incomplete_negatives = sum(
+        labels[repo] in {"control", "nearmiss"} for repo in tool["incomplete_runs"]["repos"]
+    )
+    assert incomplete_negatives
+    code = [
+        f"blob/main/benchmarks/{code_run}/REPORT.md",
+        f"(2026-10-09, {tool['version']})",
+        f"{corpus['repos']} public repositories pinned by SHA",
+        f"{corpus['positive']} positive, {corpus['control']} control, {corpus['nearmiss']} near-miss",
+        f"{corpus['expected_facts']} expected facts",
+        f"Fact precision / recall / F1 {_percentages(tool['value_level']['in_scope'])}",
+        f"{repos['positives_detected']} of {repos['positives']} positive repositories flagged",
+        f"{repos['controls_flagged'] + repos['nearmiss_flagged']} of "
+        f"{repos['controls'] + repos['nearmiss']} controls and near-misses flagged "
+        f"({incomplete_negatives} of those {repos['controls'] + repos['nearmiss']} runs incomplete)",
+        f"{tool['incomplete_runs']['count']} of {corpus['repos']} runs were incomplete (exit 3)",
+        "an incomplete clean run is not a clean result",
+    ]
+    missing = [claim for claim in estate + code if claim not in section]
+    assert not missing, "README benchmark table no longer matches the committed metrics: " + repr(missing)
+    assert "not** independent review" in section and "not** measured production precision" in section
+
+
+def test_readme_estate_row_says_when_the_labels_were_frozen() -> None:
+    """The estate's labels were frozen after every runnable tool ran once, not before any tool ran.
+
+    The README's benchmark table said the labels were "frozen before any tool ran", but the
+    estate protocol froze them after a label-completeness audit in which every runnable tool
+    ran once (the run report already says so).
+    """
+    readme = _read(ROOT / "README.md")
+    section = " ".join(readme[readme.index("## Benchmarks") : readme.index("## The Why")].split())
+    assert "frozen before any tool ran" not in section
+    assert "label-completeness pass in which every runnable tool ran once" in section
+
+
+def test_estate_benchmark_documents_say_later_shadowscan_runs_are_in_sample() -> None:
+    """ShadowScan was tuned with the 2026-10-11 estate run's errors in view.
+
+    Rule changes made after that run fix seven of its twelve ShadowScan errors on a replay, so a
+    later ShadowScan run on the estate is in-sample. Every document that presents that run, and
+    the changelog entry for those rules, has to say so, and the benchmark-derived note-taker
+    recognition is marked as such.
+    """
+    readme = _read(ROOT / "README.md")
+    documents = {
+        "README.md": readme[readme.index("## Benchmarks") : readme.index("## The Why")],
+        "benchmarks/shadowbench/README.md": _read(ROOT / "benchmarks/shadowbench/README.md"),
+        "benchmarks/shadowbench/estate/README.md": _read(ROOT / "benchmarks/shadowbench/estate/README.md"),
+    }
+    unstated = [name for name, text in documents.items() if "in-sample" not in " ".join(text.split())]
+    assert not unstated, f"no in-sample disclosure for later ShadowScan estate runs in {unstated}"
+    changelog = _read(ROOT / "CHANGELOG.md")
+    start = changelog.index("\n## Unreleased\n")
+    unreleased = " ".join(changelog[start : changelog.index("\n## ", start + 1)].split())
+    assert "in-sample" in unreleased
+    assert re.search(r"Wudpecker and Tactiq[^.]*\(benchmark-derived", unreleased)
+
+
 _PIP_COMMANDS = frozenset(
     {
         "cache", "check", "completion", "config", "debug", "download", "freeze", "hash", "help",
@@ -1505,3 +1782,82 @@ def test_docs_name_the_registry_operation_the_aws_connector_calls() -> None:
         if re.search(r"(?<!Batch)GetDiscoverableRegistryRecord", path.read_text(encoding="utf-8"))
     ]
     assert not stale, stale
+
+
+def test_make_install_rejects_the_interpreters_pyproject_rejects() -> None:
+    """`make install` fails before the locked installs on a Python that `pip install -e .` would refuse."""
+    makefile = _read(ROOT / "Makefile")
+    bounds = re.search(r"\(3, (\d+)\) <= sys\.version_info\[:2\] < \(3, (\d+)\)", makefile)
+    assert bounds is not None, "make ensure-python no longer checks the interpreter"
+    requires = _pyproject()["project"]["requires-python"]
+    assert requires == f">=3.{bounds.group(1)},<3.{bounds.group(2)}", (
+        f"ensure-python allows 3.{bounds.group(1)} to below 3.{bounds.group(2)}; pyproject says {requires}"
+    )
+    assert re.search(r"^install install-dev: ensure-python$", makefile, re.M)
+
+
+def _pre_commit_hook(hook_id: str) -> dict[str, Any]:
+    for repo in _load_yaml(ROOT / ".pre-commit-config.yaml")["repos"]:
+        for hook in repo["hooks"]:
+            if hook["id"] == hook_id:
+                return dict(hook)
+    raise AssertionError(f"no {hook_id} hook in .pre-commit-config.yaml")
+
+
+def _strip_trailing_whitespace(line: bytes, markdown: bool) -> bytes:
+    """What pre-commit's trailing-whitespace hook (`--markdown-linebreak-ext=md`) writes for one line."""
+    body = line.rstrip(b"\r\n")
+    eol = line[len(body) :]
+    if markdown and not body.isspace() and body.endswith(b"  "):
+        return body[:-2].rstrip() + b"  " + eol
+    return body.rstrip() + eol
+
+
+def test_tracked_text_files_already_pass_the_whitespace_hooks() -> None:
+    """`pre-commit run --all-files` on a clean checkout must not rewrite anything; CI runs no hooks."""
+    end_of_file = re.compile(_pre_commit_hook("end-of-file-fixer").get("exclude", "(?!)"))
+    whitespace = re.compile(_pre_commit_hook("trailing-whitespace").get("exclude", "(?!)"))
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, check=True).stdout
+    problems = []
+    for name in filter(None, listed.decode().split("\0")):
+        path = ROOT / name
+        if not path.is_file() or path.is_symlink():
+            continue
+        data = path.read_bytes()
+        if b"\0" in data[:8192]:  # binary, which the hooks skip
+            continue
+        if (
+            data
+            and not end_of_file.search(name)
+            and (not data.endswith(b"\n") or not data.rstrip(b"\r\n") or data.endswith((b"\n\n", b"\n\r\n")))
+        ):
+            problems.append(f"{name}: must end with exactly one newline")
+        if not whitespace.search(name):
+            markdown = name.endswith(".md")
+            if any(
+                _strip_trailing_whitespace(line, markdown) != line for line in data.splitlines(keepends=True)
+            ):
+                problems.append(f"{name}: trailing whitespace")
+    assert not problems, "fix these or add them to the hook's exclude:\n  " + "\n  ".join(problems)
+
+
+def test_mypy_hook_excludes_what_pyproject_excludes() -> None:
+    """pre-commit passes file names explicitly, which mypy's own `exclude` setting does not filter."""
+    hook = _pre_commit_hook("mypy")
+    scope = re.compile(hook["files"])
+    exclude = re.compile(hook.get("exclude", "(?!)"))
+    missed = [
+        path
+        for path in _pyproject()["tool"]["mypy"]["exclude"]
+        if scope.search(path) and not exclude.search(path)
+    ]
+    assert not missed, f"add {missed} to the mypy hook's exclude in .pre-commit-config.yaml"
+
+
+def test_workflow_readme_lists_every_workflow() -> None:
+    readme = _read(GITHUB / "workflows" / "README.md")
+    linked = set(re.findall(r"\]\(([\w.-]+\.ya?ml)\)", readme))
+    assert linked == {path.name for path in WORKFLOWS}, (
+        f"update .github/workflows/README.md: missing {sorted({p.name for p in WORKFLOWS} - linked)}, "
+        f"stale {sorted(linked - {p.name for p in WORKFLOWS})}"
+    )

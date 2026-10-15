@@ -204,7 +204,7 @@ Credential redaction resolves supported Go SDK import aliases against the full
 source before excerpts are cut. Excerpts use the same LF-based line positions as
 source matches, including when Go raw literals contain carriage returns.
 This is bounded lexical redaction, not arbitrary dynamic call resolution;
-reports remain confidential. See the [security policy](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+reports remain confidential. See the [security policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md).
 
 Rust ordinary strings and byte strings may span physical lines; their contents
 remain literal evidence, while code after the closing quote is still scanned.
@@ -571,7 +571,7 @@ A file the scanner reads that is a Git LFS pointer (a checkout or offline clone
 made without git-lfs) is not the content it stands for: it is reported as
 `Git LFS pointer file, not the content it stands for; coverage incomplete` (an
 error under `strict_coverage`) and not analyzed. A pointer in place of a file
-the scanner never reads, such as an image or a model, is not a gap.
+the scanner never reads, such as an image or a model while optional model inspection is off, is not a gap.
 Import-bound analysis is skipped for a Python module none of whose imports can
 resolve to a signature: no import, and no attribute of an imported module, forms
 an import statement that a signature's import pattern could match. Such a module
@@ -632,7 +632,11 @@ definitions write them, is not valid YAML but is read by coding agents, which
 quote it and parse again. So does the scanner, through the same strict loader:
 the definition is read and the warning `agent definition front matter quoted to
 parse (a plain value contained ': ')` records it. Repeated fields, explicit tags and
-structure that quoting cannot repair stay errors.
+structure that quoting cannot repair stay errors. The front matter, like an
+agent card, is sanitized as a whole before its fields are read; keys that
+hold a scheme credential and read alike once it is withheld (`SSWS a--auth`,
+`SSWS b`) no longer turn it into one withheld string, so `tools`, `model` and
+`permissionMode` are still read beside them.
 
 A CrewAI `agents.yaml` or `langgraph.json` inside a reported project is folded
 into that project's finding and listed under `metadata.manifests`. MCP server
@@ -914,6 +918,23 @@ rules and files. The checks are bounded regexes; nothing is executed. They do
 not judge whether an instruction is malicious: a hidden comment may be a
 template note, and a documented installer may pipe to a shell. Read the file.
 
+A `SKILL.md` also gets a bounded static instruction audit
+(`metadata.static_instruction_audit`, one entry per file): direct English
+instruction-override and sensitive-value disclosure candidates, by rule and
+line, with zero-weight evidence and no excerpts. The front matter `name` and
+`description`, which a skill loader places in the agent's context every
+session, are audited with the same rules and reported at their key's line;
+other front matter fields are not. Quoted examples, fenced and indented code,
+block quotes and explicit prohibitions are excluded. An audited line over
+4,096 characters is audited sentence by sentence (the rules match only at a
+line start or after sentence punctuation), so an instruction in its middle is
+reported. A single sentence over 4,096 characters is audited in its first and
+last 4,096 characters; its middle is not, so the audit is marked
+`partial: true` (status `partial` when nothing was found) and the scan stays
+complete. Text over 64 KiB, malformed
+or oversized YAML front matter and an unclosed fence make the audit and the
+scan incomplete.
+
 ### Coding-agent settings: posture and approval
 
 Claude Code (`.claude/settings.json`, `.claude/settings.local.json`), Codex
@@ -1030,3 +1051,120 @@ it does not replace a filesystem/container disk quota.
 
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.
+
+## Locked dependency inventory
+
+The filesystem scanner now parses `uv.lock` v1, Poetry lock versions 1.1/2.0/2.1,
+`pnpm-lock.yaml` versions 6/9 and `Cargo.lock` versions 3/4. These are separate
+`lockfile-inventory` findings when a locked dependency matches an AI signature.
+They carry `dependency-inventory-only`, a single possible-confidence observation,
+and no agent capabilities. Repeated packages do not corroborate source execution.
+The metadata records total packages, edge count, matching packages, source type
+and limitations; it omits source URLs, credentials and package-manager scripts.
+
+`direct` and `transitive` describe reachability only where the lockfile supplies
+explicit roots and unambiguous package/version references (uv root packages or
+pnpm importers). Cargo and Poetry without a root manifest remain `unknown`.
+Aliases resolve to their recorded package name; workspace links, peer-qualified
+variants, remote sources, ambiguous versions, optional conditions and environment markers are not resolved.
+A pnpm package from a git, tarball, URL or local source (`name@https://...`,
+`name@git+ssh://...`, `name@file:...`, a v6 `github.com/<owner>/<repo>/<commit>`
+key) has no registry version. It is inventoried by name with `version: null`
+and a `source_type` of `git`, `tarball`, `url` or `local`, so it still matches
+AI signatures; the source URL is not kept, its edges have unknown
+reachability, and a limitation counts these packages. The name comes from the
+key (`name@<source>`) or, for a v6 key that does not carry it, the entry's
+`name` field; an entry with neither is malformed and reported as
+`unsupported pnpm package key`. A `uv.lock`
+package without a `version` (a workspace member or a dynamic version) is
+inventoried with `version: null`.
+Nothing installs dependencies or launches a package manager. Presence in a lock
+file does not establish installation, execution, agency or authorization.
+
+Parsing is limited to the smaller of `max_file_size` and 1,000,000 UTF-8 bytes,
+4,096 packages (pnpm counts `packages` and `snapshots` entries together),
+16,384 dependency edges and 50,000 structural nodes/depth 64. A supported
+lockfile that is not inventoried (malformed content, including a TOML integer
+past Python's digit limit, reported as `lockfile is not valid TOML`; an
+unsupported format version such as `Cargo.lock` v1/v2 or `pnpm-lock.yaml` 5.x,
+an exceeded limit, a file over `max_file_size` or a symbolic link, which is
+never followed) is reported against that lockfile with a fixed reason, for
+example `Cargo.lock: lockfile inventory skipped (unsupported Cargo lockfile
+version)`. Diagnostics never quote lockfile content. How that gap counts
+depends on what else declares the dependencies:
+
+- Beside its own manifest in the same directory (`pyproject.toml` for
+  `uv.lock` and `poetry.lock`, `package.json` for `pnpm-lock.yaml`,
+  `Cargo.toml` for `Cargo.lock`), the gap is a warning and the scan stays
+  complete. The manifest's declared dependencies are still parsed, failing
+  closed as before; only the locked versions and transitive packages are
+  missing. Earlier revisions never read these lockfiles, so this keeps their
+  coverage claim.
+- Without that manifest (or with it excluded from the walk), the lockfile is
+  the directory's only dependency record. The gap is an error and the scan is
+  incomplete, as it is for an unparseable manifest.
+
+The supported lockfiles therefore no longer pass through `oversize_skip_globs`;
+other lockfile formats retain the documented exclusions.
+
+## Optional model and packaged-binary inventory
+
+Set `inspect_model_artifacts: true` on `code.filesystem` to inspect `.gguf`,
+`.safetensors`, `.onnx`, `.exe`, `.bin`, `.pkg` and extensionless files within the
+selected include/exclude scope. This is off by default. `code.github` and
+`code.gitlab` forward the option for checkout scans. Model payloads may exceed
+`max_file_size`: the reader seeks across payloads and reads only bounded metadata.
+`model_metadata_bytes` controls the cumulative per-file read budget (default
+65,536, allowed 128–1,048,576); each root also has a 32 MiB aggregate metadata-read
+budget, the ordinary entry/deadline budgets and an 8,192-field limit.
+
+- GGUF v2/v3: literal magic, header counts, bounded metadata and tensor descriptors;
+  tensor payloads and quantization semantics are not validated. Array values
+  (a llama.cpp vocabulary holds 32,000–256,000 tokens, plus scores and merges)
+  are skipped without being decoded or counted as fields: fixed-size items by
+  seeking, strings by walking their length prefixes in 64 KiB chunks. Skipping
+  has its own bounds: 8,388,608 array elements and 64 MiB read per file, and
+  256 MiB read per root; the bytes read are reported as `array_bytes_skimmed`.
+- safetensors: bounded length-prefixed strict JSON, shape/dtype sizes and contiguous
+  payload offsets; metadata values and tensor names are not included in output.
+- ONNX: a bounded protobuf-envelope check of supported IR versions 1–13, graph and
+  opset presence. ONNX has no fixed magic. This is candidate format evidence,
+  not semantic model validation. Tensor/external-data paths are never followed.
+- PyInstaller: bounded tail-cookie and TOC checks for modern Python 3 archives
+  in `.exe`, `.bin` and `.pkg` files, and in extensionless files that start
+  with an ELF, PE (`MZ`) or Mach-O header. Any other extensionless file costs
+  only its four-byte prefix and is analysed as text as usual. Legacy cookies
+  and cookies beyond the bounded tail search are unsupported. Entries are
+  never extracted, decompressed, imported or executed.
+
+Findings use `local-model` or `infra` for packaging, carry
+`artifact-inventory-only`, and explicitly leave execution and agency unobserved.
+An empty GGUF header is not a usable model; PyInstaller alone is not AI evidence.
+Unreadable or malformed selected formats, unsupported headers, truncated reads,
+changed files and per-file budget exhaustion mark coverage incomplete. When a
+root's 32 MiB aggregate budget is spent, the remaining selected files are not
+inspected as artifacts: an extensionless file still gets the normal text
+analysis, and one warning per root counts the uninspected files and marks
+coverage incomplete. All reads use
+confined regular-file handles; symlinks, FIFOs and device files are never opened
+as model payloads. A link with an artifact suffix to a scanned artifact with the
+same suffix in the same project and test classification (`latest.gguf` to
+`model-q4.gguf`) loses nothing, since the target is inventoried at its real
+path, and leaves coverage complete; a link to an artifact outside the root, in
+an excluded directory, under a test path or with another suffix is an unscanned
+symbolic link (coverage incomplete). Headers are an inventory aid, not a guarantee that an artifact
+is safe to load. No deserializer, inference engine or scanned executable runs.
+
+Known limitation: a Hugging Face cache (`snapshots/<revision>/model.safetensors`
+linked to an extensionless file under `blobs/`) is not inventoried through its
+links, because inventory symlinks are never followed. Each link is reported as
+an unscanned symbolic link (coverage incomplete). A GGUF blob is still
+inventoried at its `blobs/` path by its magic; a safetensors blob has no magic
+and is read as an ordinary extensionless file, so its binary content is
+reported as unreadable. Scan a materialised copy instead, such as a download
+to a local directory that writes regular files.
+
+Format references: [GGUF](https://github.com/ggml-org/ggml/blob/master/docs/gguf.md),
+[safetensors](https://github.com/safetensors/safetensors/blob/main/README.md),
+[ONNX protobuf](https://github.com/onnx/onnx/blob/main/onnx/onnx.proto), and
+[PyInstaller archive reader](https://github.com/pyinstaller/pyinstaller/blob/develop/PyInstaller/archive/readers.py).

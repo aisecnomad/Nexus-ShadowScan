@@ -1,5 +1,6 @@
 # Pre-commit hooks for ShadowScan development.
-# Install the hash-locked toolchain and hooks: make install-hooks
+# Install the hash-locked toolchain and hooks: make install-hooks (or
+# pre-commit install after make install)
 # Run manually: pre-commit run --all-files
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -74,7 +75,7 @@ repos:
           - rich==15.0.0
           - urllib3==2.8.0
           - types-PyYAML==6.0.12.20260906
-          - types-requests==2.33.0.20260906
+          - types-requests==2.33.0.20261006
         args: []
 
   - repo: local

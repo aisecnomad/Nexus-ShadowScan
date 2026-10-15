@@ -34,7 +34,20 @@ htmlcov/
 !.env.example
 *.pem
 *.key
+# Other local credential stores an operator may keep next to a checkout. No
+# fixture uses these names; force-add one deliberately if a test ever needs it.
+*.p12
+*.pfx
+.envrc
+.direnv/
+.netrc
+.pypirc
+*.tfstate
+*.tfstate.*
 .DS_Store
+Thumbs.db
+*.swp
+*~
 .idea/
 .vscode/
 # ShadowBench estate artifacts are developer home directories and repositories

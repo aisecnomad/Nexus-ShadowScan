@@ -5,8 +5,11 @@ import json
 import time
 
 import pytest
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.connectors import ConnectorContext
+from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.gateway import logs as logs_module
 from shadowscan.connectors.gateway.logs import (
     GatewayLogConnector,
@@ -642,3 +645,237 @@ def test_gateway_json_fallback_reports_a_corrupt_document_once(index, tmp_path):
     ctx = _ctx(index, input=str(export))
     GatewayLogConnector(ctx).run()
     assert 1 <= len(ctx.stats.errors) <= logs_module._MAX_INVALID_LINE_ERRORS + 1
+
+
+_ACCESS_LINE = '10.4.4.{n} - - [10/Oct/2025:04:00:0{n} +0000] "{method} {path} HTTP/1.1" 200 512 "-" "{agent}" host={host}'
+_CHROME = "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
+
+
+def _access_log(tmp_path, *requests, name="access.log"):
+    path = tmp_path / name
+    lines = [
+        _ACCESS_LINE.format(n=n, method=method, path=route, agent=agent, host=host)
+        for n, (method, route, agent, host) in enumerate(requests)
+    ]
+    path.write_text("\n".join(lines) + "\n")
+    return str(path)
+
+
+@pytest.mark.parametrize(
+    "method,route,host",
+    [
+        # A chat widget or document service that happens to use these paths.
+        ("POST", "/api/chat", "helpdesk.intra.example"),
+        ("POST", "/api/generate", "helpdesk.intra.example"),
+        ("POST", "/generate", "pdf.example.com"),
+        ("POST", "/generate_stream", "pdf.example.com"),
+        ("GET", "/api/tags", "registry.example"),
+        ("GET", "/v2/team/image/tags/list", "registry.example"),
+    ],
+)
+def test_self_hosted_routes_on_a_parsed_non_model_host_are_not_inference(
+    tmp_path, run_connector, method, route, host
+):
+    source = _access_log(tmp_path, *[(method, route, _CHROME, host)] * 3)
+    findings, ctx = run_connector("gateway.logs", input=source)
+    assert findings == []
+    assert not ctx.stats.incomplete
+
+
+def test_ollama_route_without_a_parsed_host_stays_a_caller(tmp_path, run_connector):
+    # localhost:11434 is not parsed as a host, so the route keeps main's meaning.
+    source = _access_log(tmp_path, *[("POST", "/api/chat", "ollama-python/0.3", "localhost:11434")] * 3)
+    findings, ctx = run_connector("gateway.logs", input=source)
+    assert len(findings) == 1 and findings[0].kind in {Kind.GATEWAY_CALLER, Kind.AGENT}
+    assert not ctx.stats.incomplete
+
+
+def test_bare_generate_route_needs_a_declared_internal_model_host(tmp_path, run_connector):
+    source = _access_log(
+        tmp_path, *[("POST", "/generate", "python-requests/2.32", "tgi.internal.example")] * 3
+    )
+    findings, _ = run_connector("gateway.logs", input=source)
+    assert findings == []
+    findings, ctx = run_connector("gateway.logs", input=source, internal_model_hosts=["TGI.internal.example"])
+    assert len(findings) == 1 and findings[0].metadata["hosts"] == {"tgi.internal.example": 3}
+    assert not ctx.stats.incomplete
+    # With the default llm_hosts_only, a declared internal host is kept too.
+    findings, _ = run_connector("gateway.logs", input=source, internal_model_hosts=["tgi.internal.example"])
+    assert len(findings) == 1
+
+
+def test_browser_calling_a_provider_host_keeps_its_provider(tmp_path, run_connector):
+    source = _access_log(tmp_path, *[("POST", "/v1/chat/completions", _CHROME, "api.openai.com")] * 3)
+    findings, _ = run_connector("gateway.logs", input=source)
+    assert len(findings) == 1 and "provider.openai" in findings[0].model_providers
+
+
+@pytest.mark.parametrize(
+    "hosts", ["bad host!", "", 7, {"tgi": True}, ["bad host!"], [7], ["-leading.example"], ["a" * 254]]
+)
+def test_internal_model_hosts_must_be_a_list_of_hostnames(index, hosts):
+    with pytest.raises(ConnectorError, match="internal_model_hosts"):
+        GatewayLogConnector(context(index, input="export.log", internal_model_hosts=hosts))
+
+
+def test_one_internal_model_host_may_be_given_as_a_string(tmp_path, run_connector, index):
+    """Regression (F15): YAML or ``--set internal_model_hosts=host`` gives one hostname as a string."""
+    source = _access_log(tmp_path, *[("POST", "/generate", "python-requests/2.32", "llm.acme.internal")] * 3)
+    findings, ctx = run_connector("gateway.logs", input=source, internal_model_hosts="LLM.acme.internal")
+    assert len(findings) == 1 and not ctx.stats.incomplete
+    assert _source_id(index, internal_model_hosts="llm.acme.internal") == _source_id(
+        index, internal_model_hosts=["llm.acme.internal"]
+    )
+
+
+def _gateway_cli(*args):
+    result = CliRunner().invoke(main, [*args, "--format", "json"])
+    assert result.stdout.lstrip().startswith("{"), result.output
+    return result.exit_code, json.loads(result.stdout)
+
+
+def test_internal_model_hosts_from_the_command_line(tmp_path):
+    """Regression (F15): the gateway command and ``run --set`` both declare internal model hosts."""
+    source = _access_log(
+        tmp_path,
+        *[("POST", "/generate", "python-requests/2.32", "llm.acme.internal")] * 3,
+        *[("POST", "/generate", "python-requests/2.32", "tgi:8080")] * 2,
+    )
+    code, report = _gateway_cli("gateway", source)
+    assert code == 0 and report["findings"] == []
+    code, report = _gateway_cli(
+        "gateway", source, "--internal-model-host", "llm.acme.internal", "--internal-model-host", "tgi"
+    )
+    assert code == 0 and len(report["findings"]) == 1
+    assert report["findings"][0]["metadata"]["hosts"] == {"llm.acme.internal": 3, "tgi:8080": 2}
+    code, report = _gateway_cli(
+        "run", "gateway.logs", "--input", source, "--set", "internal_model_hosts=llm.acme.internal"
+    )
+    assert code == 0 and report["summary"]["complete"] is True and len(report["findings"]) == 1
+
+
+def _source_id(index, **config):
+    ctx = ConnectorContext(
+        config={"input": "/nonexistent/gateway/export.log", **config},
+        index=index,
+        gateway_identity_key=b"k" * 32,
+        gateway_identity_key_stable=True,
+    )
+    ctx.stats = ScanStats(connector="gateway.logs", started_at="now")
+    return GatewayLogConnector(ctx).source_id
+
+
+def test_unset_internal_model_hosts_keeps_existing_finding_ids(index):
+    # Pinned before internal_model_hosts existed: default sources keep their ids.
+    assert _source_id(index) == "12bd53db7e9f02cfae7060b05a732369a2cc77a03e9dc3beb73660015ea3f433"
+    assert _source_id(index, internal_model_hosts=[]) == _source_id(index)
+    # Declaring internal hosts changes how the source is read, so it is a new source identity.
+    assert _source_id(index, internal_model_hosts=["tgi.internal.example"]) != _source_id(index)
+
+
+def _route_warnings(ctx):
+    return [warning for warning in ctx.stats.warnings if "internal_model_hosts" in warning]
+
+
+def test_undeclared_self_hosted_route_hosts_are_named_without_incompleteness(tmp_path, run_connector):
+    source = _access_log(
+        tmp_path,
+        *[("POST", "/api/generate", "langchain/0.2", "gpu01.corp.example:11434")] * 3,
+        *[("POST", "/api/chat", "ollama-python/0.3", "ollama.svc.cluster.local")] * 2,
+        ("POST", "/v1/chat/completions", "python-httpx/0.27", "api.openai.com"),
+    )
+    findings, ctx = run_connector("gateway.logs", input=source)
+    assert len(findings) == 1 and "provider.openai" in findings[0].model_providers
+    # Not counting a request on an undeclared host is a classification, not lost coverage.
+    assert not ctx.stats.incomplete
+    assert _route_warnings(ctx) == [
+        "gateway.logs: requests to Ollama-style or text-generation-inference routes on hosts that are not "
+        "known or declared model hosts were not counted as LLM traffic: 5 (gpu01.corp.example (3), "
+        "ollama.svc.cluster.local (2)). List internal model servers among them in internal_model_hosts"
+    ]
+    findings, ctx = run_connector(
+        "gateway.logs", input=source, internal_model_hosts=["gpu01.corp.example", "ollama.svc.cluster.local"]
+    )
+    assert len(findings) == 3 and _route_warnings(ctx) == []
+
+
+def test_undeclared_route_host_list_is_bounded(tmp_path, run_connector):
+    hosts = [f"svc{n}.corp.example" for n in range(7)]
+    source = _access_log(tmp_path, *[("POST", "/api/chat", "python-httpx/0.27", host) for host in hosts])
+    findings, ctx = run_connector("gateway.logs", input=source)
+    assert findings == [] and not ctx.stats.incomplete
+    (warning,) = _route_warnings(ctx)
+    assert ": 7 (svc0.corp.example (1), " in warning and "; and other hosts)" in warning
+    assert "svc5.corp.example" not in warning and "svc6.corp.example" not in warning
+
+
+@pytest.mark.parametrize(
+    "logged,declared",
+    [("tgi:8080", "tgi"), ("TGI", "tgi"), ("10.20.0.5:8080", "10.20.0.5"), ("10.20.0.5", "10.20.0.5")],
+)
+def test_declared_single_label_or_address_host_matches_a_text_access_log(
+    tmp_path, run_connector, logged, declared
+):
+    """Regression (F9): text access logs keep single-label and address hosts for internal_model_hosts."""
+    source = _access_log(tmp_path, *[("POST", "/generate", "python-requests/2.32", logged)] * 3)
+    findings, ctx = run_connector("gateway.logs", input=source)
+    assert findings == [] and not ctx.stats.incomplete
+    # The excluded requests are named in the advisory, so the operator can declare the host.
+    assert f"{declared} (3)" in _route_warnings(ctx)[0]
+    findings, ctx = run_connector("gateway.logs", input=source, internal_model_hosts=[declared])
+    assert len(findings) == 1 and findings[0].metadata["hosts"] == {logged: 3}
+    assert _route_warnings(ctx) == [] and not ctx.stats.incomplete
+
+
+def test_single_label_host_keeps_ollama_route_meaning_unless_declared(tmp_path, run_connector):
+    # An undeclared localhost:11434 is still an unparsed host for the Ollama-style route.
+    source = _access_log(tmp_path, *[("POST", "/api/chat", "ollama-python/0.3", "localhost:11434")] * 3)
+    findings, _ = run_connector("gateway.logs", input=source)
+    assert len(findings) == 1 and findings[0].metadata["hosts"] == {}
+    findings, _ = run_connector("gateway.logs", input=source, internal_model_hosts=["localhost"])
+    assert len(findings) == 1 and findings[0].metadata["hosts"] == {"localhost:11434": 3}
+
+
+def test_bare_host_in_a_quoted_field_never_matches_a_declared_host(tmp_path, run_connector):
+    # Text inside the quoted user agent is client-controlled, never the request host.
+    line = '10.4.4.{n} - - [10/Oct/2025:04:00:0{n} +0000] "POST /generate HTTP/1.1" 200 512 "-" "x host=tgi:8080"'
+    source = tmp_path / "access.log"
+    source.write_text("\n".join(line.format(n=n) for n in range(3)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(source), internal_model_hosts=["tgi"])
+    assert findings == [] and not ctx.stats.incomplete
+
+
+def test_self_hosted_route_without_a_logged_host_is_reported(tmp_path, run_connector):
+    """Regression (F9): a bare TGI route with no host is tallied, not dropped without a diagnostic."""
+    line = '10.4.4.{n} - - [10/Oct/2025:04:00:0{n} +0000] "POST /generate HTTP/1.1" 200 512 "-" "curl/8"'
+    source = tmp_path / "access.log"
+    source.write_text("\n".join(line.format(n=n) for n in range(3)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(source))
+    assert findings == [] and not ctx.stats.incomplete
+    assert _route_warnings(ctx) == [
+        "gateway.logs: requests to Ollama-style or text-generation-inference routes on hosts that are not "
+        "known or declared model hosts were not counted as LLM traffic: 3 (3 with no logged host). List "
+        "internal model servers among them in internal_model_hosts; log the requested host so a declared "
+        "host can match"
+    ]
+    # Mixed with named hosts, both are reported.
+    other = _ACCESS_LINE.format(n=3, method="POST", path="/generate", agent="curl/8", host="tgi")
+    source.write_text(source.read_text() + other + "\n")
+    _, ctx = run_connector("gateway.logs", input=str(source))
+    assert ": 4 (tgi (1); 3 with no logged host)." in _route_warnings(ctx)[0]
+
+
+def test_declared_internal_model_host_matches_a_logged_port(tmp_path, run_connector):
+    source = tmp_path / "access.jsonl"
+    record = {
+        "remote_addr": "10.0.0.1",
+        "request": "POST /generate HTTP/1.1",
+        "host": "tgi.internal.example:8080",
+    }
+    source.write_text("\n".join(json.dumps(record) for _ in range(3)) + "\n")
+    findings, ctx = run_connector("gateway.logs", input=str(source))
+    assert findings == [] and "tgi.internal.example (3)" in _route_warnings(ctx)[0]
+    findings, ctx = run_connector(
+        "gateway.logs", input=str(source), internal_model_hosts=["tgi.internal.example"]
+    )
+    assert len(findings) == 1 and _route_warnings(ctx) == []

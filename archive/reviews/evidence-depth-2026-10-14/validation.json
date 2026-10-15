@@ -1,0 +1,63 @@
+{
+  "scanner_source_commit": "5de0867f9cc9ee06ff83d78cab8195ca0ea86174",
+  "python": "3.12.14",
+  "full_profile_pytest": {
+    "command": "python -m pytest -q -n 8 --cov=shadowscan --cov-report=term-missing --cov-fail-under=80",
+    "exit_code": 1,
+    "result": {
+      "tests": "17580",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "11",
+      "time": "365.274"
+    },
+    "sole_failure": "tests/unit/test_csv_injection.py::test_neutralising_a_long_whitespace_run_is_linear (CRLF + formula)",
+    "observed_seconds": 1.431713792,
+    "limit_seconds": 1.0
+  },
+  "isolated_covered_recheck": {
+    "command": "python -m pytest -q tests/unit/test_csv_injection.py --cov=shadowscan --cov-append --cov-report= --cov-fail-under=80",
+    "exit_code": 0,
+    "result": {
+      "tests": "40",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "8.857"
+    }
+  },
+  "earlier_full_run_without_cloud_sdks": {
+    "exit_code": 0,
+    "result": {
+      "tests": "17569",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "111",
+      "time": "337.566"
+    }
+  },
+  "coverage_gate": {
+    "exit_code": 0,
+    "modules": 80,
+    "floor": 75,
+    "lowest_module": "shadowscan/connectors/cloud/kubernetes.py",
+    "lowest_percent": 76.29
+  },
+  "other_gates": {
+    "lint": "passed",
+    "format": "passed",
+    "typecheck": "passed",
+    "signatures": "passed",
+    "mappings": "passed",
+    "policy": "passed",
+    "nine_evaluation_corpora": "passed",
+    "secrets": "passed",
+    "audit_environment_and_four_lockfiles": "passed",
+    "pip_check": "passed",
+    "mkdocs_strict": "passed",
+    "connector_listing": "passed"
+  },
+  "hosted_ci": "not_run_locally",
+  "independent_human_review": false,
+  "live_tenant_acceptance": false
+}

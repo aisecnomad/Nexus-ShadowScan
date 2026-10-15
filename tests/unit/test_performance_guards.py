@@ -279,10 +279,10 @@ def _engine_config(tmp_path: Path, **connector) -> ScanConfig:
     return ScanConfig(connectors=[ConnectorSpec("code.filesystem", config)], parallel=1)
 
 
-def test_oversize_lockfile_is_a_warning_and_the_scan_stays_complete(tmp_path, index):
+def test_oversize_unselected_lockfile_is_a_warning_and_the_scan_stays_complete(tmp_path, index):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     (tmp_path / "yarn.lock").write_text("x" * 200)
-    (tmp_path / "poetry.lock").write_text("small")
+    (tmp_path / "pdm.lock").write_text("small")
     (tmp_path / "data.csv").write_text("a,b\n" * 60)
     (tmp_path / "LOGO.PNG").write_bytes(b"\x89PNG" + b"\0" * 200)
     result = Engine(_engine_config(tmp_path), index).run()
@@ -292,6 +292,15 @@ def test_oversize_lockfile_is_a_warning_and_the_scan_stays_complete(tmp_path, in
     named = sorted(warning.split(": ")[1] for warning in stats.warnings)
     assert named == ["LOGO.PNG", "data.csv", "yarn.lock"]
     assert all("over max_file_size" in warning for warning in stats.warnings)
+
+
+@pytest.mark.parametrize("name", ["uv.lock", "poetry.lock", "pnpm-lock.yaml", "Cargo.lock"])
+def test_malformed_selected_lockfile_marks_scan_incomplete(tmp_path, index, name):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    (tmp_path / name).write_text("small")
+    result = Engine(_engine_config(tmp_path), index).run()
+    assert not result.complete and result.findings
+    assert any(name in error and "lockfile parsing failed (" in error for error in result.stats[0].errors)
 
 
 def test_oversize_source_file_marks_coverage_incomplete_by_default(tmp_path, index):
@@ -1135,3 +1144,42 @@ def test_two_scans_of_a_tree_produce_identical_findings_and_diagnostics(index, f
 
     first, second = scan(), scan()
     assert first[0] and first == second
+
+
+def test_uidless_vpc_flow_log_keeps_one_bounded_group_per_connection(tmp_path, run_connector, monkeypatch):
+    """Regression (#220 review F4): VPC flows without UIDs group per connection, not per record."""
+    from shadowscan.connectors.network import logs as network_logs
+
+    groups: list[network_logs._Pair] = []
+
+    class CountingPair(network_logs._Pair):
+        def __init__(self) -> None:
+            super().__init__()
+            groups.append(self)
+
+    monkeypatch.setattr(network_logs, "_Pair", CountingPair)
+    flows = 20_000
+    (tmp_path / "dns.json").write_text(
+        json.dumps(
+            [
+                {
+                    "client": "10.0.0.5",
+                    "query": "api.openai.com",
+                    "answers": ["203.0.113.8"],
+                    "ts": 1000,
+                    "ttl": 86400,
+                }
+            ]
+        )
+    )
+    lines = [
+        f"2 123456789012 eni-0a 10.0.0.5 203.0.113.8 50000 443 6 10 100 {1001 + n} {1002 + n} ACCEPT OK"
+        for n in range(flows)
+    ]
+    (tmp_path / "flows.log").write_text("\n".join(lines) + "\n")
+    findings, ctx = run_connector("network.logs", input=str(tmp_path), label="hq")
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+    (finding,) = findings
+    assert finding.metadata["flows"] == flows and finding.metadata["bytes_out"] == 100 * flows
+    assert len(groups) == 1
+    assert len(groups[0].buckets) <= network_logs._MAX_BUCKETS_PER_PAIR

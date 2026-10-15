@@ -219,7 +219,7 @@ class AzureConnector(BaseConnector):
             except ImportError as exc:
                 raise ConnectorError(
                     "cloud.azure: install azure-identity (install '.[azure]' from the "
-                    "reviewed Project Nexus checkout) or provide access_token"
+                    "reviewed Nexus ShadowScan checkout) or provide access_token"
                 ) from exc
             allow_instance = allow_instance_credentials(self.ctx.get("allow_instance_credentials", False))
             self._cred = DefaultAzureCredential(

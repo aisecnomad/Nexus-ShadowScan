@@ -72,6 +72,54 @@ CloudTrail collection is enabled. The notice does not mark the scan incomplete:
 no returned callers still does not establish absence of runtime activity. A
 failed or denied `LookupEvents` call does mark it incomplete.
 
+CloudTrail exports can include normalized `cloudtrail-event` records or raw
+CloudTrail event objects with `_kind: cloudtrail-event`. Model invocation events
+(including `ConverseStream`) and STS assumption events may be replayed together.
+`metadata.cloudtrail_lineage` retains bounded event IDs, recipient account,
+region, timestamp, caller ARN, session issuer ARN and source identity. Request
+bodies and credential identifiers/values are never retained. STS records supply
+context only and never independently produce an AI finding. Exact duplicate
+event IDs within the same recipient/region scope do not inflate invocation
+counts; conflicting IDs make coverage incomplete and prevent lineage binding.
+
+A parent assumption is linked only when its returned session ARN and role ARN
+exactly match the invocation's principal and session issuer, its target account
+matches those ARNs, its creation timestamp matches the session creation time,
+and the invocation lies within an explicitly exported expiration (at most 12
+hours). Source identities must agree when supplied by the invocation. Multiple
+candidates remain ambiguous. STS and invocation regions may differ; their scopes
+are retained rather than treated as interchangeable event identities. The same
+rules follow up to eight observed STS ancestry hops; `chain_status` distinguishes
+an observed non-session origin, partial exports, ambiguity, cycles and depth
+limits. A missing predecessor never becomes an inferred edge. Even a chain
+ending at an observed origin does not prove effective access or completeness of
+the provider's audit record. Missing assumption events, session times or data
+events leave the relationship unlinked, never absent. A chain whose last
+observed hop is `AssumeRoleWithWebIdentity` or `AssumeRoleWithSAML` ends
+`partial`: the identity provider's subject is not an AWS principal the export
+can trace. Session tags are not used to join sessions.
+
+Lineage is export replay only. Live collection runs `LookupEvents` for the
+invocation operations alone and never retrieves STS `AssumeRole*` events, so
+every live observation is `unlinked`; replay an export that includes the STS
+events to link sessions.
+
+Lineage is non-scoring metadata, so its bounds never decide detection: every
+invocation is still counted in its caller finding. It traces at most 100
+invocations per caller and 2,000 invocations and 2,000 STS assumptions per
+connector run. A sampled caller reports `observation_count` and
+`observations_truncated`; a run past a bound, a cycle or the eight-hop limit
+records the reason in `limits` with `coverage: partial` and a warning that
+leaves the scan complete. Malformed metadata, invalid event timestamps and
+conflicting event IDs mark coverage incomplete (`coverage: incomplete`); valid
+invocation evidence is preserved. Offline `cloudtrail-event` records whose
+`eventName` is neither a collected invocation operation nor an STS assumption
+are ignored rather than reported as LLM callers. A record with no `eventName`
+(absent, `null` or empty) is malformed, not an ignored operation: it is skipped
+with a warning that marks the scan incomplete (exit 3). The synthetic fixture
+`tests/fixtures/cloud/lineage/assumed_session.jsonl` exercises a cross-account
+assumption, cross-region `ConverseStream`, and a non-AI control.
+
 Lambda `Environment.Error` is unknown environment coverage, not an empty set of
 variables. The `environment_coverage` marker survives sanitized exports and replay;
 other valid function evidence is retained while completeness fails.
@@ -255,7 +303,14 @@ Discovery Engine uses `discoveryengine.googleapis.com` for `global` and
 `us-` / `eu-discoveryengine.googleapis.com` for the `us` and `eu` multi-regions.
 Cloud Run discovery enumerates project locations and then lists services in each
 concrete region (`run.locations.list` and `run.services.list` permissions).
-Unreachable locations reported by GCP make the scan incomplete. `max_projects`
+Unreachable locations reported by GCP make the scan incomplete. A Cloud Run
+service or Cloud Function name or description is matched at half weight. An
+ambiguous product name (Gemini, also a cryptocurrency exchange and a common
+project name) never establishes the product by itself: a service named only
+for it, with no AI image, environment variable or secret, is not reported,
+and a reported one keeps the product under `metadata.potential_frameworks`.
+An unambiguous name or description, such as a function described as using
+Anthropic Claude or a service named `openai-proxy`, is reported. `max_projects`
 limits discovery without loading all projects first; `max_pages` (default and
 maximum 1000) bounds every paginated call; resource lists stop at 500 pages and audit-log
 queries at 50 pages regardless.

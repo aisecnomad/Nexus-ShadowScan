@@ -230,3 +230,13 @@ def test_command_line_entry_point_reports_failure(tmp_path):
     )
     assert result.returncode == 1, result.stdout + result.stderr
     assert f"{BASE}: 25.00% < 75%" in result.stderr
+
+
+def test_an_inventory_mismatch_names_a_few_modules_and_the_fix(checkout, capsys):
+    """A selected-test report misses most modules; the error stays short and says what to run."""
+    modules = [f"shadowscan/connectors/saas/m{index:02}.py" for index in range(15)]
+    _add_modules(checkout, AWS, *modules)
+    assert _gate(checkout, _report({AWS: _summary(10, 10)}), add_modules=False) == 2
+    err = capsys.readouterr().err
+    assert "m09.py" in err and "m10.py" not in err and "and 5 more" in err
+    assert "measured 1 of 16 connector modules" in err and "run `make test`, then `make coverage-gate`" in err

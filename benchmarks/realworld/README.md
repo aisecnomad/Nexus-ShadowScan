@@ -1,4 +1,4 @@
-# Real-world repository benchmark
+# Real-world repositories benchmark (34)
 
 Thirty-four public repositories, pinned by commit in [`corpus.json`](corpus.json),
 scored with the repo-surface tool cohort from

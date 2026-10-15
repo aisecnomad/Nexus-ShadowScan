@@ -36,7 +36,9 @@ def test_scheduled_audit_reports_scoped_assurance_without_admin_writes(tmp_path:
     workflow = yaml.safe_load((ROOT / ".github/workflows/audit.yml").read_text())
     job = workflow["jobs"]["merge-policy"]
     assert workflow["permissions"] == {"contents": "read"}
-    assert job["if"] == "github.repository == 'aisecnomad/Project-Nexus' && github.ref == 'refs/heads/main'"
+    # Pinned to the immutable repository ID of aisecnomad/Nexus-ShadowScan
+    # (formerly aisecnomad/Project-Nexus), so a rename cannot skip the audit job.
+    assert job["if"] == "github.repository_id == '1174915264' && github.ref == 'refs/heads/main'"
     assert "permissions" not in job
     steps = [step for step in job["steps"] if step.get("env", {}).get("GH_TOKEN")]
     assert len(steps) == 1
@@ -48,7 +50,7 @@ def test_scheduled_audit_reports_scoped_assurance_without_admin_writes(tmp_path:
             **payload,
             "id": ruleset_id,
             "source_type": "Repository",
-            "source": "aisecnomad/Project-Nexus",
+            "source": "aisecnomad/Nexus-ShadowScan",
         }
     ruleset = snapshots["23913372"]
     if change in {"disabled", "missing_bypass_and_disabled"}:
@@ -76,8 +78,8 @@ def test_scheduled_audit_reports_scoped_assurance_without_admin_writes(tmp_path:
         "import json, os, sys\n"
         "from pathlib import Path\n"
         "args = sys.argv[1:]\n"
-        "allowed = {'repos/aisecnomad/Project-Nexus/rulesets/23892853', "
-        "'repos/aisecnomad/Project-Nexus/rulesets/23913372'}\n"
+        "allowed = {'repos/aisecnomad/Nexus-ShadowScan/rulesets/23892853', "
+        "'repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372'}\n"
         "if len(args) != 2 or args[0] != 'api' or args[1] not in allowed:\n"
         "    raise SystemExit('Only the two read-only ruleset requests are allowed')\n"
         "with Path(os.environ['AUDIT_REQUEST_LOG']).open('a') as log:\n"
@@ -99,7 +101,7 @@ def test_scheduled_audit_reports_scoped_assurance_without_admin_writes(tmp_path:
     env = dict(os.environ)
     env.update(
         PATH=os.pathsep.join((str(fake_bin), str(Path(sys.executable).parent), env.get("PATH", ""))),
-        GITHUB_REPOSITORY="aisecnomad/Project-Nexus",
+        GITHUB_REPOSITORY="aisecnomad/Nexus-ShadowScan",
         RUNNER_TEMP=str(runner_temp),
         GITHUB_STEP_SUMMARY=str(tmp_path / "summary.md"),
         AUDIT_RESPONSES=str(inputs),
@@ -113,7 +115,7 @@ def test_scheduled_audit_reports_scoped_assurance_without_admin_writes(tmp_path:
     observed = requests.read_text().splitlines()
     assert observed[0].endswith("/23892853")
     assert set(observed).issubset(
-        {f"repos/aisecnomad/Project-Nexus/rulesets/{number}" for number in RULESET_IDS}
+        {f"repos/aisecnomad/Nexus-ShadowScan/rulesets/{number}" for number in RULESET_IDS}
     )
     assert len(observed) == 2  # One bad ruleset must not hide the other's status.
     reports = {

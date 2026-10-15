@@ -2,7 +2,7 @@
 
 This page describes how to set up a reproducible development environment and
 run ShadowScan's test suites the way CI does. The gates themselves are defined
-in the [contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#quality-gates);
+in the [contributor guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#quality-gates);
 this page is the practical companion.
 
 ## Environment
@@ -15,17 +15,20 @@ POSIX `venv/bin` layout.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-make install          # hash-locked runtime, cloud, development and docs sets
+make install          # hash-locked runtime, cloud, development, build and docs sets
 pre-commit install    # optional: run the lint, format and secret hooks on commit
 ```
 
-`make install` installs `requirements-ci.lock`, `requirements.lock` and
-`requirements-docs.lock` under `--require-hashes --only-binary=:all:` and then
-the scanner itself in editable mode. `make install-dev` installs only the
-hash-locked core and development set, which is enough for lint, typing and the
-offline suite but leaves the cloud SDK code paths unexercised. Do not work
-around a hash mismatch: a lock that no longer installs is a signal to review,
-not to bypass.
+`make install` installs `requirements-ci.lock`, `requirements-build.lock`,
+`requirements.lock` and `requirements-docs.lock` under
+`--require-hashes --only-binary=:all:` and then the scanner itself in editable
+mode. `make install-dev` installs only the hash-locked core, development and
+build set, which is enough for lint, typing and the offline suite but leaves the
+cloud SDK code paths unexercised. The release-evidence tests record the `build`
+frontend version, so an environment without `requirements-build.lock` fails
+them; re-run `make install-dev` or `make install` in an older environment. Do
+not work around a hash mismatch: a lock that no longer installs is a signal to
+review, not to bypass.
 
 The development set already includes the `types-PyYAML` and `types-requests`
 stubs that `mypy` needs. The third-party packages that ship neither stubs nor
@@ -96,6 +99,24 @@ python -m pytest -q -x --tb=short              # stop early, short tracebacks
 python -m pytest -q --co tests/unit | head     # list collected tests
 ```
 
+### Iterate on one connector
+
+Tests are named by concern, not by connector, so select a connector's tests by
+name and measure only its module:
+
+```bash
+COVERAGE_FILE="${TMPDIR:-/tmp}/shadowscan-okta.coverage" python -m pytest -q -k okta tests \
+  --cov=shadowscan.connectors.identity.okta --cov-report=term-missing --cov-fail-under=0
+```
+
+`-k` matches test names, so check that the selection is the one you meant.
+The module path is not always the registry name: `saas.microsoft-teams` lives
+in `saas/teams.py` and `lowcode.zapier` in `lowcode/automation.py`
+(`shadowscan/connectors/__init__.py` maps every name). `COVERAGE_FILE` keeps
+this partial data away from the full run's `.coverage`, which
+`make coverage-gate` rejects when it comes from a selected run. Only
+`make test` followed by `make coverage-gate` establishes the floor.
+
 ### Expected skips
 
 Some tests skip by design when the host cannot exercise them. Read the skip
@@ -124,12 +145,19 @@ make lint            # ruff check
 make format-check    # ruff format --check
 make typecheck       # mypy on the scanner and tools
 make signatures      # signature schema and regex validation
-make audit           # pip-audit on the environment and every hash lock, as CI
+make mappings        # threat and control mapping catalogs
 make secrets         # fail on hardcoded credentials in tracked files, as CI
-make evaluate        # every bundled detection corpus
-make policy          # workflow, issue-form and repository consistency checks
-make check           # all of the above, in order
+make audit           # pip-audit on the environment and every hash lock, as CI (needs network)
+make evaluate        # every bundled detection corpus; reports go to a temporary directory
+make check           # exactly: lint format-check typecheck signatures mappings secrets audit test coverage-gate evaluate
 ```
+
+Two more targets are not prerequisites of `make check`. `make policy` runs the
+two repository test modules on their own, which `make test` also runs; use it
+after touching `.github/` or documentation. `make docs` builds the site with
+`mkdocs build --strict`, as CI's docs job does. `make check-fast` runs lint,
+format, types, both validators, secrets and policy in a minute or two, without
+the test suite, audit or evaluation.
 
 `make evaluate` runs each corpus under `tools/evaluation/`; a corpus fails on
 an unwaived regression, an over-budget or expired known-gap waiver, or a waived
@@ -162,7 +190,7 @@ reason the sweep's input cannot reach it.
 
 ## What CI runs
 
-The [CI workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/ci.yml)
+The [CI workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/ci.yml)
 runs the same commands on Linux for Python 3.11, 3.12 and 3.13 and on macOS for
 3.11 and 3.13, installs the hash-locked dependency sets, audits every lock and
 builds and validates the wheel outside the checkout. A separate
@@ -204,5 +232,5 @@ describes running the scanner itself inside a pipeline.
 
 Bug fixes need a regression test, and connector changes need offline fixtures
 and documentation, as the
-[pull request requirements](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#pull-requests)
+[pull request requirements](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#pull-requests)
 describe.

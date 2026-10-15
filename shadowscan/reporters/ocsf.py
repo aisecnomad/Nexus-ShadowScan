@@ -109,7 +109,7 @@ def _confidence_score(value: float) -> int | float:
 def _metadata() -> dict[str, Any]:
     return {
         "version": _OCSF_VERSION,
-        "product": {"name": "ShadowScan", "version": __version__, "vendor_name": "Project Nexus"},
+        "product": {"name": "ShadowScan", "version": __version__, "vendor_name": "Nexus ShadowScan"},
         # The ``*_dt`` twins belong to the datetime profile; a validating
         # consumer rejects or drops them unless the event declares it.
         "profiles": ["datetime"],

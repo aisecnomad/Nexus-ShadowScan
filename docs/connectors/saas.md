@@ -11,6 +11,11 @@ See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.
 
+Display-name recognition follows the same
+[ambiguous-product-name rules](identity.md#ambiguous-product-names) as identity
+connectors. An app's existence or permissions do not corroborate an ambiguous
+AI product name.
+
 ## `saas.slack`
 `users.list` (bots), `admin.apps.approved.list` / `restricted` / `requests`
 (scopes, pending requests), `team.integrationLogs` (who installed what).
@@ -20,6 +25,10 @@ collection arrays and malformed pagination are incomplete coverage. Later
 network failures retain already collected observations; provider error text is
 not copied into diagnostics. Complete live acceptance generally requires an
 appropriately scoped administrative audit token, not an ordinary bot token.
+The Slack app id is passed to signature matching as the app's client id, so a
+rule pack's `client_id` signal can bind a reviewed Slack app. AI meeting
+note-takers include Wudpecker and Tactiq by name and by their `wudpecker.io`
+and `tactiq.io` homepage domains.
 
 ## `saas.microsoft-teams`
 Graph app catalog (custom apps with bot definitions and RSC permissions) and
@@ -36,10 +45,34 @@ tagged `unrecognized-app` and capped at possible confidence. `workflows` or
 are SaaS write actions.
 
 ## `saas.atlassian`
-UPM user-installed apps for Jira and Confluence.
+UPM user-installed apps for Jira and Confluence. Set `site` to the concrete
+HTTPS site origin for offline exports as well as live collection. App keys
+are shared across sites, so approvals must also name the site in
+`discovery.accounts`. Missing site identity leaves discovery incomplete and
+generated cards unbound pending review. URL host case, a default HTTPS port
+and a trailing slash are normalized; app resource IDs remain case-sensitive.
+
+Without a configured `site`, finding IDs are bound to the resolved path of
+each export file: the same app key in two files stays two findings, and moving
+or renaming a file changes its IDs. Finding IDs from earlier releases change
+for unscoped exports and for a `site` with an uppercase host or an explicit
+`:443`; configure the canonical site, rescan and take a fresh baseline. Keep one
+site's exports per scan input. A `site` must be a plain HTTPS origin
+(`https://<host>`): a missing scheme, `http://`, a path such as a Data Center
+context path, user information, a query, a fragment, a trailing dot or a
+non-ASCII host stops the connector with exit 3.
 
 ## `saas.notion`
-Notion bot users. A missing or repeated pagination cursor, or reaching the live
+Notion bot users. A bot is inventoried when its name or other evidence
+establishes an AI product or provider, or when its name is an AI-name hint, as
+for GitHub Apps: a generic AI word ("Internal LLM Agent", "Acme AI Assistant",
+"Support GPT") or an ambiguous product name such as Gemini. Every Notion
+integration is a bot user, so the word "bot" alone ("Jira Bot") is not a hint
+here. A hint never attributes a product: the bot's own observation is bounded
+at possible confidence and an ambiguous product stays under
+`metadata.potential_frameworks`. A nameless bot (its id is never matched as a
+name) or an ordinary sync integration is not reported, because a bot's
+existence and owner do not identify AI. A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete.
 
 ## `saas.zoom`

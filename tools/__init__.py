@@ -1,1 +1,1 @@
-"""Development tooling for Project Nexus."""
+"""Development tooling for Nexus ShadowScan."""

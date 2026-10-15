@@ -217,6 +217,7 @@ From `shadowscan/mappings/data/rules/threats.yaml`.
 | Rule | When | References | Rationale |
 | --- | --- | --- | --- |
 | `tool-poisoning` | tag `tool-poisoning` | `owasp-llm-2026:LLM01`, `owasp-asi-2026:ASI01`, `mitre-atlas-2026.09:AML.T0110.000`, `mitre-atlas-2026.09:AML.T0051.001` | A tool description carrying injected instructions is read by the model as trusted context and can redirect the agent's goal. |
+| `tool-name-shadowing` | tag `tool-name-shadowing` | `owasp-llm-2026:LLM01`, `owasp-asi-2026:ASI01`, `mitre-atlas-2026.09:AML.T0051.001` | A tool whose name duplicates another installed server's tool can be selected in its place, so the duplicating server reads or shapes calls meant for the original. |
 | `unsafe-serialization` | tag `unsafe-serialization` | `owasp-llm-2026:LLM04`, `owasp-asi-2026:ASI04`, `mitre-atlas-2026.09:AML.T0011.000`, `mitre-atlas-2026.09:AML.T0010.003` | A model artifact in a format that can execute code on load is a supply chain risk for anyone who loads it. |
 | `credential-exposure` | tag `hardcoded-credential` or `inline-secrets` or `plaintext-credential` or `secret-in-env` or `unmasked-ci-variable` | `owasp-llm-2026:LLM02`, `owasp-asi-2026:ASI03`, `mitre-atlas-2026.09:AML.T0055` | A credential stored in source, configuration or an unmasked variable can be read and reused by anyone who can read that location. |
 | `credential-finding` | kind `secret` | `owasp-asi-2026:ASI03` | An AI provider credential, wherever it is stored, is an identity that an agent or anyone who obtains it can act as. |

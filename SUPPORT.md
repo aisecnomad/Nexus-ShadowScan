@@ -9,15 +9,15 @@ does not establish production acceptance for your environment.
 
 | Need | Route |
 |---|---|
-| Installation, configuration or scan semantics | [Documentation](https://github.com/aisecnomad/Project-Nexus/tree/main/docs) and the troubleshooting steps below |
-| Usage question | [Usage question form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=question.yml) |
-| Reproducible bug, false positive or missed detection | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose) |
-| Feature or connector proposal | [Issue forms](https://github.com/aisecnomad/Project-Nexus/issues/new/choose); describe the use case and required permissions |
-| Vulnerability, credential disclosure or unsafe scanner behavior | [Security reporting policy](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md#reporting); keep exploit details private |
-| Participation or conduct concern | [Code of conduct](https://github.com/aisecnomad/Project-Nexus/blob/main/CODE_OF_CONDUCT.md#reporting-a-concern) |
-| Contribute a fix or review | [Contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md) |
+| Installation, configuration or scan semantics | [Documentation](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/docs) and the troubleshooting steps below |
+| Usage question | [Usage question form](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=question.yml) |
+| Reproducible bug, false positive or missed detection | [Issue forms](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new/choose) |
+| Feature or connector proposal | [Issue forms](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new/choose); describe the use case and required permissions |
+| Vulnerability, credential disclosure or unsafe scanner behavior | [Security reporting policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#reporting); keep exploit details private |
+| Participation or conduct concern | [Code of conduct](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CODE_OF_CONDUCT.md#reporting-a-concern) |
+| Contribute a fix or review | [Contributor guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md) |
 
-Search [existing issues](https://github.com/aisecnomad/Project-Nexus/issues)
+Search [existing issues](https://github.com/aisecnomad/Nexus-ShadowScan/issues)
 before opening a new topic. Add new reproduction evidence to an existing report
 instead of posting duplicates.
 
@@ -27,14 +27,14 @@ instead of posting duplicates.
    affected connector. In a source checkout, use `git rev-parse HEAD`; for an
    installed wheel, retain its hash and source SHA from the release evidence
    or build record. A candidate version alone cannot identify a source revision.
-2. Check [connector documentation](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors.md)
+2. Check [connector documentation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md)
    for supported input modes, required SDK extras and read-only permissions.
    Do not broaden permissions simply to make an error disappear.
 3. Reduce the problem to one connector and the smallest synthetic input that
    reproduces it. Compare against the bundled offline example when possible.
 4. Read the report's completion state and sanitized diagnostics. An incomplete
    scan is not evidence that a tenant or repository has no findings. See
-   [scan semantics](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/scanning.md)
+   [scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md)
    for limits, skipped inputs and exit codes.
 5. For a suspected detection error, explain the expected classification and its
    evidence. Static dependencies do not prove execution, and `shadow: true`
@@ -74,6 +74,6 @@ is not a promise of a fix or delivery date. If you can contribute a reproducer,
 documentation improvement or review, link it to the issue.
 
 For deployment decisions, use the
-[production and acceptance guidance](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md).
+[production and acceptance guidance](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md).
 Community support, regression fixtures and an AI-assisted code review do not
 replace your own security review or live tenant acceptance.

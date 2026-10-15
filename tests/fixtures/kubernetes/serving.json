@@ -1,0 +1,246 @@
+{
+ "apiVersion": "v1",
+ "kind": "List",
+ "items": [
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "name": "chat-serving",
+    "namespace": "ml"
+   },
+   "spec": {
+    "template": {
+     "spec": {
+      "containers": [
+       {
+        "image": "registry.example/ml/vllm-serving:1.4",
+        "args": [
+         "--model",
+         "example-org/chat-7b",
+         "--port",
+         "8000"
+        ],
+        "resources": {
+         "limits": {
+          "nvidia.com/gpu": 1
+         }
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "name": "opaque-server",
+    "namespace": "ml"
+   },
+   "spec": {
+    "template": {
+     "spec": {
+      "containers": [
+       {
+        "image": "registry.example/team/server:2",
+        "args": [
+         "--model-id=example-org/chat-7b"
+        ],
+        "resources": {
+         "limits": {
+          "nvidia.com/gpu": 1
+         }
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "apiVersion": "batch/v1",
+   "kind": "Job",
+   "metadata": {
+    "name": "finetune-forecast",
+    "namespace": "ml"
+   },
+   "spec": {
+    "template": {
+     "spec": {
+      "containers": [
+       {
+        "image": "nvcr.io/nvidia/pytorch:24.05-py3",
+        "command": [
+         "torchrun",
+         "train.py"
+        ],
+        "args": [
+         "--model",
+         "example-org/encoder-base",
+         "--epochs",
+         "3"
+        ],
+        "resources": {
+         "limits": {
+          "nvidia.com/gpu": 4
+         }
+        }
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "name": "image-classifier",
+    "namespace": "ml"
+   },
+   "spec": {
+    "template": {
+     "spec": {
+      "containers": [
+       {
+        "image": "pytorch/torchserve:0.11.0-gpu",
+        "args": [
+         "--model-id",
+         "example-org/resnet50"
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "name": "local-ai",
+    "namespace": "ml"
+   },
+   "spec": {
+    "template": {
+     "spec": {
+      "containers": [
+       {
+        "image": "localai/localai:latest"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "name": "llama-server",
+    "namespace": "ml"
+   },
+   "spec": {
+    "template": {
+     "spec": {
+      "containers": [
+       {
+        "image": "ghcr.io/ggerganov/llama.cpp:server",
+        "args": [
+         "-m",
+         "/models/chat.gguf"
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "name": "tgi",
+    "namespace": "ml"
+   },
+   "spec": {
+    "template": {
+     "spec": {
+      "containers": [
+       {
+        "image": "ghcr.io/huggingface/text-generation-inference:2.0",
+        "env": [
+         {
+          "name": "MODEL_ID",
+          "value": "example-org/chat-7b"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "apiVersion": "apps/v1",
+   "kind": "Deployment",
+   "metadata": {
+    "name": "web",
+    "namespace": "web"
+   },
+   "spec": {
+    "template": {
+     "spec": {
+      "containers": [
+       {
+        "image": "nginx:1.27",
+        "env": [
+         {
+          "name": "DD_AGENT_HOST",
+          "value": "datadog"
+         },
+         {
+          "name": "NEW_RELIC_AGENT_ENABLED",
+          "value": "true"
+         }
+        ],
+        "volumeMounts": [
+         {
+          "name": "m",
+          "mountPath": "/app/models"
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "apiVersion": "batch/v1",
+   "kind": "Job",
+   "metadata": {
+    "name": "render-batch",
+    "namespace": "media"
+   },
+   "spec": {
+    "template": {
+     "spec": {
+      "containers": [
+       {
+        "image": "registry.example/media/render:3",
+        "resources": {
+         "limits": {
+          "nvidia.com/gpu": 1
+         }
+        }
+       }
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -95,7 +95,8 @@ signatures:
 | `file` matcher | fields vary by type | No | `globs`. |
 | `env` matcher | fields vary by type | No | `names`, `patterns`. |
 | `domain`, `iac`, `scope` matchers | fields vary by type | No | `values`. |
-| `user_agent`, `image`, `name`, `model`, `secret` matchers | fields vary by type | No | `patterns`. |
+| `user_agent`, `image`, `model`, `secret` matchers | fields vary by type | No | `patterns`. |
+| `name` matcher | fields vary by type | No | `patterns`, `ambiguous`. |
 | `client_id` matcher | fields vary by type | No | `names`, `patterns`. |
 
 ### Categories
@@ -146,6 +147,42 @@ such a match only when the same signature also has an import, a dependency or
 a non-ambiguous code match in the same project. Put ambiguous patterns in their
 own signal; every signature with one must also declare an import, dependency or
 specific code signal.
+
+`ambiguous: true` on a `name` signal marks product names that also describe
+unrelated applications. The Google Gemini identity signature uses this rule:
+its name matches remain possible-product hints until a non-name signal for the
+same product corroborates them. A second name, publisher or description is not
+independent evidence. Uncorroborated hints do not establish the signature's
+vendor, tags, capabilities or agent indicator. Their evidence shares a confidence
+group, and ordinary inventory or permission evidence cannot promote an otherwise
+unattributed hint above possible confidence. Keep candidate signatures in
+`metadata.potential_frameworks` or `metadata.potential_providers` separate from
+established technologies. Once a non-name signal for the same signature has
+established the product on a finding, a later ambiguous name match for it is
+corroborated and keeps its full weight; it adds no second agent indicator. This
+rule does not turn a declared domain in an untrusted export into proof of
+publisher ownership.
+
+More generally, a match that does not establish its signature (an ambiguous
+name, or a caller's `establish=False` mention) adds none of the signature's
+tags; it is recorded only under `metadata.potential_*`, except the generic
+AI-name hint (`identity-app.generic-ai-name`), which names no product and is
+never listed there. OAuth reply and homepage
+URLs corroborate a domain signal by their parsed `http(s)` hostname only. A URL
+field holding several URLs is split and each host is checked once: whitespace
+always separates, and a comma or semicolon separates only where a new
+`http(s)://` URL starts and before the current URL's query or fragment, so
+`https://portal.example/cb?next=a,https://chatgpt.com/` names only
+`portal.example`. Tokens with userinfo, a backslash or a
+control character are skipped, because Python and browsers can disagree about
+their host.
+
+This conservative rule covers the signature's qualified Google Gemini, AI Studio
+and NotebookLM names too: even a plausible publisher/name pair is self-declared
+text. A genuine app exported with only those fields remains a hint until a
+matching domain, client ID or other non-name signal is available. Intrinsic Entra
+agent-identity/registry observations and explicit LLM-access permission evidence
+retain their own confidence without attributing the app to Google.
 
 `languages` on a `code` signal gates its patterns to one language family. Use
 it whenever an idiom is lexically bound to a language and its name is not

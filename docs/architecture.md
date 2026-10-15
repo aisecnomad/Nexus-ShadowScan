@@ -101,9 +101,40 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       large to sanitize within the output budget is dropped and reported as an
       `engine.postprocess` error.
    2. **Correlate** (`correlation.py`). Findings from different connectors or
-      surfaces that share resource ids, normalised names or repository labels
-      are linked in
-      `metadata.related`. Gateway activity is attached to the code it is bound
+      surfaces that share an exact identifier are linked in `metadata.related`,
+      with `metadata.related_details` records of the identifier type, the
+      matching fields and the scope. A fully qualified reference (an ARN, a
+      GCP resource name, an Azure resource id, an OCI OCID) carries its own
+      account or project. A GCP service account address, bare or as
+      `projects/<project>/serviceAccounts/<address>`, names one service
+      account wherever it is used, so it links across projects. Code
+      findings report repository paths, so there a `projects/` path is a GCP
+      resource name only with a valid project id or number, a GCP collection
+      after it, no `:<line>` suffix and no source-file extension on its last
+      segment. Google-managed service accounts that many projects share
+      (`@system.gserviceaccount.com`) link nothing. Identifiers are compared byte for
+      byte, except Azure resource ids, which Azure Resource Manager treats
+      case-insensitively and which are compared in ASCII lowercase. Shared
+      AWS catalog ARNs (AWS-managed policies, Bedrock foundation models)
+      identify no workload and are not compared.
+      A local identifier links exactly only within a
+      declared shared scope: the Entra tenant for an Entra application id
+      (reported as `app_id`, `client_id`, a Teams `bot_id` or an Azure Bot
+      `msa_app_id`), or a shared tenant, workspace, cloud account,
+      subscription or project. Vendor names and gateway labels are not scope,
+      and neither is an `account` its connector marks as not attributed to
+      the records (`metadata.account_attributed: false`, an Entra export of
+      another tenant).
+      Normalised names, and equal local identifiers whose shared scope cannot
+      be verified, produce only `metadata.related_candidates`, with candidate
+      assurance and a limitation; they never enter the exact-link list. A
+      conflicting declared tenant, account, subscription, project or
+      workspace prevents both kinds of link. A declared scope value that
+      cannot be compared (redacted, padded, or with wildcard characters, as a
+      display name such as `Acme [EU]` has) gives its finding no identifier
+      link, exact or candidate; its name similarity is still a candidate.
+      These links describe the supplied observations, not independently
+      verified ownership. Gateway activity is attached to the code it is bound
       to by `correlation_bindings` (`metadata.runtime_activity`). Endpoint
       findings are linked to a running process of the same tool on the same
       device (`metadata.lifecycle`, `observed-running`). Correlation changes
@@ -445,7 +476,7 @@ Once a release is published, a plugin declares the scanner as an ordinary
 dependency with a lower bound on the reviewed release, for example
 `NexusShadowScan>=0.1.2`. Before then, depend on a reviewed full git revision,
 as the README install instructions do, for example
-`NexusShadowScan @ git+https://github.com/aisecnomad/Project-Nexus.git@<40-character-sha>`.
+`NexusShadowScan @ git+https://github.com/aisecnomad/Nexus-ShadowScan.git@<40-character-sha>`.
 PyPI rejects direct URL requirements, so a plugin published on PyPI cannot use
 that form. Use a fresh virtual environment when moving from an earlier Project
 Nexus distribution named `shadowscan` or `project-nexus-shadowscan`; installing

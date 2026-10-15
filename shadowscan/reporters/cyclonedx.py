@@ -53,7 +53,7 @@ from shadowscan.reporters._publication import publication_stats
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.utils.redaction import sanitize
 
-_PROJECT_URI = "https://github.com/aisecnomad/Project-Nexus"
+_PROJECT_URI = "https://github.com/aisecnomad/Nexus-ShadowScan"
 _EXCLUDED_KINDS = {Kind.SECRET, Kind.TOKEN}
 _MAX_MCP_SERVERS = 50
 _MAX_MODELS = 20

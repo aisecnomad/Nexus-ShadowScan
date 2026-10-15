@@ -1,4 +1,4 @@
-# Real-world shadow-AI discovery benchmark
+# Repo and home-view surfaces benchmark
 
 This benchmark runs shadow-AI discovery tools over public GitHub repositories
 at pinned commits. Labels come from a written protocol, not from any tool.

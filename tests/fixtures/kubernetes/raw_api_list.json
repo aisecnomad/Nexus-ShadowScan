@@ -1,0 +1,19 @@
+{
+  "kind": "PodList",
+  "apiVersion": "v1",
+  "metadata": {"resourceVersion": "42"},
+  "items": [
+    {
+      "metadata": {"name": "local-model", "namespace": "ai"},
+      "spec": {
+        "containers": [
+          {
+            "name": "model",
+            "image": "ollama/ollama:example",
+            "resources": {"limits": {"nvidia.com/gpu": 1}}
+          }
+        ]
+      }
+    }
+  ]
+}

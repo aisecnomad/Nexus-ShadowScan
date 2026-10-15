@@ -14,14 +14,14 @@ its reporting and enforcement process. For usage questions, start with the
 
 - **Documentation:** fix a confusing step, add a synthetic example, or improve
   an explanation. No live tenant or cloud credentials are needed. Use the
-  [documentation form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=documentation.yml)
+  [documentation form](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=documentation.yml)
   or submit a focused pull request.
 - **Detection quality:** provide a minimal positive or negative fixture with the
   expected outcome and why it is correct. A dependency name alone does not prove
   an agent is running. File it with the
-  [detection quality report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml);
+  [detection quality report form](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=detection_report.yml);
   accepted reports become labeled regression cases under `tools/evaluation/`.
-- **Bugs:** use the [bug report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=bug_report.yml)
+- **Bugs:** use the [bug report form](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=bug_report.yml)
   and include the full scanner commit, command, expected result and a sanitized
   reproducer. Search existing issues first; add evidence to an existing report
   where possible.
@@ -30,7 +30,7 @@ its reporting and enforcement process. For usage questions, start with the
 - **Review:** explain what you inspected and verified, including limits. Review
   from someone who did not author the change is especially valuable.
 
-Browse [open issues](https://github.com/aisecnomad/Project-Nexus/issues) or propose
+Browse [open issues](https://github.com/aisecnomad/Nexus-ShadowScan/issues) or propose
 a small improvement if no suitable issue exists. You can ask for scope guidance
 on the issue before starting; there is no expectation to build a large feature
 as your first contribution.
@@ -47,8 +47,8 @@ cloud and development toolchain. Fork the repository on GitHub if you need a
 branch you can push; clone your fork in that case. In a local checkout:
 
 ```bash
-git clone https://github.com/aisecnomad/Project-Nexus.git
-cd Project-Nexus
+git clone https://github.com/aisecnomad/Nexus-ShadowScan.git
+cd Nexus-ShadowScan
 python -m venv .venv
 source .venv/bin/activate
 git switch -c fix/short-description
@@ -69,13 +69,32 @@ Run `make help` for a quick reference of all development commands.
 | [`shadowscan/`](shadowscan/) | The scanner package: CLI (`cli.py`), engine, finding model, risk and autonomy scoring, inventory reconciliation, reporters and redaction. [docs/architecture.md](docs/architecture.md#package-layout) describes each module's responsibility. |
 | [`shadowscan/connectors/`](shadowscan/connectors/) | One subpackage per discovery surface (`code`, `identity`, `gateway`, `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime`); each connector implements `collect()` and `analyze()`. |
 | [`shadowscan/signatures/data/`](shadowscan/signatures/data/), [`shadowscan/mappings/data/`](shadowscan/mappings/data/) | YAML signature packs and the threat and control mapping catalogs. |
-| [`tests/`](tests/) | The pytest suite. Unit tests sit in [`tests/unit/`](tests/unit/), named after the module they exercise; offline, sanitized fixtures sit under [`tests/fixtures/`](tests/fixtures/); `tests/test_repository_policy.py` and `tests/test_repository_consistency.py` are the `make policy` gates. |
+| [`tests/`](tests/) | The pytest suite. Unit tests sit in [`tests/unit/`](tests/unit/), named after the module they exercise; offline, sanitized fixtures sit under [`tests/fixtures/`](tests/fixtures/); `tests/test_repository_policy.py` and `tests/test_repository_consistency.py` are the `make policy` gates. Other top-level `tests/test_*.py` modules test repository tooling: release, governance, evaluation, canaries and benchmark entry points. Find a module's tests with `git grep -l shadowscan.connectors.identity.okta tests`. |
 | [`docs/`](docs/) | The MkDocs site (`mkdocs.yml` holds the navigation): getting-started guides, connector guides under [`docs/connectors/`](docs/connectors/), concepts, operations runbooks, ADRs and the API reference. |
 | [`examples/`](examples/) | The offline demo configuration (`shadowscan.offline.yaml`), sample inventories, canary and eBPF fixtures, and consumer CI examples (GitHub Actions workflows and Kubernetes manifests). |
 | [`tools/`](tools/README.md) | Repository tooling that never ships: the secrets and per-connector coverage gates, the regression corpora, benchmark harnesses, the acceptance verifier, release, governance and container checks, and the AI review gate internals. |
 | [`benchmarks/`](benchmarks/README.md) | Benchmark corpora and recorded results, with each benchmark's harness and what it can and cannot show. |
 | [`archive/reviews/`](archive/reviews/README.md) | Dated, AI-assisted review records; per [AGENTS.md](AGENTS.md), not independent human review. |
-| [`.github/`](.github/) | Workflows, issue forms, the pull request template, the label taxonomy (`labels.yml`), Dependabot configuration and the committed `main` ruleset. |
+| [`.github/`](.github/) | Workflows ([inventory](.github/workflows/README.md)), issue forms, the pull request template, the label taxonomy (`labels.yml`), Dependabot configuration and the committed `main` ruleset. |
+
+Files at the repository root stay there because the build, the container image,
+Dependabot and the tests read them from there:
+
+| File | Purpose |
+|---|---|
+| `pyproject.toml` | Package metadata, extras, and the ruff, mypy, pytest and coverage settings |
+| `Makefile` | Every development command; `make help` lists them by section |
+| `requirements.lock` | Hash-locked runtime and cloud SDK set for deployments, CI and the image |
+| `requirements-build.lock` | Hash-locked build backend for `--no-build-isolation` builds |
+| `requirements-ci.lock` | Hash-locked development and test toolchain (CPython 3.11 to 3.13) |
+| `requirements-ci-constraints.txt` | Reviewed inputs that `requirements-ci.lock` is generated from; never installed directly |
+| `requirements-docs.lock` | Hash-locked MkDocs toolchain for `make docs` and the Docs workflow |
+| `mkdocs.yml` | Documentation site configuration and navigation |
+| `Dockerfile`, `.dockerignore` | The worker image and its build-context allow-list |
+| `agent-card.yaml` | Sample Agent Capability Card used by the offline demo, the quick start and the image |
+| `CHANGELOG.md`, `RELEASE_NOTES.md` | Engineering change log, and the operator summary of what changes on upgrade |
+| `AGENTS.md` | Rules for coding agents working in this repository |
+| `CITATION.cff`, `NOTICE`, `LICENSE`, `CODEOWNERS` | Citation metadata, attribution, licence and review ownership |
 
 ## Run one test
 
@@ -100,11 +119,16 @@ changes only that module.
 Existing Make targets provide the next steps:
 
 ```bash
+make check-fast      # lint, format, types, validators, secrets and policy; no tests
 make test-fast       # full test suite without coverage, stop at first failure
 make test            # full suite with line and branch coverage and the overall floor
 make coverage-gate   # connector coverage; run after make test
 make check           # all local quality gates
 ```
+
+On CI runners the full suite takes about 15 minutes untraced and about 20 with
+coverage; `make check-fast` takes a minute or two. `make audit`, and therefore
+`make check`, needs network access for pip-audit.
 
 For detailed testing guidance, environment setup troubleshooting, and advanced patterns,
 see [Testing Guide](docs/testing.md).
@@ -146,7 +170,9 @@ exact supported Python matrix and dependency pins.
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Mappings | `python -m shadowscan.mappings.validate` | All valid |
 | Secrets | `make secrets` | Every tracked file is scanned; only exact reviewed synthetic-value approvals are accepted |
-| Audit | `pip-audit` | No known vulnerabilities |
+| Audit | `make audit` | No known vulnerabilities in the environment or any hash lock |
+| Repository policy | `make policy` | Action pins, permissions, links, anchors, Makefile and hook parity with CI |
+| Docs | `make docs` | `mkdocs build --strict` with no warnings |
 | Evaluation | `make evaluate` | All bundled corpora pass |
 
 CI measures coverage on one Linux job (Python 3.11) and runs the same full
@@ -164,23 +190,25 @@ repository test requires the reason. Mypy requires annotated definitions
 The same gates as individual commands:
 
 ```bash
-python -m pip install -e ".[cloud,dev]"
+make install
 python -m shadowscan.signatures.validate
 python -m shadowscan.mappings.validate
 make secrets
 ruff check shadowscan tests tools benchmarks
 ruff format --check shadowscan tests tools benchmarks
 mypy shadowscan tools benchmarks
-pip-audit --progress-spinner off
+make audit
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 make coverage-gate
 make evaluate
 ```
 
 The cloud SDKs (`boto3`, `google-auth`, `azure-identity`, `oci`) are optional
-extras for users, but the test suite is gated with them installed, so use
-`".[cloud,dev]"` as shown above. CI installs the hash-locked
-`requirements.lock`, which contains every cloud SDK. Offline fixtures cover the
+extras for users, but the test suite is gated with them installed. `make
+install` installs the hash-locked `requirements.lock`, which contains every
+cloud SDK, together with the CI and build locks, as CI does. The
+release-evidence tests record the version of the `build` frontend, which only
+`requirements-build.lock` provides. Offline fixtures cover the
 cloud connectors; do not commit live tenant exports.
 
 Dependabot updates the version ranges in `pyproject.toml` and the reviewed
@@ -252,12 +280,17 @@ contract. In brief:
 2. Implement `collect()` (live API) and `analyze()` (offline records → findings).
 3. Register in `shadowscan/connectors/__init__.py`.
 4. Add offline test fixtures under `tests/fixtures/`.
-5. Achieve ≥ 75% coverage of statements and branches (the per-connector floor).
+5. Achieve ≥ 75% coverage of statements and branches (the per-connector floor);
+   [iterate on one connector](docs/testing.md#iterate-on-one-connector) shows how
+   to measure one module while you work.
 6. Describe each key in `config_keys` and run `make connector-reference`, which
    regenerates [docs/connectors/reference.md](docs/connectors/reference.md); a
    test fails when it is stale. Document required API scopes and the offline
    export format in the connector guide under `docs/connectors/`, and add the
-   connector's summary row to [docs/connectors.md](docs/connectors.md).
+   connector's summary row to [docs/connectors.md](docs/connectors.md). Run
+   `make readme-matrix` too: the README detection matrix lists the identity,
+   gateway, low-code, SaaS and network connectors, and a test fails when it is
+   stale.
 
 `BaseConnector.load_offline` already reads `input` exports. Declare an
 [engine hook](docs/architecture.md#engine-hooks) only when the engine must
@@ -271,6 +304,7 @@ Signatures are YAML. Add a pack directory with `--signatures` or the
 ```bash
 python -m shadowscan.signatures.validate
 make evaluate
+make readme-matrix   # the README detection matrix is generated from the built-in packs
 ```
 
 See [docs/signatures.md](docs/signatures.md) for the schema and authoring guide.
@@ -322,7 +356,7 @@ The historical review status is documented in
 Do not read a merged pull request, green check, AI review or version number as
 evidence that a second person examined the change. Repository settings are
 separate from this policy: inspect the
-[live rules](https://github.com/aisecnomad/Project-Nexus/rules) and PR checks
+[live rules](https://github.com/aisecnomad/Nexus-ShadowScan/rules) and PR checks
 before merging. The versioned policy requires no bypass actors; the 2026-10-10
 readback listed four `always` bypass actors on both `main` rulesets, so a
 repository administrator can merge without the non-author approval until they
@@ -335,12 +369,12 @@ merge possible, and recheck live enforcement before relying on it.
 reviewer must not have authored or produced the change. A review is recorded as
 a GitHub pull request approval from an account other than the author's. Inspect
 the review author, state and `commit_id` with
-`gh api repos/aisecnomad/Project-Nexus/pulls/<number>/reviews`, and compare that
+`gh api repos/aisecnomad/Nexus-ShadowScan/pulls/<number>/reviews`, and compare that
 commit to the current PR head. The ruleset on `main` is configured to require
 one approving review from a reviewer with write access; its enforcement state
 has changed several times since 2026-09 (the dated readbacks are under
 [merge gate and review status](docs/production.md#merge-gate-and-review-status)),
-so check the [live rules](https://github.com/aisecnomad/Project-Nexus/rules)
+so check the [live rules](https://github.com/aisecnomad/Nexus-ShadowScan/rules)
 rather than this sentence. While the maintainer is the only account with write access, that rule
 cannot be satisfied for the maintainer's own changes until a second eligible
 reviewer receives write access and approves. Never manufacture an approval or

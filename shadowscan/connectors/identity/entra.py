@@ -724,6 +724,14 @@ class EntraConnector(BaseConnector):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         graph = self._index_records(records)
         coverage = self._coverage(graph)
+        for f in self._findings(graph, coverage):
+            if coverage.foreign_tenant:
+                # account keeps naming tenant_id (finding identity), but these records are another
+                # or an unknown tenant's: correlation must not take tenant_id as their tenant.
+                f.metadata["account_attributed"] = False
+            yield f
+
+    def _findings(self, graph: _GraphExport, coverage: _Coverage) -> Iterator[Finding]:
         # Packages whose records bind objects: neither conflicting nor missing their details.
         packages = {
             package_id: package

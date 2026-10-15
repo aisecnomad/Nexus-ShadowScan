@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Read [SUPPORT.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SUPPORT.md) first.
+        Read [SUPPORT.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SUPPORT.md) first.
         This is a public issue. Remove credentials, private source code, tenant identifiers,
         and sensitive findings. For vulnerabilities use a private security advisory.
   - type: input

@@ -76,6 +76,15 @@ def connector_coverage(report: Any) -> dict[str, float]:
     return measured
 
 
+def _some(names: set[str], limit: int = 10) -> str:
+    """At most ``limit`` sorted names, then how many more; a partial run can miss every module."""
+    shown = sorted(names)
+    if not shown:
+        return "none"
+    rest = len(shown) - limit
+    return ", ".join(shown[:limit]) + (f" and {rest} more" if rest > 0 else "")
+
+
 def _read_report(path: Path) -> dict[str, float]:
     """Measurements of a report that covers the whole connector inventory of this checkout."""
     report = strict_json_loads(path.read_text(encoding="utf-8"))
@@ -90,9 +99,12 @@ def _read_report(path: Path) -> dict[str, float]:
     if reported != expected:
         # A report of a selected test run or of another checkout cannot vouch
         # for the modules it never measured.
-        missing = ", ".join(sorted(expected - reported)) or "none"
-        unexpected = ", ".join(sorted(reported - expected)) or "none"
-        raise ValueError(f"connector module inventory mismatch; missing: {missing}; unexpected: {unexpected}")
+        raise ValueError(
+            f"connector module inventory mismatch; missing: {_some(expected - reported)}; "
+            f"unexpected: {_some(reported - expected)}; the report measured "
+            f"{len(reported & expected)} of {len(expected)} connector modules, so it comes from a "
+            "selected test run or another checkout: run `make test`, then `make coverage-gate`"
+        )
     return connector_coverage(report)
 
 

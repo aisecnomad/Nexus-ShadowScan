@@ -25,7 +25,7 @@ from tools.governance_check import (
     requires_advisory_check,
 )
 
-REPOSITORY = "aisecnomad/Project-Nexus"
+REPOSITORY = "aisecnomad/Nexus-ShadowScan"
 RULESETS = {23892853: "Protect main", 23913372: "Require CI and CodeQL"}
 _FIELDS = ("name", "target", "enforcement", "bypass_actors", "conditions", "rules")
 _CHECKS = set(REQUIRED_CHECKS)

@@ -320,7 +320,7 @@ class GcpConnector(BaseConnector):
             except ImportError as exc:
                 raise ConnectorError(
                     "cloud.gcp: install google-auth (install '.[gcp]' from the "
-                    "reviewed Project Nexus checkout) or provide access_token"
+                    "reviewed Nexus ShadowScan checkout) or provide access_token"
                 ) from exc
             # google-auth otherwise uses its own 120-second transport default,
             # including discovery/refresh requests outside our HttpClient.

@@ -1,0 +1,7 @@
+# Source distribution contents. setuptools already adds the package, its
+# declared package data, README.md, pyproject.toml and the licence files. By
+# default it would also add the top-level tests/test*.py modules without the
+# fixtures, conftest and tools they need; the suite runs only from a
+# repository checkout (CONTRIBUTING.md), so the sdist ships none of it.
+# tools/release/distributions.py fails the release if tests reach the sdist.
+prune tests

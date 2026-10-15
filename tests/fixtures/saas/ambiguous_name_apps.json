@@ -1,0 +1,37 @@
+[
+  {
+    "id": "gemini-ledger-sync",
+    "name": "Gemini Ledger Sync",
+    "publisher": "Northwind Treasury",
+    "description": "Settlement ledger reconciliation and account reporting",
+    "url": "https://api.gemini.com/v1/settlement",
+    "scopes": ["https://www.googleapis.com/auth/userinfo.email"],
+    "users": 300
+  },
+  {
+    "id": "gemini-name-only",
+    "name": "Google Gemini",
+    "publisher": "Google",
+    "description": "Gemini, Google AI Studio and NotebookLM",
+    "scopes": ["https://www.googleapis.com/auth/userinfo.email"],
+    "users": 300
+  },
+  {
+    "id": "gemini-official-domain",
+    "name": "Gemini",
+    "url": "https://gemini.google.com/app",
+    "scopes": ["https://www.googleapis.com/auth/userinfo.email"]
+  },
+  {
+    "id": "gemini-query-mention",
+    "name": "Gemini",
+    "url": "https://portal.example/callback?next=https://gemini.google.com/app",
+    "scopes": ["https://www.googleapis.com/auth/userinfo.email"]
+  },
+  {
+    "id": "gemini-host-prefix",
+    "name": "Gemini",
+    "url": "https://gemini.google.com.portal.example/app",
+    "scopes": ["https://www.googleapis.com/auth/userinfo.email"]
+  }
+]

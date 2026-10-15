@@ -28,6 +28,7 @@ These pages are built from source docstrings using
 | [Vendor registries](registries.md) | Registry record contract, reconciliation statuses and trusted-registry approvals |
 | [MCP registry](mcp_registry.md) | MCP Registry snapshots, server provenance and approved MCP catalogs |
 | [Declared governance](governance.md) | Governance facts declared in Capability Cards |
+| [Signatures](signatures.md) | Signature schema, loading and the matcher index behind every connector |
 | [Threat and control mappings](mappings.md) | Edition-qualified threat and control references |
 
 ## Reports and Fleet
@@ -37,6 +38,7 @@ These pages are built from source docstrings using
 | [Fleet merge](fleet.md) | Combining reports from several machines or scans |
 | [Dashboard](dashboard.md) | The `shadowscan.inventory/v1` document behind `shadowscan dashboard` |
 | [Control evidence](controls.md) | Findings per governance control for `shadowscan controls` |
+| [Reporters](reporters.md) | Output formats behind `--format`: table, JSON, SARIF, CSV, Markdown, HTML, CycloneDX, OCSF |
 
 ## Connector Framework
 
