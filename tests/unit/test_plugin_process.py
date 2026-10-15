@@ -550,7 +550,7 @@ def test_execution_backend_configuration_rejects_invalid_values(value):
 
 
 def test_execution_backend_defaults_and_mutation_validation():
-    assert ScanConfig().plugin_execution == "thread"
+    assert ScanConfig().plugin_execution == "process"
     config = ScanConfig.from_dict({"options": {"plugin_execution": "process"}})
     engine = Engine(config, SignatureIndex([]))
     config.plugin_execution = "fork"

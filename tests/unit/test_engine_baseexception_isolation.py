@@ -174,6 +174,7 @@ def _scan(tmp_path, plugin_options="", extra_options=""):
     config.write_text(
         "options:\n"
         f"  plugins: [{PLUGIN}]\n"
+        "  plugin_execution: thread\n"
         "  allow_credential_mixing: true\n"
         f"{extra_options}"
         "connectors:\n"
@@ -234,6 +235,7 @@ def test_keyboard_interrupt_at_plugin_import_still_aborts_the_scan(monkeypatch, 
     config = ScanConfig(
         connectors=[repository, ConnectorSpec(PLUGIN)],
         plugins=[PLUGIN],
+        plugin_execution="thread",
         allow_credential_mixing=True,
     )
     with pytest.raises(KeyboardInterrupt):

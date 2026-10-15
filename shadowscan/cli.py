@@ -284,6 +284,14 @@ def _run_and_emit_with_deadline(
         _log_masked_failure("scan setup failed", exc)
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
     result.stats.extend(extra_stats or [])
+    # When abandoned workers exist, arm a bounded exit watchdog so the process
+    # cannot hang indefinitely during report emission or clone cleanup.
+    _exit_guard: JobDeadline | None = None
+    if engine.abandoned_workers:
+        _exit_guard = arm_job_deadline(
+            30,
+            message="abandoned-worker exit deadline exceeded; forcing process exit",
+        )
     try:
         # The scan's own index names custom-pack signatures in the CycloneDX output.
         index = getattr(engine, "index", None)
@@ -374,7 +382,7 @@ security_options = [
         "--plugin-execution",
         type=click.Choice(["thread", "process"]),
         default=None,
-        help="third-party connector execution backend (default: thread); process enables worker termination",
+        help="third-party connector execution backend (default: process); process enables worker termination",
     ),
     click.option(
         "--allow-plugin",

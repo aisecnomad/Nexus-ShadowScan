@@ -1190,10 +1190,12 @@ class Engine:
         scopes: _ScopeLedger | None = None,
     ) -> tuple[dict[int, _JobResult], set[int]]:
         """Run every selected connector under deadline supervision."""
+        plugin_names = frozenset(entry.partition("=")[0].strip() for entry in self.config.plugins)
         states = {
             number: _JobState(
                 isolated_process=self.config.plugin_execution == "process"
                 and spec.name not in builtin_connector_names()
+                and spec.name in plugin_names
             )
             for number, spec in jobs
         }

@@ -46,6 +46,7 @@ from shadowscan.utils.git import (
     register_checkout,
     run_bounded_clone,
     unregister_checkout,
+    validate_clone_destination,
     validate_git_ref,
 )
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
@@ -607,6 +608,7 @@ class RemoteRepositoryConnector(BaseConnector):
         # The token is scoped to the API origin: a clone URL from provider JSON
         # must stay on it, and git may not follow redirects away from it.
         url = validate_url(candidate, origin)
+        validate_clone_destination(url)
         env = clone_environment(origin, self.token, self.clone_username)
         cmd = [
             *git_argv_prefix(),

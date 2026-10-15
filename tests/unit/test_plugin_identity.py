@@ -160,7 +160,7 @@ def test_valid_plugin_loads_once_and_is_attributed_to_its_own_name(monkeypatch, 
     with pytest.raises(ValueError, match="not approved"):
         registry.get_connector_class(ENTRY)
 
-    config = ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugins=[ENTRY])
+    config = ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugins=[ENTRY], plugin_execution="thread")
     result = Engine(config, index).run()
     assert result.complete
     (finding,) = result.findings
@@ -175,7 +175,9 @@ def test_valid_plugin_loads_once_and_is_attributed_to_its_own_name(monkeypatch, 
 
 def test_mismatched_plugin_yields_no_findings_and_an_incomplete_scan(monkeypatch, index):
     _publish(monkeypatch, ("saas.acme-alias", _connector(name="saas.slack")))
-    config = ScanConfig(connectors=[ConnectorSpec("saas.acme-alias")], plugins=["saas.acme-alias"])
+    config = ScanConfig(
+        connectors=[ConnectorSpec("saas.acme-alias")], plugins=["saas.acme-alias"], plugin_execution="thread"
+    )
     result = Engine(config, index).run()
     assert not result.complete and result.findings == []
     (stats,) = result.stats
