@@ -163,7 +163,9 @@ def _code_report_error(path: Path) -> str | None:
         return f"vet.json unparseable: {exc}"
     if not isinstance(data, list):
         return "vet.json is not a list"
-    if not any(_vet_record(item) for item in data):
+    # A decoded empty list is an empty inventory however it is formatted
+    # ("[ ]", "[\n]"); only a list holding items needs a vet record.
+    if data and not any(_vet_record(item) for item in data):
         return "vet.json holds no vet record"
     return None
 

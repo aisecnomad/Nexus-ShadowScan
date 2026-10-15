@@ -423,6 +423,19 @@ def test_vet_code_report_of_the_wrong_shape_is_an_error(tmp_path: Path, text: st
     normalized = VetEstateAdapter().normalize("code:repo-x", tmp_path)
 
     assert normalized.error == error
+
+
+@pytest.mark.parametrize(
+    "text", ["[]", "[ ]", "[\n]", " [\n  ]\n"], ids=["compact", "spaced", "newline", "indented"]
+)
+def test_vet_empty_report_reads_as_nothing_found_regardless_of_whitespace(tmp_path: Path, text: str) -> None:
+    """A decoded empty list is a successful empty inventory however vet formats it."""
+    (tmp_path / "vet.json").write_text(text, encoding="utf-8")
+
+    normalized = VetEstateAdapter().normalize("code:repo-x", tmp_path)
+
+    assert normalized.error is None
+    assert list(normalized.predictions) == []
     assert normalized.predictions == []
 
 
