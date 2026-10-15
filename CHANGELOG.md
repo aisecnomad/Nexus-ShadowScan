@@ -54,21 +54,31 @@ summarizes each release for people who install and operate ShadowScan.
   configured grant (or `run ... --set allow_private_origin=true`) still reached
   loopback, private and cloud-metadata addresses for that connector although
   the operator had refused them for the scan. Before #235 built-in connectors
-  rejected the key, so the flag held for every connector. `ScanConfig` gains a
-  keyword-only `deny_private_origin`, which `--deny-private-origin` sets on
+  rejected the key, so no connector key could lift the flag. `ScanConfig` gains
+  a keyword-only `deny_private_origin`, which `--deny-private-origin` sets on
   every scanning command, and the engine checks it before the connector's key,
   for the plugin lookup as well as collection, as a scan-wide
   `allow_instance_credentials` already overrides a connector key. A conflicting
-  connector key is overridden without an error. A `ScanConfig` with both
-  `allow_private_origin` and `deny_private_origin` true is refused, and a
-  configuration file cannot set the refusal; an in-file
+  connector key is overridden without an error, and the connector's own
+  configuration (`ctx.config`) reads the value the engine enforces, in thread
+  and process plugin workers alike, so a plugin whose own transport honours
+  the documented key is refused too; under the refusal it read `true`. The
+  flag refuses the `allow_private_origin` grant only. It does not revoke
+  `allow_instance_credentials`, under which cloud connectors still contact the
+  instance metadata service and the `cloud.gcp` credential transport accepts a
+  private token endpoint; `SECURITY.md`, the threat model,
+  `docs/production.md`, `docs/api/http.md` and the configuration guide say so
+  and tell operators to pass `--deny-instance-credentials` as well. A
+  `ScanConfig` with both `allow_private_origin` and `deny_private_origin` true
+  is refused, and a configuration file cannot set the refusal; an in-file
   `options.allow_private_origin: false` stays a default that a connector grant
   overrides. Affects operators and pipelines that pass `--deny-private-origin`
   with a configuration that grants a connector; library callers can now refuse
   with `ScanConfig(deny_private_origin=True)`. Regression tests cover `scan`
   with and without the flag, `run --set allow_private_origin=true
-  --deny-private-origin`, the engine and plugin-lookup policy and the both-true
-  rejection.
+  --deny-private-origin`, the engine and plugin-lookup policy, the connector's
+  `ctx.config` with and without the refusal in threads and in a spawned plugin
+  worker, and the both-true rejection.
 - **Private-origin documentation (#235).** The per-connector grant examples in
   `docs/getting-started/configuration.md` and `docs/production.md` used
   `gateway.logs` with `input:`, which reads an export and makes no HTTPS

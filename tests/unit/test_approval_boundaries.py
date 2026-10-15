@@ -321,17 +321,26 @@ def test_connector_can_refuse_private_origin_the_scan_allows(index, monkeypatch,
     assert http._allow_private_origin.get() is False
 
 
+@pytest.mark.parametrize("deny", [True, False])
 @pytest.mark.parametrize("parallel", [1, 2])
-def test_explicit_scan_wide_deny_overrides_a_connector_grant(index, monkeypatch, parallel):
-    """deny_private_origin (--deny-private-origin) wins over a connector-level grant, lookup included."""
+def test_explicit_scan_wide_deny_overrides_a_connector_grant(index, monkeypatch, parallel, deny):
+    """deny_private_origin (--deny-private-origin) wins over a connector-level grant.
+
+    The plugin lookup, collection and the connector's own ``ctx.config`` all
+    see the refusal, so a plugin whose own transport honours the key cannot
+    reach a private address either; without the refusal the grant holds.
+    """
     from shadowscan.utils import http
 
     observed = {}
+    configured = {}
     lookups = []
 
     class Probe(BaseConnector):
         def collect(self):
-            observed[self.ctx.get("label")] = http._allow_private_origin.get()
+            label = self.ctx.get("label")
+            observed[label] = http._allow_private_origin.get()
+            configured[label] = self.ctx.config.get("allow_private_origin", "absent")
             raise RuntimeError("simulated failure")
 
         def analyze(self, records):
@@ -347,13 +356,16 @@ def test_explicit_scan_wide_deny_overrides_a_connector_grant(index, monkeypatch,
             ConnectorSpec("probe.internal", {"allow_private_origin": True}, label="internal"),
             ConnectorSpec("probe.public", label="public"),
         ],
-        deny_private_origin=True,
+        deny_private_origin=deny,
         parallel=parallel,
     )
     result = Engine(config, index).run()
     assert not result.complete
-    assert observed == {"internal": False, "public": False}
-    assert lookups == [False, False]
+    granted = not deny
+    assert observed == {"internal": granted, "public": False}
+    # The engine replaces a connector's key with the policy it enforces and adds none.
+    assert configured == {"internal": granted, "public": "absent"}
+    assert sorted(lookups) == sorted([granted, False])
     assert http._allow_private_origin.get() is False
 
 

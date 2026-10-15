@@ -375,9 +375,15 @@ configuration that set neither key behaves as before.
 
 `--deny-private-origin` on the command line (or
 `ScanConfig(deny_private_origin=True)` for a library caller) is a scan-wide
-refusal: it also overrides every connector-level `allow_private_origin: true`,
-so a pipeline that passes it keeps every connector off private destinations
-whatever the configuration grants. A `ScanConfig` with both
+refusal of the `allow_private_origin` grant: it overrides the scan-wide grant
+and every connector-level `allow_private_origin: true` for this scanner's HTTPS
+clients, and a connector that sets the key, plugins included, reads `false`
+there. It does not revoke `allow_instance_credentials`: under that opt-in the
+cloud connectors still contact the instance metadata service, and the
+`cloud.gcp` credential transport accepts a private token endpoint. A pipeline
+that must keep cloud connectors off both passes `--deny-instance-credentials`
+as well; the cloud SDKs' own requests stay outside this policy, so restrict
+egress at the network where that matters. A `ScanConfig` with both
 `allow_private_origin` and `deny_private_origin` true is refused, and a
 configuration file cannot set the refusal.
 

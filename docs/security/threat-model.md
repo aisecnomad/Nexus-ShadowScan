@@ -68,9 +68,13 @@ Grouped by boundary, in STRIDE terms where the category is meaningful.
 Private destinations require a deliberate grant. Prefer the per-connector
 `allow_private_origin`, which applies to that connector alone, over the
 scan-wide `options.allow_private_origin`, which applies to every connector in
-the configuration. The operator's `--deny-private-origin` overrides both, so a
-configuration cannot grant a connector what the command line refuses. See
-[configuration](../getting-started/configuration.md).
+the configuration. The operator's `--deny-private-origin` overrides both
+grants for this scanner's HTTPS clients, and a connector that sets the key
+reads `false` there. It does not revoke `options.allow_instance_credentials`:
+under that opt-in cloud connectors still contact the instance metadata
+service, and the `cloud.gcp` credential transport accepts a private token
+endpoint, so pass `--deny-instance-credentials` as well to keep cloud
+connectors off both. See [configuration](../getting-started/configuration.md).
 
 ### Scan output (disclosure)
 

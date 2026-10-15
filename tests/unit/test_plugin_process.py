@@ -84,11 +84,20 @@ class Connector(BaseConnector):
             import sys
             helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], close_fds=False)
             Path(os.environ["SHADOWSCAN_PROCESS_PID"] + ".helper").write_text(str(helper.pid))
+        if mode == "origin":
+            from shadowscan.utils import http
+            return [{
+                "pid": os.getpid(),
+                "policy": http._allow_private_origin.get(),
+                "configured": self.ctx.config.get("allow_private_origin"),
+            }]
         return [{"pid": os.getpid()}]
 
     def analyze(self, records):
         for record in records:
             metadata = {"pid": record["pid"]}
+            if mode == "origin":
+                metadata.update(policy=record["policy"], configured=record["configured"])
             if mode == "metadata-types":
                 import datetime
                 metadata.update(seen=datetime.datetime(2026, 1, 1), scopes={"read"}, raw=b"ab")
@@ -416,6 +425,26 @@ def test_non_json_metadata_round_trips_like_thread_mode(installed_probe, monkeyp
     # The report renders a datetime as text and reads a set as a list and
     # bytes as text; the transport must not change that rendering.
     assert connector_metadata == {"seen": "2026-01-01 00:00:00", "scopes": ["read"], "raw": "ab"}
+
+
+@pytest.mark.parametrize("deny", [True, False])
+def test_spawned_plugin_sees_the_scan_wide_private_origin_refusal(installed_probe, monkeypatch, deny):
+    """--deny-private-origin reaches the worker's transport policy and the plugin's own ctx.config."""
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "origin")
+    config = ScanConfig(
+        connectors=[ConnectorSpec(ENTRY, {"allow_private_origin": True})],
+        plugins=[ENTRY],
+        plugin_execution="process",
+        deny_private_origin=deny,
+    )
+    result = Engine(config, SignatureIndex([])).run()
+    assert result.complete, result.stats
+    [finding] = result.findings
+    assert finding.metadata["pid"] != os.getpid()
+    assert finding.metadata["policy"] is (not deny)
+    assert finding.metadata["configured"] is (not deny)
+    assert MODULE not in sys.modules
+    _assert_reaped(installed_probe)
 
 
 def test_plugin_allowlist_still_required_without_parent_import(installed_probe):

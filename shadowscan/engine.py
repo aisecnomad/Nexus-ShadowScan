@@ -415,8 +415,11 @@ class _ConnectorRunner:
         would also let every other connector leave the public internet.
         ``normalize_connector_config`` has already made the value a boolean.
         An explicit scan-wide refusal (``deny_private_origin``, which
-        ``--deny-private-origin`` sets) wins over both, as it does for
-        ``allow_instance_credentials`` in ``_connector_config``.
+        ``--deny-private-origin`` sets) wins over both, and
+        ``_connector_config`` hands the connector this value in place of its
+        own key, as it does for ``allow_instance_credentials``. The refusal
+        does not revoke ``allow_instance_credentials``: a cloud connector it
+        approves still reaches the instance metadata service.
         """
         if self._config.deny_private_origin:
             # An explicit scan-wide refusal cannot be bypassed by a connector-level key.
@@ -547,6 +550,10 @@ class _ConnectorRunner:
         if "allow_instance_credentials" in cfg or inherits_approval:
             # Scan-wide approval cannot be bypassed by a connector-level key.
             cfg["allow_instance_credentials"] = self._config.allow_instance_credentials
+        if "allow_private_origin" in cfg:
+            # A connector (or plugin transport) that reads its own key sees the
+            # policy the engine enforces, so --deny-private-origin holds there too.
+            cfg["allow_private_origin"] = self._allow_private_origin(spec)
         if spec.label:
             cfg.setdefault("label", spec.label)
         if self._dump_directory:

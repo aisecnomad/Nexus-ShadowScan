@@ -80,7 +80,12 @@ connector-level `false` keeps a connector public under a scan-wide grant. An
 `options.allow_private_origin: false` in the file is only that default, which a
 connector grant overrides. `--deny-private-origin` on the command line is the
 operator's scan-wide refusal: it also overrides every connector-level
-`allow_private_origin: true` for that run.
+`allow_private_origin: true` for that run, and a connector that sets the key
+reads `false` there. It refuses the `allow_private_origin` grant only and does
+not revoke `allow_instance_credentials`: under that opt-in cloud connectors
+still contact the instance metadata service, and the `cloud.gcp` credential
+transport accepts a private token endpoint. Pass `--deny-instance-credentials`
+as well to keep cloud connectors off both.
 
 The key takes a YAML boolean or the strings `true`/`false`, so an interpolated
 `"false"` cannot enable it. The grant covers this scanner's HTTPS clients

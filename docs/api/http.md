@@ -10,8 +10,12 @@ which the scan configuration grants to every connector
 (`options.allow_private_origin`) or to one connector (its own
 `allow_private_origin` key), and which the operator's `--deny-private-origin`
 (`ScanConfig.deny_private_origin`) overrides for the whole scan; see the
-[threat model](../security/threat-model.md). Under the opt-in the numeric
-connection and TLS hostname verification still apply. Proxies and replacement
+[threat model](../security/threat-model.md). A client constructed with an
+explicit `allow_private_origin` argument keeps it whatever the scan grants or
+refuses: the `cloud.gcp` credential transport passes its
+`allow_instance_credentials` approval there, so `--deny-private-origin` does
+not cover it and `--deny-instance-credentials` does. Under the opt-in the
+numeric connection and TLS hostname verification still apply. Proxies and replacement
 adapters are refused. Each client copies urllib3's pool-class mapping before
 selecting its destination-policy pool, so a client cannot change another
 session's policy. An injected `session` must be a `requests.Session` (or a

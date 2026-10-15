@@ -69,8 +69,12 @@ coverage, even when a response includes an empty collection field.
   to the checked address, retaining hostname TLS verification. A trusted private
   API requires `allow_private_origin: true` on its connector,
   `options.allow_private_origin: true` (every connector) or
-  `--allow-private-origin`; `--deny-private-origin` refuses it for every
-  connector, connector-level grants included.
+  `--allow-private-origin`; `--deny-private-origin` refuses that grant for
+  every connector, connector-level grants included. It does not revoke
+  `options.allow_instance_credentials`: under that opt-in cloud connectors
+  still contact the instance metadata service, and the `cloud.gcp` credential
+  transport accepts a private token endpoint. Pass `--deny-instance-credentials`
+  as well to keep cloud connectors off both.
   This exception does not relax origin or TLS checks. HTTP proxies, including
   environment proxy settings, are unsupported by this transport.
 * The shared HTTPS adapter bounds response acquisition, including status/header
