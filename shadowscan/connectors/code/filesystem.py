@@ -5631,11 +5631,7 @@ class FilesystemConnector(BaseConnector):
             key=lambda s: order[s.category],
         )
         names = [s.name for s in ranked[:4]]
-        provs = [
-            sig.name
-            for sid in f.model_providers[:3]
-            if (sig := self.index.get(sid))
-        ]
+        provs = [sig.name for sid in f.model_providers[:3] if (sig := self.index.get(sid))]
         where = "repository root" if proj.root == "." else proj.root
         what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
         if f.kind != Kind.AGENT and "mcp_server" in f.metadata:
