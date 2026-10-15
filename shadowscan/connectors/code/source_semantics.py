@@ -35,8 +35,13 @@ import regex
 from shadowscan.connectors.code.genkit_semantics import genkit_call_capabilities, genkit_tool_registration
 from shadowscan.connectors.code.javascript_dispatch import javascript_responses_dispatch_lines
 from shadowscan.connectors.code.javascript_reachability import (
+    _TOKEN,
     JavascriptReachabilityLimit,
+    _Token,
     javascript_dead_ranges,
+)
+from shadowscan.connectors.code.javascript_reachability import (
+    MAX_NESTING as MAX_JAVASCRIPT_NESTING,
 )
 from shadowscan.connectors.code.javascript_tool_attribution import (
     is_javascript_tool_factory,
@@ -58,6 +63,7 @@ from shadowscan.connectors.code.source_capabilities import (
     configured_capabilities,
     python_tool_argument_position,
 )
+from shadowscan.connectors.code.source_ranges import _LookaheadBudget, _type_arguments_end
 from shadowscan.connectors.code.tool_attribution import python_tool_regions
 from shadowscan.connectors.code.vercel_tools import has_executable_vercel_tools, has_vercel_tool_loop
 from shadowscan.signatures import Match, SignatureIndex
@@ -69,6 +75,7 @@ from shadowscan.utils.text import line_counter, python_source_lines
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
 MAX_CALL_TEXT = 8192
+MAX_DECLARATION_TOKENS = 50_000
 # The Python binder checks the file's matching budget every this many visited
 # nodes: its walk is pure Python, which no regex timeout covers.
 _BUDGET_CHECK_NODES = 256
@@ -1691,6 +1698,334 @@ def _javascript_genkit_calls(text: str, masked: str, initial: list[_Call]) -> li
     ]
 
 
+class _JavascriptDeclarations:
+    """Read binding patterns, never their property keys or initializer references.
+
+    This is a bounded declaration reader, not a second JavaScript parser. The
+    shared token grammar has its own per-declaration cap; balanced groups are skipped and
+    pattern nesting is capped. Unknown/malformed declarations cannot preserve
+    proof of an imported constructor. Declaration names retain the resolver's
+    existing whole-file shadow policy.
+    """
+
+    def __init__(self, masked: str, declarations: Sequence[tuple[int, int]] = ()) -> None:
+        self.masked = masked
+        tokens: list[_Token] = []
+        for match in _TOKEN.finditer(masked):
+            if len(tokens) >= MAX_DECLARATION_TOKENS:
+                raise JavascriptReachabilityLimit(
+                    "source binding JavaScript declaration token limit exceeded"
+                )
+            if not len(tokens) % 256:
+                pattern_timeout()
+            tokens.append(_Token(match.group(), *match.span()))
+        self.tokens: list[_Token] = []
+        # The shared lexer splits non-ASCII identifier starts into individual
+        # tokens. Rejoin contiguous identifier characters in one linear pass;
+        # unrelated Unicode locals must not invalidate every SDK import.
+        first = 0
+        while first < len(tokens):
+            if not first % 256:
+                pattern_timeout()
+            last = first + 1
+            if self.identifier_part(tokens[first].value):
+                while (
+                    last < len(tokens)
+                    and tokens[last - 1].end == tokens[last].start
+                    and self.identifier_part(tokens[last].value)
+                ):
+                    last += 1
+            start, end = tokens[first].start, tokens[last - 1].end
+            self.tokens.append(_Token(masked[start:end], start, end))
+            first = last
+        self.starts = [token.start for token in self.tokens]
+        self.pairs: dict[int, int] = {}
+        stack: list[int] = []
+        for position, token in enumerate(self.tokens):
+            if not position % 256:
+                pattern_timeout()
+            if token.value in {"(", "[", "{"}:
+                stack.append(position)
+            elif token.value in {")", "]", "}"}:
+                if stack and self.tokens[stack[-1]].value == {")": "(", "]": "[", "}": "{"}[token.value]:
+                    self.pairs[stack.pop()] = position
+                else:
+                    stack.clear()
+        # Keep complete earlier groups even when later, unrelated text has an
+        # unclosed delimiter; malformed binding patterns themselves still fail.
+        self.lookahead = _LookaheadBudget(len(masked))
+        self.declarations = sorted(declarations)
+        self.declaration_starts = [start for start, _ in self.declarations]
+        self.names: set[str] = set()
+
+    @staticmethod
+    def identifier_part(value: str) -> bool:
+        return all(character in "$\u200c\u200d" or ("_" + character).isidentifier() for character in value)
+
+    def record(self, position: int) -> None:
+        offset = self.tokens[position].start
+        prior = bisect_right(self.declaration_starts, offset) - 1
+        if prior < 0 or offset >= self.declarations[prior][1]:
+            self.names.add(self.value(position))
+
+    def value(self, position: int) -> str:
+        return self.tokens[position].value if position < len(self.tokens) else ""
+
+    def name(self, position: int) -> str | None:
+        value = self.value(position)
+        normalized = value.replace("$", "_").replace("\u200c", "").replace("\u200d", "")
+        return value if normalized.isidentifier() else None
+
+    def type_arguments(self, position: int) -> int | None:
+        end = _type_arguments_end(self.masked, self.tokens[position].start, self.lookahead)
+        if end is None:
+            return None
+        after = bisect_left(self.starts, end)
+        # An invocation/instantiation can carry type arguments. A comparison
+        # can also contain '<' and '>': assignments and statement boundaries
+        # inside that span rule out a type list, so its comma still starts
+        # the next declaration (a < b, { Agent } = factories).
+        if self.value(after) not in {"(", ".", "[", ";", ",", ")", "]", "}", ""}:
+            return None
+        for cursor in range(position + 1, after):
+            if self.value(cursor) == ";" or (self.value(cursor) == "=" and self.value(cursor + 1) != ">"):
+                return None
+            if cursor > position + 1:
+                gap = self.masked[self.tokens[cursor - 1].end : self.tokens[cursor].start]
+                if (
+                    any(character in gap for character in "\n\r\u2028\u2029")
+                    and self.name(cursor - 1) is not None
+                    and self.name(cursor) is not None
+                    and self.value(cursor - 1)
+                    not in {"keyof", "typeof", "readonly", "infer", "extends", "const"}
+                ):
+                    return None
+        return after
+
+    def skip_expression(self, position: int) -> int:
+        """Skip a pattern's default value, stopping at its containing separator.
+
+        Literal contents were masked by the source lexer. Parentheses, object
+        expressions and arrays are opaque here: their identifiers are reads,
+        not bindings. A newline can end an initializer through ASI; operators
+        on either side and a following comma continue the declaration.
+        """
+        start = position
+        operators = {"=", "+", "-", "*", "/", "%", "&", "|", "^", "!", "?", ":", "<", ">"}
+        while position < len(self.tokens):
+            if not position % 256:
+                pattern_timeout()
+            value = self.value(position)
+            if value in {";", ")", "]", "}", ","}:
+                break
+            if value in {"const", "let", "var"} and self.value(position - 1) not in {"as", "<"}:
+                break
+            if position > start:
+                previous = self.tokens[position - 1]
+                gap = self.masked[previous.end : self.tokens[position].start]
+                if (
+                    any(character in gap for character in "\n\r\u2028\u2029")
+                    and previous.value not in operators | {"in", "instanceof", "as", "satisfies", ",", "."}
+                    and value not in operators | {"in", "instanceof", "as", "satisfies", ".", "(", "["}
+                ):
+                    break
+            if value in {"(", "[", "{"}:
+                if position not in self.pairs:
+                    # The initializer is opaque, not a binding pattern. Keep
+                    # imported calls available for their existing truncation
+                    # diagnostics instead of silently erasing them.
+                    return len(self.tokens)
+                position = self.pairs[position]
+            elif value == "<":
+                after = self.type_arguments(position)
+                if after is not None:
+                    position = after
+                    continue
+            position += 1
+        return position
+
+    def pattern(self, position: int, depth: int = 0) -> int:
+        if depth >= MAX_JAVASCRIPT_NESTING:
+            raise JavascriptReachabilityLimit("source binding JavaScript pattern nesting limit exceeded")
+        pattern_timeout()
+        if self.name(position) is not None:
+            self.record(position)
+            return position + 1
+        opening = self.value(position)
+        if opening not in {"[", "{"} or position not in self.pairs:
+            raise ValueError("unrecognized JavaScript binding pattern")
+        ending = self.pairs[position]
+        position += 1
+        while position < ending:
+            if self.value(position) == ",":
+                if opening != "[":
+                    raise ValueError("empty JavaScript object binding property")
+                position += 1  # array holes
+                continue
+            rest = [self.value(position + offset) for offset in range(3)] == [".", ".", "."]
+            if rest:
+                position = self.pattern(position + 3, depth + 1)
+            elif opening == "{":
+                # Computed keys are expressions. Ordinary keys can be names,
+                # numbers or (already masked) strings; only the colon's RHS
+                # declares a binding. A shorthand key declares its own name.
+                key = position
+                if self.value(position) == "[":
+                    if position not in self.pairs:
+                        raise ValueError("unbalanced JavaScript computed binding key")
+                    position = self.pairs[position] + 1
+                elif self.value(position) != ":":
+                    position += 1
+                if self.value(position) == ":":
+                    position = self.pattern(position + 1, depth + 1)
+                elif self.name(key) is not None and position == key + 1:
+                    self.record(key)
+                else:
+                    raise ValueError("unrecognized JavaScript binding property")
+            else:
+                position = self.pattern(position, depth + 1)
+            if not rest and self.value(position) == "=":
+                position = self.skip_expression(position + 1)
+            if position > ending or self.value(position) not in {",", "]", "}"}:
+                raise ValueError("unrecognized JavaScript binding separator")
+            if rest and self.value(position) != self.value(ending):
+                raise ValueError("JavaScript rest binding must be last")
+            if self.value(position) == ",":
+                position += 1
+        return ending + 1
+
+
+def _javascript_declaration_keyword(masked: str, start: int) -> bool:
+    """Exclude member names, const assertions and leading const type parameters."""
+    previous = start - 1
+    while previous >= 0 and masked[previous].isspace():
+        previous -= 1
+    if previous >= 0 and masked[previous] in ".<,":
+        return False
+    end = previous + 1
+    while previous >= 0 and (masked[previous].isalnum() or masked[previous] in "_$"):
+        previous -= 1
+    return masked[previous + 1 : end] != "as"
+
+
+def _javascript_declaration_names(
+    masked: str, rest: str, declarations: list[tuple[int, int]], roots: Collection[str]
+) -> set[str]:
+    """Read balanced binding patterns without tokenizing their initializer bodies.
+
+    Scalar declarations keep a narrow lexical check. Destructuring starts after
+    a declaration keyword or a comma; a comma candidate must end before an
+    assignment or type annotation at its declaration's delimiter depth, not an ordinary
+    object/array argument. The shared source deadline bounds delimiter indexing
+    and each selected pattern has its own token/nesting limits. Neither ASI nor
+    unrelated initializer bodies can turn the remainder of a file into a pattern.
+    """
+    if not roots:
+        return set()
+    names = "|".join(re.escape(name) for name in roots)
+    scalar = regex.compile(rf"(?<![\w$.])(?:const|let|var)\s+({names})(?![\w$])")
+    declared = {
+        match[1]
+        for match in scalar.finditer(rest, timeout=pattern_timeout(), concurrent=False)
+        if _javascript_declaration_keyword(rest, match.start())
+        and not regex.match(r"\s*[<>]", rest, pos=match.end(), timeout=pattern_timeout(), concurrent=False)
+    }
+    # An uninitialized scalar at the end of a flat let/var list also shadows
+    # an import. Keep this proof outside calls, patterns, types and multiline
+    # initializers, where a comma/name can merely be an expression reference.
+    uninitialized = regex.compile(
+        rf"(?<![\w$.])(?:let|var)\s+[^;:{{}}()\[\]\r\n]*,\s*({names})(?![\w$])"
+        r"(?=[ \t]*(?:;|\r?\n|$))"
+    )
+    declared.update(
+        match[1]
+        for match in uninitialized.finditer(rest, timeout=pattern_timeout(), concurrent=False)
+        if _javascript_declaration_keyword(rest, match.start())
+    )
+    candidates = list(
+        regex.finditer(
+            r"(?P<declaration>(?<![\w$.])(?:const|let|var)\s*)|(?P<comma>,\s*)",
+            rest,
+            timeout=pattern_timeout(),
+            concurrent=False,
+        )
+    )
+    openings = [
+        (match.end(), match.group("declaration") is not None)
+        for match in candidates
+        if rest[match.end() : match.end() + 1] in {"[", "{"}
+        and (match.group("declaration") is None or _javascript_declaration_keyword(rest, match.start()))
+    ]
+    if not openings:
+        return declared
+    pairs: dict[int, int] = {}
+    stack: list[tuple[str, int]] = []
+    declaration_scopes: set[int] = set()
+    owned: set[int] = set()
+    pending = iter(openings)
+    opening = next(pending, None)
+    # A comma in an initializer object/call has a different delimiter owner
+    # from its declaration. Index ownership without tokenizing those bodies;
+    # raw keywords keep CommonJS continuation declarations in their scope even
+    # when the import's own binding is exempt from shadow checks.
+    events = regex.finditer(
+        r"(?<![\w$.])(?:const|let|var)\b|[()\[\]{};]",
+        masked,
+        timeout=pattern_timeout(),
+        concurrent=False,
+    )
+    for number, mark in enumerate(events):
+        if not number % 256:
+            pattern_timeout()
+        scope = stack[-1][1] if stack else -1
+        while opening is not None and opening[0] <= mark.start():
+            if scope in declaration_scopes:
+                owned.add(opening[0])
+            opening = next(pending, None)
+        value = mark.group()
+        if value in {"const", "let", "var"}:
+            if _javascript_declaration_keyword(masked, mark.start()) and not regex.match(
+                r"\s*[=:?!;(<}]", masked, pos=mark.end(), timeout=pattern_timeout(), concurrent=False
+            ):
+                declaration_scopes.add(scope)
+        elif value == ";":
+            declaration_scopes.discard(scope)
+        elif value in {"(", "[", "{"}:
+            stack.append((value, mark.start()))
+        elif stack and stack[-1][0] == {")": "(", "]": "[", "}": "{"}[value]:
+            pairs[stack.pop()[1]] = mark.end()
+            declaration_scopes.discard(scope)
+        else:
+            stack.clear()
+            declaration_scopes.clear()
+    ordered_declarations = sorted(declarations)
+    declaration_starts = [start for start, _ in ordered_declarations]
+    for start, direct in openings:
+        end = pairs.get(start)
+        if end is None:
+            if direct:
+                raise ValueError("unbalanced JavaScript binding pattern")
+            continue  # an unbalanced initializer expression cannot prove a binding
+        if not direct and (
+            start not in owned
+            or not regex.match(
+                r"\s*(?:=(?!=|>)|:)",
+                masked,
+                pos=end,
+                timeout=pattern_timeout(),
+                concurrent=False,
+            )
+        ):
+            continue
+        first = max(0, bisect_right(declaration_starts, start) - 1)
+        last = bisect_left(declaration_starts, end)
+        exempt = [(a - start, b - start) for a, b in ordered_declarations[first:last] if b > start]
+        reader = _JavascriptDeclarations(masked[start:end], exempt)
+        reader.pattern(0)
+        declared.update(reader.names)
+    return declared
+
+
 def _drop_uncertain_bindings(
     bindings: dict[str, _Binding],
     masked: str,
@@ -1703,11 +2038,22 @@ def _drop_uncertain_bindings(
     for start, end in declaration_spans:
         declaration_mask[start:end] = " " * (end - start)
     rest = "".join(declaration_mask)
+    try:
+        declared = _javascript_declaration_names(masked, rest, declaration_spans, bindings)
+    except JavascriptReachabilityLimit as exc:
+        raise SourceBudgetExceeded(str(exc)) from exc
+    except ValueError:
+        # A binding pattern we cannot read cannot establish that an imported
+        # constructor survives it. Keep supporting import evidence only.
+        bindings.clear()
+        return
+    for name in declared:
+        bindings.pop(name, None)
     marks: tuple[list[int], list[int]] | None = None
     for name in list(bindings):
         escaped = re.escape(name)
         patterns = [
-            rf"\b(?:const|let|var|class|function)\s+{escaped}\b",
+            rf"\b(?:class|function)\s+{escaped}\b",
             rf"(?<![\w$.]){escaped}\s*(?:=(?!=|>)|\+=|-=|\+\+|--)",
             rf"\bfunction\b[^(){{}};]*\([^)]*\b{escaped}\b[^)]*\)",
             rf"\([^()]*\b{escaped}\b[^()]*\)\s*(?::[^=;{{}}]+)?=>",

@@ -84,6 +84,14 @@ Zapier export record needs an `id`, `title`,
 and makes the scan incomplete. A CSV row whose cells are all blank is skipped
 without a diagnostic.
 
+Zapier and Workato live collection reject provider error envelopes and malformed
+collections even when a response includes an empty result array. Zapier also
+rejects malformed pagination metadata before publishing that page. Missing,
+null or empty-string `links.next` ends collection normally; a supplied `links`
+container must be an object. Invalid pages make coverage incomplete while
+retaining valid records from earlier pages. Workato accepts both an `items`
+object envelope and a bare recipe array.
+
 An n8n step counts as AI when its node type is a LangChain, model-provider,
 agent or MCP node (`mcp` matched as its own token: custom `mcpClient`,
 `MCPServer` and `mcp_bridge` node types count, and so do camelCase types that

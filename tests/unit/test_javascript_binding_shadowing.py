@@ -13,10 +13,13 @@ from click.testing import CliRunner
 
 from shadowscan.cli import main
 from shadowscan.connectors.code.source_semantics import (
+    SourceBudgetExceeded,
     _Binding,
     _drop_uncertain_bindings,
+    _javascript_declaration_names,
     _named_as_method_parameter,
 )
+from shadowscan.models import Kind
 
 # The whole-source pattern that ``_named_as_method_parameter`` replaced. It defines what shadowing means.
 _ORIGINAL = r"(?:^|[;{{}}\n])\s*(?:async\s+)?[\w$]+\s*\([^)]*\b{name}\b[^)]*\)\s*(?::[^{{}};]+)?\{{"
@@ -186,3 +189,231 @@ def test_windowed_check_agrees_with_the_original_pattern_on_declaration_shaped_s
         matches += expected
         assert _windowed(text, "Name") == expected, text
     assert matches > 500
+
+
+def _project(tmp_path, run_connector, declaration, suffix=".ts"):
+    (tmp_path / f"app{suffix}").write_text(
+        "import { Agent } from '@openai/agents';\n"
+        "class LocalAgent {}\n"
+        "export function create() {\n"
+        f"  {declaration}\n"
+        "  return new Agent({name: 'worker', instructions: 'Help'});\n"
+        "}\n"
+    )
+    findings, context = run_connector(
+        "code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False
+    )
+    assert not context.stats.incomplete, context.stats.errors
+    return next(finding for finding in findings if finding.resource_type == "project")
+
+
+@pytest.mark.parametrize("suffix", [".js", ".ts", ".tsx"])
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "const Agent = LocalAgent;",
+        "let first, Agent;",
+        "let Agent\n",
+        "function inner() { var Agent }",
+        "var first, Agent;",
+        "const { Agent } = { Agent: LocalAgent };",
+        "const [Agent] = [LocalAgent];",
+        "let { factory: Agent } = factories;",
+        "var { outer: { factory: Agent } } = factories;",
+        "const { outer: [Agent] } = factories;",
+        "const [first, , { factory: Agent }] = factories;",
+        "const { ...Agent } = factories;",
+        "const [first, ...Agent] = factories;",
+        "const [...[Agent]] = factories;",
+        "const { Agent = LocalAgent } = factories;",
+        "const { factory: Agent = LocalAgent } = factories;",
+        "const [Agent = LocalAgent] = factories;",
+        "const first = 1, { Agent } = factories;",
+        "let first, [Agent] = factories;",
+        "const first = call({ nested: [1, 2] }), { Agent } = factories;",
+        "const first = 1, { outer: [Agent = LocalAgent] } = factories;",
+        "const { [key]: Agent } = factories;",
+        "const { 'factory': Agent } = factories;",
+        "for (const { Agent } of factories) { new Agent(); }",
+    ],
+)
+def test_declaration_binding_names_shadow_imports(tmp_path, run_connector, declaration, suffix):
+    project = _project(tmp_path, run_connector, declaration, suffix)
+    assert project.kind == Kind.FRAMEWORK_USAGE
+    assert not any("import-bound agent construction" in item.description for item in project.evidence)
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "",  # actual SDK construction remains detected
+        "const { Agent: local } = factories;",
+        "const { outer: { Agent: local } } = factories;",
+        "const { other = Agent } = factories;",
+        "const { other = choose(Agent) } = factories;",
+        "const { other: local = Agent } = factories;",
+        "const [local = Agent] = factories;",
+        "const { [Agent.name]: local } = factories;",
+        "const { [choose(Agent)]: local } = factories;",
+        "const { 'Agent': local } = factories;",
+        "const other = { Agent: LocalAgent };",
+        "const other = [Agent];",
+        "const first = choose(Agent), { other = Agent } = factories;",
+        "const other = { const: Agent, let: Agent, var: Agent };",
+        "const other = object.const(Agent);",
+        "const options = { first: 1, [Agent.name]: true };",
+        "const options = { first: 1, [Agent]: true };",
+        "const { other = { first: 1, [Agent.name]: true } } = values;",
+        "const other = (first, [Agent] in options);",
+        "const other = (first, { Agent } in options);",
+        "function f<const Agent>() {}",
+        "const other = <T, const Agent extends object>(value: T) => value;",
+        "const other = <T, const Agent, U>(value: T) => value;",
+        "let other = use(value, Agent\n);",
+        "let other: Pair<First, Agent\n> = value;",
+        "class C { const = 1; }",
+        "interface C { let?: string; }",
+        "class C { var!: string; }",
+        "class C { const<T>() {} }",
+        "const other = choose<Deps, Agent>();",
+        "const other = choose<Deps, Agent>;",
+        "const { other = choose<Deps, Agent>() } = factories;",
+        "const other = <const T, const Agent>(value: T) => value;",
+        "const π = 3.14;",
+        "const πvalue = 3.14;",
+        "const { other: πvalue } = factories;",
+        "const other = { constructor: Agent } as const;",
+        "const { other = () => { const local = Agent; return local; } } = factories;",
+    ],
+)
+def test_property_keys_and_initializer_reads_do_not_shadow_imports(tmp_path, run_connector, declaration):
+    project = _project(tmp_path, run_connector, declaration)
+    assert project.kind == Kind.AGENT
+    assert any("import-bound agent construction" in item.description for item in project.evidence)
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "const { Agent }: { Agent: typeof LocalAgent } = factories;",
+        "const first: Map<string, number> = values, { Agent } = factories;",
+        "let first: [string, number], [Agent] = factories;",
+        "let first!: string, { Agent } = factories;",
+        "let first, { Agent }: Options = factories;",
+        "let first, [Agent]: Options = factories;",
+        "const fs = require('fs'), [Agent]: Options = factories;",
+        "const first = {} as const, { Agent } = factories;",
+        "const first = choose<Deps, Result>(), { Agent } = factories;",
+        "const first = left < right, { Agent } = factories;",
+        "let first = left < right, Agent = LocalAgent > value;",
+        "let first = left < right, Agent\nother > (value);",
+        "const πvalue = 1, { Agent } = factories;",
+    ],
+)
+def test_typescript_annotations_preserve_declaration_lists(tmp_path, run_connector, declaration):
+    assert _project(tmp_path, run_connector, declaration).kind == Kind.FRAMEWORK_USAGE
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "const { other }: { Agent: typeof LocalAgent } = factories;",
+        "const other: Map<string, Agent> = values;",
+        "const other: [string, Agent] = values;",
+        "const other: Factory<() => void, Agent> = values;",
+    ],
+)
+def test_typescript_type_references_do_not_shadow_imports(tmp_path, run_connector, declaration):
+    assert _project(tmp_path, run_connector, declaration).kind == Kind.AGENT
+
+
+@pytest.mark.parametrize(
+    "source", ["const { Agent: } = x;", "const [Agent", "const { ...other, Agent } = x;"]
+)
+def test_malformed_binding_patterns_cannot_establish_import_proof(source):
+    from shadowscan.connectors.code.source_semantics import _Binding, _drop_uncertain_bindings
+
+    bindings = {"Agent": _Binding("@openai/agents", "Agent")}
+    _drop_uncertain_bindings(bindings, source, [])
+    assert bindings == {}
+
+
+def test_binding_pattern_depth_is_bounded():
+    source = "const " + "[" * 130 + "Agent" + "]" * 130 + " = values;"
+    from shadowscan.connectors.code.source_semantics import _Binding, _drop_uncertain_bindings
+
+    with pytest.raises(SourceBudgetExceeded, match="pattern nesting"):
+        _drop_uncertain_bindings({"Agent": _Binding("@openai/agents", "Agent")}, source, [])
+
+
+def test_many_declarations_are_read_without_rescanning_initializers():
+    # Thousands of declarations and references must not become thousands of
+    # whole-file scans or mistake expression names for declared names.
+    source = "\n".join(f"const {{ other{number} = use(Agent) }} = factories;" for number in range(2000))
+    names = _javascript_declaration_names(source, source, [], {"Agent"})
+    assert len(names) == 2000
+    assert "Agent" not in names
+
+
+def test_review_fixture_keeps_local_constructions_as_framework_usage(fixtures, run_connector):
+    findings, context = run_connector(
+        "code.filesystem",
+        path=str(fixtures / "js_review_binding_shadowing"),
+        scan_secrets=False,
+        use_git=False,
+    )
+    assert not context.stats.incomplete, context.stats.errors
+    project = next(finding for finding in findings if finding.resource_type == "project")
+    assert project.kind == Kind.FRAMEWORK_USAGE
+    assert not any("import-bound agent construction" in item.description for item in project.evidence)
+
+
+def test_ordinary_declaration_bulk_and_comma_object_arguments_stay_complete(tmp_path, run_connector):
+    # The comma followed by an object is an initializer argument, not another
+    # declarator. It must not charge the rest of the file to a token cap.
+    declarations = "const options = use(value, { OpenAI });\n" + "".join(
+        f"const value{number} = compute({number}, other{number});\n" for number in range(6000)
+    )
+    (tmp_path / "app.ts").write_text(
+        'import OpenAI from "openai";\n' + declarations + "const client = new OpenAI();\n"
+    )
+    findings, context = run_connector(
+        "code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False
+    )
+    assert not context.stats.incomplete, context.stats.errors
+    assert any("provider.openai" in finding.model_providers for finding in findings)
+
+
+@pytest.mark.parametrize("prefix", ["", "const { unrelated } = options;\n"])
+def test_require_binding_keeps_later_partial_call_diagnostics(index, prefix):
+    from shadowscan.connectors.code.source_ranges import noncode_ranges
+    from shadowscan.connectors.code.source_semantics import bound_source_matches
+
+    source = "const { Agent } = require('@openai/agents');\n" + prefix + "const client = new Agent(\n"
+    ignored, _ = noncode_ranges(source, "javascript")
+    truncated = []
+    bound_source_matches(index, source, "javascript", ignored, truncated=truncated)
+    assert truncated == [source.count("\n")]
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_unrelated_asi_and_arrow_body_declarations_keep_sdk_evidence(tmp_path, run_connector, wrapped):
+    source = 'import OpenAI from "openai";\n'
+    if wrapped:
+        source += "const handler = () => {\nconst { other } = factories;\n"
+        source += "".join(
+            f"const value{number} = compute({number}, other{number});\n" for number in range(6000)
+        )
+        source += "};\n"
+    else:
+        source += "const { other } = factories\n"
+        source += "".join(
+            f"const value{number} = compute({number}, other{number})\n" for number in range(6000)
+        )
+    source += "const client = new OpenAI();\n"
+    (tmp_path / "app.ts").write_text(source)
+    findings, context = run_connector(
+        "code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False
+    )
+    assert not context.stats.incomplete, context.stats.errors
+    assert any("provider.openai" in finding.model_providers for finding in findings)

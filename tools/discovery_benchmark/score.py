@@ -16,7 +16,9 @@ categories are ignored in the *in-scope* view and counted in the *all* view.
 
 A run the tool reported as incomplete (ShadowScan exit 3) is scored on the
 facts it found and flagged ``incomplete``: its facts are a lower bound, and a
-clean result on it is not a clean negative.
+clean result on it is not a clean negative. Unavailable runs also retain their
+facts for diagnostic scoring; their normalized status, separately from these
+scores and the ``incomplete`` flag, determines whether collection succeeded.
 """
 
 from __future__ import annotations
@@ -28,6 +30,11 @@ from typing import Any
 
 from tools.discovery_benchmark.corpus import Corpus, Repo
 from tools.discovery_benchmark.taxonomy import CATEGORIES, category
+
+# The runner sets ``ok`` after applying each adapter's accepted exit codes and
+# validating its normalized output. Nonzero process exits can therefore be valid
+# successes. These other statuses never establish successful collection.
+UNAVAILABLE_STATUSES = frozenset({"failed", "timeout", "skipped", "error", "missing"})
 
 
 @dataclass
@@ -191,12 +198,13 @@ def score_tool(
             statuses["missing"] += 1
             score = score_repo(repo, [], scope, status="missing", seconds=0.0)
         else:
-            statuses[str(run.get("status", "error"))] = statuses.get(str(run.get("status", "error")), 0) + 1
+            status = str(run.get("status") or "error")
+            statuses[status] = statuses.get(status, 0) + 1
             score = score_repo(
                 repo,
                 list(run.get("facts") or []),
                 scope,
-                status=str(run.get("status")),
+                status=status,
                 seconds=float(run.get("seconds") or 0.0),
                 incomplete=bool((run.get("detail") or {}).get("incomplete")),
             )

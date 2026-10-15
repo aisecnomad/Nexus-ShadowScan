@@ -63,3 +63,33 @@ def test_sanitize_catches_every_later_mutation():
     assert "sk-proj" not in finding.title and redaction.REDACTED in finding.title
     assert "AKIA" not in (finding.evidence[0].snippet or "")
     assert "abcdefghijklmnop" not in finding.metadata["note"]
+
+
+def test_credential_context_bypasses_clean_cache_without_retaining_source():
+    finding = _finding()
+    credential = "opaque-synthetic-credential"
+    finding.title = f"Agent {credential}"
+    finding.evidence.append(Evidence("test", credential))
+    finding.sanitize()
+    context = {"api_key": credential, "private_column": "source-only"}
+    finding.sanitize(credential_context=context)
+    assert finding.title == f"Agent {redaction.REDACTED}"
+    assert finding.evidence[0].description == redaction.REDACTED
+    assert context["api_key"] == credential
+    assert "source-only" not in str(finding.to_dict())
+    assert credential not in str(finding.to_dict())
+
+
+def test_credential_context_keeps_identity_guards():
+    finding = _finding()
+    with pytest.raises(redaction.SanitizationLimitError, match="finding identity"):
+        finding.sanitize(credential_context={"api_key": "code.filesystem"})
+
+
+def test_credential_context_budget_failure_invalidates_clean_cache(monkeypatch):
+    finding = _finding()
+    assert finding._clean_digest is not None
+    monkeypatch.setattr(redaction, "_MAX_SANITIZATION_CHARS", 1000)
+    with pytest.raises(redaction.SanitizationLimitError):
+        finding.sanitize(credential_context={"note": "x" * 1001})
+    assert finding._clean_digest is None

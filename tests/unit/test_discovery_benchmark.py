@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -591,8 +592,16 @@ class _FakeAdapter:
 
     spec = ShadowScanAdapter.spec
 
-    def __init__(self, sleep: float = 0.0) -> None:
+    def __init__(
+        self,
+        sleep: float = 0.0,
+        *,
+        exit_code: int = 0,
+        ok_exit_codes: frozenset[int] = frozenset({0}),
+    ) -> None:
         self.sleep = sleep
+        self.exit_code = exit_code
+        self.ok_exit_codes = ok_exit_codes
 
     def unavailable_reason(self, cfg: ToolConfig) -> str | None:
         return None
@@ -601,8 +610,8 @@ class _FakeAdapter:
         return "fake"
 
     def commands(self, cfg: ToolConfig, repo_dir: Path, out_dir: Path) -> list[Command]:
-        code = f"import json,time; time.sleep({self.sleep}); open({str(out_dir / 'report.json')!r},'w').write(json.dumps({{'findings': [], 'stats': []}}))"
-        return [Command((sys.executable, "-c", code))]
+        code = f"import json,time; time.sleep({self.sleep}); open({str(out_dir / 'report.json')!r},'w').write(json.dumps({{'findings': [], 'stats': []}})); raise SystemExit({self.exit_code})"
+        return [Command((sys.executable, "-c", code), ok_exit_codes=self.ok_exit_codes)]
 
     def normalize(self, out_dir: Path) -> object:
         return ShadowScanAdapter().normalize(out_dir)
@@ -643,6 +652,132 @@ def test_compare_flags_f1_drop_and_new_negative_only() -> None:
     assert any("F1" in r for r in bad.regressions) and any("recall" in r for r in bad.regressions)
 
 
+def _status_metrics(status: str = "ok", *, repo_id: str = "acme__ctl") -> dict[str, Any]:
+    manifest = _manifest()
+    for item in manifest["results"]:
+        if item["tool"] == "shadowscan" and item["repo"] == repo_id:
+            item["status"] = status
+    if status == "missing":
+        manifest["results"] = [
+            item for item in manifest["results"] if (item["tool"], item["repo"]) != ("shadowscan", repo_id)
+        ]
+    return score.score_all(
+        _tiny_corpus(), manifest, {"shadowscan": frozenset(taxonomy.CATEGORIES)}, {"shadowscan": "ShadowScan"}
+    )
+
+
+@pytest.mark.parametrize("status", ["failed", "timeout", "error", "missing", "skipped"])
+@pytest.mark.parametrize("subset", [False, True])
+def test_unavailable_control_fails_gate_independently_of_detection_scores(status: str, subset: bool) -> None:
+    classes = {r.id: r.klass for r in _tiny_corpus().repos}
+    baseline, current = _status_metrics(), _status_metrics(status)
+    assert baseline["tools"]["shadowscan"]["value_level"] == current["tools"]["shadowscan"]["value_level"]
+    result = compare.compare(
+        baseline, current, classes, tools=["shadowscan"], repos={"acme__ctl"} if subset else None
+    )[0]
+    assert not result.ok and result.newly_unavailable == ["acme__ctl"]
+    assert any("unavailable" in reason and status in reason for reason in result.regressions)
+    assert result.to_dict()["newly_unavailable"] == ["acme__ctl"]
+    # Existing unavailable runs are visible but not newly regressed; recovery is
+    # permitted. The explicit status also works for legacy metrics without flags.
+    assert compare.compare(current, current, classes, tools=["shadowscan"])[0].ok
+    assert compare.compare(current, baseline, classes, tools=["shadowscan"])[0].ok
+    legacy = _status_metrics(status)
+    for per in legacy["tools"]["shadowscan"]["per_repo"].values():
+        del per["incomplete"]
+    assert compare.compare(legacy, current, classes, tools=["shadowscan"])[0].ok
+
+
+def test_unavailable_run_retains_facts_without_claiming_a_new_clean_negative() -> None:
+    classes = {r.id: r.klass for r in _tiny_corpus().repos}
+    baseline, failed = _status_metrics(), _status_metrics("failed", repo_id="acme__near")
+    tool = failed["tools"]["shadowscan"]
+    assert tool["per_repo"]["acme__near"]["fp"] == ["provider:openai"]
+    assert tool["value_level"] == baseline["tools"]["shadowscan"]["value_level"]
+    result = compare.compare(baseline, failed, classes, tools=["shadowscan"])[0]
+    assert not result.ok and result.newly_unavailable == ["acme__near"]
+    # Losing the diagnostic facts after a failure cannot become an improvement.
+    tool["per_repo"]["acme__near"].update(flagged=False, fp=[])
+    result = compare.compare(baseline, failed, classes, tools=["shadowscan"])[0]
+    assert result.newly_clean == []
+
+
+@pytest.mark.parametrize("side", ["baseline", "current"])
+@pytest.mark.parametrize("repo_id", ["acme__ctl", "acme__demo"])
+def test_subset_cannot_hide_a_missing_repository_result(side: str, repo_id: str) -> None:
+    classes = {r.id: r.klass for r in _tiny_corpus().repos}
+    baseline, current = _status_metrics(), _status_metrics()
+    metrics = baseline if side == "baseline" else current
+    del metrics["tools"]["shadowscan"]["per_repo"][repo_id]
+    result = compare.compare(baseline, current, classes, tools=["shadowscan"], repos={repo_id})[0]
+    assert not result.ok
+    assert any(
+        f"{side} metrics missing repository results: {repo_id}" in reason for reason in result.regressions
+    )
+    if repo_id == "acme__demo":
+        selected = compare.subset(metrics["tools"]["shadowscan"], {repo_id}, classes)
+        assert selected["repo_level"]["recall"] == 0.0
+
+
+@pytest.mark.parametrize("unknown", [None, "unknown"])
+def test_unknown_baseline_status_cannot_grandfather_failed_collection(unknown: str | None) -> None:
+    classes = {r.id: r.klass for r in _tiny_corpus().repos}
+    baseline, current = _status_metrics(), _status_metrics("failed")
+    baseline["tools"]["shadowscan"]["per_repo"]["acme__ctl"]["status"] = unknown
+    result = compare.compare(baseline, current, classes, tools=["shadowscan"])[0]
+    assert not result.ok and result.newly_unavailable == ["acme__ctl"]
+
+
+@pytest.mark.parametrize("unknown", [None, "unknown"])
+def test_unknown_current_status_cannot_inherit_a_known_baseline_failure(unknown: str | None) -> None:
+    classes = {r.id: r.klass for r in _tiny_corpus().repos}
+    baseline, current = _status_metrics("failed"), _status_metrics("failed")
+    current["tools"]["shadowscan"]["per_repo"]["acme__ctl"]["status"] = unknown
+    result = compare.compare(baseline, current, classes, tools=["shadowscan"])[0]
+    assert not result.ok and any("recognized run status" in reason for reason in result.regressions)
+
+
+@pytest.mark.parametrize("status", ["failed", "timeout", "error", "missing", "skipped"])
+def test_unavailable_negative_report_preserves_status_and_any_facts(status: str) -> None:
+    corpus = _tiny_corpus()
+    text = report.render(_status_metrics(status), corpus, title="T")
+    header, rows = _report_table(text, "Near-miss and control repositories")
+    row = next(row for row in rows if row[0] == "acme/ctl")
+    assert row[header.index("ShadowScan")] == status
+    text = report.render(_status_metrics(status, repo_id="acme__near"), corpus, title="T")
+    header, rows = _report_table(text, "Near-miss and control repositories")
+    row = next(row for row in rows if row[0] == "acme/near")
+    expected = "missing" if status == "missing" else f"provider:openai ({status})"
+    assert row[header.index("ShadowScan")] == expected
+
+
+def test_legacy_report_without_completeness_does_not_claim_a_clean_negative() -> None:
+    metrics = _status_metrics()
+    del metrics["tools"]["shadowscan"]["per_repo"]["acme__ctl"]["incomplete"]
+    text = report.render(metrics, _tiny_corpus(), title="T")
+    assert "no facts (completeness unknown)" in text
+
+
+@pytest.mark.parametrize("exit_code", [1, 2, 3])
+def test_adapter_accepted_nonzero_exit_remains_a_successful_run(tmp_path: Path, exit_code: int) -> None:
+    corpus = _tiny_corpus()
+    adapter = _FakeAdapter(exit_code=exit_code, ok_exit_codes=frozenset({0, exit_code}))
+    result = run_pair(
+        adapter,
+        ToolConfig({"tools": {}}),
+        corpus.get("acme__ctl"),
+        tmp_path / "repo",
+        tmp_path / "out",
+        RunPolicy(timeout=30),
+    )  # type: ignore[arg-type]
+    assert result.status == "ok" and result.commands[0].exit_code == exit_code
+    manifest = _manifest()
+    manifest["results"][1] = result.to_dict()
+    current = score.score_all(corpus, manifest, {"shadowscan": frozenset(taxonomy.CATEGORIES)}, {})
+    classes = {r.id: r.klass for r in corpus.repos}
+    assert compare.compare(_status_metrics(), current, classes, tools=["shadowscan"])[0].ok
+
+
 def _incomplete_manifest(*repo_ids: str) -> dict[str, object]:
     manifest = _manifest()
     for item in manifest["results"]:  # type: ignore[union-attr]
@@ -662,7 +797,7 @@ def test_incomplete_runs_are_scored_reported_and_never_clean() -> None:
     assert metrics["tools"]["cdxgen"]["incomplete_runs"] == {"count": 0, "repos": []}
     text = report.render(metrics, corpus, title="T")
     control = next(line for line in text.splitlines() if line.startswith("| acme/ctl |"))
-    assert "clean (incomplete)" in control
+    assert "no facts (incomplete)" in control
     positive = next(line for line in text.splitlines() if line.startswith("| acme/demo |"))
     assert "(incomplete)" in positive
     assert "Incomplete runs" in text

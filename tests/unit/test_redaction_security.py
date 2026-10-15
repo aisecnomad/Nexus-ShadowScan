@@ -295,6 +295,84 @@ def test_generic_saas_does_not_copy_arbitrary_export_columns():
     assert "raw" not in result[0].metadata
 
 
+@pytest.mark.parametrize("fmt", ["json", "html", "markdown", "csv", "sarif", "cyclonedx", "ocsf", "table"])
+def test_generic_saas_preserves_record_credential_context_in_all_reports(fixtures, tmp_path, index, fmt):
+    source = fixtures / "saas" / "generic_review_credentials.json"
+    dumped = tmp_path / "dumped"
+    result = Engine(
+        ScanConfig(
+            connectors=[ConnectorSpec("saas.generic", {"input": str(source)})],
+            dump_records=str(dumped),
+        ),
+        index,
+    ).run()
+    assert result.complete and len(result.findings) == 1
+    finding = result.findings[0]
+    assert finding.resource == "saas:app:app-1"
+    assert finding.frameworks and "files:read" in finding.permissions
+    assert REDACTED in finding.title and "Claude" in finding.title
+    if fmt == "table":
+        output = io.StringIO()
+        print_table(result, console=Console(file=output, width=180))
+        rendered = output.getvalue()
+    else:
+        rendered = render(result, fmt)
+    assert SECRET not in rendered
+    assert SECRET not in result.to_json()
+    assert "not-for-publication" not in result.to_json()
+    (dump_file,) = dumped.glob("*.jsonl")
+    assert SECRET not in dump_file.read_text()
+    assert json.loads(source.read_text())[0]["api_key"] == SECRET
+
+
+@pytest.mark.parametrize("separator", [" ", ",", ";"])
+def test_generic_saas_removes_known_credentials_before_splitting_scopes(index, separator):
+    credential = separator.join(["privatefragmentone", "privatefragmenttwo"])
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    (finding,) = connector.analyze(
+        [{"id": "app-1", "name": "Claude", "scopes": credential, "api_key": credential}]
+    )
+    report = json.dumps(finding.to_dict())
+    assert "privatefragmentone" not in report and "privatefragmenttwo" not in report
+
+
+def test_generic_saas_removes_known_credentials_before_scope_excerpt_truncation(index):
+    credential = "privatefragment" * 30
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    (finding,) = connector.analyze(
+        [{"id": "app-1", "name": "Claude", "scopes": [credential], "api_key": credential}]
+    )
+    assert "privatefragment" not in json.dumps(finding.to_dict())
+
+
+def test_generic_saas_credential_values_do_not_establish_app_identity(index):
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    assert not list(connector.analyze([{"id": "app-1", "name": "Claude", "api_key": "Claude"}]))
+
+
+@pytest.mark.parametrize("with_id", [False, True])
+def test_generic_saas_redacts_resource_without_collapsing_distinct_identities(index, with_id):
+    connector = GenericSaaSConnector(ConnectorContext(config={"keep_all": True}, index=index))
+    records = []
+    for suffix in ("one", "two"):
+        credential = f"private-identity-{suffix}"
+        records.append(
+            {"name": f"Claude {credential}", "api_key": credential, **({"id": credential} if with_id else {})}
+        )
+    findings = list(connector.analyze(records))
+    assert len(findings) == 2
+    assert findings[0].id != findings[1].id and findings[0].resource == findings[1].resource
+    assert all("private-identity-" not in json.dumps(finding.to_dict()) for finding in findings)
+
+
+def test_generic_saas_context_limit_omits_record_and_marks_incomplete(index, monkeypatch):
+    monkeypatch.setattr("shadowscan.utils.redaction._MAX_SANITIZATION_CHARS", 1000)
+    connector = GenericSaaSConnector(ConnectorContext(config={"keep_all": True}, index=index))
+    connector.ctx.stats = ScanStats(connector="saas.generic", started_at="now")
+    result = list(connector.analyze([{"name": "Claude", "irrelevant": "x" * 1001}]))
+    assert not result and connector.ctx.stats.incomplete
+
+
 @pytest.mark.parametrize(
     "formula,expected",
     [

@@ -33,6 +33,15 @@ and `tactiq.io` homepage domains.
 ## `saas.microsoft-teams`
 Graph app catalog (custom apps with bot definitions and RSC permissions) and
 installed apps per team (capped by `max_teams`).
+Findings retain catalog and installed-version definitions together, without
+assuming catalog order identifies the current version. `definition_observations`
+records definition IDs, versions, bot IDs, requested RSC permissions and
+installation/team provenance. Requested permissions do not establish granted
+access. Contradictory observations of the same definition ID or version mark
+coverage incomplete while retaining the attributed evidence. `versions` and
+`bot_ids` contain the observed values; scalar `version`, `bot_id` and
+`publishing_state` are populated only when one nonempty value was observed;
+otherwise they are `null`.
 
 ## `saas.github-apps`
 Org installations with permissions and repository selection (AI reviewers,
@@ -90,5 +99,11 @@ and privileged/data scopes (`keep_all: true` to emit everything). A record witho
 skipped and makes the scan incomplete (fully blank rows are ignored); valid
 neighboring records are still reported. An export where no record maps to a
 name is reported with the accepted column names instead of looking empty.
+Whole-record credential context is applied before selecting, splitting or
+shortening fields for matching and reports. A known credential copied into an
+app name, scope or other display field is withheld even when its original
+credential column is omitted from findings. Credential contents do not establish
+product or permission evidence. Sanitization limits make coverage incomplete;
+distinct raw resource identities retain distinct finding IDs after redaction.
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

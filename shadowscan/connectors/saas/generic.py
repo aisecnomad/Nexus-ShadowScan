@@ -18,6 +18,7 @@ from shadowscan.connectors.common import config_boolean, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
+from shadowscan.utils.redaction import sanitize
 
 DEFAULT_FIELDS: dict[str, list[str]] = {
     "name": [
@@ -53,6 +54,14 @@ DEFAULT_FIELDS: dict[str, list[str]] = {
     "last_used": ["last_used", "last_used_at", "last_activity", "last_seen", "updated_at"],
     "status": ["status", "state", "approval", "sanctioned", "risk", "risk_score"],
 }
+
+
+def _scope_values(value: Any) -> list[str]:
+    return (
+        [str(scope) for scope in value if scope not in (None, "")]
+        if isinstance(value, list)
+        else [scope.strip() for scope in re.split(r"[,;\s]+", str(value or "")) if scope.strip()]
+    )
 
 
 class GenericSaaSConnector(BaseConnector):
@@ -158,14 +167,15 @@ class GenericSaaSConnector(BaseConnector):
             # evidence that the exported app is outside the scan's scope.
             self.ctx.warn("saas.generic: app record has no valid name; coverage incomplete")
             return None
-        raw_scopes = self._get(rec, "scopes")
+        # Credential context must survive field selection, before splitting,
+        # joining or truncating can hide a known secret. Match this safe view
+        # too: a credential's contents cannot establish product/permission
+        # evidence. Preserve the original resource only for its identity digest.
+        _, safe_values = sanitize((rec, [(self._get(rec, key),) for key in self.fields]))
+        safe = {key: value for key, (value,) in zip(self.fields, safe_values, strict=True)}
         # JSON exports may carry non-string list members; coerce rather than crash.
-        scopes = (
-            [str(s) for s in raw_scopes if s not in (None, "")]
-            if isinstance(raw_scopes, list)
-            else [s.strip() for s in re.split(r"[,;\s]+", str(raw_scopes or "")) if s.strip()]
-        )
-        urls = self._get(rec, "url")
+        scopes = _scope_values(safe["scopes"])
+        urls = safe["url"]
         url_list = (
             [str(u) for u in urls if u not in (None, "")]
             if isinstance(urls, list)
@@ -176,28 +186,28 @@ class GenericSaaSConnector(BaseConnector):
             surface=Surface.SAAS,
             connector=self.name,
             kind=Kind.OAUTH_GRANT if scopes else Kind.BOT_APP,
-            title=f"{self.platform} app: {name}",
+            title=f"{self.platform} app: {safe['name']}",
             resource=f"{self.platform}:app:{app_id or name}",
             resource_type="saas-app",
             provider=self.platform,
-            owner=str(self._get(rec, "owner") or "") or None,
-            first_seen=str(self._get(rec, "installed_at") or "") or None,
-            last_seen=str(self._get(rec, "last_used") or "") or None,
+            owner=str(safe["owner"] or "") or None,
+            first_seen=str(safe["installed_at"] or "") or None,
+            last_seen=str(safe["last_used"] or "") or None,
         )
         assess_app(
             self.index,
             f,
-            name=str(name),
-            publisher=str(self._get(rec, "publisher") or "") or None,
-            description=str(self._get(rec, "description") or "") or None,
+            name=str(safe["name"]),
+            publisher=str(safe["publisher"] or "") or None,
+            description=str(safe["description"] or "") or None,
             urls=url_list,
             scopes=scopes,
-            client_id=str(app_id) if app_id else None,
+            client_id=str(safe["id"]) if safe["id"] else None,
         )
         interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags)
         if not interesting and not self.keep_all:
             return None
-        users = self._get(rec, "users")
+        users = safe["users"]
         try:
             user_count = (
                 int(str(users).replace(",", ""))
@@ -210,7 +220,7 @@ class GenericSaaSConnector(BaseConnector):
             Evidence(
                 signal=f"{self.platform}:app",
                 description=(
-                    f"'{name}' from {self.platform} export; status {self._get(rec, 'status') or 'n/a'}; "
+                    f"'{safe['name']}' from {self.platform} export; status {safe['status'] or 'n/a'}; "
                     f"users {user_count if user_count is not None else users or '?'}; scopes "
                     f"{', '.join(scopes)[:300] or 'n/a'}"
                 ),
@@ -220,11 +230,11 @@ class GenericSaaSConnector(BaseConnector):
         f.metadata.update(
             {
                 "platform": self.platform,
-                "status": self._get(rec, "status"),
+                "status": safe["status"],
                 "users": user_count if user_count is not None else users,
                 "scopes": summarize_scopes(scopes),
             }
         )
         finalize(f, self.index)
-        f.sanitize()
+        f.sanitize(credential_context=rec)
         return f
