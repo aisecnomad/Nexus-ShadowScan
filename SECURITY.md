@@ -33,6 +33,16 @@ coverage, even when a response includes an empty collection field.
 
 ## Implemented controls and limits
 
+* Gateway inventory reconciliation requires authenticated caller-field
+  assurance before an exact card binding grants registration or ownership.
+  Operator-asserted and unverified names remain review candidates, without
+  registration risk credit. Provider-field assurance still depends on the log
+  producer's integrity and the supplied export's provenance; the scanner does
+  not authenticate an offline export merely by parsing it.
+* Make blueprint and Zapier pagination metadata are validated before collection
+  can be considered complete. CODEOWNERS reads remain anchored to the source
+  scan's directory descriptor. A root replacement detected before ownership
+  lookup makes the scan incomplete; later replacements cannot redirect reads.
 * Optional filesystem model/artifact inspection uses confined regular-file
   access, file identity checks and bounded metadata reads. It never executes
   packaged code, unpickles objects, loads tensor data or follows ONNX external

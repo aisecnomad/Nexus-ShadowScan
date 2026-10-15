@@ -54,21 +54,36 @@ def test_directory_swapped_for_a_link_after_the_walk_is_never_read(tmp_path, ind
     assert ctx.stats.errors == ["code.filesystem: pkg/package.json: file could not be read"]
 
 
-def test_scan_root_is_opened_once_and_files_below_it_are_read(tmp_path, index, monkeypatch):
+def test_source_and_ownership_reads_share_one_root_descriptor(tmp_path, index, monkeypatch):
     (tmp_path / "svc" / "agents").mkdir(parents=True)
     (tmp_path / "svc" / "agents" / "crew.py").write_text(OUTSIDE_AGENT)
-    opened: list[Path] = []
+    (tmp_path / "CODEOWNERS").write_text("*.py @source-team\n")
+    opened: list[tuple[Path, int]] = []
+    reads: list[tuple[Path, int | None]] = []
     original = open_confined_directory
 
     def recording(path):
-        opened.append(Path(path))
-        return original(path)
+        descriptor = original(path)
+        opened.append((Path(path), descriptor))
+        return descriptor
+
+    def reading(path, *args, **kwargs):
+        reads.append((Path(path), kwargs.get("dir_fd")))
+        return read_text(path, *args, **kwargs)
 
     monkeypatch.setattr("shadowscan.connectors.code.filesystem.open_confined_directory", recording)
+    monkeypatch.setattr("shadowscan.connectors.code.filesystem.read_text", reading)
     findings, ctx = _run(index, tmp_path)
-    assert opened == [tmp_path]
+    # The second open verifies the root's identity before ownership lookup;
+    # every source and CODEOWNERS read stays on the original descriptor.
+    assert [path for path, _ in opened] == [tmp_path, tmp_path]
+    assert any(path.name == "CODEOWNERS" for path, _ in reads)
+    assert {descriptor for _, descriptor in reads} == {opened[0][1]}
+    assert opened[0][1] != opened[1][1]
     assert not ctx.stats.incomplete
-    assert any("framework.crewai" in finding.frameworks for finding in findings)
+    assert any(
+        "framework.crewai" in finding.frameworks and finding.owner == "@source-team" for finding in findings
+    )
 
 
 @pytest.mark.parametrize("label", [None, "github:example/service"])

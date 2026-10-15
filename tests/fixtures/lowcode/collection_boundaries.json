@@ -1,0 +1,41 @@
+{
+  "make_invalid_blueprints": [
+    {"case": "provider-error", "response": {"error": "denied"}},
+    {"case": "unknown-schema", "response": {"unexpected": "schema"}},
+    {"case": "missing-wrapped-blueprint", "response": {"response": {}}},
+    {"case": "null-envelope", "response": {"response": null}},
+    {"case": "error-envelope", "response": {"response": {"error": "denied", "blueprint": {"flow": []}}}},
+    {"case": "empty-blueprint", "response": {"response": {"blueprint": {}}}},
+    {"case": "null-blueprint", "response": {"response": {"blueprint": null}}},
+    {"case": "blueprint-error", "response": {"response": {"blueprint": {"error": "denied", "flow": []}}}},
+    {"case": "missing-flow", "response": {"name": "Routine backup"}},
+    {"case": "null-flow", "response": {"flow": null}},
+    {"case": "object-flow", "response": {"flow": {}}},
+    {"case": "non-object-node", "response": {"flow": [null]}},
+    {"case": "missing-module", "response": {"flow": [{"id": 1}]}},
+    {"case": "invalid-module", "response": {"flow": [{"module": false}]}},
+    {"case": "invalid-routes", "response": {"flow": [{"module": "builtin:BasicRouter", "routes": {}}]}},
+    {"case": "invalid-route", "response": {"flow": [{"module": "builtin:BasicRouter", "routes": [null]}]}},
+    {"case": "missing-nested-flow", "response": {"flow": [{"module": "builtin:BasicRouter", "routes": [{}]}]}},
+    {"case": "malformed-nested-flow", "response": {"flow": [{"module": "builtin:BasicRouter", "routes": [{"flow": [false]}]}]}}
+  ],
+  "make_valid_blueprints": [
+    {"case": "direct-empty", "response": {"flow": []}, "finding": false},
+    {"case": "wrapped-empty", "response": {"response": {"blueprint": {"flow": []}}}, "finding": false},
+    {"case": "non-ai", "response": {"flow": [{"module": "http:ActionSendData"}]}, "finding": false},
+    {"case": "nested-ai", "response": {"response": {"blueprint": {"flow": [{"module": "builtin:BasicRouter", "routes": [{"flow": []}, {"flow": [{"module": "openai-gpt-3:CreateCompletion"}]}]}]}}}, "finding": true}
+  ],
+  "zapier_invalid_pages": [
+    {"case": "missing-links", "page": {"data": []}},
+    {"case": "null-links", "page": {"data": [], "links": null}},
+    {"case": "array-links", "page": {"data": [], "links": []}},
+    {"case": "string-links", "page": {"data": [], "links": "unexpected"}},
+    {"case": "missing-next", "page": {"data": [], "links": {}}},
+    {"case": "false-next", "page": {"data": [], "links": {"next": false}}},
+    {"case": "zero-next", "page": {"data": [], "links": {"next": 0}}},
+    {"case": "array-next", "page": {"data": [], "links": {"next": []}}},
+    {"case": "object-next", "page": {"data": [], "links": {"next": {}}}},
+    {"case": "whitespace-next", "page": {"data": [], "links": {"next": " "}}},
+    {"case": "provider-error", "page": {"data": [], "error": "denied", "links": {"next": null}}}
+  ]
+}

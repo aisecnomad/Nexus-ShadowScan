@@ -7,10 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code import filesystem as fs_module
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.ownership import MAX_OWNERSHIP_STEPS, OwnershipBudget, codeowners_match
+from shadowscan.engine import Engine
 from shadowscan.models import ScanStats, now_iso
 
 
@@ -44,6 +46,91 @@ def test_codeowners_basename_glob_owns_nested_source(tmp_path: Path, run_connect
     findings, _ = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     project = next(f for f in findings if f.resource_type == "project")
     assert project.owner == "@python"
+
+
+@pytest.mark.parametrize("replacement", ["symlink", "directory"])
+def test_codeowners_root_replaced_before_emission_is_incomplete(
+    tmp_path: Path, index, monkeypatch: pytest.MonkeyPatch, replacement: str
+):
+    root, outside = tmp_path / "repo", tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (root / "agent.py").write_text("from crewai import Agent\n")
+    (root / "CODEOWNERS").write_text("* @original\n")
+    (outside / "CODEOWNERS").write_text("* @outside\n")
+    original_emit = FilesystemConnector._emit_findings
+
+    def replace_root(self, scan):
+        root.rename(tmp_path / "original")
+        if replacement == "symlink":
+            root.symlink_to(outside, target_is_directory=True)
+        else:
+            outside.rename(root)
+        yield from original_emit(self, scan)
+
+    monkeypatch.setattr(FilesystemConnector, "_emit_findings", replace_root)
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("code.filesystem", {"path": str(root), "use_git": False})]),
+        index,
+    ).run()
+
+    assert result.findings
+    assert not result.complete
+    assert all(finding.owner is None for finding in result.findings)
+    assert all("@outside" not in str(finding.metadata) for finding in result.findings)
+    assert any(
+        "CODEOWNERS; ownership incomplete" in error for stats in result.stats for error in stats.errors
+    )
+
+
+def test_codeowners_root_replaced_after_verification_stays_on_source_descriptor(
+    tmp_path: Path, index, monkeypatch: pytest.MonkeyPatch
+):
+    root, outside = tmp_path / "repo", tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    (root / "agent.py").write_text("from crewai import Agent\n")
+    (root / "CODEOWNERS").write_text("* @original\n")
+    (outside / "CODEOWNERS").write_text("* @outside\n")
+    original_read = FilesystemConnector._read_codeowners
+    changed = False
+
+    def replace_before_read(self, path, directory):
+        nonlocal changed
+        changed = True
+        root.rename(tmp_path / "original")
+        root.symlink_to(outside, target_is_directory=True)
+        return original_read(self, path, directory)
+
+    monkeypatch.setattr(FilesystemConnector, "_read_codeowners", replace_before_read)
+    findings, ctx = _run(index, root)
+
+    assert changed
+    assert not ctx.stats.errors
+    assert findings and all(finding.owner == "@original" for finding in findings)
+
+
+def test_codeowners_cache_is_refreshed_when_connector_scans_again(tmp_path: Path, index):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    owners = tmp_path / "CODEOWNERS"
+    owners.write_text("* @first\n")
+    connector = FilesystemConnector(
+        ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    )
+    assert all(finding.owner == "@first" for finding in connector.run())
+    owners.write_text("* @second\n")
+    findings = connector.run()
+    assert findings and all(finding.owner == "@second" for finding in findings)
+    assert connector._ownership_scan is None
+
+
+def test_single_file_scan_keeps_ownership_scope(tmp_path: Path, index):
+    source = tmp_path / "agent.py"
+    source.write_text("from crewai import Agent\n")
+    (tmp_path / "CODEOWNERS").write_text("* @parent\n")
+    findings, ctx = _run(index, source)
+    assert not ctx.stats.errors
+    assert findings and all(finding.owner is None for finding in findings)
 
 
 @pytest.mark.parametrize(

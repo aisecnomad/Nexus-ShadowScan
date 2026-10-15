@@ -35,7 +35,12 @@ from shadowscan.connectors.common import (
     model_matches,
     name_matches,
 )
-from shadowscan.connectors.lowcode.graph import GraphAnalysis, analyze_workflow_graph
+from shadowscan.connectors.lowcode.graph import (
+    MAX_GRAPH_EDGES,
+    MAX_GRAPH_NODES,
+    GraphAnalysis,
+    analyze_workflow_graph,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -67,6 +72,9 @@ _N8N_SCHEDULE_TRIGGERS = re.compile(r"\.(scheduleTrigger|cron|interval)$", re.I)
 # instant trigger runs immediately on its webhook, and every other type is a schedule.
 _MAKE_SCHEDULE_TYPES = frozenset({"indefinitely", "interval", "once", "daily", "weekly", "monthly", "yearly"})
 _MAKE_WEBHOOK_MODULES = re.compile(r"hook", re.I)
+# Make nests router branches as routes[].flow; bound that traversal like the
+# other graph adapters, without interpreting a module's mapper as a graph.
+_MAKE_MAX_FLOW_DEPTH = 64
 # Workato trigger providers: Scheduler by Workato (``clock``) and Workbot, whose commands, menus,
 # buttons, modals and shortcuts a person operates in Slack or Teams. A Workbot event trigger
 # reacts to the workspace's events, a bot's messages included, like every other trigger line,
@@ -568,12 +576,7 @@ class MakeConnector(_AutomationBase):
             for s in self._offset_pages(http, "/scenarios", "scenarios", teamId=team):
                 try:
                     bp = http.get_json(f"/scenarios/{quote(str(s['id']), safe='')}/blueprint")
-                    response = bp.get("response") if isinstance(bp, dict) else None
-                    blueprint = (response.get("blueprint") if isinstance(response, dict) else None) or bp
-                    if not isinstance(blueprint, dict):
-                        self.ctx.warn(f"lowcode.make: invalid blueprint for scenario {s['id']}")
-                    else:
-                        s["blueprint"] = blueprint
+                    s["blueprint"] = self._blueprint(bp)
                 except (HttpError, RequestException, RuntimeError, ValueError) as exc:
                     status = failure_summary(exc)
                     blueprint_errors[status] = blueprint_errors.get(status, 0) + 1
@@ -691,9 +694,8 @@ class MakeConnector(_AutomationBase):
         return found
 
     def _scenario_finding(self, rec: dict[str, Any]) -> Finding | None:
-        bp = rec.get("blueprint") or rec
-        flow = bp.get("flow") if isinstance(bp, dict) else None
-        modules = [str(m.get("module", "")) for m in (flow or []) if isinstance(m, dict)]
+        bp = self._blueprint(rec.get("blueprint", rec))
+        modules = self._flow_modules(bp["flow"])
         ai_steps = [
             m
             for m in modules
@@ -731,6 +733,53 @@ class MakeConnector(_AutomationBase):
             },
         )
 
+    @classmethod
+    def _blueprint(cls, data: Any) -> dict[str, Any]:
+        """A direct or API-wrapped blueprint with an explicit flow, never an error document."""
+        if not isinstance(data, dict) or cls._is_error_record(data):
+            raise ValueError("invalid Make blueprint response")
+        if "response" in data:
+            response = data["response"]
+            if not isinstance(response, dict) or cls._is_error_record(response):
+                raise ValueError("invalid Make blueprint envelope")
+            data = response.get("blueprint")
+        if not isinstance(data, dict) or cls._is_error_record(data) or not isinstance(data.get("flow"), list):
+            raise ValueError("Make blueprint requires an explicit flow array")
+        return data
+
+    @classmethod
+    def _flow_modules(cls, flow: list[Any]) -> list[str]:
+        """Validate and project Make modules, including nested router branches, within graph budgets."""
+        modules: list[str] = []
+        pending = [(flow, 0)]
+        branches = 0
+        while pending:
+            nodes, depth = pending.pop()
+            if depth > _MAKE_MAX_FLOW_DEPTH or len(nodes) > MAX_GRAPH_NODES - len(modules):
+                raise ValueError("Make blueprint exceeds the flow budget")
+            for node in nodes:
+                if not isinstance(node, dict) or cls._is_error_record(node):
+                    raise ValueError("Make blueprint contains an invalid module")
+                module = node.get("module")
+                if not isinstance(module, str) or not module.strip():
+                    raise ValueError("Make blueprint contains an invalid module")
+                modules.append(module)
+                if "routes" not in node:
+                    continue
+                routes = node["routes"]
+                if not isinstance(routes, list) or len(routes) > MAX_GRAPH_EDGES - branches:
+                    raise ValueError("Make blueprint contains invalid or oversized routes")
+                branches += len(routes)
+                for route in reversed(routes):
+                    if (
+                        not isinstance(route, dict)
+                        or cls._is_error_record(route)
+                        or not isinstance(route.get("flow"), list)
+                    ):
+                        raise ValueError("Make blueprint route requires an explicit flow array")
+                    pending.append((route["flow"], depth + 1))
+        return modules
+
 
 # ---------------------------------------------------------------- Zapier
 # Fields that name or identify a zap in API records and account exports.
@@ -766,10 +815,24 @@ class ZapierConnector(_AutomationBase):
                 return
             seen.add(url)
             data = http.get_json(url, params={"limit": 100})
-            if not isinstance(data, dict) or not isinstance(data.get("data"), list):
+            if (
+                not isinstance(data, dict)
+                or self._is_error_record(data)
+                or not isinstance(data.get("data"), list)
+            ):
                 raise ConnectorError("lowcode.zapier: invalid collection response")
             yield from data["data"]
-            url = get_path(data, "links.next")
+            links = data.get("links")
+            if not isinstance(links, dict) or "next" not in links:
+                self.ctx.warn("lowcode.zapier: invalid pagination links; collection incomplete")
+                return
+            next_url = links["next"]
+            if next_url is not None and (
+                not isinstance(next_url, str) or (next_url != "" and not next_url.strip())
+            ):
+                self.ctx.warn("lowcode.zapier: invalid pagination continuation; collection incomplete")
+                return
+            url = next_url
         if url:
             self.ctx.warn("lowcode.zapier: pagination limit reached")
 

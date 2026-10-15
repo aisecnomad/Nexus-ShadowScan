@@ -84,6 +84,20 @@ Zapier export record needs an `id`, `title`,
 and makes the scan incomplete. A CSV row whose cells are all blank is skipped
 without a diagnostic.
 
+Make scenario analysis requires a direct blueprint or a
+`response.blueprint` API envelope with an explicit `flow` array. Provider
+errors, missing definitions and malformed modules or nested `routes[].flow`
+branches mark the scan incomplete; they cannot establish an inventory with no
+AI workflows. An explicit `flow: []` remains a valid empty definition. Router
+branches are inspected for AI modules within budgets of 4,096 modules, 16,384
+branches and 64 nesting levels. Observations from other valid scenarios remain
+available when a scenario cannot be analyzed.
+
+Zapier live pages require a `links` object with a `next` continuation. Only
+`null` or an empty string ends pagination successfully; missing fields,
+non-string continuations and whitespace-only strings mark coverage incomplete.
+Previously observed Zaps remain in the report when a later page fails.
+
 An n8n step counts as AI when its node type is a LangChain, model-provider,
 agent or MCP node (`mcp` matched as its own token: custom `mcpClient`,
 `MCPServer` and `mcp_bridge` node types count, and so do camelCase types that
