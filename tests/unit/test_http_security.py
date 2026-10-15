@@ -5,6 +5,8 @@ import ipaddress
 import json
 import logging
 import socket
+import threading
+import time
 import traceback
 from unittest.mock import Mock
 
@@ -15,6 +17,7 @@ from rich.console import Console
 from urllib3.connectionpool import HTTPSConnectionPool
 from urllib3.exceptions import MaxRetryError
 
+import shadowscan.utils.http as http_module
 from shadowscan.cli import _setup_logging
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.base import BaseConnector
@@ -509,6 +512,107 @@ def test_connect_rejects_rebinding_after_url_preflight(monkeypatch):
     with pytest.raises(ValueError, match="Refusing"):
         _PublicHTTPSConnection("issuer.example", timeout=5)._new_conn()
     factory.assert_not_called()
+
+
+@pytest.mark.parametrize("inherited_deadline", [False, True])
+def test_advisory_dns_preflight_is_bounded_and_daemonized(monkeypatch, inherited_deadline):
+    release = threading.Event()
+    workers = []
+
+    def resolve(*args, **kwargs):
+        workers.append(threading.current_thread())
+        release.wait(2)
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))]
+
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", resolve)
+    monkeypatch.setattr(http_module, "DNS_PREFLIGHT_TIMEOUT", 1 if inherited_deadline else 0.02)
+    token = http_module.set_request_deadline(time.monotonic() + 0.02 if inherited_deadline else None, None)
+    started = time.monotonic()
+    try:
+        with pytest.raises(ValueError, match="^API URL DNS preflight deadline exceeded$"):
+            validate_url("https://withheld.example/path")
+        assert time.monotonic() - started < 0.5
+        assert workers and all(worker.daemon for worker in workers)
+    finally:
+        release.set()
+        for worker in workers:
+            worker.join(1)
+        http_module.reset_request_deadline(token)
+
+
+@pytest.mark.parametrize("stage", ["request", "redirect", "paginate_link", "paginate_odata"])
+def test_http_preflight_uses_remaining_deadline_on_every_path(monkeypatch, stage):
+    http, session = client()
+    http_module_origin = http._validate_url
+    release = threading.Event()
+    workers = []
+
+    def resolve(*args, **kwargs):
+        workers.append(threading.current_thread())
+        release.wait(2)
+        return []
+
+    def begin_slow_preflight():
+        http.deadline = time.monotonic() + 0.02
+        monkeypatch.setattr(http_module.socket, "getaddrinfo", resolve)
+
+    if stage == "request":
+        begin_slow_preflight()
+    elif stage == "redirect":
+
+        def redirect(*args, **kwargs):
+            begin_slow_preflight()
+            return response(status=302, headers={"Location": "/next"})
+
+        session.request.side_effect = redirect
+    else:
+        # Leave initial origin validation fast, then stall the continuation preflight.
+        def validate_then_stall(url, origin):
+            result = http_module_origin(url, origin)
+            begin_slow_preflight()
+            http._validate_url = http_module_origin
+            return result
+
+        http._validate_url = validate_then_stall
+    started = time.monotonic()
+    try:
+        with pytest.raises(ValueError, match="^API URL DNS preflight deadline exceeded$"):
+            if stage in {"request", "redirect"}:
+                http.get("/items")
+            else:
+                list(getattr(http, stage)("/items"))
+        assert time.monotonic() - started < 0.5
+        assert workers and all(worker.daemon for worker in workers)
+        assert session.request.call_count == int(stage == "redirect")
+    finally:
+        release.set()
+        for worker in workers:
+            worker.join(1)
+
+
+def test_dns_preflight_failure_has_fixed_diagnostics(monkeypatch):
+    monkeypatch.setattr(
+        http_module.socket, "getaddrinfo", Mock(side_effect=RuntimeError("withheld-resolver-detail"))
+    )
+    with pytest.raises(ValueError, match="^API URL DNS preflight failed$") as caught:
+        validate_url("https://issuer.example/keys")
+    assert caught.value.__context__ is None
+
+
+def test_expired_http_deadline_does_not_start_advisory_resolution(monkeypatch):
+    resolver = Mock()
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", resolver)
+    http, session = client(deadline=time.monotonic() - 1)
+    with pytest.raises(ValueError, match="^API URL DNS preflight deadline exceeded$"):
+        http.get("/items")
+    resolver.assert_not_called()
+    session.request.assert_not_called()
+
+
+@pytest.mark.parametrize("userinfo", ["@", "operator@", ":withheld@"])
+def test_url_validation_rejects_even_empty_embedded_userinfo(userinfo):
+    with pytest.raises(ValueError, match="without embedded credentials"):
+        validate_url(f"https://{userinfo}issuer.example", allow_private=True)
 
 
 def test_private_override_is_worker_scoped_and_reset():

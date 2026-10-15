@@ -12,6 +12,7 @@ options:
     model: <model-id>            # required; there is no default model
     api_key_env: ANTHROPIC_API_KEY
     # base_url: https://llm-gateway.example.com   # optional, https only
+    # allow_custom_base_url: true # required for a non-default provider origin
     max_findings: 25             # 1 to 500, highest risk first
     min_level: medium            # lowest heuristic risk level triaged
     timeout_seconds: 30
@@ -41,6 +42,12 @@ point `base_url` at a model endpoint you operate.
 The request goes through the scanner's HTTP client: HTTPS only, no redirect
 to another origin, and private or loopback endpoints refused unless the scan
 allows private origins (`--allow-private-origin`).
+`base_url` must have no userinfo or whitespace. A different host or port from
+the provider's default origin requires the YAML boolean
+`allow_custom_base_url: true`; strings such as `"true"` are refused. This is
+explicit consent to send the provider API key to that origin, not a trust
+assessment of the endpoint. A path change on the default origin needs no
+additional consent, and custom-origin consent does not allow private origins.
 
 ## What triage changes
 
@@ -139,8 +146,8 @@ change. The corpus is read as the evaluation corpus is: a regular file (no
 symbolic link in its path), at most 1 MiB, unambiguous JSON with no duplicate
 keys, and at least one well-formed case; anything else is a usage error.
 
-`--live --model <id>` (with `--provider`, `--api-key-env`, `--base-url` and
-`--structured-output` as needed) sends the canaries to a real model and
+`--live --model <id>` (with `--provider`, `--api-key-env`, `--base-url`,
+`--allow-custom-base-url` and `--structured-output` as needed) sends the canaries to a real model and
 reports how many verdicts followed the injection. A run in which any case got
 no parsed verdict (a refused key, an unreachable endpoint, an unparseable
 reply) is `incomplete` and exits 3, so it never reads as resistant. The cases and their `truth`

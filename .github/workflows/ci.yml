@@ -340,6 +340,53 @@ jobs:
               attempt=$(( attempt + 1 ))
             done
           done < "$RUNNER_TEMP/base-images.txt"
+      - name: Check whether the temporary Wolfi Python pin can be removed
+        continue-on-error: ${{ github.event_name != 'schedule' }}
+        run: |
+          set -euo pipefail
+          if ! image="$(head -n 1 "$RUNNER_TEMP/base-images.txt" 2>/dev/null)"; then
+            echo "::error::The Wolfi Python pin probe could not read the base reference."
+            exit 1
+          fi
+          pinned="$(python - <<'PY'
+          import re
+          from pathlib import Path
+          try:
+              configuration = Path('Dockerfile').read_text()
+          except (OSError, UnicodeError):
+              raise SystemExit('Python pin monitor could not read configuration') from None
+          pins = set(re.findall(r'\bpython-3\.12=([0-9][\w.-]*)', configuration))
+          if len(pins) != 1:
+              raise SystemExit('Python pin monitor requires one consistent revision')
+          print(pins.pop())
+          PY
+          )"
+          status=0
+          timeout 180s docker run --rm --entrypoint /bin/sh "$image" -ec '
+            apk upgrade --no-cache >/dev/null 2>&1
+            apk add --no-cache python-3.12 python-3.12-base >/dev/null 2>&1
+            candidate="$(apk info -v python-3.12 | sed -n "s/^python-3.12-//p")"
+            test -n "$candidate"
+            comparison="$(apk version -t "$candidate" "$1")"
+            case "$comparison" in
+              "<"|"=") exit 0 ;;
+              ">") ;;
+              *) exit 1 ;;
+            esac
+            python3.12 -c "import hashlib; hashlib.sha224(b\"\")" >/dev/null 2>&1 || exit 43
+            exit 42
+          ' -- "$pinned" >/dev/null 2>&1 || status=$?
+          case "$status" in
+            0) echo "No newer Wolfi Python revision is available." ;;
+            42)
+              echo "::warning::A newer Wolfi Python revision supports SHA-224; review and remove both temporary Python pins."
+              exit 1 ;;
+            43)
+              echo "::warning::The newer Wolfi Python revision still fails SHA-224; retain both temporary pins." ;;
+            *)
+              echo "::error::The Wolfi Python pin probe could not complete."
+              exit 1 ;;
+          esac
       - name: Build and validate one immutable worker image
         run: |
           set -euo pipefail

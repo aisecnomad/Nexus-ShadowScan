@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import Signature, SignatureIndex
+from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
+from shadowscan.utils.crypto import plugin_identity_key
 from shadowscan.utils.redaction import sanitize
 from shadowscan.utils.safe_json import strict_json_loads
 
@@ -126,7 +128,7 @@ def _worker(
     signatures: list[Signature],
     number: int,
     deadline: float,
-    identity_key: bytes,
+    plugin_key: bytes,
     dump_directory: Path | None,
 ) -> None:
     """Import and execute the approved plugin only inside its spawned process."""
@@ -138,9 +140,14 @@ def _worker(
         os.dup2(sink.fileno(), 1)
         os.dup2(sink.fileno(), 2)
     try:
+        from shadowscan.comparison import IDENTITY_KEY_ENV
         from shadowscan.engine import Engine, _ConnectorRunner, _ExportLedger, _JobState
         from shadowscan.incremental import IncrementalCache
 
+        # Spawn inherits the operator environment. Do not let Engine reload the
+        # stable run key, or leave it available when the plugin is imported.
+        stable_identity = IDENTITY_KEY_ENV in os.environ
+        os.environ.pop(IDENTITY_KEY_ENV, None)
         index = SignatureIndex(signatures)
         engine = Engine(config, index)
         exports = _ExportLedger()
@@ -152,7 +159,8 @@ def _worker(
             dump_directory,
             exports,
         )
-        runner._run_identity_key = identity_key
+        runner._run_identity_key = plugin_key
+        runner._identity_key_stable = stable_identity
         state = _JobState(started_at=now_iso(), deadline=deadline)
         spec = config.connectors[0]
         _, findings, stats = runner._run_job(number, spec, state)
@@ -338,7 +346,7 @@ def _run_plugin_process(
                 list(runner._index.signatures.values()),
                 number,
                 deadline,
-                runner._run_identity_key,
+                plugin_identity_key(runner._run_identity_key, spec.id, number),
                 dump_directory,
             ),
             daemon=True,
@@ -368,7 +376,14 @@ def _run_plugin_process(
         _remaining(deadline)
         if process.exitcode != 0:
             raise ValueError("plugin worker did not exit successfully")
-        findings, stats, entries = _decode_result(payload, number, spec)
+        # Decode and sanitize under the parent's identity scope, never a
+        # process-local fallback. Retain validated finding IDs: sanitization can
+        # intentionally preserve a raw-resource digest after redacting its fields.
+        token = set_credential_identity_key(runner._run_identity_key)
+        try:
+            findings, stats, entries = _decode_result(payload, number, spec)
+        finally:
+            reset_credential_identity_key(token)
         _remaining(deadline)
         if state.cancelled.is_set():
             raise TimeoutError

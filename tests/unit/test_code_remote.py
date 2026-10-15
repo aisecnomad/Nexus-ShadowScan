@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -293,7 +294,9 @@ def test_github_enterprise_clone_stays_on_the_api_origin(tmp_path, index, monkey
     assert connector._clone({"full_name": "acme/app"}, str(tmp_path / "repo"))
     cmd, env = run.call_args.args[:2]
     assert cmd[-3:] == ["--", "https://ghe.example.com/acme/app.git", str(tmp_path / "repo")]
-    keys = [env[f"GIT_CONFIG_KEY_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))]
+    assert isinstance(env, git_module._CloneEnvironment)
+    keys = dict(env.config)
+    assert "GIT_CONFIG_COUNT" not in env
     assert "http.https://ghe.example.com/.extraheader" in keys
 
 
@@ -1143,6 +1146,118 @@ def test_lfs_pointer_scan_is_bounded_and_honours_the_deadline(tmp_path, monkeypa
         (tmp_path / f"g{number}.txt").write_text("x\n")
     with pytest.raises(ConnectorError, match="deadline"):
         checkout_has_lfs_pointers(tmp_path, check_deadline=expired)
+
+
+@pytest.mark.parametrize("linked_component", ["root", "ancestor"])
+def test_lfs_scan_refuses_symlinks_in_the_root_path(tmp_path, linked_component):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "pointer").write_text(LFS_POINTER)
+    link = tmp_path / "link"
+    link.symlink_to(checkout, target_is_directory=True)
+    if linked_component == "ancestor":
+        (checkout / "nested").mkdir()
+        (checkout / "nested" / "pointer").write_text(LFS_POINTER)
+        link = link / "nested"
+    assert checkout_has_lfs_pointers(link) is None
+
+
+@pytest.mark.parametrize("swap_at", ["directory-open", "file-open"])
+def test_lfs_scan_never_retraverses_a_replaced_directory(tmp_path, monkeypatch, swap_at):
+    root = tmp_path / "checkout"
+    source = root / "src"
+    source.mkdir(parents=True)
+    (source / "model").write_text("ordinary content " * 4)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "model").write_text(LFS_POINTER)
+    original_open = os.open
+    original_read = os.read
+    reads = []
+    swapped = False
+
+    def racing_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        target = "src" if swap_at == "directory-open" else "model"
+        if path == target and not swapped:
+            swapped = True
+            source.rename(tmp_path / "detached")
+            source.symlink_to(outside, target_is_directory=True)
+        return original_open(path, flags, *args, **kwargs)
+
+    def record_read(fd, size):
+        content = original_read(fd, size)
+        reads.append(content)
+        return content
+
+    monkeypatch.setattr(git_module.os, "open", racing_open)
+    monkeypatch.setattr(git_module.os, "supports_dir_fd", {*os.supports_dir_fd, racing_open})
+    monkeypatch.setattr(git_module.os, "read", record_read)
+    result = checkout_has_lfs_pointers(root)
+    assert swapped
+    assert result is (None if swap_at == "directory-open" else False)
+    assert all(not content.startswith(git_module.LFS_POINTER_PREFIX) for content in reads)
+
+
+@pytest.mark.parametrize("replacement", ["large", "fifo", "symlink", "regular"])
+def test_lfs_scan_checks_the_open_file_not_stale_entry_metadata(tmp_path, monkeypatch, replacement):
+    root = tmp_path / "checkout"
+    root.mkdir()
+    target = root / "model"
+    target.write_text(LFS_POINTER)
+    outside = tmp_path / "outside"
+    outside.write_text(LFS_POINTER)
+    original_open = os.open
+    reads = Mock(wraps=os.read)
+
+    def racing_open(path, flags, *args, **kwargs):
+        if path == "model":
+            target.unlink()
+            if replacement == "large":
+                target.write_text(LFS_POINTER + "x" * 2048)
+            elif replacement == "fifo":
+                os.mkfifo(target)
+            elif replacement == "symlink":
+                target.symlink_to(outside)
+            else:
+                target.write_text(LFS_POINTER)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(git_module.os, "open", racing_open)
+    monkeypatch.setattr(git_module.os, "supports_dir_fd", {*os.supports_dir_fd, racing_open})
+    monkeypatch.setattr(git_module.os, "read", reads)
+    assert checkout_has_lfs_pointers(root) is None
+    reads.assert_not_called()
+
+
+def test_lfs_scan_closes_descriptors_on_depth_limits_and_deadlines(tmp_path, monkeypatch):
+    root = tmp_path / "checkout"
+    (root / "one" / "two").mkdir(parents=True)
+    opened = []
+    closed = []
+    original_open, original_close = os.open, os.close
+
+    def track_open(*args, **kwargs):
+        fd = original_open(*args, **kwargs)
+        opened.append(fd)
+        return fd
+
+    def track_close(fd):
+        closed.append(fd)
+        return original_close(fd)
+
+    monkeypatch.setattr(git_module.os, "open", track_open)
+    monkeypatch.setattr(git_module.os, "supports_dir_fd", {*os.supports_dir_fd, track_open})
+    monkeypatch.setattr(git_module.os, "close", track_close)
+    monkeypatch.setattr(git_module, "_MAX_GIT_METADATA_DEPTH", 1)
+    assert checkout_has_lfs_pointers(root) is None
+    assert sorted(opened) == sorted(closed)
+    opened.clear()
+    closed.clear()
+    deadline = Mock(side_effect=[None, ConnectorError("deadline exceeded")])
+    with pytest.raises(ConnectorError, match="deadline"):
+        checkout_has_lfs_pointers(root, check_deadline=deadline)
+    assert sorted(opened) == sorted(closed)
 
 
 def _api_snapshot_with_a_pointer(tmp_path, index, monkeypatch, cls, **config):

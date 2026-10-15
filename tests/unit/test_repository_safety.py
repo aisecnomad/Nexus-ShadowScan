@@ -18,7 +18,7 @@ from shadowscan.connectors.code.gitlab import GitLabConnector
 from shadowscan.connectors.code.ownership import OwnershipBudget, OwnershipLimitError, codeowners_match
 from shadowscan.incremental import _git_state, _HashBudget
 from shadowscan.models import ScanStats
-from shadowscan.utils.git import clone_environment, safe_git_env, validate_git_ref
+from shadowscan.utils.git import _CloneEnvironment, clone_environment, safe_git_env, validate_git_ref
 
 
 def test_codeowners_overlapping_stars_finish_in_a_bounded_subprocess():
@@ -82,6 +82,13 @@ def test_git_children_never_receive_the_report_identity_key(monkeypatch):
     assert IDENTITY_KEY_ENV not in safe_git_env({"GIT_CONFIG_COUNT": "0"})
 
 
+def test_git_children_never_inherit_provider_token_variables(monkeypatch):
+    keys = {"GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN"}
+    for key in keys:
+        monkeypatch.setenv(key, "synthetic-token")
+    assert not keys & safe_git_env().keys()
+
+
 def test_git_environment_discards_injected_configs_and_execution_overrides(monkeypatch):
     hostile = {
         "GIT_CONFIG_COUNT": "1",
@@ -101,10 +108,10 @@ def test_git_environment_discards_injected_configs_and_execution_overrides(monke
     env = safe_git_env()
     assert not hostile.keys() & env.keys()
     clone_env = clone_environment("https://github.com", "synthetic-token", "x-access-token")
-    config = {
-        clone_env[f"GIT_CONFIG_KEY_{i}"]: clone_env[f"GIT_CONFIG_VALUE_{i}"]
-        for i in range(int(clone_env["GIT_CONFIG_COUNT"]))
-    }
+    assert isinstance(clone_env, _CloneEnvironment)
+    config = dict(clone_env.config)
+    assert "GIT_CONFIG_COUNT" not in clone_env
+    assert all("Authorization" not in value for value in clone_env.values())
     assert config["core.hooksPath"] == os.devnull
     assert config["protocol.allow"] == "never"
     assert config["protocol.https.allow"] == "always"

@@ -11,6 +11,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -156,11 +157,12 @@ _MAX_CLONE_ENTRIES = 100_000
 # Clones and temporary checkouts this process owns right now. A termination
 # signal or a hard exit (``os._exit``) skips the ``finally`` blocks that stop
 # git and delete the checkout; git would otherwise keep running in its own
-# session, unbounded, with the clone credential in its environment. Single
+# session, unbounded, with access to the clone credential file. Single
 # dict and set operations are atomic under the GIL, so no lock is needed and
 # the signal-handler and watchdog paths can never block on one.
 _ACTIVE_CLONES: set[subprocess.Popen[bytes]] = set()
 _ACTIVE_CHECKOUTS: set[str] = set()
+_ACTIVE_CLONE_CONFIGS: set[str] = set()
 _INTERRUPTED = threading.Event()
 _CLEANUP_BUDGET_SECONDS = 3.0
 _TERMINATION_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP")
@@ -323,6 +325,11 @@ def terminate_active_clones(budget: float = _CLEANUP_BUDGET_SECONDS, *, refuse_n
         # Reap what we can so git is gone before its checkout is deleted.
         with contextlib.suppress(Exception):
             proc.wait(timeout=max(0.0, min(0.5, deadline - time.monotonic())))
+    # Credential files are tiny and must disappear even when the checkout
+    # cleanup thread cannot finish before the process's hard-exit deadline.
+    for directory in list(_ACTIVE_CLONE_CONFIGS):
+        with contextlib.suppress(Exception):
+            _remove_clone_config(directory)
     if not checkouts:
         return
 
@@ -401,6 +408,26 @@ def run_bounded_clone(
     destination: str | None = None,
     max_bytes: int | None = None,
 ) -> bool:
+    """Create clone-only configuration for exactly the bounded subprocess lifetime."""
+    with terminate_clones_on_signal():
+        ctx.check_deadline()
+        if _INTERRUPTED.is_set():
+            raise CloneInterruptedError("clone not started: the scan was interrupted")
+        with _clone_config_file(env) as child_env:
+            return _run_bounded_clone(
+                cmd, child_env, ctx, timeout, destination=destination, max_bytes=max_bytes
+            )
+
+
+def _run_bounded_clone(
+    cmd: list[str],
+    env: dict[str, str],
+    ctx: ConnectorContext,
+    timeout: float,
+    *,
+    destination: str | None = None,
+    max_bytes: int | None = None,
+) -> bool:
     """Run a clone with a per-repository deadline and cooperative cancellation.
 
     Output is discarded: an untrusted remote may print unlimited diagnostics,
@@ -426,26 +453,31 @@ def run_bounded_clone(
         # thread of an interrupted scan is refused (it cannot install handlers or reset anything).
         if _INTERRUPTED.is_set():
             raise CloneInterruptedError("clone not started: the scan was interrupted")
-        if os.name == "posix":
-            proc: subprocess.Popen[bytes] = subprocess.Popen(
-                cmd,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        else:
-            proc = subprocess.Popen(
-                cmd,
-                env=env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-            )
+        try:
+            if os.name == "posix":
+                proc: subprocess.Popen[bytes] = subprocess.Popen(
+                    cmd,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            else:
+                proc = subprocess.Popen(
+                    cmd,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+                )
+        except OSError:
+            raise OSError("cannot start Git clone") from None
         _ACTIVE_CLONES.add(proc)
         try:
+            if _INTERRUPTED.is_set():
+                raise CloneInterruptedError("clone stopped: the scan was interrupted")
             while True:
                 ctx.check_deadline()
                 if destination is not None and max_bytes is not None:
@@ -701,8 +733,8 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
     Drops inherited Git variables and ignores system/global gitconfig so
     ``url.*.insteadOf``, credential helpers and smudge filters cannot rewrite
-    a clone of untrusted content. Callers may add ``GIT_CONFIG_*`` overlays
-    for origin-scoped extraheaders.
+    a clone of untrusted content. Metadata callers may add non-secret
+    ``GIT_CONFIG_*`` overlays; clone authentication uses a private file.
     """
     # In particular, GIT_CONFIG_COUNT/KEY_n/VALUE_n must not survive: Git gives
     # them command-scope precedence over the otherwise-disabled config files.
@@ -712,6 +744,8 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     # Git never needs the report identity key (comparison.IDENTITY_KEY_ENV),
     # so a child process of untrusted content never receives it.
     env.pop("SHADOWSCAN_IDENTITY_KEY", None)
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN"):
+        env.pop(key, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -722,8 +756,8 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
 
 # The clone protections (no redirects, origin-scoped credentials, no hooks, no helpers, no
-# system or global configuration) are applied through GIT_CONFIG_COUNT (Git 2.31) and
-# GIT_CONFIG_GLOBAL (Git 2.32). An older Git ignores both silently, follows a redirect to
+# system or global configuration) are applied through GIT_CONFIG_GLOBAL (Git 2.32).
+# An older Git ignores it silently, follows a redirect to
 # another host and finishes the scan, so cloning requires at least this version.
 MINIMUM_CLONE_GIT = (2, 32)
 _GIT_VERSION_RX = re.compile(rb"git version (\d+)\.(\d+)(?:\.(\d+))?")
@@ -770,7 +804,13 @@ def git_config_overlay(pairs: list[tuple[str, str]]) -> dict[str, str]:
 
 
 def clone_environment(origin: str, token: str | None, username: str) -> dict[str, str]:
-    """Scope authentication to a verified HTTPS origin and disable redirects."""
+    """Prepare clone policy without putting authentication in an environment.
+
+    The bounded runner materializes the policy in a private configuration file,
+    not argv or Git's environment overlay. Merely preparing a clone allocates
+    no file, so preflight failures and callers that never start Git cannot leak
+    a credential file.
+    """
     import base64
 
     config = [
@@ -784,12 +824,97 @@ def clone_environment(origin: str, token: str | None, username: str) -> dict[str
         ("transfer.fsckObjects", "true"),
         ("fetch.fsckObjects", "true"),
     ]
-    extra: dict[str, str] = {}
     if token:
         basic = base64.b64encode(f"{username}:{token}".encode()).decode()
         config.append((f"http.{origin.rstrip('/')}/.extraheader", f"Authorization: Basic {basic}"))
-    extra.update(git_config_overlay(config))
-    return safe_git_env(extra)
+    env = _CloneEnvironment(config)
+    if token:
+        # Operators can name a credential variable arbitrarily. Do not leave
+        # the same credential in the inherited environment under another key.
+        for key, value in list(env.items()):
+            if token in value or basic in value:
+                env.pop(key)
+    return env
+
+
+class _CloneEnvironment(dict[str, str]):
+    """Keep sensitive configuration outside the mapping passed to subprocesses."""
+
+    def __init__(self, config: list[tuple[str, str]]) -> None:
+        super().__init__(safe_git_env())
+        self.config = config
+
+
+def _git_config_quote(value: str) -> str:
+    return (
+        '"'
+        + value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+        .replace("\b", "\\b")
+        + '"'
+    )
+
+
+def _remove_clone_config(directory: str) -> None:
+    try:
+        try:
+            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            pass
+        else:
+            try:
+                try:
+                    os.unlink("config", dir_fd=fd)
+                except FileNotFoundError:
+                    pass
+            finally:
+                os.close(fd)
+        try:
+            os.rmdir(directory)
+        except FileNotFoundError:
+            pass
+    except OSError:
+        raise OSError("cannot remove private Git clone configuration") from None
+    _ACTIVE_CLONE_CONFIGS.discard(directory)
+
+
+@contextlib.contextmanager
+def _clone_config_file(env: dict[str, str]) -> Iterator[dict[str, str]]:
+    if not isinstance(env, _CloneEnvironment):
+        yield env
+        return
+    with contextlib.ExitStack() as cleanup:
+        try:
+            # Use a private directory under the trusted working directory rather
+            # than a shared temporary root or anything inside the untrusted clone.
+            directory = tempfile.mkdtemp(prefix=".shadowscan-git-", dir=os.getcwd())
+            cleanup.callback(_remove_clone_config, directory)
+            _ACTIVE_CLONE_CONFIGS.add(directory)
+            if _INTERRUPTED.is_set():
+                raise CloneInterruptedError("clone not started: the scan was interrupted")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+            directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.fchmod(directory_fd, 0o700)
+                fd = os.open("config", flags, 0o600, dir_fd=directory_fd)
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    os.fchmod(stream.fileno(), 0o600)
+                    for key, value in env.config:
+                        section, _, variable = key.rpartition(".")
+                        section, separator, subsection = section.partition(".")
+                        heading = section + (" " + _git_config_quote(subsection) if separator else "")
+                        stream.write(f"[{heading}]\n{variable} = {_git_config_quote(value)}\n")
+            finally:
+                os.close(directory_fd)
+            child_env = dict(env)
+            child_env["GIT_CONFIG_GLOBAL"] = os.path.join(directory, "config")
+            if _INTERRUPTED.is_set():
+                raise CloneInterruptedError("clone not started: the scan was interrupted")
+        except OSError:
+            raise OSError("cannot prepare private Git clone configuration") from None
+        yield child_env
 
 
 def git_argv_prefix() -> list[str]:
@@ -1146,37 +1271,77 @@ def checkout_has_lfs_pointers(
     if not root or "\x00" in root:
         return None
     entries = 0
-    pending = [root]
-    while pending:
-        directory = pending.pop()
-        try:
-            with os.scandir(directory) as scan:
-                for entry in scan:
-                    entries += 1
-                    if entries > _MAX_CLONE_ENTRIES:
-                        return None
-                    if check_deadline is not None and entries % 1000 == 0:
-                        check_deadline()
-                    info = entry.stat(follow_symlinks=False)
-                    if stat.S_ISDIR(info.st_mode):
-                        if directory != root or entry.name != ".git":
-                            pending.append(entry.path)
-                    elif (
-                        stat.S_ISREG(info.st_mode)
-                        and len(LFS_POINTER_PREFIX) <= info.st_size <= LFS_POINTER_MAX_BYTES
-                        and _opens_with_lfs_pointer(entry.path)
-                    ):
-                        return True
-        except OSError:
+
+    def walk(directory: int, depth: int) -> bool | None:
+        nonlocal entries
+        if depth > _MAX_GIT_METADATA_DEPTH:
             return None
-    return False
+        if check_deadline is not None:
+            check_deadline()
+        with os.scandir(directory) as scan:
+            for entry in scan:
+                entries += 1
+                if entries > _MAX_CLONE_ENTRIES:
+                    return None
+                if check_deadline is not None and entries % 1000 == 0:
+                    check_deadline()
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    if depth == 0 and entry.name == ".git":
+                        continue
+                    child = os.open(
+                        entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+                    )
+                    try:
+                        opened = os.fstat(child)
+                        if (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
+                            return None
+                        result = walk(child, depth + 1)
+                        if result is not False:
+                            return result
+                    finally:
+                        os.close(child)
+                elif (
+                    stat.S_ISREG(info.st_mode)
+                    and len(LFS_POINTER_PREFIX) <= info.st_size <= LFS_POINTER_MAX_BYTES
+                    and _opens_with_lfs_pointer(entry.name, dir_fd=directory, expected=info)
+                ):
+                    return True
+        return False
 
-
-def _opens_with_lfs_pointer(path: str) -> bool:
-    # O_NOFOLLOW and O_NONBLOCK: never traverse a link or wait on a special file.
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    fd = os.open(path, flags)
     try:
-        return os.read(fd, len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
+        # Anchor every descendant open to a live descriptor. A saved pathname
+        # would re-traverse a directory replaced by a symlink after scandir.
+        anchor = open_confined_directory(Path(root))
+        try:
+            directory = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=anchor)
+            try:
+                return walk(directory, 0)
+            finally:
+                os.close(directory)
+        finally:
+            os.close(anchor)
+    except (OSError, ValueError):
+        return None
+
+
+def _opens_with_lfs_pointer(path: str, *, dir_fd: int, expected: os.stat_result) -> bool:
+    # O_NOFOLLOW and O_NONBLOCK: never traverse a link or wait on a special file.
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    fd = os.open(path, flags, dir_fd=dir_fd)
+    try:
+        before = os.fstat(fd)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not len(LFS_POINTER_PREFIX) <= before.st_size <= LFS_POINTER_MAX_BYTES
+            or any(getattr(before, field) != getattr(expected, field) for field in fields)
+        ):
+            raise ValueError("checkout file changed during LFS inspection")
+        pointer = os.read(fd, len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
+        after = os.fstat(fd)
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise ValueError("checkout file changed during LFS inspection")
+        return pointer
     finally:
         os.close(fd)

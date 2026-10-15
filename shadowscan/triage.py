@@ -46,7 +46,7 @@ from typing import Any
 
 from shadowscan.models import Finding, RiskLevel, Surface
 from shadowscan.signatures import SignatureIndex
-from shadowscan.utils.http import HttpClient
+from shadowscan.utils.http import HttpClient, validate_url
 from shadowscan.utils.redaction import sanitize
 
 PROVIDERS = {
@@ -66,6 +66,7 @@ _KEYS = {
     "provider",
     "model",
     "base_url",
+    "allow_custom_base_url",
     "api_key_env",
     "max_findings",
     "min_level",
@@ -118,6 +119,24 @@ class TriageConfigError(ValueError):
     """The ``options.llm_triage`` mapping is invalid."""
 
 
+def _validate_base_url(base_url: Any, provider: str, allow_custom: Any) -> None:
+    if not isinstance(allow_custom, bool):
+        raise TriageConfigError("llm_triage.allow_custom_base_url must be a YAML boolean")
+    message = (
+        "llm_triage.base_url must be a valid HTTPS URL on the provider origin; "
+        "a different origin requires allow_custom_base_url: true"
+    )
+    if not isinstance(base_url, str):
+        raise TriageConfigError(message)
+    if base_url:
+        try:
+            # This validates syntax and credential origin only. The HTTP client
+            # applies the scan's private-origin policy before sending anything.
+            validate_url(base_url, None if allow_custom else PROVIDERS[provider][0], allow_private=True)
+        except (ValueError, TypeError):
+            raise TriageConfigError(message) from None
+
+
 @dataclass(frozen=True)
 class TriageSettings:
     enabled: bool = False
@@ -130,6 +149,7 @@ class TriageSettings:
     timeout_seconds: float = 30.0
     budget_seconds: float = 300.0
     structured_output: bool = False
+    allow_custom_base_url: bool = False
 
     @classmethod
     def from_options(cls, value: Any) -> TriageSettings:
@@ -155,8 +175,8 @@ class TriageSettings:
         if not isinstance(model, str) or (enabled and not model.strip()):
             raise TriageConfigError("llm_triage.model must name the model to use")
         base_url = value.get("base_url", "")
-        if not isinstance(base_url, str) or (base_url and not base_url.startswith("https://")):
-            raise TriageConfigError("llm_triage.base_url must be an https:// URL")
+        allow_custom = value.get("allow_custom_base_url", False)
+        _validate_base_url(base_url, provider, allow_custom)
         api_key_env = value.get("api_key_env", PROVIDERS[provider][2])
         if not isinstance(api_key_env, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", api_key_env):
             raise TriageConfigError("llm_triage.api_key_env must be an environment variable name")
@@ -190,6 +210,7 @@ class TriageSettings:
             timeout_seconds=float(timeout),
             budget_seconds=float(budget),
             structured_output=structured,
+            allow_custom_base_url=allow_custom,
         )
 
 
@@ -367,6 +388,7 @@ class Triage:
     ) -> None:
         if not settings.enabled:
             raise TriageConfigError("llm_triage is not enabled")
+        _validate_base_url(settings.base_url, settings.provider, settings.allow_custom_base_url)
         key = os.environ.get(settings.api_key_env, "")
         if not key and client is None:
             raise TriageConfigError(f"llm_triage: environment variable {settings.api_key_env} is not set")

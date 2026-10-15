@@ -110,6 +110,118 @@ def test_invalid_settings_are_refused(options):
         TriageSettings.from_options(options)
 
 
+@pytest.mark.parametrize("value", ["true", "false", 1, 0, None, [], {}])
+def test_custom_base_url_opt_in_requires_a_yaml_boolean(value):
+    with pytest.raises(TriageConfigError, match=r"^llm_triage.allow_custom_base_url must be a YAML boolean$"):
+        TriageSettings.from_options({"allow_custom_base_url": value})
+
+
+@pytest.mark.parametrize(
+    ("provider", "base_url"),
+    [
+        ("anthropic", "https://api.anthropic.com/alternate/path"),
+        ("anthropic", "https://API.ANTHROPIC.COM:443/v1"),
+        ("openai", "https://api.openai.com/alternate/path/"),
+        ("openai", "https://api.openai.com:443/v1"),
+    ],
+)
+def test_same_provider_origin_does_not_require_custom_base_url_opt_in(provider, base_url):
+    settings = TriageSettings.from_options({"provider": provider, "base_url": base_url})
+    assert settings.base_url == base_url.rstrip("/")
+    assert settings.allow_custom_base_url is False
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "https://gateway.example/v1",
+        "https://api.anthropic.com:444/v1",
+        "https://api.openai.com/v1",
+    ],
+)
+@pytest.mark.parametrize("opt_in", [None, False, True])
+def test_different_provider_origin_requires_explicit_opt_in(base_url, opt_in):
+    options = {"base_url": base_url}
+    if opt_in is not None:
+        options["allow_custom_base_url"] = opt_in
+    if opt_in is True:
+        settings = TriageSettings.from_options(options)
+        assert settings.base_url == base_url
+        assert settings.allow_custom_base_url is True
+    else:
+        with pytest.raises(TriageConfigError, match="requires allow_custom_base_url: true"):
+            TriageSettings.from_options(options)
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://gateway.example",
+        "******gateway.example",
+        "https://@gateway.example",
+        "https://",
+        "https://gateway.example:invalid",
+        " https://gateway.example",
+        "https://gateway.example/\nwithheld",
+        "https://gateway.example/\twithheld",
+        "https://[invalid",
+        42,
+    ],
+)
+def test_custom_base_url_opt_in_does_not_relax_url_syntax_or_echo_values(base_url):
+    with pytest.raises(TriageConfigError) as caught:
+        TriageSettings.from_options({"base_url": base_url, "allow_custom_base_url": True})
+    assert str(caught.value) == (
+        "llm_triage.base_url must be a valid HTTPS URL on the provider origin; "
+        "a different origin requires allow_custom_base_url: true"
+    )
+
+
+def test_direct_settings_cannot_bypass_custom_origin_opt_in():
+    settings = TriageSettings(enabled=True, model="m", base_url="https://gateway.example")
+    with pytest.raises(TriageConfigError, match="requires allow_custom_base_url: true"):
+        Triage(settings, client=FakeClient([]))
+
+
+@pytest.mark.parametrize("opt_in", ["true", '"true"'])
+def test_custom_origin_opt_in_yaml_validation_reaches_scan_config(tmp_path, opt_in):
+    path = tmp_path / "scan.yaml"
+    path.write_text(
+        "options:\n  llm_triage:\n    provider: openai\n"
+        f"    base_url: https://gateway.example/v1\n    allow_custom_base_url: {opt_in}\n"
+    )
+    if opt_in == "true":
+        assert ScanConfig.from_yaml(path).llm_triage.allow_custom_base_url is True
+    else:
+        with pytest.raises(ConfigValidationError, match="must be a YAML boolean"):
+            ScanConfig.from_yaml(path)
+
+
+@responses.activate
+@pytest.mark.parametrize("allow_private", [False, True])
+def test_custom_origin_opt_in_does_not_replace_private_origin_policy(monkeypatch, allow_private):
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-value")
+    settings = TriageSettings.from_options(
+        {
+            "enabled": True,
+            "model": "m",
+            "provider": "openai",
+            "base_url": "https://127.0.0.1/v1",
+            "allow_custom_base_url": True,
+        }
+    )
+    responses.add(
+        responses.POST,
+        "https://127.0.0.1/v1/chat/completions",
+        json={"choices": [{"message": {"content": '{"verdict":"uncertain"}'}}]},
+    )
+    triage = Triage(settings, allow_private_origin=allow_private)
+    findings = [_finding("a", 70, RiskLevel.HIGH)]
+    warnings = triage.run(findings)
+    assert len(responses.calls) == int(allow_private)
+    assert bool(warnings) is not allow_private
+
+
 def test_budget_seconds_defaults_to_five_minutes_and_accepts_the_range():
     assert TriageSettings().budget_seconds == 300.0
     assert TriageSettings.from_options({"enabled": True, "model": "m"}).budget_seconds == 300.0

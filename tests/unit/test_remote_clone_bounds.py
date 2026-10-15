@@ -6,6 +6,7 @@ import base64
 import hashlib
 import os
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -400,9 +401,12 @@ SLEEPER = "import os,pathlib,sys,time;pathlib.Path(sys.argv[1]).write_text(str(o
 # that interrupts join() marks the still-running thread as stopped, so interpreter shutdown does not
 # wait for it, and the process aborts (SIGABRT) if that thread holds the stderr lock at exit.
 CLONE_CHILD = """
-import os, pathlib, sys
+import os, pathlib, sys, time
 from concurrent.futures import ThreadPoolExecutor, wait
-from shadowscan.utils.git import register_checkout, run_bounded_clone, terminate_clones_on_signal
+from shadowscan.utils.git import (
+    clone_environment, register_checkout, run_bounded_clone,
+    terminate_active_clones, terminate_clones_on_signal,
+)
 
 class Ctx:
     deadline = None
@@ -410,12 +414,18 @@ class Ctx:
         pass
 
 pidfile, checkout, mode = sys.argv[1], sys.argv[2], sys.argv[3]
-sleeper = [sys.executable, "-c", sys.argv[4], pidfile]
+record_config = (
+    "import os,pathlib,sys;"
+    "pathlib.Path(sys.argv[1]+'.config').write_text(os.environ['GIT_CONFIG_GLOBAL']);"
+)
+sleeper = [sys.executable, "-c", record_config + sys.argv[4], pidfile]
+os.chdir(pathlib.Path(checkout).parent)
 register_checkout(checkout)
 
 def clone():
     try:
-        run_bounded_clone(sleeper, dict(os.environ), Ctx(), 120)
+        env = clone_environment("https://github.com", "synthetic-token", "x-access-token")
+        run_bounded_clone(sleeper, env, Ctx(), 120)
     finally:
         pathlib.Path(pidfile + ".done").touch()
 
@@ -426,7 +436,13 @@ try:
         with terminate_clones_on_signal():
             pool = ThreadPoolExecutor(max_workers=1)
             try:
-                wait([pool.submit(clone)])
+                future = pool.submit(clone)
+                if mode == "hard-exit":
+                    while not pathlib.Path(pidfile).exists():
+                        time.sleep(0.01)
+                    terminate_active_clones()
+                    os._exit(3)
+                wait([future])
             finally:
                 pool.shutdown(wait=False)
 except KeyboardInterrupt:
@@ -479,6 +495,11 @@ def _started_child(tmp_path: Path, mode: str) -> tuple[subprocess.Popen[str], Pa
         child.communicate(timeout=5)
         raise
     return child, pidfile, checkout
+
+
+def _assert_clone_config_removed(pidfile: Path) -> None:
+    config = Path(pidfile.with_name("pid.config").read_text())
+    assert not config.exists() and not config.parent.exists()
 
 
 @pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
@@ -537,6 +558,169 @@ def test_finished_clones_leave_the_registry_empty(index):
     assert not git_module._ACTIVE_CLONES
 
 
+def test_clone_auth_uses_only_private_global_config(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic-token")
+    monkeypatch.setenv("GH_TOKEN", "other-synthetic")
+    monkeypatch.setenv("GITLAB_TOKEN", "other-synthetic")
+    monkeypatch.setenv("CUSTOM_CREDENTIAL", "prefix-synthetic-token-suffix")
+    monkeypatch.setenv(
+        "CUSTOM_ENCODED_CREDENTIAL", base64.b64encode(b"x-access-token:synthetic-token").decode()
+    )
+    env = git_module.clone_environment("https://github.com", "synthetic-token", "x-access-token")
+    encoded = base64.b64encode(b"x-access-token:synthetic-token").decode()
+    assert not list(tmp_path.iterdir()), "preparing an unused clone must allocate no file"
+    assert all("synthetic-token" not in value and encoded not in value for value in env.values())
+    assert "GIT_CONFIG_COUNT" not in env
+    assert not {"GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "CUSTOM_CREDENTIAL"} & env.keys()
+    with git_module._clone_config_file(env) as child_env:
+        path = Path(child_env["GIT_CONFIG_GLOBAL"])
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+        assert path.parent.parent == tmp_path
+        assert encoded in path.read_text()
+        assert str(path.parent) in git_module._ACTIVE_CLONE_CONFIGS
+        assert "GIT_CONFIG_COUNT" not in child_env
+        assert all(encoded not in value for value in child_env.values())
+        for url, expected in (
+            ("https://github.com/org/repo.git", 0),
+            ("https://other.example/org/repo.git", 1),
+        ):
+            match = subprocess.run(
+                ["git", "config", "--get-urlmatch", "http.extraheader", url],
+                env=child_env,
+                capture_output=True,
+                check=False,
+            )
+            assert match.returncode == expected
+            assert bool(match.stdout) is (expected == 0)
+        redirect = subprocess.run(
+            ["git", "config", "--get", "http.followRedirects"],
+            env=child_env,
+            capture_output=True,
+            check=True,
+        )
+        assert redirect.stdout.strip() == b"false"
+        assert git_module.metadata_git_env()["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert not path.exists() and not path.parent.exists()
+    assert not git_module._ACTIVE_CLONE_CONFIGS
+
+
+@pytest.mark.parametrize("outcome", ["success", "failure", "timeout", "cancel", "interrupt", "spawn", "size"])
+def test_clone_private_configuration_is_removed_on_every_exit(tmp_path, monkeypatch, outcome):
+    monkeypatch.chdir(tmp_path)
+    env = git_module.clone_environment("https://github.com", "synthetic-token", "x-access-token")
+    paths = []
+    proc = Mock()
+    proc.wait.return_value = 1 if outcome == "failure" else 0
+
+    def spawn(cmd, **kwargs):
+        path = Path(kwargs["env"]["GIT_CONFIG_GLOBAL"])
+        assert path.is_file()
+        paths.append(path)
+        assert all("synthetic-token" not in value for value in kwargs["env"].values())
+        if outcome == "spawn":
+            raise OSError("untrusted exception text")
+        if outcome == "cancel":
+            proc.wait.side_effect = ConnectorError("scan cancelled")
+        if outcome == "interrupt":
+            proc.wait.side_effect = KeyboardInterrupt
+        return proc
+
+    monkeypatch.setattr(git_module.subprocess, "Popen", spawn)
+    monkeypatch.setattr(git_module, "_stop_clone", Mock())
+    timeout = -1 if outcome == "timeout" else 30
+    expected = {
+        "timeout": git_module.CloneTimeoutError,
+        "cancel": ConnectorError,
+        "interrupt": KeyboardInterrupt,
+        "spawn": OSError,
+        "size": git_module.CloneSizeError,
+    }
+    kwargs = {}
+    if outcome == "size":
+        destination = tmp_path / "checkout"
+        destination.mkdir()
+        (destination / "large").write_bytes(b"x" * 1024)
+        kwargs = {"destination": str(destination), "max_bytes": 1}
+    if outcome in expected:
+        with pytest.raises(expected[outcome]) as caught:
+            run_bounded_clone(["git", "clone"], env, ConnectorContext(), timeout, **kwargs)
+        if outcome == "spawn":
+            assert str(caught.value) == "cannot start Git clone"
+    else:
+        assert run_bounded_clone(["git", "clone"], env, ConnectorContext(), timeout) is (outcome == "success")
+    assert paths and all(not path.exists() and not path.parent.exists() for path in paths)
+    assert not git_module._ACTIVE_CLONE_CONFIGS
+    assert not git_module._ACTIVE_CLONES
+
+
+@pytest.mark.parametrize("interruption", ["signal", "hard-exit", "before-spawn", "during-setup"])
+def test_termination_removes_clone_credentials_before_finally(tmp_path, monkeypatch, interruption):
+    monkeypatch.chdir(tmp_path)
+    env = git_module.clone_environment("https://github.com", "synthetic-token", "x-access-token")
+    try:
+        if interruption == "during-setup":
+            original_open = git_module.os.open
+
+            def interrupt_open(path, flags, *args, **kwargs):
+                fd = original_open(path, flags, *args, **kwargs)
+                if path == "config":
+                    git_module.terminate_active_clones()
+                return fd
+
+            monkeypatch.setattr(git_module.os, "open", interrupt_open)
+            with pytest.raises(git_module.CloneInterruptedError), git_module._clone_config_file(env):
+                pytest.fail("interrupted setup must not start a clone")
+        else:
+            with git_module.terminate_clones_on_signal(), git_module._clone_config_file(env) as child_env:
+                path = Path(child_env["GIT_CONFIG_GLOBAL"])
+                if interruption == "signal":
+                    git_module._TerminationHandler(lambda *args: None)(signal.SIGTERM, None)
+                else:
+                    git_module.terminate_active_clones()
+                assert not path.exists() and not path.parent.exists()
+                if interruption == "before-spawn":
+                    with pytest.raises(git_module.CloneInterruptedError):
+                        git_module._run_bounded_clone(["git", "clone"], child_env, ConnectorContext(), 30)
+        assert not git_module._ACTIVE_CLONE_CONFIGS
+        assert not list(tmp_path.iterdir())
+    finally:
+        git_module._INTERRUPTED.clear()
+
+
+@pytest.mark.parametrize("failure", ["write", "exclusive", "nofollow"])
+def test_clone_private_config_creation_fails_closed_and_cleans_up(tmp_path, monkeypatch, failure):
+    monkeypatch.chdir(tmp_path)
+    env = git_module.clone_environment("https://github.com", "synthetic-token", "x-access-token")
+    original_open = git_module.os.open
+    outside = tmp_path / "outside"
+    outside.write_text("untouched")
+
+    def open_config(path, flags, *args, **kwargs):
+        if path == "config":
+            assert flags & os.O_EXCL and flags & os.O_NOFOLLOW
+            directory_fd = kwargs["dir_fd"]
+            if failure == "write":
+                raise OSError("untrusted path and credential text")
+            if failure == "nofollow":
+                os.symlink(outside, "config", dir_fd=directory_fd)
+            else:
+                existing = original_open("config", os.O_CREAT | os.O_WRONLY, 0o600, dir_fd=directory_fd)
+                os.close(existing)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(git_module.os, "open", open_config)
+    with (
+        pytest.raises(OSError, match="^cannot prepare private Git clone configuration$"),
+        git_module._clone_config_file(env),
+    ):
+        pytest.fail("unsafe configuration must not be used")
+    assert outside.read_text() == "untouched"
+    assert list(tmp_path.iterdir()) == [outside]
+    assert not git_module._ACTIVE_CLONE_CONFIGS
+
+
 @pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
 @pytest.mark.parametrize("mode", ["main", "worker"])
 def test_sigterm_stops_the_clone_and_deletes_its_checkout(tmp_path, mode):
@@ -550,6 +734,7 @@ def test_sigterm_stops_the_clone_and_deletes_its_checkout(tmp_path, mode):
         assert child.returncode == -signal.SIGTERM
         assert _wait_for(lambda: not _process_running(clone_pid), 5), "git survived the scanner"
         assert not checkout.exists()
+        _assert_clone_config_removed(pidfile)
     finally:
         if child.poll() is None:
             child.kill()
@@ -571,6 +756,25 @@ def test_sigint_stops_the_clone_then_interrupts_as_before(tmp_path, mode):
         assert pidfile.with_name("pid.done").exists(), "the scanner exited before its clone worker returned"
         assert _wait_for(lambda: not _process_running(clone_pid), 5)
         assert not checkout.exists()
+        _assert_clone_config_removed(pidfile)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate(timeout=5)
+        if _process_running(clone_pid):
+            os.killpg(clone_pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group assertion uses POSIX signals")
+def test_hard_exit_stops_clone_and_removes_private_credentials(tmp_path):
+    child, pidfile, checkout = _started_child(tmp_path, "hard-exit")
+    clone_pid = int(pidfile.read_text())
+    try:
+        child.communicate(timeout=15)
+        assert child.returncode == 3
+        assert _wait_for(lambda: not _process_running(clone_pid), 5)
+        assert not checkout.exists()
+        _assert_clone_config_removed(pidfile)
     finally:
         if child.poll() is None:
             child.kill()

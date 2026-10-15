@@ -5,6 +5,20 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Low/info security-review hardening
+
+- Keep clone authorization out of child environments using an origin-scoped
+  private temporary Git config with clone/termination cleanup. Document
+  remaining same-UID exposure and per-scan isolation.
+- Require boolean `allow_custom_base_url` consent for non-default triage
+  origins, retaining HTTPS, URL validation and private-origin controls.
+- Give plugin workers HKDF-derived keys while preserving parent report
+  identities; bound advisory DNS preflight, use no-follow descriptor-relative
+  LFS inspection, and respect descriptor limits in the fallback close list.
+- Add bounded parser property tests and a non-blocking PR/weekly-attention
+  probe for removal of the temporary Wolfi Python pin. Document fork AI-gate
+  publication failures as fail-closed and a separate publisher as future work.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

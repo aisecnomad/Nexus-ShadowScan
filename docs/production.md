@@ -7,6 +7,28 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## Unreleased security-review hardening
+
+- Authenticated clones no longer expose authorization in the Git child's
+  environment. A private temporary config is removed when the clone ends or is
+  terminated by the scanner. Same-UID processes can still read it while active;
+  isolate each scan with a dedicated UID or disposable container. Host crashes
+  and forced kills can prevent cleanup.
+- Triage endpoints on a non-default provider origin now require the YAML boolean
+  `allow_custom_base_url: true`. Review existing gateway configurations before
+  upgrading; this explicitly authorizes disclosure of the provider API key to
+  that endpoint and does not relax HTTPS or private-origin controls.
+- Plugin worker keys are derived separately for each configured plugin. Parent
+  processing preserves report identities relative to thread mode; this is not
+  plugin sandboxing and does not require a baseline identity migration.
+- Advisory DNS preflight is bounded; connection-time address checks remain the
+  enforcement point. A timed-out advisory lookup is not proof that an origin is
+  public. Descriptor-relative LFS inspection preserves unknown/incomplete
+  coverage when it cannot safely finish.
+- The weekly container check reports when a newer Wolfi Python revision passes
+  SHA-224 so maintainers can review removal of the temporary interpreter pins.
+  See [CI integration](operations/ci.md).
+
 ## Unreleased Kubernetes and Atlassian migration
 
 Rescan Kubernetes and OpenShift exports after upgrading. Earlier observations

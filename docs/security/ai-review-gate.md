@@ -46,9 +46,17 @@ No PR Python code, dependencies, actions or hooks are executed. No
 is requested. Preflight has contents/pull-requests read; the publisher adds only
 pull-requests write and checks write. Checkouts do not persist credentials.
 Do not introduce repository secrets to make fork write permissions work.
-Forks and Dependabot may receive a read-only token: denied publication leaves
+Fork PRs cannot receive `pull-requests: write` under this `pull_request`
+trigger, even though the publisher job requests it. They fail closed by
+design. Dependabot may also receive a read-only token: denied publication leaves
 the check absent or incomplete, never successful. Such PRs need a
 maintainer-controlled review process, not a privileged trigger workaround.
+
+A separate `workflow_run`-based publisher is future work, not implemented.
+It would need to bind untrusted artifacts to the exact repository, PR and head
+SHA, independently validate evidence using trusted base code, and reject stale
+or incomplete runs without executing PR code. Do not enable a privileged
+publisher merely to make a fork check green.
 
 Trust the reviewed base code and GitHub-hosted runner. Treat PR content, API
 responses, scanner adapters and all model outputs as untrusted. The PR workflow

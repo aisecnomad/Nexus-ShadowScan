@@ -16,6 +16,7 @@ from shadowscan.signatures.loader import load_signatures, signature_source_diges
 from shadowscan.utils import files as files_mod
 from shadowscan.utils.files import policy_files
 from shadowscan.utils.git import (
+    _CloneEnvironment,
     clone_environment,
     git_argv_prefix,
     git_config_overlay,
@@ -60,8 +61,10 @@ def test_clone_environment_ignores_system_config_and_sets_hooks(monkeypatch):
     assert "GIT_DIR" not in env
     assert "GIT_REPLACE_REF_BASE" not in env
     assert "GIT_CONFIG_PARAMETERS" not in env
-    values = [env[k] for k in env if k.startswith("GIT_CONFIG_VALUE_")]
-    keys = [env[k] for k in env if k.startswith("GIT_CONFIG_KEY_")]
+    settings = _clone_settings(env)
+    values = settings.values()
+    keys = settings.keys()
+    assert "GIT_CONFIG_COUNT" not in env
     assert "core.hooksPath" in keys
     assert os.devnull in values
     assert any(k.startswith("http.https://github.com/.extraheader") for k in keys)
@@ -257,9 +260,8 @@ def test_inventory_glob_matching_nothing_is_an_error_like_a_missing_path(tmp_pat
 
 
 def _clone_settings(env):
-    return {
-        env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))
-    }
+    assert isinstance(env, _CloneEnvironment)
+    return dict(env.config)
 
 
 def test_clone_environment_makes_git_verify_the_objects_it_receives():

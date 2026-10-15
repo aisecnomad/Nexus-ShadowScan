@@ -26,6 +26,7 @@ from shadowscan.engine import Engine
 from shadowscan.models import DERIVED_METADATA_KEYS, ScanStats
 from shadowscan.plugin_process import _decode_result, _encode_result, _receive, _worker, _WorkerHandle
 from shadowscan.signatures import SignatureIndex
+from shadowscan.utils.crypto import hkdf_sha256, plugin_identity_key
 
 ENTRY = "platform.process-probe"
 MODULE = "shadowscan_process_probe"
@@ -84,9 +85,16 @@ class Connector(BaseConnector):
             if mode == "metadata-types":
                 import datetime
                 metadata.update(seen=datetime.datetime(2026, 1, 1), scopes={"read"}, raw=b"ab")
+            if mode == "identity-key":
+                from shadowscan.comparison import IDENTITY_KEY_ENV
+                from shadowscan.utils.credential_identity import keyed_credential_digest
+                metadata.update(
+                    key_marker=keyed_credential_digest("plugin-key-probe"),
+                    inherited_key=IDENTITY_KEY_ENV in os.environ,
+                )
             yield Finding(
                 surface=self.surface, connector=self.name, kind=Kind.AGENT,
-                title="process probe", resource="probe", resource_type="test",
+                title="process probe", resource=self.ctx.config.get("resource", "probe"), resource_type="test",
                 metadata=metadata,
             )
 """
@@ -124,6 +132,132 @@ def _assert_reaped(marker):
     assert pid != os.getpid()
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_hkdf_sha256_rfc5869_case_one():
+    assert hkdf_sha256(
+        b"\x0b" * 22,
+        salt=bytes(range(13)),
+        info=bytes(range(0xF0, 0xFA)),
+        length=42,
+    ).hex() == ("3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865")
+
+
+def test_hkdf_sha256_rfc5869_without_salt_or_info():
+    assert hkdf_sha256(b"\x0b" * 22, info=b"", length=42).hex() == (
+        "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8"
+    )
+
+
+@pytest.mark.parametrize("length", [0, -1, 255 * 32 + 1])
+def test_hkdf_sha256_rejects_invalid_lengths(length):
+    with pytest.raises(ValueError, match="invalid derived key length"):
+        hkdf_sha256(bytes(range(32)), info=b"probe", length=length)
+
+
+@pytest.mark.parametrize("ordinal", [0, -1])
+def test_plugin_identity_rejects_invalid_ordinal(ordinal):
+    with pytest.raises(ValueError, match="invalid plugin configuration ordinal"):
+        plugin_identity_key(bytes(range(32)), ENTRY, ordinal)
+
+
+def test_plugin_keys_are_domain_separated_and_unambiguous():
+    key = bytes(range(32))
+    derived = plugin_identity_key(key, ENTRY, 1)
+    assert len(derived) == 32 and derived != key
+    assert derived == plugin_identity_key(key, ENTRY, 1)
+    assert (
+        len(
+            {
+                derived,
+                plugin_identity_key(key, ENTRY, 2),
+                plugin_identity_key(key, ENTRY + "2", 1),
+                plugin_identity_key(key, ENTRY + "1", 2),
+                plugin_identity_key(key, ENTRY, 12),
+                plugin_identity_key(bytes(reversed(key)), ENTRY, 1),
+            }
+        )
+        == 6
+    )
+
+
+def test_spawn_arguments_never_contain_the_run_identity_key(installed_probe, monkeypatch):
+    import shadowscan.plugin_process as transport
+    from shadowscan.comparison import IDENTITY_KEY_ENV
+
+    key = bytes(range(32))
+    monkeypatch.setenv(IDENTITY_KEY_ENV, "hex:" + key.hex())
+    arguments = []
+
+    def capture(**kwargs):
+        arguments.append(kwargs["args"])
+        raise OSError("process unavailable")
+
+    monkeypatch.setattr(
+        transport.multiprocessing, "get_context", lambda mode: SimpleNamespace(Process=capture)
+    )
+    result = _engine().run()
+    assert not result.complete and not result.findings
+    [args] = arguments
+    assert args[5] == plugin_identity_key(key, ENTRY, 1) and key not in args
+    assert MODULE not in sys.modules
+
+
+def test_spawned_worker_uses_only_the_derived_key(installed_probe, monkeypatch):
+    import hmac
+
+    from shadowscan.comparison import IDENTITY_KEY_ENV
+
+    key = bytes(range(32))
+    monkeypatch.setenv(IDENTITY_KEY_ENV, "hex:" + key.hex())
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "identity-key")
+    result = _engine().run()
+    assert result.complete, result.stats
+    [finding] = result.findings
+    expected = hmac.digest(
+        plugin_identity_key(key, ENTRY, 1),
+        b"shadowscan.credential-identity.v1\0plugin-key-probe",
+        "sha256",
+    ).hex()
+    assert finding.metadata["key_marker"] == expected
+    assert finding.metadata["inherited_key"] is False
+    assert os.environ[IDENTITY_KEY_ENV] == "hex:" + key.hex()
+
+
+@pytest.mark.parametrize("stable", [False, True])
+@pytest.mark.parametrize("redacted_resource", [False, True])
+def test_finding_identity_matches_thread_mode(installed_probe, monkeypatch, stable, redacted_resource):
+    from shadowscan import connectors as registry
+    from shadowscan.comparison import IDENTITY_KEY_ENV
+
+    if stable:
+        monkeypatch.setenv(IDENTITY_KEY_ENV, "hex:" + bytes(range(32)).hex())
+    else:
+        monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    identities = {}
+    resource = "probe?" + "pass" + "word" + "=" + "probe-value" if redacted_resource else "probe"
+    try:
+        for backend in ("thread", "process"):
+            config = ScanConfig(
+                connectors=[ConnectorSpec(ENTRY, {"resource": resource}, label="probe-instance")],
+                plugins=[ENTRY],
+                plugin_execution=backend,
+            )
+            result = Engine(config, SignatureIndex([])).run()
+            assert result.complete, result.stats
+            [finding] = result.findings
+            identities[backend] = (
+                finding.id,
+                finding.compute_id(),
+                finding.identity_schema,
+                finding.resource,
+            )
+            if redacted_resource:
+                assert "probe-value" not in finding.resource
+    finally:
+        sys.modules.pop(MODULE, None)
+        registry._cache.pop(ENTRY, None)
+    assert identities["process"] == identities["thread"]
 
 
 def _plugin_pid(marker, limit=30.0):

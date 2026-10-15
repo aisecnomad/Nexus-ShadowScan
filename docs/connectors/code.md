@@ -1026,6 +1026,16 @@ connector uses sampled API mode and the scan is incomplete. (The gitlink
 inventory of a clone needs Git 2.45; with 2.32 to 2.44 a clone is scanned but
 reports that submodule coverage is unknown.)
 
+Clone authorization is scoped to the HTTPS origin in a temporary mode-0600 Git
+config inside a mode-0700 directory. Only the clone process references it;
+metadata commands still reject config includes. Credentials are not placed in
+the clone environment or command line. Cleanup runs on completion, failure,
+timeout and scanner-managed interruption. Same-UID processes can still read
+the file during the clone, and a crash or forced kill can leave it behind:
+use a dedicated per-scan UID or disposable container. LFS pointer inspection
+uses descriptor-relative, no-follow traversal; an unsafe or incomplete walk is
+unknown coverage, never a clean result.
+
 ## `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
 clone or API mode; also CI/CD variable names (masked flag), group service

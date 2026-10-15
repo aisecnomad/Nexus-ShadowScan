@@ -46,6 +46,7 @@ from shadowscan.utils.redaction import sanitize_text
 log = logging.getLogger("shadowscan.http")
 
 DEFAULT_TIMEOUT = 30
+DNS_PREFLIGHT_TIMEOUT = 1.0
 DEFAULT_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 # A per-read socket timeout does not bound a response body: a server can send one
 # byte just inside every timeout. Each body must also finish within this multiple
@@ -349,13 +350,51 @@ def _blocked_host(hostname: str) -> bool:
         return False
 
 
-def validate_url(url: str, origin: str | None = None, *, allow_private: bool | None = None) -> str:
+def _preflight_addresses(host: str, port: int, timeout: float) -> list[Any]:
+    """Bound advisory DNS without leaving a resolver that prevents process exit."""
+    deadline, cancelled = _request_limits.get()
+    if deadline is not None:
+        timeout = min(timeout, deadline - time.monotonic())
+    if timeout <= 0 or (cancelled is not None and cancelled.is_set()):
+        raise ValueError("API URL DNS preflight deadline exceeded")
+    completed = threading.Event()
+    addresses: list[Any] = []
+    failed = False
+    resolver = socket.getaddrinfo
+
+    def resolve() -> None:
+        nonlocal failed
+        try:
+            addresses.extend(resolver(host, port, proto=socket.IPPROTO_TCP))
+        except socket.gaierror:
+            pass  # The transport reports unavailable DNS, as before.
+        except Exception:  # noqa: BLE001 - never expose resolver diagnostics from a background thread
+            failed = True
+        finally:
+            completed.set()
+
+    worker = threading.Thread(target=resolve, name="shadowscan-dns-preflight", daemon=True)
+    worker.start()
+    if not completed.wait(timeout):
+        raise ValueError("API URL DNS preflight deadline exceeded")
+    if failed:
+        raise ValueError("API URL DNS preflight failed")
+    return addresses
+
+
+def validate_url(
+    url: str,
+    origin: str | None = None,
+    *,
+    allow_private: bool | None = None,
+    dns_timeout: float | None = None,
+) -> str:
     """Require HTTPS and, for server-supplied links, the credential origin.
 
     Destinations that resolve to loopback, link-local, private, multicast,
     unspecified, reserved, or cloud-metadata addresses are rejected unless
     ``allow_private`` (or the current worker's policy) is true. DNS checks here
-    are preflight only; HttpClient also enforces the policy at socket connection.
+    are bounded advisory preflight only; HttpClient also enforces the policy at socket connection.
     External transports such as git and cloud SDKs need their own egress controls.
     """
     # urlsplit drops tabs and line breaks and strips leading blanks before parsing, while git and
@@ -368,7 +407,12 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
         port = parsed.port or 443
     except (TypeError, ValueError, UnicodeError):
         raise ValueError("Invalid API URL") from None
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
         raise ValueError("API URL must use HTTPS without embedded credentials")
     if origin:
         try:
@@ -385,13 +429,17 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     host = parsed.hostname.strip("[]")
     if (_blocked_host(host) or "%" in host) and not allow:
         raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
+    if allow:
+        return url
     try:
         ipaddress.ip_address(host)
     except ValueError:
-        try:
-            infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-        except socket.gaierror:
-            infos = []
+        numeric = False
+    else:
+        numeric = True
+    if not numeric:
+        timeout = DNS_PREFLIGHT_TIMEOUT if dns_timeout is None else min(dns_timeout, DNS_PREFLIGHT_TIMEOUT)
+        infos = _preflight_addresses(host, port, timeout)
         for info in infos:
             try:
                 addr = ipaddress.ip_address(info[4][0])
@@ -697,7 +745,13 @@ class HttpClient:
             url = _join_url(self.base_url, path)
         else:
             url = f"{self.base_url}/{path.lstrip('/')}"
-        return validate_url(url, self.base_url or None, allow_private=self.allow_private_origin)
+        return self._validate_url(url, self.base_url or None)
+
+    def _validate_url(self, url: str, origin: str | None) -> str:
+        budget = self.read_deadline
+        if self.deadline is not None:
+            budget = min(budget, self.deadline - time.monotonic())
+        return validate_url(url, origin, allow_private=self.allow_private_origin, dns_timeout=budget)
 
     def request(
         self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any
@@ -762,7 +816,7 @@ class HttpClient:
                 resp.close()
                 if not location or redirects >= 5:
                     raise HttpError(resp.status_code, url, "Invalid or excessive redirect")
-                url = validate_url(_join_url(url, location), origin, allow_private=self.allow_private_origin)
+                url = self._validate_url(_join_url(url, location), origin)
                 redirects += 1
                 # Do not carry original query parameters onto a redirect target.
                 kwargs.pop("params", None)
@@ -986,7 +1040,7 @@ class HttpClient:
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:
-            url = validate_url(_join_url(origin, url), origin, allow_private=self.allow_private_origin)
+            url = self._validate_url(_join_url(origin, url), origin)
             if url in seen:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)
@@ -1011,7 +1065,7 @@ class HttpClient:
         pages = 0
         seen: set[str] = set()
         while url and pages < max_pages:
-            url = validate_url(_join_url(origin, url), origin, allow_private=self.allow_private_origin)
+            url = self._validate_url(_join_url(origin, url), origin)
             if url in seen:
                 raise RuntimeError("Repeated pagination link; collection incomplete")
             seen.add(url)

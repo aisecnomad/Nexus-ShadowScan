@@ -1,5 +1,22 @@
 # CI integration
 
+## Temporary Wolfi Python pin monitor
+
+The `container-security` job probes the current Wolfi `python-3.12` package
+using the Dockerfile's reviewed, digest-pinned base image. It installs the
+latest package revision in a disposable container, compares it with the
+temporary Dockerfile pin, and runs
+`python3.12 -c "import hashlib; hashlib.sha224(b'')"`.
+A newer revision that passes emits a warning to review and remove **both**
+`python-3.12` and `python-3.12-base` pins in both stages. It does not change
+the pins automatically or publish an image.
+
+The probe is non-blocking for PRs. On the weekly schedule a working newer
+revision fails the step to require attention; an unavailable or timed-out
+probe also fails rather than implying the pin is current. A newer revision
+that still lacks SHA-224 emits a warning and leaves the pins in place.
+No new actions, triggers or permissions are needed.
+
 ShadowScan is designed to run in CI pipelines. It produces SARIF output for
 GitHub Code Scanning and exits with deterministic codes for gate decisions.
 SARIF results are warnings or notes for analyst triage, without a
