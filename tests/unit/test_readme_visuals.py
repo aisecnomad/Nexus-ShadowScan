@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from pathlib import Path
 
 import pytest
 
@@ -91,9 +90,7 @@ def test_readme_and_architecture_page_reference_the_generated_images() -> None:
     assert f"assets/{CONNECTORS.name}" in (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
 
 
-def test_no_unlisted_raster_images_under_docs_assets() -> None:
-    """Raster images cannot be regenerated or checked; only the generated SVGs and listed files belong here."""
-    generated = {path.name for path in rendered()}
-    others = {path.name for path in ASSETS.iterdir()} - generated
-    assert others <= {"cross-tool-comparison.webp"}, sorted(others)
-    assert all(isinstance(path, Path) and path.parent == ASSETS for path in rendered())
+def test_docs_assets_holds_only_the_generated_images() -> None:
+    """Raster images cannot be regenerated or checked, so only the generated SVGs belong here."""
+    assert {path.name for path in ASSETS.iterdir()} == {path.name for path in rendered()}
+    assert all(path.parent == ASSETS for path in rendered())

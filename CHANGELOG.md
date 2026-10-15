@@ -21,6 +21,11 @@ summarizes each release for people who install and operate ShadowScan.
 - `docs/assets/discovery-tool-scorecard.png` is removed. It gave letter grades
   to 11 named third-party tools from a benchmark this repository does not
   contain, which #199 had already ruled out.
+  `docs/assets/cross-tool-comparison.webp` is removed too: nothing referenced
+  it, and it showed head-to-head figures from
+  `tools/benchmark/results/REPORT.md` without that report's statement that
+  they are author-written synthetic results, not field accuracy. A test now
+  keeps `docs/assets/` to the generated images.
 
 ### Redaction review fixes, second round (October 14)
 
