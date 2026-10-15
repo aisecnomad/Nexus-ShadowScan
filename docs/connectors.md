@@ -605,8 +605,12 @@ signed-in user's Graph token from the environment variable named by
 Graph audience and delegated claims, never refreshes it and refuses
 `access_token`, `client_id` and `client_secret`; delegated package listings are
 caller-scoped and never complete, so a delegated scan with an opt-in collection
-warns and exits 3. Statuses, bindings, coverage and the delegated token rules
-are in the [identity connector guide](connectors/identity.md#identityentra).
+warns and exits 3. A replayed export whose coverage marker names another
+tenant than `tenant_id`, or no tenant, exits 3; its findings carry
+`metadata.account_attributed: false`, so correlation never links them exactly
+to the configured tenant's objects. Statuses, bindings, coverage and the
+delegated token rules are in the
+[identity connector guide](connectors/identity.md#identityentra).
 
 After authenticating, live collection reads `GET /organization` and attests the
 tenant it returns for [live collection scope](scanning.md#live-collection-scope)

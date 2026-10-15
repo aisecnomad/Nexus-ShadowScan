@@ -1598,6 +1598,48 @@ def test_foreign_export_bindings_never_register_the_configured_tenants_objects(i
     assert reconciliation.get("status") != "registered-and-observed"
 
 
+@pytest.mark.parametrize("marker_tenant", ["tenant-y", None, TENANT])
+def test_foreign_export_objects_never_link_exactly_to_the_configured_tenants(index, tmp_path, marker_tenant):
+    # A Teams app of tenant_id T carries the bot id that a service principal in the replayed
+    # export carries. When the export is another (or an unknown) tenant's, account still names T
+    # for finding identity, but an equal application id there is a review candidate only.
+    principal = {
+        "_kind": "servicePrincipal",
+        "id": "sp-bot",
+        "appId": "bot-guid-1",
+        "displayName": "OpenAI mail summarizer",
+        "servicePrincipalType": "Application",
+    }
+    export = tmp_path / "entra.json"
+    export.write_text(
+        json.dumps([{**COMPLETE_MARKER, "tenantId": marker_tenant}, principal]), encoding="utf-8"
+    )
+    teams = Path(__file__).resolve().parents[1] / "fixtures" / "saas" / "teams_apps.json"
+    cfg = ScanConfig.from_dict(
+        {
+            "connectors": [
+                {"name": "identity.entra", "input": str(export), "tenant_id": TENANT},
+                {"name": "saas.microsoft-teams", "input": str(teams), "tenant_id": TENANT},
+            ]
+        }
+    )
+    result = Engine(cfg, index).run()
+    by = _by_resource(result.findings)
+    sp, app = by["entra:sp:sp-bot"], by["teams:app:ta1"]
+    assert (sp.account, app.account, app.metadata["bot_id"]) == (TENANT, TENANT, "bot-guid-1")
+    if marker_tenant == TENANT:
+        assert result.complete and "account_attributed" not in sp.metadata
+        assert sp.metadata["related"] == [app.id]
+        assert sp.metadata["related_details"][0]["matches"][0]["scope"] == {"entra-tenant": TENANT}
+        return
+    assert not result.complete
+    assert sp.metadata["account_attributed"] is False
+    assert "related" not in sp.metadata and "related" not in app.metadata
+    [candidate] = sp.metadata["related_candidates"]
+    assert candidate["finding_id"] == app.id
+    assert "entra-application-id" in {match["key_type"] for match in candidate["matches"]}
+
+
 @responses.activate
 def test_marker_records_the_token_tenant_without_tenant_id(monkeypatch, index, tmp_path, run_connector):
     # A pre-issued app-only token of another tenant, collected without tenant_id: the marker must

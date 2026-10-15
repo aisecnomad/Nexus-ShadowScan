@@ -16,6 +16,7 @@ from __future__ import annotations
 import gc
 import json
 import re
+import string
 from dataclasses import dataclass, field
 from functools import lru_cache
 from itertools import combinations
@@ -88,6 +89,85 @@ _METADATA_SCOPE = {
 # exact link. Other local identifiers need at least one shared scope key.
 _REQUIRED_SCOPE = {_ENTRA_APPLICATION_ID: ("entra-tenant",)}
 _GLOBAL_PREFIXES = ("arn:", "projects/", "/subscriptions/", "ocid1.")
+_AZURE_PREFIX = "/subscriptions/"
+# Only ASCII letters fold: Unicode lowercasing could merge distinct names.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+# Google issues service account addresses only under gserviceaccount.com, and
+# one address names one service account in every project that refers to it.
+_GCP_SERVICE_ACCOUNT_DOMAIN = ".gserviceaccount.com"
+_GCP_SERVICE_ACCOUNT = re.compile(
+    r"[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+gserviceaccount\.com"
+)
+# Google-owned service accounts that every customer project shares identify no
+# workload, like AWS-managed policies, so they are not compared.
+_SHARED_GCP_SERVICE_ACCOUNT_SUFFIXES = (
+    "@system.gserviceaccount.com",
+    "@firebase-sa-management.iam.gserviceaccount.com",
+)
+# A repository file, not a resource: its last path segment carries a source extension.
+_SOURCE_FILE_SUFFIXES = frozenset(
+    [
+        ".py",
+        ".ipynb",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".go",
+        ".java",
+        ".kt",
+        ".rb",
+        ".rs",
+        ".cs",
+        ".php",
+        ".swift",
+        ".scala",
+        ".sh",
+        ".ps1",
+        ".tf",
+        ".hcl",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".env",
+        ".md",
+        ".txt",
+        ".xml",
+        ".sql",
+        ".lock",
+    ]
+)
+# The strict form of a GCP resource name in a code finding (see _repository_path).
+_GCP_PROJECT = re.compile(
+    r"[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,19}|[a-z0-9.-]{1,63}:[a-z][a-z0-9-]{4,28}[a-z0-9]"
+)
+_GCP_COLLECTIONS = frozenset(
+    {
+        "agent",
+        "alertPolicies",
+        "databases",
+        "datasets",
+        "global",
+        "instances",
+        "locations",
+        "notificationChannels",
+        "regions",
+        "repos",
+        "secrets",
+        "serviceAccounts",
+        "sinks",
+        "snapshots",
+        "subscriptions",
+        "topics",
+        "zones",
+    }
+)
+_LINE_SUFFIX = re.compile(r":[0-9]+(?::[0-9]+)?$")
 _CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 _PATTERN_CHARACTER = re.compile(r"[*?\[\]]")
 _SPACE_OR_PATTERN = re.compile(r"[\s*?\[\]]")
@@ -123,13 +203,48 @@ def _normalise_key(s: Any) -> str | None:
     return t if len(t) >= 5 else None
 
 
+def _qualified_prefix(value: str) -> bool:
+    """Whether a value is spelled as a fully qualified reference (an Azure id in any letter case)."""
+    return value.startswith(_GLOBAL_PREFIXES) or (
+        value[:1] == "/" and value[: len(_AZURE_PREFIX)].lower() == _AZURE_PREFIX
+    )
+
+
+def _repository_path(value: str) -> bool:
+    """Whether a code finding's ``projects/`` value is a repository path rather than a GCP resource name.
+
+    Code findings report repository locations ("projects/api/src/main.py:12").
+    From code, a GCP resource name must name a valid project id or number,
+    then a GCP collection, and carry no line suffix; a last segment with a
+    source-file extension ("projects/support-bot/agent/main.py") is a path.
+    """
+    components = value.split("/", 3)
+    last = value.rsplit("/", 1)[-1]
+    if "." in last and last[last.rfind(".") :].lower() in _SOURCE_FILE_SUFFIXES:
+        return True
+    return not (
+        _GCP_PROJECT.fullmatch(components[1])
+        and components[2] in _GCP_COLLECTIONS
+        and not _LINE_SUFFIX.search(value)
+    )
+
+
 @lru_cache(maxsize=65536)
-def _global_resource(value: str) -> tuple[str, tuple[tuple[str, str], ...]] | None:
-    """Recognize fully qualified resource references without normalising their identifiers.
+def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
+    """Recognize fully qualified resource references; return their type, comparison key and scope.
 
     The identifier itself is the scope: an ARN, a GCP resource name, an Azure
     resource id or an OCI OCID names its partition, account, project or
     subscription, so it needs no scope from the finding that reported it.
+    A GCP service account address, bare or as
+    ``projects/<project>/serviceAccounts/<address>``, is one global identifier:
+    the caller of another project's API is the same service account, so a
+    project in which it is used is not its scope. Identifiers are compared
+    byte for byte, except Azure resource ids: Azure Resource Manager treats
+    them case-insensitively and reports one resource in different casings (a
+    lowercased role-assignment scope, an uppercased diagnostic-log resource
+    id), so they are compared lowercased. Findings keep the spelling they
+    reported.
     """
     if _SPACE_OR_PATTERN.search(value):
         return None
@@ -151,50 +266,87 @@ def _global_resource(value: str) -> tuple[str, tuple[tuple[str, str], ...]] | No
             scope["region"] = parts[3]
         if parts[4]:
             scope["account"] = parts[4]
-        return "resource:aws-arn", tuple(sorted(scope.items()))
+        return "resource:aws-arn", value, tuple(sorted(scope.items()))
     components = value.split("/")
     if value.startswith("projects/") and len(components) >= 4 and all(components):
+        if (
+            len(components) == 4
+            and components[1] not in {".", ".."}
+            and components[2] == "serviceAccounts"
+            and components[3].endswith(_GCP_SERVICE_ACCOUNT_DOMAIN)
+            and (account := _gcp_service_account(components[3])) is not None
+        ):
+            # The address identifies the account; "-" (any project) is a valid spelling.
+            return account
         if components[1] in {"-", ".", ".."} or any(p in {".", ".."} for p in components):
             return None
         scope = {"provider": "gcp", "account": components[1]}
         if len(components) >= 6 and components[2] in {"locations", "regions"}:
             scope["region"] = components[3]
-        return "resource:gcp-name", tuple(sorted(scope.items()))
-    if (
-        value.startswith("/subscriptions/")
-        and len(components) >= 7
-        and all(components[1:])
-        and not any(p in {".", ".."} for p in components)
-    ):
-        return "resource:azure-id", (("account", components[2]), ("provider", "azure"))
+        return "resource:gcp-name", value, tuple(sorted(scope.items()))
+    if value[:1] == "/" and value[: len(_AZURE_PREFIX)].lower() == _AZURE_PREFIX:
+        key = value.lower() if value.isascii() else value.translate(_ASCII_LOWER)
+        components = key.split("/")
+        if len(components) >= 7 and all(components[1:]) and not any(p in {".", ".."} for p in components):
+            return "resource:azure-id", key, (("account", components[2]), ("provider", "azure"))
+        return None
     if re.fullmatch(r"ocid1\.[a-z0-9]+\.[a-z0-9]+\.[a-z0-9-]*\.[A-Za-z0-9.]+", value):
-        return "resource:oci-id", (("provider", "oci"),)
+        return "resource:oci-id", value, (("provider", "oci"),)
+    if value.endswith(_GCP_SERVICE_ACCOUNT_DOMAIN):
+        return _gcp_service_account(value)
     return None
 
 
-def _declared_scope(finding: Finding) -> dict[str, str] | None:
-    """The identity scope a connector declares for its findings; ``None`` when it is unusable.
+def _gcp_service_account(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
+    if (
+        len(value) <= 254
+        and _GCP_SERVICE_ACCOUNT.fullmatch(value)
+        and not value.endswith(_SHARED_GCP_SERVICE_ACCOUNT_SUFFIXES)
+    ):
+        return "resource:gcp-service-account", value, (("provider", "gcp"),)
+    return None
+
+
+def _declared_scope(finding: Finding) -> tuple[dict[str, str], bool] | None:
+    """The identity scope a connector declares for its findings, and whether all of it is comparable.
 
     Only namespaces with a documented meaning are used: a Microsoft tenant, a
     cloud account, subscription or project, or an explicit tenant/workspace
-    in metadata. A redacted, padded or wildcard scope value refuses every link.
+    in metadata. A redacted, padded or wildcard scope value (a display name
+    such as ``Acme [EU]`` looks like a wildcard) cannot be compared: it is left
+    out, and the finding gets no identifier link, exact or candidate. Its name
+    similarity is still a review candidate, as for a finding that declares no
+    such scope. Two different values for one scope (``tenant`` and
+    ``tenant_id``) refuse every link: ``None``. A finding whose connector
+    marks its ``account`` as not attributed to its records
+    (``metadata.account_attributed: false``, an Entra export of another
+    tenant) declares no account scope.
     """
     scope: dict[str, str] = {}
+    comparable = True
     account_key = _ACCOUNT_SCOPE.get(finding.connector)
-    if account_key is not None and finding.account is not None:
+    if (
+        account_key is not None
+        and finding.account is not None
+        and finding.metadata.get("account_attributed") is not False
+    ):
         usable = _identity_text(finding.account)
         if usable is None:
-            return None
-        scope[account_key] = usable
+            comparable = False
+        else:
+            scope[account_key] = usable
     for key, canonical in _METADATA_SCOPE.items():
         value = finding.metadata.get(key)
         if value is None:
             continue
         usable = _identity_text(value)
-        if usable is None or scope.get(canonical, usable) != usable:
+        if usable is None:
+            comparable = False
+            continue
+        if scope.get(canonical, usable) != usable:
             return None
         scope[canonical] = usable
-    return scope
+    return scope, comparable
 
 
 def _conflicts(left: dict[str, str], right: dict[str, str]) -> bool:
@@ -227,28 +379,39 @@ def _correlation_keys(findings: list[Finding]) -> tuple[_Groups, _Groups]:
     exact: _Groups = {}
     names: _Groups = {}
     for finding in findings:
-        declared = _declared_scope(finding)
-        if declared is None:
+        scoped = _declared_scope(finding)
+        if scoped is None:
             continue
-        identifiers: list[tuple[str, object]] = [("resource", finding.resource)]
-        identifiers.extend((f"metadata.{key}", finding.metadata.get(key)) for key in _IDENTITY_KEYS)
-        identifiers.extend(
-            (f"evidence[{number}].location", evidence.location)
-            for number, evidence in enumerate(finding.evidence)
-            if evidence.location and evidence.location.startswith(_GLOBAL_PREFIXES)
-        )
+        declared, comparable = scoped
+        repository = finding.surface == Surface.CODE
+        identifiers: list[tuple[str, object]] = []
+        if comparable:
+            identifiers.append(("resource", finding.resource))
+            identifiers.extend((f"metadata.{key}", finding.metadata.get(key)) for key in _IDENTITY_KEYS)
+            identifiers.extend(
+                (f"evidence[{number}].location", evidence.location)
+                for number, evidence in enumerate(finding.evidence)
+                if evidence.location
+                and (
+                    evidence.location.startswith(_GLOBAL_PREFIXES)
+                    or (evidence.location[:1] == "/" and _qualified_prefix(evidence.location))
+                )
+            )
         for source, raw in identifiers:
             value = _identity_text(raw)
             if value is None:
                 continue
             qualified = _global_resource(value)
-            if qualified is None and value.startswith(_GLOBAL_PREFIXES):
+            if qualified is None:
+                if _qualified_prefix(value):
+                    # A malformed qualified reference is not compared at all.
+                    continue
+                kind, key, scope = _identifier_kind(finding, source), value, declared
+            elif repository and qualified[0] == "resource:gcp-name" and _repository_path(value):
                 continue
-            if qualified is not None:
-                kind, scope = qualified[0], dict(qualified[1])
             else:
-                kind, scope = _identifier_kind(finding, source), declared
-            group = exact.setdefault((kind, value), {})
+                kind, key, scope = qualified[0], qualified[1], dict(qualified[2])
+            group = exact.setdefault((kind, key), {})
             entry = group.setdefault(finding.id, _CorrelationKey(finding, scope, qualified is not None))
             entry.fields.add(source)
         labels: list[tuple[str, object]] = [

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 ROOT = Path(__file__).resolve().parents[2]
 
 ARN = "arn:aws:bedrock:us-east-1:123456789012:agent/Agent-A"
+SERVICE_ACCOUNT = "crew-runner@shared-ml-a.iam.gserviceaccount.com"
 
 
 def finding(**kwargs) -> Finding:
@@ -140,6 +142,50 @@ def test_exact_identifiers_preserve_case_and_punctuation(left_resource, right_re
     assert "related" not in left.metadata
 
 
+AZURE_OPENAI = (
+    "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/acme-openai"
+)
+ROLE_ASSIGNMENT = "/subscriptions/s1/providers/Microsoft.Authorization/roleAssignments/ra1"
+
+
+def test_azure_resource_ids_link_in_any_letter_case(tmp_path, run_connector):
+    """ARM reports a role assignment's scope lowercased; it still names the listed resource."""
+    records = [
+        json.loads(line)
+        for line in (ROOT / "tests" / "fixtures" / "cloud" / "azure_records.jsonl").read_text().splitlines()
+    ]
+    for record in records:
+        if record.get("_kind") == "role-assignment":
+            record["scope"] = AZURE_OPENAI.lower()
+    source = tmp_path / "azure.jsonl"
+    source.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    findings, _ = run_connector("cloud.azure", input=str(source))
+    correlate(findings)
+    by = {f.resource: f for f in findings}
+    assignment, account = by[ROLE_ASSIGNMENT], by[AZURE_OPENAI]
+    assert assignment.metadata["related"] == [account.id]
+    [match] = assignment.metadata["related_details"][0]["matches"]
+    assert match["key_type"] == "resource:azure-id"
+    assert "resource" in match["target_fields"]
+    assert all(field.startswith("evidence[") for field in match["source_fields"])
+    assert match["scope"] == {"account": "s1", "provider": "azure"}
+    # Correlation compares; it does not rewrite what each finding reported.
+    assert AZURE_OPENAI.lower() in {e.location for e in assignment.evidence}
+    assert account.resource == AZURE_OPENAI
+
+
+@pytest.mark.parametrize("spelling", [AZURE_OPENAI.upper(), AZURE_OPENAI.lower()])
+def test_azure_resource_id_casings_link_but_other_resources_do_not(spelling):
+    live = finding(resource=AZURE_OPENAI, provider="azure", account="s1", region=None)
+    caller = peer(resource="gateway:caller", provider=None, account=None, region=None)
+    caller.metadata["resource_id"] = spelling
+    correlate([live, caller])
+    assert live.metadata["related"] == [caller.id]
+    caller.metadata["resource_id"] = spelling.replace("ACME-OPENAI", "OTHER").replace("acme-openai", "other")
+    correlate([live, caller])
+    assert not any(key.startswith("related") for key in live.metadata)
+
+
 def test_metadata_identifier_types_do_not_share_a_namespace():
     left = finding(resource="one", metadata={"app_id": "identity-42", "tenant": "tenant-a"})
     right = peer(resource="two", metadata={"agent_id": "identity-42", "tenant": "tenant-a"})
@@ -187,6 +233,20 @@ def test_one_entra_application_id_links_across_fields_in_the_same_tenant(connect
     other.account = "tenant-b"
     correlate([app, other])
     assert not any(key.startswith("related") for key in app.metadata)
+
+
+def test_an_account_not_attributed_to_its_records_is_not_tenant_scope():
+    """An Entra export of another tenant keeps tenant_id as account, but not as the records' tenant."""
+    app = _microsoft("identity.entra", Surface.IDENTITY, "app_id", "tenant-a", account_attributed=False)
+    bot = _microsoft("saas.microsoft-teams", Surface.SAAS, "bot_id", "tenant-a")
+    correlate([app, bot])
+    assert "related" not in app.metadata and "related" not in bot.metadata
+    candidate = app.metadata["related_candidates"][0]
+    assert candidate["finding_id"] == bot.id
+    assert "entra-application-id" in {match["key_type"] for match in candidate["matches"]}
+    app.metadata["account_attributed"] = True
+    correlate([app, bot])
+    assert app.metadata["related"] == [bot.id]
 
 
 def test_entra_application_id_without_a_declared_tenant_is_only_a_candidate():
@@ -252,6 +312,59 @@ def test_two_unscoped_opaque_identifiers_and_redacted_scope_cannot_create_exact_
 
 
 @pytest.mark.parametrize(
+    "unusable",
+    [
+        {"metadata": {"workspace": "Acme [EU]"}},
+        {"metadata": {"tenant": "[REDACTED]"}},
+        {"metadata": {"workspace_id": " ws-1"}},
+        {"connector": "identity.entra", "account": "tenant-*"},
+    ],
+)
+def test_unusable_scope_refuses_identifier_links_but_keeps_name_candidates(unusable):
+    values = dict(unusable)
+    metadata = {"app_id": "app-0001", "name": "Support Agent", **values.pop("metadata", {})}
+    left = finding(resource="opaque-id", metadata=metadata, **values)
+    right = peer(
+        resource="opaque-id", metadata={"app_id": "app-0001", "name": "support-agent", "tenant": "t-1"}
+    )
+    correlate([left, right])
+    assert "related" not in left.metadata and "related" not in right.metadata
+    [candidate] = left.metadata["related_candidates"]
+    assert candidate["finding_id"] == right.id
+    assert {match["key_type"] for match in candidate["matches"]} == {"name"}
+    assert [entry["finding_id"] for entry in right.metadata["related_candidates"]] == [left.id]
+
+
+def test_two_values_for_one_scope_still_refuse_every_link():
+    left = finding(resource="opaque-id", metadata={"name": "support-agent", "tenant": "a", "tenant_id": "b"})
+    right = peer(resource="opaque-id", metadata={"name": "support-agent"})
+    correlate([left, right])
+    assert not any(key.startswith("related") for key in left.metadata)
+
+
+def test_notion_bot_in_a_bracketed_workspace_stays_a_name_candidate(tmp_path, run_connector):
+    """A Notion workspace display name such as "Acme [EU]" is not an identifier to compare."""
+    users = json.loads((ROOT / "tests" / "fixtures" / "saas" / "notion_users.json").read_text())
+    slack = json.loads((ROOT / "tests" / "fixtures" / "saas" / "slack.json").read_text())
+    [bot] = [user for user in users["results"] if user["id"] == "n2"]
+    bot["name"], bot["bot"]["workspace_name"] = "Claude Assistant", "Acme [EU]"
+    [app] = [
+        record for record in slack if record.get("_kind") == "approved_app" and record["app"]["id"] == "A1"
+    ]
+    app["app"]["name"] = "Claude Assistant"
+    (tmp_path / "notion.json").write_text(json.dumps(users), encoding="utf-8")
+    (tmp_path / "slack.json").write_text(json.dumps(slack), encoding="utf-8")
+    notion, _ = run_connector("saas.notion", input=str(tmp_path / "notion.json"))
+    apps, _ = run_connector("saas.slack", input=str(tmp_path / "slack.json"))
+    correlate(notion + apps)
+    integration = next(f for f in notion if f.resource == "notion:bot:n2")
+    slack_app = next(f for f in apps if f.resource == "slack:app:A1")
+    assert integration.metadata["workspace"] == "Acme [EU]"
+    assert "related" not in integration.metadata
+    assert [entry["finding_id"] for entry in integration.metadata["related_candidates"]] == [slack_app.id]
+
+
+@pytest.mark.parametrize(
     "resource,provider,account,region",
     [
         (ARN, "aws", "123456789012", "us-east-1"),
@@ -287,6 +400,59 @@ def test_global_iac_reference_links_without_code_account(resource, provider, acc
     assert details["matches"][0]["scope"]["provider"] == provider
 
 
+def _code(connector: str, resource: str, location: str) -> Finding:
+    return finding(
+        surface=Surface.CODE,
+        connector=connector,
+        kind=Kind.INFRA,
+        resource=resource,
+        resource_type="iac",
+        provider="github",
+        account=None,
+        region=None,
+        evidence=[Evidence("file:langchain", "Framework import", location=location)],
+    )
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "projects/api/src/main.py:12",
+        "projects/backend/src/main.py",
+        "projects/backend-api/locations/main.py:7",
+        "projects/api/locations/us/agents/a",
+        "projects/support-bot/agent/main.py",
+    ],
+)
+def test_repository_paths_under_projects_are_not_gcp_resource_names(location):
+    """Two monorepos with the same projects/ layout share a file path, not a GCP resource."""
+    # A scan root named "projects" gives code resources the same shape.
+    left = _code("code.filesystem", "projects/api/src/main.py", location)
+    right = _code("code.github", "github:acme/other/projects/api/src/main.py", location)
+    correlate([left, right])
+    for item in (left, right):
+        assert not any(key.startswith("related") for key in item.metadata)
+
+
+def test_code_references_to_gcp_resource_names_still_link():
+    name = "projects/project-1/locations/europe-west1/agents/Agent-A"
+    live = finding(resource=name, provider="gcp", account="project-1", region="europe-west1")
+    for location in (
+        name,
+        f"projects/project-1/serviceAccounts/{SERVICE_ACCOUNT}",
+        "projects/123456/secrets/x",
+    ):
+        code = _code("code.filesystem", "github:acme/infra/main.tf", location)
+        live.resource = location
+        correlate([live, code])
+        assert live.metadata["related"] == [code.id]
+    # The strict form is for code: a non-code finding's GCP name parses as before.
+    synthetic = "projects/acme-ml/iam/serviceAccount:runner@acme-ml.iam.gserviceaccount.com"
+    left, right = finding(resource=synthetic), peer(resource=synthetic)
+    correlate([left, right])
+    assert left.metadata["related"] == [right.id]
+
+
 def test_arn_reference_can_link_principal_to_iam_identity_but_not_wrong_account():
     left = finding(resource="arn:aws:iam::123456789012:role/AgentRole", region=None)
     right = peer(resource="cloudtrail:caller", region=None, metadata={"principal": left.resource})
@@ -299,6 +465,101 @@ def test_arn_reference_can_link_principal_to_iam_identity_but_not_wrong_account(
     right.metadata["principal"] = "arn:aws:iam::999999999999:role/AgentRole"
     correlate([left, right])
     assert "related" not in left.metadata
+
+
+def test_gcp_service_account_links_to_its_caller_in_another_project(tmp_path, run_connector):
+    """A Vertex AI caller in one project is the service account another project defines."""
+    records = [
+        {
+            "_kind": "service-account",
+            "_project": "shared-ml-a",
+            "name": f"projects/shared-ml-a/serviceAccounts/{SERVICE_ACCOUNT}",
+            "email": SERVICE_ACCOUNT,
+            "displayName": "Anthropic Claude runner",
+            "user_managed_keys": 0,
+        },
+        {
+            "_kind": "audit-event",
+            "_project": "ml-prod-b",
+            "principal": SERVICE_ACCOUNT,
+            "method": "google.cloud.aiplatform.v1.PredictionService.GenerateContent",
+            "resource": "projects/ml-prod-b/locations/us-central1/publishers/google/models/gemini-1.5-pro",
+            "timestamp": "2025-09-10T03:00:00Z",
+            "userAgent": "google-genai-sdk/1.0",
+        },
+    ]
+    source = tmp_path / "gcp.jsonl"
+    source.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+    findings, _ = run_connector("cloud.gcp", input=str(source))
+    correlate(findings)
+    by = {f.resource: f for f in findings}
+    account = by[f"projects/shared-ml-a/serviceAccounts/{SERVICE_ACCOUNT}"]
+    caller = by[f"audit:{SERVICE_ACCOUNT}"]
+    assert (account.account, caller.account) == ("shared-ml-a", "ml-prod-b")
+    assert caller.metadata["related"] == [account.id]
+    [match] = caller.metadata["related_details"][0]["matches"]
+    assert match["key_type"] == "resource:gcp-service-account"
+    assert (match["source_fields"], match["target_fields"]) == (["metadata.principal"], ["resource"])
+    assert match["scope"] == {"provider": "gcp"}
+
+
+def _gcp(surface: Surface, project: str, resource: str, **metadata) -> Finding:
+    return finding(
+        surface=surface,
+        connector="cloud.gcp",
+        provider="gcp",
+        account=project,
+        resource=resource,
+        metadata=metadata,
+    )
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        SERVICE_ACCOUNT,
+        f"projects/-/serviceAccounts/{SERVICE_ACCOUNT}",
+        f"projects/ml-prod-b/serviceAccounts/{SERVICE_ACCOUNT}",
+    ],
+)
+def test_gcp_service_account_spellings_are_one_identifier_across_projects(spelling):
+    defined = _gcp(Surface.IDENTITY, "shared-ml-a", f"projects/shared-ml-a/serviceAccounts/{SERVICE_ACCOUNT}")
+    caller = _gcp(Surface.GATEWAY, "ml-prod-b", "audit:caller", principal=spelling)
+    correlate([defined, caller])
+    assert defined.metadata["related"] == [caller.id]
+
+
+def test_shared_google_service_accounts_do_not_link_projects():
+    """Google-managed service accounts act in many projects; sharing one is not a link."""
+    principal = "cloud-logs@system.gserviceaccount.com"
+    defined = _gcp(Surface.IDENTITY, "proj-alpha-1", "audit:defined", principal=principal)
+    caller = _gcp(Surface.GATEWAY, "proj-beta-22", "audit:caller", principal=principal)
+    correlate([defined, caller])
+    for item in (defined, caller):
+        assert "related" not in item.metadata
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        # Not Google-issued service account addresses: local identifiers, and
+        # the declared project conflict blocks them like any other.
+        "crew-runner@shared-ml-a.iam.gserviceaccount.com.example.com",
+        "crew-runner@example-gserviceaccount.com",
+        "crew-runner@gserviceaccount.com",
+        "Crew-Runner@shared-ml-a.iam.gserviceaccount.com",
+        "crew-runner@acme.com",
+    ],
+)
+def test_lookalike_service_account_addresses_keep_their_project_scope(other):
+    defined = _gcp(Surface.IDENTITY, "shared-ml-a", "audit:defined", principal=other)
+    caller = _gcp(Surface.GATEWAY, "ml-prod-b", "audit:caller", principal=other)
+    correlate([defined, caller])
+    assert not any(key.startswith("related") for key in defined.metadata)
+    caller.metadata["principal"] = SERVICE_ACCOUNT
+    caller.account = "shared-ml-a"
+    correlate([defined, caller])
+    assert "related" not in defined.metadata
 
 
 @pytest.mark.parametrize(
