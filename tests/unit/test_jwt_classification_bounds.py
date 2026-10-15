@@ -62,3 +62,28 @@ def test_agent_claim_values_and_claim_names_are_bounded(index):
     assert len(finding.metadata["agent_claims"]["agent_id"]) <= 200
     assert len(finding.metadata["claim_names"]) == 100
     assert all(len(name) <= 64 for name in finding.metadata["claim_names"])
+
+
+def test_a_nested_token_cut_by_the_kid_and_claim_name_bounds_is_still_withheld(index):
+    # A token in the kid or in a claim name, where the 200- and 64-character cuts fall
+    # inside its payload: shortened first, it kept two of its three segments and no
+    # longer looked like a token, so its header and part of its payload were reported.
+    nested = ".".join(
+        (
+            _segment({"alg": "HS256", "typ": "JWT"}),
+            _segment({"sub": "nested-service-subject", "scope": "admin write delete"}),
+            "s" * 43,
+        )
+    )
+    header_segment, payload_segment, _ = nested.split(".")
+    kid = "k" * 120 + " " + nested
+    name = "n " + nested
+    for text, bound in ((kid, 200), (name, 64)):
+        payload_start = text.index(payload_segment)
+        assert payload_start < bound < payload_start + len(payload_segment)
+    (finding,), _ = _run(index, [_unsigned({"alg": "none", "kid": kid}, {"sub": "svc", name: 1})])
+    reported = json.dumps([finding.metadata["kid"], finding.metadata["claim_names"]])
+    assert header_segment not in reported
+    assert payload_segment[:12] not in reported
+    assert finding.metadata["kid"] == "k" * 120 + " [REDACTED]"
+    assert finding.metadata["claim_names"] == ["n [REDACTED]", "sub"]

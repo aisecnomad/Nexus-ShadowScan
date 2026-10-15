@@ -171,6 +171,51 @@ summarizes each release for people who install and operate ShadowScan.
   now fails `make secrets`, and AI review gate output; every tracked file still
   passes. Regression tests cover every layout with up to four bytes before and
   two after the `{`, longer runs, and three hostile inputs for linear time.
+- **A report could land behind another user's link (#237).**
+  `write_private_text` checked only the links named in the output path itself,
+  then let `os.path.realpath` follow the rest unchecked. An operator's link to
+  another user's link (`mine -> shared -> victim/`), a link inside another
+  link's target (`mine -> shared/sub`), or a link planted where a component was
+  missing when it was checked put the report, mode 0600 and owned by the
+  operator, in a directory the other user chose. The output directory is now
+  resolved one component at a time, as the kernel resolves it: every link met,
+  in the path or in a link's target, must be owned by root or the current user,
+  more than 40 links are refused as a loop, and a missing component is an error
+  instead of being resolved later. `..` in the output path is resolved
+  lexically first, as since #237 (before it the kernel resolved `..` after the
+  link), so `-o mylink/../r.json` writes beside `mylink`, not in the parent of
+  the link's target; `SECURITY.md`, `docs/production.md` and the controls guide
+  now say so, and the dashboard guide states the link rule. Affects `-o` and
+  `--inventory-json` paths that run through a chain of links; links owned by
+  the operator or root (macOS `/tmp`) are followed as before. Regression tests
+  give links to another uid with `lchown` (as root) and cover a chain, a link
+  inside a target, a link planted after the check, own and root-owned links,
+  relative links with `..`, a loop and a missing directory.
+- **Long output names in multibyte characters failed (#237).**
+  `_temporary_name` cut the destination name at 200 characters, but `NAME_MAX`
+  counts bytes: a legal name of 253 to 255 bytes in CJK, accented or emoji
+  characters (83 CJK characters and `.json`) gave a temporary name over 255
+  bytes, and the write failed with "could not write report", although #237
+  said long legal names no longer fail. The name is now cut at whole characters
+  to at most 200 bytes. Affects every output written under such a name.
+  Regression tests cover CJK, accented and emoji names.
+- **The configuration read diagnostic did not mention the encoding (#237).** A
+  configuration file that is not UTF-8 got "it must be a readable regular file
+  of at most 8 MiB", which leaves out the actual cause; the message now asks
+  for "a readable regular UTF-8 text file of at most 8 MiB". Affects operators
+  with a Latin-1 or UTF-16 configuration file. A regression test covers a
+  Latin-1 file.
+- **identity.jwt shortened `kid` and claim names before redacting them
+  (#237).** #237 bounded both but cut them before the finding was sanitized,
+  against its own "sanitize before shortening" comment: a token inside a `kid`
+  or a claim name that straddled the 200- or 64-character cut lost its third
+  segment, no longer looked like a token, and its header and the start of its
+  payload were reported. Both are now sanitized first and cut after, as agent
+  claim values already were; only the 100 claim names reported are sanitized,
+  which keeps a token of many claims cheap. Affects identity.jwt findings for
+  tokens that carry such a header or claim: their `metadata.kid` and
+  `metadata.claim_names` change. A regression test places a token across both
+  cuts.
 
 ### Cap runtime dep ranges at the next major (October 15)
 

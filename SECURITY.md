@@ -186,7 +186,10 @@ coverage, even when a response includes an empty collection field.
   Keep Git patched and use disposable workers for untrusted inputs.
 * Reports and generated inventory stubs are written atomically with mode 0600,
   never to a symbolic link and never through a directory link that another user
-  owns; the file is created and renamed relative to the opened real directory.
+  owns, a link inside another link's target included; the file is created and
+  renamed relative to the opened real directory. `..` in the output path is
+  resolved before any link is followed: `-o mylink/../r.json` writes `r.json`
+  beside `mylink`, not in the parent of the link's target.
   An existing character device given as the output path (such as `/dev/null`)
   is written in place, and an existing named pipe only when the current user
   owns it with mode 0600; other non-regular paths are refused.

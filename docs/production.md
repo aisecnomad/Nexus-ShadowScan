@@ -29,7 +29,11 @@ passing unit suite does not establish complete coverage of a particular estate.
   cloned; the repository uses sampled API mode (incomplete).
 - **Report paths.** `-o` refuses a path through a directory link owned by
   another user; links owned by root or by the current user are followed. Point
-  `-o` at a real directory if a scan now fails with that message.
+  `-o` at a real directory if a scan now fails with that message. Every link on
+  the way is checked, a link inside another link's target included. `..` in the
+  `-o` path is resolved before any link is followed: `-o mylink/../r.json`
+  writes `r.json` beside `mylink`, not in the parent of the link's target, where
+  the kernel's own resolution would put it.
 - **Redaction.** JWTs whose header is written with whitespace (encoded as
   `IHsi…`, `eyAi…`, `ewo…` rather than `eyJ…`) are withheld everywhere,
   including directly after a dotted name with a segment of 16 or more
@@ -39,8 +43,9 @@ passing unit suite does not establish complete coverage of a particular estate.
 - **identity.jwt.** `expected_issuer` or `allowed_algorithms` without
   `jwks_url` is an error (exit 3) in a configuration file, as it was on the
   command line. Tokens whose header has a non-string `kid` or a `crit` list are
-  now reported as unverified instead of being dropped. Agent claim values are
-  cut at 200 characters and `claim_names` at 100 names.
+  now reported as unverified instead of being dropped. Agent claim values and
+  a string `kid` are redacted, then cut at 200 characters; `claim_names` keeps
+  at most 100 names, each redacted, then cut at 64 characters.
 - **SARIF.** Evidence locations that climb above the scan root or name a
   network path (`//host/share`) get no physical location, and a line number
   beyond 2,147,483,647 drops the region; a merged report with such locations

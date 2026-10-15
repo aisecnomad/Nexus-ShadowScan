@@ -745,10 +745,11 @@ class ScanConfig:
         try:
             text = read_policy_text(p)
         except (OSError, ValueError):
-            # The OS error can name other paths; the size and type limits are what to fix.
+            # The OS error can name other paths; the type, size and encoding limits are what
+            # to fix (a file that is not UTF-8 raises UnicodeDecodeError, a ValueError).
             raise ConfigValidationError(
-                f"scan configuration {p} could not be read: it must be a readable regular file"
-                " of at most 8 MiB"
+                f"scan configuration {p} could not be read: it must be a readable regular UTF-8"
+                " text file of at most 8 MiB"
             ) from None
         try:
             data = yaml.load(text, Loader=_ConfigLoader)

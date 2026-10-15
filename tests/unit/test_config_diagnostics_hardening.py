@@ -37,6 +37,14 @@ def test_an_oversized_configuration_file_gets_a_read_diagnostic(tmp_path):
         ScanConfig.from_yaml(path)
 
 
+def test_a_configuration_file_that_is_not_utf8_gets_a_read_diagnostic_naming_the_encoding(tmp_path):
+    path = tmp_path / "shadowscan.yaml"
+    path.write_bytes("connectors: []  # caf\u00e9\n".encode("latin-1"))
+    with pytest.raises(ConfigValidationError, match="could not be read: .*UTF-8") as failure:
+        ScanConfig.from_yaml(path)
+    assert "0xe9" not in str(failure.value)
+
+
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes need POSIX")
 def test_a_named_pipe_configuration_gets_a_read_diagnostic(tmp_path):
     path = tmp_path / "shadowscan.yaml"

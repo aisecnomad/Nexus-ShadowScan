@@ -334,11 +334,16 @@ class JwtConnector(BaseConnector, _NoDump):
                 "identity_type": identity_type,
                 "reasons": reasons,
                 "algorithm": alg,
-                "kid": header["kid"][:_MAX_CLAIM_CHARS] if isinstance(header.get("kid"), str) else None,
+                # Sanitize before shortening, here and in the agent claims and claim
+                # names: a nested token loses its recognizable three-segment shape once
+                # truncated.
+                "kid": (
+                    sanitize_text(header["kid"])[:_MAX_CLAIM_CHARS]
+                    if isinstance(header.get("kid"), str)
+                    else None
+                ),
                 "lifetime_hours": round(lifetime_h, 1) if lifetime_h else None,
                 "scopes": scopes[:40],
-                # Sanitize before shortening: a nested token loses its
-                # recognizable three-segment shape once truncated.
                 "agent_claims": {
                     k: (
                         v
@@ -347,7 +352,11 @@ class JwtConnector(BaseConnector, _NoDump):
                     )
                     for k, v in agent_hints.items()
                 },
-                "claim_names": sorted(name[:_MAX_CLAIM_NAME_CHARS] for name in claims)[:_MAX_CLAIM_NAMES],
+                # Only the names reported are sanitized, so a token of many claims costs
+                # no more than one of a hundred.
+                "claim_names": sorted(
+                    sanitize_text(name)[:_MAX_CLAIM_NAME_CHARS] for name in sorted(claims)[:_MAX_CLAIM_NAMES]
+                ),
                 "context": context,
             }
         )

@@ -159,28 +159,55 @@ def _write_in_place(target: Path, data: bytes) -> None:
         os.close(fd)
 
 
+# Linux's MAXSYMLINKS: more links than this on the way to an output is a loop.
+_MAX_OUTPUT_LINKS = 40
+
+
 def _private_output_parent(target: Path) -> Path:
     """The real directory an output goes into, refusing a link another user could have planted.
 
-    Every symbolic link on the way to the output's directory must be owned by root (a
-    system link such as macOS's ``/tmp``) or by the current user: another local user can
-    plant a link in a shared directory and receive the report. The directory is then
-    named by its real path, with no link left in it.
+    ``..`` in the given path is resolved lexically first (``mylink/../r.json`` names
+    ``r.json`` beside ``mylink``). The directory is then resolved one component at a
+    time, following each symbolic link as the kernel would, links inside another link's
+    target included. Every link met must be owned by root (a system link such as macOS's
+    ``/tmp``) or by the current user: another local user can plant a link in a shared
+    directory and receive the report. A missing component raises ``FileNotFoundError``
+    rather than being resolved later, unchecked. The directory is then named by its real
+    path, with no link left in it.
     """
     absolute = Path(os.path.abspath(target)).parent
-    for part in (*reversed(absolute.parents), absolute):
-        try:
-            info = os.lstat(part)
-        except FileNotFoundError:
-            break
-        if stat.S_ISLNK(info.st_mode) and info.st_uid not in (0, os.geteuid()):
+    resolved = Path(absolute.anchor)
+    pending = list(reversed(absolute.parts[1:]))
+    links = 0
+    while pending:
+        part = pending.pop()
+        if part == "..":
+            resolved = resolved.parent
+            continue
+        candidate = resolved / part
+        info = os.lstat(candidate)
+        if not stat.S_ISLNK(info.st_mode):
+            resolved = candidate
+            continue
+        if info.st_uid not in (0, os.geteuid()):
             raise ValueError("refusing an output path through a symbolic link owned by another user")
-    return Path(os.path.realpath(absolute))
+        links += 1
+        if links > _MAX_OUTPUT_LINKS:
+            raise ValueError("refusing an output path through too many symbolic links")
+        link = Path(os.readlink(candidate))
+        if link.is_absolute():
+            resolved = Path(link.anchor)
+        pending.extend(reversed(link.parts[1:] if link.is_absolute() else link.parts))
+    return resolved
 
 
 def _temporary_name(name: str) -> str:
-    # The name stays within NAME_MAX for any legal destination name.
-    return f".{name[:200]}.{secrets.token_hex(4)}"
+    # NAME_MAX (255) counts bytes, not characters: keep whole characters of the name
+    # up to 200 bytes, so ".<name>.<8 hex>" fits for any legal destination name.
+    kept = name[:200]
+    while len(os.fsencode(kept)) > 200:
+        kept = kept[:-1]
+    return f".{kept}.{secrets.token_hex(4)}"
 
 
 def write_private_text(path: str | Path, text: str) -> None:
