@@ -5632,9 +5632,9 @@ class FilesystemConnector(BaseConnector):
         )
         names = [s.name for s in ranked[:4]]
         provs = [
-            self.index.get(sid).name  # type: ignore[union-attr]
+            sig.name
             for sid in f.model_providers[:3]
-            if self.index.get(sid)
+            if (sig := self.index.get(sid))
         ]
         where = "repository root" if proj.root == "." else proj.root
         what = "Agent" if f.kind == Kind.AGENT else "LLM usage"

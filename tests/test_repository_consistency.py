@@ -1876,3 +1876,28 @@ def test_workflow_readme_lists_every_workflow() -> None:
         f"update .github/workflows/README.md: missing {sorted({p.name for p in WORKFLOWS} - linked)}, "
         f"stale {sorted(linked - {p.name for p in WORKFLOWS})}"
     )
+
+
+def test_assurance_results_synthetic_case_count_matches_corpus() -> None:
+    """docs/assurance-results.md's synthetic-corpus count tracks tools/evaluation/corpus.json.
+
+    The prose states a current total ("has since grown to N authored synthetic
+    cases (P positives, Q negatives)"). That is a live count of the committed
+    corpus, so it earns the same documented-count guard the signature and
+    connector totals get; a synthetic case is a positive when it sets
+    ``present: true``. Whitespace is collapsed so a claim wrapped across lines is
+    still found.
+    """
+    text = " ".join(_read(ROOT / "docs" / "assurance-results.md").split())
+    match = re.search(r"(\d+) authored synthetic cases \((\d+) positives, (\d+) negatives\)", text)
+    assert match, "docs/assurance-results.md no longer states the synthetic corpus case count"
+    stated = tuple(int(match.group(index)) for index in (1, 2, 3))
+    cases = json.loads(_read(ROOT / "tools" / "evaluation" / "corpus.json"))["cases"]
+    present = sum(1 for case in cases if case.get("present") is True)
+    absent = sum(1 for case in cases if case.get("present") is False)
+    assert present + absent == len(cases), "every evaluation case must set present true or false"
+    assert stated == (len(cases), present, absent), (
+        f"docs/assurance-results.md says {stated[0]} cases ({stated[1]} positives, {stated[2]} "
+        f"negatives) but tools/evaluation/corpus.json has {len(cases)} ({present} positives, "
+        f"{absent} negatives)"
+    )
