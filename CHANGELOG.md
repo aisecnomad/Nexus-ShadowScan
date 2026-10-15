@@ -5,6 +5,30 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### README restructured as a landing page (October 15)
+
+- The README leads with install, quick start, a command reference and the
+  offline demo output; deep reference material (deployment and development
+  installs, coverage policy, incremental correlation, baseline upgrades, the
+  risk-policy YAML, full finding-field notes) now lives only in the `docs/`
+  pages it duplicated, and the README links them. The README drops from 777
+  to about 515 lines. `docs/getting-started/configuration.md` links
+  `docs/concepts/risk.md` instead of the removed `README.md#risk-policy`
+  anchor.
+- The command reference lists every top-level command, including
+  `inventory check`, `mcp-registry snapshot` and `signatures show`, and the
+  exit-code table keeps `diff`'s 2 and 3 and the rule to gate CI on any
+  non-zero exit.
+- Review fixes kept the statements the condensed draft dropped: the warning
+  that the unrelated `shadowscan` PyPI package is not this project and the
+  attestation check, the exact `shadow` rule (a name match only suggests an
+  inventory entry), the evidence table under "The Why", the advisory-only LLM
+  triage exception to failing closed, the retention limits (no span prompt or
+  completion content, no process command lines, no live endpoint probing
+  except opt-in A2A Agent Card fetches), the credential-boundary rule, the
+  plugin allowlist and its "not a sandbox" limit, and the review-state,
+  assurance and governance links.
+
 ### README visuals generated from the code (October 15)
 
 - The README banner and the architecture diagrams are now SVG files that

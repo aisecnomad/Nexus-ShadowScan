@@ -13,26 +13,34 @@
 [![Docs](https://img.shields.io/badge/docs-source-blue.svg)](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/docs)
 [![PyPI: NexusShadowScan](https://img.shields.io/pypi/v/NexusShadowScan.svg)](https://pypi.org/project/NexusShadowScan/)
 
-**Discover shadow AI agents across your organization and reconcile them against your approved inventory.**
+**Discover evidence of shadow AI agents across your organization and reconcile it against your approved agent registry.**
 
 It inspects nine surfaces: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, cloud accounts, endpoints (developer workstations and
 host/runtime inventories), network logs, and running processes.
 
-| GitHub repository | PyPI distribution | Command |
+| GitHub repository | PyPI distribution | Command and Python package |
 |---|---|---|
 | [`aisecnomad/Nexus-ShadowScan`](https://github.com/aisecnomad/Nexus-ShadowScan) | [`NexusShadowScan`](https://pypi.org/project/NexusShadowScan/) | `shadowscan` |
+
+The repository was formerly `aisecnomad/Project-Nexus`; GitHub redirects the old links.
+
+**Contents:** [Install](#install) · [Quick start](#quick-start) · [Commands](#command-reference) · [Example output](#example-output) · [Detection matrix](#detection-matrix) · [Benchmarks](#benchmarks) · [How it works](#how-it-works) · [Surfaces](#surfaces--connectors) · [Findings](#what-a-finding-looks-like) · [Configuration](#configuration) · [Inventory](#sanctioned-inventory) · [Extending](#extending) · [Docs](#documentation) · [Limits](#evidence-and-assurance-limits) · [Status](#project-status) · [Contributing](#community-and-contributing) · [Safety](#safety-notes)
 
 ## Install
 
 ```bash
-pip install NexusShadowScan          # or: pipx install NexusShadowScan
+python -m pip install NexusShadowScan            # or: pipx install NexusShadowScan
+python -m pip install "NexusShadowScan[cloud]"   # adds the AWS, GCP, Azure and OCI SDKs
 shadowscan --help
 ```
 
-For cloud connectors (AWS, GCP, Azure, OCI): `pip install "NexusShadowScan[cloud]"`.
-Python 3.11–3.13 required. For production deployment with hash-locked dependencies,
-see the [installation guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/install.md).
+The distribution is `NexusShadowScan`; the unrelated `shadowscan` package on
+PyPI is not this project. Python 3.11, 3.12 or 3.13 is required. Releases are
+uploaded through PyPI trusted publishing and attested on GitHub, so you can
+check a download with `gh attestation verify`. For a deployment, install a
+reviewed commit from the hash-locks instead; both procedures are in the
+[installation guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/install.md).
 
 ## Quick start
 
@@ -46,6 +54,14 @@ shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 # Real estate: live connectors with secrets from the environment
 shadowscan scan -c shadowscan.yaml --format sarif -o shadowscan.sarif
 ```
+
+`agent-card.yaml`, `examples/` and the sample exports under `tests/fixtures/`
+come from a repository checkout; the wheel does not ship them. Scanning the
+ShadowScan checkout itself reports an incomplete scan (exit 3), because some
+redaction tests and benchmark files deliberately exceed the scanner's limits
+and it fails closed rather than skip them; in a checkout,
+`shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
+completes in seconds.
 
 See the [quick start guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/quickstart.md)
 for walkthroughs of each surface and the
@@ -64,24 +80,32 @@ for walkthroughs of each surface and the
 | `shadowscan gateway <logs...>` | Analyze AI gateway / provider log files |
 | `shadowscan jwt --file <token>` | Classify a JWT as human, service or agent identity |
 | `shadowscan merge <reports...>` | Combine multiple JSON reports into one fleet report |
-| `shadowscan dashboard <report.json>` | Generate a static fleet dashboard (HTML) |
-| `shadowscan diff <old.json> <new.json>` | Compare reports: new findings, drift, resolution |
+| `shadowscan dashboard <report.json>` | Write a static fleet dashboard (HTML) and, optionally, `shadowscan.inventory/v1` JSON |
+| `shadowscan diff <old.json> <new.json>` | Compare reports: new, resolved and changed findings, adverse drift |
+| `shadowscan inventory check <path>` | Validate inventory files and list the registered agents |
 | `shadowscan inventory stubs <report.json>` | Generate Agent Card skeletons for shadow findings |
-| `shadowscan controls <report.json>` | Map findings to NIST AI RMF / ISO 42001 / EU AI Act / AIUC-1 controls |
-| `shadowscan signatures list` | List all recognized signatures |
+| `shadowscan controls <report.json>` | List findings per NIST AI RMF / ISO/IEC 42001 / EU AI Act / AIUC-1 control (evidence references, not compliance determinations) |
+| `shadowscan mcp-registry snapshot` | Snapshot an MCP registry to pin in `options.mcp_registries` |
+| `shadowscan signatures list` / `show <id>` | List the loaded signatures, or print one as YAML |
 | `shadowscan signatures test <value>` | Test what a package, host, model ID, etc. maps to |
 | `shadowscan connectors` | List connectors with configuration keys and required extras |
 
-**Output formats:** `--format table` (default), `json`, `sarif`, `csv`, `markdown`, `html`, `cyclonedx`, `ocsf`
+**Output formats:** `--format table` (default), `json`, `sarif`, `csv`, `markdown`,
+`html`, `cyclonedx` (CycloneDX 1.6 AI-BOM) and `ocsf` (OCSF 1.1.0 Detection Finding).
 
 **Exit codes:**
 
 | Exit | Meaning |
 |---|---|
 | **0** | Scan completed and passed |
-| **1** | Invalid option, configuration or setup error |
-| **2** | Scan completed but reached `--fail-on` threshold |
-| **3** | Scan incomplete (API error, timeout, denied access) |
+| **1** | No scan result: invalid option, value, path or configuration, or a setup or output error |
+| **2** | Scan completed but reached `--fail-on`; `diff` returns 2 with `--fail-on-new` or `--fail-on-drift` |
+| **3** | Scan incomplete (API error, timeout, denied access, limit, malformed export); `diff` returns 3 when reports are not comparable |
+
+Gate CI on any non-zero exit: exit 1 means nothing was scanned, and an
+incomplete scan never reads as clean. Exit 0 from a complete static scan does
+not prove that no agent runs; see
+[scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md).
 
 ## Example output
 
@@ -250,6 +274,13 @@ ShadowScan normalizes these observations into one finding model with evidence,
 so investigators or auditors can ask: *Who owns this AI Agent? What can it do, and is it
 registered in the agent registry supplied for this scan?*
 
+| Observation | What it establishes | Next check |
+|---|---|---|
+| Source dependency, import, or configuration | A repository contains a potential integration. | Inspect executable code and deployment; comments, examples, and unused dependencies can mislead. |
+| Cloud or SaaS resource | The collector observed a configured resource within its granted scope. | Check resource state and authenticated runtime telemetry before claiming execution. |
+| Gateway event | The supplied log contains a request or tool-use signal. | Verify the log's origin, caller binding, and observation window before attributing it to a deployed agent. |
+| `shadow: true` | No single explicit binding in the **supplied** inventory matched the finding. | Confirm the inventory's scope and freshness; an unmatched finding alone does not prove unauthorized use. |
+
 ## How it works
 
 <p align="center">
@@ -269,7 +300,8 @@ Detection knowledge lives in YAML signature packs and threat and control
 references in YAML mapping catalogs, so adding a product is a data change, not
 a code change. Collection and analysis fail closed: an API error, a timeout, a
 limit or a malformed export marks the scan incomplete (exit 3) rather than
-producing a smaller report that looks clean. See
+producing a smaller report that looks clean. Only the opt-in LLM triage is
+advisory; its failures are warnings and it never changes scores. See
 [architecture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md)
 for the pipeline, the package layout and the connector contract.
 
@@ -281,16 +313,23 @@ ShadowScan ships **38 connectors** across the nine surfaces below.
 |---|---|---|
 | **Code** | `code.filesystem`, `code.github`, `code.gitlab` | Agent frameworks & LLM SDKs (deps, imports, idioms), MCP client/server configs, coding-agent configs, A2A agent cards, IaC provisioning, CI secrets, hard-coded provider keys (redacted) |
 | **Identity** | `identity.okta`, `identity.entra`, `identity.google-workspace`, `identity.auth0`, `identity.jwt` | OAuth apps & consent grants to AI SaaS, service principals / managed identities with LLM or data permissions, JWT classification (human/service/agent) |
-| **Gateway** | `gateway.logs`, `gateway.otel` | Callers reconstructed from gateway logs or offline OpenTelemetry GenAI spans |
+| **Gateway** | `gateway.logs`, `gateway.otel` | Callers reconstructed from gateway logs or offline OpenTelemetry GenAI spans; span prompt and completion content is not retained |
 | **Low-code** | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | Copilot Studio agents, Agentforce, Now Assist, automation workflows with AI steps |
 | **SaaS** | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | Bots and apps with their scopes, install requests, AI coding agents and their permissions |
 | **Cloud** | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci`, `cloud.kubernetes`, `cloud.openshift` | Managed cloud AI and IAM inventories, Kubernetes/OpenShift workload exports |
 | **Endpoint** | `endpoint.inventory`, `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`, `endpoint.ebpf` | AI clients and coding agents on workstations with their MCP servers, local model stores, osquery fleet exports |
 | **Network** | `network.logs` | AI services contacted per client address from DNS, TLS SNI and flow logs |
-| **Runtime** | `runtime.processes` | Coding-agent CLIs, AI apps, MCP servers and local model servers seen running |
+| **Runtime** | `runtime.processes` | Coding-agent CLIs, AI apps, MCP servers and local model servers seen running; command lines are never kept |
 
 Connectors support **live** API collection, **offline** JSON/CSV/log exports,
 or both; see the [connector guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md) for supported modes and provider scope.
+The offline inventories (`endpoint.host`, `endpoint.mcp`, `endpoint.ollama`,
+`endpoint.models`, `endpoint.ebpf`, `gateway.otel`, `cloud.kubernetes`,
+`cloud.openshift`) analyze exports and never probe endpoints or a Kubernetes
+API; the one opt-in exception is `endpoint.mcp` fetching the A2A Agent Cards
+listed in `agent_card_urls`. Without an `input`, `endpoint.inventory` reads a
+fixed list of user-scope client locations (model files are listed by name,
+never parsed) and `runtime.processes` reads `/proc` on Linux.
 
 ## Frameworks & products recognized
 
@@ -334,7 +373,12 @@ tells you what a package, host, user agent, model ID, scope, or file path maps t
 }
 ```
 
-Key fields: **confidence** is a heuristic evidence score (not a calibrated probability). **risk** is additive and explainable: each factor adds up to `score`. **shadow** is `true` unless an inventory entry matches the finding. **autonomy** (`metadata.autonomy`) classifies agents on the L0–L5 scale. **threats** and **controls** are edition-qualified references (OWASP, MITRE ATLAS, MAESTRO, NIST AI RMF, ISO/IEC 42001, EU AI Act, AIUC-1).
+* **confidence** combines grouped evidence weights with noisy-OR. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
+* **risk** is additive and explainable: the listed factors always add up to `score`. **danger_score** is the same model without the governance factors (registration and ownership); `options.risk_basis: danger` bases `level` and `--fail-on` on it.
+* **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its scope restrictions; a name match only suggests an entry for review.
+* **autonomy** (`metadata.autonomy`) places the finding on the L0 Chatbot to L5 Fully Autonomous scale as an interval: the `floor` the evidence proves and the `ceiling` it has not ruled out.
+* **related** links findings across surfaces only through an exact shared identifier; name similarity goes to `related_candidates` as a review hint.
+* **threats** and **controls** are edition-qualified references to OWASP, MITRE ATLAS, MAESTRO, NIST AI RMF, ISO/IEC 42001, EU AI Act and AIUC-1 entries: author mappings, not compliance determinations.
 
 For the full finding schema, risk model, and output format details, see the
 [risk scoring](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/concepts/risk.md),
@@ -359,6 +403,11 @@ connectors:
     regions: [us-east-1, eu-west-1]
 ```
 
+Run repository scans separately from live tenant collection: the scanner
+rejects a configuration that mixes a live code connector with credentialed
+tenant connectors unless `options.allow_credential_mixing` is set, and cloud
+instance-metadata credentials need `options.allow_instance_credentials`.
+Keep secrets in the environment (`${VAR}`), never in the file.
 `shadowscan connectors` lists each connector's configuration keys and required
 extras; `shadowscan connectors --json` also lists offline export formats. See the
 [configuration reference](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/configuration.md) for all options and the
@@ -370,6 +419,21 @@ Drop [Agent Cards](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/agen
 Simple `agents.yaml` lists and CSV work too. `shadowscan inventory stubs`
 generates card skeletons from shadow findings. See
 [docs/inventory.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/inventory.md).
+
+## Extending
+
+* **Signatures** are YAML: add a pack directory with `--signatures` or
+  `signatures:`. Replacing a built-in signature requires explicit opt-in
+  (`allow_signature_override`). See
+  [docs/signatures.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/signatures.md).
+* **Connectors** implement `collect()` (live) and `analyze()` (records to
+  findings) and register through the `shadowscan.connectors` entry-point group.
+  A third-party connector runs only when an exact-name `options.plugins`
+  allowlist entry (or `--allow-plugin`) names it. An allowlisted plugin runs
+  with the scanner's privileges: `plugin_execution: process` lets the scanner
+  stop it at its deadline, but it is not a sandbox. See
+  [writing a connector](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md#writing-a-connector)
+  and [third-party plugin execution](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md#third-party-plugin-execution).
 
 ## Documentation
 
@@ -400,21 +464,27 @@ for where the code, tests, docs, tooling and benchmarks live.
 ## Evidence and assurance limits
 
 - **Evaluation corpora** are author-written regression cases, not independent field-precision estimates. See [evaluation](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/evaluation.md).
-- **Benchmarks against other tools** are written by the same maintainer. They show behaviour on those inputs, not field accuracy. See the [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md).
+- **Benchmarks against other tools** use inputs and labels the same maintainer wrote. They show behaviour on those inputs, not field accuracy, and none is independent. See the [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md).
+- **Assurance results** use a frozen corpus of 42 public files labeled by two AI reviewers, not independent human ground truth; only the baseline run is out of sample.
 - **Canaries** validate named tenant controls when credentials are supplied; offline replay does not establish live acceptance. See [canaries](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/canaries.md).
+- **The acceptance verifier** validates supplied holdout and tenant evidence but cannot authenticate reviewer independence or manufacture tenant acceptance. See the [verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md).
 - Review [rollout acceptance](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#rollout-acceptance) before using a risk threshold as a production gate.
 
 ## Project status
 
 * **Release state.** Version `0.1.2` is published to PyPI as `NexusShadowScan`
   and tagged `v0.1.2`, as an alpha pre-release. The package classifier is `Development Status :: 3 - Alpha`.
-  Commits on `main` after the tag are unreleased.
+  Commits on `main` after the tag are unreleased. Publication does not
+  establish independent review or deployment acceptance.
 * **Single maintainer, AI-assisted development.** Apart from Dependabot updates, every commit was written
   by a single maintainer or generated with an AI coding assistant (Claude, Codex, Grok, GitHub Copilot, Google Antigravity, Perplexity, Meta AI, etc.). The logs under
   [archive/reviews/](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/archive/reviews) are AI-assisted, not third-party reviews.
 * **Recommendation.** Review the revision yourself or have it reviewed, then
   pin that full commit SHA as shown in
   [Deployment install](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/install.md#from-a-reviewed-revision-hash-locked).
+  Review state cannot be established from a checkout; verify it with the
+  commands in
+  [merge gate and review status](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#merge-gate-and-review-status).
 
 ## Community and contributing
 
@@ -425,8 +495,12 @@ for where the code, tests, docs, tooling and benchmarks live.
 | Report a false positive or missed framework | [Detection quality report](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=detection_report.yml) |
 | Make a first contribution | [Contributor guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md) and [`good first issue`](https://github.com/aisecnomad/Nexus-ShadowScan/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) |
 | Report a vulnerability privately | [Security policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#reporting) |
+| Understand decisions, review and release requirements | [Governance](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md), [Maintainers](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/MAINTAINERS.md), [Roadmap](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/ROADMAP.md) |
 | Understand participation standards | [Code of conduct](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CODE_OF_CONDUCT.md) |
-| See what changed or cite the project | [Changelog](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md), [CITATION.cff](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CITATION.cff) |
+| See what changed or cite the project | [Release notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md), [Changelog](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md), [CITATION.cff](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CITATION.cff) |
+
+Use synthetic, minimal examples in public reports. Scan results can contain
+credentials, personal data, and sensitive inventory even after redaction.
 
 ## Safety notes
 
