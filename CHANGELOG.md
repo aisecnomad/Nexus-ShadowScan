@@ -238,6 +238,49 @@ summarizes each release for people who install and operate ShadowScan.
   schema-aware `--set` coercion, the `engine_state.py` and `http_transport.py`
   split and the Docker Python pin guard) is not carried, and the draft stays
   open for it.
+- **Four hardening hunks carried from draft #232.** Rewritten as one commit
+  that credits Copilot as co-author:
+  - `safe_git_env` passed the scanner's `GITHUB_TOKEN`, `GH_TOKEN` and
+    `GITLAB_TOKEN` to every Git child process, which runs on untrusted
+    repository content, although Git never needs them: a clone authenticates
+    with its origin-scoped header. They are now removed like the report
+    identity key. Affects workers that export those variables; configured
+    connectors behave as before.
+  - `checkout_has_lfs_pointers` walked the clone by path names saved from
+    `scandir` and followed links in the checkout's own path, so a directory
+    replaced by a link between the listing and the open was walked outside the
+    checkout, and a file swapped after its `lstat` was read unchecked. It now
+    opens the root with `open_confined_directory` and each directory and file
+    relative to an open descriptor without following links, compares the
+    opened file with its listing before and after reading it, and gives
+    "unknown" (the clone "could not be inspected", incomplete) instead of a
+    clean result for a replaced entry, a directory nested more than 64 levels
+    deep, or a platform without descriptor-relative no-follow opens. Affects
+    `code.github` and `code.gitlab` clones; only such deep checkouts change
+    outcome in practice.
+  - Process-mode plugin workers, where neither `/proc/self/fd` nor `/dev/fd`
+    lists descriptors, made only descriptors 3 to 4095 non-inheritable, so a
+    worker with a higher descriptor could pass it to a program the plugin
+    starts. The range now runs to the open-file soft limit (`RLIMIT_NOFILE`,
+    else `SC_OPEN_MAX`), capped at 2^20. Linux and macOS list descriptors and
+    are unaffected.
+  - The Dockerfile comment and `docs/production.md` said to drop the Wolfi
+    Python pin once `python3.12 -c "import hashlib; hashlib.sha224"` passes;
+    that only looks the name up. The check is now `hashlib.sha224(b'')`, which
+    builds a hash.
+
+  Regression tests: provider token variables in `safe_git_env`; a link in the
+  checkout path, missing platform primitives, a directory or file replaced
+  during the walk, a changed open file, and descriptors closed at the depth
+  limit and the deadline; the descriptor-limit fallbacks. Each fails without
+  its code hunk; the comment fix has no test. Two of #232's tests are adapted:
+  the infinite soft limit uses the platform's `RLIM_INFINITY` (-1 is not
+  infinity on macOS, where the suite also runs), and a same-content file
+  replacement gets a distinct modification time, because within one coarse
+  clock tick a new file can reuse the old inode and every timestamp. Not
+  carried, and left in the open draft: the clone credential temporary file,
+  plugin worker key separation, triage `allow_custom_base_url`, the Python pin
+  CI probe, the parser fuzz tests and the `validate_url` `is not None` change.
 
 ### Cap runtime dep ranges at the next major (October 15)
 

@@ -1007,7 +1007,10 @@ see the [coverage policy](../scanning.md#coverage-policy)) and runs no Git LFS
 smudge filter: a repository whose files include LFS pointer files is reported as
 `Git LFS pointer files in <repo> are not resolved` and makes the scan incomplete
 (an error under `strict_coverage`), as does a clone that could not be checked for
-them. API mode reports LFS pointer files the same way.
+them. The check walks the checkout through open directory descriptors and follows
+no link; a directory nested more than 64 levels below the repository root, or an
+entry replaced while it is read, means the clone could not be checked.
+API mode reports LFS pointer files the same way.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) first checks the provider's repository

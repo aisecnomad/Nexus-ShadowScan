@@ -42,6 +42,9 @@ _MAX_WAIT_SECONDS = 86_400.0
 # A worker stops itself this long after its deadline, matching the parent's
 # supervision guard, in case nothing in the scanner is left to terminate it.
 _WORKER_GRACE_SECONDS = 2.0
+# Without a descriptor listing, descriptors up to the open-file limit are
+# visited, but never more than this many.
+_MAX_DESCRIPTOR_LIMIT = 1 << 20
 
 
 def _remaining(deadline: float) -> float:
@@ -96,6 +99,27 @@ def _exit_with_scanner(deadline: float) -> None:
     threading.Thread(target=watch, name="shadowscan-plugin-watchdog", daemon=True).start()
 
 
+def _descriptor_limit() -> int:
+    """Bound descriptor enumeration when the platform has no descriptor listing."""
+    try:
+        import resource
+
+        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft == resource.RLIM_INFINITY:
+            return _MAX_DESCRIPTOR_LIMIT
+        if soft >= 0:
+            return min(soft, _MAX_DESCRIPTOR_LIMIT)
+    except (ImportError, OSError, ValueError, OverflowError):
+        pass
+    try:
+        limit = os.sysconf("SC_OPEN_MAX")
+        if limit >= 0:
+            return min(limit, _MAX_DESCRIPTOR_LIMIT)
+    except (AttributeError, OSError, ValueError, OverflowError):
+        pass
+    return _MAX_DESCRIPTOR_LIMIT
+
+
 def _keep_descriptors_from_programs() -> None:
     """Programs a plugin starts must not inherit this worker's descriptors.
 
@@ -111,7 +135,7 @@ def _keep_descriptors_from_programs() -> None:
         except (OSError, ValueError):
             continue
     else:
-        descriptors = range(3, 4096)
+        descriptors = range(3, _descriptor_limit())
     for descriptor in descriptors:
         if descriptor > 2:
             try:

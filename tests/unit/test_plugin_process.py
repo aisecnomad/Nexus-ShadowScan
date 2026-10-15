@@ -24,7 +24,15 @@ from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import DERIVED_METADATA_KEYS, ScanStats
-from shadowscan.plugin_process import _decode_result, _encode_result, _receive, _worker, _WorkerHandle
+from shadowscan.plugin_process import (
+    _decode_result,
+    _descriptor_limit,
+    _encode_result,
+    _keep_descriptors_from_programs,
+    _receive,
+    _worker,
+    _WorkerHandle,
+)
 from shadowscan.signatures import SignatureIndex
 
 ENTRY = "platform.process-probe"
@@ -508,6 +516,71 @@ def test_kill_during_worker_cleanup_waits_instead_of_failing_the_scan():
     handle.stop()
     killer.join(5)
     assert not killer.is_alive() and failures == []
+
+
+def test_descriptor_listing_failure_covers_high_descriptors(monkeypatch):
+    resource = pytest.importorskip("resource")
+    visited = {}
+    listings = []
+
+    def unavailable(path):
+        listings.append(path)
+        raise OSError("descriptor listing unavailable")
+
+    monkeypatch.setattr(os, "listdir", unavailable)
+    monkeypatch.setattr(resource, "getrlimit", lambda kind: (5002, 6000))
+    monkeypatch.setattr(os, "set_inheritable", lambda fd, inheritable: visited.update({fd: inheritable}))
+    _keep_descriptors_from_programs()
+    assert listings == ["/proc/self/fd", "/dev/fd"]
+    assert visited[5001] is False
+    assert min(visited) == 3 and max(visited) == 5001
+    assert not any(visited.values())
+
+
+@pytest.mark.parametrize("soft", [1 << 22, "infinity"])
+def test_descriptor_resource_limit_is_capped(monkeypatch, soft):
+    resource = pytest.importorskip("resource")
+    # RLIM_INFINITY is -1 on Linux and 2**63 - 1 on macOS: use the platform's own value.
+    limit = resource.RLIM_INFINITY if soft == "infinity" else soft
+    monkeypatch.setattr(resource, "getrlimit", lambda kind: (limit, resource.RLIM_INFINITY))
+    assert _descriptor_limit() == 1 << 20
+
+
+def test_descriptor_limit_without_resource_uses_sysconf(monkeypatch):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    names = []
+
+    def limit(name):
+        names.append(name)
+        return 8192
+
+    monkeypatch.setattr(os, "sysconf", limit, raising=False)
+    assert _descriptor_limit() == 8192
+    assert names == ["SC_OPEN_MAX"]
+
+
+def test_descriptor_resource_failure_uses_sysconf(monkeypatch):
+    resource = pytest.importorskip("resource")
+
+    def unavailable(kind):
+        raise OSError("resource limit unavailable")
+
+    monkeypatch.setattr(resource, "getrlimit", unavailable)
+    monkeypatch.setattr(os, "sysconf", lambda name: 9000, raising=False)
+    assert _descriptor_limit() == 9000
+
+
+@pytest.mark.parametrize("limit", [-1, 1 << 22])
+def test_descriptor_sysconf_limit_is_capped_or_unknown(monkeypatch, limit):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    monkeypatch.setattr(os, "sysconf", lambda name: limit, raising=False)
+    assert _descriptor_limit() == 1 << 20
+
+
+def test_descriptor_limit_without_platform_limits_uses_cap(monkeypatch):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    monkeypatch.delattr(os, "sysconf", raising=False)
+    assert _descriptor_limit() == 1 << 20
 
 
 def test_result_encoder_enforces_limit(monkeypatch):

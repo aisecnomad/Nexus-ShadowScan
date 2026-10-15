@@ -714,6 +714,10 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     # Git never needs the report identity key (comparison.IDENTITY_KEY_ENV),
     # so a child process of untrusted content never receives it.
     env.pop("SHADOWSCAN_IDENTITY_KEY", None)
+    # Nor the provider tokens the code connectors read by default: a clone
+    # carries only its own origin-scoped header.
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN"):
+        env.pop(key, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -1201,43 +1205,91 @@ def checkout_has_lfs_pointers(
 
     Only small regular files are opened, and only for their first bytes. Links are never followed and
     the repository metadata directory is not entered. The walk is bounded by the same entry limit as the
-    size measurement, so a checkout that was accepted can be walked.
+    size measurement, so a checkout that was accepted can be walked. A link in the checkout's own path,
+    an entry replaced while it is read, nesting deeper than the metadata depth limit, or a platform
+    without descriptor-relative no-follow opens gives None, never False.
     """
     root = os.fspath(path)
     if not root or "\x00" in root:
         return None
+    if (
+        os.name != "posix"
+        or not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK"))
+        or os.scandir not in os.supports_fd
+    ):
+        return None
     entries = 0
-    pending = [root]
-    while pending:
-        directory = pending.pop()
-        try:
-            with os.scandir(directory) as scan:
-                for entry in scan:
-                    entries += 1
-                    if entries > _MAX_CLONE_ENTRIES:
-                        return None
-                    if check_deadline is not None and entries % 1000 == 0:
-                        check_deadline()
-                    info = entry.stat(follow_symlinks=False)
-                    if stat.S_ISDIR(info.st_mode):
-                        if directory != root or entry.name != ".git":
-                            pending.append(entry.path)
-                    elif (
-                        stat.S_ISREG(info.st_mode)
-                        and len(LFS_POINTER_PREFIX) <= info.st_size <= LFS_POINTER_MAX_BYTES
-                        and _opens_with_lfs_pointer(entry.path)
-                    ):
-                        return True
-        except OSError:
+
+    def walk(directory: int, depth: int) -> bool | None:
+        nonlocal entries
+        if depth > _MAX_GIT_METADATA_DEPTH:
             return None
-    return False
+        if check_deadline is not None:
+            check_deadline()
+        with os.scandir(directory) as scan:
+            for entry in scan:
+                entries += 1
+                if entries > _MAX_CLONE_ENTRIES:
+                    return None
+                if check_deadline is not None and entries % 1000 == 0:
+                    check_deadline()
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    if depth == 0 and entry.name == ".git":
+                        continue
+                    child = os.open(
+                        entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+                    )
+                    try:
+                        opened = os.fstat(child)
+                        if (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
+                            return None
+                        result = walk(child, depth + 1)
+                        if result is not False:
+                            return result
+                    finally:
+                        os.close(child)
+                elif (
+                    stat.S_ISREG(info.st_mode)
+                    and len(LFS_POINTER_PREFIX) <= info.st_size <= LFS_POINTER_MAX_BYTES
+                    and _opens_with_lfs_pointer(entry.name, dir_fd=directory, expected=info)
+                ):
+                    return True
+        return False
 
-
-def _opens_with_lfs_pointer(path: str) -> bool:
-    # O_NOFOLLOW and O_NONBLOCK: never traverse a link or wait on a special file.
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    fd = os.open(path, flags)
     try:
-        return os.read(fd, len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
+        # Anchor every descendant open to a live descriptor. A saved pathname
+        # would re-traverse a directory replaced by a symlink after scandir.
+        anchor = open_confined_directory(Path(root))
+        try:
+            directory = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=anchor)
+            try:
+                return walk(directory, 0)
+            finally:
+                os.close(directory)
+        finally:
+            os.close(anchor)
+    except (OSError, ValueError):
+        return None
+
+
+def _opens_with_lfs_pointer(path: str, *, dir_fd: int, expected: os.stat_result) -> bool:
+    # O_NOFOLLOW and O_NONBLOCK: never traverse a link or wait on a special file.
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    fd = os.open(path, flags, dir_fd=dir_fd)
+    try:
+        before = os.fstat(fd)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not len(LFS_POINTER_PREFIX) <= before.st_size <= LFS_POINTER_MAX_BYTES
+            or any(getattr(before, field) != getattr(expected, field) for field in fields)
+        ):
+            raise ValueError("checkout file changed during LFS inspection")
+        pointer = os.read(fd, len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
+        after = os.fstat(fd)
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise ValueError("checkout file changed during LFS inspection")
+        return pointer
     finally:
         os.close(fd)

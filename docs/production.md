@@ -76,6 +76,15 @@ passing unit suite does not establish complete coverage of a particular estate.
   missing or truncated and an existing `-o` file may still hold the previous
   report. A job deadline, when set, bounds output instead. See
   [resource limits](#resource-limits-and-incomplete-scans).
+- **Git LFS check of a clone.** The check for Git LFS pointer files walks the
+  checkout through open directory descriptors. A clone with a directory nested
+  more than 64 levels below its root, or an entry replaced while it is read, is
+  now reported as one that could not be inspected for LFS pointer files
+  (incomplete) instead of being walked by path.
+- **Provider tokens stay out of Git.** Git child processes no longer inherit
+  `GITHUB_TOKEN`, `GH_TOKEN` or `GITLAB_TOKEN` from the scanner's environment.
+  A clone authenticates only with the origin-scoped header ShadowScan sets, so
+  nothing changes for configured connectors.
 
 ## Unreleased Kubernetes and Atlassian migration
 
@@ -2484,7 +2493,7 @@ it. While the pin holds, a rebuild keeps that interpreter revision and does not
 receive later Wolfi Python fixes. The container gate still scans it and fails
 on HIGH or CRITICAL findings, and the build fails if the revision is no longer
 available. Drop the pin once a newer revision passes
-`python3.12 -c "import hashlib; hashlib.sha224"`.
+`python3.12 -c "import hashlib; hashlib.sha224(b'')"`.
 
 ### October 2 integrity and capability corrections
 

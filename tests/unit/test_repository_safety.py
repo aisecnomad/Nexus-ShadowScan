@@ -82,6 +82,13 @@ def test_git_children_never_receive_the_report_identity_key(monkeypatch):
     assert IDENTITY_KEY_ENV not in safe_git_env({"GIT_CONFIG_COUNT": "0"})
 
 
+def test_git_children_never_inherit_provider_token_variables(monkeypatch):
+    keys = {"GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN"}
+    for key in keys:
+        monkeypatch.setenv(key, "synthetic-token")
+    assert not keys & safe_git_env().keys()
+
+
 def test_git_environment_discards_injected_configs_and_execution_overrides(monkeypatch):
     hostile = {
         "GIT_CONFIG_COUNT": "1",
