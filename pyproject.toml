@@ -29,7 +29,9 @@ classifiers = [
 # Each range caps the next major so a surprise upstream major bump cannot
 # resolve into a user's sdist install. requirements.lock pins the exact
 # reviewed version for deployments and CI; the caps here protect the
-# unlocked `pip install NexusShadowScan` path from untested majors.
+# unlocked `pip install NexusShadowScan` path from untested majors. regex is
+# calendar-versioned (YYYY.M.D) and has no major to cap: a year cap would
+# shut out every later release, security fixes included.
 dependencies = [
   "click>=8.5.0,<9",
   "rich>=15.0.0,<16",
@@ -37,7 +39,7 @@ dependencies = [
   "requests>=2.34.2,<3",
   "urllib3>=2.8.0,<3",
   "PyJWT[crypto]>=2.14.0,<3",
-  "regex>=2026.9.10,<2027",
+  "regex>=2026.9.10",
 ]
 
 [project.optional-dependencies]

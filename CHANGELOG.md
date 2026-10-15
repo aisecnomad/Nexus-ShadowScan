@@ -7,12 +7,13 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Cap runtime dep ranges at the next major (October 15)
 
-- `pyproject.toml` now caps `click`, `rich`, `PyYAML`, `requests`,
-  `PyJWT[crypto]` and `regex` at the next major (or the next calendar
-  year for `regex`), and does the same for the optional cloud SDKs
-  (`boto3`, `google-auth`, `azure-identity`, `oci`) in `aws`, `gcp`,
-  `azure`, `oci` and the aggregate `cloud` extra. `urllib3` already
-  carried `<3`.
+- `pyproject.toml` now caps `click`, `rich`, `PyYAML`, `requests` and
+  `PyJWT[crypto]` at the next major, and does the same for the optional
+  cloud SDKs (`boto3`, `google-auth`, `azure-identity`, `oci`) in `aws`,
+  `gcp`, `azure`, `oci` and the aggregate `cloud` extra. `urllib3` already
+  carried `<3`. `regex` stays uncapped: it is calendar-versioned with no
+  major to cap, and a year cap would shut out every later release,
+  security fixes included.
 - The caps protect the unlocked `pip install NexusShadowScan` path from
   silently resolving a user into an untested upstream major; deployment
   and CI continue to install the hash-locked `requirements.lock`, so
