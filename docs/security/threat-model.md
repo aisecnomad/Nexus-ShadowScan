@@ -48,7 +48,7 @@ Grouped by boundary, in STRIDE terms where the category is meaningful.
 | Denial of service by YAML expansion (billion laughs) | Node, alias, depth, expanded-node and expanded-character budgets, applied across every document in a stream. | `BoundedSafeLoader` |
 | Denial of service by quadratic scalar parsing | YAML 1.1 sexagesimal integers are built by repeated big-integer multiplication; number scalars are length-bounded. | `BoundedSafeLoader.MAX_NUMBER_CHARS` |
 | Denial of service by catastrophic regex backtracking | Signature matching runs under a per-pattern timeout (the reason `regex` is a dependency; stdlib `re` has none), charged against CPU time so that scheduler contention is not mistaken for backtracking. Exhaustion raises `MatchTimeoutError` and the input is incomplete. | `signatures/matcher.py` |
-| Reading outside the scan root via symlinks | Directory walks open with `O_NOFOLLOW｜O_DIRECTORY` (and `O_PATH` where present); a link is recorded as skipped coverage, never followed. | `utils/files.py` |
+| Reading outside the scan root via symlinks | Directory walks open with `O_NOFOLLOW` \| `O_DIRECTORY` (and `O_PATH` where present); a link is recorded as skipped coverage, never followed. | `utils/files.py` |
 | Credential disclosure through parser errors | Third-party and parser exception text is sanitized and bounded, or omitted. YAML error marks contribute positions only, never the source line, which may hold a credential. | `errors.py` |
 | Prompt injection in scanned text steering the scanner | The scanner does not act on scanned content. Optional LLM triage treats it as data under a bounded budget. | `triage.py` |
 
@@ -67,7 +67,9 @@ Grouped by boundary, in STRIDE terms where the category is meaningful.
 Private destinations require a deliberate grant. Prefer the per-connector
 `allow_private_origin`, which applies to that connector alone, over the
 scan-wide `options.allow_private_origin`, which applies to every connector in
-the configuration. See [configuration](../getting-started/configuration.md).
+the configuration. The operator's `--deny-private-origin` overrides both, so a
+configuration cannot grant a connector what the command line refuses. See
+[configuration](../getting-started/configuration.md).
 
 ### Scan output (disclosure)
 

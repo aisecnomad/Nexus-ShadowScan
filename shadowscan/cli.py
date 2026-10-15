@@ -398,7 +398,8 @@ security_options = [
     click.option(
         "--allow-private-origin/--deny-private-origin",
         default=None,
-        help="allow private HTTPS endpoints for this scan; origin restrictions still apply",
+        help="allow private HTTPS endpoints for this scan; origin restrictions still apply;"
+        " --deny-private-origin also overrides every connector-level allow_private_origin",
     ),
 ]
 
@@ -535,6 +536,8 @@ def _apply_security_options(cfg: ScanConfig, opts: ScanOptions) -> None:
         cfg.allow_signature_override = opts.allow_signature_override
     if opts.allow_private_origin is not None:
         cfg.allow_private_origin = opts.allow_private_origin
+        # --deny-private-origin also overrides connector-level grants.
+        cfg.deny_private_origin = not opts.allow_private_origin
     if opts.allow_instance_credentials is not None:
         cfg.allow_instance_credentials = opts.allow_instance_credentials
     if opts.allow_credential_mixing is not None:

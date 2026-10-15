@@ -319,3 +319,53 @@ def test_connector_can_refuse_private_origin_the_scan_allows(index, monkeypatch,
     assert not result.complete
     assert observed == {"kept": False, "inherits": True}
     assert http._allow_private_origin.get() is False
+
+
+@pytest.mark.parametrize("parallel", [1, 2])
+def test_explicit_scan_wide_deny_overrides_a_connector_grant(index, monkeypatch, parallel):
+    """deny_private_origin (--deny-private-origin) wins over a connector-level grant, lookup included."""
+    from shadowscan.utils import http
+
+    observed = {}
+    lookups = []
+
+    class Probe(BaseConnector):
+        def collect(self):
+            observed[self.ctx.get("label")] = http._allow_private_origin.get()
+            raise RuntimeError("simulated failure")
+
+        def analyze(self, records):
+            yield from ()
+
+    def lookup(*args, **kwargs):
+        lookups.append(http._allow_private_origin.get())
+        return Probe
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lookup)
+    config = ScanConfig(
+        connectors=[
+            ConnectorSpec("probe.internal", {"allow_private_origin": True}, label="internal"),
+            ConnectorSpec("probe.public", label="public"),
+        ],
+        deny_private_origin=True,
+        parallel=parallel,
+    )
+    result = Engine(config, index).run()
+    assert not result.complete
+    assert observed == {"internal": False, "public": False}
+    assert lookups == [False, False]
+    assert http._allow_private_origin.get() is False
+
+
+def test_allow_and_deny_private_origin_together_are_rejected():
+    with pytest.raises(ValueError, match="cannot both be true"):
+        ScanConfig(allow_private_origin=True, deny_private_origin=True)
+    config = ScanConfig(deny_private_origin=True)
+    config.allow_private_origin = True
+    with pytest.raises(ValueError, match="cannot both be true"):
+        config.validate_security_options()
+    with pytest.raises(ValueError, match="deny_private_origin"):
+        ScanConfig(deny_private_origin=1)  # type: ignore[arg-type]
+    # Only the command line or a library caller sets the refusal; a file cannot.
+    with pytest.raises(ValueError, match="unsupported field"):
+        ScanConfig.from_dict({"options": {"deny_private_origin": True}})

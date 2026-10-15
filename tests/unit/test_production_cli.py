@@ -102,6 +102,72 @@ def test_cli_security_options_and_private_report(tmp_path):
     assert json.loads(output.read_text())["summary"]["complete"] is True
 
 
+def _record_private_origin_policy(monkeypatch) -> dict[str, bool]:
+    """Replace every connector with a probe that records its private-origin policy by label."""
+    from shadowscan.connectors.base import BaseConnector
+    from shadowscan.utils import http
+
+    observed: dict[str, bool] = {}
+
+    class Probe(BaseConnector):
+        def collect(self):
+            observed[self.ctx.get("label") or "unlabelled"] = http._allow_private_origin.get()
+            return []
+
+        def analyze(self, records):
+            yield from ()
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda *args, **kwargs: Probe)
+    return observed
+
+
+@pytest.mark.parametrize(
+    "flag,expected",
+    [
+        (None, {"granted": True, "inherits": False}),
+        ("--deny-private-origin", {"granted": False, "inherits": False}),
+        ("--allow-private-origin", {"granted": True, "inherits": True}),
+    ],
+)
+def test_cli_deny_private_origin_overrides_a_configured_connector_grant(
+    tmp_path, monkeypatch, flag, expected
+):
+    """An explicit --deny-private-origin is scan-wide; the in-file default false is not."""
+    from shadowscan.utils import http
+
+    observed = _record_private_origin_policy(monkeypatch)
+    config = tmp_path / "scan.yaml"
+    config.write_text(
+        "options:\n  allow_private_origin: false\n"
+        "connectors:\n"
+        "  - name: endpoint.mcp\n    label: granted\n    allow_private_origin: true\n"
+        "  - name: endpoint.mcp\n    label: inherits\n"
+    )
+    args = ["scan", "-c", str(config), "--format", "json", "--output", str(tmp_path / "scan.json")]
+    result = CliRunner().invoke(main, [*args, flag] if flag else args)
+    assert result.exit_code in (0, 3), result.output
+    assert observed == expected
+    assert http._allow_private_origin.get() is False
+
+
+@pytest.mark.parametrize("flag,expected", [(None, True), ("--deny-private-origin", False)])
+def test_cli_run_deny_private_origin_overrides_a_set_connector_grant(tmp_path, monkeypatch, flag, expected):
+    observed = _record_private_origin_policy(monkeypatch)
+    args = [
+        "run",
+        "endpoint.mcp",
+        "--set",
+        "allow_private_origin=true",
+        "--format",
+        "json",
+        "--output",
+        str(tmp_path / "scan.json"),
+    ]
+    result = CliRunner().invoke(main, [*args, flag] if flag else args)
+    assert result.exit_code in (0, 3), result.output
+    assert observed == {"unlabelled": expected}
+
+
 @pytest.mark.parametrize(
     "option,value", [("--expected-issuer", "https://issuer.example"), ("--jwt-algorithm", "RS256")]
 )

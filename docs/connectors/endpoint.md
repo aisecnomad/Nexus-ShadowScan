@@ -265,8 +265,9 @@ Fetch rules:
   a signature header's `jku` or `x5u`) are never fetched, and no A2A method is
   called.
 - Redirects must stay on the card URL's origin. Loopback, private,
-  link-local and cloud-metadata addresses are refused unless the scan sets
-  `options.allow_private_origin`. Proxies are not used.
+  link-local and cloud-metadata addresses are refused unless `endpoint.mcp`
+  sets `allow_private_origin` (or the scan sets `options.allow_private_origin`),
+  and always under `--deny-private-origin`. Proxies are not used.
 - A card is read up to 1 MiB, as strict JSON: duplicate keys and non-finite
   numbers are refused.
 - Every failure is an error and the scan is incomplete (exit 3): an

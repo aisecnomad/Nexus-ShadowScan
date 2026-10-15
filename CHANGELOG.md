@@ -32,6 +32,40 @@ summarizes each release for people who install and operate ShadowScan.
   value followed by a note. Operators with Kubernetes secrets or Helm values
   written this way should regenerate retained reports and cached evidence and
   rotate any key they show.
+- **`--deny-private-origin` lost to a connector grant (#235).** The flag only
+  set `allow_private_origin` to false, which is also the default, and the
+  engine preferred a connector's own `allow_private_origin: true`, so a
+  configured grant (or `run ... --set allow_private_origin=true`) still reached
+  loopback, private and cloud-metadata addresses for that connector although
+  the operator had refused them for the scan. Before #235 built-in connectors
+  rejected the key, so the flag held for every connector. `ScanConfig` gains a
+  keyword-only `deny_private_origin`, which `--deny-private-origin` sets on
+  every scanning command, and the engine checks it before the connector's key,
+  for the plugin lookup as well as collection, as a scan-wide
+  `allow_instance_credentials` already overrides a connector key. A conflicting
+  connector key is overridden without an error. A `ScanConfig` with both
+  `allow_private_origin` and `deny_private_origin` true is refused, and a
+  configuration file cannot set the refusal; an in-file
+  `options.allow_private_origin: false` stays a default that a connector grant
+  overrides. Affects operators and pipelines that pass `--deny-private-origin`
+  with a configuration that grants a connector; library callers can now refuse
+  with `ScanConfig(deny_private_origin=True)`. Regression tests cover `scan`
+  with and without the flag, `run --set allow_private_origin=true
+  --deny-private-origin`, the engine and plugin-lookup policy and the both-true
+  rejection.
+- **Private-origin documentation (#235).** The per-connector grant examples in
+  `docs/getting-started/configuration.md` and `docs/production.md` used
+  `gateway.logs` with `input:`, which reads an export and makes no HTTPS
+  request, so an operator who copied them granted nothing and the real internal
+  connector still failed closed. They now use `endpoint.mcp` with
+  `agent_card_urls` and say that an offline `input` run makes no requests. The
+  A2A probe docstring, `SECURITY.md`, `docs/connectors/endpoint.md` and the
+  `endpoint.mcp` egress row in `docs/production.md` named only
+  `options.allow_private_origin`; they now name the connector-level key and
+  `--deny-private-origin`. The threat model's symlink row joined `O_NOFOLLOW`
+  and `O_DIRECTORY` with a full-width vertical line (U+FF5C) that neither
+  pastes nor greps as the ASCII flag operator; it is now an escaped `|` outside
+  the code spans, which keeps the table intact.
 
 ### Cap runtime dep ranges at the next major (October 15)
 
@@ -75,9 +109,11 @@ summarizes each release for people who install and operate ShadowScan.
   configuration, so a repository, endpoint or cloud connector in the same scan
   also lost the refusal. A connector that sets the key uses its own value and
   one that does not inherits the scan-wide setting, so a connector-level `false`
-  keeps a connector public under a scan-wide grant. The key is normalised like
-  the other connector switches, so an interpolated `"false"` cannot enable it,
-  and a non-boolean fails closed without echoing its value. The engine reads it
+  keeps a connector public under a scan-wide grant; an explicit
+  `--deny-private-origin` overrides both (see Integration review fixes above).
+  The key is normalised like the other connector switches, so an interpolated
+  `"false"` cannot enable it, and a non-boolean fails closed without echoing
+  its value. The engine reads it
   for both the connector lookup, which imports an approved plugin, and the
   collection it wraps.
 - **Threat model.** `docs/security/threat-model.md` consolidates the trust

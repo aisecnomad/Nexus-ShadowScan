@@ -300,18 +300,31 @@ onto the connectors that need it:
 options:
   allow_private_origin: false
 connectors:
-  - name: gateway.logs
+  - name: endpoint.mcp
     allow_private_origin: true
+    agent_card_urls: [https://agent.internal.example]
 ```
+
+Move it only onto connectors that make HTTPS requests, such as `endpoint.mcp`
+with `agent_card_urls`; an offline run that reads `input` makes none.
 
 A connector that sets the key uses its own value; one that does not inherits the
 scan-wide setting, so a connector-level `false` keeps a connector public under a
-scan-wide grant. The key takes a YAML boolean or the strings `true`/`false`, so
-an interpolated `"false"` cannot enable it, and any other value fails closed
-without echoing itself. The grant covers this scanner's HTTPS clients only: git
-and the cloud SDKs carry their own egress controls, so keep restricting egress
-at the network where that matters. No default changes, so a configuration that
-set neither key behaves as before.
+scan-wide grant. An in-file `options.allow_private_origin: false` is only that
+default, so the connector grant above overrides it. The key takes a YAML boolean
+or the strings `true`/`false`, so an interpolated `"false"` cannot enable it,
+and any other value fails closed without echoing itself. The grant covers this
+scanner's HTTPS clients only: git and the cloud SDKs carry their own egress
+controls, so keep restricting egress at the network where that matters. No
+default changes, so a configuration that set neither key behaves as before.
+
+`--deny-private-origin` on the command line (or
+`ScanConfig(deny_private_origin=True)` for a library caller) is a scan-wide
+refusal: it also overrides every connector-level `allow_private_origin: true`,
+so a pipeline that passes it keeps every connector off private destinations
+whatever the configuration grants. A `ScanConfig` with both
+`allow_private_origin` and `deny_private_origin` true is refused, and a
+configuration file cannot set the refusal.
 
 ## Unreleased review migration
 
@@ -676,7 +689,8 @@ The new policies also expose `--connector-timeout-seconds`,
 All scan commands also expose `--allow-plugin`,
 `--allow-signature-override/--deny-signature-override` and
 `--allow-private-origin/--deny-private-origin`. Configured values are retained
-unless explicitly overridden. Signature inspection commands expose the same
+unless explicitly overridden; `--deny-private-origin` also overrides every
+connector-level `allow_private_origin`. Signature inspection commands expose the same
 signature override opt-in. JWT CLI verification additionally accepts
 `--expected-issuer` and repeatable `--jwt-algorithm`.
 
@@ -1772,7 +1786,7 @@ were not checked against a live agent.
 
 | Area | Changed behavior | Migration check |
 | --- | --- | --- |
-| Egress | `endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (HTTPS only, same-origin redirects, 1 MiB, at most `max_agent_cards`, default 100) and, when set, the JWKS at `agent_card_jwks_url`. Private and loopback agents need `options.allow_private_origin`; `ca_bundle` trusts a private CA. Without `agent_card_urls` the connector is unchanged. | Allow egress only to the listed agent hosts and the JWKS host. Keep `allow_private_origin` off unless a configuration targets internal agents on purpose. |
+| Egress | `endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (HTTPS only, same-origin redirects, 1 MiB, at most `max_agent_cards`, default 100) and, when set, the JWKS at `agent_card_jwks_url`. Private and loopback agents need `allow_private_origin` on the `endpoint.mcp` connector (or the scan-wide `options.allow_private_origin`), and `--deny-private-origin` refuses them either way; `ca_bundle` trusts a private CA. Without `agent_card_urls` the connector is unchanged. | Allow egress only to the listed agent hosts and the JWKS host. Keep `allow_private_origin` off unless a configuration targets internal agents on purpose. |
 | Findings | One `a2a-agent-card` finding per fetched card (`provider` `a2a`, identity `a2a-card`, resource the card URL without query). Every fetch, HTTP, JSON, size or card-validation failure is an error and the scan is incomplete (exit 3). | Treat exit 3 as unknown coverage of that agent. |
 | Card projection | `code.filesystem` and the probe share `metadata.agent_card`: A2A 1.0 `supportedInterfaces` now supply `url` and `protocol_version` (earlier 1.x cards had `url: null`), interfaces are listed, and `signature` records `absent`, `present-unverified`, `verified` or `invalid`. Projected strings are bounded (200 characters; the description 300). An interface URL with user information or a backslash before its host is left out: HTTP clients can read another host from it. | Consumers that read `agent_card` must tolerate the new `interfaces`, `signature` and `signature_detail` keys. A card whose only interface carries user information has `url: null`. |
 | Risk | New tags `a2a-plaintext-interface` (10; an `http://` or `ws://` interface to a host not known to be loopback, one with a backslash or user information before its host included) and `a2a-card-signature-invalid` (10), with threat references (ASI07; AML.T0118.001; ASI04). Existing card files with an `http://` interface or a malformed `signatures` entry score higher. | Rebaseline risk-level gates that cover A2A card findings. |
@@ -2301,7 +2315,8 @@ card. Allow egress to exactly those hosts.
 - Agents on private or loopback addresses are refused unless
   `allow_private_origin: true`. Set it on the `endpoint.mcp` connector so the
   grant covers that connector alone; `options.allow_private_origin: true`
-  applies to every connector in the scan.
+  applies to every connector in the scan. `--deny-private-origin` overrides
+  both.
 - `ca_bundle` on `endpoint.mcp` trusts a private CA for the card and JWKS
   endpoints; verification stays on, and a relative path resolves beside the
   configuration file.

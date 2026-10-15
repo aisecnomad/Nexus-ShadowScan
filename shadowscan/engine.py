@@ -408,7 +408,13 @@ class _ConnectorRunner:
         internal gateway or agent no longer needs the scan-wide grant that
         would also let every other connector leave the public internet.
         ``normalize_connector_config`` has already made the value a boolean.
+        An explicit scan-wide refusal (``deny_private_origin``, which
+        ``--deny-private-origin`` sets) wins over both, as it does for
+        ``allow_instance_credentials`` in ``_connector_config``.
         """
+        if self._config.deny_private_origin:
+            # An explicit scan-wide refusal cannot be bypassed by a connector-level key.
+            return False
         granted = spec.config.get("allow_private_origin")
         if isinstance(granted, bool):
             return granted

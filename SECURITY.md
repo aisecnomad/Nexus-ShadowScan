@@ -67,7 +67,10 @@ coverage, even when a response includes an empty collection field.
   loopback, link-local, metadata and other non-global addresses are rejected.
   The HTTPS adapter checks the addresses at connection time and connects directly
   to the checked address, retaining hostname TLS verification. A trusted private
-  API requires `options.allow_private_origin: true` or `--allow-private-origin`.
+  API requires `allow_private_origin: true` on its connector,
+  `options.allow_private_origin: true` (every connector) or
+  `--allow-private-origin`; `--deny-private-origin` refuses it for every
+  connector, connector-level grants included.
   This exception does not relax origin or TLS checks. HTTP proxies, including
   environment proxy settings, are unsupported by this transport.
 * The shared HTTPS adapter bounds response acquisition, including status/header

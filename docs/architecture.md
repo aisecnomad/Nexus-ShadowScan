@@ -206,7 +206,7 @@ Options are keys under `options:`; most also have a command-line flag.
 | `connector_timeout_seconds` | 120 | each connector's completion deadline; an expired job's results are discarded and the scan is incomplete ([deadlines and parallelism](scanning.md#connector-deadlines-and-parallelism)) |
 | `job_deadline_seconds`, `--job-deadline-seconds` | off | the CLI process and its output from the moment the deadline is armed: the flag while the command line is parsed, the option once the configuration is read; expiry exits 3 |
 | `plugin_execution` | `thread` | `process` runs each allowlisted plugin in a spawned worker that is killed at its deadline; built-in connectors always use threads ([plugin execution](connectors.md#third-party-plugin-execution)) |
-| `allow_private_origin` | `false` | HTTPS clients refuse loopback, link-local, private and cloud-metadata destinations (`utils/http.py`); every connector accepts the same key to grant itself the exception alone, which the engine prefers over this scan-wide setting ([threat model](security/threat-model.md)) |
+| `allow_private_origin` | `false` | HTTPS clients refuse loopback, link-local, private and cloud-metadata destinations (`utils/http.py`); every connector accepts the same key to grant itself the exception alone, which the engine prefers over this scan-wide setting; `--deny-private-origin` (`ScanConfig.deny_private_origin`) overrides both ([threat model](security/threat-model.md)) |
 | `allow_credential_mixing` | `false` | repository scans and live tenant collection run as separate scans |
 | `allow_instance_credentials` | `false` | cloud connectors use an explicit audit identity, not instance or managed-identity credentials |
 

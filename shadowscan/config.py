@@ -508,6 +508,10 @@ class ScanConfig:
     plugin_execution: str = "process"
     allow_signature_override: bool = False
     allow_private_origin: bool = False
+    # An explicit refusal (--deny-private-origin, or a library caller): unlike
+    # allow_private_origin=False it also overrides every connector-level grant.
+    # Never read from a configuration file.
+    deny_private_origin: bool = field(default=False, kw_only=True)
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
     connector_timeout_seconds: float = 120.0
@@ -546,6 +550,9 @@ class ScanConfig:
             self.allow_signature_override, "allow_signature_override"
         )
         self.allow_private_origin = _boolean_option(self.allow_private_origin, "allow_private_origin")
+        self.deny_private_origin = _boolean_option(self.deny_private_origin, "deny_private_origin")
+        if self.allow_private_origin and self.deny_private_origin:
+            raise ConfigValidationError("allow_private_origin and deny_private_origin cannot both be true")
         self.allow_instance_credentials = _boolean_option(
             self.allow_instance_credentials, "allow_instance_credentials"
         )

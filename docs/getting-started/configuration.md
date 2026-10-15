@@ -61,16 +61,24 @@ refusal for itself alone, which is the narrower grant and the one to prefer:
 
 ```yaml
 connectors:
-  - name: gateway.logs
+  - name: endpoint.mcp
     allow_private_origin: true        # this connector only
-    input: ./internal-gateway-logs
+    agent_card_urls: [https://agent.internal.example]
 ```
+
+The grant matters only to a connector that makes HTTPS requests, here the
+Agent Card fetch. An offline run that reads `input` makes no requests, so the
+key changes nothing there.
 
 `options.allow_private_origin: true` lifts it for *every* connector in the
 configuration, so one internal gateway would also let repository, endpoint and
 cloud connectors leave the public internet. A connector that sets the key uses
 its own value; one that does not inherits the scan-wide setting, so a
-connector-level `false` keeps a connector public under a scan-wide grant.
+connector-level `false` keeps a connector public under a scan-wide grant. An
+`options.allow_private_origin: false` in the file is only that default, which a
+connector grant overrides. `--deny-private-origin` on the command line is the
+operator's scan-wide refusal: it also overrides every connector-level
+`allow_private_origin: true` for that run.
 
 The key takes a YAML boolean or the strings `true`/`false`, so an interpolated
 `"false"` cannot enable it. The grant covers this scanner's HTTPS clients
