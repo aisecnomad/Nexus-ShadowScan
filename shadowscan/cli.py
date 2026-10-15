@@ -678,7 +678,7 @@ def scan(config_path: str, only: tuple[str, ...], opts: ScanOptions) -> None:
     "-S",
     "settings",
     multiple=True,
-    help="connector option key=value (repeatable; lists as a,b,c)",
+    help="connector option key=value (repeatable; use JSON for structured values)",
 )
 @scan_options
 def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts: ScanOptions) -> None:
@@ -686,7 +686,7 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
     if connector not in available_connectors():
         raise click.BadParameter(f"unknown connector {connector!r}; see `shadowscan connectors`")
     try:
-        conf = parse_set_options(list(settings))
+        conf = parse_set_options(list(settings), connector)
     except (ValueError, TypeError):
         raise click.BadParameter("--set expects key=value pairs") from None
     if input_path:

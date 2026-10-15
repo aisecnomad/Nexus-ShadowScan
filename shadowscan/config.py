@@ -177,6 +177,34 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "saas.github-apps": frozenset({"include_unrecognized_apps"}),
     "saas.microsoft-teams": frozenset({"include_store"}),
 }
+_INTEGER_CONNECTOR_KEYS = frozenset(
+    {
+        "audit_days",
+        "cloudtrail_days",
+        "clone_max_bytes",
+        "clone_timeout_seconds",
+        "dns_clock_skew_seconds",
+        "dns_max_ttl_seconds",
+        "inspection_timeout_seconds",
+        "min_events",
+        "model_metadata_bytes",
+    }
+)
+_COMMA_LIST_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
+    "cloud.aws": frozenset({"regions", "registry_arns"}),
+    "cloud.azure": frozenset({"subscriptions"}),
+    "cloud.gcp": frozenset({"agent_registry_locations", "discovery_collections", "projects"}),
+    "code.filesystem": frozenset({"exclude", "include", "paths"}),
+    "code.github": frozenset({"repos"}),
+    "code.gitlab": frozenset({"projects"}),
+    "endpoint.inventory": frozenset({"paths"}),
+    "endpoint.mcp": frozenset({"agent_card_urls"}),
+    "gateway.logs": frozenset({"internal_model_hosts"}),
+    "identity.jwt": frozenset({"tokens"}),
+    "lowcode.power-platform": frozenset({"environments"}),
+    "runtime.processes": frozenset({"inspect_env_keys"}),
+    "saas.atlassian": frozenset({"products"}),
+}
 _IDENTIFIER_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
 _deprecations_warned: set[str] = set()
 
@@ -482,7 +510,7 @@ class ScanConfig:
     incremental: bool = False
     state_dir: str | None = None
     plugins: list[str] = field(default_factory=list)
-    plugin_execution: str = "thread"
+    plugin_execution: str = "process"
     allow_signature_override: bool = False
     allow_private_origin: bool = False
     allow_instance_credentials: bool = False
@@ -678,7 +706,7 @@ class ScanConfig:
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
-            plugin_execution=opts.get("plugin_execution", "thread"),
+            plugin_execution=opts.get("plugin_execution", "process"),
             allow_signature_override=_boolean_option(
                 opts.get("allow_signature_override", False), "allow_signature_override"
             ),
@@ -1055,18 +1083,43 @@ def validate_min_confidence(value: Any) -> float:
     return confidence
 
 
-def parse_set_options(items: list[str]) -> dict[str, Any]:
-    """Parse ``--set key=value`` pairs; JSON-ish values are decoded (lists, numbers, booleans)."""
+def parse_set_options(items: list[str], connector_name: str | None = None) -> dict[str, Any]:
+    """Parse ``--set`` values, using the built-in connector schema when supplied.
+
+    Legacy callers without a connector name retain the former generic coercion.
+    The CLI supplies the connector so identifiers and string options stay text,
+    while only declared boolean, integer and comma-list fields are coerced.
+    """
     out: dict[str, Any] = {}
     for item in items:
         if "=" not in item:
             raise ValueError(f"--set expects key=value, got {item!r}")
         key, value = item.split("=", 1)
         key, value = key.strip(), value.strip()
-        # Account IDs are identifiers: integer coercion loses leading zeros
-        # and changes exact comparisons with provider-issued string IDs.
-        out[key] = value if key == "account_id" and re.fullmatch(r"[0-9]+", value) else _coerce(value)
+        out[key] = _coerce_for_connector(value, connector_name, key) if connector_name else _coerce(value)
     return out
+
+
+def _coerce_for_connector(value: str, connector_name: str, key: str) -> Any:
+    """Coerce only fields whose built-in connector schema declares a scalar type."""
+    if value.startswith(("[", "{")):
+        try:
+            return strict_json_loads(value)
+        except JSONIntegrityError:
+            raise ValueError("structured --set values require unique fields and finite numbers") from None
+        except json.JSONDecodeError:
+            pass
+    if key in _BOOLEAN_CONNECTOR_KEYS.get(connector_name, frozenset()):
+        if value.lower() in {"true", "false"}:
+            return value.lower() == "true"
+        return value
+    if key.startswith("max_") or key in _INTEGER_CONNECTOR_KEYS:
+        accepted = accepted_connector_keys(connector_name)
+        if accepted is not None and key in accepted and re.fullmatch(r"-?\d+", value):
+            return int(value)
+    if key in _COMMA_LIST_CONNECTOR_KEYS.get(connector_name, frozenset()) and "," in value:
+        return [member.strip() for member in value.split(",") if member.strip()]
+    return value
 
 
 def _coerce(value: str) -> Any:
