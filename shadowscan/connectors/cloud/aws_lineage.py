@@ -119,7 +119,10 @@ class CloudTrailLineage:
         # invocation events are counted, not listed.
         self.sampled: set[str] = set()
         self._events: dict[str, list[dict[str, Any]]] = {}
-        self._assumptions: dict[str, list[dict[str, Any]]] = {}
+        # STS hops keyed by the exact pair ``_matches`` requires, the session ARN
+        # they created and their normalized creation time, so a trace reads only
+        # the candidates that can match instead of every hop into that session.
+        self._assumptions: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
     def _gap(self, reason: str) -> None:
         if reason not in self.limits:
@@ -180,7 +183,8 @@ class CloudTrailLineage:
         self.retained[principal] = retained + 1
         self._events.setdefault(principal, []).append(observation)
         if observation.get("eventName") in ASSUME_OPERATIONS:
-            self._assumptions.setdefault(observation.get("assumedRoleArn") or "", []).append(observation)
+            created = (observation.get("assumedRoleArn") or "", observation.get("eventTime") or "")
+            self._assumptions.setdefault(created, []).append(observation)
         return True
 
     @staticmethod
@@ -292,7 +296,10 @@ class CloudTrailLineage:
         seen = {id(event)}
         status = "partial"
         while True:
-            candidates = self._assumptions.get(current.get("principal") or "", [])
+            # Both times are ISO-normalized by add(); equal strings are the equal
+            # datetimes _matches compares, so no candidate outside this key can link.
+            session = (current.get("principal") or "", current.get("sessionCreatedAt") or "")
+            candidates = self._assumptions.get(session, [])
             matches = [e for e in candidates if self._matches(current, e)]
             if not matches:
                 if current.get("identityType") in {"IAMUser", "Root", "AWSService"}:

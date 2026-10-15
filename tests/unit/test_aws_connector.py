@@ -715,3 +715,38 @@ def test_cloudtrail_ai_events_outside_the_lineage_operation_list_still_count_for
         "ConverseStream"
     ]
     assert any("4 CloudTrail AI event(s) outside the lineage operation list" in w for w in ctx.stats.warnings)
+
+
+def test_cloudtrail_trace_reads_only_the_hops_that_can_match_on_a_large_export(monkeypatch):
+    # A busy role with a fixed session name repeats one session ARN across thousands of
+    # AssumeRole events; each observation must read the hops keyed by its exact creation
+    # time, not every hop into that session (quadratic within the export limits).
+    import time
+
+    from shadowscan.connectors.cloud.aws_lineage import CloudTrailLineage, normalize_detail
+
+    assumption, invocation, _ = _lineage_records()
+    assumers = ("arn:aws:sts::111111111111:assumed-role/build/runner", "arn:aws:iam::111111111111:user/ops")
+    lineage = CloudTrailLineage(lambda *a, **k: None)
+    for n in range(1000):
+        hop = json.loads(json.dumps(assumption))
+        hop["eventID"] = f"hop-{n}"
+        hop["eventTime"] = f"2025-12-{1 + n // 250:02d}T{(n // 10) % 24:02d}:{(n % 10) * 6:02d}:00Z"
+        hop["userIdentity"]["arn"] = assumers[n % 2]
+        assert lineage.add(normalize_detail(hop))
+    assert lineage.add(normalize_detail(assumption))
+    for n in range(100):
+        assert lineage.add(normalize_detail({**invocation, "eventID": f"invocation-{n}"}))
+    calls: list[int] = []
+    original = CloudTrailLineage._matches
+    monkeypatch.setattr(
+        CloudTrailLineage, "_matches", staticmethod(lambda i, a: calls.append(1) or original(i, a))
+    )
+    started = time.monotonic()
+    result = lineage.for_principal(invocation["userIdentity"]["arn"])
+    assert time.monotonic() - started < 1.0
+    assert len(calls) <= 2 * len(result["observations"])
+    assert not lineage.limits
+    assert len(result["observations"]) == 100
+    assert {o["assumption_status"] for o in result["observations"]} == {"linked"}
+    assert {o["assumption"]["eventID"] for o in result["observations"]} == {"assumption-17"}
