@@ -917,10 +917,12 @@ Each discovered `SKILL.md` is also audited statically for direct instruction
 candidates: `static-instruction:<rule>` evidence with the file line number, the
 `suspicious-instruction` tag and `metadata.static_instruction_audit`, with no
 excerpt retained. Its YAML front matter values (the `description`, an
-`instructions` block, list items) are read line by line like the body; an
-overlong line is skipped and recorded as a limitation rather than marking the
-scan incomplete, and a `---` that no `key:` line follows is a Markdown rule, not
-unclosed front matter. No skill is executed.
+`instructions` block, list items) are read line by line like the body; a
+line over 4,096 characters is skipped, recorded as a limitation and marks the
+scan incomplete, since nothing else reads it; a `---` followed by prose or a
+heading is a Markdown rule, while one followed by a `key:` line or a `- ` item
+(after any blank or `#` comment lines) with no closing `---` is unclosed front
+matter and marks the scan incomplete. No skill is executed.
 
 ### Coding-agent settings: posture and approval
 

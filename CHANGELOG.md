@@ -86,9 +86,17 @@ a second verification; each has a regression test.
   `metadata.static_instruction_audit` and zero-weight `instruction:<rule>`
   evidence on top; an audit indicator also sets the tag, and nothing removes it. YAML front matter values of
   `SKILL.md` files and MCP descriptions are audited line by line with their
-  line numbers. One line over 4,096 characters is skipped and listed under
-  `limitations` instead of marking the scan incomplete, and a text that opens
-  with `---` followed by prose is body text, not unclosed front matter.
+  line numbers. One line over 4,096 characters is skipped by the sentence
+  audit, listed under `limitations` and marks the scan incomplete, since
+  nothing else reads it; the tool-poisoning floor reads the whole inspected
+  description (64 KiB, was the first 4 KiB), so an instruction past the
+  4,096th character of one line is still a review candidate. A text that
+  opens with `---` followed by prose or a heading is body text, while one
+  followed by a `key:` line or a `- ` item (after blank or `#` comment lines)
+  with no closing `---` is unclosed front matter and incomplete. A declared
+  grant ending in repeated glob segments (`filesystem:/**/*`,
+  `filesystem:~/**/*`, `filesystem:C:\**\*`) is read as the whole
+  filesystem, drive or home directory.
 - MCP: `tool-name-shadowing` (a tool name another server in the same export
   also serves) now weighs 10 and maps to OWASP LLM01, ASI01 and ATLAS
   AML.T0051.001, from #217. A tool definition's declared `capabilities`,

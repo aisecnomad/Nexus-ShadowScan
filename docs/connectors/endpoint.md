@@ -172,12 +172,14 @@ MCP tool definitions are analyzed for risky capability names, missing declared
 authentication, duplicate tool names across servers (`tool-name-shadowing`) and
 declared grants: a `capabilities`, `permissions` or `scopes` value naming the
 whole filesystem, a drive root or a home directory (`*`, `filesystem:*`,
-`filesystem:/`, `filesystem:~`, `filesystem:/home/<user>/**`) adds
+`filesystem:/`, `filesystem:/**/*`, `filesystem:~`, `filesystem:~/**/*`,
+`filesystem:/home/<user>/**`, `filesystem:C:\**\*`; every trailing glob
+segment is stripped before the root is read) adds
 `mcp-broad-filesystem`, and `shell`, `command`, `execute`, `code-exec` or
 `terminal` adds `mcp-shell-command`; a path scoped below a root
 (`filesystem:/srv/app/data`) adds nothing, and a declaration that is not a
 string or a list of strings marks the scan incomplete. The `tool-poisoning` tag
-follows fixed rules on the first 4 KiB of a description: a URL, an OpenAI,
+follows fixed rules on the whole inspected description (the first 64 KiB): a URL, an OpenAI,
 Anthropic or Google API host, `use`/`call`/`invoke the <tool>`, an invisible
 control character, `<IMPORTANT>`, `ignore previous instructions` or
 `send`/`forward`/`exfiltrate the data`/`secret`/`credential`/`prompt`, whether
@@ -192,8 +194,11 @@ verified intent or execution. Quoted text and fenced code are excluded from the
 audit; YAML front matter values are read line by line. Descriptions over 64 KiB,
 malformed or oversized front matter, an unclosed fence and a description that is
 not text mark coverage incomplete; a single line over 4,096 characters is
-skipped and listed under `limitations`, and a description that opens with `---`
-followed by prose is read as body text. Tool definitions are fingerprinted
+skipped by the sentence audit, listed under `limitations` and marks coverage
+incomplete (the floor rules still read it), and a description that opens with
+`---` followed by prose or a heading is read as body text, while one followed by
+a `key:` line, a `- ` item or a `#` comment before either is unclosed front
+matter and incomplete. Tool definitions are fingerprinted
 for downstream comparison, but baseline/rug-pull detection is not yet implemented. No tool is
 invoked. With `options.mcp_registries`, a tool finding whose server is an
 HTTP(S) URL is matched against the pinned MCP Registry snapshots by that URL
