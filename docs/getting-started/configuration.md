@@ -22,7 +22,7 @@ options:
   fail_on: high                       # exit 2 if any finding reaches this level
   dump_records: ./exports             # sanitized records for offline re-runs
   connector_timeout_seconds: 120      # cooperative deadline per connector
-  allow_private_origin: false         # permit non-global IP addresses
+  allow_private_origin: false         # permit non-global IP addresses (every connector)
   allow_instance_credentials: false   # permit cloud instance-metadata credentials
   allow_credential_mixing: false      # permit repo + live tenant in one scan
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
@@ -52,6 +52,30 @@ can terminate at the connector deadline. Built-in connectors always use the
 thread backend. Workers keep the scanner's privileges and credentials: this is
 lifecycle isolation, not a sandbox. See
 [third-party plugin execution](../connectors.md#third-party-plugin-execution).
+
+## Reaching an internal destination
+
+HTTPS clients refuse loopback, link-local, private and cloud-metadata
+destinations. Every connector accepts `allow_private_origin` to lift that
+refusal for itself alone, which is the narrower grant and the one to prefer:
+
+```yaml
+connectors:
+  - name: gateway.logs
+    allow_private_origin: true        # this connector only
+    input: ./internal-gateway-logs
+```
+
+`options.allow_private_origin: true` lifts it for *every* connector in the
+configuration, so one internal gateway would also let repository, endpoint and
+cloud connectors leave the public internet. A connector that sets the key uses
+its own value; one that does not inherits the scan-wide setting, so a
+connector-level `false` keeps a connector public under a scan-wide grant.
+
+The key takes a YAML boolean or the strings `true`/`false`, so an interpolated
+`"false"` cannot enable it. The grant covers this scanner's HTTPS clients
+only — git and the cloud SDKs carry their own egress controls, so restrict
+egress at the network when that matters.
 
 ## Trusted vendor registries
 

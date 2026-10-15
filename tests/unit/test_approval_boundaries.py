@@ -259,3 +259,63 @@ def test_engine_propagates_and_restores_private_origin_policy(index, monkeypatch
     result = Engine(config, index).run()
     assert not result.complete and observed == [True, True]
     assert http._allow_private_origin.get() is False
+
+
+@pytest.mark.parametrize("parallel", [1, 2])
+def test_connector_private_origin_grant_applies_to_that_connector_alone(index, monkeypatch, parallel):
+    """A connector-level grant reaches private destinations without the scan-wide one."""
+    from shadowscan.utils import http
+
+    observed = {}
+
+    class Probe(BaseConnector):
+        def collect(self):
+            observed[self.ctx.get("label")] = http._allow_private_origin.get()
+            raise RuntimeError("simulated failure")
+
+        def analyze(self, records):
+            yield from ()
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda *args, **kwargs: Probe)
+    config = ScanConfig(
+        connectors=[
+            ConnectorSpec("probe.internal", {"allow_private_origin": True}, label="internal"),
+            ConnectorSpec("probe.public", label="public"),
+        ],
+        allow_private_origin=False,
+        parallel=parallel,
+    )
+    result = Engine(config, index).run()
+    assert not result.complete
+    assert observed == {"internal": True, "public": False}
+    assert http._allow_private_origin.get() is False
+
+
+@pytest.mark.parametrize("parallel", [1, 2])
+def test_connector_can_refuse_private_origin_the_scan_allows(index, monkeypatch, parallel):
+    """A connector-level false narrows a scan-wide grant for that connector."""
+    from shadowscan.utils import http
+
+    observed = {}
+
+    class Probe(BaseConnector):
+        def collect(self):
+            observed[self.ctx.get("label")] = http._allow_private_origin.get()
+            raise RuntimeError("simulated failure")
+
+        def analyze(self, records):
+            yield from ()
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda *args, **kwargs: Probe)
+    config = ScanConfig(
+        connectors=[
+            ConnectorSpec("probe.kept", {"allow_private_origin": False}, label="kept"),
+            ConnectorSpec("probe.inherits", label="inherits"),
+        ],
+        allow_private_origin=True,
+        parallel=parallel,
+    )
+    result = Engine(config, index).run()
+    assert not result.complete
+    assert observed == {"kept": False, "inherits": True}
+    assert http._allow_private_origin.get() is False

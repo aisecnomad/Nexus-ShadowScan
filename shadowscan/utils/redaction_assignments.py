@@ -122,6 +122,24 @@ _YAML_MAPPING_LINE = re.compile(
 _YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")
 
 
+def _opaque_block_credential(lines: list[str]) -> bool:
+    """Whether a block scalar's own content is an opaque credential.
+
+    Read for a name that carries a credential only when its value is opaque
+    ('key'), the way the single-line assignment pass reads one. The dedented
+    lines are joined without a separator so a wrapped base64 blob is tested as
+    the one value it encodes; prose, paths and placeholders keep their text,
+    since ``_credential_literal`` rejects whitespace, a path and a placeholder.
+
+    Joining can also read a few short lines as one opaque value ('Alpha1' over
+    'Beta2'). That withholds a little more than a line-by-line test would under
+    a name like 'key', which is the safer direction here: testing each line on
+    its own would keep every wrapped credential, the case this pass exists for.
+    """
+    joined = "".join(lines)
+    return bool(joined) and _credential_literal(joined, positional=False)
+
+
 def _redact_yaml_multiline_values(text: str) -> str:
     """Withhold indented sensitive YAML values before line-based excerpting.
 
@@ -129,12 +147,22 @@ def _redact_yaml_multiline_values(text: str) -> str:
     credentials with no recognizable token prefix. Consume their indentation
     boundary once, without loading or executing the untrusted source. Preserve
     newline counts for evidence locations and the following peer mapping.
+
+    A name that always carries a credential ('password') withholds its block
+    whatever it holds. A name that carries one only when the value is opaque
+    ('key') withholds its block only then, so that a Kubernetes secret's
+    'key: |' is read like the single-line 'key: <opaque>' the assignment pass
+    already withholds, while 'key: |' over a path or a sentence keeps its text.
     """
     pieces: list[str] = []
     cursor = 0
     for match in _YAML_MAPPING_LINE.finditer(text):
         key = match.group("quoted") or match.group("plain")
-        if match.start() < cursor or not _sensitive_assignment_key(key):
+        if match.start() < cursor:
+            continue
+        always_sensitive = _sensitive_assignment_key(key)
+        # A conditionally sensitive name is decided by the block's content below.
+        if not always_sensitive and not _credential_name(key):
             continue
         value = match.group("value").strip()
         # Quoted and flow-style values are consumed by the mapping lexer.
@@ -151,6 +179,7 @@ def _redact_yaml_multiline_values(text: str) -> str:
             continue
         indent = len(match.group("prefix").expandtabs(8))
         has_continuation = False
+        content_lines: list[str] = []
         while position < len(text):
             line = _YAML_CONTINUATION_LINE.match(text, position)
             assert line is not None
@@ -160,9 +189,13 @@ def _redact_yaml_multiline_values(text: str) -> str:
             if content.strip() and len(content[:whitespace].expandtabs(8)) <= indent:
                 break
             has_continuation = has_continuation or bool(content.strip())
+            if content.strip():
+                content_lines.append(content.strip())
             end = line.end()
             position = end
         if not has_continuation:
+            continue
+        if not always_sensitive and not _opaque_block_credential(content_lines):
             continue
         pieces.append(text[cursor:start])
         pieces.append('"' + REDACTED + '"' + "\n" * text[start:end].count("\n"))
