@@ -18,7 +18,7 @@ from click.testing import CliRunner
 from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code import filesystem as filesystem_module
-from shadowscan.connectors.code import manifests
+from shadowscan.connectors.code import lockfiles, manifests
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt
 from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.models import Kind
@@ -1594,8 +1594,14 @@ def test_unsupported_lockfile_beside_its_manifest_is_a_scoped_warning(
     assert not any(f.resource_type == "lockfile-inventory" for f in findings)
 
 
-def test_lockfile_over_its_package_limit_beside_its_manifest_is_a_scoped_warning(tmp_path, run_connector):
-    packages = "".join(f"  pkg{i}@1.0.0: {{}}\n" for i in range(5000))
+def test_lockfile_over_its_package_limit_beside_its_manifest_is_a_scoped_warning(
+    tmp_path, run_connector, monkeypatch
+):
+    # A small limit keeps the lockfile small: 5,000 entries put signature matching
+    # near its CPU budget under coverage on a loaded runner, and the scan then ended
+    # incomplete for a reason this test is not about.
+    monkeypatch.setattr(lockfiles, "MAX_PACKAGES", 8)
+    packages = "".join(f"  pkg{i}@1.0.0: {{}}\n" for i in range(9))
     _beside_manifest(tmp_path, "pnpm-lock.yaml", "lockfileVersion: '9.0'\npackages:\n" + packages)
     _, ctx = run_connector("code.filesystem", path=str(tmp_path))
     assert not ctx.stats.incomplete and not ctx.stats.errors
