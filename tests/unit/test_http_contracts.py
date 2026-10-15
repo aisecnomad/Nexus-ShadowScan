@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 
+import pytest
 from requests.adapters import HTTPAdapter
 from urllib3.connectionpool import HTTPSConnectionPool
 from urllib3.response import HTTPResponse
 
+from shadowscan.utils import http
 from shadowscan.utils.http import (
     _AcquisitionHTTPSConnectionPool,
     _DestinationPolicyAdapter,
@@ -15,6 +18,7 @@ from shadowscan.utils.http import (
     _PrivateHTTPSConnectionPool,
     _PublicHTTPSConnection,
     _PublicHTTPSConnectionPool,
+    _SocketDeadline,
 )
 
 
@@ -48,3 +52,19 @@ def test_destination_policy_adapters_isolate_pool_class_mapping() -> None:
         first.close()
         second.close()
         ordinary.close()
+
+
+def test_transport_resolves_policy_from_legacy_module_at_call_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = _PublicHTTPSConnection("example.test", timeout=1.0)
+    monkeypatch.setattr(http, "_blocked_host", lambda _: True)
+    with pytest.raises(ValueError, match="private or cloud-metadata"):
+        connection._new_conn()
+
+
+def test_socket_deadline_uses_legacy_clock_patch_point(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(http, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    guard = _SocketDeadline(SimpleNamespace(sock=None), deadline=110.0)
+    try:
+        assert guard.remaining() == 10.0
+    finally:
+        guard.finish()

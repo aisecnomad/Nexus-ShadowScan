@@ -240,6 +240,7 @@ reports (`--format json`). None contacts a provider except
 | `shadowscan/models.py` | `Finding`, `Evidence`, `Risk`, `ScanResult`; confidence = noisy-OR of evidence weights, each group of correlated evidence counted once at its strongest weight (`confidence_group`, else the same signal outside the code surface) |
 | `shadowscan/config.py` | YAML config with `${ENV}` expansion, `--set` parsing, connector key validation |
 | `shadowscan/engine.py` | parallel connector execution under deadline supervision, merge, correlation, reconciliation, scoring; no connector names |
+| `shadowscan/engine_state.py` | per-run job state, connector export bookkeeping and live-scope ledgers shared with the engine |
 | `shadowscan/merge.py` | merging findings with the same id: first observation's owner and metadata, unioned evidence and technologies |
 | `shadowscan/correlation.py` | cross-surface links (`metadata.related`), gateway-to-code runtime activity, endpoint-to-process lifecycle links |
 | `shadowscan/incremental.py` | content-addressed reuse of completed static connector results (`--incremental`, `--state-dir`) |
@@ -333,6 +334,7 @@ splitting the connector class itself.
 | module | responsibility |
 |---|---|
 | `shadowscan/utils/http.py` | shared HTTPS client: destination policy, retries, 16 MiB response limit and whole-body read deadline |
+| `shadowscan/utils/http_transport.py` | urllib3 connection, pool and adapter hooks for DNS-time destination enforcement and acquisition deadlines; policy dependencies resolve through the legacy HTTP module to preserve patch points |
 | `shadowscan/utils/files.py` | confined reads: no link followed in any path component, directories opened for traversal only (`O_PATH` on Linux) |
 | `shadowscan/utils/output.py` | atomic, owner-readable output files and private export directories |
 | `shadowscan/utils/redaction.py` | redaction API (`sanitize`, `sanitize_text`, `policy_token`) driving the passes in the `redaction_*` modules; patch rules here, never in a `redaction_*` module |
