@@ -19,12 +19,15 @@ passing unit suite does not establish complete coverage of a particular estate.
   upgrading; this explicitly authorizes disclosure of the provider API key to
   that endpoint and does not relax HTTPS or private-origin controls.
 - Plugin worker keys are derived separately for each configured plugin. Parent
-  processing preserves report identities relative to thread mode; this is not
-  plugin sandboxing and does not require a baseline identity migration.
-- Advisory DNS preflight is bounded; connection-time address checks remain the
-  enforcement point. A timed-out advisory lookup is not proof that an origin is
-  public. Descriptor-relative LFS inspection preserves unknown/incomplete
-  coverage when it cannot safely finish.
+  processing re-keys bounded, transient identity inputs received through private
+  IPC to preserve report identities relative to thread mode. These inputs never
+  enter logs or exports; this is not plugin sandboxing and does not require a
+  baseline identity migration.
+- HTTP checks addresses at connection time without advisory DNS preflight;
+  external Git/SDK transports use bounded preflight, reject resolver timeouts,
+  and need egress controls against DNS rebinding. A timed-out lookup
+  is not proof that an origin is public. Descriptor-relative LFS inspection
+  preserves unknown/incomplete coverage when it cannot safely finish.
 - The weekly container check reports when a newer Wolfi Python revision passes
   SHA-224 so maintainers can review removal of the temporary interpreter pins.
   See [CI integration](operations/ci.md).

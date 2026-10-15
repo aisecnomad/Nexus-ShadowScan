@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import multiprocessing
 import os
@@ -24,9 +25,24 @@ from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import DERIVED_METADATA_KEYS, ScanStats
-from shadowscan.plugin_process import _decode_result, _encode_result, _receive, _worker, _WorkerHandle
+from shadowscan.plugin_process import (
+    _decode_result,
+    _descriptor_limit,
+    _encode_result,
+    _keep_descriptors_from_programs,
+    _receive,
+    _rekey_result,
+    _rewrite_identity_values,
+    _worker,
+    _WorkerHandle,
+)
 from shadowscan.signatures import SignatureIndex
-from shadowscan.utils.crypto import hkdf_sha256, plugin_identity_key
+from shadowscan.utils.crypto import (
+    capture_identity_material,
+    hkdf_sha256,
+    identity_hmac_digest,
+    plugin_identity_key,
+)
 
 ENTRY = "platform.process-probe"
 MODULE = "shadowscan_process_probe"
@@ -61,6 +77,7 @@ class Connector(BaseConnector):
     surface = Surface.LOWCODE
     description = "spawned-process test connector"
     config_keys = {}
+    uses_run_identity_key = True
 
     def collect(self):
         if self.ctx.config.get("mode", mode) == "hang":
@@ -92,11 +109,39 @@ class Connector(BaseConnector):
                     key_marker=keyed_credential_digest("plugin-key-probe"),
                     inherited_key=IDENTITY_KEY_ENV in os.environ,
                 )
-            yield Finding(
+            resource = self.ctx.config.get("resource", "probe")
+            if mode in ("credential-resource", "mixed-resource"):
+                from shadowscan.utils.redaction import credential_id
+                resource = credential_id("plugin-identity-probe")
+                if mode == "mixed-resource":
+                    resource += "?pass" + "word" + "=" + "probe-value"
+            if mode == "gateway-resource":
+                from shadowscan.connectors.gateway.logs import _restore_scope
+                resource = _restore_scope(
+                    {"tenant": "plugin-identity-probe"}, [("[REDACTED]",)],
+                    self.ctx.gateway_identity_key,
+                )[0]["tenant"]
+            finding = Finding(
                 surface=self.surface, connector=self.name, kind=Kind.AGENT,
-                title="process probe", resource=self.ctx.config.get("resource", "probe"), resource_type="test",
+                title="process probe", resource=resource, resource_type="test",
                 metadata=metadata,
             )
+            if mode in ("credential-resource", "gateway-resource", "mixed-resource"):
+                from shadowscan.utils.crypto import identity_hmac_digest
+                finding.metadata.update(
+                    identity=finding.resource, own_id=finding.id,
+                    nested_digest=identity_hmac_digest(
+                        self.ctx.gateway_identity_key, finding.id.encode()
+                    ).hex(),
+                )
+                yield finding
+                yield Finding(
+                    surface=self.surface, connector=self.name, kind=Kind.AGENT,
+                    title="linked probe", resource="peer", resource_type="test",
+                    metadata={"linked_id": finding.id, "identity": finding.resource},
+                )
+            else:
+                yield finding
 """
 
 
@@ -161,6 +206,69 @@ def test_plugin_identity_rejects_invalid_ordinal(ordinal):
         plugin_identity_key(bytes(range(32)), ENTRY, ordinal)
 
 
+def test_descriptor_listing_failure_covers_high_descriptors(monkeypatch):
+    resource = pytest.importorskip("resource")
+    visited = {}
+    listings = []
+
+    def unavailable(path):
+        listings.append(path)
+        raise OSError("descriptor listing unavailable")
+
+    monkeypatch.setattr(os, "listdir", unavailable)
+    monkeypatch.setattr(resource, "getrlimit", lambda kind: (5002, 6000))
+    monkeypatch.setattr(os, "set_inheritable", lambda fd, inheritable: visited.update({fd: inheritable}))
+    _keep_descriptors_from_programs()
+    assert listings == ["/proc/self/fd", "/dev/fd"]
+    assert visited[5001] is False
+    assert min(visited) == 3 and max(visited) == 5001
+    assert not any(visited.values())
+
+
+@pytest.mark.parametrize("soft", [1 << 22, -1])
+def test_descriptor_resource_limit_is_capped(monkeypatch, soft):
+    resource = pytest.importorskip("resource")
+    monkeypatch.setattr(resource, "getrlimit", lambda kind: (soft, resource.RLIM_INFINITY))
+    assert _descriptor_limit() == 1 << 20
+
+
+def test_descriptor_limit_without_resource_uses_sysconf(monkeypatch):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    names = []
+
+    def limit(name):
+        names.append(name)
+        return 8192
+
+    monkeypatch.setattr(os, "sysconf", limit, raising=False)
+    assert _descriptor_limit() == 8192
+    assert names == ["SC_OPEN_MAX"]
+
+
+def test_descriptor_resource_failure_uses_sysconf(monkeypatch):
+    resource = pytest.importorskip("resource")
+
+    def unavailable(kind):
+        raise OSError("resource limit unavailable")
+
+    monkeypatch.setattr(resource, "getrlimit", unavailable)
+    monkeypatch.setattr(os, "sysconf", lambda name: 9000, raising=False)
+    assert _descriptor_limit() == 9000
+
+
+@pytest.mark.parametrize("limit", [-1, 1 << 22])
+def test_descriptor_sysconf_limit_is_capped_or_unknown(monkeypatch, limit):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    monkeypatch.setattr(os, "sysconf", lambda name: limit, raising=False)
+    assert _descriptor_limit() == 1 << 20
+
+
+def test_descriptor_limit_without_platform_limits_uses_cap(monkeypatch):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    monkeypatch.delattr(os, "sysconf", raising=False)
+    assert _descriptor_limit() == 1 << 20
+
+
 def test_plugin_keys_are_domain_separated_and_unambiguous():
     key = bytes(range(32))
     derived = plugin_identity_key(key, ENTRY, 1)
@@ -215,13 +323,200 @@ def test_spawned_worker_uses_only_the_derived_key(installed_probe, monkeypatch):
     assert result.complete, result.stats
     [finding] = result.findings
     expected = hmac.digest(
-        plugin_identity_key(key, ENTRY, 1),
+        key,
         b"shadowscan.credential-identity.v1\0plugin-key-probe",
         "sha256",
     ).hex()
     assert finding.metadata["key_marker"] == expected
     assert finding.metadata["inherited_key"] is False
     assert os.environ[IDENTITY_KEY_ENV] == "hex:" + key.hex()
+
+
+@pytest.mark.parametrize("mode", ["credential-resource", "gateway-resource", "mixed-resource"])
+@pytest.mark.parametrize("stable", [False, True])
+def test_keyed_resources_metadata_and_linked_ids_match_thread_mode(
+    installed_probe, monkeypatch, tmp_path, mode, stable
+):
+    from shadowscan import connectors as registry
+    from shadowscan.comparison import IDENTITY_KEY_ENV
+
+    if stable:
+        monkeypatch.setenv(IDENTITY_KEY_ENV, "hex:" + bytes(range(32)).hex())
+    else:
+        monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+        # Compare two executions of the same synthetic run-key scope.
+        monkeypatch.setattr(engine_module.secrets, "token_bytes", lambda size: bytes(range(size)))
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", mode)
+    reported = {}
+    try:
+        for backend in ("thread", "process"):
+            directory = tmp_path / ("exports-" + backend)
+            config = ScanConfig(
+                connectors=[ConnectorSpec(ENTRY)],
+                plugins=[ENTRY],
+                plugin_execution=backend,
+                dump_records=str(directory),
+            )
+            result = Engine(config, SignatureIndex([])).run()
+            assert result.complete, result.stats
+            findings = sorted(result.findings, key=lambda finding: finding.title)
+            reported[backend] = [
+                (
+                    finding.id,
+                    finding.compute_id(),
+                    finding.resource,
+                    {key: value for key, value in finding.metadata.items() if key != "pid"},
+                )
+                for finding in findings
+            ]
+            peer, primary = findings
+            assert primary.metadata["own_id"] == primary.id
+            assert peer.metadata["linked_id"] == primary.id
+            assert primary.resource == peer.metadata["identity"]
+            assert "plugin-identity-probe" not in result.to_json()
+            assert "identity_material" not in result.to_json()
+            assert "probe-value" not in result.to_json()
+            for path in directory.iterdir():
+                assert b"identity_material" not in path.read_bytes()
+                assert b"plugin-identity-probe" not in path.read_bytes()
+    finally:
+        sys.modules.pop(MODULE, None)
+        registry._cache.pop(ENTRY, None)
+    assert reported["process"] == reported["thread"]
+
+
+def test_identity_material_capture_is_scoped_deduplicated_and_key_specific():
+    key = bytes(range(32))
+    message = b"ephemeral-input"
+    with capture_identity_material(key) as material:
+        digest = identity_hmac_digest(key, message)
+        assert identity_hmac_digest(key, message) == digest
+        identity_hmac_digest(bytes(reversed(key)), b"other-key-input")
+    assert material == {digest.hex(): message}
+    identity_hmac_digest(key, b"outside-capture")
+    assert len(material) == 1
+
+
+def test_identity_material_size_limit_fails_closed(monkeypatch):
+    import shadowscan.utils.crypto as crypto
+
+    monkeypatch.setattr(crypto, "MAX_IDENTITY_MATERIAL_BYTES", 64)
+    with capture_identity_material(bytes(range(32))), pytest.raises(ValueError, match="transport limit"):
+        identity_hmac_digest(bytes(range(32)), b"ephemeral-input")
+
+
+def test_identity_material_count_limit_fails_closed(monkeypatch):
+    import shadowscan.utils.crypto as crypto
+
+    key = bytes(range(32))
+    monkeypatch.setattr(crypto, "MAX_IDENTITY_MATERIAL_ENTRIES", 1)
+    with capture_identity_material(key), pytest.raises(ValueError, match="transport limit"):
+        identity_hmac_digest(key, b"first")
+        identity_hmac_digest(key, b"second")
+
+
+def _identity_envelope(material):
+    return {
+        "findings": [],
+        "stats": asdict(ScanStats(ENTRY, "now")),
+        "exports": [],
+        "identity_material": material,
+    }
+
+
+@pytest.mark.parametrize(
+    "material",
+    [
+        None,
+        {},
+        [{"digest": "0" * 64, "message": "not-base64"}],
+        [{"digest": "0" * 64, "message": ""}],
+        [{"digest": "invalid", "message": ""}],
+        [{"digest": "ss-" + "0" * 16, "message": ""}],
+        [{"digest": "0" * 64, "message": "", "extra": True}],
+        [{"digest": "0" * 64, "message": []}],
+    ],
+)
+def test_untrusted_identity_material_is_rejected(material):
+    with pytest.raises(ValueError):
+        _decode_result(
+            _encode_result(_identity_envelope(material)),
+            1,
+            ConnectorSpec(ENTRY),
+            identity_keys=(bytes(range(32)), bytes(reversed(range(32)))),
+        )
+
+
+@pytest.mark.parametrize("binary", [False, True])
+def test_nested_identity_material_is_rekeyed_in_generation_order(binary):
+    import hmac
+
+    parent_key, worker_key = bytes(range(32)), bytes(reversed(range(32)))
+    with capture_identity_material(worker_key) as material:
+        first = identity_hmac_digest(worker_key, b"first")
+        second = identity_hmac_digest(worker_key, b"nested:" + (first if binary else first.hex().encode()))
+    data = _identity_envelope(
+        [
+            {"digest": digest, "message": base64.b64encode(message).decode()}
+            for digest, message in material.items()
+        ]
+    )
+    data["stats"]["warnings"] = [first.hex(), second.hex()]
+    restored = _rekey_result(data, parent_key, worker_key)
+    expected_first = hmac.digest(parent_key, b"first", "sha256").hex()
+    nested_input = bytes.fromhex(expected_first) if binary else expected_first.encode()
+    expected_second = hmac.digest(parent_key, b"nested:" + nested_input, "sha256").hex()
+    assert restored["stats"]["warnings"] == [expected_first, expected_second]
+    assert "identity_material" not in restored
+
+
+def test_identity_rewrite_matches_embedded_digest_without_rewriting_it_twice():
+    original, restored, other = "a" * 64, "b" * 64, "c" * 64
+    assert _rewrite_identity_values(
+        {"value": "face" + original + "suffix"}, {original: restored, restored: other}
+    ) == {"value": "face" + restored + "suffix"}
+
+
+def test_identity_rewrite_rejects_ambiguous_keys_and_excessive_depth():
+    original, restored = "a" * 64, "b" * 64
+    with pytest.raises(ValueError, match="duplicate fields"):
+        _rewrite_identity_values({original: True, restored: False}, {original: restored})
+    nested = "value"
+    for _ in range(130):
+        nested = [nested]
+    with pytest.raises(ValueError, match="nesting exceeds safety limit"):
+        _rewrite_identity_values(nested, {original: restored})
+
+
+def test_duplicate_identity_material_is_rejected():
+    worker_key = bytes(reversed(range(32)))
+    with capture_identity_material(worker_key) as material:
+        identity_hmac_digest(worker_key, b"probe")
+    entries = [
+        {"digest": digest, "message": base64.b64encode(message).decode()}
+        for digest, message in material.items()
+    ]
+    with pytest.raises(ValueError, match="identity material fields"):
+        _rekey_result(_identity_envelope(entries * 2), bytes(range(32)), worker_key)
+
+
+def test_parent_identity_material_limits_are_enforced(monkeypatch):
+    import shadowscan.plugin_process as transport
+
+    worker_key = bytes(reversed(range(32)))
+    with capture_identity_material(worker_key) as material:
+        identity_hmac_digest(worker_key, b"probe")
+    entries = [
+        {"digest": digest, "message": base64.b64encode(message).decode()}
+        for digest, message in material.items()
+    ]
+    monkeypatch.setattr(transport, "MAX_IDENTITY_MATERIAL_ENTRIES", 0)
+    with pytest.raises(ValueError, match="identity material"):
+        _rekey_result(_identity_envelope(entries), bytes(range(32)), worker_key)
+    monkeypatch.setattr(transport, "MAX_IDENTITY_MATERIAL_ENTRIES", 4096)
+    monkeypatch.setattr(transport, "MAX_IDENTITY_MATERIAL_BYTES", 64)
+    with pytest.raises(ValueError, match="transport limit"):
+        _rekey_result(_identity_envelope(entries), bytes(range(32)), worker_key)
 
 
 @pytest.mark.parametrize("stable", [False, True])

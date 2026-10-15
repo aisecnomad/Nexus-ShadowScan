@@ -21,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from shadowscan.utils.files import open_confined_directory, open_confined_file
+from shadowscan.utils.output import prepare_private_directory
 
 _OBJECT_ID_RX = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 MAX_METADATA_OUTPUT_BYTES = 16 * 1024
@@ -413,7 +414,7 @@ def run_bounded_clone(
         ctx.check_deadline()
         if _INTERRUPTED.is_set():
             raise CloneInterruptedError("clone not started: the scan was interrupted")
-        with _clone_config_file(env) as child_env:
+        with _clone_config_file(env, workdir=getattr(ctx, "workdir", None)) as child_env:
             return _run_bounded_clone(
                 cmd, child_env, ctx, timeout, destination=destination, max_bytes=max_bytes
             )
@@ -832,7 +833,10 @@ def clone_environment(origin: str, token: str | None, username: str) -> dict[str
         # Operators can name a credential variable arbitrarily. Do not leave
         # the same credential in the inherited environment under another key.
         for key, value in list(env.items()):
-            if token in value or basic in value:
+            # All inherited GIT_* entries were already discarded. These
+            # scanner-generated controls are not credentials, even when a
+            # short token happens to equal one of their policy values.
+            if not key.startswith("GIT_") and (token in value or basic in value):
                 env.pop(key)
     return env
 
@@ -881,19 +885,26 @@ def _remove_clone_config(directory: str) -> None:
 
 
 @contextlib.contextmanager
-def _clone_config_file(env: dict[str, str]) -> Iterator[dict[str, str]]:
+def _clone_config_file(env: dict[str, str], *, workdir: str | None = None) -> Iterator[dict[str, str]]:
     if not isinstance(env, _CloneEnvironment):
         yield env
         return
     with contextlib.ExitStack() as cleanup:
         try:
-            # Use a private directory under the trusted working directory rather
-            # than a shared temporary root or anything inside the untrusted clone.
-            directory = tempfile.mkdtemp(prefix=".shadowscan-git-", dir=os.getcwd())
+            if os.name != "posix" or not all(
+                hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
+            ):
+                raise OSError("secure Git clone configuration is unavailable")
+            directory = tempfile.mkdtemp(prefix="shadowscan-git-", dir=workdir)
             cleanup.callback(_remove_clone_config, directory)
             _ACTIVE_CLONE_CONFIGS.add(directory)
             if _INTERRUPTED.is_set():
                 raise CloneInterruptedError("clone not started: the scan was interrupted")
+            # This directory was just created exclusively. Restore exact owner
+            # access even under a restrictive umask, then apply the shared
+            # ownership/mode/symlink checks before storing any authentication.
+            os.chmod(directory, 0o700, follow_symlinks=False)
+            directory = str(prepare_private_directory(directory))
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
             directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
@@ -912,7 +923,7 @@ def _clone_config_file(env: dict[str, str]) -> Iterator[dict[str, str]]:
             child_env["GIT_CONFIG_GLOBAL"] = os.path.join(directory, "config")
             if _INTERRUPTED.is_set():
                 raise CloneInterruptedError("clone not started: the scan was interrupted")
-        except OSError:
+        except (OSError, ValueError, NotImplementedError):
             raise OSError("cannot prepare private Git clone configuration") from None
         yield child_env
 
@@ -1215,7 +1226,6 @@ def read_git_snapshot(path: str | os.PathLike[str], *, timeout: float = 10.0) ->
     root = os.fspath(path)
     if not root or "\x00" in root:
         return None
-
     deadline = time.monotonic() + min(timeout, 10.0)
     try:
         require_local_git_metadata(Path(root), timeout=min(timeout, 10.0))
@@ -1269,6 +1279,12 @@ def checkout_has_lfs_pointers(
     """
     root = os.fspath(path)
     if not root or "\x00" in root:
+        return None
+    if (
+        os.name != "posix"
+        or not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK"))
+        or os.scandir not in os.supports_fd
+    ):
         return None
     entries = 0
 

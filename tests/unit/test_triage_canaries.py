@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import Mock
 
 import pytest
 
@@ -98,6 +99,50 @@ def test_live_run_without_answers_is_incomplete(monkeypatch):
 
     monkeypatch.setattr(triage_canaries, "Triage", Refusing)
     assert triage_canaries.main(["--live", "--model", "m"]) == 3
+
+
+@pytest.mark.parametrize(
+    ("base_url", "opt_in"),
+    [
+        ("https://api.anthropic.com/alternate", False),
+        ("https://api.anthropic.com:443/alternate", False),
+        ("https://gateway.example/v1", True),
+    ],
+)
+def test_cli_only_opts_in_to_custom_origin_when_explicit(monkeypatch, base_url, opt_in):
+    live = Mock(return_value={"incomplete": False})
+    monkeypatch.setattr(triage_canaries, "live", live)
+    args = ["--live", "--model", "m", "--base-url", base_url]
+    if opt_in:
+        args.append("--allow-custom-base-url")
+    assert triage_canaries.main(args) == 0
+    settings = live.call_args.args[1]
+    assert settings.base_url == base_url
+    assert settings.allow_custom_base_url is opt_in
+
+
+def test_cli_custom_origin_requires_explicit_consent_before_live_call(monkeypatch, capsys):
+    live = Mock()
+    monkeypatch.setattr(triage_canaries, "live", live)
+    with pytest.raises(SystemExit) as caught:
+        triage_canaries.main(["--live", "--model", "m", "--base-url", "https://gateway.example/v1"])
+    assert caught.value.code == 2
+    live.assert_not_called()
+    assert "requires allow_custom_base_url: true" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    ["http://gateway.example", "https://@gateway.example", "https://gateway.example/\n"],
+)
+def test_cli_custom_origin_consent_does_not_relax_url_validation(monkeypatch, capsys, base_url):
+    live = Mock()
+    monkeypatch.setattr(triage_canaries, "live", live)
+    with pytest.raises(SystemExit) as caught:
+        triage_canaries.main(["--live", "--model", "m", "--base-url", base_url, "--allow-custom-base-url"])
+    assert caught.value.code == 2
+    live.assert_not_called()
+    assert "withheld" not in capsys.readouterr().err
 
 
 def test_cli_offline_exits_zero_and_writes_a_private_report(tmp_path):

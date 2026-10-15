@@ -27,7 +27,6 @@ Input: JSONL / JSON / CSV / plain text access logs, file or directory.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import math
 import re
@@ -74,6 +73,7 @@ from shadowscan.connectors.gateway.normalise import (  # noqa: F401
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import Match, MatchTimeoutError, SignatureIndex
+from shadowscan.utils.crypto import identity_hmac_digest
 from shadowscan.utils.redaction import REDACTED, sanitize
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import get_path, host_of, parse_timestamp, to_iso
@@ -177,7 +177,7 @@ def _restore_scope(
         changed = clean != original or original.startswith((_OPAQUE_SCOPE_PREFIX, _LEGACY_SCOPE_PREFIX))
         if changed:
             identity = json.dumps(["shadowscan.gateway.scope.v1", key, original], separators=(",", ":"))
-            result[key] = _OPAQUE_SCOPE_PREFIX + hmac.digest(scope_key, identity.encode(), "sha256").hex()
+            result[key] = _OPAQUE_SCOPE_PREFIX + identity_hmac_digest(scope_key, identity.encode()).hex()
         else:
             result[key] = clean
         redacted = redacted or changed
@@ -256,7 +256,7 @@ def _conceal_api_key(
     # No publicly enumerable digest of a caller-supplied API key or key ID
     # may appear in a report. Even provider key IDs can be guessable.
     material = json.dumps(["shadowscan.gateway.credential.v1", namespace, raw_key], separators=(",", ":"))
-    opaque_id = "credential:hmac-sha256:" + hmac.digest(scope_key, material.encode(), "sha256").hex()
+    opaque_id = "credential:hmac-sha256:" + identity_hmac_digest(scope_key, material.encode()).hex()
     ev.caller = f"{namespace}:{opaque_id}"
     ev.caller_redacted = True
     if not ev.caller_label or raw_key in ev.caller_label or ev.caller_label in raw_key:
@@ -328,7 +328,7 @@ def normalise_with_record(
             cleaned["caller"] = ev.caller
         else:
             material = json.dumps(["shadowscan.gateway.caller.v1", ev.caller], separators=(",", ":"))
-            digest = hmac.digest(scope_key, material.encode(), "sha256").hex()
+            digest = identity_hmac_digest(scope_key, material.encode()).hex()
             cleaned["caller"] = f"{ev.caller_kind}:{_OPAQUE_CALLER_PREFIX}{digest}"
             cleaned["caller_redacted"] = True
             if cleaned["caller_label"] != ev.caller_label:
@@ -1201,7 +1201,7 @@ class GatewayLogConnector(BaseConnector, _NoDump):
         )
         # Any source configuration may contain guessable labels or bindings;
         # never disclose an unkeyed digest even if rows are filtered out.
-        self.source_id = hmac.digest(self._scope_key, identity.encode(), "sha256").hex()
+        self.source_id = identity_hmac_digest(self._scope_key, identity.encode()).hex()
 
     def collect(self) -> Iterable[dict[str, Any]]:
         raise ConnectorError(

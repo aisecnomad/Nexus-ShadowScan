@@ -394,14 +394,17 @@ def test_clone_refuses_metadata_credential_destination(cls, record, tmp_path, in
     ],
 )
 def test_clone_credential_header_is_origin_scoped(cls, record, origin, tmp_path, index, monkeypatch):
+    from shadowscan.utils.git import _CloneEnvironment
+
     run = Mock(return_value=True)
     monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", run)
     connector = cls(ConnectorContext(config={"token": "synthetic-token"}, index=index))
     assert connector._clone(record, str(tmp_path))
     env = run.call_args.args[1]
-    settings = {
-        env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))
-    }
+    assert isinstance(env, _CloneEnvironment)
+    settings = dict(env.config)
+    assert "GIT_CONFIG_COUNT" not in env
+    assert all("synthetic-token" not in value for value in env.values())
     assert "http.extraheader" not in settings
     assert settings[f"http.{origin}.extraheader"].startswith("Authorization: Basic ")
     assert settings["http.followRedirects"] == "false"
@@ -541,53 +544,44 @@ def test_advisory_dns_preflight_is_bounded_and_daemonized(monkeypatch, inherited
 
 
 @pytest.mark.parametrize("stage", ["request", "redirect", "paginate_link", "paginate_odata"])
-def test_http_preflight_uses_remaining_deadline_on_every_path(monkeypatch, stage):
-    http, session = client()
-    http_module_origin = http._validate_url
-    release = threading.Event()
-    workers = []
-
-    def resolve(*args, **kwargs):
-        workers.append(threading.current_thread())
-        release.wait(2)
-        return []
-
-    def begin_slow_preflight():
-        http.deadline = time.monotonic() + 0.02
-        monkeypatch.setattr(http_module.socket, "getaddrinfo", resolve)
-
-    if stage == "request":
-        begin_slow_preflight()
-    elif stage == "redirect":
-
-        def redirect(*args, **kwargs):
-            begin_slow_preflight()
-            return response(status=302, headers={"Location": "/next"})
-
-        session.request.side_effect = redirect
+def test_http_skips_advisory_dns_on_every_path(monkeypatch, stage):
+    resolver = Mock(side_effect=AssertionError("HTTP must enforce DNS only at connection time"))
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", resolver)
+    if stage == "redirect":
+        http, session = client(response(status=302, headers={"Location": "/next"}), response({"ok": True}))
+    elif stage == "paginate_link":
+        http, session = client(response([{"id": 1}]))
+    elif stage == "paginate_odata":
+        http, session = client(response({"value": [{"id": 1}]}))
     else:
-        # Leave initial origin validation fast, then stall the continuation preflight.
-        def validate_then_stall(url, origin):
-            result = http_module_origin(url, origin)
-            begin_slow_preflight()
-            http._validate_url = http_module_origin
-            return result
+        http, session = client(response({"ok": True}))
+    http.deadline = time.monotonic() + 1
+    if stage in {"request", "redirect"}:
+        assert http.get_json("/items") == {"ok": True}
+    else:
+        assert list(getattr(http, stage)("/items")) == [{"id": 1}]
+    resolver.assert_not_called()
+    assert session.request.call_count == (2 if stage == "redirect" else 1)
 
-        http._validate_url = validate_then_stall
-    started = time.monotonic()
+
+def test_http_skips_advisory_timeout_but_connect_still_rejects_private_dns(monkeypatch):
+    advisory = Mock(side_effect=TimeoutError("API URL DNS preflight deadline exceeded"))
+    monkeypatch.setattr(http_module, "_preflight_addresses", advisory)
+    resolver = Mock(
+        return_value=[(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("169.254.169.254", 443))]
+    )
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", resolver)
+    socket_factory = Mock()
+    monkeypatch.setattr(http_module.socket, "socket", socket_factory)
+    http = HttpClient("https://issuer.example", max_retries=0)
     try:
-        with pytest.raises(ValueError, match="^API URL DNS preflight deadline exceeded$"):
-            if stage in {"request", "redirect"}:
-                http.get("/items")
-            else:
-                list(getattr(http, stage)("/items"))
-        assert time.monotonic() - started < 0.5
-        assert workers and all(worker.daemon for worker in workers)
-        assert session.request.call_count == int(stage == "redirect")
+        with pytest.raises(ValueError, match="Refusing private or cloud-metadata destination"):
+            http.get("/keys")
     finally:
-        release.set()
-        for worker in workers:
-            worker.join(1)
+        http.session.close()
+    advisory.assert_not_called()
+    resolver.assert_called_once()
+    socket_factory.assert_not_called()
 
 
 def test_dns_preflight_failure_has_fixed_diagnostics(monkeypatch):
@@ -603,10 +597,40 @@ def test_expired_http_deadline_does_not_start_advisory_resolution(monkeypatch):
     resolver = Mock()
     monkeypatch.setattr(http_module.socket, "getaddrinfo", resolver)
     http, session = client(deadline=time.monotonic() - 1)
-    with pytest.raises(ValueError, match="^API URL DNS preflight deadline exceeded$"):
+    with pytest.raises(TimeoutError, match="^HTTP request abandoned: connector deadline exceeded$"):
         http.get("/items")
     resolver.assert_not_called()
     session.request.assert_not_called()
+
+
+def test_redirect_after_deadline_does_not_start_another_transport_request():
+    http, session = client()
+
+    def expired_redirect(*args, **kwargs):
+        http.deadline = time.monotonic() - 1
+        return response(status=302, headers={"Location": "/next"})
+
+    session.request.side_effect = expired_redirect
+    with pytest.raises(TimeoutError, match="^HTTP request abandoned: connector deadline exceeded$"):
+        http.get("/items")
+    assert session.request.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://api.example.com",
+        "https://@api.example.com",
+        "https://127.0.0.1",
+        "https://169.254.169.254",
+        "https://api.example.com/\n",
+        "https://other.example.com",
+    ],
+)
+def test_skipping_dns_preflight_retains_url_and_literal_destination_policy(url):
+    origin = "https://api.example.com" if url == "https://other.example.com" else None
+    with pytest.raises(ValueError):
+        validate_url(url, origin, dns_preflight=False)
 
 
 @pytest.mark.parametrize("userinfo", ["@", "operator@", ":withheld@"])

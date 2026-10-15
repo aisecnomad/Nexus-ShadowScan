@@ -419,7 +419,7 @@ record_config = (
     "pathlib.Path(sys.argv[1]+'.config').write_text(os.environ['GIT_CONFIG_GLOBAL']);"
 )
 sleeper = [sys.executable, "-c", record_config + sys.argv[4], pidfile]
-os.chdir(pathlib.Path(checkout).parent)
+Ctx.workdir = str(pathlib.Path(checkout).parent)
 register_checkout(checkout)
 
 def clone():
@@ -573,7 +573,7 @@ def test_clone_auth_uses_only_private_global_config(tmp_path, monkeypatch):
     assert all("synthetic-token" not in value and encoded not in value for value in env.values())
     assert "GIT_CONFIG_COUNT" not in env
     assert not {"GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN", "CUSTOM_CREDENTIAL"} & env.keys()
-    with git_module._clone_config_file(env) as child_env:
+    with git_module._clone_config_file(env, workdir=str(tmp_path)) as child_env:
         path = Path(child_env["GIT_CONFIG_GLOBAL"])
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
         assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
@@ -603,6 +603,66 @@ def test_clone_auth_uses_only_private_global_config(tmp_path, monkeypatch):
         assert redirect.stdout.strip() == b"false"
         assert git_module.metadata_git_env()["GIT_CONFIG_GLOBAL"] == os.devnull
     assert not path.exists() and not path.parent.exists()
+    assert not git_module._ACTIVE_CLONE_CONFIGS
+
+
+@pytest.mark.parametrize("token", ["0", "1", "null"])
+def test_short_clone_tokens_cannot_remove_generated_git_security_controls(monkeypatch, token):
+    monkeypatch.setenv("CUSTOM_CREDENTIAL", f"prefix-{token}-suffix")
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "untrusted override")
+    env = git_module.clone_environment("https://github.com", token, "x-access-token")
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert env["GIT_CONFIG_GLOBAL"] == os.devnull
+    assert env["GIT_CONFIG_SYSTEM"] == os.devnull
+    assert "GIT_CONFIG_PARAMETERS" not in env
+    assert "CUSTOM_CREDENTIAL" not in env
+
+
+def test_clone_private_config_uses_shared_checks_and_never_depends_on_cwd(tmp_path, monkeypatch):
+    storage = tmp_path / "storage"
+    storage.mkdir(mode=0o700)
+    monkeypatch.setattr(git_module.tempfile, "tempdir", str(storage))
+    check_private = Mock(wraps=git_module.prepare_private_directory)
+    monkeypatch.setattr(git_module, "prepare_private_directory", check_private)
+    env = git_module.clone_environment("https://github.com", "synthetic-token", "x-access-token")
+    with monkeypatch.context() as isolated:
+        isolated.setattr(git_module.os, "getcwd", Mock(side_effect=OSError("unavailable cwd")))
+        previous = os.umask(0o777)
+        try:
+            with git_module._clone_config_file(env) as child_env:
+                config = Path(child_env["GIT_CONFIG_GLOBAL"])
+                assert config.parent.parent == storage
+                assert stat.S_IMODE(config.parent.stat().st_mode) == 0o700
+                assert stat.S_IMODE(config.stat().st_mode) == 0o600
+        finally:
+            os.umask(previous)
+    check_private.assert_called_once()
+    assert not list(storage.iterdir())
+
+
+def test_clone_private_config_refuses_symlinked_storage_before_writing(tmp_path, monkeypatch):
+    storage = tmp_path / "storage"
+    storage.mkdir(mode=0o700)
+    linked_storage = tmp_path / "linked-storage"
+    linked_storage.symlink_to(storage, target_is_directory=True)
+    env = git_module.clone_environment("https://github.com", "synthetic-token", "x-access-token")
+    original_open = os.open
+    config_opens = []
+
+    def record_open(path, *args, **kwargs):
+        if path == "config":
+            config_opens.append(path)
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(git_module.os, "open", record_open)
+    with (
+        pytest.raises(OSError, match="^cannot prepare private Git clone configuration$"),
+        git_module._clone_config_file(env, workdir=str(linked_storage)),
+    ):
+        pytest.fail("symlinked storage must be refused")
+    assert not config_opens
+    assert not list(storage.iterdir())
     assert not git_module._ACTIVE_CLONE_CONFIGS
 
 
@@ -645,11 +705,15 @@ def test_clone_private_configuration_is_removed_on_every_exit(tmp_path, monkeypa
         kwargs = {"destination": str(destination), "max_bytes": 1}
     if outcome in expected:
         with pytest.raises(expected[outcome]) as caught:
-            run_bounded_clone(["git", "clone"], env, ConnectorContext(), timeout, **kwargs)
+            run_bounded_clone(
+                ["git", "clone"], env, ConnectorContext(workdir=str(tmp_path)), timeout, **kwargs
+            )
         if outcome == "spawn":
             assert str(caught.value) == "cannot start Git clone"
     else:
-        assert run_bounded_clone(["git", "clone"], env, ConnectorContext(), timeout) is (outcome == "success")
+        assert run_bounded_clone(["git", "clone"], env, ConnectorContext(workdir=str(tmp_path)), timeout) is (
+            outcome == "success"
+        )
     assert paths and all(not path.exists() and not path.parent.exists() for path in paths)
     assert not git_module._ACTIVE_CLONE_CONFIGS
     assert not git_module._ACTIVE_CLONES
@@ -670,10 +734,16 @@ def test_termination_removes_clone_credentials_before_finally(tmp_path, monkeypa
                 return fd
 
             monkeypatch.setattr(git_module.os, "open", interrupt_open)
-            with pytest.raises(git_module.CloneInterruptedError), git_module._clone_config_file(env):
+            with (
+                pytest.raises(git_module.CloneInterruptedError),
+                git_module._clone_config_file(env, workdir=str(tmp_path)),
+            ):
                 pytest.fail("interrupted setup must not start a clone")
         else:
-            with git_module.terminate_clones_on_signal(), git_module._clone_config_file(env) as child_env:
+            with (
+                git_module.terminate_clones_on_signal(),
+                git_module._clone_config_file(env, workdir=str(tmp_path)) as child_env,
+            ):
                 path = Path(child_env["GIT_CONFIG_GLOBAL"])
                 if interruption == "signal":
                     git_module._TerminationHandler(lambda *args: None)(signal.SIGTERM, None)
@@ -713,7 +783,7 @@ def test_clone_private_config_creation_fails_closed_and_cleans_up(tmp_path, monk
     monkeypatch.setattr(git_module.os, "open", open_config)
     with (
         pytest.raises(OSError, match="^cannot prepare private Git clone configuration$"),
-        git_module._clone_config_file(env),
+        git_module._clone_config_file(env, workdir=str(tmp_path)),
     ):
         pytest.fail("unsafe configuration must not be used")
     assert outside.read_text() == "untouched"

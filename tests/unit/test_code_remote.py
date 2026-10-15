@@ -1162,6 +1162,26 @@ def test_lfs_scan_refuses_symlinks_in_the_root_path(tmp_path, linked_component):
     assert checkout_has_lfs_pointers(link) is None
 
 
+@pytest.mark.parametrize(
+    "missing", ["O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK", "non-posix", "dir-fd", "scandir-fd"]
+)
+def test_lfs_scan_returns_unknown_when_safe_platform_primitives_are_unavailable(
+    tmp_path, monkeypatch, missing
+):
+    root = str(tmp_path)
+    with monkeypatch.context() as platform:
+        if missing == "non-posix":
+            platform.setattr(git_module.os, "name", "nt")
+        elif missing == "dir-fd":
+            platform.setattr(git_module.os, "supports_dir_fd", set())
+        elif missing == "scandir-fd":
+            platform.setattr(git_module.os, "supports_fd", set())
+        else:
+            platform.delattr(git_module.os, missing)
+        result = checkout_has_lfs_pointers(root)
+    assert result is None
+
+
 @pytest.mark.parametrize("swap_at", ["directory-open", "file-open"])
 def test_lfs_scan_never_retraverses_a_replaced_directory(tmp_path, monkeypatch, swap_at):
     root = tmp_path / "checkout"

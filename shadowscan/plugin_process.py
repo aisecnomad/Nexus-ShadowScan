@@ -9,6 +9,8 @@ a ProcessPoolExecutor future cannot stop a running worker.
 
 from __future__ import annotations
 
+import base64
+import hmac
 import json
 import multiprocessing
 import multiprocessing.connection
@@ -28,7 +30,13 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import Signature, SignatureIndex
 from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
-from shadowscan.utils.crypto import plugin_identity_key
+from shadowscan.utils.crypto import (
+    MAX_IDENTITY_MATERIAL_BYTES,
+    MAX_IDENTITY_MATERIAL_ENTRIES,
+    capture_identity_material,
+    finding_identity_digest,
+    plugin_identity_key,
+)
 from shadowscan.utils.redaction import sanitize
 from shadowscan.utils.safe_json import strict_json_loads
 
@@ -44,6 +52,9 @@ _MAX_WAIT_SECONDS = 86_400.0
 # A worker stops itself this long after its deadline, matching the parent's
 # supervision guard, in case nothing in the scanner is left to terminate it.
 _WORKER_GRACE_SECONDS = 2.0
+_MAX_DESCRIPTOR_LIMIT = 1 << 20
+_IDENTITY_TEXT_WINDOW = re.compile(r"(?=(ss-[0-9a-f]{16}|[0-9a-f]{64}))")
+_IDENTITY_BYTES_WINDOW = re.compile(rb"(?=(.{19,64}))", re.DOTALL)
 
 
 def _remaining(deadline: float) -> float:
@@ -98,6 +109,27 @@ def _exit_with_scanner(deadline: float) -> None:
     threading.Thread(target=watch, name="shadowscan-plugin-watchdog", daemon=True).start()
 
 
+def _descriptor_limit() -> int:
+    """Bound descriptor enumeration when the platform has no descriptor listing."""
+    try:
+        import resource
+
+        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft == resource.RLIM_INFINITY:
+            return _MAX_DESCRIPTOR_LIMIT
+        if soft >= 0:
+            return min(soft, _MAX_DESCRIPTOR_LIMIT)
+    except (ImportError, OSError, ValueError, OverflowError):
+        pass
+    try:
+        limit = os.sysconf("SC_OPEN_MAX")
+        if limit >= 0:
+            return min(limit, _MAX_DESCRIPTOR_LIMIT)
+    except (AttributeError, OSError, ValueError, OverflowError):
+        pass
+    return _MAX_DESCRIPTOR_LIMIT
+
+
 def _keep_descriptors_from_programs() -> None:
     """Programs a plugin starts must not inherit this worker's descriptors.
 
@@ -113,7 +145,7 @@ def _keep_descriptors_from_programs() -> None:
         except (OSError, ValueError):
             continue
     else:
-        descriptors = range(3, 4096)
+        descriptors = range(3, _descriptor_limit())
     for descriptor in descriptors:
         if descriptor > 2:
             try:
@@ -163,14 +195,26 @@ def _worker(
         runner._identity_key_stable = stable_identity
         state = _JobState(started_at=now_iso(), deadline=deadline)
         spec = config.connectors[0]
-        _, findings, stats = runner._run_job(number, spec, state)
-        payload = _encode_result(
-            {
-                "findings": [finding.to_dict() for finding in findings],
-                "stats": asdict(stats),
-                "exports": exports.entries([(number, spec)], set()),
-            }
-        )
+        # Raw identity inputs live only in this bounded socket message, never in
+        # findings, exports or diagnostics. Only the parent has the run key.
+        with capture_identity_material(plugin_key) as material:
+            token = set_credential_identity_key(plugin_key)
+            try:
+                _, findings, stats = runner._run_job(number, spec, state)
+                public = [finding.to_dict() for finding in findings]
+            finally:
+                reset_credential_identity_key(token)
+            payload = _encode_result(
+                {
+                    "findings": public,
+                    "stats": asdict(stats),
+                    "exports": exports.entries([(number, spec)], set()),
+                    "identity_material": [
+                        {"digest": digest, "message": base64.b64encode(message).decode("ascii")}
+                        for digest, message in material.items()
+                    ],
+                }
+            )
         status = 0
     except BaseException:  # noqa: BLE001 - a plugin may raise SystemExit; never echo its exception
         payload = b'{"error":"plugin worker failed or its result exceeded the transport limit"}'
@@ -261,14 +305,139 @@ class _WorkerHandle:
             _stop(self._process)
 
 
+def _rewrite_identity_values(value: Any, replacements: dict[str, str]) -> Any:
+    if not replacements:
+        return value
+
+    def rewrite(item: Any, depth: int = 0) -> Any:
+        if depth > 128:
+            raise ValueError("plugin identity nesting exceeds safety limit")
+        if isinstance(item, str):
+            chunks: list[str] = []
+            end = 0
+            for match in _IDENTITY_TEXT_WINDOW.finditer(item):
+                replacement = replacements.get(match[1])
+                if replacement is not None and match.start() >= end:
+                    chunks.extend((item[end : match.start()], replacement))
+                    end = match.start() + len(match[1])
+            return "".join((*chunks, item[end:])) if chunks else item
+        if isinstance(item, list):
+            return [rewrite(child, depth + 1) for child in item]
+        if isinstance(item, dict):
+            result = {}
+            for key, child in item.items():
+                changed = rewrite(key, depth + 1)
+                if changed in result:
+                    raise ValueError("plugin identity rewrite produced duplicate fields")
+                result[changed] = rewrite(child, depth + 1)
+            return result
+        return item
+
+    return rewrite(value)
+
+
+def _rekey_result(data: dict[str, Any], run_key: bytes, worker_key: bytes) -> dict[str, Any]:
+    """Validate ephemeral identity inputs and restore the thread-mode public identity."""
+    material = data.pop("identity_material")
+    if not isinstance(material, list) or len(material) > MAX_IDENTITY_MATERIAL_ENTRIES:
+        raise ValueError("invalid plugin identity material")
+    replacements: dict[str, str] = {}
+    ascii_replacements: dict[bytes, bytes] = {}
+    binary_replacements: dict[bytes, bytes] = {}
+    finding_messages: dict[str, bytes] = {}
+    verified: list[tuple[str, bytes]] = []
+    seen = set()
+    size = 0
+    for entry in material:
+        if not isinstance(entry, dict) or set(entry) != {"digest", "message"}:
+            raise ValueError("invalid plugin identity material entry")
+        digest, encoded = entry["digest"], entry["message"]
+        if (
+            not isinstance(digest, str)
+            or re.fullmatch("(?:[0-9a-f]{64}|ss-[0-9a-f]{16})", digest) is None
+            or digest in seen
+            or not isinstance(encoded, str)
+            or len(encoded) > 4 * ((MAX_IDENTITY_MATERIAL_BYTES + 2) // 3)
+        ):
+            raise ValueError("invalid plugin identity material fields")
+        message = base64.b64decode(encoded, validate=True)
+        size += len(message) + len(digest)
+        if size > MAX_IDENTITY_MATERIAL_BYTES:
+            raise ValueError("plugin identity material exceeds transport limit")
+        seen.add(digest)
+        if digest.startswith("ss-"):
+            if not hmac.compare_digest(digest, finding_identity_digest(message)):
+                raise ValueError("invalid plugin finding identity material authentication")
+        elif not hmac.compare_digest(digest, hmac.digest(worker_key, message, "sha256").hex()):
+            raise ValueError("invalid plugin identity material authentication")
+        verified.append((digest, message))
+    for digest, message in verified:
+        restored_message = _rewrite_identity_message(message, ascii_replacements, binary_replacements)
+        if digest.startswith("ss-"):
+            finding_messages[digest] = message
+            restored_id = finding_identity_digest(restored_message)
+            if restored_id != digest:
+                replacements[digest] = restored_id
+                ascii_replacements[digest.encode("ascii")] = restored_id.encode("ascii")
+            continue
+        # Helpers may hash an identity derived earlier in the same worker.
+        # Replace its opaque digest, never expose the original preimage.
+        replacements[digest] = hmac.digest(run_key, restored_message, "sha256").hex()
+        ascii_replacements[digest.encode("ascii")] = replacements[digest].encode("ascii")
+        binary_replacements[bytes.fromhex(digest)] = bytes.fromhex(replacements[digest])
+    original = [Finding.from_dict(item) for item in data["findings"]]
+    restored: dict[str, Any] = _rewrite_identity_values(data, replacements)
+    changed = [Finding.from_dict(item) for item in restored["findings"]]
+    finding_ids = {}
+    for before, after, item in zip(original, changed, restored["findings"], strict=True):
+        if before.compute_id() != after.compute_id() and before.id not in finding_messages:
+            if before.id != before.compute_id():
+                # A mixed raw-redacted/keyed identity cannot be reconstructed
+                # from sanitized fields. Reject it rather than publish a wrong ID.
+                raise ValueError("plugin finding identity cannot be safely rekeyed")
+            item["id"] = after.compute_id()
+            finding_ids[before.id] = item["id"]
+    result: dict[str, Any] = _rewrite_identity_values(restored, finding_ids)
+    return result
+
+
+def _rewrite_identity_message(
+    message: bytes, ascii_replacements: dict[bytes, bytes], binary_replacements: dict[bytes, bytes]
+) -> bytes:
+    if not ascii_replacements:
+        return message
+    chunks: list[bytes] = []
+    end = 0
+    for match in _IDENTITY_BYTES_WINDOW.finditer(message):
+        if match.start() < end:
+            continue
+        window = match[1]
+        for size, tokens in ((64, ascii_replacements), (32, binary_replacements), (19, ascii_replacements)):
+            replacement = tokens.get(window[:size]) if len(window) >= size else None
+            if replacement is not None:
+                chunks.extend((message[end : match.start()], replacement))
+                end = match.start() + size
+                break
+    return b"".join((*chunks, message[end:])) if chunks else message
+
+
 def _decode_result(
-    payload: bytes, number: int, spec: ConnectorSpec
+    payload: bytes,
+    number: int,
+    spec: ConnectorSpec,
+    *,
+    identity_keys: tuple[bytes, bytes] | None = None,
 ) -> tuple[list[Finding], ScanStats, list[dict[str, Any]]]:
     data = strict_json_loads(payload)
-    if not isinstance(data, dict) or set(data) != {"findings", "stats", "exports"}:
+    fields = {"findings", "stats", "exports"}
+    if identity_keys is not None:
+        fields.add("identity_material")
+    if not isinstance(data, dict) or set(data) != fields:
         raise ValueError("invalid plugin result envelope")
     if not isinstance(data["findings"], list) or not isinstance(data["exports"], list):
         raise ValueError("invalid plugin result arrays")
+    if identity_keys is not None:
+        data = _rekey_result(data, *identity_keys)
     raw = data["stats"]
     if not isinstance(raw, dict) or set(raw) != set(asdict(ScanStats("", ""))):
         raise ValueError("invalid plugin statistics")
@@ -336,6 +505,7 @@ def _run_plugin_process(
         plugin_execution="thread",
         dump_records=str(dump_directory) if dump_directory else None,
     )
+    worker_key = plugin_identity_key(runner._run_identity_key, spec.id, number)
     parent, child = socket.socketpair()
     try:
         process = multiprocessing.get_context("spawn").Process(
@@ -346,7 +516,7 @@ def _run_plugin_process(
                 list(runner._index.signatures.values()),
                 number,
                 deadline,
-                plugin_identity_key(runner._run_identity_key, spec.id, number),
+                worker_key,
                 dump_directory,
             ),
             daemon=True,
@@ -376,12 +546,13 @@ def _run_plugin_process(
         _remaining(deadline)
         if process.exitcode != 0:
             raise ValueError("plugin worker did not exit successfully")
-        # Decode and sanitize under the parent's identity scope, never a
-        # process-local fallback. Retain validated finding IDs: sanitization can
-        # intentionally preserve a raw-resource digest after redacting its fields.
+        # Restore thread-mode keyed identities and sanitize under the parent's
+        # scope, never a process-local fallback.
         token = set_credential_identity_key(runner._run_identity_key)
         try:
-            findings, stats, entries = _decode_result(payload, number, spec)
+            findings, stats, entries = _decode_result(
+                payload, number, spec, identity_keys=(runner._run_identity_key, worker_key)
+            )
         finally:
             reset_credential_identity_key(token)
         _remaining(deadline)

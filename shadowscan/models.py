@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from shadowscan.utils.crypto import finding_identity_digest
 from shadowscan.utils.redaction import (
     SanitizationLimitError,
     _check_sanitization_structure,
@@ -366,7 +367,7 @@ class Finding:
                 separators=(",", ":"),
                 ensure_ascii=True,
             )
-        return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
+        return finding_identity_digest(raw.encode())
 
     def sanitize(self) -> None:
         """Remove credentials from every persisted/reportable field in place.

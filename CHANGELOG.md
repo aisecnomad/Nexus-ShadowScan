@@ -12,9 +12,10 @@ summarizes each release for people who install and operate ShadowScan.
   remaining same-UID exposure and per-scan isolation.
 - Require boolean `allow_custom_base_url` consent for non-default triage
   origins, retaining HTTPS, URL validation and private-origin controls.
-- Give plugin workers HKDF-derived keys while preserving parent report
-  identities; bound advisory DNS preflight, use no-follow descriptor-relative
-  LFS inspection, and respect descriptor limits in the fallback close list.
+- Give plugin workers HKDF-derived keys and parent-side identity re-keying
+  through bounded private IPC; bound external advisory DNS preflight, use
+  no-follow descriptor-relative LFS inspection, and respect descriptor limits
+  in the fallback close list.
 - Add bounded parser property tests and a non-blocking PR/weekly-attention
   probe for removal of the temporary Wolfi Python pin. Document fork AI-gate
   publication failures as fail-closed and a separate publisher as future work.

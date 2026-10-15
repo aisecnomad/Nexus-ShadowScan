@@ -376,7 +376,7 @@ def _preflight_addresses(host: str, port: int, timeout: float) -> list[Any]:
     worker = threading.Thread(target=resolve, name="shadowscan-dns-preflight", daemon=True)
     worker.start()
     if not completed.wait(timeout):
-        raise ValueError("API URL DNS preflight deadline exceeded")
+        raise TimeoutError("API URL DNS preflight deadline exceeded")
     if failed:
         raise ValueError("API URL DNS preflight failed")
     return addresses
@@ -388,13 +388,15 @@ def validate_url(
     *,
     allow_private: bool | None = None,
     dns_timeout: float | None = None,
+    dns_preflight: bool = True,
 ) -> str:
     """Require HTTPS and, for server-supplied links, the credential origin.
 
     Destinations that resolve to loopback, link-local, private, multicast,
     unspecified, reserved, or cloud-metadata addresses are rejected unless
     ``allow_private`` (or the current worker's policy) is true. DNS checks here
-    are bounded advisory preflight only; HttpClient also enforces the policy at socket connection.
+    are bounded advisory preflight only; external transports fail closed on resolver timeout.
+    HttpClient skips DNS preflight and enforces the policy at socket connection.
     External transports such as git and cloud SDKs need their own egress controls.
     """
     # urlsplit drops tabs and line breaks and strips leading blanks before parsing, while git and
@@ -429,7 +431,9 @@ def validate_url(
     host = parsed.hostname.strip("[]")
     if (_blocked_host(host) or "%" in host) and not allow:
         raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
-    if allow:
+    if not isinstance(dns_preflight, bool):
+        raise TypeError("dns_preflight must be a boolean")
+    if allow or not dns_preflight:
         return url
     try:
         ipaddress.ip_address(host)
@@ -439,7 +443,10 @@ def validate_url(
         numeric = True
     if not numeric:
         timeout = DNS_PREFLIGHT_TIMEOUT if dns_timeout is None else min(dns_timeout, DNS_PREFLIGHT_TIMEOUT)
-        infos = _preflight_addresses(host, port, timeout)
+        try:
+            infos = _preflight_addresses(host, port, timeout)
+        except TimeoutError:
+            raise ValueError("API URL DNS preflight deadline exceeded") from None
         for info in infos:
             try:
                 addr = ipaddress.ip_address(info[4][0])
@@ -751,7 +758,9 @@ class HttpClient:
         budget = self.read_deadline
         if self.deadline is not None:
             budget = min(budget, self.deadline - time.monotonic())
-        return validate_url(url, origin, allow_private=self.allow_private_origin, dns_timeout=budget)
+        if budget <= 0:
+            raise TimeoutError("HTTP request abandoned: connector deadline exceeded")
+        return validate_url(url, origin, allow_private=self.allow_private_origin, dns_preflight=False)
 
     def request(
         self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any

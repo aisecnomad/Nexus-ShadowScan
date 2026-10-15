@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import contextvars
-import hmac
 import secrets
+
+from shadowscan.utils.crypto import identity_hmac_digest
 
 _DOMAIN = b"shadowscan.credential-identity.v1\0"
 _FALLBACK_KEY = secrets.token_bytes(32)
@@ -32,4 +33,4 @@ def keyed_credential_digest(value: str) -> str:
     exported and does not establish comparability between processes.
     """
     key = _identity_key.get() or _FALLBACK_KEY
-    return hmac.digest(key, _DOMAIN + value.encode("utf-8"), "sha256").hex()
+    return identity_hmac_digest(key, _DOMAIN + value.encode("utf-8")).hex()

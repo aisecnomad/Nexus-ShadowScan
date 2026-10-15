@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from shadowscan.models import Evidence, Finding, Kind, Risk, RiskLevel, Surface
-from shadowscan.triage import _SYSTEM, VERDICTS, Triage, TriageSettings
+from shadowscan.triage import _SYSTEM, VERDICTS, Triage, TriageConfigError, TriageSettings
 from shadowscan.utils.files import read_policy_text
 
 CORPUS = Path(__file__).with_name("triage_canaries.json")
@@ -302,6 +302,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", help="model id (live mode)")
     parser.add_argument("--api-key-env", help="environment variable holding the API key (live mode)")
     parser.add_argument("--base-url", help="https:// endpoint (live mode)")
+    parser.add_argument(
+        "--allow-custom-base-url",
+        action="store_true",
+        help="allow sending triage data and credentials to a different provider origin (live mode)",
+    )
     parser.add_argument("--structured-output", action="store_true", help="request JSON-schema output")
     parser.add_argument("--output", type=Path, help="write the JSON report to a new local file, mode 0600")
     args = parser.parse_args(argv)
@@ -317,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
             "provider": args.provider,
             "model": args.model,
             "structured_output": args.structured_output,
+            "allow_custom_base_url": args.allow_custom_base_url,
             "max_findings": 1,
             "min_level": "high",
         }
@@ -324,7 +330,11 @@ def main(argv: list[str] | None = None) -> int:
             options["api_key_env"] = args.api_key_env
         if args.base_url:
             options["base_url"] = args.base_url
-        report = live(cases, TriageSettings.from_options(options))
+        try:
+            settings = TriageSettings.from_options(options)
+        except TriageConfigError as exc:
+            parser.error(str(exc))
+        report = live(cases, settings)
         status = 3 if report["incomplete"] else 0
     else:
         report = offline(cases, args.provider)
