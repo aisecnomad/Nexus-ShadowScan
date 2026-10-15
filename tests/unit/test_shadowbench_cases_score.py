@@ -194,6 +194,86 @@ def test_missing_rows_count_as_errors_not_as_absent_cases(tmp_path: Path) -> Non
     assert "| 2 (2 missing) |" in report.render(metrics, corpus_path)
 
 
+def _declare(monkeypatch: pytest.MonkeyPatch, tool: str, surfaces: dict[str, frozenset[str]]) -> None:
+    """Register an adapter for ``tool`` that declares it runs only ``surfaces``."""
+    adapter = SimpleNamespace(name=tool, surfaces=surfaces)
+    monkeypatch.setattr(score, "load_adapters", lambda: ({tool: adapter}, {}))
+
+
+HOME = _case("e1", surface="endpoint", modality="home", expected=[("app:e", "agent")])
+OKTA = _case("i1", expected=[("app:i", "agent")])
+
+
+def test_a_missing_row_where_the_adapter_does_not_run_counts_as_unsupported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An endpoint-only run (runner ``--surfaces endpoint``) charged an endpoint-only tool with errors on
+    identity, and claimed it covered identity."""
+    _declare(monkeypatch, "t", {"endpoint": frozenset({"home"})})
+    found = _row(HOME, keys=["app:e"])
+    (tmp_path / "subset").mkdir()
+    (tmp_path / "full").mkdir()
+    corpus_path, results = _write(tmp_path / "subset", [HOME, OKTA], {"t": [found]})
+    t = _score(tmp_path / "subset", corpus_path, results)["tools"]["t"]
+    assert (t["surfaces_supported"], t["coverage"]) == (["endpoint"], "1/2")
+    i = t["in_scope"]
+    assert (i["cases"], i["errors"], i["missing"], i["recall"], i["case"]["recall"]) == (1, 0, 0, 1.0, 1.0)
+    # estate recall still charges the surface the tool does not run
+    assert t["estate"] == {"expected": 2, "tp": 1, "recall": 0.5}
+    # exactly what the full run, with the runner's unsupported row, scores
+    corpus_path, results = _write(tmp_path / "full", [HOME, OKTA], {"t": [found, _row(OKTA, "unsupported")]})
+    assert _score(tmp_path / "full", corpus_path, results)["tools"]["t"] == t
+
+
+def test_a_missing_row_where_the_adapter_runs_stays_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _declare(monkeypatch, "t", {"endpoint": frozenset({"home"}), "identity": frozenset({"okta-export"})})
+    corpus_path, results = _write(tmp_path, [HOME, OKTA], {"t": [_row(HOME, keys=["app:e"])]})
+    t = _score(tmp_path, corpus_path, results)["tools"]["t"]
+    assert (t["surfaces_supported"], t["coverage"]) == (["endpoint", "identity"], "2/2")
+    i = t["in_scope"]
+    assert (i["cases"], i["errors"], i["missing"], i["recall"]) == (2, 1, 1, 0.5)
+
+
+@pytest.mark.parametrize(
+    ("declared", "recorded", "expected"),
+    [
+        # the run wrote unsupported rows on the pair: the adapter has since gained it
+        ({"identity": frozenset({"okta-export"})}, "unsupported", "unsupported"),
+        # the run ran the pair: the adapter has since dropped it
+        ({"endpoint": frozenset({"home"})}, "ok", "error"),
+    ],
+)
+def test_the_rows_of_the_run_decide_a_missing_row_before_the_adapter_does(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    declared: dict[str, frozenset[str]],
+    recorded: str,
+    expected: str,
+) -> None:
+    """The runner decides support per (surface, modality); the rows it wrote say what it decided."""
+    _declare(monkeypatch, "t", declared)
+    other = _case("i2", expected=[("app:j", "agent")])
+    corpus_path, results = _write(tmp_path, [OKTA, other], {"t": [_row(OKTA, recorded)]})
+    i = _score(tmp_path, corpus_path, results)["tools"]["t"]["in_scope"]
+    assert (i["errors"], i["missing"]) == ((1, 1) if expected == "error" else (0, 0))
+
+
+@pytest.mark.parametrize(
+    "surfaces",
+    [None, ["endpoint"], {"endpoint": "home"}, {"endpoint": frozenset({1})}, {1: frozenset({"home"})}],
+)
+def test_without_a_well_formed_declaration_a_missing_row_stays_an_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surfaces: object
+) -> None:
+    adapter = SimpleNamespace(name="t") if surfaces is None else SimpleNamespace(name="t", surfaces=surfaces)
+    monkeypatch.setattr(score, "load_adapters", lambda: ({"t": adapter}, {}))
+    corpus_path, results = _write(tmp_path, [HOME, OKTA], {"t": [_row(HOME, keys=["app:e"])]})
+    i = _score(tmp_path, corpus_path, results)["tools"]["t"]["in_scope"]
+    assert (i["errors"], i["missing"]) == (1, 1)
+
+
 def test_a_results_file_truncated_after_the_run_is_refused_unless_forced(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

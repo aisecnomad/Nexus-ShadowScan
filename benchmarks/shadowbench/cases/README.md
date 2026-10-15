@@ -157,7 +157,12 @@ Per tool, per surface and per modality, over the cases the tool ran
   MCC and the McNemar test use these outcomes.
 * **Errors, missing rows and incomplete runs.** A crash, timeout or unreadable
   output is an `error` row, and a case with no row counts as an error and is
-  also reported as missing. An error is never a correct outcome: every expected
+  also reported as missing. The exception is a case on a surface and modality
+  the tool does not run (its other rows there are `unsupported`, or it has
+  none there and its adapter does not declare the pair): the runner writes an
+  `unsupported` row for each such case, so a run of some surfaces or cases
+  left out nothing else there, and the missing row counts as `unsupported`.
+  An error is never a correct outcome: every expected
   entity is missed, the decoys stay in the specificity denominator without
   being true negatives, a positive case is missed and a negative case is a
   false alarm. A run marked incomplete (the tool says so, as with ShadowScan's
@@ -478,7 +483,10 @@ track:
   exits, the runner now takes `work/` back for root and removes group and
   other write from its directories before it removes escaping symlinks, so a
   process of the tools' uid outside the stage cannot plant one after that
-  check and have the adapter read a root-only file through it.
+  check and have the adapter read a root-only file through it. Hard links,
+  FIFOs, sockets and device nodes in `work/` are removed rather than handed
+  to root, so a hard link the tools' uid made to another account's file no
+  longer gives that file to root.
 * The runner now records in `manifest.json` the harness commit and whether
   anything under `tools/` differed from it, and the report names both. It
   records the `version` that `tools.json` gives any tool; before, the Numbat,
