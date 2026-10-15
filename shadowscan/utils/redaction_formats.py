@@ -46,8 +46,13 @@ from shadowscan.utils.redaction_rules import (
 # boundary are found by ``_SECRET_TOKEN``; the rest start at the character before them,
 # which the regular expression reads first and the replacement keeps.
 _ESCAPE = r"\\[nrt]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|%[0-9A-Fa-f]{2}"
-# The same boundaries as lookbehinds, for the JWT rule.
-_ESCAPED_BOUNDARY = r"(?<=\\[nrt])|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})|(?<=%[0-9A-Fa-f]{2})"
+# The same boundaries as lookbehinds, for the JWT rule, which also stands after a
+# doubly encoded escape ('%253D' in a redirect URL nested in another's query): its hex
+# pair can end in a letter, and the token that follows is just as much a credential.
+_ESCAPED_BOUNDARY = (
+    r"(?<=\\[nrt])|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})|(?<=%[0-9A-Fa-f]{2})"
+    r"|(?<=%25[0-9A-Fa-f]{2})"
+)
 _SPECIFIC_TOKEN_START = r"(?:(?<![A-Za-z])|" + _ESCAPED_BOUNDARY + ")"
 # Prefixes no ordinary word contains.
 _SPECIFIC_TOKEN = (
@@ -104,15 +109,21 @@ _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     # n8n (commonly self-hosted, so any host): /webhook/<id> and /webhook-test/<id>.
     (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
-# A JWT starts at an 'eyJ' that follows the boundary rule above and runs to the end of
-# its third dotted segment. Each attempt starts at a run of base64url characters and
-# reads the characters before the first such 'eyJ' as 'lead', which is kept: an attempt
-# from every 'eyJ' would read a run of 'eyJ-eyJ-eyJ-...' without dots once per 'eyJ',
-# which takes quadratic time, and every run is read once here. Use ``_redact_jwts``.
+# A JWT starts at an 'eyJ' that follows the boundary rule above and has at least three
+# dotted segments. Each attempt starts at a run of base64url characters and reads the
+# characters before the first such 'eyJ' as 'lead', which is kept: an attempt from every
+# 'eyJ' would read a run of 'eyJ-eyJ-eyJ-...' without dots once per 'eyJ', which takes
+# quadratic time, and every run is read once here. The match runs on to the end of the
+# dotted chain (``_CHAIN``): that first 'eyJ' can be an unrelated segment or the payload
+# of a token whose header has whitespace ('eyJ4IjoxfQ.v2.<token>', '<token>.<token>',
+# '<token>-<token>'), and three segments from it ended at the next token's header and
+# showed that token's payload and signature; an encrypted token (JWE, five segments)
+# kept its ciphertext and tag. Use ``_redact_jwts``.
 _JWT_HEADER = r"(?=eyJ)" + _SPECIFIC_TOKEN_START + "eyJ"
+_CHAIN = re.compile(r"(?:\.[A-Za-z0-9_-]*+)*+")
 _JWT = re.compile(
     r"(?<![A-Za-z0-9_-])(?P<lead>(?:(?!" + _JWT_HEADER + r")[A-Za-z0-9_-])*+)"
-    r"(?P<jwt>" + _JWT_HEADER + r"[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+)"
+    r"(?P<jwt>" + _JWT_HEADER + r"[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+" + _CHAIN.pattern + ")"
 )
 # 'eyJ' is the base64url of '{"': a header written with whitespace does not start with
 # it (' {"alg"' is 'IHsi', '{ "alg"' is 'eyAi', a pretty-printed '{\n"' is 'ewoi'), and
@@ -120,13 +131,15 @@ _JWT = re.compile(
 # base64url segments is therefore read as well (``_dotted_token_reader``): its first
 # segment is withheld as a header, from the run's start or from any boundary the 'eyJ'
 # rule admits before a token (a non-letter, or an escape before the run), when it
-# decodes to a JSON object with an ``alg`` member. The candidate starts are many; each
-# costs one cheap reading of the first bytes (JSON whitespace, '{', whitespace, '"'),
-# only a start that passes it is decoded and parsed, and the decoded text is charged
-# against a budget, so a hostile run is read in linear time. A run that is no token is
-# searched again from its second segment, which may be a token's header after a long
-# first segment ('com.example.authenticationservice.<token>'), so every segment is
-# matched at most three times.
+# decodes to a JSON object with an ``alg`` member; the rest of the run's dotted chain
+# goes with it. The candidate starts are many; each costs one cheap reading of the
+# first bytes (JSON whitespace, '{', whitespace, '"'), only a start that passes it is
+# decoded and parsed, and the decoded text is charged against a budget, so a hostile
+# run is read in linear time. A run that is no token is searched again from its second
+# segment, which may be a token's header after a long first segment
+# ('com.example.authenticationservice.<token>'), so every segment is matched at most
+# three times. The chain after a token is read once, by ``_CHAIN``: in this pattern,
+# every search again would read the rest of the chain again.
 _DOTTED_RUN = re.compile(
     r"(?<![A-Za-z0-9_-])(?P<header>[A-Za-z0-9_-]{16,}+)\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+"
 )
@@ -498,7 +511,8 @@ def _dotted_token_reader(text: str) -> Callable[[re.Match[str]], str | None]:
         starts = {0}
         before = text[match.start() - 1] if match.start() else ""
         # The boundaries of the 'eyJ' rule: an escaped line break, byte or code point
-        # ('\n', '\x2e', '.'), a percent escape, and any non-letter.
+        # ('\n', '\x2e', '.'), a percent escape, a doubly encoded one ('%253D'), and any
+        # non-letter.
         if before == "\\":
             if header[0] in "nrt":
                 starts.add(1)
@@ -508,6 +522,8 @@ def _dotted_token_reader(text: str) -> Callable[[re.Match[str]], str | None]:
                 starts.add(5)
         elif before == "%" and _HEX_PAIR.fullmatch(header[:2]):
             starts.add(2)
+            if header[:2] == "25" and _HEX_PAIR.fullmatch(header[2:4]):
+                starts.add(4)
         starts.update(position for position in range(1, len(header)) if not header[position - 1].isalpha())
         for start in sorted(starts):
             if is_header(header, start):
@@ -532,8 +548,12 @@ def _redact_jwts(text: str) -> str:
             # Not a token: its second segment may be a token's header, so search on from there.
             position = match.end("header")
             continue
+        # The rest of its dotted chain goes with it, as with an 'eyJ' token: an encrypted
+        # token's ciphertext and tag, or a token joined on by a dot ('<token>.<token>'),
+        # would otherwise be kept.
         parts += (text[kept : match.start()], replacement)
-        kept = position = match.end()
+        chain = _CHAIN.match(text, match.end())
+        kept = position = chain.end() if chain else match.end()
     parts.append(text[kept:])
     return "".join(parts)
 

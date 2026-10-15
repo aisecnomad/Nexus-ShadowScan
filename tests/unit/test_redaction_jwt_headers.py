@@ -15,8 +15,9 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-def _token(header: bytes) -> str:
-    return ".".join([_b64url(header), _b64url(b'{"sub":"agent"}'), _b64url(bytes(range(32)))])
+def _token(header: bytes, subject: bytes = b"agent") -> str:
+    signature = bytes(range(32)) if subject == b"agent" else subject.ljust(32, b"#")
+    return ".".join([_b64url(header), _b64url(b'{"sub":"' + subject + b'"}'), _b64url(signature)])
 
 
 @pytest.mark.parametrize(
@@ -60,7 +61,15 @@ def test_a_dotted_json_object_without_alg_is_kept():
 
 def test_hostile_dotted_runs_stay_fast():
     started = time.monotonic()
-    for shape in ("-IHsi" * 100_000 + ".a.b", "IHsiCQ" * 50_000 + ".x.y", ("x" * 20 + ".") * 50_000):
+    for shape in (
+        "-IHsi" * 100_000 + ".a.b",
+        "IHsiCQ" * 50_000 + ".x.y",
+        ("x" * 20 + ".") * 50_000,
+        # A token's dotted chain is withheld with it, read once.
+        _token(b' {"alg":"HS256"}') + ".x" * 200_000,
+        "eyJ4IjoxfQ.v2" + ".x" * 200_000,
+        ("%253D" + "IHsi" * 4 + ".a.b ") * 20_000,
+    ):
         try:
             sanitize_text(shape)
         except ValueError:
@@ -104,3 +113,65 @@ def test_dotted_runs_are_read_again_from_the_second_segment_in_linear_time():
 
     small, large = elapsed(12_500), elapsed(50_000)  # 1 MB
     assert large < max(small, 0.05) * 10, (small, large)
+
+
+_COMPACT = b'{"alg":"HS256","typ":"JWT"}'
+_SPACED = b' {"alg":"HS256","typ":"JWT"}'
+_BRACE_SPACED = b'{ "alg":"HS256"}'
+
+
+@pytest.mark.parametrize(
+    ("prefix", "tokens", "joint"),
+    [
+        # An unrelated 'eyJ' segment two segments before the token.
+        ("eyJ4IjoxfQ.v2.", [_token(_SPACED)], ""),
+        ("eyJ4IjoxfQ.v2.", [_token(_COMPACT)], ""),
+        # A whitespace-header token's payload is an 'eyJ' segment, and so is the next token.
+        ("", [_token(_BRACE_SPACED), _token(_COMPACT, b"second")], "."),
+        ("", [_token(_BRACE_SPACED), _token(_SPACED, b"second")], "."),
+        ("", [_token(_SPACED), _token(_SPACED, b"second")], "."),
+        ("", [_token(_COMPACT), _token(_COMPACT, b"second")], "-"),
+        ("", [_token(_COMPACT), _token(_SPACED, b"second"), _token(_BRACE_SPACED, b"third")], "."),
+    ],
+)
+def test_a_token_in_a_dotted_chain_keeps_no_payload_or_signature(prefix, tokens, joint):
+    # Three segments from the first 'eyJ' ended at the next token's header, which left
+    # that token's payload and signature, verifiable once its header is guessed.
+    text = prefix + joint.join(tokens)
+    for result in (sanitize_text(text), sanitize({"note": text})["note"]):
+        assert result.endswith(REDACTED), result
+        for token in tokens:
+            _, payload, signature = token.split(".")
+            assert payload not in result and signature not in result, result
+
+
+@pytest.mark.parametrize(
+    "header", [b'{"alg":"RSA-OAEP","enc":"A256GCM"}', b' {"alg":"RSA-OAEP","enc":"A256GCM"}']
+)
+def test_an_encrypted_token_of_five_segments_is_withheld_whole(header):
+    # JWE compact serialization: header, encrypted key, IV, ciphertext and tag. Three
+    # segments were withheld and the ciphertext and tag were kept.
+    token = ".".join([_b64url(header), *(_b64url(byte * 24) for byte in (b"k", b"i", b"c", b"t"))])
+    for result in (sanitize_text(token + " was sent"), sanitize({"note": token + " was sent"})["note"]):
+        assert result == REDACTED + " was sent"
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        # A redirect URL nested in another's query, so its own query is encoded twice.
+        "https://app.example.com/cb?next=https%253A%252F%252Fapi.example.com%252Fcb%253Fx%253D",
+        "x%253d",
+        "/v1%252F",
+    ],
+)
+@pytest.mark.parametrize(
+    # The last header is cut short, so only the 'eyJ' rule, which does not decode it, reads it.
+    "header",
+    [_COMPACT, _SPACED, b"{\n" + _COMPACT[1:], b'{"alg":"HS256","typ":'],
+)
+def test_a_token_after_a_doubly_encoded_escape_is_redacted(prefix, header):
+    # '%253D' ends in a letter, so the token after it stood behind no boundary.
+    token = _token(header)
+    for result in (sanitize_text(prefix + token), sanitize({"note": prefix + token})["note"]):
+        assert result == prefix + REDACTED, result

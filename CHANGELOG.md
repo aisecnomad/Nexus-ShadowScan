@@ -218,6 +218,32 @@ summarizes each release for people who install and operate ShadowScan.
   now fails `make secrets`, and AI review gate output; every tracked file still
   passes. Regression tests cover every layout with up to four bytes before and
   two after the `{`, longer runs, and three hostile inputs for linear time.
+- **A JWT in a dotted chain or after a doubly encoded separator kept its
+  payload and signature.** Both leaks pre-date #237, whose
+  `docs/production.md` entry said whitespace-header tokens were withheld
+  everywhere. The `eyJ` rule took three dotted segments from the first `eyJ`
+  it met, and that `eyJ` can be an unrelated segment or the `eyJ` payload of a
+  whitespace-header token: `eyJ4IjoxfQ.v2.<token>`, `<token>.<token>` and
+  `<token>-<token>` withheld up to the next token's header and kept its
+  payload and signature, verifiable once the header is guessed. An encrypted
+  token (JWE, five segments) kept its ciphertext and tag under either reading.
+  A token is now withheld to the end of its dotted chain, with any text joined
+  on by a dot (`<token>.json`, a full stop right after it); the chain is read
+  once after the match, not by the pattern that is searched again after a run
+  that is no token, so the pass stays linear. A token right after a doubly
+  percent-encoded separator (`%253D`, `%252F`, as in a redirect URL nested in
+  another's query) followed a hex letter, which neither reading took as a
+  boundary, and was kept whole for every header layout; both readings now
+  start after such an escape as after a single one. `docs/production.md` now
+  describes the coverage and names the gaps that remain: a token glued
+  directly to letters, one after a separator encoded three times, and a UTF-16
+  header. Affects report text, evidence and logs that held such a token, and
+  finding ids derived from them; reports written before this change may still
+  show it. Regression tests cover seven chains and a JWE with compact and
+  whitespace headers through `sanitize_text` and `sanitize`, and three doubly
+  encoded prefixes with four header layouts; the hostile-input timing test
+  gains a long chain after each kind of token and a run of double-encoded
+  candidates.
 - **A report could land behind another user's link (#237).**
   `write_private_text` checked only the links named in the output path itself,
   then let `os.path.realpath` follow the rest unchecked. An operator's link to

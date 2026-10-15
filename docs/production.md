@@ -43,11 +43,20 @@ passing unit suite does not establish complete coverage of a particular estate.
   writes `r.json` beside `mylink`, not in the parent of the link's target, where
   the kernel's own resolution would put it.
 - **Redaction.** JWTs whose header is written with whitespace (encoded as
-  `IHsi…`, `eyAi…`, `ewo…` rather than `eyJ…`) are withheld everywhere,
-  including directly after a dotted name with a segment of 16 or more
-  characters (`com.example.authenticationservice.<token>`), which the first
-  version of this check missed. Report text that held such a token changes, and
-  so may finding ids derived from it.
+  `IHsi…`, `eyAi…`, `ewo…` rather than `eyJ…`) are withheld in report text,
+  evidence and logs as `eyJ…` tokens are, including directly after a dotted
+  name with a segment of 16 or more characters
+  (`com.example.authenticationservice.<token>`), which the first version of
+  this check missed. A token of either kind is withheld to the end of its
+  dotted chain, so a token joined to another by `.` or `-`, or after an
+  unrelated `eyJ…` segment, keeps no payload or signature, and an encrypted
+  token (JWE) keeps no ciphertext; text joined on by a dot (`<token>.json`, a
+  full stop) goes with it. A token after a doubly percent-encoded separator
+  (`%253D`, `%252F` in a redirect URL nested in another's query) is withheld
+  as after a single one. Known gaps: a token glued directly to letters
+  (`abc<token>`), one after a separator encoded three times (`%25253D`), and a
+  header encoded as UTF-16 are kept. Report text that held such a token
+  changes, and so may finding ids derived from it.
 - **identity.jwt.** `expected_issuer` or `allowed_algorithms` without
   `jwks_url` is an error (exit 3) in a configuration file, as it was on the
   command line. Tokens whose header has a non-string `kid` or a `crit` list are
