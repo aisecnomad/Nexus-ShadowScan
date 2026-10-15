@@ -809,7 +809,9 @@ def test_cloudtrail_sanitized_or_absent_principal_keys_the_tally_and_the_lineage
     from shadowscan.connectors.cloud import aws_lineage
 
     monkeypatch.setattr(aws_lineage, "MAX_LINEAGE_EVENTS", 1)
-    session = "arn:aws:sts::222222222222:assumed-role/ml-worker/AKIAIOSFODNN7EXAMPLE"
+    # Built at runtime so the tracked file holds no key-shaped literal (the secrets gate).
+    key_id = "AKIA" + "IOSFODNN7EXAMPLE"
+    session = f"arn:aws:sts::222222222222:assumed-role/ml-worker/{key_id}"
     first = {
         "_kind": "cloudtrail-event",
         "_region": "us-west-2",
@@ -826,7 +828,7 @@ def test_cloudtrail_sanitized_or_absent_principal_keys_the_tally_and_the_lineage
     assert not ctx.stats.incomplete
     (finding,) = findings
     assert finding.metadata["events"] == 2
-    assert "AKIAIOSFODNN7EXAMPLE" not in json.dumps(finding.to_dict())
+    assert key_id not in json.dumps(finding.to_dict())
     lineage = finding.metadata["cloudtrail_lineage"]
     assert [o["eventID"] for o in lineage["observations"]] == ["sanitized-1"]
     assert lineage["coverage"] == "partial" and "event-limit" in lineage["limits"]

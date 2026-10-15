@@ -84,6 +84,13 @@ a second verification; each has a regression test.
   `imapTrigger`, `postMessage` and `sendMessage` do not exist; the IMAP
   trigger is `emailReadImap`, already an untrusted input). Roles remain
   non-scoring graph metadata.
+- Low-code: a Slack post, Gmail send or Postgres/MySQL insert node exported
+  without an `operation` key (n8n strips default-valued parameters) gets the
+  egress role of its declared default; Gmail v1 (default resource draft) and
+  MongoDB (default find) stay non-egress. A `null` output slot in
+  `connections` (an unwired If or Switch output, valid per n8n's schema) no
+  longer marks the graph malformed and the scan incomplete; it is skipped
+  while still counting toward the connection-inspection budget.
 - Signatures: `provider.google-vertex-ai`, `provider.aws-bedrock` and
   `provider.azure-openai` carry `references` to the provider's endpoint
   documentation and IP-range publications, from #217. IP ranges are

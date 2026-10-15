@@ -137,8 +137,15 @@ Email (`emailSend`) always sends; Slack `post`/`sendAndWait`, Gmail
 `send`/`reply`/`sendAndWait`, and Postgres, MySQL (`mySql`) and MongoDB write
 operations (`insert`, `update`, `upsert`, `deleteTable` or `delete`,
 `findOneAndReplace`, `findOneAndUpdate`, and `executeQuery`, whose SQL is not
-parsed) are egress; `select`, `find`, `aggregate`, searches, and an omitted or
-expression-valued operation give no role. A malformed or over-budget graph
+parsed) are egress; `select`, `find`, `aggregate` and searches give no role.
+n8n saves a parameter only when it differs from the node's declared default,
+so an absent `operation` means that default: Slack posts a message, Gmail v2
+sends one, Postgres and MySQL insert, MongoDB finds (not a sink). A Gmail v1
+node without a resource defaults to a draft and gets no sink role; an explicit
+non-message resource, an explicit null or an expression-valued operation gives
+no role. A `null` output slot (`IConnection[] | null` in n8n's schema) is an
+unwired output and is skipped, still counting toward the connection-inspection
+budget. A malformed or over-budget graph
 marks coverage incomplete and the finding records
 `workflow_graph.status: incomplete`; it is never dropped.
 
@@ -160,7 +167,8 @@ capped at 32 nodes and explicitly disclose truncation.
 
 The fixtures in `tests/fixtures/lowcode/graph_cases.json` cover connected,
 disconnected, cyclic, reversed, disabled, non-AI and type-prefix decoy workflows,
-plus email, database-write, database-read, raw-query and IMAP-trigger sinks and
+plus email, database-write, database-read, raw-query and IMAP-trigger sinks,
+default-operation sinks (Slack, Gmail, Postgres, MongoDB), a null output slot and
 sources.
 They are synthetic regressions, not measured production precision. Registry
 extensions should cite the provider's actual node declaration and add positive
