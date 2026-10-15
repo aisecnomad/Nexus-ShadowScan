@@ -260,7 +260,8 @@ def test_other_languages_idioms_in_a_python_file_match_nothing(run_connector, in
     assert not [m for m in index.match_code(text, "python") if m.signature_id == "protocol.mcp"]
     assert not [m for m in index.match_imports(text, "python") if m.signature_id == "protocol.mcp"]
     findings, ctx = _scan(run_connector, _write(tmp_path, {"notes.py": text}))
-    assert findings == [] and not ctx.stats.incomplete
+    assert findings == [] and ctx.stats.incomplete
+    assert any("source did not parse" in warning for warning in ctx.stats.warnings)
 
 
 @pytest.mark.parametrize("fixture", ["uncorroborated_rust", "uncorroborated_go"])

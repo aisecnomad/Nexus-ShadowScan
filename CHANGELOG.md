@@ -5,6 +5,30 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Runtime identity, collection completeness and semantic fallback (October 15)
+
+- Runtime process classification now reads the executed target of supported
+  launchers, rather than treating later application arguments or package-source
+  options as executed AI tools. Exhausted command-line bounds mark coverage
+  incomplete even when the retained prefix produces no finding. Host and user
+  identities are retained in full within validated input limits, so different
+  devices or users cannot merge through a shortened display prefix.
+- GitHub App installation inventories validate declared totals against unique
+  returned installation IDs. Inconsistent or malformed count information marks
+  coverage incomplete while retaining valid observations; the existing HTTP
+  origin, pagination and response-size protections remain in effect.
+- Python source and notebook cells that the scanner's interpreter cannot parse
+  retain lexical observations but mark semantic analysis incomplete. Unparsed
+  ranges cannot acquire agent classification or execution capabilities from
+  semantic claims that were not established; independently parsed neighboring
+  source remains usable.
+- Rescan affected inputs and rebuild comparison baselines after upgrading.
+  Long runtime identities now produce their full resource bindings and may
+  change finding IDs. Review and regenerate affected inventory cards instead
+  of treating a missing old, shortened resource as resolved. These changes are
+  verified with authored regression fixtures; they do not establish independent
+  field accuracy or live tenant acceptance.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

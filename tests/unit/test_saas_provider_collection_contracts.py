@@ -7,8 +7,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import responses
+from click.testing import CliRunner
 from requests import ConnectionError
 
+from shadowscan.cli import main
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.saas import github_apps as github_apps_module
 from shadowscan.connectors.saas.github_apps import GitHubAppsConnector
@@ -373,10 +375,13 @@ def test_github_apps_pat_inventory_is_optional(index, monkeypatch):
         def __init__(self, *args, **kwargs):
             pass
 
-        def paginate_link(self, path, params=None, item_key=None):
+        def paginate_link(self, path, params=None, item_key=None, on_data=None):
             if "personal-access-tokens" in path:
                 raise HttpError(403, "https://api.github.com" + path)
-            yield {"id": 101, "app_slug": "coderabbitai", "permissions": {}}
+            installation = {"id": 101, "app_slug": "coderabbitai", "permissions": {}}
+            if on_data is not None:
+                on_data({"total_count": 1, "installations": [installation]})
+            yield installation
 
         def try_get_json(self, path, default=None, ok_statuses=None, **kwargs):
             return None
@@ -411,6 +416,214 @@ def _pat(**overrides):
     }
 
 
+def _run_github_inventory(mode, payload, run_connector, tmp_path):
+    if mode == "offline":
+        source = tmp_path / "github-inventory.json"
+        source.write_text(json.dumps(payload))
+        return run_connector("saas.github-apps", org="acme", input=str(source))
+    base = "https://api.github.com/orgs/acme"
+    responses.get(f"{base}/installations", json=payload)
+    responses.get(f"{base}/copilot/billing", status=404)
+    responses.get(f"{base}/personal-access-tokens", json=[])
+    return run_connector("saas.github-apps", org="acme", token="example-token")
+
+
+@pytest.mark.parametrize("mode", ["live", "offline"])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"total_count": None},
+        {"total_count": True},
+        {"total_count": False},
+        {"total_count": -1},
+        {"total_count": 1.0},
+        {"total_count": "1"},
+        {"total_count": {"opaque-provider-secret": 1}},
+    ],
+)
+@responses.activate
+def test_github_inventory_requires_valid_total_without_losing_observations(
+    run_connector, tmp_path, mode, metadata
+):
+    payload = {**metadata, "installations": [_claude_installation()]}
+    findings, ctx = _run_github_inventory(mode, payload, run_connector, tmp_path)
+
+    assert [f.resource for f in findings] == ["github:installation:101"]
+    incomplete = mode == "live" or "total_count" in metadata
+    assert ctx.stats.incomplete is incomplete
+    diagnostics = ctx.stats.warnings + ctx.stats.errors
+    assert any("total_count" in message for message in diagnostics) is incomplete
+    assert "opaque-provider-secret" not in str(ctx.stats)
+
+
+@pytest.mark.parametrize("mode", ["live", "offline"])
+@pytest.mark.parametrize(
+    "total,ids,incomplete",
+    [
+        (0, [], False),
+        (1, [101], False),
+        (2, [101, 102], False),
+        (2, [], True),
+        (2, [101], True),
+        (0, [101], True),
+        (1, [101, 102], True),
+        (2, [101, 101], True),
+        (1, [101, 101], True),
+    ],
+)
+@responses.activate
+def test_github_inventory_total_matches_unique_observed_installations(
+    run_connector, tmp_path, mode, total, ids, incomplete
+):
+    payload = {"total_count": total, "installations": [_claude_installation(id=identity) for identity in ids]}
+    findings, ctx = _run_github_inventory(mode, payload, run_connector, tmp_path)
+
+    assert {f.resource for f in findings} == {f"github:installation:{identity}" for identity in ids}
+    assert ctx.stats.incomplete is incomplete
+    assert bool(ctx.stats.warnings + ctx.stats.errors) is incomplete
+
+
+@pytest.mark.parametrize("second_total", [3, 1, None])
+@responses.activate
+def test_github_inventory_changed_or_missing_page_total_retains_both_pages(run_connector, second_total):
+    base = "https://api.github.com/orgs/acme"
+    responses.get(
+        f"{base}/installations",
+        json={"total_count": 2, "installations": [_claude_installation()]},
+        headers={"Link": f'<{base}/installations?page=2>; rel="next"'},
+    )
+    second = {"installations": [_claude_installation(id=102)]}
+    if second_total is not None:
+        second["total_count"] = second_total
+    responses.get(f"{base}/installations", json=second)
+    responses.get(f"{base}/copilot/billing", status=404)
+    responses.get(f"{base}/personal-access-tokens", json=[])
+
+    findings, ctx = run_connector("saas.github-apps", org="acme", token="example-token")
+
+    assert {f.resource for f in findings} == {"github:installation:101", "github:installation:102"}
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert any("total_count" in warning for warning in ctx.stats.warnings)
+    assert len(responses.calls) == 4
+
+
+@responses.activate
+def test_github_inventory_repeated_id_across_pages_does_not_complete_total(run_connector):
+    base = "https://api.github.com/orgs/acme"
+    page = {"total_count": 2, "installations": [_claude_installation()]}
+    responses.get(
+        f"{base}/installations",
+        json=page,
+        headers={"Link": f'<{base}/installations?page=2>; rel="next"'},
+    )
+    responses.get(f"{base}/installations", json=page)
+    responses.get(f"{base}/copilot/billing", status=404)
+    responses.get(f"{base}/personal-access-tokens", json=[])
+
+    findings, ctx = run_connector("saas.github-apps", org="acme", token="example-token")
+
+    assert {f.resource for f in findings} == {"github:installation:101"}
+    assert ctx.stats.incomplete and not ctx.stats.errors
+    assert any("repeated installation ids" in warning for warning in ctx.stats.warnings)
+    assert any("does not match total_count" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("mode", ["live", "offline"])
+@pytest.mark.parametrize("identity", [None, "102", True, 0, -1, 102.0])
+@responses.activate
+def test_github_inventory_invalid_installation_id_cannot_satisfy_total(
+    run_connector, tmp_path, mode, identity
+):
+    payload = {
+        "total_count": 2,
+        "installations": [_claude_installation(), _claude_installation(id=identity)],
+    }
+    findings, ctx = _run_github_inventory(mode, payload, run_connector, tmp_path)
+
+    assert "github:installation:101" in {f.resource for f in findings}
+    assert ctx.stats.incomplete
+    diagnostics = ctx.stats.warnings + ctx.stats.errors
+    assert any("invalid installation id" in message for message in diagnostics)
+
+
+@pytest.mark.parametrize("records", [[], [_claude_installation()]])
+@pytest.mark.parametrize("envelope", [False, True])
+def test_github_legacy_offline_exports_do_not_require_provider_totals(
+    run_connector, tmp_path, records, envelope
+):
+    payload = {"installations": records} if envelope else records
+    findings, ctx = _run_github_inventory("offline", payload, run_connector, tmp_path)
+
+    assert len(findings) == len(records)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+@pytest.mark.parametrize("metadata", [{"id": "page"}, {"name": "page"}, {"type": "page"}])
+@pytest.mark.parametrize("populated", [False, True])
+def test_github_offline_installations_envelope_takes_precedence_over_page_identity(
+    run_connector, tmp_path, metadata, populated
+):
+    payload = {
+        **metadata,
+        "total_count": 1 if populated else 2,
+        "installations": [_claude_installation()] if populated else [],
+    }
+    findings, ctx = _run_github_inventory("offline", payload, run_connector, tmp_path)
+
+    assert [f.resource for f in findings] == (["github:installation:101"] if populated else [])
+    assert ctx.stats.incomplete is not populated
+    assert bool(ctx.stats.warnings + ctx.stats.errors) is not populated
+
+
+@pytest.mark.parametrize("collection", [None, {}, "opaque-provider-secret"])
+def test_github_offline_page_identity_cannot_hide_malformed_installations(
+    run_connector, tmp_path, collection
+):
+    payload = {"id": "page", "total_count": 0, "installations": collection}
+    findings, ctx = _run_github_inventory("offline", payload, run_connector, tmp_path)
+
+    assert findings == []
+    assert ctx.stats.incomplete
+    assert any("collection must be an array" in error for error in ctx.stats.errors)
+    assert "opaque-provider-secret" not in str(ctx.stats)
+
+
+def test_github_offline_single_installation_remains_a_native_record(run_connector, tmp_path):
+    findings, ctx = _run_github_inventory("offline", _claude_installation(), run_connector, tmp_path)
+
+    assert [f.resource for f in findings] == ["github:installation:101"]
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+
+
+@pytest.mark.parametrize("mode", ["live", "offline"])
+@responses.activate
+def test_github_declared_missing_installations_exit_3_from_cli(tmp_path, monkeypatch, mode):
+    payload = {"total_count": 2, "installations": []}
+    args = ["run", "saas.github-apps", "--set", "org=acme", "--format", "json"]
+    output = tmp_path / "report.json"
+    args.extend(["--output", str(output)])
+    if mode == "offline":
+        source = tmp_path / "installations.json"
+        source.write_text(json.dumps(payload))
+        args.extend(["--input", str(source)])
+    else:
+        monkeypatch.setenv("GITHUB_TOKEN", "example-readonly-token")
+        base = "https://api.github.com/orgs/acme"
+        responses.get(f"{base}/installations", json=payload)
+        responses.get(f"{base}/copilot/billing", status=404)
+        responses.get(f"{base}/personal-access-tokens", json=[])
+
+    result = CliRunner().invoke(main, args)
+
+    assert result.exit_code == 3, result.output
+    report = json.loads(output.read_text())
+    assert report["findings"] == []
+    assert report["stats"][0]["incomplete"] is True
+    diagnostics = report["stats"][0]["warnings"] + report["stats"][0]["errors"]
+    assert any("does not match total_count" in message for message in diagnostics)
+
+
 @responses.activate
 def test_github_installation_denial_keeps_independent_billing_and_pat(run_connector):
     base = "https://api.github.com/orgs/acme"
@@ -434,7 +647,7 @@ def test_github_failed_installation_continuation_preserves_pages_and_pat(run_con
     base = "https://api.github.com/orgs/acme"
     responses.get(
         f"{base}/installations",
-        json={"installations": [_claude_installation()]},
+        json={"total_count": 2, "installations": [_claude_installation()]},
         headers={"Link": f'<{base}/installations?page=2>; rel="next"'},
     )
     responses.get(f"{base}/installations", status=403)
@@ -452,7 +665,7 @@ def test_github_failed_installation_continuation_preserves_pages_and_pat(run_con
 @responses.activate
 def test_github_malformed_billing_keeps_installations_and_pat(run_connector, billing):
     base = "https://api.github.com/orgs/acme"
-    responses.get(f"{base}/installations", json={"installations": [_claude_installation()]})
+    responses.get(f"{base}/installations", json={"total_count": 1, "installations": [_claude_installation()]})
     responses.get(f"{base}/copilot/billing", json=billing)
     responses.get(f"{base}/personal-access-tokens", json=[_pat()])
 
@@ -466,7 +679,7 @@ def test_github_malformed_billing_keeps_installations_and_pat(run_connector, bil
 @responses.activate
 def test_github_billing_network_failure_keeps_pat(run_connector):
     base = "https://api.github.com/orgs/acme"
-    responses.get(f"{base}/installations", json={"installations": []})
+    responses.get(f"{base}/installations", json={"total_count": 0, "installations": []})
     responses.get(f"{base}/copilot/billing", body=ConnectionError("opaque-provider-secret"))
     responses.get(f"{base}/personal-access-tokens", json=[_pat()])
 
@@ -505,7 +718,7 @@ def test_github_malformed_records_preserve_valid_neighbors(tmp_path, run_connect
 @responses.activate
 def test_github_live_billing_kind_is_assigned_by_collector(run_connector):
     base = "https://api.github.com/orgs/acme"
-    responses.get(f"{base}/installations", json={"installations": []})
+    responses.get(f"{base}/installations", json={"total_count": 0, "installations": []})
     responses.get(
         f"{base}/copilot/billing",
         json={"_kind": "pat", "plan_type": "business", "seat_breakdown": {"total": 3}},

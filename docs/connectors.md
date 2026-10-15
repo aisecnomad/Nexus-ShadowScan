@@ -298,6 +298,12 @@ corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
 
+Python files or notebook cells that the scanner's interpreter cannot parse
+retain lexical observations but make semantic coverage incomplete. Unparsed
+ranges cannot establish semantic agent construction or execution capabilities;
+supported neighboring source remains analyzable. Scan with a supported Python
+interpreter that understands the input syntax before accepting completeness.
+
 Supported Python and JavaScript/TypeScript tool registrations and model-selected
 dispatch establish execution capabilities. Unused or unrelated execution code
 remains zero-weight `metadata.contextual_capabilities`; unresolved registration is
@@ -891,6 +897,11 @@ on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
 untrusted repositories; the rule that code scans and live connectors run
 separately does not narrow a shared token's scope.
 
+Installation envelopes validate declared totals against unique collected IDs.
+Malformed or contradictory count information marks coverage incomplete while
+retaining valid observations. See the [SaaS guide](connectors/saas.md) for
+offline export forms and collection limits.
+
 ### `saas.atlassian`
 UPM user-installed apps for Jira and Confluence. Provider error envelopes make
 collection incomplete even when they include empty record arrays; valid
@@ -1252,6 +1263,13 @@ command line or executable; live mode reads `/proc` on Linux. The engine
 links these findings to endpoint findings for the same tool on the same
 device (`metadata.lifecycle`, tag `observed-running`) without changing
 scores.
+
+Launcher parsing identifies the executed script, module or package rather than
+its application arguments. Reaching a command-line parsing limit marks coverage
+incomplete even when no tool can be identified. Full validated host and user
+identities are used for aggregation; display shortening never merges devices
+or users. See the [migration notes](production.md#unreleased-runtime-identity-and-completeness-migration)
+before rebuilding inventory bindings and comparison baselines.
 
 Lifecycle assessments additionally disclose their observation window, runtime
 coverage and whether activity is current, historical or unknown. Unobservable
