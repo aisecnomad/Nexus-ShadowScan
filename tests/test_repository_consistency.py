@@ -1494,10 +1494,17 @@ def _percentages(level: dict[str, Any]) -> str:
     return " / ".join(f"{level[key]:.1%}" for key in ("precision", "recall", "f1"))
 
 
+def _readme_section(readme: str, heading: str) -> str:
+    """The README text from ``heading`` up to the next level-2 heading, wherever the section sits."""
+    start = readme.index(f"\n{heading}\n")
+    end = readme.find("\n## ", start + 1)
+    return readme[start : end if end != -1 else len(readme)]
+
+
 def test_readme_benchmark_table_quotes_the_committed_results() -> None:
     """Every number in the README benchmark table comes from the committed metrics files."""
     readme = _read(ROOT / "README.md")
-    section = readme[readme.index("## Benchmarks") : readme.index("## The Why")]
+    section = _readme_section(readme, "## Benchmarks")
     estate_run = "shadowbench/estate/results/2026-10-11"
     estate_metrics = json.loads((_BENCHMARKS / estate_run / "metrics.json").read_text(encoding="utf-8"))
     corpus, tool = estate_metrics["corpus"], estate_metrics["tools"]["shadowscan"]
@@ -1556,7 +1563,7 @@ def test_readme_estate_row_says_when_the_labels_were_frozen() -> None:
     ran once (the run report already says so).
     """
     readme = _read(ROOT / "README.md")
-    section = " ".join(readme[readme.index("## Benchmarks") : readme.index("## The Why")].split())
+    section = " ".join(_readme_section(readme, "## Benchmarks").split())
     assert "frozen before any tool ran" not in section
     assert "label-completeness pass in which every runnable tool ran once" in section
 
@@ -1571,12 +1578,20 @@ def test_estate_benchmark_documents_say_later_shadowscan_runs_are_in_sample() ->
     """
     readme = _read(ROOT / "README.md")
     documents = {
-        "README.md": readme[readme.index("## Benchmarks") : readme.index("## The Why")],
+        "README.md": _readme_section(readme, "## Benchmarks"),
         "benchmarks/shadowbench/README.md": _read(ROOT / "benchmarks/shadowbench/README.md"),
         "benchmarks/shadowbench/estate/README.md": _read(ROOT / "benchmarks/shadowbench/estate/README.md"),
     }
     unstated = [name for name, text in documents.items() if "in-sample" not in " ".join(text.split())]
     assert not unstated, f"no in-sample disclosure for later ShadowScan estate runs in {unstated}"
+    # The estate row's "in-sample (below)" points at this explanation; the word alone in the
+    # table cell must not stand in for it.
+    benchmarks = " ".join(documents["README.md"].split())
+    for statement in (
+        "detection rules were changed with that run's errors in view",
+        "fewer errors on it are not evidence of better field accuracy",
+    ):
+        assert statement in benchmarks, f"README Benchmarks no longer says: {statement!r}"
     changelog = _read(ROOT / "CHANGELOG.md")
     start = changelog.index("\n## Unreleased\n")
     unreleased = " ".join(changelog[start : changelog.index("\n## ", start + 1)].split())

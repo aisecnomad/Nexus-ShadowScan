@@ -5,6 +5,28 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### README: why and how first, AI-assisted benchmark authorship (October 15)
+
+- From #229: "The Why" and "How it works" now follow the name table, ahead
+  of install, so a reader meets the problem and the pipeline first; the
+  benchmark note says the maintainer wrote ShadowScan, both corpora, their
+  labels and the harnesses with AI coding assistants, as "Project status"
+  already says of the code; "Safety notes" is now "Safety and security
+  notes".
+- Not carried from #229, because each would have made the README less
+  accurate or broken a test that guards it: hand-deleting five rows of the
+  generated detection matrix (`make readme-matrix` owns it), removing the
+  statement that later ShadowScan runs on the 2026-10-11 estate are
+  in-sample, dropping ShadowScan from the list of what the benchmark author
+  wrote, "reports may still contain" for "still contain" sensitive
+  inventory data, and a superlative in the banner's alt text.
+- The README benchmark tests read the Benchmarks section up to the next
+  heading instead of up to "The Why", so moving a section no longer empties
+  the text they check. The in-sample test now also requires the README's
+  explanation (rules changed with the run's errors in view; fewer errors are
+  not evidence of better field accuracy): the estate row's "in-sample
+  (below)" alone had let a deletion of that explanation pass.
+
 ### README restructured as a landing page (October 15)
 
 - The README leads with install, quick start, a command reference and the
