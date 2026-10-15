@@ -777,3 +777,26 @@ def test_cloudtrail_timestamp_outside_the_utc_range_is_invalid_not_a_crash(index
     assert "invalid-timestamp" in lineage["limits"]
     # The record after the overflowing one was still analyzed.
     assert any(o["eventID"] == "invocation-17" for o in lineage["observations"])
+
+
+@pytest.mark.parametrize(
+    ("source", "name"),
+    [
+        ("codewhisperer.amazonaws.com", "GenerateCompletions"),  # Amazon Q Developer
+        ("wisdom.amazonaws.com", "QueryAssistant"),  # Amazon Q in Connect
+        ("lex.amazonaws.com", "RecognizeText"),
+        ("kendra.amazonaws.com", "Retrieve"),
+        ("q.amazonaws.com", "SendMessage"),
+    ],
+)
+def test_cloudtrail_q_developer_q_in_connect_lex_and_kendra_events_count_for_callers(index, source, name):
+    # Every AI-service event counted for its caller before lineage; the services that
+    # LLM_ACTION_PREFIXES already names must not vanish from a full trail export.
+    assumption, invocation, _ = _lineage_records()
+    event = {**invocation, "eventID": f"{name}-1", "eventName": name, "eventSource": source}
+    findings, ctx = _lineage(index, [assumption, event])
+    assert not ctx.stats.incomplete
+    (finding,) = findings
+    assert finding.metadata["events"] == 1
+    assert finding.metadata["operations"] == {name: 1}
+    assert any("1 CloudTrail AI event(s) outside the lineage operation list" in w for w in ctx.stats.warnings)

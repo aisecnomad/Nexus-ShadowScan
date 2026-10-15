@@ -147,7 +147,23 @@ CLOUDTRAIL_EVENTS = [
 # CloudTrail event sources whose API calls the caller tally counts, as every
 # cloudtrail-event record did before session lineage. Only CLOUDTRAIL_EVENTS
 # carry a session trace; a normalized record without a source is one of those.
-_LLM_EVENT_SOURCES = frozenset({"bedrock", "sagemaker", "q", "qbusiness", "qapps", "qdeveloper", "qconnect"})
+_LLM_EVENT_SOURCES = frozenset(
+    {
+        "bedrock",
+        "sagemaker",
+        "q",
+        "qbusiness",
+        "qapps",
+        "qdeveloper",
+        "qconnect",
+        # The services LLM_ACTION_PREFIXES already treats as AI scope: Amazon Q
+        # Developer logs under codewhisperer, Amazon Q in Connect under wisdom.
+        "codewhisperer",
+        "wisdom",
+        "lex",
+        "kendra",
+    }
+)
 MAX_LIST_PAGES = 1000
 # Representative AI operations, not a complete IAM action catalogue. These
 # establish potential access from NotAction; they never establish effective
