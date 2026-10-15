@@ -374,7 +374,10 @@ security_options = [
         "--plugin-execution",
         type=click.Choice(["thread", "process"]),
         default=None,
-        help="third-party connector execution backend (default: thread); process enables worker termination",
+        help=(
+            "third-party connector execution backend (default: process); "
+            "thread uses cooperative cancellation"
+        ),
     ),
     click.option(
         "--allow-plugin",
@@ -678,7 +681,7 @@ def scan(config_path: str, only: tuple[str, ...], opts: ScanOptions) -> None:
     "-S",
     "settings",
     multiple=True,
-    help="connector option key=value (repeatable; use JSON for structured values)",
+    help="connector option key=value (repeatable; schema-aware; JSON for structured values)",
 )
 @scan_options
 def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts: ScanOptions) -> None:

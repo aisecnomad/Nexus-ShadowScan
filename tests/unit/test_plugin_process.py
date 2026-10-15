@@ -114,7 +114,7 @@ TIMEOUT_SECONDS = 10
 
 def _engine(**options):
     return Engine(
-        ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugins=[ENTRY], plugin_execution="process", **options),
+        ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugins=[ENTRY], **options),
         SignatureIndex([]),
     )
 
@@ -550,7 +550,8 @@ def test_execution_backend_configuration_rejects_invalid_values(value):
 
 
 def test_execution_backend_defaults_and_mutation_validation():
-    assert ScanConfig().plugin_execution == "thread"
+    assert ScanConfig().plugin_execution == "process"
+    assert ScanConfig.from_dict({}).plugin_execution == "process"
     config = ScanConfig.from_dict({"options": {"plugin_execution": "process"}})
     engine = Engine(config, SignatureIndex([]))
     config.plugin_execution = "fork"
@@ -558,6 +559,23 @@ def test_execution_backend_defaults_and_mutation_validation():
         engine.run()
 
 
+def test_builtin_connectors_remain_threaded_in_process_mode(tmp_path, monkeypatch):
+    import shadowscan.plugin_process as transport
+
+    def unexpected_process(*args, **kwargs):
+        pytest.fail("built-in connector was sent to a plugin worker")
+
+    monkeypatch.setattr(transport, "run_plugin_process", unexpected_process)
+    result = Engine(
+        ScanConfig(
+            connectors=[ConnectorSpec("code.filesystem", {"path": str(tmp_path), "use_git": False})],
+            plugin_execution="process",
+        ),
+        SignatureIndex([]),
+    ).run()
+    assert result.complete, result.stats
+
+
 def test_plugin_execution_cli_option():
     result = CliRunner().invoke(main, ["scan", "--help"])
-    assert result.exit_code == 0 and "--plugin-execution" in result.output
+    assert result.exit_code == 0 and "--plugin-execution" in result.output and "default: process" in result.output

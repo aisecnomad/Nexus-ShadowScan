@@ -5,6 +5,16 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Typed CLI settings and plugin worker defaults (October 15)
+
+- `shadowscan run --set` now uses the selected built-in connector schema to
+  coerce declared booleans, integers and comma-separated list fields, while
+  preserving identifiers and other strings as text.
+- Allowlisted plugins now default to killable spawned workers; built-in
+  connectors remain on threads. Configuration guidance now identifies scan
+  configuration as trusted operator input that must stay outside scanned or
+  pull-request-controlled workspaces.
+
 ### Temporary Docker Python pin review deadline (October 15)
 
 - The temporary Wolfi Python revision pin now has a review deadline enforced by

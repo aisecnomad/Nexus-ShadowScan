@@ -6,6 +6,11 @@ values fail closed. An invalid configuration, like an invalid command-line
 option, stops the command with exit code 1 before anything is scanned (see
 [exit codes](../operations/ci.md#exit-code-handling)).
 
+Configuration is trusted operator input. Keep it under operator control and
+outside scanned repositories or other pull-request-controlled workspaces; review
+it before use, especially plugin allowlists, connector options and filesystem
+paths.
+
 ## Common options
 
 This page shows the options most configurations use. `parallel`, `incremental`,
@@ -27,7 +32,7 @@ options:
   allow_credential_mixing: false      # permit repo + live tenant in one scan
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
   plugins: []                         # exact-name allowlist for third-party connectors
-  plugin_execution: thread            # or process: killable spawned plugin workers
+  plugin_execution: process            # default for allowlisted plugins
 
 connectors:
   - name: code.github
@@ -46,12 +51,19 @@ file. Place it on a volume with room for the largest repository you scan.
 the highest-risk findings to a model you name and stores an advisory verdict.
 See [LLM triage](../operations/llm-triage.md) for its keys and what is sent.
 
-`plugin_execution: process` (or `--plugin-execution process`) runs each
-allowlisted third-party connector in its own spawned worker that the scanner
-can terminate at the connector deadline. Built-in connectors always use the
+Allowlisted third-party connectors run in spawned workers by default. Set
+`plugin_execution: thread` or pass `--plugin-execution thread` only when a
+reviewed plugin needs in-process execution. Built-in connectors always use the
 thread backend. Workers keep the scanner's privileges and credentials: this is
 lifecycle isolation, not a sandbox. See
 [third-party plugin execution](../connectors.md#third-party-plugin-execution).
+
+For `shadowscan run`, `--set` uses the selected built-in connector's schema:
+declared booleans and integer fields are converted, and declared comma-list
+fields accept `a,b`; other values remain strings. Use JSON lists or objects for
+structured values. Identifiers such as cloud account IDs retain their exact
+text, including leading zeroes. Plugin settings are opaque because the plugin
+schema is not imported while parsing.
 
 ## Trusted vendor registries
 

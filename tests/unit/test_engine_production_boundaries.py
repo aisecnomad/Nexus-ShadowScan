@@ -573,10 +573,44 @@ def test_set_preserves_account_id_lexical_form(account_id):
     }
 
 
+def test_set_uses_connector_schema_for_typed_values():
+    assert parse_set_options(
+        [
+            "account_id=001234567890",
+            "cloudtrail_days=3",
+            "allow_instance_credentials=false",
+            "regions=us-east-1, eu-west-1",
+        ],
+        "cloud.aws",
+    ) == {
+        "account_id": "001234567890",
+        "cloudtrail_days": 3,
+        "allow_instance_credentials": False,
+        "regions": ["us-east-1", "eu-west-1"],
+    }
+
+
 @pytest.mark.parametrize("account_id", ["012345678901", "123456789012"])
 def test_cli_preserves_account_id_for_provider_scope_check(monkeypatch, account_id):
     received = []
     monkeypatch.setattr("shadowscan.cli._run_and_emit", lambda cfg, *args, **kwargs: received.append(cfg))
-    result = CliRunner().invoke(main, ["run", "cloud.aws", "--set", f"account_id={account_id}"])
+    result = CliRunner().invoke(
+        main,
+        [
+            "run",
+            "cloud.aws",
+            "--set",
+            f"account_id={account_id}",
+            "--set",
+            "cloudtrail_days=3",
+            "--set",
+            "allow_instance_credentials=false",
+            "--set",
+            "regions=us-east-1,eu-west-1",
+        ],
+    )
     assert result.exit_code == 0, result.output
     assert received[0].connectors[0].config["account_id"] == account_id
+    assert received[0].connectors[0].config["cloudtrail_days"] == 3
+    assert received[0].connectors[0].config["allow_instance_credentials"] is False
+    assert received[0].connectors[0].config["regions"] == ["us-east-1", "eu-west-1"]

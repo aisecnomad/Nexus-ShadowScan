@@ -1096,7 +1096,11 @@ def parse_set_options(items: list[str], connector_name: str | None = None) -> di
             raise ValueError(f"--set expects key=value, got {item!r}")
         key, value = item.split("=", 1)
         key, value = key.strip(), value.strip()
-        out[key] = _coerce_for_connector(value, connector_name, key) if connector_name else _coerce(value)
+        if connector_name:
+            out[key] = _coerce_for_connector(value, connector_name, key)
+        else:
+            # Preserve the legacy account-ID exception for callers without a schema.
+            out[key] = value if key == "account_id" and re.fullmatch(r"[0-9]+", value) else _coerce(value)
     return out
 
 

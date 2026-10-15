@@ -78,6 +78,10 @@ a socket, never pickle. That isolates crashes and the result channel; it is not
 a security sandbox. Treat every plugin as trusted code equivalent to a built-in
 connector. In high-assurance environments use built-in connectors only, or run
 the whole scanner in a restricted container with the egress controls above.
+Process execution is the default for allowlisted plugins; built-in connectors
+continue to use threads. Keep scan configuration under operator control and
+outside scanned or pull-request-controlled workspaces: configuration can
+allowlist privileged plugins and select the paths and resources they access.
 
 ## Detection expectations
 

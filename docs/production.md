@@ -521,7 +521,7 @@ intended connector instance; export names are not a fixed `cloud_aws.jsonl`.
 ```yaml
 options:
   plugins: []
-  plugin_execution: thread
+  plugin_execution: process
   allow_signature_override: false
   allow_private_origin: false
   allow_credential_mixing: false
@@ -540,10 +540,10 @@ Approved plugins still run trusted Python code. `shadowscan connectors` lists
 installed plugin metadata without importing it. A plugin must be explicitly
 allowed on each scan, even if a prior scan imported it.
 
-Use `options.plugin_execution: process` or `--plugin-execution process` to run
-approved third-party connectors in dedicated spawned workers. Built-in
-connectors keep their existing thread execution; the default for plugins also
-remains `thread`. Plugin import and execution happen in the child. The original
+Approved third-party connectors run in dedicated spawned workers by default.
+Use `options.plugin_execution: thread` or `--plugin-execution thread` only when
+a reviewed plugin requires in-process execution. Built-in connectors always use
+threads. Plugin import and execution happen in the child. The original
 connector deadline includes worker startup and result transfer, and the worker
 exits as soon as its result is sent (plugin `atexit` handlers do not run); expired results
 are discarded, and termination escalates from TERM to KILL with bounded cleanup.

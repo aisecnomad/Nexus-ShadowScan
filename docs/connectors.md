@@ -94,9 +94,9 @@ normalizes them, and an entry point without distribution metadata is refused.
 These checks read installed metadata before import. They bind a reviewed
 release, not file contents, so keep the plugin itself in a hash-locked install.
 
-The default `options.plugin_execution: thread` retains
-existing behavior. For reviewed plugins that can block inside an SDK or native
-extension, select a dedicated spawned process per connector:
+The default `options.plugin_execution: process` runs each allowlisted plugin in
+a dedicated spawned process. Use `thread` only when a reviewed plugin requires
+in-process behavior:
 
 ```yaml
 options:
@@ -107,8 +107,8 @@ connectors:
   - name: platform.example
 ```
 
-The equivalent CLI override is `--plugin-execution process`. Built-in connectors
-continue to use the existing thread backend. A plugin is imported only inside
+Use `--plugin-execution thread` to opt into thread execution for a particular
+scan. Built-in connectors always use the thread backend. A plugin is imported only inside
 its child process, and its original completion deadline includes import,
 collection, result serialization and transfer. The worker exits with
 `os._exit` as soon as its result is sent: plugin `atexit` handlers do not run,

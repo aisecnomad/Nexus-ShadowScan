@@ -608,7 +608,9 @@ def test_plugins_never_attest_even_when_they_record_a_scope(index, monkeypatch):
 
     monkeypatch.setattr(engine_module, "get_connector_class", lambda name, **kwargs: Attesting)
     spec = ConnectorSpec("platform.attesting", {"tenant": "t"})
-    result = Engine(ScanConfig(connectors=[spec], plugins=["platform.attesting"]), SignatureIndex([])).run()
+    result = Engine(
+        ScanConfig(connectors=[spec], plugins=["platform.attesting"], plugin_execution="thread"), SignatureIndex([])
+    ).run()
     assert result.complete
     assert result.collection_scope is not None
     assert result.collection_scope["reason"] == "third-party connector scope is not attested"
