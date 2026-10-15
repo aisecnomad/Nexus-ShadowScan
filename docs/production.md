@@ -1322,12 +1322,15 @@ or in `projects/<project>/serviceAccounts/<address>`) is one global identifier
 too: a Vertex AI caller in one project links exactly to the service account
 another project defines, which a declared project conflict used to block
 entirely. Lookalike addresses outside `gserviceaccount.com`, or with upper-case
-letters, stay local identifiers in their project. Code findings report
-repository paths, so two monorepos that both hold `projects/api/src/main.py`
-no longer link as one GCP resource: from code, a `projects/` path is a GCP
-resource name only with a valid project id or number, a GCP collection after
-it (such as `locations`, `secrets` or `serviceAccounts`) and no `:<line>`
-suffix.
+letters, stay local identifiers in their project. Google-managed accounts
+that many projects share (`@system.gserviceaccount.com`,
+`@firebase-sa-management.iam.gserviceaccount.com`) link nothing. Code findings
+report repository paths, so two monorepos that both hold
+`projects/api/src/main.py` no longer link as one GCP resource: from code, a
+`projects/` path is a GCP resource name only with a valid project id or
+number, a GCP collection after it (such as `locations`, `secrets` or
+`serviceAccounts`), no `:<line>` suffix and no source-file extension on its
+last segment.
 Azure resource ids compare case-insensitively, as Azure Resource Manager
 treats them, so a role assignment whose scope ARM returns lowercased still
 links to the resource listing; the findings keep the spelling they reported.
@@ -1349,7 +1352,8 @@ correlation entirely. Entra findings replayed from an export of another tenant
 (or of an unknown one) carry `metadata.account_attributed: false` and declare
 no Entra tenant, so their application ids link to the configured tenant's
 Teams bots only as review candidates; they used to link exactly. (Two findings
-of one connector are never compared, so app registrations were never linked.) Their `account` and finding ids are unchanged.
+of one connector are never compared, so app registrations were never linked.)
+Their `account` and finding ids are unchanged.
 In the bundled demo, the three identifier links main produced stay exact and
 three new same-ARN links appear; the three links main made from a display name
 or a caller label (a Teams bot and an Entra service principal named Otter.ai,

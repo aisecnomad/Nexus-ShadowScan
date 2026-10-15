@@ -110,7 +110,9 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
       account wherever it is used, so it links across projects. Code
       findings report repository paths, so there a `projects/` path is a GCP
       resource name only with a valid project id or number, a GCP collection
-      after it and no `:<line>` suffix. Identifiers are compared byte for
+      after it, no `:<line>` suffix and no source-file extension on its last
+      segment. Google-managed service accounts that many projects share
+      (`@system.gserviceaccount.com`) link nothing. Identifiers are compared byte for
       byte, except Azure resource ids, which Azure Resource Manager treats
       case-insensitively and which are compared in ASCII lowercase. Shared
       AWS catalog ARNs (AWS-managed policies, Bedrock foundation models)
