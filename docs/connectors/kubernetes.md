@@ -63,8 +63,9 @@ Triton (`tritonserver`) also serves vision and tabular models, so it counts
 only with an LLM backend in its name or tag (`24.05-trtllm-python-py3`,
 `24.05-vllm-python-py3`). A GPU counts when `nvidia.com/gpu` is above zero in
 `requests` or only in `limits`; `0` or `"0"` requests no GPU, and a value that
-is not a resource quantity (a word, a negative number) is skipped with a
-warning that marks the scan incomplete. A `--model org/name` or `--model-id org/name` container argument
+is not a resource quantity (a word, a negative number) counts as no GPU, with
+a warning that marks the scan incomplete; the workload is still analyzed. A
+`--model org/name` or `--model-id org/name` container argument
 corroborates an AI image or AI resource kind: together they add the
 `self-hosted-model-serving` tag and model-argument and GPU evidence. On their
 own, a model argument and a GPU never make a workload an agent, because
