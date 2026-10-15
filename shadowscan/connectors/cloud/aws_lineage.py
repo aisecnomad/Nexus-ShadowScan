@@ -10,12 +10,26 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeGuard
 
 from shadowscan.connectors.cloud.aws_registry import text
 from shadowscan.utils.redaction import REDACTED
 from shadowscan.utils.text import parse_timestamp, to_iso
+
+# CloudTrail renders STS credential expirations as "Jan 20, 2024, 3:16:07 PM" (UTC).
+_CLOUDTRAIL_TIME_FORMAT = "%b %d, %Y, %I:%M:%S %p"
+
+
+def _parse_time(value: Any) -> datetime | None:
+    """CloudTrail's display format first: ``parse_timestamp`` reads it as RFC 2822 and drops the meridian."""
+    if isinstance(value, str):
+        try:
+            return datetime.strptime(value, _CLOUDTRAIL_TIME_FORMAT).replace(tzinfo=UTC)
+        except ValueError:
+            pass
+    return parse_timestamp(value)
+
 
 MAX_LINEAGE_EVENTS = 2000
 MAX_CALLER_OBSERVATIONS = 100
@@ -139,7 +153,7 @@ class CloudTrailLineage:
                 observation[name] = value
         for name in ("eventTime", "sessionCreatedAt", "sessionExpiresAt"):
             if observation.get(name):
-                stamp = parse_timestamp(observation[name])
+                stamp = _parse_time(observation[name])
                 iso = to_iso(stamp) if stamp is not None else None
                 if iso is None:
                     self._gap("invalid-timestamp")

@@ -347,7 +347,23 @@ _CLOUDTRAIL_TEXT_FIELDS = (
     "sourceIp",
     "eventTime",
     "_region",
+    "eventSource",
 )
+
+
+# CloudTrail event sources whose API calls the caller tally counts, as every
+# cloudtrail-event record did before session lineage. Only CLOUDTRAIL_EVENTS
+# carry a session trace; a normalized record without a source is one of those.
+_LLM_EVENT_SOURCES = frozenset({"bedrock", "sagemaker", "q", "qbusiness", "qapps", "qdeveloper", "qconnect"})
+
+
+def _is_llm_event(rec: dict[str, Any]) -> bool:
+    """Whether a CloudTrail event is an AI-service call the caller tally counts."""
+    source = rec.get("eventSource")
+    if not source or not isinstance(source, str):
+        return rec.get("eventName") in CLOUDTRAIL_EVENTS
+    service = source.partition(".")[0].lower()
+    return service in _LLM_EVENT_SOURCES or service.partition("-")[0] in {"bedrock", "sagemaker"}
 
 
 def _action_has_ai_scope(action: str, resource_services: set[str] | None = None) -> bool:
@@ -1530,6 +1546,7 @@ class AwsConnector(BaseConnector):
         invalid_account = False
         failure: Exception | None = None
         callers: dict[str, dict[str, Any]] = {}
+        untraced = 0
         lineage = CloudTrailLineage(self.ctx.warn)
         dispatch = RecordDispatch(self, "account", "cloudtrail-event")
         self._registry_tainted = False
@@ -1563,11 +1580,16 @@ class AwsConnector(BaseConnector):
                         # ignored; an event without its name is malformed.
                         if not rec.get("eventName"):
                             raise ValueError("event field")
-                        if rec.get("eventName") not in {*CLOUDTRAIL_EVENTS, *ASSUME_OPERATIONS}:
-                            continue
-                        if not lineage.add(rec) or rec.get("eventName") in ASSUME_OPERATIONS:
-                            continue
-                        if rec.get("eventName") in CLOUDTRAIL_EVENTS:
+                        if rec.get("eventName") in ASSUME_OPERATIONS:
+                            lineage.add(rec)  # STS context for callers, never a caller itself
+                        elif not _is_llm_event(rec):
+                            continue  # an ordinary service event in a full trail export
+                        elif rec.get("eventName") not in CLOUDTRAIL_EVENTS:
+                            # Counted for its caller as before lineage existed; only the
+                            # listed operations carry a session trace.
+                            untraced += 1
+                            self._acc_caller(callers, rec)
+                        elif lineage.add(rec):
                             self._acc_caller(callers, rec)
                     else:
                         f = dispatch.handlers[kind](rec)
@@ -1582,6 +1604,12 @@ class AwsConnector(BaseConnector):
         if not self.offline and received < self._registry_inputs:
             # The export rejected a record collection produced, so analysis never saw it.
             self._registry_tainted = True
+        if untraced:
+            self.ctx.warn(
+                f"cloud.aws: {untraced} CloudTrail AI event(s) outside the lineage operation list "
+                "counted for callers without session lineage",
+                incomplete=False,
+            )
         expected_account = self.account  # configured offline, or verified by live STS
         if expected_account is not None:
             accounts.add(expected_account)

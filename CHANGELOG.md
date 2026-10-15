@@ -51,6 +51,21 @@ An agent-run review of the integrated branch found these defects; each was
 reproduced before it was fixed and verified again after. The bundled
 evaluation corpora make no new prediction changes.
 
+Cross-checked against an independent parallel integration of the same pull
+requests, which found three more defects, fixed here with its regression
+tests: a CloudTrail AI-service event outside the lineage operation list
+(InvokeModelWithBidirectionalStream, Retrieve, ApplyGuardrail,
+InvokeEndpointAsync and the like) was silently skipped in offline exports —
+it now counts for its caller with a disclosed untraced warning, while only
+the listed operations carry a session trace; CloudTrail's display-format STS
+expirations ("Jan 20, 2024, 3:16:07 PM") were misread, silently unlinking
+the session — they are parsed first now, and an unreadable expiration is a
+disclosed invalid-timestamp gap; and n8n's registered openAiAssistant node
+now classifies its workflow as an agent. The same comparison carried an n8n
+sink and trigger registry keyed by the node type and operation names n8n
+declares, so email, database and messaging writes establish egress roles by
+declared operation.
+
 #### ShadowBench
 
 - Cases runner: after a stage, hard links, FIFOs, sockets and device nodes

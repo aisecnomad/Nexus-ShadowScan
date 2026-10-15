@@ -478,7 +478,8 @@ class N8nConnector(_AutomationBase):
             ai_steps=ai_steps,
             kind=(
                 Kind.AGENT
-                if any(t.endswith(".agent") or t.endswith("agentTool") for t in types)
+                # openAiAssistant is n8n's registered OpenAI Assistant agent node.
+                if any(t.endswith((".agent", "agentTool", ".openAiAssistant")) for t in types)
                 else Kind.WORKFLOW
             ),
             resource_type="workflow" if identified else "unresolved-workflow",

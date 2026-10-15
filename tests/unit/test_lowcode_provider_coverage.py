@@ -1320,3 +1320,15 @@ def test_n8n_database_sink_role_depends_on_the_declared_operation(index, operati
     # and its evidence come from the agent node either way.
     assert finding.kind == Kind.AGENT
     assert all("graph" not in evidence.signal for evidence in finding.evidence)
+
+
+def test_n8n_openai_assistant_node_is_an_agent(index):
+    # openAiAssistant is n8n's registered OpenAI Assistant agent node.
+    wf = {
+        "id": "a",
+        "nodes": [{"name": "A", "type": "@n8n/n8n-nodes-langchain.openAiAssistant", "parameters": {}}],
+    }
+    connector = N8nConnector(ConnectorContext(index=index))
+    connector.collect = Mock(return_value=iter([wf]))
+    (finding,) = connector.run()
+    assert finding.kind == Kind.AGENT
