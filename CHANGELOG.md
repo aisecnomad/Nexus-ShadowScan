@@ -5,6 +5,12 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Temporary Docker Python pin review deadline (October 15)
+
+- The temporary Wolfi Python revision pin now has a review deadline enforced by
+  repository policy tests. Remove the pin when a newer package passes the
+  documented SHA-224 check, or explicitly review and renew the deadline.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

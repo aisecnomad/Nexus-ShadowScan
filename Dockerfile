@@ -56,6 +56,7 @@ FROM chainguard/wolfi-base:latest@sha256:824f77df45397eb954dfb963db255907ee8842e
 # Both stages stay on 3.12.15-r0, the last revision that built this image (the
 # runtime copies a virtual environment bound to its interpreter). Drop both pins
 # once a newer revision passes `python3.12 -c "import hashlib; hashlib.sha224"`.
+# Review deadline: 2026-11-15; the repository consistency test fails after it.
 # hadolint ignore=DL3018
 RUN apk upgrade --no-cache \
     && apk add --no-cache python-3.12=3.12.15-r0 python-3.12-base=3.12.15-r0 py3.12-pip

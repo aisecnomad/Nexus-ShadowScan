@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1332,6 +1332,20 @@ def test_container_updates_installed_base_packages_before_dependency_install() -
     # pip and the build tools never reach the runtime stage.
     assert "pip" not in runtime.split("RUN apk upgrade", 1)[1].split("\nCOPY --from=build")[0].replace(
         "python-3.12", ""
+    )
+
+
+def test_temporary_docker_python_pin_has_an_unexpired_review_deadline() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    pins = re.findall(r"python-3\.12=([^\s]+)", dockerfile)
+    deadlines = re.findall(r"(?m)^# Review deadline: (\d{4}-\d{2}-\d{2});", dockerfile)
+    if not pins:
+        assert not deadlines, "remove the temporary pin's review deadline when the pin is removed"
+        return
+    assert len(deadlines) == 1, "a temporary Python pin needs exactly one review deadline"
+    deadline = date.fromisoformat(deadlines[0])
+    assert datetime.now(UTC).date() <= deadline, (
+        f"temporary Docker Python pin expired on {deadline}; remove or explicitly renew the pin"
     )
 
 
