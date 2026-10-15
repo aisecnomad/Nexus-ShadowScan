@@ -1,6 +1,9 @@
 # Detection and collection assurance: 2026-09-24
 
-This change implements the five review recommendations: suppress generic-code
+This change implements the five recommendations of the maintainer's 2026-09-24
+internal, AI-assisted review (logged under
+[archive/reviews/](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/archive/reviews);
+not an independent or second-person audit): suppress generic-code
 false positives and repeated-evidence inflation; require meaningful operational
 configuration; resolve imported constructors and aliases; preserve incomplete
 AWS/Slack collection; and recognize potential AI permissions expressed through
@@ -40,7 +43,8 @@ reviewed commit rather than trusting these recorded results.
 At the time of this 2026-09-24 review, the separate authored synthetic suite
 passed 39 cases (16 positives, 23 negatives), and the earlier public-source
 sample passed five. The currently committed `tools/evaluation/corpus.json` has
-since grown to 77 authored synthetic cases (32 positives, 45 negatives); the
+since grown to 109 authored synthetic cases (48 positives, 61 negatives as of
+2026-10-15); the
 case count alone does not establish that the current scanner passes them. Check
 the final commit's CI evaluation. One **synthetic** PHP fixture was corrected to
 a negative: a bare `create_agent(...)` call with no framework binding cannot

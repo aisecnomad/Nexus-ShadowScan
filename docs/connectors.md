@@ -23,8 +23,11 @@ the scan incomplete rather than producing a clean result.
 TLS verification cannot be disabled and `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` are
 ignored, so a private endpoint admitted with `--allow-private-origin` behind
 internal PKI fails verification (and the scan is incomplete) unless the connector
-offers an explicit CA option. Only `identity.jwt` does today (`ca_bundle`, JWKS
-endpoint); other connectors trust the default CA store.
+offers an explicit CA option. `identity.jwt` (`ca_bundle` for its JWKS
+endpoint) and `endpoint.mcp` (`ca_bundle` for its opt-in Agent Card and JWKS
+fetches) do today; the other connectors on the shared HTTPS client trust the
+default CA store, and SDK-based cloud connectors follow their SDK's own CA
+settings (botocore honours `AWS_CA_BUNDLE`, for example).
 
 Ambiguous app-name signals retain possible-product hints until the same product
 has non-name corroboration, and an app with no established AI evidence is
@@ -56,10 +59,13 @@ integer or the entry fails validation.
 
 ### Live pagination limits
 
-Connectors that page through a live API accept `max_pages`, a positive integer
-(default 1000; larger values are capped at 1000). Zero, a negative or fractional
+Ten connectors accept `max_pages`, a positive integer
+(default 1000; larger values are capped at 1000): `identity.auth0`,
+`saas.notion`, the seven low-code connectors and `cloud.gcp` / `cloud.oci`.
+Zero, a negative or fractional
 number, a boolean or non-numeric text is a configuration error, never a silent
 one-page scan; reaching the page bound marks coverage incomplete. The other
+live connectors page under fixed internal caps and reject the key as unknown. The other
 integer limits (`max_lambda`, `max_ecs_api_calls`, `max_registry_records`, `max_projects`,
 `min_events`, `max_teams`, `max_records`, `max_users`,
 `max_app_role_lookups`, `max_package_lookups`) follow the same rule, and the look-back windows
@@ -399,10 +405,14 @@ built-in list of directory names (`bin`, `build`, `dist`, `vendor`,
 `default_excludes: false` (`--no-default-excludes`) scans them. The full list
 and the quiet/disclosed split are in [connectors/code.md](connectors/code.md).
 `oversize_skip_globs` replaces the default list of case-insensitive file-name
-globs. The defaults cover lockfiles, minified bundles, source maps, images,
+globs. The defaults cover lockfiles, logs and recordings, minified bundles,
+source maps, data files (`*.csv`, `*.parquet`), images,
 fonts, archives and compiled artifacts, and a glob with `/` matches the relative
 path. A file over `max_file_size` that matches one is skipped with a warning
-and the scan stays complete, even under `strict_coverage`. Any other oversize
+and the scan stays complete, even under `strict_coverage` — note an in-limit
+`*.csv` is credential-scanned, so the default trades an oversize data file's
+credential pass for a complete scan; override the list without `*.csv` where
+oversize data files must count as gaps. Any other oversize
 analyzable file makes coverage incomplete.
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
@@ -505,8 +515,8 @@ warning does not say which endpoint was denied. There is no option to skip these
 endpoints: grant the four permissions, or accept an incomplete scan.
 
 **Use a dedicated token variable.** `token` defaults to the environment variable
-`GITHUB_TOKEN` (then `GH_TOKEN`), and so does `saas.github-apps`, which needs an
-organization-admin token. `code.github` clones and parses untrusted repository
+`GITHUB_TOKEN` (then `GH_TOKEN`); `saas.github-apps` reads `GITHUB_TOKEN`
+only, and its listings need organization-level grants (see its section). `code.github` clones and parses untrusted repository
 content with its token in the process, so give each connector its own variable
 (for example `token: ${GITHUB_CODE_TOKEN}` here and `token: ${GITHUB_APPS_TOKEN}`
 for `saas.github-apps`) and never export the admin token as `GITHUB_TOKEN` where
@@ -518,7 +528,11 @@ not narrow what a shared token can do.
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
 clone or API mode; also CI/CD variable names (masked flag), group service
 accounts, group/project access tokens, project bots and GitLab Duo enablement.
-Token: PAT with `read_api` + `read_repository`.
+Token: PAT with `read_api` + `read_repository`. The group service-account,
+access-token and CI/CD-variable listings also need elevated roles (Maintainer
+or Owner per GitLab's API reference) and service accounts a tier that includes
+them; a token without a listing's role logs a per-listing warning and the scan
+exits 3 — verify against your instance.
 Live API records cannot choose internal offline paths or dispatch fields. Code
 findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable
@@ -551,11 +565,15 @@ other values stop the connector with an error that names the option (exit 3).
 ## Identity
 
 ### `identity.okta`
-`/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OAuth apps that
-match AI SaaS signatures or hold privileged scopes, and service apps
-(`application_type: service` / `client_credentials` / token-exchange).
+`/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OIDC, SAML and
+WS-Fed apps that match AI SaaS signatures or hold any granted or consented
+scope, and service apps (`application_type: service` or `client_credentials`
+grants; a token-exchange app is kept only through its signatures or scopes).
 Token: SSWS API token (`token`, env `OKTA_API_TOKEN`) or OAuth bearer
-(`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read`; `bearer` wins when
+(`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read` plus
+`okta.appGrants.read` for the per-app grant listing (and the token listing's
+scope when `fetch_tokens` is set) — a bearer missing one logs an
+incomplete-coverage warning per app and the scan exits 3; `bearer` wins when
 both are set. Options: `include_inactive`, `fetch_tokens`. A 429 is retried
 after the window named by Okta's `X-Rate-Limit-Reset` header (bounded to 120 s
 per wait); exhausted retries mark the scan incomplete.
@@ -885,7 +903,13 @@ coding agents), Copilot billing/seat settings, fine-grained PATs approved for
 the org. An installation is reported when its slug or its words match an AI
 signature or an AI-like name; `include_unrecognized_apps: true` also reports
 other write-capable apps, tagged `unrecognized-app` at possible confidence.
-`token` (env `GITHUB_TOKEN`) must be an organization-admin token. Name a variable
+`token` (env `GITHUB_TOKEN`) must be able to read the organization's app
+installations, Copilot billing and fine-grained-PAT inventory. The
+fine-grained-PAT listing accepts a GitHub App installation token or an
+organization admin's fine-grained PAT with the organization **Personal access
+tokens** read permission — a classic PAT cannot call it. Each listing the
+token cannot read logs a warning, findings from the available listings are
+kept, and the scan exits 3. Name a variable
 of its own for it (for example `token: ${GITHUB_APPS_TOKEN}`) rather than relying
 on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
 untrusted repositories; the rule that code scans and live connectors run
@@ -1115,7 +1139,9 @@ or malformed collections remain incomplete; pagination must finish before
 absence can be inferred.
 `subscriptions` lists the subscription IDs to scan (default: every visible
 subscription). `include_app_settings` (default true) reads Web and Function
-app settings, recording names and checking values for credentials; `false`
+app settings, recording names and checking values for credentials; it needs
+`Microsoft.Web/sites/config/list/Action` on each audited app (plain `Reader`
+lacks it, and every denied app marks the scan incomplete). `false`
 skips them.
 
 ### `cloud.oci`
@@ -1274,8 +1300,8 @@ All connectors are read-only. Prefer dedicated audit credentials:
 |---|---|
 | GitHub | fine-grained PAT: contents/metadata read; `secrets:read` for Actions secret names, plus `variables:read`, Codespaces `secrets:read` and Dependabot `secrets:read` for the other credential-name listings (each optional; a denied listing marks coverage incomplete) |
 | GitLab | PAT `read_api`, `read_repository` |
-| Okta | API token from a read-only admin, or OAuth `okta.apps.read` |
-| Slack | token with `users:read`; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`) |
+| Okta | API token from a read-only admin, or OAuth `okta.apps.read` + `okta.appGrants.read` (and the token listing's scope with `fetch_tokens`) |
+| Slack | token with `team:read` + `users:read` — `/team.info` is called first and gates every other listing; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`) |
 | ServiceNow | basic or bearer credentials with read access to the `sn_aia_*`, `sys_hub_flow` and `oauth_entity` tables through the Table API |
 | Salesforce | connected app (client-credentials flow) whose integration user has read access to the objects the REST `query` and Tooling `query` endpoints return; verify the object permissions in your org |
 | n8n | API key; the connector reads `/api/v1/workflows` only |
@@ -1290,8 +1316,8 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
 | AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition`; the opt-in `registry` service needs `agent-registry:ListRegistries`, `agent-registry:GetRegistry`, `agent-registry:ListRegistryRecords`, `agent-registry:GetRegistryRecord` (AgentCore registries are covered by `bedrock-agentcore:List*/Get*`), and `registry_arns` needs `agent-registry:ListDiscoverableRegistryRecords` and `agent-registry:BatchGetDiscoverableRegistryRecord` on those registries. Do not grant `agent-registry:InvokeRegistryMcp` or `Search*` actions: the connector never calls them |
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs; with the opt-in catalogs, read access to Agent Registry and to Discovery Engine assistants and agents, for example Google's viewer roles for those APIs: verify the role names in your organization) |
-| Azure | `Reader` on subscriptions, which also covers the `GET /subscriptions/{id}` read that verifies configured subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents; a narrowly scoped custom permission `Microsoft.Web/sites/config/list/Action` when sensitive app settings are needed) |
-| OCI | policy `Allow group audit to read all-resources in tenancy` |
+| Azure | `Reader` on subscriptions, which also covers the `GET /subscriptions/{id}` read that verifies configured subscriptions (+ `Cognitive Services OpenAI User`/`Azure AI User` to list Foundry agents). `include_app_settings` defaults to true and reads every Web/Function app's settings, which `Reader` cannot: grant the custom permission `Microsoft.Web/sites/config/list/Action` on the audited apps, or set `include_app_settings: false` — otherwise each app logs a warning and the scan exits 3 |
+| OCI | policy `Allow group audit to read all-resources in tenancy` works but over-grants: OCI `read` on all-resources includes object contents and secret bundles, which the connector never fetches (secrets are listed by name only). Prefer policies scoped to what it reads — GenAI (agents), Functions, Data Science, container instances, Digital Assistant, and IAM and vault metadata, with `inspect` where listing suffices |
 | Endpoint | read access to the inventoried home directories; run as that user, or as an account that can read every listed home on a shared host. Nothing is written |
 | Network | read access to the exported logs; the connector needs no sensor or cloud credentials |
 | Runtime | offline: read access to the process export; live: an account that can read `/proc/<pid>/cmdline` of the processes to inventory. Nothing is written |

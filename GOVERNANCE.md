@@ -28,7 +28,8 @@ Repository settings may change. Consult the
 [verification commands](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#merge-gate-and-review-status)
 before relying on enforcement. The versioned policy requires no bypass actors.
 The 2026-10-10 readback listed four `always` bypass actors on both rulesets,
-the repository administrator role and three integrations, so an administrator
+the repository administrator role and three integrations (GitHub Apps not
+resolved to names), so an administrator or any of those integrations
 can merge without the non-author approval until they are removed. A ruleset
 only blocks anything while it is enabled. The [versioned policy and verification procedure](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/merge-policy.md)
 require the complete CI gate, final-push approval and an empty bypass list;

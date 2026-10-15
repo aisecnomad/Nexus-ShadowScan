@@ -148,10 +148,16 @@ regression scores**, not independently measured field accuracy.
 The September 27 classification correction keeps the original generic
 StateGraph and schema-only Vercel examples as negative agent cases, and adds
 actual agent factories and executable-tool examples as positives. New negatives
-cover generic CrewAI Flow and disabled tools. These 77 authored cases (32
-positives, 45 negatives) describe the intended boundary; they are not a new
-holdout. The frozen public, realistic and independently AI-labeled sources and
-labels are unchanged. Review capabilities separately from binary agent labels:
+cover generic CrewAI Flow and disabled tools. These authored cases describe
+the intended boundary; they are not a new holdout, and the committed corpus
+has since grown to 109 cases (48 positives, 61 negatives as of 2026-10-15).
+The frozen public and independently AI-labeled sources and
+labels are unchanged. The realistic corpus is no longer frozen: on 2026-10-09
+two positives were added in the same change as a scanner rule fix, and on
+2026-10-10 the n8n and Dify cases' target kind was relabeled from `workflow`
+to `agent` to follow a classification change, so its scores are regression
+evidence on author-maintained labels, not a held-out measurement.
+Review capabilities separately from binary agent labels:
 an available framework feature is not an observed workload capability.
 
 Source masking is a bounded lexical filter. Ruby `%q` strings with supported
@@ -286,16 +292,19 @@ shape behind one observed miss or false positive in a few small files; the
 labels are author-written reproductions of public-repository shapes, not
 copies of third-party code and not independent review. The negatives are a
 Rust rig service declaring a `ToolCallback` trait (never Spring AI), a test
-fixture and a code comment that only name `huggingface.co`, the
-`huggingface_hub` `InferenceClient` using the OpenAI-compatible call shape
-(never `provider.openai`), the Browserbase session SDK with its API key
-(Browserbase usage, never Stagehand or an agent), a CI job running in the
+fixture that only names `huggingface.co`, a CI job running in the
 `modelcontextprotocol/python-sdk` image, a documentation site's static server
 catalog listing `BROWSERBASE_API_KEY`, a Rust `create_agent(` constructor
 without LangChain, a Pydantic AI project whose tests define `async def
 handoff(` (never the OpenAI Agents SDK), a TypeScript provider catalog naming
 `DIFY_API_KEY` (no workflow or agent), and a website leaderboard listing eight
-model identifiers, which must produce no finding at all. The positives are a
+model identifiers, which must produce no finding at all. Three positives pair
+an expected finding with a forbidden attribution: an OpenAI SDK app whose
+comment links a `huggingface.co` model card (`provider.openai`, never
+`provider.huggingface`), the `huggingface_hub` `InferenceClient` using the
+OpenAI-compatible call shape (`provider.huggingface`, never
+`provider.openai`), and the Browserbase session SDK with its API key
+(Browserbase usage, never Stagehand and no agent finding). The other positives are a
 model identifier in code without an SDK import, a LiteLLM `bedrock/anthropic.`
 route in YAML (Bedrock and Anthropic), Python FastMCP, TypeScript `McpServer`
 and Go `NewMCPServer` servers that must carry exactly the `mcp-server` and

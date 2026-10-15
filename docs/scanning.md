@@ -7,8 +7,11 @@ Situations that are deliberately outside a repository's own content, and gaps
 that are never silent:
 
 * **Symbolic links** are never followed. A link is skipped silently when its
-  own name is one the scanner never reads (a lockfile, generated bundle or
-  image), or when it is a source file whose target is analyzed at its real path
+  own name is one the scanner never reads (an unparsed lockfile, generated
+  bundle or image; a link named `uv.lock`, `poetry.lock`, `pnpm-lock.yaml` or
+  `Cargo.lock` is instead a
+  [lockfile gap](connectors/code.md#locked-dependency-inventory)),
+  or when it is a source file whose target is analyzed at its real path
   in the same project, with the same test classification, extension and
   file-name signals. A coding-agent instruction document (`AGENTS.md`,
   `AGENT.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`,
@@ -34,7 +37,10 @@ that are never silent:
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect make the scan incomplete when skipped. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
-  warnings, including when `strict_coverage` is enabled.
+  warnings, including when `strict_coverage` is enabled — except the four
+  parsed lockfiles (`uv.lock`, `poetry.lock`, `pnpm-lock.yaml`, `Cargo.lock`),
+  which never pass through the globs (see
+  [large and generated files](#large-and-generated-files)).
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
   byte-order mark is decoded and the mark removed. A Python source is decoded
   with the codec its `# coding:` cookie declares. Text that is not valid UTF-8
@@ -69,7 +75,8 @@ that are never silent:
   empty. A compiled or packed artifact with no file extension and a known
   header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,
   GIF, PDF) is skipped quietly, as are names the scanner never analyzes
-  (images, archives, fonts, lockfiles, minified bundles). Exclude a directory
+  (images, archives, fonts, minified bundles, lockfiles other than the four it
+  parses). Exclude a directory
   of binary data that carries an analyzed extension.
 * **Default-excluded directories.** The walk skips a built-in list of directory
   names (see `default_excludes` in the [code connector](connectors/code.md)).
@@ -95,9 +102,11 @@ that are never silent:
   with `binary or undecodable content in analyzable file`; the rules above say
   which invalid UTF-8 and NUL-bearing files are read instead. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
-  parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
+  parses). A file with NUL bytes in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
-  still run a script with a NUL in a comment, so it is a gap, not an empty file;
+  still run a script with a NUL in a comment, so it is a gap, not an empty file
+  (a few stray NUL bytes in otherwise valid text are read with a warning, per
+  the rules above);
   this includes UTF-16 without a byte-order mark and NUL-dense content. Mostly-invalid UTF-8, a Python
   source or notebook that is not valid UTF-8, and malformed
   BOM-declared content also make coverage incomplete, with a fixed diagnostic
@@ -139,8 +148,12 @@ staged-only gitlink is likewise outside that check. Use a reviewed committed
 checkout and declared submodule paths when completeness matters.
 
 By default, incomplete coverage is recorded as a warning and exits 3.
-`strict_coverage: true` (`--strict-coverage`) elevates the diagnostic to an
-error; it does not change the exit code. Raise `max_file_size`, explicitly
+`strict_coverage: true` (`--strict-coverage`) elevates those diagnostics to
+errors without changing their exit code, and additionally turns some
+complete-scan warnings into coverage gaps — files read with a note (invalid
+UTF-8, stray NUL bytes, quoted front matter), oversize test fixtures and other
+declared test-path skips — so a scan that exited 0 can exit 3 under it. Raise
+`max_file_size`, explicitly
 exclude known data, or review `oversize_skip_globs` for the intended scope.
 
 Analysis limits are reported with their reason, for example
@@ -230,7 +243,11 @@ unchanged. The fingerprint is a SHA-256 digest over the content of every file th
 scanner can read plus the size, modification and change times, mode, device and
 inode of every file and directory, so a fresh checkout at a new inode does not hit
 the cache. Files over `max_file_size` contribute only that metadata: the scanner
-never opens them, so their bytes cannot change the result. Inventory approval,
+never opens them, so their bytes cannot change the result. Notebooks are the
+exception: an `.ipynb` over `max_file_size` is still analyzed up to
+`max_notebook_size` (20 MiB by default) while the fingerprint keeps only its
+metadata, so a notebook edit that preserves size, times and inode is not
+detected by content. Inventory approval,
 risk scoring and runtime correlation always run again. New, edited and deleted
 files invalidate the affected repository.
 
@@ -257,8 +274,9 @@ Each `code.filesystem.paths` root is a separate cache unit. A `code.filesystem`
 scan with `diff_base` is never cached or reused: its result depends on HEAD and
 the base ref's merge base, which the working-tree fingerprint does not cover.
 Offline local directory inputs to `code.github` / `code.gitlab` and static
-exports to the four `cloud.*`
-connectors are also eligible. Live remote repositories, live cloud APIs, gateway
+exports to `cloud.aws`, `cloud.azure`, `cloud.gcp` and `cloud.oci`
+are also eligible; Kubernetes and OpenShift workload exports always rescan.
+Live remote repositories, live cloud APIs, gateway
 logs, identity, SaaS inputs and third-party connectors are collected anew: unchanged configuration cannot
 establish that remote state is unchanged. Hashing still reads eligible inputs;
 the saving is avoiding repeated parsing and signature evaluation.
@@ -280,7 +298,14 @@ who controls the scanner account. Remove the state directory to clear it.
 
 Incomplete scans are never cached; a complete scan whose only diagnostics are
 warnings, such as skipped oversize generated files, is cached and replays those
-warnings on every hit. Corrupt, incompatible or unsafe state and
+warnings on every hit. A completed result whose findings carry credential
+pseudonyms (`credential:hmac-sha256:…` — any detected or placeholder secret,
+a `.env.example` key included) is cached only when a stable
+`SHADOWSCAN_IDENTITY_KEY` is set: scan-local pseudonyms cannot be rekeyed from
+a cache, so such roots otherwise rescan on every run. Setting or rotating the
+key invalidates every cached entry, and a commitment to it enters each scan's
+collection scope, so keyed and unkeyed reports do not compare (exit 3 from
+`diff`). Corrupt, incompatible or unsafe state and
 symlink-bearing eligible inputs cause a full scan. Hashing has conservative limits:
 512 MiB total, 200,000 entries, 30 seconds per snapshot, and 64 MiB per hashed
 file; code files over `max_file_size` (default 1,000,000 bytes) are tracked by
@@ -349,10 +374,19 @@ incomplete depends on what the file could hide:
   or packaged artifacts (`*.wasm`, `*.so`, `*.dylib`, `*.dll`, `*.jar`,
   `*.pyc`, `*.class`), documents, images and fonts (`*.pdf`, `*.png`, `*.jpg`,
   `*.jpeg`, `*.gif`, `*.woff`, `*.woff2`, `*.ttf`) and archives (`*.zip`,
-  `*.gz`, `*.tar`). Such content is generated from sources the scanner does
-  inspect, or is binary, so no agent configuration, framework usage or
-  credential evidence is lost by skipping it. The warning still names each file
-  so the omission is visible. Lockfiles, minified bundles, source maps and
+  `*.gz`, `*.tar`). Most such content is generated from sources the scanner
+  does inspect, or is binary, so skipping it loses no agent configuration or
+  framework evidence. Data files are the exception: an in-limit `*.csv` is read
+  for credentials, so an oversize one matched by these globs is skipped with
+  only a warning and no credential pass — set `oversize_skip_globs` explicitly
+  (without `*.csv`, or empty) where oversize data files must count as coverage
+  gaps. The warning still names each file
+  so the omission is visible. The four parsed lockfiles (`uv.lock`,
+  `poetry.lock`, `pnpm-lock.yaml`, `Cargo.lock`) never pass through these
+  globs: an oversize copy is a
+  [lockfile gap](connectors/code.md#locked-dependency-inventory) — a warning
+  when its own manifest sits beside it, and otherwise incomplete (exit 3).
+  Other lockfiles, minified bundles, source maps and
   bytecode below the limit are skipped silently because they are never analyzed.
   A coding-agent settings file that an operator's glob matches (a
   `.claude/settings.json` under `*.json`) is still recorded as unread for its
@@ -692,7 +726,8 @@ configuration are medium-weight evidence (at most 0.5 each); a project known
 only from them is tagged `model-ids-only` and capped at 0.6, and a model id in
 a data file is a mention that anchors nothing. A container image in a CI
 pipeline is a mention at 0.3 of its weight and yields no `infra` finding.
-Configuration is never a catalog, however many products it names: deployment
+Configuration is not a catalog, however many products it names — unless its
+file name spells a deny list, as below: deployment
 and CI documents, files under `.devcontainer/` or a top-level `config/`,
 `conf/` or `settings/` directory, files that assign the variables they name
 (`OPENAI_API_KEY=...`), and data files that code of the same project loads by
@@ -956,7 +991,9 @@ completed, declare the same supported finding-identity schema, carry a
 or filtered report is therefore unknown (exit 3), not a resolution. The
 fingerprint is an opaque digest that covers
 selected source paths, connector settings, filters, confidence threshold,
-signatures and scanner implementation. File contents and inventory approvals
+signatures, the scanner implementation and its runtime (the exact Python,
+platform, PyYAML, `regex` and `git` versions — pin these where baselines must
+stay comparable). File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public
 digest does not hide guessable paths or labels; keep these settings nonsecret.
 With `options.mcp_registries` set, the digest also covers each registry's id,
@@ -1083,7 +1120,8 @@ Offline exports require valid objects or arrays of objects; scalar records,
 invalid envelopes and malformed rows are errors. Use `[]` in JSON/YAML or
 `{"records": []}` in JSONL for an explicitly empty inventory; an empty file does
 not establish successful collection. Valid neighboring records are retained.
-Export files are capped at 64 MiB each, 512 MiB total and 200,000 filesystem
+Export files are capped at 32 MiB each and 256 MiB total by default
+(configurable up to hard ceilings of 64 MiB and 512 MiB) and 200,000 filesystem
 entries; symlinks and special files are rejected. Gateway gzip input is bounded
 before and after decompression. These limits also apply to custom gateway and
 JWT loaders.

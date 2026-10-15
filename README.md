@@ -291,7 +291,11 @@ shadowscan --help
 
 The distribution is `NexusShadowScan`; the command and Python imports are
 `shadowscan`. The unrelated `shadowscan` package on PyPI is not this project.
-Python 3.11, 3.12 or 3.13 is required. Releases are uploaded only by the
+Python 3.11, 3.12 or 3.13 is required (on 3.12, use 3.12.4 or later: 3.12.0 to
+3.12.3 can leave scans of files with very long lines incomplete). ShadowScan
+needs a POSIX platform; CI covers Linux and macOS, and Windows is unsupported —
+every command except `--help` and `--version` exits 1 there, because the
+confined file reader needs `O_NOFOLLOW` and `dir_fd`. Releases are uploaded only by the
 maintainer-approved [publish job](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/release.yml)
 through PyPI trusted publishing. Each uploaded file is the same file that job
 attests on GitHub, so you can check a download against this repository:
@@ -329,7 +333,7 @@ source .venv/bin/activate
 python -m pip install --require-hashes --only-binary=:all: -r requirements.lock
 python -m pip install --require-hashes --only-binary=:all: -r requirements-build.lock
 python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
-python -m pip install --no-deps dist/nexusshadowscan-0.1.2-*.whl
+python -m pip install --no-deps dist/nexusshadowscan-*.whl
 ```
 
 The checked-in runtime lock includes the core scanner and cloud dependencies.
@@ -398,7 +402,7 @@ shadowscan merge laptop-*.json --format json -o fleet.json       # one report fo
 shadowscan dashboard fleet.json -o dashboard.html --inventory-json inventory.json   # static fleet dashboard
 
 # 7. Register what you found
-shadowscan inventory stubs report.json -o inventory/pending/    # capability-card stubs for shadow agents
+shadowscan inventory stubs report.json -o inventory-review/     # card stubs for shadow agents; review, then move into ./inventory
 shadowscan diff last-week.json today.json                        # what is new / resolved/changed
 shadowscan diff baseline.json today.json --fail-on-drift inventory,capability,autonomy,governance  # exit 2 on adverse drift
 shadowscan scan -c shadowscan.yaml --format cyclonedx -o ai-bom.json   # CycloneDX 1.6 bill of materials
@@ -432,7 +436,7 @@ options:
   connector_timeout_seconds: 120    # soft deadline; also enforce a host job timeout
   parallel: 4                        # worker threads; use 1-2 for CPU-bound offline scans
   min_confidence: 0.3
-  dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs
+  dump_records: ./exports             # sanitized records for offline re-runs; excludes JWTs; a dedicated private directory
 connectors:
   - name: identity.entra
     tenant_id: ${AZURE_TENANT_ID}
@@ -443,7 +447,7 @@ connectors:
     admin_email: admin@acme.com
   - name: gateway.logs
     label: litellm-prod                # names this entry in --only, progress and exports
-    input: ./exports/litellm-spend.jsonl
+    input: ./logs/litellm-spend.jsonl  # keep inputs outside the dump_records directory
   - name: lowcode.power-platform
     tenant_id: ${AZURE_TENANT_ID}
     client_id: ${AZURE_CLIENT_ID}
@@ -458,8 +462,9 @@ connectors:
 
 #### Credential boundaries
 
-`shadowscan connectors` lists each connector's configuration keys and required
-extras; `shadowscan connectors --json` also lists offline export formats. Entries
+`shadowscan connectors` lists each connector's configuration keys and, where
+the connector declares them, the Python packages it needs;
+`shadowscan connectors --json` also lists offline export formats. Entries
 accept `enabled` (default `true`) and `label` (a distinct ID when a connector runs
 more than once). See [connector keys and least-privilege scopes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md).
 Run repository scans separately from live tenant collection. Mixing these
@@ -508,7 +513,7 @@ or YAML values stop the scan before the risk gate runs.
 #### Incremental and runtime correlation
 
 Use `--incremental` to reuse completed scans of unchanged local checkouts and
-static cloud exports. Live APIs and gateway logs are refreshed on each run.
+static repository and cloud exports. Live APIs and gateway logs are refreshed on each run.
 Configure `gateway.logs.correlation_bindings` to link a code resource to a
 specific gateway caller and scope. Matching timestamped framework fingerprints
 then appear in `metadata.runtime_activity`, including the observation window and

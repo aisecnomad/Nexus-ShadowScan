@@ -11,6 +11,11 @@ shadowscan dashboard fleet.json -o dashboard.html --inventory-json inventory.jso
 shadowscan dashboard laptop-*.json --baseline last-week.json --history weekly/ -o dashboard.html
 ```
 
+Every report, baseline and history file the command reads is refused over
+64 MiB. `merge` writes without a size cap, so a merged report of a large
+fleet can exceed what `dashboard` and `diff` will read back — pass the
+per-machine reports directly, as the second command does, when it would.
+
 Several reports are merged exactly as [`shadowscan merge`](../scanning.md#fleet-merge)
 merges them. One report is not merged again: a fleet report keeps its
 sources and each finding's `metadata.merged_from`, and a single scan becomes
@@ -75,7 +80,8 @@ from the keyboard, and they stay hidden without the script.
    risk first.
 
 The page holds at most 5,000 AI system rows, 1,000 source rows, 100
-connector columns, 1,000 priority rows and 100 new-since-baseline rows. A
+connector columns, 1,000 priority rows, 100 new-since-baseline rows and 50
+rows in each threat and control reference table. A
 table that holds fewer rows or columns than the data says how many more are
 in the JSON document; nothing is cut silently.
 

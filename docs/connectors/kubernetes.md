@@ -58,7 +58,14 @@ start the image name, its last path component without tag or digest, so a
 private-registry rebuild such as `registry.example/ml/vllm-serving` is
 recognised. An engine name elsewhere in the path (`registry.example/vllm/server`,
 `serving-vllm`), inside another word, or followed by an auxiliary role
-(`ollama-exporter`, `vllm-operator`, `-metrics`, `-monitor`) is not. NVIDIA
+(`ollama-exporter`, `vllm-operator`, `-metrics`, `-monitor`) is not. That
+word-boundary rule applies to the serving-engine names only: the vendor image
+markers (`dify`, `litellm`, `flowise`, `localai`, `open-webui`,
+`text-generation-inference`, `mcp-server` and the like) match as plain
+substrings anywhere in the image reference, so
+`text-generation-inference-exporter`, or an image name that merely contains
+`dify`, is still selected — review such findings rather than assuming the
+engine rule filtered them. NVIDIA
 Triton (`tritonserver`) also serves vision and tabular models, so it counts
 only with an LLM backend in its name or tag (`24.05-trtllm-python-py3`,
 `24.05-vllm-python-py3`). A GPU counts when `nvidia.com/gpu` is above zero in

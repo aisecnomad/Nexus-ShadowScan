@@ -5,6 +5,68 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Documentation audit corrections (October 15)
+
+A docs-against-code audit of the README and the `docs/` tree. Behavior is
+unchanged; these corrections make the documentation match the code.
+
+- The quickstart, README and inventory guide no longer write
+  `inventory stubs` output into `inventory/pending/`: an `inventory:`
+  directory is read recursively, so stubs written inside it registered their
+  findings on the next scan before review. The examples now use
+  `inventory-review/` and say why.
+- Exit codes: an unknown connector name, or a value a connector rejects at
+  startup (`code.filesystem` size options included), is documented as that
+  connector's failure and exit 3, not an exit-1 setup stop; `--fail-on` exit 2
+  is "reached", not "exceeded".
+- Install pages state the platform bounds (Windows unsupported; CPython
+  3.12.0–3.12.3 long-line caveat), use `shadowscan connectors` as the smoke
+  test (`--help` answers before the platform check), validate the wheel from
+  outside the checkout, no longer hard-code the wheel version, and note 0.1.2
+  was wheel-only.
+- Scan semantics: the four parsed lockfiles are carved out of every
+  `oversize_skip_globs` and skipped-silently passage; `strict_coverage` is
+  documented as also turning some complete-scan warnings into gaps; the
+  incremental section names the eligible connectors, the notebook fingerprint
+  exception and the `SHADOWSCAN_IDENTITY_KEY` caching and comparability rules;
+  offline caps are labeled defaults versus hard ceilings; the oversize `*.csv`
+  credential-pass trade-off is disclosed in the README-adjacent guides.
+- The comparison-scope fingerprint is documented as covering the runtime
+  (exact Python, platform, PyYAML, regex, git versions) with pinning advice in
+  the drift guide, which also gains the 64 MiB per-report cap, the adverse
+  first-value exceptions, and corrected drift-entry field notes.
+- production.md: the CloudTrail untraced-event note matches the October 14
+  change; the MCP invisible-operator `tool-poisoning` change is listed as a
+  score migration; the exception-text redaction claim is scoped to the paths
+  that guarantee it; lockfile manifests are described as paired per ecosystem;
+  plugin pin syntax, the ConfigMap `subPath` guidance and the removed
+  `CONNECTOR_FAMILIES` bullet are corrected.
+- Connector guides: Slack needs `team:read` (team.info gates collection);
+  Azure `include_app_settings` needs `Microsoft.Web/sites/config/list/Action`
+  or `false`; Okta needs `okta.appGrants.read` and keeps any-scope apps;
+  `saas.github-apps` reads `GITHUB_TOKEN` only and its PAT listing needs the
+  organization "Personal access tokens" permission; GitLab metadata listings
+  need elevated roles; `max_pages` is scoped to the ten connectors that accept
+  it; `ca_bundle` is documented on `endpoint.mcp` as well as `identity.jwt`;
+  Kubernetes vendor image markers are documented as substring matches;
+  `saas.generic` is marked offline-only; the OCI least-privilege row warns
+  that `read all-resources` over-grants.
+- Assurance pages: the synthetic corpus count is 109 (48 positives, 61
+  negatives as of 2026-10-15); the realistic corpus is no longer described as
+  frozen (its 2026-10-09 additions and 2026-10-10 relabels are dated); the
+  2026-09-24 review is attributed to the internal AI-assisted log; the
+  benchmark-follow-up list separates the three forbidden-attribution positives
+  from the negatives; the controls CSV is documented as carrying only the
+  per-row `mapping_review` label; GOVERNANCE/CONTRIBUTING/merge-policy name
+  the integrations as bypass actors alongside the administrator, and the
+  stale `verify` readback result is dated to before the rename; the AI review
+  gate doc's label-rerun contradiction and no-findings reason code are fixed;
+  testing.md lists all seven untyped-import modules.
+- The `shadowscan.config` module docstring example no longer mixes a live
+  code connector with live credentialed connectors (its own validation
+  rejects that) and no longer reads an input from the directory
+  `dump_records` writes.
+
 ### README visuals generated from the code (October 15)
 
 - The README banner and the architecture diagrams are now SVG files that

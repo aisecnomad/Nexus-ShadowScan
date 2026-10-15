@@ -27,10 +27,15 @@ the repository administrator role (`RepositoryRole` 5) and integrations
 1144995, 1236702 and 2875373, which were not resolved to application names.
 `python -m tools.governance_check` fails on that readback with
 `bypass_actors_not_empty` (and, for `Protect main`, `status_checks_required`,
-because that ruleset carries no status-check rule). The `verify` command
-reports `readback differs from reviewed payload: bypass_actors` for both
-against the committed payloads. The merge gate is therefore not yet enforced
-against a repository administrator. Removal of the bypass actors and a
+because that ruleset carries no status-check rule). Against the committed
+payloads, the `verify` command refuses the recorded snapshots outright: they
+predate the repository rename and record `source` under the repository's
+former name (formerly `aisecnomad/Project-Nexus`), so `verify` fails on
+repository identity before comparing (a fresh
+readback of the current repository reported
+`readback differs from reviewed payload: bypass_actors` at the time of the
+snapshot). The merge gate is therefore not yet enforced
+against a repository administrator or those integrations. Removal of the bypass actors and a
 readback showing `bypass_actors: []` remain outstanding; the committed
 `observed/` snapshots record this readback.
 

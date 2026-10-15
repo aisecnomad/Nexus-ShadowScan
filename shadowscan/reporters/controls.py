@@ -1,9 +1,10 @@
 """Control evidence report output: Markdown tables, CSV for GRC tools and JSON.
 
 Renders the ``shadowscan.control-evidence/v1`` document of
-:func:`shadowscan.controls.build_control_evidence`. Every format carries the
-notice that these are evidence references, not compliance determinations, and
-an incomplete input is marked before any control row. Untrusted text (finding
+:func:`shadowscan.controls.build_control_evidence`. The Markdown and JSON
+formats carry the notice that these are evidence references, not compliance
+determinations; the CSV carries only the per-row ``mapping_review`` label. An
+incomplete input is marked before any control row. Untrusted text (finding
 titles, report names) uses the Markdown reporter's escaping and the CSV
 reporter's spreadsheet-injection protection; a code span in a Markdown table
 cell also escapes ``|``, which would otherwise end the cell.

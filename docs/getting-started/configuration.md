@@ -2,16 +2,22 @@
 
 ShadowScan is configured through a YAML file passed with `-c` / `--config`.
 Environment variables are expanded using `${VAR}` syntax; missing required
-values fail closed. An invalid configuration, like an invalid command-line
-option, stops the command with exit code 1 before anything is scanned (see
-[exit codes](../operations/ci.md#exit-code-handling)).
+values fail closed. An invalid YAML structure, an invalid `options` value, an
+unknown key of a built-in connector, or an invalid command-line option stops
+the command with exit code 1 before anything is scanned (see
+[exit codes](../operations/ci.md#exit-code-handling)). An unknown connector
+name — a typo such as `identity.entr` is treated as a plugin that never
+loads — or a value its connector rejects at startup is reported as that
+connector's failure instead: the other connectors still run and the scan is
+incomplete (exit 3).
 
 ## Common options
 
 This page shows the options most configurations use. `parallel`, `incremental`,
-`state_dir`, `workdir`, `job_deadline_seconds`, `risk_basis` and `risk_weights`
+`state_dir`, `job_deadline_seconds`, `risk_basis` and `risk_weights`
 are documented in the [README risk policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/README.md#risk-policy),
-[scan semantics](../scanning.md) and [production deployment](../production.md).
+[scan semantics](../scanning.md) and [production deployment](../production.md);
+`workdir` is described below.
 
 ```yaml
 # shadowscan.yaml
@@ -156,8 +162,12 @@ All string values support `${VAR}` expansion:
 
 ## Incremental scanning
 
-Use `--incremental` to reuse completed scans of unchanged local checkouts and
-static exports. Live APIs and gateway logs are refreshed on every run.
+Use `--incremental` to reuse completed scans of unchanged `code.filesystem`
+checkouts and of unchanged `input` exports of `code.github`, `code.gitlab`,
+`cloud.aws`, `cloud.azure`, `cloud.gcp` and `cloud.oci`. Every other
+connector — live APIs, gateway logs, and the other surfaces' exports — runs in
+full on every scan. See [scan semantics](../scanning.md#incremental-scans) for
+the cache rules and what invalidates reuse.
 
 ## Connector listing
 

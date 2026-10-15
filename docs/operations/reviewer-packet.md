@@ -63,7 +63,9 @@ review record.
 - Treat confidence as a calibrated probability.
 - Treat author-written evaluation corpora as field precision or recall.
 - Treat `archive/reviews/` as an external audit.
-- Treat the `0.1.2` version string as a published release.
+- Treat the `0.1.2` version string in a checkout as the released artifact:
+  `main` carries unreleased changes while `pyproject.toml` still says 0.1.2;
+  only the index file and its attestation identify the release.
 - Treat GitHub Pages at <https://aisecnomad.github.io/Nexus-ShadowScan/> as the
   MkDocs site until Pages is switched to the Docs workflow artifact.
 

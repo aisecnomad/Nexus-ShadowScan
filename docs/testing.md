@@ -31,9 +31,11 @@ not work around a hash mismatch: a lock that no longer installs is a signal to
 review, not to bypass.
 
 The development set already includes the `types-PyYAML` and `types-requests`
-stubs that `mypy` needs. The third-party packages that ship neither stubs nor
-a `py.typed` marker (`regex`, `boto3`, `botocore` and `oci`) are the only
-modules `pyproject.toml` allows to be imported untyped.
+stubs that `mypy` needs. The only modules `pyproject.toml` allows to be
+imported untyped are `regex`, `boto3`, `botocore` and `oci` (no stubs or
+`py.typed` marker) plus `google`, `google.auth` and `azure.identity` (cloud
+SDKs that `make install-dev` leaves out, so `make typecheck` must pass
+without them).
 
 ## Run one test
 

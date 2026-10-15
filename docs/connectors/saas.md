@@ -5,7 +5,8 @@ installations across collaboration and productivity platforms.
 
 !!! info "Live and offline"
     SaaS connectors support live API collection and offline JSON/CSV export
-    analysis (including CASB inventory exports via `saas.generic`).
+    analysis. `saas.generic` is the exception: it is offline-only, reading
+    CASB and admin-console app-inventory exports, and has no live mode.
 
 See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit

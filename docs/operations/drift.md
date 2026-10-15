@@ -56,6 +56,10 @@ Some changes are drift but not adverse:
 - an owner or registry match that is newly set;
 - an autonomy bound that falls.
 
+Two first values are nonetheless adverse: a first `shadow: true` (the finding
+is now known to be unregistered), and any change of `kind` or `resource_type`
+(the finding is now inventoried as something else).
+
 Changes to `risk.score`, `risk.level` and `risk.factors` are not classified.
 `--fail-on-new` keeps its meaning: it exits 2 on new findings and on risk
 level rises. The two flags can be combined.
@@ -72,11 +76,12 @@ governance drift that is not adverse. Regenerate the baseline fleet report.
 
 The JSON document keeps every earlier key and adds:
 
-- `changed[].drift`: one entry per classified field, with `class`, `field`,
+- `changed[].drift`: one entry per classified field (`tags` can yield two, one
+  capability and one governance), with `class`, `field`,
   `direction` and `adverse`. List fields add `added` and `removed` and use
   the directions `added`, `removed` and `replaced`. Scalars add `before` and
   `after` and use the directions `set`, `cleared` and `changed`. Autonomy
-  bounds use `rose` and `fell` instead of `changed`. Values come from the
+  bounds, oversight and initiation use `rose` and `fell` instead of `changed`. Values come from the
   exported records, so anything the export boundary redacts stays redacted.
 - `drift_summary`: per class, the number of findings with drift of that
   class. Inventory counts new and resolved findings as well. Coverage counts
@@ -155,10 +160,19 @@ A baseline is a reviewed artifact, not a cache:
     - the baseline is older than N days;
     - its start time is missing, unparseable, without a timezone, or more
       than five minutes in the future;
-    - it started after the current scan.
-- **Scanner upgrades.** The scope fingerprint covers the scanner
-  implementation and its signatures. A baseline from another scanner revision
-  therefore does not compare (exit 3). Change `SHADOWSCAN_REVISION` and the
+    - it started after the current scan;
+    - the current report's own start time is missing or unparseable.
+- **Report size.** Every report `diff` reads — current, baseline or a merged
+  fleet report — is refused over 64 MiB. For a fleet that would exceed it,
+  compare the per-machine reports instead of one merged report.
+- **Scanner and runtime upgrades.** The scope fingerprint covers the scanner
+  implementation, its signatures and the runtime: the exact Python version,
+  platform, PyYAML, `regex` and `git` versions. A baseline from another
+  scanner revision — or from before a runtime update, such as a new runner
+  image or a Python patch release — does not compare (exit 3), and the
+  diagnostic names a scope difference, not the runtime. Pin the job's runtime
+  (exact Python patch version, a pinned runner or digest-pinned image), and
+  change `SHADOWSCAN_REVISION`, the runtime and the
   baseline in the same reviewed change window.
 
 A pinned, unexpired baseline shows only that the file is the one you

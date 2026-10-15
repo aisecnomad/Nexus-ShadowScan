@@ -62,7 +62,10 @@ stopped running.
 
 MCP inventory findings change score and metadata: tool descriptions are
 additionally screened for hidden HTML-comment content, fetch-and-execute
-phrasing and terminal control sequences, supported lockfiles are
+phrasing and terminal control sequences — and invisible operators
+(U+2061–U+2064) and bidirectional isolates (U+2066–U+2069) now raise
+`tool-poisoning` (weight 15) where they previously added only
+`invisible-text` — supported lockfiles are
 credential-scanned like every other read file, and a tool name duplicating
 another installed server's tool now carries the `tool-name-shadowing` threat
 mapping with a default risk weight of 10 (a default-weights change).
@@ -103,8 +106,10 @@ where the previous revision completed:
 
 - A supported lockfile (`uv.lock`, `poetry.lock`, `pnpm-lock.yaml`,
   `Cargo.lock`) that is malformed, an unsupported version (`Cargo.lock` v1/v2,
-  `pnpm-lock.yaml` 5.x), over a limit or a symbolic link, when no
-  `pyproject.toml`, `package.json` or `Cargo.toml` sits beside it. Beside its
+  `pnpm-lock.yaml` 5.x), over a limit or a symbolic link, when its own
+  manifest does not sit beside it (`uv.lock` and `poetry.lock` pair with
+  `pyproject.toml`, `pnpm-lock.yaml` with `package.json`, `Cargo.lock` with
+  `Cargo.toml`; another ecosystem's manifest does not count). Beside its
   manifest the same gap is a warning naming the lockfile and the reason, and
   the scan stays complete; earlier revisions never read these files. A pnpm
   git, tarball, URL or local package is inventoried by name with
@@ -176,13 +181,21 @@ where the previous revision completed:
   storage. Provenance gains `valid_until` when later answers extended the
   first answer's validity.
 - `cloud.aws` CloudTrail callers no longer count exact duplicate event IDs
-  twice, and offline `cloudtrail-event` records whose `eventName` is neither a
-  collected invocation operation nor an STS assumption are ignored instead of
-  reported as LLM callers. A record with no `eventName` (absent, `null` or
+  twice. Offline `cloudtrail-event` records are ignored only when their
+  `eventSource` is not an AI service and their `eventName` is not an STS
+  assumption; an AI-service event outside the collected invocation-operation
+  list (`ApplyGuardrail`, `Retrieve`, `InvokeModelWithBidirectionalStream`,
+  `InvokeEndpointAsync` and the like) counts for its caller without session
+  lineage, under a disclosed `untraced` warning that leaves the scan
+  complete. A record with no `eventName` (absent, `null` or
   empty) is not ignored: it is skipped as malformed and the scan is incomplete
   (exit 3). Regenerate such exports with the event name before relying on exit
   codes.
-- MCP tools keep the `tool-poisoning` rules of the previous revision; a
+- MCP tools keep the previous revision's `tool-poisoning` rules with one
+  addition: invisible operators (U+2061–U+2064) and bidirectional isolates
+  (U+2066–U+2069) in a tool description now raise `tool-poisoning` where they
+  previously added only `invisible-text`, so a `--fail-on` gate can trip on
+  such tools after upgrading. A
   bounded sentence audit adds zero-weight `instruction:*` evidence and
   `metadata.static_instruction_audit`, and can also raise the tag. The
   `SKILL.md` audit also covers the front matter `name` and `description`,
@@ -535,7 +548,9 @@ connectors:
     allowed_algorithms: [RS256]
 ```
 
-`plugins` contains exact connector names, not module paths or wildcard patterns.
+`plugins` contains exact connector names — each optionally pinned to its
+import target and distribution as `name=module:Class@distribution==version` —
+never wildcard patterns.
 Approved plugins still run trusted Python code. `shadowscan connectors` lists
 installed plugin metadata without importing it. A plugin must be explicitly
 allowed on each scan, even if a prior scan imported it.
@@ -748,7 +763,7 @@ per-input scan deadline. Exhausting either deadline marks the code scan
 incomplete (exit 3).
 
 A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 3
-must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
+must remain a failed gate in CI. Exit 2 means a complete scan reached the chosen
 risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be a strictly positive
 finite number. It starts when the connector worker begins, and split filesystem
 roots share that connector's deadline. The engine stops accepting a connector's
@@ -1226,10 +1241,15 @@ the whole tree.
 An unexpected connector failure, and an unexpected failure while scanning one
 `code.github` or `code.gitlab` repository, reports the exception text only when
 ShadowScan code raised it; those messages are fixed or already sanitized. An
-exception raised inside a third-party SDK or plugin reports only its type
+exception raised inside a third-party SDK or plugin during collection,
+analysis or a per-repository scan reports only its type
 (`code.github: acme/app: RuntimeError`), because its text can echo request data
 or opaque credentials that redaction does not recognize. The scan is still
-incomplete (exit 3). Alerting keyed on SDK exception text should key on the
+incomplete (exit 3). A failure outside those paths — a connector constructor,
+a plugin that overrides `run()`, or a plugin import — appends the exception
+text after the sanitizer strips the credential patterns it recognizes, so
+treat such messages as potentially provider-derived. Alerting keyed on SDK
+exception text should key on the
 connector name and exception type.
 
 Redaction reads a text with a run glued after a `Bearer`, `Basic` or `SSWS`
@@ -2319,9 +2339,11 @@ only after the acceptance steps it lists. A consumer that sorted results by
 SARIF level should read the result property `risk_level` or the rule property
 `shadowscan/heuristic-risk` instead.
 
-`code.filesystem` now stops at setup (exit 1) on a boolean, fractional or
-non-numeric `max_file_size` or `max_files` and on a boolean, non-finite or
-out-of-range `scan_timeout`. Such values used to be coerced: `max_file_size:
+`code.filesystem` now rejects a boolean, fractional or
+non-numeric `max_file_size` or `max_files` and a boolean, non-finite or
+out-of-range `scan_timeout` when the connector starts: the value is reported
+as that connector's error and the scan is incomplete (exit 3), like the
+equivalent checks in `cloud.aws` and `cloud.gcp`. Such values used to be coerced: `max_file_size:
 true` skipped every file larger than one byte and reported the scan
 incomplete. Correct the value and rescan instead of comparing against reports
 it produced; numbers and numeric text are accepted as before.
@@ -3493,15 +3515,18 @@ Redaction and lexing changes to review:
 
 Operational notes:
 
-- With a Kubernetes ConfigMap mount, pass the resolved file path as the
-  scan configuration; links are deliberately not followed.
+- Mount a Kubernetes ConfigMap- or Secret-held configuration, baseline or
+  snapshot with `subPath`, as `examples/k8s-drift-cronjob.yaml` does: a plain
+  volume presents each key through symbolic links, which ShadowScan
+  deliberately refuses, and the kubelet's resolved target path changes on
+  every ConfigMap update.
 - `XDG_STATE_HOME` is ignored when it is empty or relative.
 - Remove an `actions/cache` step that restores `--incremental` state. The
   fingerprint includes file identity, so a fresh checkout never reused it.
 - Maintainers: `main` push CI runs are no longer cancelled by the next push,
-  so expect more concurrent CI minutes on busy days. A new connector family
-  directory or nested connector package must be listed in `CONNECTOR_FAMILIES`
-  in `tools/coverage_gate.py`, or the coverage gate fails.
+  so expect more concurrent CI minutes on busy days. The per-connector
+  coverage gate discovers every module under `shadowscan/connectors/`
+  automatically, so a new connector family needs no gate registration.
 
 ### Finding identity and comparison migration
 

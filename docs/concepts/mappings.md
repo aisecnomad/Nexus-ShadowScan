@@ -189,9 +189,10 @@ to signature validation. The validator rejects:
   outside 0 to 5;
 - a reference that no catalog lists, or one whose catalog kind does not match
   the rules file;
-- a tag that is neither a weighted risk tag nor listed in the rules file's
-  `extra_known_tags`, and unknown capabilities, kinds, surfaces, oversight
-  values, registry statuses or declared risk classes;
+- a tag that is neither in the risk model's `TAG_WEIGHTS` (zero-weight tags
+  included) nor listed in the rules file's `extra_known_tags` — which must not
+  repeat a `TAG_WEIGHTS` tag — and unknown capabilities, kinds, surfaces,
+  oversight values, registry statuses or declared risk classes;
 - symbolic links, files other than `.yaml`, subdirectories, and rules files
   other than the three above.
 

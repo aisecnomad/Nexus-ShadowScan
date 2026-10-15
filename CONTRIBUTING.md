@@ -360,9 +360,10 @@ evidence that a second person examined the change. Repository settings are
 separate from this policy: inspect the
 [live rules](https://github.com/aisecnomad/Nexus-ShadowScan/rules) and PR checks
 before merging. The versioned policy requires no bypass actors; the 2026-10-10
-readback listed four `always` bypass actors on both `main` rulesets, so a
-repository administrator can merge without the non-author approval until they
-are removed. Every ruleset blocks nothing while disabled. Apply and
+readback listed four `always` bypass actors on both `main` rulesets (the
+administrator role and three unresolved integrations), so a repository
+administrator or any of those integrations can merge without the non-author
+approval until they are removed. Every ruleset blocks nothing while disabled. Apply and
 verify the [versioned merge policy](docs/operations/merge-policy.md) with repository
 administration access. Do not disable checks or review rules to make a
 merge possible, and recheck live enforcement before relying on it.

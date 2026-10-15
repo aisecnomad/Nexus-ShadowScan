@@ -507,14 +507,20 @@ root that does not affect completeness. Incomplete coverage is reserved for
 content the scan would have read. The default `oversize_skip_globs` name the
 remaining lockfiles (`gradle.lockfile`, `Package.resolved`,
 `Cartfile.resolved`, `deno.lock`, `pubspec.lock`, `mix.lock`, `bun.lock`,
-`*.lockb`, `flake.lock`) and generated files (`*.log`, `*.har`, `*.snap`).
+`*.lockb`, `flake.lock`), generated files (`*.log`, `*.har`, `*.snap`,
+minified bundles, source maps, compiled artifacts, images, fonts, archives)
+and data files (`*.csv`, `*.parquet`).
 Change logs are not on the list, because a name glob such as `CHANGELOG*`
 also matches source files a scanned repository names freely
 (`history_store.py`, `changes.ts`). Credential detection reads every
 analyzable file, prose and fixtures included, so while `scan_secrets` is on
 (the default) an oversize `README.md`, `CHANGELOG.md` or recorded cassette is
 a coverage gap like any other unread file:
-a key planted in it is never lost to an exit 0. With `scan_secrets: false`
+a key planted in it is never lost to an exit 0. The oversize skip globs are
+the one exception: an in-limit `*.csv` is credential-scanned, but an oversize
+one matching the default glob is skipped with a complete-scan warning —
+override `oversize_skip_globs` without `*.csv` where that trade-off is wrong
+for your data. With `scan_secrets: false`
 two more kinds are skipped with a warning and the scan stays complete: a
 documentation file (`.md`, `.mdc`, `.mdx`, `.txt` that is not a manifest, a
 coding-agent instruction document such as `CLAUDE.md` or `AGENTS.md`, an
@@ -1030,7 +1036,10 @@ reports that submodule coverage is unknown.)
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
 clone or API mode; also CI/CD variable names (masked flag), group service
 accounts, group/project access tokens, project bots and GitLab Duo enablement.
-Token: PAT with `read_api` + `read_repository`.
+Token: PAT with `read_api` + `read_repository`; the service-account,
+access-token and variable listings also need elevated roles and tier (see the
+[least-privilege table](../connectors.md#least-privilege)), and a token
+without a listing's role logs a per-listing warning and exits 3.
 Live API records cannot choose internal offline paths or dispatch fields. Code
 findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable

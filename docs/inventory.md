@@ -615,8 +615,13 @@ including any server whose package or endpoint cannot be identified; see
 
 ```
 shadowscan scan -c shadowscan.yaml --format json -o today.json
-shadowscan inventory stubs today.json -o inventory/pending/ --min-risk medium
+shadowscan inventory stubs today.json -o inventory-review/ --min-risk medium
 ```
+
+Write stubs outside every configured `inventory:` path. Inventory directories
+are read recursively, so a stub inside one (an `inventory/pending/`
+subdirectory, for example) is loaded as sanctioned inventory on the next scan
+and registers its finding before anyone has reviewed it.
 
 `inventory stubs` writes one capability-card skeleton per shadow finding (agent,
 mcp-server, workflow, bot-app, agent-config by default): the discovered

@@ -47,10 +47,12 @@ data-driven ambiguity rule. Domain and client identifiers in an offline export
 are observations from that export, not authenticated publisher attestations.
 
 ## `identity.okta`
-`/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OAuth apps that
-match AI SaaS signatures or hold privileged scopes, and service apps
-(`application_type: service` / `client_credentials` / token-exchange).
-Token: SSWS API token or OAuth bearer with `okta.apps.read`. A 429 is retried
+`/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OIDC, SAML and
+WS-Fed apps that match AI SaaS signatures or hold any granted or consented
+scope, and service apps (`application_type: service` or `client_credentials`
+grants; a token-exchange app is kept only through its signatures or scopes).
+Token: SSWS API token or OAuth bearer with `okta.apps.read` plus
+`okta.appGrants.read` for the per-app grant listing. A 429 is retried
 after the window named by Okta's `X-Rate-Limit-Reset` header (bounded to 120 s
 per wait); exhausted retries mark the scan incomplete.
 

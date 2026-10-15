@@ -11,18 +11,19 @@ Example ``shadowscan.yaml``::
       fail_on: high             # exit non-zero when a finding reaches this level
       dump_records: ./exports   # save sanitized connector records (JSONL) for offline re-analysis
     connectors:
-      - name: code.github
-        org: acme
-        token: ${GITHUB_TOKEN}
       - name: identity.entra
         tenant_id: ${AZURE_TENANT_ID}
         client_id: ${AZURE_CLIENT_ID}
         client_secret: ${AZURE_CLIENT_SECRET}
       - name: gateway.logs
-        input: ./exports/litellm-spend.jsonl
+        input: ./logs/litellm-spend.jsonl
       - name: cloud.aws
         regions: [us-east-1, eu-west-1]
         cloudtrail_days: 7
+
+Run code connectors in a configuration of their own: without
+``options.allow_credential_mixing`` a code connector is rejected beside any
+other live credentialed connector (``validate_connector_isolation``).
 
 ``options.trusted_registries`` lists vendor registry instances, each by registry type and
 exact id, whose approved records count as sanctioned inventory::

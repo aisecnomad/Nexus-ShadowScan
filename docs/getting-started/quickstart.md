@@ -37,10 +37,13 @@ checkout; the PyPI wheel does not ship them (see [installation](install.md)).
 ## 3. Scan with live connectors
 
 Repository scans and live tenant collection run as separate scans: the scanner
-rejects a configuration that mixes a live code connector with credentialed
-tenant connectors unless `options.allow_credential_mixing` is set for reviewed
-inputs (see [production deployment](../production.md#explicit-security-policy)).
-Create one configuration per boundary:
+rejects a configuration that selects any code connector (a local path, an
+offline export or a live repository) together with any other live credentialed
+connector — another live repository connector included — unless
+`options.allow_credential_mixing` is set for reviewed inputs (see
+[production deployment](../production.md#explicit-security-policy)).
+Create one configuration per boundary, with one live code connector at most
+(the `./inventory` directory must exist):
 
 ```yaml
 # shadowscan-code.yaml: repository scan
@@ -110,13 +113,19 @@ before any count; see [fleet dashboard](../operations/dashboard.md).
 ## 7. Register, compare and report
 
 ```bash
-shadowscan inventory stubs report.json -o inventory/pending/
+shadowscan inventory stubs report.json -o inventory-review/
 shadowscan diff last-week.json today.json                 # informational: exit 0 unless the comparison is incomplete (3)
 shadowscan diff last-week.json today.json --fail-on-new   # exit 2 on new findings or a higher risk level
 shadowscan diff last-week.json today.json --fail-on-drift inventory,capability,autonomy,governance   # exit 2 on adverse drift
 shadowscan controls today.json --format csv -o controls.csv   # findings per NIST AI RMF, ISO/IEC 42001, EU AI Act and AIUC-1 control
 shadowscan scan -c shadowscan-code.yaml --format cyclonedx -o ai-bom.json   # CycloneDX 1.6 AI bill of materials
 ```
+
+Write stubs outside every `inventory:` path. Inventory directories are read
+recursively, so a stub under `./inventory/` (an `inventory/pending/`
+subdirectory, for example) would register its finding on the next scan before
+anyone reviewed it. Review and complete each card, then move it into the
+inventory directory; see [inventory](../inventory.md#from-shadow-to-registered).
 
 `controls` reports evidence references, not compliance determinations; see
 [control evidence report](../operations/controls.md) and
@@ -140,7 +149,11 @@ does unless both scans were keyed with the same identity key (see
 | `3`  | Incomplete scan (API failures, timeouts, permission denials) |
 
 Treat any non-zero exit as a failure in CI. Do not test only for 2 and 3: exit 1
-means nothing was scanned.
+means nothing was scanned. Errors in the YAML structure, `options` or a
+built-in connector's keys exit 1 before anything runs; an unknown connector
+name (a typo such as `identity.entr`), or a value its connector rejects when
+it starts, is reported as that connector's failure, the other connectors still
+run, and the scan exits 3.
 
 ## Next steps
 

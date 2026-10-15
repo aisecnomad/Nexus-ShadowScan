@@ -8,8 +8,11 @@ relevant to NIST AI RMF `GOVERN-1.6`, ISO/IEC 42001 `A.6.2.8` or EU AI Act
 Article 14, how risky they are, and how complete the scan behind them was.
 
 **Evidence references, not compliance determinations. Mappings are author
-mappings and have not been independently reviewed.** Every output starts with
-this notice (the JSON document carries it as `notice`). The report never says
+mappings and have not been independently reviewed.** The Markdown report
+starts with this notice and the JSON document carries it as `notice`; the CSV
+carries only the per-row `mapping_review` column (`author mapping, not
+independently reviewed`), so keep the notice alongside a CSV handed to a GRC
+tool. The report never says
 that a control is met, applies or is missing, and it has no score. Whether an
 obligation applies, and whether the evidence satisfies it, is for the people
 who own the programme to decide.
@@ -36,7 +39,8 @@ and its review status. Every entry of the catalog gets a row, referenced or not:
 - the control id and the catalog's own-words title;
 - the evidence status (below);
 - the number of findings that reference the control, split by risk level;
-- up to 10 example findings, highest risk score first (ties by finding id),
+- up to 10 example findings, highest risk score first (ties by danger score,
+  then finding id),
   with their titles, level and score. An example whose only reference to the
   control comes from [declared facts](#declared-facts) is marked `(declared)`;
 - for NIST AI RMF `GOVERN-1.6` and ISO/IEC 42001 `A.4.2`, a scan evidence line
@@ -96,7 +100,11 @@ whether it was reconciled with an inventory.
 
 A merged finding counts as shadow when a report reconciled with an inventory
 says it is shadow, as registered when every report says it is registered, and
-as unknown otherwise. A report without an inventory knows nothing about
+as unknown otherwise. This vote is deliberately stricter than the fleet
+[`merge`](../scanning.md#fleet-merge) and dashboard rule, which ignores
+sources without an inventory: a finding registered in one report and also
+seen by an inventory-less report reads sanctioned on the dashboard but
+unknown here. A report without an inventory knows nothing about
 registration, so it never makes a finding look shadow: a report's own
 `inventory_present` decides whether it had one, and its shadow values and
 `inventory_size` are ignored when it says it had none. A report written

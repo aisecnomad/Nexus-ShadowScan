@@ -11,7 +11,9 @@ options:
     provider: anthropic          # or openai (any OpenAI-compatible chat endpoint)
     model: <model-id>            # required; there is no default model
     api_key_env: ANTHROPIC_API_KEY
-    # base_url: https://llm-gateway.example.com   # optional, https only
+    # base_url: https://llm-gateway.example.com/v1   # optional, https only; the provider path is
+    #   appended verbatim: openai appends /chat/completions (so include the /v1),
+    #   anthropic appends /v1/messages (so omit it)
     max_findings: 25             # 1 to 500, highest risk first
     min_level: medium            # lowest heuristic risk level triaged
     timeout_seconds: 30
@@ -59,7 +61,8 @@ Finding text comes from scanned repositories and remote APIs and is
 untrusted. The model is told to treat it as data, and a reply is accepted
 only as a JSON object with one of the four verdicts; anything else is
 recorded as `status: unparseable`, as is a reply longer than 16 KiB, which is
-refused unread (the response body is capped at 64 KiB). A reply must name a
+refused unread. A response body over the HTTP client's 64 KiB cap fails the
+request instead (`status: failed`, counting toward the circuit breaker). A reply must name a
 `verdict` key exactly once: one that names it again, such as a verdict quoted
 from injected finding text beside the model's own (whether or not either is
 strict JSON, nested, a repeated key or spelled with escapes), or a prose
@@ -80,8 +83,9 @@ finding text: never let a pipeline suppress or close findings because of
 `structured_output: true` also asks the provider to constrain the reply to the
 verdict schema: `output_config.format` for `anthropic`, a strict
 `response_format` JSON schema for `openai`. Enable it only for a model and
-endpoint that support it; otherwise every request fails and is recorded as
-`status: failed`. The reply is still checked the same way, since a schema
+endpoint that support it; otherwise requests fail (`status: failed`) and,
+after three consecutive failures, the circuit breaker records the remaining
+findings as `status: skipped`. The reply is still checked the same way, since a schema
 constrains the form of the answer, not whether finding text persuaded the
 model.
 

@@ -84,8 +84,9 @@ PR files API, excluding paths starting `.github/ai-review/`. This avoids a
 circular head-SHA requirement when evidence is committed, binds findings to
 file blobs/status, and permits evidence-only updates. Regenerate it after any
 non-evidence diff change. Labels and diff are fetched again at publication;
-superseded heads fail closed. Label-only changes do not trigger this workflow:
-rerun after applying/removing a blocking label.
+superseded heads fail closed. A label change triggers its own run (the
+workflow listens for `labeled` and `unlabeled`), so a blocking label takes
+effect without a new push.
 
 Scanner adapters must establish scan completion against the reviewed diff,
 normalize identities, and include only fingerprints, never alerts, raw
@@ -136,8 +137,9 @@ path, is rejected before it is listed: the trusted job never enumerates a
 directory the pull request pointed it at, and the file limit applies while
 iterating. Any malformed entry invalidates its artifact, even alongside valid
 entries. Out-of-diff locations fail as stale findings. `ai-review: blocked`
-fails the check; critical/high findings do likewise. High-risk changes
-without findings fail as insufficient evidence, never an empty pass. Any
+fails the check; critical/high findings do likewise. A specialist that
+returns no findings fails the gate as malformed findings at any risk level,
+so a change without findings is never an empty pass. Any
 non-documentation change is conservatively high risk (the evidence under
 `.github/ai-review/`, which every gated diff carries, is left out of that
 classification as it is of the digest); the high-risk label can only
