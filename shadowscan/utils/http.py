@@ -74,8 +74,10 @@ class _SocketDeadline:
     The timer never closes a descriptor or touches a returned pool connection.
     ``finish`` cancels and joins it before ``_make_request`` returns, so an
     expiring request cannot shut down a socket reused by another request.
-    DNS runs in the caller: it cannot be killed safely, but a late resolution
-    cannot proceed to a connection. TLS uses the remaining socket timeout.
+    DNS runs in a bounded worker (``_resolve_bounded``): the resolver call
+    itself cannot be killed, but the request stops waiting at its budget and a
+    late resolution cannot proceed to a connection. TLS uses the remaining
+    socket timeout.
     """
 
     def __init__(self, connection: Any, deadline: float):
@@ -178,6 +180,44 @@ def _read_deadline(timeout: float) -> float:
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be a positive finite number of seconds")
     return float(timeout) * READ_DEADLINE_FACTOR
+
+
+# getaddrinfo has no timeout or cancellation interface of its own: a stalled
+# system resolver would otherwise hold the calling worker past every
+# cooperative deadline check. This bounds the wait; the client timeout and the
+# acquisition deadline tighten it further where they apply.
+_RESOLVE_TIMEOUT = 20.0
+
+
+def _resolve_bounded(host: str, port: int, budget: float, **kwargs: Any) -> list[Any]:
+    """Run ``socket.getaddrinfo`` in a worker thread, waiting at most ``budget``.
+
+    The resolver call itself cannot be interrupted: on timeout the worker is
+    abandoned (it holds only its arguments and ends with the call) and
+    ``TimeoutError`` is raised, so a result that arrives late is discarded
+    with the worker, never used. A resolver error is re-raised in the caller.
+    """
+    answers: list[list[Any]] = []
+    failures: list[BaseException] = []
+    done = threading.Event()
+
+    def resolve() -> None:
+        try:
+            answers.append(socket.getaddrinfo(host, port, **kwargs))
+        except Exception as exc:  # noqa: BLE001 - delivered to the waiting caller below
+            failures.append(exc)
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=resolve, name="shadowscan-http-resolve", daemon=True)
+    worker.start()
+    if not done.wait(max(0.0, budget)):
+        raise TimeoutError("DNS resolution did not complete within the deadline")
+    if failures:
+        raise failures[0]
+    if not answers:  # the worker died without an answer or an error
+        raise TimeoutError("DNS resolution did not complete within the deadline")
+    return answers[0]
 
 
 def _read_watchdog(
@@ -388,10 +428,18 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     try:
         ipaddress.ip_address(host)
     except ValueError:
+        deadline, _ = _request_limits.get()
+        budget = _RESOLVE_TIMEOUT if deadline is None else min(_RESOLVE_TIMEOUT, deadline - time.monotonic())
         try:
-            infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+            infos = _resolve_bounded(host, port, budget, proto=socket.IPPROTO_TCP)
         except socket.gaierror:
             infos = []
+        except TimeoutError:
+            # A name that fails to resolve can be left to the connection-time
+            # check, but external transports (git, SDKs) rely on this preflight,
+            # and a resolver stalled past the budget gives no answer to check:
+            # fail closed instead of holding the worker indefinitely.
+            raise ValueError("DNS resolution for the API URL did not complete in time") from None
         for info in infos:
             try:
                 addr = ipaddress.ip_address(info[4][0])
@@ -430,10 +478,17 @@ class _PublicHTTPSConnection(HTTPSConnection):
         host = self.host.rstrip(".")
         if not self.allow_private_origin and (_blocked_host(host) or "%" in host):
             raise ValueError("Refusing private or cloud-metadata destination")
+        budget = _RESOLVE_TIMEOUT
+        if isinstance(self.timeout, (int, float)) and not isinstance(self.timeout, bool):
+            budget = min(budget, float(self.timeout))
+        if guard is not None:
+            budget = min(budget, guard.remaining())
         try:
-            addresses = socket.getaddrinfo(host, self.port or 443, type=socket.SOCK_STREAM)
+            addresses = _resolve_bounded(host, self.port or 443, budget, type=socket.SOCK_STREAM)
         except socket.gaierror as exc:
             raise NameResolutionError(host, self, exc) from exc
+        except TimeoutError as exc:
+            raise NameResolutionError(host, self, socket.gaierror(str(exc))) from exc
         if guard is not None:
             guard.remaining()
         if not addresses:
@@ -648,6 +703,18 @@ class HttpClient:
         )
         if not isinstance(self.allow_private_origin, bool):
             raise TypeError("allow_private_origin must be a boolean")
+        # The declared type does not bind untyped callers: re-check at runtime.
+        # Tests stand sessions in with unittest.mock doubles, which carry no
+        # real transport. Any other duck-typed session would send requests
+        # without the destination-policy adapter and without the proxy and
+        # adapter-identity checks below, so it is refused, not silently trusted.
+        injected: object = session
+        if (
+            injected is not None
+            and not isinstance(injected, requests.Session)
+            and type(injected).__module__.split(".", 1)[0] != "unittest"
+        ):
+            raise TypeError("session must be a requests.Session or a unittest.mock stand-in")
         self.session = session or requests.Session()
         _validate_headers(self.session.headers)
         _validate_headers(headers)
