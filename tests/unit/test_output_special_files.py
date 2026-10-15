@@ -229,3 +229,41 @@ def test_cli_report_to_named_pipe_keeps_the_pipe(tmp_path):
     assert result.exit_code == 0, result.output
     assert stat.S_ISFIFO(os.lstat(pipe).st_mode)
     assert "findings" in json.loads(received)
+
+
+def test_report_is_not_written_through_a_directory_link_another_user_owns(tmp_path, monkeypatch):
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    link = tmp_path / "reports"
+    link.symlink_to(victim, target_is_directory=True)
+    real_lstat = os.lstat
+
+    def foreign_link(path, *args, **kwargs):
+        info = real_lstat(path, *args, **kwargs)
+        if os.fspath(path) == os.fspath(link):
+            fields = list(info)
+            fields[stat.ST_UID] = os.geteuid() + 4242
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(output.os, "lstat", foreign_link)
+    with pytest.raises(ValueError, match="symbolic link owned by another user"):
+        write_private_text(link / "report.json", "report body")
+    assert list(victim.iterdir()) == []
+
+
+def test_report_through_the_operators_own_directory_link_lands_in_its_target(tmp_path):
+    target = tmp_path / "real"
+    target.mkdir()
+    (tmp_path / "alias").symlink_to(target, target_is_directory=True)
+    write_private_text(tmp_path / "alias" / "report.json", "report body")
+    written = target / "report.json"
+    assert written.read_text() == "report body"
+    assert stat.S_IMODE(written.stat().st_mode) == 0o600
+    assert sorted(entry.name for entry in target.iterdir()) == ["report.json"]
+
+
+def test_a_long_legal_output_name_is_written(tmp_path):
+    name = "r" * 250 + ".json"
+    write_private_text(tmp_path / name, "report body")
+    assert (tmp_path / name).read_text() == "report body"

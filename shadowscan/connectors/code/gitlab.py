@@ -317,6 +317,12 @@ class GitLabConnector(RemoteRepositoryConnector):
                 size = detail_stats.get("repository_size")
         return size
 
+    def _clone_path_prefix(self) -> str:
+        # A GitLab installed under a relative URL root ('https://host/gitlab/api/v4')
+        # serves its repositories under that root.
+        path = urlsplit(self.api_url).path.rstrip("/")
+        return path.removesuffix("/api/v4") if path.endswith("/api/v4") else ""
+
     def _clone_target(self, proj: dict[str, Any]) -> tuple[str, Any] | None:
         url = proj.get("http_url_to_repo")
         if not url:

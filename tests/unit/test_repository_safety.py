@@ -135,6 +135,7 @@ def test_clone_callers_enforce_hooks_auth_and_branch_validation(provider, branch
     monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", fake_clone)
     repo = {
         "full_name": "acme/app",
+        "path_with_namespace": "acme/app",
         "default_branch": branch,
         "clone_url": "https://github.com/acme/app.git",
         "http_url_to_repo": "https://gitlab.com/acme/app.git",

@@ -741,7 +741,10 @@ def test_nested_repository_scan_inherits_cancellation_and_publication_fence(
     "cls, record",
     [
         (GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}),
-        (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/org/repo.git"}),
+        (
+            GitLabConnector,
+            {"path_with_namespace": "org/repo", "http_url_to_repo": "https://gitlab.com/org/repo.git"},
+        ),
     ],
 )
 def test_clone_process_is_bounded_by_connector_deadline(tmp_path, index, monkeypatch, cls, record):
@@ -1359,11 +1362,13 @@ def test_blank_target_names_are_unset_like_an_empty_variable(index, monkeypatch)
         (GitLabConnector, {"path_with_namespace": "org/repo", "id": 123}),
     ],
 )
-@pytest.mark.parametrize("version", [(2, 30, 2), (2, 31, 9), (1, 9, 5), None], ids=str)
+@pytest.mark.parametrize(
+    "version", [(2, 30, 2), (2, 31, 9), (2, 43, 0), (2, 44, 9), (1, 9, 5), None], ids=str
+)
 def test_clone_with_an_old_or_unreadable_git_uses_incomplete_api_fallback(
     tmp_path, monkeypatch, index, cls, record, version
 ):
-    """Git before 2.32 ignores GIT_CONFIG_COUNT/GIT_CONFIG_GLOBAL: a redirect to another host was followed."""
+    """Git before 2.32 ignores GIT_CONFIG_COUNT/GIT_CONFIG_GLOBAL; before 2.45 it rejects --no-lazy-fetch."""
     ctx = ConnectorContext(config={"mode": "clone"}, index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
     connector = cls(ctx)
@@ -1375,12 +1380,12 @@ def test_clone_with_an_old_or_unreadable_git_uses_incomplete_api_fallback(
     assert fetch(record, str(tmp_path)) == str(tmp_path)
     assert ctx.stats.incomplete
     assert ctx.stats.warnings == [
-        f"{cls.name}: Git 2.32 or newer is required to clone org/repo; using sampled API mode"
+        f"{cls.name}: Git 2.45 or newer is required to clone org/repo; using sampled API mode"
     ]
     clone.assert_not_called()
 
 
-@pytest.mark.parametrize("version", [(2, 32, 0), (2, 43, 0), (3, 0, 1)])
+@pytest.mark.parametrize("version", [(2, 45, 0), (2, 51, 2), (3, 0, 1)])
 def test_clone_proceeds_with_a_supported_git(tmp_path, monkeypatch, index, version):
     ctx = ConnectorContext(index=index)
     ctx.stats = ScanStats(connector="code.github", started_at="2026-01-01T00:00:00Z")
@@ -1400,8 +1405,10 @@ def test_clone_proceeds_with_a_supported_git(tmp_path, monkeypatch, index, versi
     "version,supported",
     [
         ((2, 31, 9), False),
-        ((2, 32, 0), True),
-        ((2, 43, 0), True),
+        ((2, 32, 0), False),
+        ((2, 43, 0), False),
+        ((2, 44, 9), False),
+        ((2, 45, 0), True),
         ((3, 0, 0), True),
         ((1, 99, 0), False),
         (None, False),
@@ -1507,3 +1514,45 @@ def test_offline_clone_with_an_lfs_pointer_is_incomplete(tmp_path, index, run_co
     _, ctx = run_connector(cls.name, input=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
     assert any("agent.py: Git LFS pointer file" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "acme/app", "clone_url": "https://github.com/other/repo.git"}),
+        (GitHubConnector, {"full_name": "acme/app", "clone_url": "https://github.com/acme/app-fork.git"}),
+        (
+            GitLabConnector,
+            {"path_with_namespace": "acme/app", "http_url_to_repo": "https://gitlab.com/other/acme/app.git"},
+        ),
+        (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/acme/app.git"}),
+    ],
+)
+def test_clone_url_must_name_the_listed_repository(tmp_path, index, monkeypatch, cls, record):
+    run = Mock(side_effect=AssertionError("another repository must not be cloned"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    with pytest.raises(ValueError, match="does not name the listed repository"):
+        _connector(index, cls, token="synthetic")._clone(record, str(tmp_path / "repo"))
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "cls,record,api_url",
+    [
+        (GitHubConnector, {"full_name": "Acme/App", "clone_url": "https://github.com/acme/app.git"}, None),
+        (GitHubConnector, {"full_name": "acme/app"}, None),
+        (
+            GitLabConnector,
+            {
+                "path_with_namespace": "grp/sub/app",
+                "http_url_to_repo": "https://git.example/gitlab/grp/sub/app.git",
+            },
+            "https://git.example/gitlab/api/v4",
+        ),
+    ],
+)
+def test_clone_url_naming_the_repository_is_cloned(tmp_path, index, monkeypatch, cls, record, api_url):
+    run = Mock(return_value=True)
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    config = {"token": "synthetic", **({"api_url": api_url} if api_url else {})}
+    assert _connector(index, cls, **config)._clone(record, str(tmp_path / "repo"))

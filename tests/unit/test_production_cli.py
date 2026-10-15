@@ -40,7 +40,7 @@ def test_output_failure_preserves_previous_report(tmp_path, monkeypatch):
     target = tmp_path / "report"
     target.write_text("previous")
 
-    def failed_replace(*args):
+    def failed_replace(*args, **kwargs):
         raise OSError("synthetic failure")
 
     monkeypatch.setattr("shadowscan.utils.output.os.replace", failed_replace)

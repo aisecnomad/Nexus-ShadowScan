@@ -28,6 +28,10 @@ _PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?<![\w])hf_[A-Za-z0-9]{34,}(?![A-Za-z0-9_])"),
     re.compile(r"(?<![\w])[rs]k_live_[0-9A-Za-z]{20,}(?![A-Za-z0-9_])"),
     re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
+    re.compile(
+        r"(?<![\w-])(?:IHsi|eyAi|eyAg|eyAK|ewo|CXsi|Cnsi)[A-Za-z0-9_-]{10,}"
+        r"\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+    ),
     # The whole block. With a footer within 8 KiB, everything up to it, however the body is
     # quoted (real or escaped line breaks, one line, a '> ' prefix). Without one, the header,
     # PEM encryption headers directly after it, at most one blank line, then runs of 16 or more

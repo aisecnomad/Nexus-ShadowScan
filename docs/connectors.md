@@ -461,14 +461,13 @@ is scanned through the incomplete API fallback. A clone URL or API link that
 contains whitespace or control characters is refused outright rather than
 cleaned up, and an API tree path with a `.git` component (any case) aborts that
 repository's API snapshot.
-Cloning requires Git 2.32 or newer: the protections that keep a clone on its
+Cloning requires Git 2.45 or newer: the protections that keep a clone on its
 origin and out of local configuration are passed through `GIT_CONFIG_COUNT` and
-`GIT_CONFIG_GLOBAL`, which older versions ignore without an error. With an older
-or unidentifiable Git (`git --version` is read once per process) the connector
-uses sampled API mode and the scan is incomplete. The submodule inventory of a
-clone uses the hardened metadata path, which needs Git 2.45; with Git 2.32 to
-2.44 a clone is scanned but reports
-`could not inventory gitlinks safely; submodule coverage unknown`.
+`GIT_CONFIG_GLOBAL`, which versions before 2.32 ignore without an error, and the
+clone's revision and submodule inventory are read on the hardened metadata path
+with `--no-lazy-fetch`, which Git 2.45 added. With an older or unidentifiable Git
+(`git --version` is read once per process) the connector uses sampled API mode and
+the scan is incomplete.
 The provider's size is an estimate, and polling can overshoot between samples.
 Neither check limits network transfer or guarantees a hard disk ceiling. Run
 remote scans with a host/container wall-clock limit and a writable disk quota.

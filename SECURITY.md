@@ -179,7 +179,9 @@ coverage, even when a response includes an empty collection field.
   branch values are dropped with incomplete diagnostics.
   Remote repository data cannot select an internal offline filesystem path.
   Keep Git patched and use disposable workers for untrusted inputs.
-* Reports and generated inventory stubs are written atomically with mode 0600.
+* Reports and generated inventory stubs are written atomically with mode 0600,
+  never to a symbolic link and never through a directory link that another user
+  owns; the file is created and renamed relative to the opened real directory.
   An existing character device given as the output path (such as `/dev/null`)
   is written in place, and an existing named pipe only when the current user
   owns it with mode 0600; other non-regular paths are refused.

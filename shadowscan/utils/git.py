@@ -724,8 +724,11 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 # The clone protections (no redirects, origin-scoped credentials, no hooks, no helpers, no
 # system or global configuration) are applied through GIT_CONFIG_COUNT (Git 2.31) and
 # GIT_CONFIG_GLOBAL (Git 2.32). An older Git ignores both silently, follows a redirect to
-# another host and finishes the scan, so cloning requires at least this version.
-MINIMUM_CLONE_GIT = (2, 32)
+# another host and finishes the scan. The metadata reads of the finished clone (its
+# immutable revision and gitlink inventory) pass --no-lazy-fetch, which Git 2.45 added:
+# with 2.32 to 2.44 every clone was scanned without provenance and reported incomplete,
+# so cloning requires at least 2.45.
+MINIMUM_CLONE_GIT = (2, 45)
 _GIT_VERSION_RX = re.compile(rb"git version (\d+)\.(\d+)(?:\.(\d+))?")
 _git_version_cache: tuple[int, int, int] | None = None
 

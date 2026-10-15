@@ -190,6 +190,8 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "saas.microsoft-teams": frozenset({"include_store"}),
 }
 _IDENTIFIER_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+# The identifiers a diagnostic quotes back (see _plain_identifier).
+_DISPLAYED_IDENTIFIER_RX = re.compile(r"[a-z][a-z0-9_.-]{0,39}")
 _deprecations_warned: set[str] = set()
 
 
@@ -256,11 +258,20 @@ def _warn_deprecated_once(key: str, message: str) -> None:
 
 
 def _plain_identifier(value: Any) -> bool:
-    """Whether a key or connector name is plainly an identifier that redaction leaves alone."""
-    if isinstance(value, str) and _IDENTIFIER_RX.fullmatch(value):
-        shown = sanitize_text(value)
-        return shown == value and REDACTED not in shown
-    return False
+    """Whether a key or connector name is plainly an identifier that redaction leaves alone.
+
+    Configuration keys and connector names are lowercase words ('fetch_tokens',
+    'identity.auth0'). A credential pasted where a key belongs has no prefix
+    redaction recognizes when it is an opaque token (an Okta API token, a hex
+    key), so only a lowercase name of at most 40 characters with at most three
+    digits is quoted back; anything else is described instead.
+    """
+    if not isinstance(value, str) or not _IDENTIFIER_RX.fullmatch(value):
+        return False
+    if not _DISPLAYED_IDENTIFIER_RX.fullmatch(value) or sum(char.isdigit() for char in value) > 3:
+        return False
+    shown = sanitize_text(value)
+    return shown == value and REDACTED not in shown
 
 
 def _display_identifier(value: Any, fallback: str) -> str:
@@ -724,7 +735,14 @@ class ScanConfig:
                 f"scan configuration {p} is a symbolic link or inside one; links are not followed,"
                 " so pass the file's real path"
             ) from None
-        text = read_policy_text(p)
+        try:
+            text = read_policy_text(p)
+        except (OSError, ValueError):
+            # The OS error can name other paths; the size and type limits are what to fix.
+            raise ConfigValidationError(
+                f"scan configuration {p} could not be read: it must be a readable regular file"
+                " of at most 8 MiB"
+            ) from None
         try:
             data = yaml.load(text, Loader=_ConfigLoader)
         except ConfigValidationError:

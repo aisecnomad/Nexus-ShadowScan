@@ -2,20 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import asdict
 from typing import Any, cast
 
 from shadowscan.models import ScanResult
-from shadowscan.utils.output import terminal_text
+from shadowscan.utils.output import shown_escaped, terminal_text
 from shadowscan.utils.redaction import sanitize
-
-# Every character terminal_text() renders visibly: C0 and C1 controls, bidi
-# formatting and line/paragraph separators.
-_TERMINAL_CONTROLS = re.compile(
-    r"[\x00-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069"
-    r"\ufeff\ud800-\udfff\U000e0000-\U000e007f]"
-)
 
 
 def unassessed_count(result: ScanResult) -> int:
@@ -46,8 +38,8 @@ def visible_controls(value: str, keep: str = "") -> str:
     (tab, newline) is kept by the caller; every other control is shown as
     ``\\uXXXX``, the same rendering the table and Markdown reporters use.
     """
-    return _TERMINAL_CONTROLS.sub(
-        lambda m: m.group() if m.group() in keep else terminal_text(m.group()), value
+    return "".join(
+        terminal_text(char) if char not in keep and shown_escaped(char) else char for char in value
     )
 
 
