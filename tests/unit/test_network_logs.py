@@ -1101,6 +1101,41 @@ def test_day_long_log_attributes_within_bounds(monkeypatch):
         assert "DNS attribution provenance is sampled to 20 entries" in finding.metadata["limitations"]
 
 
+def test_deadline_is_checked_within_a_connections_timestamp_groups(monkeypatch):
+    # One connection with 3,000 timestamp groups. Once the records are read
+    # (every record checks the deadline), attribution checks it twice per
+    # connection and then every 1,024 groups, so the fourth check happens
+    # inside the group loop and must abandon the scan there.
+    base, context = 1_759_000_000.0, ("", "", "")
+    attributing = False
+
+    def records():
+        nonlocal attributing
+        yield {"kind": "dns", "ts": base, "client": "10.0.0.1", "query": "api.openai.com",
+               "answers": ["203.0.113.8"], "ttl": 86400.0, "context": context}  # fmt: skip
+        for step in range(3_000):
+            yield {"kind": "flow", "ts": base + step + 1, "client": "10.0.0.1", "server": "203.0.113.8",
+                   "port": 443, "bytes_out": 1, "bytes_in": 0, "uid": None, "context": context}  # fmt: skip
+        attributing = True
+
+    ctx = ConnectorContext(config={"input": "unused", "label": "hq"}, index=get_index())
+    ctx.stats = ScanStats(connector="network.logs", started_at="now")
+    checks = 0
+
+    def check_deadline():
+        nonlocal checks
+        if not attributing:
+            return
+        checks += 1
+        if checks == 4:
+            raise ConnectorError("connector completion deadline exceeded")
+
+    monkeypatch.setattr(ctx, "check_deadline", check_deadline)
+    with pytest.raises(ConnectorError, match="deadline exceeded"):
+        list(NetworkLogConnector(ctx).analyze(records()))
+    assert checks == 4
+
+
 def test_per_address_dns_bound_is_scoped_to_that_address(run_connector, tmp_path, monkeypatch):
     monkeypatch.setattr(network_logs, "_MAX_DNS_PER_ADDRESS", 1)
     rows = _temporal_rows()
@@ -1111,14 +1146,40 @@ def test_per_address_dns_bound_is_scoped_to_that_address(run_connector, tmp_path
     found, stats = _scan_network_rows(run_connector, tmp_path, rows)
     assert stats.incomplete
     assert stats.warnings == [
-        "network.logs: 1 DNS observation(s) exceeded the 1 per-address bound; DNS and service-port flow "
-        "attribution disabled for 1 address(es) because discarded answers may conflict"
+        "network.logs: 1 DNS observation(s) exceeded the per-address bound (1 windows or 64 hosts); DNS and "
+        "service-port flow attribution disabled for 1 address(es) because discarded answers may conflict"
     ]
     openai = found[("192.0.2.10", "provider.openai")]
     assert openai.metadata["flows"] == 0
     assert any("answers exceeded storage bounds" in item for item in openai.metadata["limitations"])
     assert found[("192.0.2.10", "provider.anthropic")].metadata["flows"] == 1
     assert found[("192.0.2.11", "provider.openai")].metadata["flows"] == 1
+
+
+@pytest.mark.parametrize("limit", [2, 3])
+def test_distinct_hosts_per_address_are_bounded_and_fail_closed(run_connector, tmp_path, monkeypatch, limit):
+    # Three wildcard-matched hosts of one service resolve to one address; one
+    # host repeats. Every timestamp group bisects each host key, so the keys an
+    # address may hold are bounded, and overflow disables its attribution.
+    monkeypatch.setattr(network_logs, "_MAX_DNS_HOSTS_PER_ADDRESS", limit)
+    rows = _temporal_rows()
+    rows[0]["query"] = "h1.anthropic.com"
+    rows.extend({**rows[0], "query": f"h{index}.anthropic.com"} for index in (2, 3, 1))
+    rows.extend({**row, "client": "192.0.2.11"} for row in _temporal_rows())
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    claude = found[("192.0.2.10", "identity-app.anthropic-claude")]
+    assert claude.metadata["dns_queries"] == 4
+    assert found[("192.0.2.11", "provider.openai")].metadata["flows"] == 1
+    if limit == 3:
+        assert not stats.incomplete and not stats.warnings and claude.metadata["flows"] == 1
+        return
+    assert stats.incomplete
+    assert stats.warnings == [
+        "network.logs: 1 DNS observation(s) exceeded the per-address bound (4,096 windows or 2 hosts); DNS and "
+        "service-port flow attribution disabled for 1 address(es) because discarded answers may conflict"
+    ]
+    assert claude.metadata["flows"] == 0
+    assert any("answers exceeded storage bounds" in item for item in claude.metadata["limitations"])
 
 
 def test_record_limit_cannot_hide_a_contradictory_dns_answer(run_connector, tmp_path):

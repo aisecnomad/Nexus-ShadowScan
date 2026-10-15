@@ -67,6 +67,9 @@ _MAX_TIMES = 1_000
 _MAX_TOTAL_TIMES = 200_000
 _MAX_DNS_OBSERVATIONS = 500_000
 _MAX_DNS_PER_ADDRESS = 4_096
+# Distinct (signature, host) keys per context/client/address: every timestamp
+# group bisects each key's windows, so this bounds attribution work per group.
+_MAX_DNS_HOSTS_PER_ADDRESS = 64
 _MAX_JA4_PER_CONTACT = 32
 _MAX_DNS_PROVENANCE = 20
 _JA4 = re.compile(r"^[tqd](?:1[0-3]|s[23]|d[123]|00)[di][0-9]{4}[a-zA-Z0-9]{2}_[a-f0-9]{12}_[a-f0-9]{12}$")
@@ -187,7 +190,13 @@ class _DNSAnswers:
 
     windows: dict[tuple[str, str], list[_DNSObservation]] = field(default_factory=dict)
     others: list[_DNSObservation] = field(default_factory=list)  # answers without a window
+    hosts: set[tuple[str, str]] = field(default_factory=set)  # (signature, host) keys held
     size: int = 0
+
+    def holds(self, observation: _DNSObservation) -> bool:
+        """Whether an entry for the answer's host key fits the per-address host bound."""
+        key = (observation.signature, observation.host)
+        return key in self.hosts or len(self.hosts) < _MAX_DNS_HOSTS_PER_ADDRESS
 
     def entries(self) -> Iterator[_DNSObservation]:
         yield from self.others
@@ -237,6 +246,7 @@ class _DNSAnswers:
         else:
             windows = self.windows.setdefault((observation.signature, observation.host), [])
             windows.insert(bisect.bisect_right(windows, start, key=_start), observation)
+        self.hosts.add((observation.signature, observation.host))
         self.size += 1
 
     def valid_at(self, when: float | None) -> list[_DNSObservation]:
@@ -710,7 +720,9 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                         if dns_used >= _MAX_DNS_OBSERVATIONS:
                             dropped_dns += 1
                             continue
-                        if answers is not None and answers.size >= _MAX_DNS_PER_ADDRESS:
+                        if answers is not None and (
+                            answers.size >= _MAX_DNS_PER_ADDRESS or not answers.holds(observation)
+                        ):
                             # A discarded answer could contradict this address's
                             # retained ones; the doubt stays with the address.
                             dropped_address_dns += 1
@@ -827,9 +839,10 @@ class NetworkLogConnector(BaseConnector, _NoDump):
             )
         if dropped_address_dns:
             self.ctx.warn(
-                f"network.logs: {dropped_address_dns:,} DNS observation(s) exceeded the "
-                f"{_MAX_DNS_PER_ADDRESS} per-address bound; DNS and service-port flow attribution "
-                f"disabled for {len(dns_overflow):,} address(es) because discarded answers may conflict"
+                f"network.logs: {dropped_address_dns:,} DNS observation(s) exceeded the per-address bound "
+                f"({_MAX_DNS_PER_ADDRESS:,} windows or {_MAX_DNS_HOSTS_PER_ADDRESS} hosts); DNS and "
+                f"service-port flow attribution disabled for {len(dns_overflow):,} address(es) because "
+                "discarded answers may conflict"
             )
         if dropped_ja4:
             self.ctx.warn(
@@ -949,7 +962,11 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                         "exceeded storage bounds"
                     )
                 continue
-            for ts, pair in groups.items():
+            for number, (ts, pair) in enumerate(groups.items()):
+                if number and not number % 1024:
+                    # A connection may hold 100,000 groups, each bisecting every
+                    # host key of the address: honour the deadline within it.
+                    self.ctx.check_deadline()
                 signature: str | None = None
                 basis = ""
                 valid: list[_DNSObservation] = []
