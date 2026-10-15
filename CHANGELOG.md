@@ -139,6 +139,38 @@ summarizes each release for people who install and operate ShadowScan.
   which a connector timed out; `docs/production.md` documents the limit.
   Regression tests cover a set job deadline, the cancelled watchdog and the
   message.
+- **A whitespace-header JWT after a long dotted segment was kept (#237).**
+  #237's second reading, which withholds a JWT whose header JSON is written
+  with whitespace (`IHsi…`, `eyAi…`, `ewoi…`), took three dotted segments from
+  the first one of 16 or more characters. When that segment was no header, the
+  search went on after the third segment, so the token's own header, read only
+  as the second or third segment of that run, was never tried. A token right
+  after such a segment (`com.example.authenticationservice.<token>`,
+  `request_identifier_0001.<token>`, a URL path segment of that length) was
+  kept whole in report text, evidence and logs, still verifiable. A run that is
+  no token is now searched again from its second segment. Each segment is
+  matched at most three times, so the pass stays linear. Affects scans whose
+  evidence holds such a token after a dotted name: its report text, and finding
+  ids derived from it, change, and reports written before this change may
+  still show it. Regression tests cover five prefixes and three header layouts
+  through `sanitize_text` and `sanitize`, and time dotted runs of 256 KB and
+  1 MB.
+- **The secret gate and the AI review sanitizer missed most whitespace JWT
+  headers (#237).** `tools/check_secrets.py` (`make secrets`, the
+  `no-hardcoded-secrets` hook and CI) and `tools/ai_review/sanitize.py`
+  recognized such a header by seven fixed base64url prefixes (`IHsi`, `eyAi`,
+  `eyAg`, `eyAK`, `ewo`, `CXsi`, `Cnsi`). Of the 440 layouts with up to two
+  whitespace bytes before and after the `{`, all of which PyJWT accepts, they
+  caught 11: a tab or carriage return after the `{` (`ewki`, `ew0K`), two bytes
+  before it (`ICB7`, `DQp7`) or three or more (`ICAg…`) passed the gate and
+  could reach posted review text. Both now match the base64url encoding of any
+  number of spaces, tabs, line feeds and carriage returns before the `{` and
+  any after it, as a regular expression that stays linear. As before they do
+  not decode the header or require `alg`; runtime redaction remains the
+  complete check. Affects contributors, whose tracked file holding such a token
+  now fails `make secrets`, and AI review gate output; every tracked file still
+  passes. Regression tests cover every layout with up to four bytes before and
+  two after the `{`, longer runs, and three hostile inputs for linear time.
 
 ### Cap runtime dep ranges at the next major (October 15)
 
@@ -263,7 +295,10 @@ summarizes each release for people who install and operate ShadowScan.
   identity.jwt decoder accept them, and a nested one in a claim was persisted
   verbatim. A second, budgeted reading accepts a dotted run when its first
   segment decodes to a JSON object with an `alg` member. `tools/check_secrets.py`
-  and the AI review sanitizer recognize the same headers.
+  and the AI review sanitizer recognize such a header by its base64url shape,
+  with any JSON whitespace before or after its `{` (`ewki`, `ew0K`, `ICB7`,
+  `DQp7`...); unlike redaction they do not decode it or require `alg`, and they
+  report a compact `eyJ` header only with an `eyJ` payload.
 - Clone mode requires Git 2.45 (`MINIMUM_CLONE_GIT`): the clone's metadata
   reads pass `--no-lazy-fetch`, which older Git rejects, so every clone on 2.32
   to 2.44 ended incomplete without provenance while the docs promised a scan.

@@ -7,7 +7,8 @@ import time
 
 import pytest
 
-from shadowscan.utils.redaction import REDACTED, sanitize_text
+from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
+from shadowscan.utils.redaction_formats import _redact_jwts
 
 
 def _b64url(data: bytes) -> str:
@@ -65,3 +66,41 @@ def test_hostile_dotted_runs_stay_fast():
         except ValueError:
             pass  # SanitizationLimitError: the value is omitted and the scan incomplete
     assert time.monotonic() - started < 20
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "com.example.authenticationservice.",
+        "request_identifier_0001.",
+        "https://idp.example.com/callback/authorization_code.",
+        "1234567890123456.",
+        "abcdefghijklmnopqrstuvwxyz.abc.",
+    ],
+)
+@pytest.mark.parametrize(
+    "header", [b' {"alg":"HS256","typ":"JWT"}', b'{ "alg":"HS256"}', b'{\n"alg":"HS256"}']
+)
+def test_a_long_dotted_segment_before_the_token_does_not_hide_it(prefix, header):
+    # The 16+ character segment before the token is read as a header first; the search
+    # must still reach the token's own header, which that first reading took as segment 2.
+    token = _token(header)
+    for result in (sanitize_text(prefix + token), sanitize({"note": prefix + token})["note"]):
+        assert token not in result and _b64url(header) not in result
+        assert result.endswith(REDACTED)
+
+
+def test_dotted_runs_are_read_again_from_the_second_segment_in_linear_time():
+    # The fastest of three runs, so one slow moment on a shared runner does not read as
+    # a super-linear cost of the larger input.
+    def elapsed(count: int) -> float:
+        text = ("x" * 20 + ".") * count
+        best = float("inf")
+        for _ in range(3):
+            started = time.perf_counter()
+            assert _redact_jwts(text) == text
+            best = min(best, time.perf_counter() - started)
+        return best
+
+    small, large = elapsed(12_500), elapsed(50_000)  # 1 MB
+    assert large < max(small, 0.05) * 10, (small, large)

@@ -115,7 +115,7 @@ _JWT = re.compile(
     r"(?P<jwt>" + _JWT_HEADER + r"[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+)"
 )
 # 'eyJ' is the base64url of '{"': a header written with whitespace does not start with
-# it (' {"alg"' is 'IHsi', '{ "alg"' is 'eyCi', a pretty-printed '{\n"' is 'ewoi'), and
+# it (' {"alg"' is 'IHsi', '{ "alg"' is 'eyAi', a pretty-printed '{\n"' is 'ewoi'), and
 # PyJWT and the identity.jwt decoder accept such a token. Every run of three dotted
 # base64url segments is therefore read as well (``_dotted_token_reader``): its first
 # segment is withheld as a header, from the run's start or from any boundary the 'eyJ'
@@ -123,15 +123,20 @@ _JWT = re.compile(
 # decodes to a JSON object with an ``alg`` member. The candidate starts are many; each
 # costs one cheap reading of the first bytes (JSON whitespace, '{', whitespace, '"'),
 # only a start that passes it is decoded and parsed, and the decoded text is charged
-# against a budget, so a hostile run is read in linear time.
+# against a budget, so a hostile run is read in linear time. A run that is no token is
+# searched again from its second segment, which may be a token's header after a long
+# first segment ('com.example.authenticationservice.<token>'), so every segment is
+# matched at most three times.
 _DOTTED_RUN = re.compile(
     r"(?<![A-Za-z0-9_-])(?P<header>[A-Za-z0-9_-]{16,}+)\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+"
 )
 _JSON_WHITESPACE = frozenset(b" \t\r\n")
-# JSON whitespace tolerated around the opening braces of all the headers in one text: a
-# run that decodes to more is no ordinary value and is withheld without a parse.
+# JSON whitespace read around the opening braces of all the candidate headers in one
+# text. Once it is spent, the cheap reading stops at the next whitespace byte and passes
+# the start, which is then decoded, charged against the budget and parsed like any other.
 _JWT_HEADER_WHITESPACE_BYTES = 4096
-# Likewise a header longer than this is withheld without a parse.
+# A candidate header longer than this that passes the cheap reading is withheld without
+# a parse.
 _JWT_HEADER_MAX_CHARS = 16 * 1024
 _HEX_PAIR = re.compile(r"[0-9A-Fa-f]{2}")
 # Private key blocks, to the end of the text when unterminated: PEM ('BEGIN PRIVATE KEY',
@@ -442,8 +447,8 @@ def _base64url_bytes(segment: str) -> bytes | None:
         return None
 
 
-def _dotted_token_reader(text: str) -> Callable[[re.Match[str]], str]:
-    """The replacement for ``_DOTTED_RUN`` matches in ``text`` (see the pattern's comment)."""
+def _dotted_token_reader(text: str) -> Callable[[re.Match[str]], str | None]:
+    """The replacement for a ``_DOTTED_RUN`` match in ``text``, or None when it is no token."""
     whitespace = _JWT_HEADER_WHITESPACE_BYTES
     budget = 8 * len(text) + 65_536
 
@@ -488,7 +493,7 @@ def _dotted_token_reader(text: str) -> Callable[[re.Match[str]], str]:
             return False
         return isinstance(parsed, dict) and "alg" in parsed
 
-    def read(match: re.Match[str]) -> str:
+    def read(match: re.Match[str]) -> str | None:
         header = match.group("header")
         starts = {0}
         before = text[match.start() - 1] if match.start() else ""
@@ -507,7 +512,7 @@ def _dotted_token_reader(text: str) -> Callable[[re.Match[str]], str]:
         for start in sorted(starts):
             if is_header(header, start):
                 return match.group()[:start] + REDACTED
-        return match.group()
+        return None
 
     return read
 
@@ -516,9 +521,21 @@ def _redact_jwts(text: str) -> str:
     """Withhold every JSON Web Token in ``text``, keeping what precedes its header."""
     if "eyJ" in text:
         text = _JWT.sub(lambda match: match.group("lead") + REDACTED, text)
-    if "." in text:
-        text = _DOTTED_RUN.sub(_dotted_token_reader(text), text)
-    return text
+    if "." not in text:
+        return text
+    read = _dotted_token_reader(text)
+    parts: list[str] = []
+    kept = position = 0
+    while (match := _DOTTED_RUN.search(text, position)) is not None:
+        replacement = read(match)
+        if replacement is None:
+            # Not a token: its second segment may be a token's header, so search on from there.
+            position = match.end("header")
+            continue
+        parts += (text[kept : match.start()], replacement)
+        kept = position = match.end()
+    parts.append(text[kept:])
+    return "".join(parts)
 
 
 def _url_host(authority: str) -> str:

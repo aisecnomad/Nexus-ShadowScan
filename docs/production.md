@@ -31,8 +31,11 @@ passing unit suite does not establish complete coverage of a particular estate.
   another user; links owned by root or by the current user are followed. Point
   `-o` at a real directory if a scan now fails with that message.
 - **Redaction.** JWTs whose header is written with whitespace (encoded as
-  `IHsi…`, `eyAi…`, `ewo…` rather than `eyJ…`) are withheld everywhere. Report
-  text that held such a token changes, and so may finding ids derived from it.
+  `IHsi…`, `eyAi…`, `ewo…` rather than `eyJ…`) are withheld everywhere,
+  including directly after a dotted name with a segment of 16 or more
+  characters (`com.example.authenticationservice.<token>`), which the first
+  version of this check missed. Report text that held such a token changes, and
+  so may finding ids derived from it.
 - **identity.jwt.** `expected_issuer` or `allowed_algorithms` without
   `jwks_url` is an error (exit 3) in a configuration file, as it was on the
   command line. Tokens whose header has a non-string `kid` or a `crit` list are
