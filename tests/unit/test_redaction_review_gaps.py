@@ -329,3 +329,80 @@ def test_labels_nested_in_an_auth_value_container_never_wipe_other_fields() -> N
     out = sanitize(postman)
     assert out["request"] == postman["request"]
     assert SECRET not in repr(out)
+
+
+# October 15 review: credential formats the scanner detects but did not withhold.
+_BASE64_BODY = "QmVkcm9ja0FQSUtleS1zeW50aGV0aWMtZXhhbXBsZS0" + "0" * 60
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "AWS_BEARER_TOKEN_BEDROCK=" + "ABSK" + _BASE64_BODY + "==",
+        "client = Bedrock(api_key='" + "ABSK" + _BASE64_BODY + "')",
+        "value " + "bedrock-api-key-" + _BASE64_BODY,
+    ],
+)
+def test_bedrock_api_keys_are_withheld(text: str) -> None:
+    out = sanitize_text(text)
+    assert _BASE64_BODY not in out and REDACTED in out
+
+
+def test_bedrock_words_in_prose_stay() -> None:
+    text = "Rotate the bedrock-api-key every 12 hours; ABSK is the long-term prefix."
+    assert sanitize_text(text) == text
+
+
+@pytest.mark.parametrize(
+    ("url", "kept"),
+    [
+        ("https://mcp.zapier.com/api/mcp/s/" + SECRET + "/mcp", "https://mcp.zapier.com/api/mcp/s/"),
+        ("https://actions.zapier.com/mcp/" + SECRET + "/sse", "https://actions.zapier.com/mcp/"),
+    ],
+)
+def test_zapier_mcp_urls_withhold_their_path_credential(url: str, kept: str) -> None:
+    out = sanitize_text(f"url: {url}")
+    assert SECRET not in out and kept + REDACTED in out
+    assert sanitize({"servers": [{"url": url}]})["servers"][0]["url"] == kept + REDACTED
+
+
+@pytest.mark.parametrize(
+    "scheme",
+    ["oracle+cx_oracle", "ibm_db_sa", "postgresql+py_postgresql", "redis_sentinel", "mssql+pyodbc"],
+)
+def test_url_userinfo_is_withheld_for_schemes_with_underscores(scheme: str) -> None:
+    # Assembled from pieces so the repository secret scanner does not flag a literal user:pass@host.
+    url = f"{scheme}://svc-user:" + SECRET + "@db.internal:1521/app"
+    out = sanitize_text(f"DATABASE_URI = {url}")
+    assert SECRET not in out
+    assert f"{scheme}://{REDACTED}@db.internal:1521/app" in sanitize_text(url)
+
+
+def test_snake_case_words_are_not_read_as_url_schemes() -> None:
+    text = "set my_scheme_name and other_value to configure the pool"
+    assert sanitize_text(text) == text
+
+
+def _url_password_across(limit: int) -> str:
+    """Prose whose URL password starts before ``limit`` and whose '@' falls after it."""
+    # 35 characters short of the limit: the password then starts 16 characters before the cut.
+    lead = "Agent instructions: call " + "x" * (limit - 60)
+    return f"{lead} https://svc-agent:" + SECRET + "@agents.example/v1 for every request"
+
+
+def test_excerpts_are_redacted_before_they_are_shortened() -> None:
+    from shadowscan.utils.redaction import sanitize_excerpt
+
+    text = _url_password_across(300)
+    assert len(text) > 300 and text.index(SECRET) < 300 < text.index("@agents")
+    out = sanitize_excerpt(text, 300)
+    assert SECRET[:8] not in out and len(out) <= 300
+    assert sanitize_excerpt(None, 10) is None and sanitize_excerpt(7, 10) == 7
+
+
+def test_connector_summaries_redact_before_shortening() -> None:
+    from shadowscan.connectors.code.semantic_config import _CLIP_CHARS, bounded_metadata
+    from shadowscan.connectors.identity.entra import _card_summary
+
+    assert SECRET[:8] not in repr(bounded_metadata({"note": _url_password_across(_CLIP_CHARS)}))
+    assert SECRET[:8] not in repr(_card_summary({"description": _url_password_across(300)}))

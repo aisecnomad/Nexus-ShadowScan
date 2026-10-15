@@ -112,9 +112,22 @@ def test_the_filesystem_excerpt_cannot_leave_a_truncated_literal() -> None:
 
     line = "client = Widget(" + ", ".join(f"opt{i}=True" for i in range(11)) + f', "{_SECRET}")'
     snippet = _excerpt([line], 1)
-    assert snippet.endswith("\u2026") and _SECRET not in snippet
+    # The whole line is read before the cut, so the literal is withheld in the excerpt itself.
+    assert _SECRET[:6] not in snippet and REDACTED in snippet
     cleaned = Evidence(signal="s", description="d", snippet=snippet).snippet
-    assert cleaned is not None and _SECRET[:20] not in cleaned and REDACTED in cleaned
+    assert cleaned is not None and _SECRET[:6] not in cleaned and REDACTED in cleaned
+
+
+def test_a_literal_the_excerpt_cut_shortens_below_the_minimum_is_withheld() -> None:
+    from shadowscan.connectors.code.filesystem import _excerpt
+
+    line = "client = Client(region='eu-west-1', " + "timeout_seconds=30, " * 5 + f'token="{_SECRET}")'
+    start = line.index(_SECRET)
+    # Fewer than the 20 characters the snippet pass needs would remain after the cut.
+    assert start < 159 < start + 20
+    snippet = _excerpt([line], 1)
+    cleaned = Evidence(signal="s", description="d", snippet=snippet).snippet or ""
+    assert _SECRET[:6] not in snippet and _SECRET[:6] not in cleaned
 
 
 def test_a_random_literal_has_no_upper_length_bound() -> None:

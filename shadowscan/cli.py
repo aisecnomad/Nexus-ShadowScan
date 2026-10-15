@@ -129,7 +129,10 @@ def _setup_logging(verbose: int, quiet: bool) -> None:
         level = logging.DEBUG
     handler = RichHandler(console=err_console, show_path=False, show_time=verbose >= 2, rich_tracebacks=False)
     logging.basicConfig(level=level, format="%(message)s", handlers=[handler], force=True)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    # urllib3 logs the full request URL (path and pagination cursor, which can name users) in
+    # a WARNING when an upstream returns malformed headers; SECURITY.md promises paths and
+    # queries stay out of diagnostics, so keep its records at ERROR.
+    logging.getLogger("urllib3").setLevel(logging.ERROR)
     logging.getLogger("botocore").setLevel(logging.WARNING)
 
 
@@ -1089,11 +1092,12 @@ def signatures_list(
     table.add_column("Agent?", justify="center")
     for s in sigs:
         agent = "✓" if s.agent_indicator else ""
+        # A custom signature pack is untrusted: strip terminal control sequences from its fields.
         table.add_row(
-            Text(s.id),
-            Text(s.name),
-            Text(s.category),
-            Text(s.vendor or ""),
+            Text(terminal_text(s.id)),
+            Text(terminal_text(s.name)),
+            Text(terminal_text(s.category)),
+            Text(terminal_text(s.vendor or "")),
             str(len(s.signals)),
             agent,
         )
@@ -1282,17 +1286,19 @@ def inventory_check(paths: tuple[str, ...]) -> None:
     table.add_column("EU AI Act class (declared)")
     table.add_column("Source")
     for e in inv.entries:
+        # Inventory cards come from a scanned tree or an operator path: strip terminal control
+        # sequences (ESC/CSI/OSC, bidi overrides) as well as Rich markup from every field.
         if e.resources:
-            resources = Text("\n".join(e.resources))
+            resources = Text("\n".join(terminal_text(r) for r in e.resources))
         else:
             resources = Text("none (suggestions only)", style="dim")
         table.add_row(
-            Text(e.agent_id),
-            Text(e.name or ""),
-            Text(e.owner or ""),
+            Text(terminal_text(e.agent_id)),
+            Text(terminal_text(e.name or "")),
+            Text(terminal_text(e.owner or "")),
             resources,
-            Text((e.governance or {}).get("eu_ai_act_risk_class", "")),
-            Text(e.source or ""),
+            Text(terminal_text((e.governance or {}).get("eu_ai_act_risk_class", ""))),
+            Text(terminal_text(e.source or "")),
         )
     console.print(table)
 

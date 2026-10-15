@@ -25,7 +25,7 @@ from shadowscan.connectors.code.semantic_config import (
     a2a_unsupported_protocol_version,
     validate_agent_manifest,
 )
-from shadowscan.connectors.code.skill_audit import audit_skill_text
+from shadowscan.connectors.code.skill_audit import MAX_TEXT_BYTES, audit_skill_text
 from shadowscan.connectors.common import apply_matches, failure_summary, finalize
 from shadowscan.connectors.endpoint import a2a
 from shadowscan.models import Evidence, Finding, Kind, Surface
@@ -60,7 +60,12 @@ _HOST = re.compile(
 def _text(value: object, limit: int = _MAX_LABEL) -> str:
     if not isinstance(value, str):
         return ""
-    return sanitize_text(value)[:limit]
+    # One hostile record (a value past the sanitizer's safety limits) must not abort the
+    # whole connector and drop its other findings: withhold that value and carry on.
+    try:
+        return sanitize_text(value)[:limit]
+    except SanitizationLimitError:
+        return REDACTED
 
 
 def _sensitive_attribute(key: str) -> bool:
@@ -372,7 +377,11 @@ class MCPInventoryConnector(_EndpointConnector):
             # reads. Line breaks and tabs are ordinary formatting.
             plain = description.replace("\r\n", "\n").replace("\n", "").replace("\t", "")
             terminal_escape = any(ord(ch) < 32 or 0x7F <= ord(ch) <= 0x9F for ch in plain)
-            desc = _text(description, 4096)
+            # Search the same window the instruction audit inspects, not a shorter prefix:
+            # padding ahead of an <IMPORTANT> block, a URL or a tool reference must not hide
+            # it. These patterns are linear, so a bounded window keeps the scan bounded; a
+            # description past the window already makes ``audit`` incomplete above.
+            desc = _text(description, MAX_TEXT_BYTES)
             tags: list[str] = []
             if (
                 _POISONING.search(desc)

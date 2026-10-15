@@ -208,20 +208,47 @@ def test_foundry_agent_cursor_pages(index, monkeypatch):
     assert http.get_json.call_args.kwargs["params"]["after"] == "first"
 
 
-def test_foundry_rejects_untrusted_metadata_endpoint(index, monkeypatch):
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://evil.example",
+        # Hosts that read as a Foundry domain to urlsplit but not to the HTTP transport.
+        "https://evil.example\\.services.ai.azure.com/api/projects/p",
+        "https://evil.example%2f.services.ai.azure.com/api/projects/p",
+        "https://example.services.ai.azure.com:8443/api/projects/p",
+        "https://example.services.ai.azure.com.evil.example/api/projects/p",
+        "https://services.ai.azure.com/api/projects/p",
+    ],
+)
+def test_foundry_rejects_untrusted_metadata_endpoint(index, monkeypatch, endpoint):
     connector = AzureConnector(context(index, foundry_token="synthetic"))
     http = Mock()
     monkeypatch.setattr("shadowscan.connectors.cloud.azure.HttpClient", http)
+    monkeypatch.setattr("socket.getaddrinfo", lambda *a, **kw: [])
     assert (
-        list(
-            connector._collect_agents(
-                {}, {"properties": {"endpoints": {"AI Foundry API": "https://evil.example"}}}
-            )
-        )
-        == []
+        list(connector._collect_agents({}, {"properties": {"endpoints": {"AI Foundry API": endpoint}}})) == []
     )
     assert connector.ctx.stats.incomplete
     http.assert_not_called()
+
+
+def test_foundry_accepts_a_canonical_project_endpoint(index, monkeypatch):
+    connector = AzureConnector(context(index, foundry_token="synthetic"))
+    http = Mock()
+    http.return_value.get_json.return_value = {
+        "object": "list",
+        "data": [],
+        "has_more": False,
+        "last_id": None,
+    }
+    monkeypatch.setattr("shadowscan.connectors.cloud.azure.HttpClient", http)
+    monkeypatch.setattr("socket.getaddrinfo", lambda *a, **kw: [])
+    endpoint = "https://Example-1.services.ai.azure.com/api/projects/p"
+    assert (
+        list(connector._collect_agents({}, {"properties": {"endpoints": {"AI Foundry API": endpoint}}})) == []
+    )
+    http.assert_called_once()
+    assert not connector.ctx.stats.incomplete
 
 
 # Response-derived ARM identifiers become request paths with the ARM bearer token:

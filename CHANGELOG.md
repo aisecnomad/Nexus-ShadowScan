@@ -5,6 +5,46 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Review-driven hardening: redaction, SSRF, parser cost, detection coverage (October 15)
+
+- **Credential destinations.** `validate_url` rejects a backslash anywhere in the URL: a host
+  such as `evil.example\.services.ai.azure.com` reads as a Foundry host to `urlsplit` but as
+  `evil.example` to the HTTP transport. The Azure Foundry bearer-token endpoint is now matched
+  against a full-host regex with a canonical-netloc check instead of a hostname suffix.
+- **Redaction.** Amazon Bedrock API keys (`ABSK…` and `bedrock-api-key-…`), Zapier MCP server
+  URLs whose path is the credential (`mcp.zapier.com/api/mcp/s/…`, `actions.zapier.com/mcp/…`),
+  and `user:password` in URLs whose scheme contains an underscore (SQLAlchemy dialects such as
+  `oracle+cx_oracle://`) are now withheld. A handful of credential environment-variable names
+  whose last word is not a credential word (`AWS_BEARER_TOKEN_BEDROCK`, `LOBE_ACCESS_CODE`,
+  `FLOWISE_SECRETKEY_OVERWRITE`, `MODAL_TOKEN_ID`, `ZAPIER_MCP_URL`) are covered, and a test
+  derives the required coverage from the signature packs. Connector summaries and source
+  excerpts are redacted before they are shortened, so a cut can no longer separate a credential
+  from the context that identifies it.
+- **LLM triage.** The redacted summary sent to the model now withholds e-mail addresses and IP
+  addresses wherever they appear in a title or evidence description, and covers more
+  identity-bearing metadata keys, matching the privacy the documentation describes.
+- **Bounded parsing.** The runtime-process connector no longer runs a backtracking package regex
+  on an over-long argument (an unprivileged local process or one offline row could otherwise
+  stall every connector while the GIL is held), and the Python source tokenizer charges the
+  per-input matching budget between tokens, so a single very long line fails closed on CPython
+  3.12.0–3.12.3 instead of burning a core.
+- **Detection coverage.** MCP client configurations and CloudFormation/ARM JSON templates are
+  recognised from their parsed structure rather than a byte-prefix window, so leading padding
+  can no longer hide a server table or an AI resource on a complete scan. The MCP tool-poisoning
+  rules read the same window the instruction audit inspects. The Kubernetes connector inspects
+  `initContainers` (native sidecars) and `ephemeralContainers`.
+- **Fleet and reporters.** A fleet merge drops any advisory `llm_triage` block a source carries,
+  so one source cannot plant a verdict on another's finding. Out-of-range report timestamps are
+  omitted from OCSF, CycloneDX and SARIF output instead of aborting the whole report.
+- **Engine, CLI and plugins.** Thread-mode plugin findings are attribution-checked like the
+  process worker's, so a plugin cannot report under a built-in connector's name. Plugin worker
+  processes are spawned with `PYTHONSAFEPATH` so a scanned checkout on the path cannot shadow
+  `multiprocessing`. The changed-file git diff passes `--no-ext-diff`/`--no-textconv`. Plugin
+  names must be lowercase ASCII `namespace.provider`, so a confusable cannot read as a built-in.
+  The `urllib3` logger is pinned to ERROR so a malformed upstream response cannot log a request
+  URL. The `inventory check` and `signatures list` commands strip terminal control sequences from
+  untrusted fields.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

@@ -143,6 +143,19 @@ def test_malformed_input_makes_the_scan_incomplete(run_connector, tmp_path, name
     assert any(message in m for m in stats.warnings + stats.errors), stats.warnings + stats.errors
 
 
+def test_empty_zeek_separator_fails_one_file_without_losing_the_others(run_connector, tmp_path):
+    # An empty '#separator' value once aborted the whole connector with ValueError('empty
+    # separator'); it must fail only its own file and leave the other log's findings.
+    (tmp_path / "bad.log").write_text("#separator  \n#fields\tts\tquery\n1\ta\tapi.openai.com\n")
+    (tmp_path / "good.log").write_text(
+        "#separator \\x09\n#fields\tts\tid.orig_h\tquery\n1\t10.0.0.9\tapi.anthropic.com\n"
+    )
+    found, stats = scan(run_connector, tmp_path)
+    assert stats.incomplete
+    assert any("empty Zeek #separator" in m for m in stats.warnings), stats.warnings
+    assert ("10.0.0.9", "provider.anthropic") in found
+
+
 @pytest.mark.parametrize("content", ["", "\n\n"])
 def test_empty_json_exports_are_errors(run_connector, tmp_path, content):
     for name in ("empty.json", "empty.jsonl"):

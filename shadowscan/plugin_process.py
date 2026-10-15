@@ -359,6 +359,13 @@ def _run_plugin_process(
         _remaining(deadline)
         if state.cancelled.is_set():
             raise TimeoutError
+        # A spawned child runs ``python -c``, so its working directory is on ``sys.path`` for
+        # the first ``import multiprocessing``. When the scan's working directory is an
+        # untrusted checkout, a planted ``multiprocessing/`` there would run in the worker.
+        # Ask the child interpreter to drop the working directory from its path. The value is
+        # constant, so setting it is safe under concurrent spawns; the scanner never imports
+        # from the working directory itself.
+        os.environ["PYTHONSAFEPATH"] = "1"
         process.start()
         if state.cancelled.is_set():
             raise TimeoutError

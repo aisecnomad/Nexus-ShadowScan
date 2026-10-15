@@ -40,8 +40,9 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.redaction import sanitize_excerpt
 from shadowscan.utils.safe_json import strict_json_loads
-from shadowscan.utils.text import get_path, truncate
+from shadowscan.utils.text import get_path
 
 # Autonomy: what starts a run, read from a definition's triggers. A schedule or an event is
 # initiation evidence (the ``scheduled`` and ``event-triggered`` tags with the ``autonomous``
@@ -663,7 +664,7 @@ class MakeConnector(_AutomationBase):
             extra={
                 "model": model,
                 "tools": [t.get("name") for t in rec.get("tools") or [] if isinstance(t, dict)][:20],
-                "system_prompt": truncate(str(rec.get("systemPrompt") or ""), 200),
+                "system_prompt": sanitize_excerpt(str(rec.get("systemPrompt") or ""), 200),
             },
             hints=model_matches(self.index, model),
         )

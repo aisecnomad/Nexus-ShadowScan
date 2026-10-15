@@ -952,6 +952,24 @@ def test_urls_with_whitespace_or_control_characters_are_refused_not_cleaned(url)
         validate_url(url, "https://api.example.com", allow_private=True)
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://other.example\\.api.example.com/x",
+        "https://api.example.com\\@other.example/x",
+        "https://api.example.com/x\\y",
+        "https://api.example.com/x?q=a\\b",
+    ],
+    ids=lambda url: repr(url),
+)
+def test_urls_with_a_backslash_are_refused(url):
+    """urlsplit keeps a backslash in the host; requests reads it as a path separator."""
+    with pytest.raises(ValueError, match="backslash"):
+        validate_url(url)
+    with pytest.raises(ValueError, match="backslash"):
+        validate_url(url, allow_private=True)
+
+
 def test_a_valid_url_is_returned_exactly_as_validated():
     url = "https://api.example.com/v1/items?per_page=100&q=a%20b#frag"
     assert validate_url(url, "https://api.example.com") == url

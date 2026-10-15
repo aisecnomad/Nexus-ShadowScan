@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -55,6 +56,23 @@ def test_classify(exe, argv, tool, package):
         return
     assert match is not None
     assert (match[0].tool, match[1]) == (tool, package)
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "@a/" + "mcp" * 20_000 + "!",
+        "x" + "mcp-server" * 6_000 + "!",
+        "mcp-" + "a." * 30_000 + "!",
+    ],
+)
+def test_overlong_package_arguments_are_not_matched(argument):
+    # The package patterns backtrack on long arguments and re holds the GIL for a whole
+    # match, so an argument no package name could be is never matched against them.
+    started = time.perf_counter()
+    assert classify(None, ["node", argument]) is None
+    assert classify(None, ["npx", "-y", argument, "@modelcontextprotocol/server-github"]) is not None
+    assert time.perf_counter() - started < 1.0
 
 
 def test_command_lines_are_never_exported():

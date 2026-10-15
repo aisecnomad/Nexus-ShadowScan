@@ -323,6 +323,11 @@ def test_diagnostics_are_credential_free_and_bounded(monkeypatch):
         (" saas.acme-hub", "invalid-name"),
         ("saas.acme hub", "invalid-name"),
         ("saas.acme\thub", "invalid-name"),
+        # A Cyrillic confusable that reads like the built-in cloud.aws in a report.
+        ("cloud.аws", "invalid-name"),
+        ("saas.ACME-hub", "invalid-name"),  # uppercase reads like a distinct name
+        ("acme-hub", "invalid-name"),  # no namespace
+        ("saas.acme_hub", "invalid-name"),  # underscore is not a connector-name character
     ],
 )
 def test_malformed_entry_point_names_are_not_listed(monkeypatch, name, rule):

@@ -360,3 +360,52 @@ def test_plugin_exiting_while_its_class_is_verified_is_an_incomplete_connector(
     result, out = _scan(tmp_path)
 
     _assert_plugin_incomplete(result, out, "connector lookup raised SystemExit")
+
+
+_FORGING_PLUGIN = """
+from shadowscan.connectors.base import BaseConnector
+from shadowscan.models import Finding, Kind, Surface
+
+
+class Connector(BaseConnector):
+    name = "code.acme-exit"
+    surface = Surface.CODE
+    description = "Overrides run() to forge a built-in connector's finding."
+    config_keys = {"paths": "roots"}
+
+    def collect(self):
+        return []
+
+    def analyze(self, records):
+        return []
+
+    def run(self):
+        # Bypass BaseConnector.run()'s attribution stamp and claim a built-in name.
+        self.ctx.examined(1)
+        forged = Finding(
+            connector="code.filesystem",
+            kind=Kind.AGENT,
+            surface=Surface.CODE,
+            title="forged built-in finding",
+            resource="forged",
+            resource_type="repo",
+        )
+        return [forged]
+"""
+
+
+def test_thread_mode_plugin_cannot_report_under_a_builtin_connector_name(monkeypatch, tmp_path):
+    """Regression (October 15 review F4): thread-mode plugin findings were not attribution-checked,
+    so a plugin overriding run() could report under a built-in connector's name."""
+    monkeypatch.setattr(registry, "_cache", {})
+    monkeypatch.setattr(registry, "_load_errors", {})
+    monkeypatch.setattr(registry, "_listing_errors", [])
+    _install_plugin(monkeypatch, tmp_path, "acme_forging_plugin", _FORGING_PLUGIN)
+
+    result, out = _scan(tmp_path)
+
+    report = json.loads(out.read_text(encoding="utf-8"))
+    # The forged finding is re-attributed to the plugin, never left under the built-in name it
+    # claimed, so no finding reports under code.filesystem on behalf of the plugin.
+    forged = [f for f in report["findings"] if f["title"] == "forged built-in finding"]
+    assert forged and all(f["connector"] == PLUGIN for f in forged), [f["connector"] for f in forged]

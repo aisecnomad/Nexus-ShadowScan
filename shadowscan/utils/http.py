@@ -363,6 +363,11 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     # exactly as the transport will is refused, never silently cleaned up.
     if isinstance(url, str) and any(char.isspace() or not char.isprintable() for char in url):
         raise ValueError("API URL must not contain whitespace or control characters")
+    # A backslash is never valid in a URL (RFC 3986). urlsplit keeps it inside the host, while
+    # requests and urllib3, like browsers, read it as a path separator: a host check here would
+    # then describe a different destination than the one the transport connects to.
+    if isinstance(url, str) and "\\" in url:
+        raise ValueError("API URL must not contain a backslash")
     try:
         parsed = urlsplit(url)
         port = parsed.port or 443

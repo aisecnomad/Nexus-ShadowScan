@@ -84,11 +84,12 @@ def _timestamp(value: object) -> str | None:
         return None
     try:
         parsed = datetime.fromisoformat(value)
-    except ValueError:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    except (ValueError, OverflowError, OSError):
+        # A malformed or out-of-range source timestamp omits the field, never aborts the report.
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _properties(pairs: list[tuple[str, object]]) -> list[dict[str, str]]:

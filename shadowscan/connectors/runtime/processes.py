@@ -142,6 +142,11 @@ _TIME_FIELDS = ("start_time", "Timestamp", "timestamp", "ts", "time", "ProcessCr
 _PID_FIELDS = ("pid", "ProcessId", "process_id", "TargetProcessId")
 _PROC = Path("/proc")
 _MAX_CMDLINE_BYTES = 64 * 1024
+# No package or module name is longer (npm allows 214 characters, with room for a version
+# spec). The package patterns backtrack on long arguments, and Python's re holds the GIL
+# for a whole match: an unprivileged process's argument, or one offline row, must not
+# stall every connector and the deadline that would stop them.
+_MAX_PACKAGE_CANDIDATE = 256
 
 # Only these fixed labels leave collection. Paths and environment values never do.
 _LIBRARIES = {
@@ -339,6 +344,8 @@ def classify(executable: str | None, argv: list[str]) -> tuple[ProcessRule, str 
     if base not in _LAUNCHERS and not _PYTHON.match(base):
         return None
     for package in _packages(base, argv[1:]):
+        if len(package) > _MAX_PACKAGE_CANDIDATE:
+            continue
         for pattern, rule in PACKAGES:
             if pattern.search(package):
                 return rule, None
