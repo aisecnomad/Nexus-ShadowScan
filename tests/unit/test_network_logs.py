@@ -920,6 +920,30 @@ def test_timestamps_per_connection_are_bounded_and_reported(run_connector, tmp_p
     assert finding.metadata["flows"] == 3 and finding.metadata["bytes_out"] == 300
 
 
+def test_timestamp_groups_across_connections_are_bounded_and_reported(run_connector, tmp_path, monkeypatch):
+    # Two connections with two timestamps each stay under the per-connection
+    # bound; the input-wide bound stops the fourth group and keeps the scan
+    # incomplete, so flow storage cannot grow with max_records alone.
+    monkeypatch.setattr(network_logs, "_MAX_TOTAL_GROUPS", 3)
+    rows = _temporal_rows()
+    rows.append({**rows[1], "ts": 1002})
+    rows.append({**rows[0], "answers": ["203.0.113.9"]})
+    rows.extend({**rows[1], "dst_ip": "203.0.113.9", "ts": ts} for ts in (1001, 1002))
+    rows.append(dict(rows[1]))  # repeats a kept timestamp: merged, not a new group
+    found, stats = _scan_network_rows(run_connector, tmp_path, rows)
+    assert stats.incomplete
+    assert stats.warnings == [
+        "network.logs: 1 flow record(s) beyond 100,000 timestamps on one connection or 3 in total "
+        "were not attributed"
+    ]
+    finding = found[("192.0.2.10", "provider.openai")]
+    assert finding.metadata["flows"] == 4 and finding.metadata["bytes_out"] == 400
+    assert {item["flow_at"] for item in finding.metadata["dns_attribution"]} == {
+        "1970-01-01T00:16:41+00:00",
+        "1970-01-01T00:16:42+00:00",
+    }
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("limit", ["_MAX_DNS_OBSERVATIONS", "_MAX_DNS_PER_ADDRESS"])
 def test_repeated_answers_extend_one_window_instead_of_filling_storage(

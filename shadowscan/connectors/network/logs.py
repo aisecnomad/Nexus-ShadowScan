@@ -62,6 +62,9 @@ _MIN_HOST_WEIGHT = 0.3
 _MAX_CLIENTS = 50_000
 _MAX_PAIRS = 500_000
 _MAX_TIMESTAMPS_PER_CONNECTION = 100_000
+# Timestamp groups over all connections: per-connection bounds alone would
+# let flow storage grow with max_records (about 200 bytes per group).
+_MAX_TOTAL_GROUPS = 2_000_000
 _MAX_HOSTS_PER_FINDING = 20
 _MAX_TIMES = 1_000
 _MAX_TOTAL_TIMES = 200_000
@@ -676,7 +679,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         dns_overflow: set[_DNSKey] = set()
         dns_defects: set[tuple[_Context, str]] = set()
         unscoped_defects = False
-        times_used = dns_used = dropped_address_dns = 0
+        times_used = dns_used = groups_used = dropped_address_dns = 0
         dropped_pairs = dropped_times = dropped_clients = dropped_tls = dropped_dns = dropped_ja4 = 0
         clients: set[str] = set()
         for rec in records:
@@ -787,14 +790,15 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                     groups = pairs[key] = {}
                 # Keep timestamps distinct within a connection: an aggregate
                 # spanning expiry must not transfer its stale bytes through one
-                # fresh observation. The bound counts a connection's timestamps,
-                # not the input's flow records.
+                # fresh observation. The bounds count a connection's timestamps
+                # and the input's groups, not its flow records.
                 pair = groups.get(ts)
                 if pair is None:
-                    if len(groups) >= _MAX_TIMESTAMPS_PER_CONNECTION:
+                    if len(groups) >= _MAX_TIMESTAMPS_PER_CONNECTION or groups_used >= _MAX_TOTAL_GROUPS:
                         dropped_times += 1
                         continue
                     pair = groups[ts] = _Pair()
+                    groups_used += 1
                 pair.flows += 1
                 pair.bytes_out += int(rec.get("bytes_out") or 0)
                 pair.bytes_in += int(rec.get("bytes_in") or 0)
@@ -825,7 +829,7 @@ class NetworkLogConnector(BaseConnector, _NoDump):
         if dropped_times:
             self.ctx.warn(
                 f"network.logs: {dropped_times:,} flow record(s) beyond {_MAX_TIMESTAMPS_PER_CONNECTION:,} "
-                "timestamps on one connection were not attributed"
+                f"timestamps on one connection or {_MAX_TOTAL_GROUPS:,} in total were not attributed"
             )
         if dropped_tls:
             self.ctx.warn(
