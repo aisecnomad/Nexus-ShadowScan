@@ -1,0 +1,5 @@
+#separator \x09
+#path	ssl
+#fields	ts	uid	id.orig_h	id.resp_h	id.resp_p	server_name	ja4
+1000	C1	192.0.2.10	203.0.113.8	443	api.openai.com	t13d1516h2_8daaf6152771_02713d6af862
+1000	C2	192.0.2.11	203.0.113.9	443	docs.example.net	t13d1516h2_8daaf6152771_02713d6af862

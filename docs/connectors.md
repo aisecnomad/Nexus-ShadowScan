@@ -26,6 +26,13 @@ internal PKI fails verification (and the scan is incomplete) unless the connecto
 offers an explicit CA option. Only `identity.jwt` does today (`ca_bundle`, JWKS
 endpoint); other connectors trust the default CA store.
 
+Ambiguous app-name signals retain possible-product hints until the same product
+has non-name corroboration, and an app with no established AI evidence is
+bounded at possible confidence; see [identity attribution](connectors/identity.md#ambiguous-product-names).
+Cross-surface correlation separates exact identifier links from review
+candidates (name similarity, or an identifier without a verifiable shared
+tenant or account); see the [pipeline](architecture.md#scan-pipeline).
+
 ### Offline input limits
 
 Offline file and directory inputs use shared safety limits: 10,000 files,
@@ -167,7 +174,7 @@ Unreleased changes require a new final-revision review and acceptance evidence.
 | `cloud.aws`, `saas.slack` | Offline replay, stubbed API/SDK tests, and a read-only canary runner for exact tenant scopes. | Canary-capable; no live tenant acceptance is recorded. |
 | Other built-in connectors | Per-connector unit, fixture, and mocked-provider coverage at varying depth; no connector-specific live acceptance receipts are published. | Regression-tested; live acceptance is unestablished. |
 | Cross-connector field accuracy | No fresh, independently sampled and human-double-labeled representative holdout is published. The bundled AI-labeled corpus does not satisfy this requirement. | Not field-evaluated. |
-| Published 0.1.2 | [Release and wheel evidence](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2), plus a [non-author approval on the release source tree](https://github.com/aisecnomad/Project-Nexus/pull/160#pullrequestreview-5459628229). | Published alpha; this does not approve a later candidate or establish field accuracy. |
+| Published 0.1.2 | [Release and wheel evidence](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.2), plus a [non-author approval on the release source tree](https://github.com/aisecnomad/Nexus-ShadowScan/pull/160#pullrequestreview-5459628229). | Published alpha; this does not approve a later candidate or establish field accuracy. |
 
 Use these labels literally:
 
@@ -231,6 +238,24 @@ Continue, Kiro, Amazon Q…), coding-agent configs (`CLAUDE.md`, `.claude/agents
 A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
+
+Supported `uv.lock`, `poetry.lock`, `pnpm-lock.yaml` and `Cargo.lock` inputs
+also provide bounded AI dependency inventory, with direct/transitive relationships
+only when their roots and edges establish them. Locked packages do not establish
+installation, execution or agency. A lockfile that cannot be inventoried is
+reported against that lockfile with a fixed reason; it leaves the scan
+incomplete only when no manifest beside it declares its dependencies. A pnpm
+git, tarball, URL or local package and a `uv.lock` package without a version
+are inventoried by name with `version: null` and a limitation. `SKILL.md` adds
+a bounded static instruction review of the body and the front matter `name`
+and `description`, with fixed rule explanations and locations; quoted examples
+and ordinary URLs are not direct suspicious instructions, and a line over 4,096
+characters is audited sentence by sentence; only a sentence over 4,096
+characters is audited at both ends and marks the audit `partial`. Optional
+`inspect_model_artifacts` adds read-only, format-specific model and
+packaged-binary metadata inspection; GGUF vocabularies are skipped under their
+own bounds.
+See the [source guide](connectors/code.md) for supported formats and limits.
 
 Supported Go SDK import aliases are resolved before source evidence is
 excerpted; reports remain confidential. Ordinary Rust multiline strings, C raw
@@ -581,8 +606,12 @@ signed-in user's Graph token from the environment variable named by
 Graph audience and delegated claims, never refreshes it and refuses
 `access_token`, `client_id` and `client_secret`; delegated package listings are
 caller-scoped and never complete, so a delegated scan with an opt-in collection
-warns and exits 3. Statuses, bindings, coverage and the delegated token rules
-are in the [identity connector guide](connectors/identity.md#identityentra).
+warns and exits 3. A replayed export whose coverage marker names another
+tenant than `tenant_id`, or no tenant, exits 3; its findings carry
+`metadata.account_attributed: false`, so correlation never links them exactly
+to the configured tenant's objects. Statuses, bindings, coverage and the
+delegated token rules are in the
+[identity connector guide](connectors/identity.md#identityentra).
 
 After authenticating, live collection reads `GET /organization` and attests the
 tenant it returns for [live collection scope](scanning.md#live-collection-scope)
@@ -622,7 +651,8 @@ eligible for collection.
 
 ### `identity.auth0`
 Management API `clients` and `client-grants`: M2M applications, their
-audiences and scopes, AI-named apps. Auth: M2M client for the Management API
+audiences and scopes, AI-named apps, and other clients with an established AI
+product or model provider. Auth: M2M client for the Management API
 (`read:clients`, `read:client_grants`) or `token`.
 Options: `domain` (tenant domain such as `acme.eu.auth0.com`, env
 `AUTH0_DOMAIN`) and the M2M application's `client_id` and `client_secret` (env
@@ -705,8 +735,9 @@ hint, never an agent indicator, and a host counts only through the one
 service it belongs to (its highest-weight signature), so browsing
 `chatgpt.com` is AI use while traffic to `api2.cursor.sh` is a coding agent.
 
-Options: `format`, `min_events`, `llm_hosts_only`, `max_records`,
-`correlation_bindings`, and `label` (or `gateway_name` when the entry has no
+Options: `format`, `min_events`, `llm_hosts_only`, `internal_model_hosts` (a
+list or one hostname; `--internal-model-host` on `shadowscan gateway`),
+`max_records`, `correlation_bindings`, and `label` (or `gateway_name` when the entry has no
 label), which names the gateway on findings: it becomes the provider and the
 account of callers without a tenant/account scope.
 
@@ -757,7 +788,9 @@ query, at most 1000).
 
 ### `lowcode.servicenow`
 Table API: `sn_aia_agent`, `sn_aia_tool`, `sn_aia_usecase`, `sn_aia_trigger`,
-`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer.
+`sys_hub_flow` (AI hints), `oauth_entity`. Auth: basic or bearer. A flow needs
+a ServiceNow AI marker or an AI product or provider name; the generic AI-name
+hint alone does not qualify it.
 
 Options: `instance` (env `SNOW_INSTANCE`), `username` and `password` (env
 `SNOW_USERNAME`, `SNOW_PASSWORD`) or `token` (env `SNOW_TOKEN`) for a bearer
@@ -769,7 +802,10 @@ as unresolved observations, make coverage incomplete and cannot inherit
 registry approval from an unrelated parent.
 
 ### `lowcode.n8n`
-n8n workflows with AI or agent steps, including LangChain nodes; triggers
+n8n workflows with AI or agent steps, including LangChain nodes and HTTP
+Request POSTs to a model API (a known model host, or a versioned generation
+route on a host that is not a messaging API; `/v1/messages`, `/v1/responses`
+and `/api/chat` there also need a model request header or body); triggers
 (schedule → `scheduled`, webhook or app event → `event-triggered`, both with
 `autonomous`; a manual, chat, form or evaluation trigger adds neither), code
 steps (→ code-exec) and models. Live
@@ -779,6 +815,14 @@ without an ID retain detected AI evidence under an unresolved identity, make
 collection incomplete and cannot be approved by a registry card. Authentication
 uses `api_key`, sent as `X-N8N-API-KEY` (env `N8N_API_KEY`), against `api_url`
 (env `N8N_API_URL`, for example `https://n8n.example.com/api/v1`).
+
+Declared workflow graphs carry bounded, cycle-safe input/AI/egress reachability
+metadata. Disconnected nodes do not establish a path. Exact supported node types
+and literal HTTP destinations, shared with static n8n/Flowise/Dify export
+analysis, assign graph roles only; which workflows are reported is unchanged.
+Dynamic expressions remain unresolved. A malformed graph marks coverage
+incomplete but keeps the workflow finding. These relationships neither change
+confidence nor prove execution, private-data access or exfiltration.
 
 ### `lowcode.make`
 Make scenarios with AI modules and AI Agents; triggers (`scheduling.type` →
@@ -807,7 +851,8 @@ models. Live pagination is bounded by
 
 ### `saas.slack`
 `users.list` (bots), `admin.apps.approved.list` / `restricted` / `requests`
-(scopes, pending requests), `team.integrationLogs` (who installed what).
+(scopes, pending requests), `team.integrationLogs` (who installed what). The
+app id is matched as the app's client id.
 `team.info` must return an authenticated workspace identity. If `team_id` is
 configured, it must match exactly before inventory calls begin. Missing/null
 collection arrays and malformed pagination are incomplete coverage. Later
@@ -855,8 +900,15 @@ offline exports. Options: `site`
 `api_token` (env `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`), and `products`
 (`jira`, `confluence`; default both).
 
+Set the concrete HTTPS site origin for offline exports too. A missing site
+leaves discovery incomplete, and generated stubs remain unbound until it is
+known. App keys are shared across sites; inventory approvals require an
+explicit `accounts` site binding. URL host case, a default HTTPS port and a
+trailing slash are normalized without folding app resource IDs.
+
 ### `saas.notion`
-Notion bot users. A missing or repeated pagination cursor, or reaching the live
+Notion bot users with an established AI product or provider, or an AI-name
+hint other than the word "bot". A missing or repeated pagination cursor, or reaching the live
 page cap (`max_pages`, at most 1000), makes the scan incomplete. Provider error
 envelopes make collection incomplete even when they include empty record arrays;
 valid observations from other pages remain available. The same rule applies to
@@ -931,6 +983,14 @@ Options: `profile`, `role_arn`, `regions` (`all`), `services` (default: every
 service except `registry`), `cloudtrail_days`, `max_ecs_api_calls` (default 2000
 per region), `max_registry_records`, `registry_arns`.
 
+CloudTrail exports retain bounded event and assumed-role provenance. Lineage
+requires exact scoped session identifiers and compatible creation/lifetime
+timestamps; missing or ambiguous predecessors remain unknown. This metadata
+does not add confidence, and its sampling bounds report partial lineage
+without marking the scan incomplete. Live `LookupEvents` retrieves no STS
+events, so live lineage is always unlinked, and it is not invocation
+data-event coverage; see the [cloud guide](connectors/cloud.md).
+
 Opt-in registry records (`services` including `registry`): AWS Agent Registry
 and AgentCore registry records of every status, from the control-plane APIs,
 each as a finding with `metadata.registry_record` (registry types
@@ -1004,7 +1064,9 @@ Service Usage (AI APIs enabled), Vertex AI reasoning engines (Agent Engine)
 and endpoints per location, Dialogflow CX agents, Discovery Engine /
 Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,
 service accounts (user-managed keys), API keys restricted to Gemini, Secret
-Manager names, optional Cloud Audit Log callers (`audit_days`). Auth: ADC via
+Manager names, optional Cloud Audit Log callers (`audit_days`). An ambiguous
+product name (Gemini) on a Cloud Run service or Cloud Function stays a hint
+until another signal corroborates it. Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows potential access, not observed agent execution. Project IAM collection
@@ -1078,9 +1140,16 @@ converted is skipped with a warning and makes the scan incomplete.
 
 ### `cloud.kubernetes` and `cloud.openshift`
 Analyze offline Kubernetes and OpenShift workload exports (images, exposure,
-GPU, privilege and egress-policy indicators). Live collection is not
+GPU, privilege and egress-policy indicators), including nested CronJob pod
+templates. Resource identities preserve full valid object names and
+namespaces; object-limit truncation, a chunked `List` page with
+`metadata.continue` or `remainingItemCount`, a malformed namespace and an
+object without a `kind` leave coverage incomplete; items of a raw API list
+(`PodList`) take the kind their envelope names. Live collection is not
 implemented and the connectors use no credentials; their findings carry no
-device name, so lifecycle links do not apply to them. See the
+device name, so lifecycle links do not apply to them. Engine-named images,
+GPU requests or limits and `--model` arguments corroborate serving workloads;
+a model argument and a GPU alone never make an agent. See the
 [Kubernetes and OpenShift guide](connectors/kubernetes.md).
 
 ## Endpoint
@@ -1131,6 +1200,13 @@ that sets both `input` and `agent_card_urls` is refused (exit 3), because a
 replay never probes. Model metadata is not parsed from GGUF/safetensors files,
 and MCP fingerprints have no rug-pull baseline.
 
+The separate opt-in filesystem artifact pass can inspect bounded raw model
+metadata. MCP description review remains static. The `tool-poisoning` tag keeps
+its description rules, which also match documentation URLs and tool references,
+so it marks a review candidate. A bounded sentence audit adds zero-weight
+explanations of direct suspicious instructions and excludes quoted examples and
+prohibitions. No MCP server is launched.
+
 ## Network
 
 ### `network.logs`
@@ -1140,7 +1216,13 @@ Resolver query logs, VPC Flow Logs, and generic JSON or CSV DNS and SNI
 records. Host names match a signature's exact domain or declared wildcard,
 never a substring. Non-AI TLS names are retained as negative attribution evidence.
 A flow is attributed by its connection identity to an AI TLS server name, or
-through unambiguous DNS answers in the same input. Conflicting identities and
+through unambiguous DNS answers valid at the flow time for the same client and
+compatible sensor/resolver/network context. Missing timestamps or TTLs retain
+DNS observations with explicit attribution limitations. Future or expired
+answers do not explain flows. Repeated DNS answers merge into validity
+intervals per client and address; a storage bound withholds DNS attribution
+only for the affected client/address, with a limitation and a warning that
+leaves the scan complete. Conflicting identities and
 explicit non-AI TLS evidence prevent fallback attribution. Coding-agent, MCP and hosted-agent services
 are tagged `agent-service`; runs of connections to a model API seconds apart
 are tagged `agent-loop`. Malformed or unrecognized records make the scan
@@ -1150,6 +1232,10 @@ make coverage incomplete; `NODATA` is a valid no-traffic observation.
 Options: `format` (`zeek`, `route53`, `vpc-flow`, `generic`; default auto),
 `label` (network name; default `network`), `max_records`. See the
 [network guide](connectors/network.md).
+
+Optional JA4 values from Zeek TLS logs are bounded supporting metadata, never
+AI identity or an independent confidence boost. This connector performs no
+live DNS lookup, packet capture or external fingerprint query.
 
 ## Runtime
 
@@ -1166,6 +1252,16 @@ command line or executable; live mode reads `/proc` on Linux. The engine
 links these findings to endpoint findings for the same tool on the same
 device (`metadata.lifecycle`, tag `observed-running`) without changing
 scores.
+
+Lifecycle assessments additionally disclose their observation window, runtime
+coverage and whether activity is current, historical or unknown. Unobservable
+scope does not establish dormancy. Optional `inspect_maps`, `inspect_fds` and
+allowlisted `inspect_env_keys` inspect bounded Linux process metadata; they never
+read process memory, open descriptor targets or retain environment values.
+Kernel threads are not inspected, and `ESRCH` on an unchanged zombie with no
+threads left is recorded as `not_applicable`; a process whose leader exited
+while other threads run is `unreadable`.
+Generic libraries, model descriptors and packaging do not establish an agent.
 
 Options: `label` (host name for records without one), `max_processes` (live
 mode bound). See the [runtime guide](connectors/runtime.md).

@@ -39,13 +39,18 @@ carries a non-empty ``agent_indicators`` list; otherwise ``llm``. Findings
 whose resource cannot be mapped are kept in the raw output and ignored. On the
 code surface the report goes through the code-surface benchmark's own
 ShadowScan adapter, which maps findings onto taxonomy facts and drops the ones
-that map to none, the rule every adapter follows there. An incomplete scan
+that map to none, the rule every adapter follows there; the dropped findings,
+LLM-provider credential findings included, are counted in the row's
+``out_of_taxonomy``, which the scorer treats as an alarm on a negative case.
+An incomplete scan
 (exit 3) is still normalized and flagged ``incomplete``; a missing report or
 one that is not a JSON object with a ``findings`` list is an error.
 
 ``version()`` runs ``python -m shadowscan.cli --version`` through ``_probe``
 (scrubbed environment, throwaway home, timeout) and appends the checkout's
-short commit.
+short commit, with ``-dirty`` when ``shadowscan/`` or ``pyproject.toml``
+differs from it (untracked files included) or git cannot tell; a probe that
+exits non-zero records ``unknown``.
 """
 
 from __future__ import annotations
@@ -70,6 +75,8 @@ from tools.shadowbench.cases.contract import (
 )
 
 AGENT_KINDS = frozenset({"agent", "mcp-server", "agent-config"})
+SCANNER_CHANGES = ("status", "--porcelain", "--untracked-files=normal", "--", "shadowscan", "pyproject.toml")
+"""``git`` arguments that list changes to the scanner under test: its package and its build metadata."""
 ROLE_IDS = {
     "810c84a8-4a9e-49e6-bf7d-12d183f40d01": "Mail.Read",
     "e2a3a72e-5f79-4c64-b1b1-878b674ecb07": "Mail.ReadWrite",
@@ -275,8 +282,8 @@ class ShadowScanAdapter:
             extra_env={"PYTHONPATH": repo, "PYTHONDONTWRITEBYTECODE": "1"},
             timeout=60,
         )
-        if out is None:
-            return "unknown"
+        if out is None or out.returncode != 0:
+            return "unknown"  # a failed probe's last word is an error message, not a version
         try:
             # git on the operator's own checkout (trusted), not a tool under test.
             head = subprocess.run(
@@ -286,7 +293,16 @@ class ShadowScanAdapter:
                 timeout=30,
                 check=False,
             )
-            return f"{(out.stdout or out.stderr).strip().split()[-1]}+{head.stdout.strip()}"
+            # The scanner under test is this checkout's package: a change to it is not the commit.
+            status = subprocess.run(
+                ["git", "--no-optional-locks", "-C", repo, *SCANNER_CHANGES],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            state = "" if status.returncode == 0 and not status.stdout.strip() else "-dirty"
+            return f"{(out.stdout or out.stderr).strip().split()[-1]}+{head.stdout.strip()}{state}"
         except (OSError, IndexError, subprocess.TimeoutExpired):
             return "unknown"
 
@@ -447,7 +463,11 @@ class ShadowScanAdapter:
             "; incomplete scan" if incomplete else ""
         )
         return AdapterResult(
-            "ok", entities, note=note, raw={"incomplete": incomplete, "stderr": tail(run.stderr, 2000)}
+            "ok",
+            entities,
+            note=note,
+            raw={"incomplete": incomplete, "stderr": tail(run.stderr, 2000)},
+            out_of_taxonomy=int(normalized.detail.get("unmapped") or 0),
         )
 
     def normalize(self, case: MaterializedCase, work: Path, runs: list[RunResult]) -> AdapterResult:

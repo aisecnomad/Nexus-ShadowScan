@@ -30,12 +30,12 @@ stop and name one SHA. Operators who later deploy must pin that same SHA.
 
 ## What to read first
 
-1. [AGENTS.md](https://github.com/aisecnomad/Project-Nexus/blob/main/AGENTS.md) — trust model and hard rules
-2. [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md) — reporting and controls
+1. [AGENTS.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/AGENTS.md) — trust model and hard rules
+2. [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md) — reporting and controls
 3. [Architecture](../architecture.md) — engine, connectors, inventory
 4. [Production deployment](../production.md) — install, rollout, merge-gate honesty
 5. [Evaluation](../evaluation.md) — what the corpora do and do not prove
-6. [Contributor review policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy)
+6. [Contributor review policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#review-and-merge-policy)
 7. [Connector maturity and validation status](../connectors.md#validation-maturity-and-evidence-status) — check the published evidence level before treating a connector as production-accepted.
 8. [Merge policy enforcement](merge-policy.md) — compare the versioned policy with live settings; a policy file does not activate repository rules.
 
@@ -45,7 +45,7 @@ From a POSIX checkout, Python 3.11 to 3.13:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate
-python -m pip install -e ".[all]"
+make install          # the hash-locked toolchain CI uses
 make check
 python -m shadowscan.signatures.validate
 python -m shadowscan.mappings.validate
@@ -64,7 +64,7 @@ review record.
 - Treat author-written evaluation corpora as field precision or recall.
 - Treat `archive/reviews/` as an external audit.
 - Treat the `0.1.2` version string as a published release.
-- Treat GitHub Pages at <https://aisecnomad.github.io/Project-Nexus/> as the
+- Treat GitHub Pages at <https://aisecnomad.github.io/Nexus-ShadowScan/> as the
   MkDocs site until Pages is switched to the Docs workflow artifact.
 
 ## Suggested review slices
@@ -77,7 +77,7 @@ Pick one. Reading every connector is a multi-day job.
 | HTTP / origin controls | connector HTTP helpers, [security policy](../security.md) | SSRF, body budget, private-address default |
 | Inventory binding | `shadowscan/registry.py`, [inventory](../inventory.md) | When is `shadow: true` wrong? |
 | One live connector | `cloud.aws` or `identity.entra` plus its fixtures | Fail-closed on malformed pages? |
-| Release path | `.github/workflows/release.yml`, [publishing runbook](publishing.md), [production](../production.md) | Can anything other than the approval-gated `publish` job upload a package, or upload anything but the attested wheel? Does anything push a tag? |
+| Release path | `.github/workflows/release.yml`, [publishing runbook](publishing.md), [production](../production.md) | Can anything other than the approval-gated `publish` job upload a package, or upload anything but the attested wheel and sdist? Does anything push a tag? |
 
 For the October 1 discovery corrections, include these paired checks:
 
@@ -206,6 +206,6 @@ commits, on the final head SHA. Quote that SHA in the review body. Do not
 approve a later push without re-reading it.
 
 Private vulnerabilities go to a
-[security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new),
+[security advisory](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new),
 not a public issue. Conduct reports follow the
-[code of conduct](https://github.com/aisecnomad/Project-Nexus/blob/main/CODE_OF_CONDUCT.md).
+[code of conduct](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CODE_OF_CONDUCT.md).

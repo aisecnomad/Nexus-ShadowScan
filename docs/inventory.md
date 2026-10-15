@@ -22,7 +22,7 @@ other agents; ShadowScan discovers those cards in code
 each as a finding. A discovered A2A card, signed or not, never registers or
 approves a finding; bind it with a Capability Card like any other agent.
 
-The bundled example is [`agent-card.yaml`](https://github.com/aisecnomad/Project-Nexus/blob/main/agent-card.yaml). ShadowScan reads
+The bundled example is [`agent-card.yaml`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/agent-card.yaml). ShadowScan reads
 `schema_version`, `metadata.agent_id`, `metadata.name`, `metadata.owner_team` / `owner`,
 `metadata.classification`, `autonomy_profile.level`, the optional
 [`governance:`](#declared-governance-facts) block, and a `discovery:` block required for automatic registration:
@@ -156,7 +156,7 @@ agents:
 
 The `agents:` mapping is optional: a file holding a bare list of the same
 entries, as in
-[`examples/inventory/sanctioned.yaml`](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/inventory/sanctioned.yaml),
+[`examples/inventory/sanctioned.yaml`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/inventory/sanctioned.yaml),
 is read the same way.
 
 ### CSV
@@ -201,6 +201,20 @@ immutable IDs and narrowly scoped patterns; a broad glob is an explicit broad
 approval. Region-scoped resources can share a short ID across regions; generated
 cards bind a region when available. Review existing cards with short cloud IDs
 and add explicit `regions` before using them to approve a single region.
+
+Atlassian app keys can be installed in multiple sites. An Atlassian approval
+must supply `accounts` with the concrete HTTPS site origin, even when its
+resource pattern is exact. Missing-site findings and historical cards without
+account constraints cannot register an app installation. URL host case,
+the default HTTPS port and a trailing slash are normalized for site identity;
+resource matching remains case-sensitive. For example:
+
+```yaml
+discovery:
+  resources: ["atlassian:jira:app:com.example.assistant"]
+  providers: [atlassian]
+  accounts: ["https://your-site.atlassian.net"]
+```
 
 Names, aliases, and agent-ID similarities produce `registry_suggestions` only.
 They never confer registered status, inherit an owner, or reduce risk. An
@@ -611,7 +625,9 @@ and the finding's `identity_discriminator` into `discovery.discriminators`, so
 the generated card approves only that finding, even where other findings share
 its resource. A redacted resource or scope leaves `discovery.resources` empty
 pending an identity review. Generated cards also bind the finding's region when
-present. The finding's names go into `discovery.names` as review suggestions,
+present. An Atlassian finding without a concrete site likewise leaves
+`discovery.resources` empty; when its site is known the generated card binds
+that site in `discovery.accounts`. The finding's names go into `discovery.names` as review suggestions,
 detected capabilities into `capability_surface`, the risk score into
 `risk_scoring`, and the owner (when known) into `owner_team`. Stubs are
 `schema_version: 2` cards whose `autonomy_profile.level` is the finding's

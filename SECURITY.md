@@ -5,7 +5,7 @@ environment variables, record dumps, incremental state and reports as sensitive
 data. Redaction reduces accidental disclosure; it does not make reports public.
 
 **Reporting a vulnerability:** open a
-[private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new);
+[private GitHub security advisory](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new);
 [Reporting](#reporting) says what to include and
 [Supported versions](#supported-versions) which versions receive fixes. Never
 put credentials, tenant exports or exploit details in a public issue.
@@ -33,6 +33,22 @@ coverage, even when a response includes an empty collection field.
 
 ## Implemented controls and limits
 
+* Optional filesystem model/artifact inspection uses confined regular-file
+  access, file identity checks and bounded metadata reads. It never executes
+  packaged code, unpickles objects, loads tensor data or follows ONNX external
+  data references. A recognized format is inventory evidence, not a working
+  model or an agent. Lockfile parsing never runs a package manager.
+* Optional Linux runtime inspection reads bounded maps and descriptor-link
+  metadata and, separately, allowlisted environment key names. It never opens
+  descriptor targets or `/proc/<pid>/mem`, and environment values and mapped
+  paths are not retained. PID namespace/start identity checks reject changed
+  observations; denied or truncated selected inspection remains incomplete.
+  These observations cannot establish arbitrary memory-only Python execution.
+* MCP/skill instruction review is static and bounded. It emits fixed heuristic
+  explanations and locations, not a safety verdict, and never launches a
+  discovered server, invokes a described tool or follows a supplied URL.
+  Zeek JA4 ingestion and temporal DNS attribution likewise operate solely on
+  supplied records; neither introduces live capture or DNS queries.
 * Source and manifest inputs are decoded from UTF-8, from UTF-16 or UTF-32
   with a byte-order mark, and for Python from the declared PEP 263 codec. An
   analyzed file with binary or undecodable content (dense NUL bytes, mostly invalid
@@ -98,7 +114,7 @@ coverage, even when a response includes an empty collection field.
   pseudonyms. Key rotation invalidates cache reuse and collection comparability.
   Resource finding IDs remain stable. Old public credential digests and private
   legacy gateway binding mappings remain sensitive; see the
-  [credential evidence migration](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#credential-evidence-identity-migration).
+  [credential evidence migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#credential-evidence-identity-migration).
 * `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
   to a 120-second cooperative completion deadline. Late connector results are
   discarded and coverage is incomplete. Legacy `connector_timeout` /
@@ -359,6 +375,10 @@ coverage, even when a response includes an empty collection field.
 * Generated inventory resource bindings escape literal glob characters. Manual
   wildcard approvals remain possible and require operator review. Surface,
   provider and account restrictions still apply; ambiguous matches do not approve.
+  Atlassian app keys require a concrete configured HTTPS site and an explicit
+  account constraint on the approval. Unknown site identity leaves the scan
+  incomplete and generated cards unbound; site fields in untrusted exports
+  cannot supply or override that trusted scope.
 * Configuration rejects missing or empty required environment substitutions,
   duplicate YAML keys, unknown top-level/options fields and invalid gate levels.
   Explicit `${VAR:-default}` fallbacks remain an operator policy decision.
@@ -371,9 +391,9 @@ coverage, even when a response includes an empty collection field.
   while scanning. Runtime telemetry attribution does not prove that a particular
   dependency executed.
 
-See [deployment and migration](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md),
-[scan semantics](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/scanning.md),
-and [connector permissions](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/connectors.md).
+See [deployment and migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md),
+[scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md),
+and [connector permissions](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md).
 
 ## Supported versions
 
@@ -384,7 +404,7 @@ Publication does not establish production acceptance for your environment.
 
 ## Reporting
 
-Use a [private GitHub security advisory](https://github.com/aisecnomad/Project-Nexus/security/advisories/new).
+Use a [private GitHub security advisory](https://github.com/aisecnomad/Nexus-ShadowScan/security/advisories/new).
 Do not include credentials, private exports or exploit details in public issues.
 
 ### What to report privately
@@ -395,7 +415,7 @@ and malformed inputs that make incomplete coverage look complete. Reports about
 CI or release-evidence integrity also belong in the private channel.
 
 Ordinary false positives, missed integrations and incorrect attribution can use
-the [detection report form](https://github.com/aisecnomad/Project-Nexus/issues/new?template=detection_report.yml)
+the [detection report form](https://github.com/aisecnomad/Nexus-ShadowScan/issues/new?template=detection_report.yml)
 when the reproduction is safe to publish. A trusted component being compromised
 is outside the scanner's stated trust boundary; explain any demonstrated bypass
 rather than assuming the scanner protects a compromised host.

@@ -220,6 +220,34 @@ def test_agentsight_script_exits_with_the_first_failed_report(tmp_path: Path) ->
     assert [call[2:4] for call in _calls(log)] == [["prompts", "--json"], ["audit", "--json"]]
 
 
+@pytest.mark.parametrize("code", [2, 3, 139])
+def test_numbat_script_keeps_a_crash_status_even_with_a_report(tmp_path: Path, code: int) -> None:
+    """Only exit 0 or 1 from `numbat agents` is accepted: a crash that printed `[]` is not an empty inventory."""
+    log = tmp_path / "calls.log"
+    stub = _stub(tmp_path / "bin" / "numbat", log, stdout="[]", exits={"agents": code})
+    estate, _ = _home(tmp_path, device="laptop", user="dana")
+
+    result, out_dir = _run(NumbatAdapter(), "numbat", stub, tmp_path, estate, "home:laptop")
+
+    assert result.status == "failed"
+    assert result.commands[0].exit_code == code
+    assert (out_dir / "agents.json").read_text(encoding="utf-8") == "[]"
+    assert [call[1] for call in _calls(log)] == ["agents"], "scan never runs after a failed inventory"
+
+
+@pytest.mark.parametrize(("code", "stdout", "status"), [(1, "[]", "ok"), (1, "", "failed"), (0, "[]", "ok")])
+def test_numbat_script_accepts_exit_one_only_with_a_report(
+    tmp_path: Path, code: int, stdout: str, status: str
+) -> None:
+    log = tmp_path / "calls.log"
+    stub = _stub(tmp_path / "bin" / "numbat", log, stdout=stdout, exits={"agents": code})
+    estate, _ = _home(tmp_path, device="laptop", user="dana")
+
+    result, _ = _run(NumbatAdapter(), "numbat", stub, tmp_path, estate, "home:laptop")
+
+    assert result.status == status, (result.error, result.commands)
+
+
 @pytest.mark.parametrize(
     ("prompts", "audit", "fragment"),
     [

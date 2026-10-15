@@ -34,3 +34,28 @@ insert_final_newline = unset
 trim_trailing_whitespace = unset
 indent_style = unset
 indent_size = unset
+
+# Kept exactly as committed; mirrors the exclusions of the pre-commit whitespace
+# hooks (.pre-commit-config.yaml). Retained review records:
+[archive/**]
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset
+
+# ShadowBench artifacts and corpora are frozen by SHA-256 (FREEZE.json) and its
+# results are written by the scorers.
+[benchmarks/shadowbench/*/{artifacts,results}/**]
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset
+
+[benchmarks/shadowbench/*/{corpus.json,FREEZE.json}]
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset

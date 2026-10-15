@@ -169,7 +169,7 @@ the baseline estate was complete beyond what its own report records.
 
 ### GitHub Actions
 
-The [weekly drift workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/github-action-drift.yml)
+The [weekly drift workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/github-action-drift.yml)
 is meant for a private operations repository:
 
 - **Triggers.** It runs weekly at an off-peak minute, and on manual dispatch.
@@ -226,7 +226,7 @@ Findings, tenant identifiers and reports never go into issues.
 
 ### Kubernetes
 
-The [drift CronJob](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-drift-cronjob.yaml)
+The [drift CronJob](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/k8s-drift-cronjob.yaml)
 runs the same scan and comparison weekly:
 
 - **Schedule.** It uses `concurrencyPolicy: Forbid` and an active deadline.

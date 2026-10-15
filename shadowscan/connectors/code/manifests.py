@@ -21,6 +21,7 @@ from typing import Any
 import regex as re
 import yaml
 
+from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES, LockfileError, LockInventory, parse_lockfile
 from shadowscan.signatures.matcher import _run_regex, pattern_timeout
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.safe_yaml import YAMLResourceLimitError, strict_bounded_safe_load
@@ -66,6 +67,10 @@ class ManifestResult:
     deps: list[Dep] = field(default_factory=list)
     artifacts: list[Artifact] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    lockfile: LockInventory | None = None
+    # Why a supported lockfile was not inventoried: a fixed reason, never input
+    # text. The caller decides whether the gap leaves coverage incomplete.
+    lockfile_issue: str | None = None
 
 
 def _mapping(value: Any, result: ManifestResult, section: str) -> dict[str, Any]:
@@ -1119,6 +1124,15 @@ def _parse_manifest(relpath: str, text: str, document: Any = None) -> ManifestRe
     p = PurePosixPath(relpath.replace("\\", "/"))
     name = p.name
     lower = name.lower()
+    if lower in LOCKFILE_NAMES:
+        try:
+            inventory = parse_lockfile(lower, text)
+        except LockfileError as exc:
+            return ManifestResult(lockfile_issue=str(exc))
+        return ManifestResult(
+            deps=[Dep(p.ecosystem, p.name, p.version) for p in inventory.packages if not p.root],
+            lockfile=inventory,
+        )
     parts = [x.lower() for x in p.parts]
     if (
         lower.startswith("requirements")
@@ -1205,7 +1219,7 @@ _MANIFEST_FILENAMES_LOWER = frozenset(n.lower() for n in MANIFEST_FILENAMES)
 
 def is_manifest_name(name: str) -> bool:
     lower = name.lower()
-    if name in MANIFEST_FILENAMES or lower in _MANIFEST_FILENAMES_LOWER:
+    if lower in LOCKFILE_NAMES or name in MANIFEST_FILENAMES or lower in _MANIFEST_FILENAMES_LOWER:
         return True
     return (
         (lower.startswith("requirements") and lower.endswith((".txt", ".in")))

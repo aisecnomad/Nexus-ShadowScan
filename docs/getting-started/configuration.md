@@ -10,7 +10,7 @@ option, stops the command with exit code 1 before anything is scanned (see
 
 This page shows the options most configurations use. `parallel`, `incremental`,
 `state_dir`, `workdir`, `job_deadline_seconds`, `risk_basis` and `risk_weights`
-are documented in the [README risk policy](https://github.com/aisecnomad/Project-Nexus/blob/main/README.md#risk-policy),
+are documented in the [README risk policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/README.md#risk-policy),
 [scan semantics](../scanning.md) and [production deployment](../production.md).
 
 ```yaml

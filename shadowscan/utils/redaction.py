@@ -61,9 +61,11 @@ from shadowscan.utils.redaction_commands import (
 )
 from shadowscan.utils.redaction_formats import (
     _ADDED_PEM,
+    _GLUED_RUN,
     _PEM,
     _SCHEME_READING,
     _URL,
+    _later_line_runs,
     _redact_authorization,
     _redact_compact_colons,
     _redact_cookie_headers,
@@ -133,6 +135,74 @@ _SCALARS = (bool, int, float, datetime.date, datetime.time, datetime.timedelta, 
 _PLAIN_TYPES = (str, Mapping, list, tuple, *_SCALARS)
 
 
+class _Copy(dict[str, Any]):
+    """A mapping a ``sanitize`` reading copied, with a copy of every member of its source.
+
+    Two keys can read alike once withheld ('SSWS a--auth' and 'SSWS b' are
+    both 'SSWS [REDACTED]' in one reading, and not in the other). As a dict,
+    the copy is what the reading always made: each step that copies it keeps
+    one member per key, at the place of the first and with the value of the
+    last, as a dict built from the members the step before kept does.
+    ``view`` holds the members it keeps, in that order. ``members`` also
+    holds the others, copied by every step as well, one for each member of
+    the source mapping in its order: the two readings then pair up member by
+    member wherever their keys read alike (see ``_merge_mappings``). Copies
+    are equal only when all their members and views are. ``sanitize``
+    returns plain dicts (see ``_dicts``).
+    """
+
+    __slots__ = ("members", "view")
+
+    def __init__(self, members: list[tuple[str, Any]], view: list[int]) -> None:
+        super().__init__(members[index] for index in view)
+        self.members = members
+        self.view = view
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, _Copy):
+            return self.view == other.view and self.members == other.members
+        return dict.__eq__(self, other)
+
+    def __ne__(self, other: object) -> bool:
+        return not self == other
+
+    __hash__ = None
+
+
+def _all_members(item: Mapping) -> list[tuple[Any, Any]]:
+    """The members of ``item``: of a copy, one for each member of its source (see ``_Copy``)."""
+    return item.members if isinstance(item, _Copy) else list(item.items())
+
+
+def _copied(source: Mapping, members: list[tuple[str, Any]]) -> _Copy:
+    """``members``, a copy of each of ``_all_members(source)`` in its order, as a copy of ``source``.
+
+    As a dict it keeps what a dict built from the members ``source`` shows
+    as a dict keeps (see ``_Copy``).
+    """
+    view: list[int] = []
+    places: dict[str, int] = {}
+    for index in source.view if isinstance(source, _Copy) else range(len(members)):
+        key = members[index][0]
+        place = places.get(key)
+        if place is None:
+            places[key] = len(view)
+            view.append(index)
+        else:
+            view[place] = index
+    return _Copy(members, view)
+
+
+def _dicts(item: Any) -> Any:
+    """``item``, a copy ``sanitize`` made, with plain dicts in place of its copies (see ``_Copy``)."""
+    if isinstance(item, Mapping):
+        return {key: _dicts(child) for key, child in item.items()}
+    if isinstance(item, (list, tuple)):
+        members = [_dicts(child) for child in item]
+        return tuple(members) if isinstance(item, tuple) else members
+    return item
+
+
 def _member_order(member: Any) -> tuple[str, str]:
     try:
         return type(member).__name__, repr(member)
@@ -200,12 +270,21 @@ def sanitize_text(text: str) -> str:
     it stays the same (see ``_settled``), since evidence is sanitized more
     than once; each line then shows only what both settled readings show (see
     ``_merge_readings``).
+
+    A text where no credential stops at such a run is read as the established
+    rules read it. The step that withholds the runs then finds only runs that
+    start a line after their scheme's ('Bearer v\\n--verbose'). Runs that are
+    only a name or a separator stay unless removing them lets the passes
+    withhold more (see ``_without_later_line_runs``); any other run, which
+    holds a value ('--max-time=30'), is withheld. A marker shows where a run
+    was withheld (see ``_marked_later_lines``), as in a text with a glued run.
     """
     text = _checked_text(text)
     reading = _SchemeReading(established=False)
-    shown = _in_reading(reading, lambda: _without_glued_runs(_redact_extended(_sanitize_established(text))))
+    first = _in_reading(reading, lambda: _redact_extended(_sanitize_established(text)))
+    shown = _in_reading(reading, lambda: _without_glued_runs(first))
     if not reading.glued:
-        return shown
+        return first if shown == _without_later_line_runs(first) else _marked_later_lines(first, shown)
     plain = _settled(
         shown,
         lambda again: _in_reading(
@@ -253,7 +332,7 @@ def _in_reading(reading: _SchemeReading, read: Callable[[], _T]) -> _T:
         _SCHEME_READING.reset(token)
 
 
-def _merge_readings(first: str, second: str) -> str:
+def _merge_readings(plain: str, established: str) -> str:
     """Two readings of one text, each line as withheld as both withhold it.
 
     A text with a run glued after a scheme credential is read with the run
@@ -264,26 +343,36 @@ def _merge_readings(first: str, second: str) -> str:
     are compared line by line (see ``_merged_line``). The established rules
     joined a line kept after a scheme to the scheme's line; readings whose
     lines do not pair up withhold the whole text, keeping its line breaks.
+
+    So each line of the result shows only what the same line of each
+    reading shows: the result shows nothing either reading withholds.
     """
-    if first == second:
-        return first
-    first_lines, second_lines = first.split("\n"), second.split("\n")
-    if len(first_lines) != len(second_lines):
-        return REDACTED + "\n" * first.count("\n")
-    return "\n".join(_merged_line(one, other) for one, other in zip(first_lines, second_lines, strict=True))
+    if plain == established:
+        return plain
+    plain_lines, established_lines = plain.split("\n"), established.split("\n")
+    if len(plain_lines) != len(established_lines):
+        return REDACTED + "\n" * plain.count("\n")
+    return "\n".join(
+        _merged_line(one, other) for one, other in zip(plain_lines, established_lines, strict=True)
+    )
 
 
-def _merged_line(one: str, other: str) -> str:
+def _merged_line(plain: str, established: str) -> str:
     """One line of two readings, showing nothing either withholds (see ``_merge_readings``).
 
     Where one line shows only what the other shows (see ``_shows_within``),
-    that one is kept; otherwise the whole line is withheld.
+    that one is kept; otherwise the whole line is withheld. Where the plain
+    reading removed the run that starts the established line ('--verbose x'
+    after a scheme credential's line), a marker shows where it was.
     """
-    if one == other or _shows_within(other, one):
-        return one
-    if _shows_within(one, other):
-        return other
-    return REDACTED + "\r" * one.endswith("\r")
+    if plain == established or _shows_within(established, plain):
+        run = established[: len(established) - len(plain)]
+        if run and established.endswith(plain) and _GLUED_RUN.fullmatch(run):
+            return REDACTED + plain
+        return plain
+    if _shows_within(plain, established):
+        return established
+    return REDACTED + "\r" * plain.endswith("\r")
 
 
 def _shows_within(kept: str, shown: str) -> bool:
@@ -316,15 +405,84 @@ def _without_glued_runs(text: str) -> str:
     the step changes is read once more by every pass, as the next
     sanitization would read it, and its runs go again. Each reading only
     adds markers and each step only removes text, so the result withholds
-    whatever any reading withholds. A text still changing after
-    ``_GLUED_RUN_READINGS`` readings keeps the last one, without its runs.
+    whatever any reading withholds.
+
+    A chain of lines that each start with a run loses one run per reading
+    (see ``_withhold_scheme_tails``). A text still changing after
+    ``_GLUED_RUN_READINGS`` readings loses the rest of each chain at once and
+    is read once more, then its runs go again: kept as the last reading left
+    it, without one run more, it showed the value the last run had hidden
+    ('Bearer v\\n--r0\\n--r0\\n--r0\\n=abc.def = password: w'), or, after a fifth
+    run, every value of the chain.
     """
     for _ in range(_GLUED_RUN_READINGS):
         cut = _withhold_scheme_tails(text)
         if cut == text:
             return text
         text = _redact_extended(_established_passes(cut))
-    return _withhold_scheme_tails(text)
+    cut = _withhold_scheme_tails(text, chains=True)
+    if cut == text:
+        return text
+    return _withhold_scheme_tails(_redact_extended(_established_passes(cut)), chains=True)
+
+
+def _without_later_line_runs(text: str) -> str:
+    """``text`` without the runs that ``_without_glued_runs`` removes from the start of a later line.
+
+    Where no credential stopped at a run, the established rules read the
+    text as its first reading does and showed the runs that start the lines
+    after a scheme credential's. If ``_without_glued_runs`` only removed
+    such runs and no pass then withheld more, it gives this text, and the
+    first reading, which shows those runs besides, is kept. No pass reads
+    this text, so each chain of such runs goes in one scan, however long.
+    """
+    for _ in range(_GLUED_RUN_READINGS + 1):
+        cut = _withhold_scheme_tails(text, later_lines=True, chains=True)
+        if cut == text:
+            break
+        text = cut
+    return text
+
+
+def _marked_later_lines(first: str, shown: str) -> str:
+    """``shown``, ``first`` without its runs, with a marker where a run that started a line was.
+
+    A run that starts a line after a scheme credential's marker (see
+    ``_later_line_runs``) and that its line in ``shown`` no longer starts
+    with was withheld; the line then starts with a marker, unless it already
+    does, as ``_merged_line`` marks it in a text with a glued run. Every pass
+    keeps the lines of a text, so the lines of ``first`` and ``shown`` pair up.
+    """
+    runs = _later_line_runs(first)
+    lines = shown.split("\n")
+    if not runs or len(lines) != first.count("\n") + 1:
+        return shown
+    for index, run in runs.items():
+        if not lines[index].startswith((run, REDACTED)):
+            lines[index] = REDACTED + lines[index]
+    return "\n".join(lines)
+
+
+def _marked_copy(first: Any, shown: Any) -> Any:
+    """``shown``, ``first`` without its runs, with each text marked as ``_marked_later_lines`` marks it.
+
+    ``shown`` is ``_without_scheme_tails(first)``: the two hold the same
+    members (see ``_Copy``), and a mapping keeps those its dict keeps.
+    """
+    if isinstance(shown, str):
+        return _marked_later_lines(first, shown) if isinstance(first, str) else shown
+    if isinstance(shown, Mapping) and isinstance(first, Mapping):
+        members, shown_members = _all_members(first), _all_members(shown)
+        view = shown.view if isinstance(shown, _Copy) else range(len(shown_members))
+        marked: dict[str, Any] = {}
+        for index in view:
+            (key, child), (shown_key, shown_child) = members[index], shown_members[index]
+            marked[_marked_copy(key, shown_key)] = _marked_copy(child, shown_child)
+        return marked
+    if isinstance(shown, (list, tuple)) and type(first) is type(shown):
+        items = [_marked_copy(one, other) for one, other in zip(first, shown, strict=True)]
+        return tuple(items) if isinstance(shown, tuple) else items
+    return _dicts(shown)
 
 
 def _checked_text(text: str) -> str:
@@ -802,8 +960,8 @@ class _Sanitizer:
         return item
 
     def clean_mapping(self, item: Mapping, depth: int, *, auth: bool = False) -> dict[str, Any]:
-        mapping_out: dict[str, Any] = {}
-        for key, child in item.items():
+        mapping_out: list[tuple[str, Any]] = []
+        for key, child in _all_members(item):
             name = str(key)
             result: Any
             if (
@@ -815,7 +973,8 @@ class _Sanitizer:
             ):
                 result = _redact_value(child)
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, Mapping):
-                result = {self.text(str(k)): _redact_value(v) for k, v in child.items()}
+                members = [(self.text(str(k)), _redact_value(v)) for k, v in _all_members(child)]
+                result = _copied(child, members)
             elif name.lower() in _ENVIRONMENT_KEYS and isinstance(child, list):
                 result = [self.clean_environment_entry(entry, depth) for entry in child]
             elif (auth or name.lower() in _AUTH_CONTAINER_KEYS) and isinstance(child, (Mapping, list, tuple)):
@@ -826,17 +985,18 @@ class _Sanitizer:
                 result = self.clean(child, depth + 1, auth=True)
             else:
                 result = self.clean(child, depth + 1)
-            mapping_out[self.text(name)] = result
-        return mapping_out
+            mapping_out.append((self.text(name), result))
+        return _copied(item, mapping_out)
 
     def clean_environment_entry(self, entry: Any, depth: int) -> Any:
         """One entry of an environment list: a record's value is withheld whatever its name."""
         if not isinstance(entry, Mapping):
             return _redact_value(entry)
-        return {
-            self.text(str(k)): _redact_value(v) if str(k).lower() == "value" else self.clean(v, depth + 1)
-            for k, v in entry.items()
-        }
+        members = [
+            (self.text(str(k)), _redact_value(v) if str(k).lower() == "value" else self.clean(v, depth + 1))
+            for k, v in _all_members(entry)
+        ]
+        return _copied(entry, members)
 
 
 class _NestedSanitizer(_Sanitizer):
@@ -1019,16 +1179,27 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
     As ``sanitize_text`` does, a value whose texts hold such a run is read
     twice, so and as the established rules read it, each reading again until
     it settles, and each text of the copy shows only what both readings show
-    (see ``_merge_copies``).
+    (see ``_merge_copies``). A value where no credential stops at such a run
+    keeps the established rules' copy, as ``sanitize_text`` keeps their
+    reading, unless removing the runs that start later lines lets the
+    passes withhold more or a run holds a value; a marker then shows where
+    each run was (see ``_marked_copy``).
+
+    A container stays a container of its type: the two readings of a
+    mapping pair up member by member even where two of its keys read alike
+    in one reading and not in the other (see ``_Copy``). A key two members
+    share keeps one value, as a dict does.
     """
     _check_sanitization_structure(value)
     reading = _SchemeReading(established=False)
-    shown = _in_reading(
-        reading,
-        lambda: _without_scheme_tails(_sanitize_reading(value, redact_short_secrets, env_values_are_secrets)),
+    first = _in_reading(
+        reading, lambda: _sanitize_reading(value, redact_short_secrets, env_values_are_secrets)
     )
+    shown = _in_reading(reading, lambda: _without_scheme_tails(first))
     if not reading.glued:
-        return shown
+        if shown == _without_scheme_tails(first, _without_later_line_runs):
+            return _dicts(first)
+        return _marked_copy(first, shown)
     plain = _settled(
         shown,
         lambda again: _in_reading(
@@ -1045,7 +1216,7 @@ def sanitize(value: Any, *, redact_short_secrets: bool = False, env_values_are_s
             lambda again: _sanitize_reading(again, redact_short_secrets, env_values_are_secrets),
         ),
     )
-    return _merge_copies(plain, established)
+    return _dicts(_merge_copies(plain, established))
 
 
 def _sanitize_reading(value: Any, redact_short_secrets: bool, env_values_are_secrets: bool) -> Any:
@@ -1076,53 +1247,77 @@ def _merge_copies(first: Any, second: Any) -> Any:
     """Two readings of one value merged, each text as withheld as both withhold it (see ``_merge_readings``).
 
     Both copies come from the same value through the same structural rules,
-    so they pair up member by member. A part that does not pair up is withheld.
+    so they pair up member by member: a mapping by the members of its source
+    (see ``_merge_mappings``), a list or tuple by position. A container stays
+    a container of its type; only where one reading withholds a value whole
+    (as a sensitive key's) is it withheld. Containers that do not pair up
+    cannot come from one value, and fail closed.
     """
     if first == second:
         return first
     if isinstance(first, str) and isinstance(second, str):
         return _merge_readings(first, second)
-    if isinstance(first, Mapping) and isinstance(second, Mapping) and len(first) == len(second):
-        return {
-            _merge_copies(key, other_key): _merge_copies(child, other_child)
-            for (key, child), (other_key, other_child) in zip(first.items(), second.items(), strict=True)
-        }
-    if isinstance(first, (list, tuple)) and type(first) is type(second) and len(first) == len(second):
+    if isinstance(first, Mapping) and isinstance(second, Mapping):
+        return _merge_mappings(first, second)
+    if isinstance(first, (list, tuple)) and type(first) is type(second):
+        if len(first) != len(second):
+            raise SanitizationLimitError("sanitization readings of one value do not pair up")
         members = [_merge_copies(one, other) for one, other in zip(first, second, strict=True)]
         return tuple(members) if isinstance(first, tuple) else members
-    if isinstance(first, (bytes, bytearray)) and type(first) is type(second):
-        merged = _merge_readings(
-            bytes(first).decode("utf-8", errors="replace"), bytes(second).decode("utf-8", errors="replace")
-        )
-        return type(first)(merged.encode())
     if type(first) is type(second) and not isinstance(first, _CONTAINERS):
         # A leaf no text pass reads, the same in both readings ('nan' is not equal to itself).
         return first
     return REDACTED
 
 
-def _without_scheme_tails(item: Any) -> Any:
-    """``item``, a copy ``sanitize`` made, with ``_without_glued_runs`` applied to each text and key.
+def _merge_mappings(first: Mapping, second: Mapping) -> dict[str, Any]:
+    """Two readings of one mapping, merged member by member (see ``_merge_copies``).
 
-    The copy holds only what ``clean`` returns: new mappings, sequences and
-    sets, nested no deeper than ``clean`` goes, and texts, bytes and other
-    leaves it keeps as they are.
+    Each reading holds a copy of every member of the source mapping, in its
+    order (see ``_Copy``), so the members pair up by their place in it,
+    whatever their keys read in either. The result holds the members that
+    both readings keep as dicts where keys read alike, in the order of the
+    established reading (``second``), which keeps them as the established
+    rules did: it shows no member either dropped. A key two of them share
+    once merged keeps the later one's value, as a dict built from them does.
+    """
+    one, other = _all_members(first), _all_members(second)
+    if len(one) != len(other):
+        raise SanitizationLimitError("sanitization readings of one value do not pair up")
+    kept = set(first.view) if isinstance(first, _Copy) else range(len(one))
+    merged: dict[str, Any] = {}
+    for index in second.view if isinstance(second, _Copy) else range(len(other)):
+        if index in kept:
+            (key, child), (other_key, other_child) = one[index], other[index]
+            merged[_merge_copies(key, other_key)] = _merge_copies(child, other_child)
+    return merged
+
+
+def _without_scheme_tails(item: Any, without: Callable[[str], str] = _without_glued_runs) -> Any:
+    """``item``, a copy ``sanitize`` made, with ``without`` applied to each text and key.
+
+    ``without`` is ``_without_glued_runs`` unless ``sanitize`` compares the
+    copy (see ``_without_later_line_runs``).
+
+    The copy holds only what ``clean`` returns: new mappings with text keys,
+    lists and tuples, nested no deeper than ``clean`` goes, and texts and
+    other leaves it keeps as they are (``_plain`` has turned bytes into text
+    and sets into lists). A mapping keeps every member, also where two keys
+    read alike once their runs go (see ``_Copy``).
     """
     if isinstance(item, str):
-        return _without_glued_runs(item)
+        return without(item)
     if isinstance(item, Mapping):
-        return {_without_scheme_tails(key): _without_scheme_tails(child) for key, child in item.items()}
+        return _copied(
+            item,
+            [
+                (_without_scheme_tails(key, without), _without_scheme_tails(child, without))
+                for key, child in _all_members(item)
+            ],
+        )
     if isinstance(item, (list, tuple)):
-        members = [_without_scheme_tails(child) for child in item]
+        members = [_without_scheme_tails(child, without) for child in item]
         return tuple(members) if isinstance(item, tuple) else members
-    if isinstance(item, (set, frozenset)):
-        return type(item)(_without_scheme_tails(child) for child in item)
-    if isinstance(item, (bytes, bytearray)):
-        decoded = bytes(item).decode("utf-8", errors="replace")
-        cleaned = _without_glued_runs(decoded)
-        if cleaned == decoded:
-            return item
-        return type(item)(cleaned.encode())
     return item
 
 

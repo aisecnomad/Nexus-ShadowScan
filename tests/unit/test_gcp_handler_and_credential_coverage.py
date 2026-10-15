@@ -59,6 +59,64 @@ def test_gcp_cloud_function_handler_ignores_functions_without_ai_signal(index):
     assert connector._h_cloud_function(rec) is None
 
 
+@pytest.mark.parametrize(
+    "handler,record",
+    [
+        (
+            "_h_cloud_run_service",
+            {"name": "projects/demo/locations/us-central1/services/gemini-report-builder", "template": {}},
+        ),
+        (
+            "_h_cloud_function",
+            {
+                "name": "projects/demo/locations/us-central1/functions/gemini-report-builder",
+                "serviceConfig": {},
+            },
+        ),
+    ],
+)
+def test_gcp_ambiguous_service_name_stays_a_hint(index, handler, record):
+    connector = GcpConnector(_context(index))
+    assert getattr(connector, handler)(dict(record)) is None
+    if handler == "_h_cloud_run_service":
+        record["template"] = {
+            "containers": [{"image": "gcr.io/demo/app", "env": [{"name": "OPENAI_API_KEY", "value": "x"}]}]
+        }
+    else:
+        record["serviceConfig"] = {"environmentVariables": {"OPENAI_API_KEY": "configured"}}
+    finding = getattr(connector, handler)(record)
+    assert "provider.openai" in finding.model_providers
+    assert "identity-app.google-gemini" not in finding.frameworks
+    assert "identity-app.google-gemini" in finding.metadata["potential_frameworks"]
+
+
+@pytest.mark.parametrize(
+    "handler,record,product",
+    [
+        (
+            "_h_cloud_run_service",
+            {"name": "projects/demo/locations/us-central1/services/openai-proxy", "template": {}},
+            "identity-app.openai-chatgpt",
+        ),
+        (
+            "_h_cloud_function",
+            {
+                "name": "projects/demo/locations/us-central1/functions/support-drafts",
+                "description": "LangGraph agent that drafts replies with Anthropic Claude",
+                "serviceConfig": {},
+            },
+            "identity-app.anthropic-claude",
+        ),
+    ],
+)
+def test_gcp_unambiguous_service_name_or_description_is_reported(index, handler, record, product):
+    # Only an ambiguous product name (Gemini) needs corroboration; a description
+    # naming Anthropic Claude, or a service named for OpenAI, establishes it.
+    finding = getattr(GcpConnector(_context(index)), handler)(record)
+    assert finding is not None and product in finding.frameworks
+    assert product not in finding.metadata.get("potential_frameworks", [])
+
+
 def test_gcp_vertex_endpoint_handler_flags_deployed_model(index):
     connector = GcpConnector(_context(index))
     rec = {

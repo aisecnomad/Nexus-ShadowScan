@@ -16,7 +16,7 @@ from tools.release.evidence import verify_ci_run, verify_codeql_run, write_manif
 from tools.release.rules import MAIN_RULESET_ID, verify_against_live, verify_ruleset
 
 SHA = "a" * 40
-REPOSITORY = "aisecnomad/Project-Nexus"
+REPOSITORY = "aisecnomad/Nexus-ShadowScan"
 
 
 def _merge_rules() -> dict[str, Any]:
@@ -270,6 +270,7 @@ def test_release_cli_rejects_ambiguous_or_nonfinite_api_json(tmp_path: Path, bod
 @pytest.fixture
 def candidate(tmp_path: Path) -> Path:
     (tmp_path / "nexusshadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel bytes")
+    (tmp_path / "nexusshadowscan-0.1.1.tar.gz").write_bytes(b"sdist bytes")
     (tmp_path / "requirements.lock").write_text("click==8.1\n", encoding="utf-8")
     (tmp_path / "requirements-build.lock").write_text("setuptools==84.0.0\n", encoding="utf-8")
     (tmp_path / "requirements-ci.lock").write_text(
@@ -303,6 +304,11 @@ def test_release_manifest_covers_every_artifact_and_detects_changed_bytes(candid
     assert manifest["merge_rules"]["ruleset_id"] == MAIN_RULESET_ID
     assert "merge-rule-verification.json" in {item["name"] for item in manifest["files"]}
     assert "not a claim" in manifest["scope"]["assurance"]
+    assert "wheel and sdist" in manifest["scope"]["artifact"]
+    assert {"build", "setuptools", "wheel"} <= set(manifest["build_environment"]["tools"])
+    assert {"nexusshadowscan-0.1.1-py3-none-any.whl", "nexusshadowscan-0.1.1.tar.gz"} <= {
+        item["name"] for item in manifest["files"]
+    }
     checksums = (candidate / "SHA256SUMS").read_text().splitlines()
     checksummed = {}
     for line in checksums:
@@ -320,12 +326,12 @@ def test_release_manifest_covers_every_artifact_and_detects_changed_bytes(candid
     [
         (
             "ci-verification.json",
-            '{"repository":"wrong/repo","repository":"aisecnomad/Project-Nexus"}',
+            '{"repository":"wrong/repo","repository":"aisecnomad/Nexus-ShadowScan"}',
             "saved ci evidence",
         ),
         (
             "codeql-verification.json",
-            '{"repository":"aisecnomad/Project-Nexus","diagnostic":Infinity}',
+            '{"repository":"aisecnomad/Nexus-ShadowScan","diagnostic":Infinity}',
             "saved codeql evidence",
         ),
         (
@@ -444,6 +450,9 @@ def test_release_evidence_rechecks_saved_merge_rule_snapshot(
         "empty-sbom",
         "no-wheel",
         "two-wheels",
+        "no-sdist",
+        "two-sdists",
+        "version-skew",
         "symlink",
         "bad-name",
     ],
@@ -467,6 +476,12 @@ def test_release_evidence_refuses_incomplete_or_unsafe_bundle(candidate: Path, c
         next(candidate.glob("*.whl")).unlink()
     elif case == "two-wheels":
         (candidate / "other.whl").write_bytes(b"other")
+    elif case == "no-sdist":
+        next(candidate.glob("*.tar.gz")).unlink()
+    elif case == "two-sdists":
+        (candidate / "nexusshadowscan-0.1.0.tar.gz").write_bytes(b"other")
+    elif case == "version-skew":
+        next(candidate.glob("*.tar.gz")).rename(candidate / "nexusshadowscan-0.1.0.tar.gz")
     elif case == "symlink":
         (candidate / "linked.txt").symlink_to(candidate / "requirements.lock")
     else:
@@ -525,10 +540,17 @@ def test_release_workflow_limits_signing_to_artifacts_without_executing_source()
     assert not any("checkout" in step.get("uses", "") for step in publication["steps"])
     publication_text = yaml.safe_dump(publication)
     assert "nexusshadowscan-*.whl" in publication_text
+    assert "nexusshadowscan-*.tar.gz" in publication_text
+    sbom = next(step for step in attest["steps"] if step.get("id") == "sbom")
+    assert sbom["with"]["subject-path"] == "candidate/nexusshadowscan-*"
     assert "sha256sum --check SHA256SUMS" in publication_text
     build_text = "\n".join(step.get("run", "") for step in build["steps"])
     assert "--untracked-files=all --ignored=matching" in build_text
     assert "git archive --format=tar HEAD" in build_text
+    # The wheel is built from the sdist with the hash-locked backend, never from the tree alone.
+    assert 'python -m build --no-isolation --outdir "$CANDIDATE_DIR" .' in build_text
+    assert "pip wheel" not in build_text
+    assert 'python -m tools.release.distributions --directory "$CANDIDATE_DIR"' in build_text
     for job in workflow["jobs"].values():
         for step in job["steps"]:
             if "uses" in step:

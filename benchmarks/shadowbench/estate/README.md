@@ -74,6 +74,10 @@ The corpus deliberately includes, in both directions:
   Chrome caller at the confidence threshold, hosted-agent `GET /runs`
   near-misses.
 
+Both lists describe ShadowScan as it was when the corpus was frozen. Its
+rules were changed after the 2026-10-11 run with these entities in view; see
+[Bias and limits](#bias-and-limits).
+
 ## Protocol
 
 1. **Authoring.** The same maintainer wrote each surface's artifacts and
@@ -119,10 +123,16 @@ tracked.
 
 **Erratum (integration, 2026-10-12).** The original pull request named the
 fictional organization *Vantor*, which is also the name a real company
-adopted in 2025, and gave it tenant hostnames on real SaaS domains. Every
-occurrence, in file contents, directory names, the three JWT payloads that
-carried it, `corpus.json` and the recorded predictions in `runs.json`, was
-replaced with the same-length, case-preserving name *Adatum*. The scorer of
+adopted in 2025. Every occurrence, in file contents, directory names, the
+three JWT payloads that carried it, `corpus.json` and the recorded
+predictions in `runs.json`, was replaced with the same-length,
+case-preserving name *Adatum*. The rename kept the tenant hostnames on real
+SaaS parent domains: the artifacts name Adatum tenants on Okta (also a JWT
+issuer), Dynamics, Azure AI and OpenAI, Blob storage and a GCP service
+account, and the ShadowScan harness configuration names Salesforce,
+ServiceNow, Atlassian and Auth0 tenants. They are offline data that no
+harness contacts, but Adatum is a widely used fictitious name, so tenants
+by those names may exist. The scorer of
 that time gave a prediction to the entity with the longest matching anchor,
 and a same-length name keeps every anchor's length, so re-scoring the
 renamed `runs.json` with that scorer gave exactly the renamed
@@ -303,7 +313,10 @@ run vet's code commands started in the run directory instead; their argv
 named the repository with `-D` either way. Those normalizers read a
 missing report as nothing found: vet's when `vet.json` is missing, empty,
 `null` or `[]`, Agentic Radar's for each framework whose report is missing
-or unparseable, and AgentDiscover's when `scan.sarif` is missing. A run
+or unparseable, and AgentDiscover's when `scan.sarif` is missing. The vet
+wrapper first holds any other `vet.json` to the home-tree rules below: one
+that is unparseable, not a list, or a list without a vet record (such as
+`{"error": ...}`) is an adapter error, not an empty inventory. A run
 whose commands all exited with accepted codes therefore counts as complete
 without a report, unless every command exited non-zero (see
 [Run completeness](#run-completeness)). The estate scorer differs from the
@@ -314,6 +327,7 @@ On the endpoint surface, the Cisco MCP Scanner and AgentSight wrapper
 scripts run every step and exit with the status of the first step that
 failed, and the Snyk Agent Scan script exits with the scanner's own
 status. Numbat's script exits with the status of `numbat agents` when that
+status is neither 0 nor 1, even if the step printed a report, or when the
 step leaves no report, and with 0 otherwise (the adapter reads its exit 1
 on an empty inventory as a valid result); its `scan` step only adds
 evidence paths to the prediction text, and its exit status is not checked.
@@ -343,7 +357,11 @@ These rules are stricter than the 2026-10-11 adapters were, but they would
 not have changed that run's rows: every committed Snyk Agent Scan, Numbat
 and vet home prediction names its client or server as text, so it was read
 from such a record, and the one Numbat row without predictions
-(`home:win-laptop-03`) recorded `raw_count` 0, an empty list.
+(`home:win-laptop-03`) recorded `raw_count` 0, an empty list. For vet's
+code rows, eight recorded `raw_count` 0 (no report, or an empty, `null`
+or `[]` one, which the check leaves alone), and in the other two every
+item the report held mapped to a named entry with an app. Scoring reads
+the recorded rows, so re-scoring that run is unaffected either way.
 
 ## Scoring
 
@@ -541,7 +559,9 @@ ShadowScan's four misses are four of the hard positives listed under
 [Corpus](#corpus) (the text-generation-inference caller, the n8n
 `httpRequest` flow, the k8s vLLM workload and the Wudpecker notetaker). It
 flagged eight negatives (two controls, six near-misses), listed in the
-report's control and near-miss grid. Its registry layer gave all 83
+report's control and near-miss grid. ShadowScan's rules were changed after
+this run with these twelve errors in view, so a later ShadowScan run on this
+estate is in-sample (see [Bias and limits](#bias-and-limits)). Its registry layer gave all 83
 detected positives the expected verdict (79 shadow, 4 registered). No other
 tool flagged a control or near-miss in this run. That is partly precision
 and partly coverage: 36 of the 50 negatives sit on surfaces only ShadowScan
@@ -639,7 +659,11 @@ entity. A run that records a freeze is checked against `--freeze` (default
 [Execution and isolation](#execution-and-isolation); `score` exits 2 when
 that check fails unless `--allow-freeze-mismatch` is given, and a malformed
 `harness_commit`, `harness_dirty` or `freeze` record stops it with a
-`corpus error` and exit 2 either way. To re-score the committed run, pass
+`corpus error` and exit 2 either way. So does a result row without a tool
+or a valid unit (`estate`, `sim`, `code:<name>` or `home:<name>`): a row
+missing its unit is not read as a whole-estate run. A second row for the
+same tool and unit is refused the same way, because its unattributed
+predictions would count twice. To re-score the committed run, pass
 `--runs benchmarks/shadowbench/estate/results/2026-10-11/runs.json`.
 
 `tools.json` maps tool ids to installed binaries:
@@ -665,9 +689,28 @@ reproduction.
 - **Trigger knowledge.** The author knew the documented detection triggers
   of ShadowScan and, to a lesser extent, of the other tools. Mitigations:
   hard positives beyond documented triggers, negatives ShadowScan itself
-  over-flags (verified: it flags eight), per-entity rationale, and every
-  run's normalized predictions committed. The tools' raw output was not
-  committed.
+  over-flags (it flagged eight in the 2026-10-11 run), per-entity rationale,
+  and every run's normalized predictions committed. The tools' raw output was
+  not committed.
+- **Later ShadowScan runs are in-sample.** After the 2026-10-11 run,
+  ShadowScan's detection rules were changed (the changelog's October 14
+  detection-precision entry) with that run's twelve ShadowScan errors in
+  view: ambiguous Gemini names on identity, SaaS and GCP inventory, Notion
+  bots, Ollama-style `/api/chat` and text-generation-inference `/generate`
+  gateway routes, Kubernetes serving-engine images and GPU limits, n8n HTTP
+  Request model calls, ServiceNow flows whose names mention an AI product,
+  and recognition of the Wudpecker note-taker. One new test fixture first
+  copied an estate row (the Gemini exchange app) before it was replaced with
+  unrelated tokens. Replayed on this frozen estate after those changes,
+  ShadowScan no longer makes seven of the twelve errors: the controls
+  `gateway.egress-helpdesk-browser` and `saas.notion-jira-sync` and the
+  near-misses `saas.generic-gemini-exchange` and
+  `cloud.gcp-gemini-settlement` are no longer flagged, and the positives
+  `cloud.k8s-eta-vllm`, `lowcode.n8n-dock-manifest-qa` and
+  `saas.slack-wudpecker` are detected. That replay is in-sample: it is not
+  published as a result and is no evidence of better field accuracy, and the
+  2026-10-11 run stays the run of record. Measuring those changes needs an
+  estate authored without sight of these errors.
 - **Anchor collisions.** `validate` reports 12 anchors that also occur
   outside their entity's artifacts. Some are deliberate (the agent registry
   names three registered entities, the live-sim services file names the two

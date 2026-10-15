@@ -20,10 +20,11 @@ import json
 import re
 from collections.abc import Callable, Collection, Iterable, Iterator
 from typing import Any, ClassVar
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from requests import RequestException
 
+from shadowscan.connectors.agent_behavior import is_generation
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.connectors.common import (
     apply_matches,
@@ -34,6 +35,7 @@ from shadowscan.connectors.common import (
     model_matches,
     name_matches,
 )
+from shadowscan.connectors.lowcode.graph import GraphAnalysis, analyze_workflow_graph
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -73,7 +75,98 @@ _WORKATO_SCHEDULE_PROVIDERS = re.compile(r"^(?:clock|scheduler)\b|schedul", re.I
 _WORKATO_HUMAN_PROVIDERS = re.compile(r"workbot", re.I)
 _WORKBOT_HUMAN_TRIGGERS = re.compile(r"command|menu|modal|button|action|shortcut", re.I)
 # Zapier apps a person operates: the Chrome extension's push, an Interfaces form and a chatbot.
+# n8n HTTP Request nodes that POST to a model API. A path alone is weak: SMS
+# and messaging APIs also take POST /v1/messages or /messages. A node counts as
+# a model step when it POSTs to a generation route (agent_behavior's
+# is_generation) and either (a) the host is a known model host, or (b) the
+# route is versioned or namespaced (/v1/chat/completions, /v1/completions,
+# /openai/deployments/.../chat/completions, /api/generate) and the host is not
+# a known messaging API. /v1/messages, /v1/responses and /api/chat are also
+# WhatsApp Business, messaging and help-desk chat routes, and a bare
+# /chat/completions is unversioned, so on an unknown host they count only with
+# request corroboration: an anthropic-version header, or a JSON body with a
+# model key and a messages, prompt or input key. A bare /messages, /responses
+# or /completions on an unknown host never counts.
+_N8N_AI_NODE = re.compile(
+    r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace|\.agent$", re.I
+)
+# ``mcp`` as its own token in a node type: mcpClient, MCPServer, mcp_bridge, and
+# a camelCase word after another word (githubMcpClient, acmeMCPTool, zapierMcp),
+# but not a word or part number that contains it (smcpDecoder, mcp9808Sensor).
+# The token starts after a non-alphanumeric character, or as ``Mcp``/``MCP``
+# after a lower-case letter, and ends at a capital letter, a separator or the
+# end, never a lower-case letter or a digit.
+_N8N_MCP_NODE = re.compile(r"(?:(?<![A-Za-z0-9])[Mm][Cc][Pp]|(?<=[a-z])(?:Mcp|MCP))(?![a-z0-9])")
+_N8N_HTTP_NODE = "n8n-nodes-base.httpRequest"
+_UNQUALIFIED_GENERATION_ROUTE = re.compile(r"/(?:messages|responses|completions)/?", re.I)
+_CORROBORATED_GENERATION_ROUTE = re.compile(r"/v1/(?:messages|responses)|/api/chat|/chat/completions", re.I)
+_MODEL_REQUEST_KEYS = frozenset({"messages", "prompt", "input"})
+# A request key in a template that is not plain JSON: an n8n expression outside
+# a string, or JSON.stringify of an object literal ({ model: ..., messages: ... }).
+_TEMPLATE_KEY = re.compile(r"(?<![\w$\"'])[\"']?(model|messages|prompt|input)[\"']?\s*:")
+_MAX_REQUEST_TEMPLATE = 65_536
+_NON_AI_MESSAGE_APIS = (
+    "nexmo.com",
+    "vonage.com",
+    "messagebird.com",
+    "bird.com",
+    "twilio.com",
+    "sinch.com",
+    "plivo.com",
+    "telnyx.com",
+)
+# Domain signals weighted below this are hints, not model hosts (as in gateway.logs).
+_MIN_MODEL_HOST_WEIGHT = 0.3
 _ZAPIER_HUMAN_APPS = re.compile(r"zapier (?:chrome extension|interfaces|chatbots)|\bmanual\b", re.I)
+
+
+def _named_parameters(value: Any, key: str) -> set[str]:
+    """Lower-cased names of an n8n ``{key: [{"name": ..., "value": ...}]}`` collection."""
+    items = value.get(key) if isinstance(value, dict) else None
+    if not isinstance(items, list):
+        return set()
+    return {
+        item["name"].strip().lower()
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+
+
+def _json_template_keys(value: Any) -> set[str]:
+    """Top-level keys of an n8n JSON template, or the model-request keys it names when it is an expression."""
+    if not isinstance(value, str):
+        return set()
+    text = value[:_MAX_REQUEST_TEMPLATE].strip().removeprefix("=").strip()
+    try:
+        parsed = strict_json_loads(text)
+    except (ValueError, RecursionError):
+        return set(_TEMPLATE_KEY.findall(text))
+    return {key.lower() for key in parsed} if isinstance(parsed, dict) else set()
+
+
+def _model_request(params: dict[str, Any]) -> bool:
+    """Whether an HTTP Request node's headers or body describe a model API call.
+
+    An ``anthropic-version`` header, or a JSON or key-value body with a
+    ``model`` key and a ``messages``, ``prompt`` or ``input`` key (v3-v4 and
+    v1-v2 parameter layouts). Headers or a body the node does not send never
+    count.
+    """
+    headers: set[str] = set()
+    if params.get("sendHeaders") is not False:
+        headers |= _named_parameters(params.get("headerParameters"), "parameters")
+        headers |= _named_parameters(params.get("headerParametersUi"), "parameter")
+        headers |= _json_template_keys(params.get("jsonHeaders"))
+        headers |= _json_template_keys(params.get("headerParametersJson"))
+    if "anthropic-version" in headers:
+        return True
+    body: set[str] = set()
+    if params.get("sendBody") is not False:
+        body |= _named_parameters(params.get("bodyParameters"), "parameters")
+        body |= _named_parameters(params.get("bodyParametersUi"), "parameter")
+        body |= _json_template_keys(params.get("jsonBody"))
+        body |= _json_template_keys(params.get("bodyParametersJson"))
+    return "model" in body and bool(_MODEL_REQUEST_KEYS & body)
 
 
 class _AutomationBase(BaseConnector):
@@ -206,6 +299,41 @@ class N8nConnector(_AutomationBase):
         "input": "offline: workflow list JSON or directory of exported workflows",
     }
 
+    def _http_model_node(self, node: dict[str, Any]) -> bool:
+        """An HTTP Request node that POSTs to a model-generation route (see _N8N_HTTP_NODE)."""
+        params = node.get("parameters")
+        if node.get("type") != _N8N_HTTP_NODE or not isinstance(params, dict):
+            return False
+        # HTTP Request v1-v2 name the method ``requestMethod``; v3 and later ``method``.
+        method = params.get("method")
+        if method is None:
+            method = params.get("requestMethod")
+        url = params.get("url")
+        if not isinstance(method, str) or method.upper() != "POST" or not isinstance(url, str):
+            return False
+        try:
+            # An expression-mode URL starts with "="; its {{ }} parts are not resolved.
+            parsed = urlsplit(url.strip().removeprefix("=").strip())
+            host = parsed.hostname
+        except ValueError:
+            return False
+        if parsed.scheme not in {"http", "https"} or not host:
+            return False
+        if "{{" in host or "}}" in host:
+            return False  # a host chosen at run time cannot be classified
+        path = parsed.path.rstrip("/") or "/"
+        if not is_generation(path, method="POST"):
+            return False
+        if any(m.weight >= _MIN_MODEL_HOST_WEIGHT for m in self.index.match_domain(host)):
+            return True
+        if any(host == api or host.endswith(f".{api}") for api in _NON_AI_MESSAGE_APIS):
+            return False
+        if _UNQUALIFIED_GENERATION_ROUTE.fullmatch(path):
+            return False
+        if _CORROBORATED_GENERATION_ROUTE.fullmatch(path):
+            return _model_request(params)
+        return True
+
     def collect(self) -> Iterable[dict[str, Any]]:
         base = str(self.ctx.get("api_url", env="N8N_API_URL") or "").rstrip("/")
         key = self.ctx.get("api_key", env="N8N_API_KEY")
@@ -239,6 +367,34 @@ class N8nConnector(_AutomationBase):
             arrays=("nodes", "tags"),
         ) and isinstance(w.get("nodes"), list)
 
+    @staticmethod
+    def _workflow_graph(workflow: dict[str, Any]) -> GraphAnalysis:
+        """The workflow's graph metadata; a graph that cannot be analysed is reported, never fatal.
+
+        The graph is non-scoring, so a failure is contained to this workflow's
+        ``workflow_graph`` (status ``incomplete``) and never drops its finding
+        or another workflow's.
+        """
+        try:
+            graph = analyze_workflow_graph(workflow, provider="n8n")
+        except Exception as exc:  # noqa: BLE001 - one hostile workflow must not end the export
+            graph = None
+            reason = f"workflow graph analysis failed ({type(exc).__name__})"
+        else:
+            reason = "workflow graph shape not recognised"
+        if graph is None:
+            graph = GraphAnalysis(
+                {
+                    "provider": "n8n",
+                    "status": "incomplete",
+                    "scoring": False,
+                    "potential_input_ai_egress_path": None,
+                    "limitations": ["The workflow graph could not be analysed."],
+                },
+                [reason],
+            )
+        return graph
+
     def _trigger_initiation(self, trigger: str) -> str | None:
         if _N8N_HUMAN_TRIGGERS.search(trigger):
             return HUMAN
@@ -262,23 +418,29 @@ class N8nConnector(_AutomationBase):
             if self._record_fields_valid(
                 node,
                 required=("type",),
-                strings=("name",),
+                strings=("name", "type"),
                 mappings=("parameters",),
             )
         ]
         if len(nodes) != len(w["nodes"]):
             self.ctx.warn("lowcode.n8n: invalid workflow node; definition coverage unknown")
+        # The graph covers the same nodes as the inventory, so its counts and
+        # path ordinals (positions in this list, in export order) agree with
+        # node_count. It is non-scoring metadata: a malformed or over-budget
+        # graph is reported (status "incomplete"), but the AI inventory below
+        # does not depend on it and is kept.
+        graph = self._workflow_graph({**w, "nodes": nodes})
+        for issue in graph.issues:
+            self.ctx.warn(f"lowcode.n8n: {issue}; graph coverage incomplete")
         types = [str(n.get("type", "")) for n in nodes]
         ai_steps = [
             f"{n.get('name')} ({n.get('type')})"
             for n in nodes
-            if re.search(
-                r"n8n-nodes-langchain|openAi|anthropic|gemini|mistral|ollama|huggingFace"
-                r"|\.agent$|mcp",
-                str(n.get("type", "")),
-                re.I,
-            )
+            if _N8N_AI_NODE.search(str(n.get("type", ""))) or _N8N_MCP_NODE.search(str(n.get("type", "")))
         ]
+        ai_steps.extend(
+            f"{n.get('name')} ({n.get('type')}, model API)" for n in nodes if self._http_model_node(n)
+        )
         # 'Respond to Webhook' is the reply step of a chat or form workflow, not a
         # trigger: counting it would read a person-operated workflow as event-run.
         triggers = [
@@ -316,11 +478,13 @@ class N8nConnector(_AutomationBase):
             ai_steps=ai_steps,
             kind=(
                 Kind.AGENT
-                if any(t.endswith(".agent") or t.endswith("agentTool") for t in types)
+                # openAiAssistant is n8n's registered OpenAI Assistant agent node.
+                if any(t.endswith((".agent", "agentTool", ".openAiAssistant")) for t in types)
                 else Kind.WORKFLOW
             ),
             resource_type="workflow" if identified else "unresolved-workflow",
             extra={
+                "workflow_graph": graph.metadata,
                 "node_count": len(nodes),
                 "node_types": sorted(set(types))[:40],
                 "tags": [t.get("name") for t in w.get("tags") or [] if isinstance(t, dict)],

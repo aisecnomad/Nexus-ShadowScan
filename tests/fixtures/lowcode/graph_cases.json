@@ -1,0 +1,628 @@
+[
+  {
+    "case": "connected",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "HTTP",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://example.invalid/out"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "HTTP",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "disconnected",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "HTTP",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://example.invalid/out"
+          }
+        }
+      ],
+      "connections": {}
+    }
+  },
+  {
+    "case": "cycle",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "HTTP",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://example.invalid/out"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "HTTP",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "HTTP": {
+          "main": [
+            [
+              {
+                "node": "Input",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "non-ai",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "n8n-nodes-base.set",
+          "parameters": {
+            "text": "api.openai.com @n8n/n8n-nodes-langchain.agent"
+          }
+        },
+        {
+          "name": "HTTP",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://example.invalid/out"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "HTTP",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "spoofed-type",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agentPretend"
+        },
+        {
+          "name": "HTTP",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://example.invalid/out"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "HTTP",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "disabled",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent",
+          "disabled": true
+        },
+        {
+          "name": "HTTP",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://example.invalid/out"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "HTTP",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "reversed",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "HTTP",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://example.invalid/out"
+          }
+        }
+      ],
+      "connections": {
+        "HTTP": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Input",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "tool-attachment",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "HTTP",
+          "type": "n8n-nodes-base.httpRequest",
+          "parameters": {
+            "url": "https://example.invalid/out"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "ai_tool": [
+            [
+              {
+                "node": "HTTP",
+                "type": "ai_tool",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "email-sink",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "Email",
+          "type": "n8n-nodes-base.emailSend"
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Email",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "database-write",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "DB",
+          "type": "n8n-nodes-base.postgres",
+          "parameters": {
+            "operation": "insert"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "DB",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "database-read",
+    "expected_path": false,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "DB",
+          "type": "n8n-nodes-base.postgres",
+          "parameters": {
+            "operation": "select"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "DB",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "database-query",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.webhook"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "DB",
+          "type": "n8n-nodes-base.mySql",
+          "parameters": {
+            "operation": "executeQuery"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "DB",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  },
+  {
+    "case": "imap-trigger",
+    "expected_path": true,
+    "workflow": {
+      "id": "graph-demo",
+      "name": "Synthetic graph",
+      "nodes": [
+        {
+          "name": "Input",
+          "type": "n8n-nodes-base.emailReadImap"
+        },
+        {
+          "name": "AI",
+          "type": "@n8n/n8n-nodes-langchain.agent"
+        },
+        {
+          "name": "Slack",
+          "type": "n8n-nodes-base.slack",
+          "parameters": {
+            "operation": "post"
+          }
+        }
+      ],
+      "connections": {
+        "Input": {
+          "main": [
+            [
+              {
+                "node": "AI",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        },
+        "AI": {
+          "main": [
+            [
+              {
+                "node": "Slack",
+                "type": "main",
+                "index": 0
+              }
+            ]
+          ]
+        }
+      }
+    }
+  }
+]

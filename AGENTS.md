@@ -1,7 +1,8 @@
 # Agent instructions
 
-This repository is ShadowScan (Project Nexus). Coding agents and humans using
-them follow the same bars as [CONTRIBUTING.md](CONTRIBUTING.md).
+This repository is Nexus ShadowScan (formerly Project Nexus; distribution
+`NexusShadowScan`, command `shadowscan`). Coding agents and humans using them
+follow the same bars as [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Trust model
 
@@ -53,9 +54,10 @@ Run `make check` or the commands in CONTRIBUTING.md. Pull requests must keep:
 - Connector work: `collect()` + `analyze()`, offline fixtures under
   `tests/fixtures/`, documentation in the connector's guide under
   `docs/connectors/` and its summary in `docs/connectors.md`, and a regenerated
-  `docs/connectors/reference.md` (`make connector-reference`).
-- Signature work: YAML packs + validate + `make evaluate`. See
-  `docs/signatures.md`.
+  `docs/connectors/reference.md` (`make connector-reference`) and README
+  detection matrix (`make readme-matrix`).
+- Signature work: YAML packs + validate + `make evaluate`, and a regenerated
+  README detection matrix (`make readme-matrix`). See `docs/signatures.md`.
 - Mapping work: catalogs under `shadowscan/mappings/data/`,
   `python -m shadowscan.mappings.validate`, and a regenerated
   `docs/concepts/mappings-reference.md` (`make mapping-reference`). See

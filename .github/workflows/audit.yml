@@ -18,7 +18,10 @@ permissions:
 jobs:
   merge-policy:
     name: Verify visible main controls (bypass assurance separate)
-    if: github.repository == 'aisecnomad/Project-Nexus' && github.ref == 'refs/heads/main'
+    # The numeric repository ID survives a rename or transfer; a name test would
+    # skip this job without failing once the repository is renamed. Forks have
+    # their own ID, so they still skip it.
+    if: github.repository_id == '1174915264' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -65,7 +68,7 @@ jobs:
           exit "$failed"
       - name: Retain scoped governance observations
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: governance-observations-${{ github.run_id }}
           path: ${{ runner.temp }}/governance-observations/observation-*.json

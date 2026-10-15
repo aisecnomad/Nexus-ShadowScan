@@ -91,9 +91,9 @@ class Signal:
     values: list[str] = field(default_factory=list)  # domain / scope / iac
     capabilities: list[str] = field(default_factory=list)  # capabilities implied when matched
     agent_indicator: bool = False  # this signal by itself indicates an *agent* (not just LLM use)
-    # code: the patterns are common identifiers outside this product (an HTTP
-    # client class, a UI component). A match counts only when the same
-    # signature has independent evidence in the same project.
+    # code: common identifiers need independent evidence in the same project.
+    # name: shared product/display names are hints; only non-name evidence
+    # can establish the product and its tags/capabilities.
     ambiguous: bool = False
     description: str | None = None
     bounded_compiled: list[Any] = field(default_factory=list, repr=False)

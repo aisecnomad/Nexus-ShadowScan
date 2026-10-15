@@ -1,7 +1,9 @@
 """Cross-surface correlation and gateway-to-code attribution.
 
-``correlate`` links findings across surfaces by resource ids and normalised
-names.  ``correlate_runtime`` conservatively attributes gateway telemetry to
+``correlate`` links exact identifiers that share a verifiable scope and
+reports name similarity, and identifiers whose shared scope cannot be
+verified, as separate review candidates. ``correlate_runtime`` conservatively
+attributes gateway telemetry to
 static framework findings using only operator-configured exact caller/scope
 bindings.  Gateway user agents are observations, not attestations: an
 ``observed`` result means the linked gateway recorded a timestamped request
@@ -11,14 +13,21 @@ findings to running-process findings for the same tool on the same device.
 
 from __future__ import annotations
 
+import gc
 import json
 import re
+import string
+from dataclasses import dataclass, field
+from functools import lru_cache
+from itertools import combinations
 from typing import Any
 
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.redaction import REDACTED
 from shadowscan.utils.text import parse_timestamp, to_iso
 
+# Display names, labels and identifiers compared after normalisation. They
+# only ever produce review candidates.
 _NAME_KEYS = (
     "agent_name",
     "name",
@@ -38,68 +47,503 @@ _NAME_KEYS = (
     "function_name",
     "agent_id",
 )
+# Metadata fields holding an identifier that is compared byte-for-byte.
+_IDENTITY_KEYS = (
+    "app_id",
+    "client_id",
+    "msa_app_id",
+    "bot_id",
+    "principal",
+    "principal_id",
+    "caller",
+    "agent_id",
+    "arn",
+    "resource_id",
+    "role",
+)
+# A Microsoft Entra application (client) id is reported as app_id or
+# client_id by Entra and Azure managed identities, as the bot id of a Teams
+# app and as an Azure Bot Service msaAppId: one identifier type.
+_ENTRA_APPLICATION_ID = "entra-application-id"
+_ENTRA_APPLICATION_FIELDS = frozenset(
+    {"metadata.app_id", "metadata.client_id", "metadata.msa_app_id", "metadata.bot_id"}
+)
+_ENTRA_APPLICATION_CONNECTORS = frozenset({"identity.entra", "saas.microsoft-teams", "cloud.azure"})
+# The identity namespace Finding.account holds, for connectors that document
+# it as one. Elsewhere account and provider are labels (a gateway name, a JSON
+# scope string, a vendor) and are never compared as identity scope.
+_ACCOUNT_SCOPE = {
+    "identity.entra": "entra-tenant",
+    "saas.microsoft-teams": "entra-tenant",
+    "cloud.aws": "aws-account",
+    "cloud.azure": "azure-subscription",
+    "cloud.gcp": "gcp-project",
+}
+_METADATA_SCOPE = {
+    "tenant": "tenant",
+    "tenant_id": "tenant",
+    "workspace": "workspace",
+    "workspace_id": "workspace",
+}
+# Scope keys a local identifier type must share before an equal value is an
+# exact link. Other local identifiers need at least one shared scope key.
+_REQUIRED_SCOPE = {_ENTRA_APPLICATION_ID: ("entra-tenant",)}
+_GLOBAL_PREFIXES = ("arn:", "projects/", "/subscriptions/", "ocid1.")
+_AZURE_PREFIX = "/subscriptions/"
+# Only ASCII letters fold: Unicode lowercasing could merge distinct names.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+# Google issues service account addresses only under gserviceaccount.com, and
+# one address names one service account in every project that refers to it.
+_GCP_SERVICE_ACCOUNT_DOMAIN = ".gserviceaccount.com"
+_GCP_SERVICE_ACCOUNT = re.compile(
+    r"[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+gserviceaccount\.com"
+)
+# Google-owned service accounts that every customer project shares identify no
+# workload, like AWS-managed policies, so they are not compared.
+_SHARED_GCP_SERVICE_ACCOUNT_SUFFIXES = (
+    "@system.gserviceaccount.com",
+    "@firebase-sa-management.iam.gserviceaccount.com",
+)
+# A repository file, not a resource: its last path segment carries a source extension.
+_SOURCE_FILE_SUFFIXES = frozenset(
+    [
+        ".py",
+        ".ipynb",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".go",
+        ".java",
+        ".kt",
+        ".rb",
+        ".rs",
+        ".cs",
+        ".php",
+        ".swift",
+        ".scala",
+        ".sh",
+        ".ps1",
+        ".tf",
+        ".hcl",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".env",
+        ".md",
+        ".txt",
+        ".xml",
+        ".sql",
+        ".lock",
+    ]
+)
+# The strict form of a GCP resource name in a code finding (see _repository_path).
+_GCP_PROJECT = re.compile(
+    r"[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,19}|[a-z0-9.-]{1,63}:[a-z][a-z0-9-]{4,28}[a-z0-9]"
+)
+_GCP_COLLECTIONS = frozenset(
+    {
+        "agent",
+        "alertPolicies",
+        "databases",
+        "datasets",
+        "global",
+        "instances",
+        "locations",
+        "notificationChannels",
+        "regions",
+        "repos",
+        "secrets",
+        "serviceAccounts",
+        "sinks",
+        "snapshots",
+        "subscriptions",
+        "topics",
+        "zones",
+    }
+)
+_LINE_SUFFIX = re.compile(r":[0-9]+(?::[0-9]+)?$")
+_CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
+_PATTERN_CHARACTER = re.compile(r"[*?\[\]]")
+_SPACE_OR_PATTERN = re.compile(r"[\s*?\[\]]")
+_MAX_CORRELATION_GROUP = 25
+_MAX_CORRELATION_PEERS = 24
+_CANDIDATE_LIMITATION = (
+    "Name similarity, or an identifier match whose shared tenant or account could not be verified, "
+    "is a review hint, not proof of identity, ownership, runtime execution or authorization."
+)
+
+
+def _identity_text(value: object, *, allow_patterns: bool = False) -> str | None:
+    """Keep exact identity bytes; never repair a missing, padded or redacted identity."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or len(value) > 2048
+        or REDACTED.lower() in value.lower()
+        or _CONTROL_CHARACTER.search(value)
+        or (not allow_patterns and _PATTERN_CHARACTER.search(value))
+    ):
+        return None
+    return value
 
 
 def _normalise_key(s: Any) -> str | None:
     """Normalise a value for fuzzy cross-surface matching."""
-    if s is None:
+    text = _identity_text(s, allow_patterns=True)
+    if text is None:
         return None
-    t = re.sub(r"[^a-z0-9]+", "-", str(s).lower()).strip("-")
+    t = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return t if len(t) >= 5 else None
 
 
-def correlate(findings: list[Finding]) -> None:
-    """Link findings across surfaces that describe the same agent / identity / resource.
+def _qualified_prefix(value: str) -> bool:
+    """Whether a value is spelled as a fully qualified reference (an Azure id in any letter case)."""
+    return value.startswith(_GLOBAL_PREFIXES) or (
+        value[:1] == "/" and value[: len(_AZURE_PREFIX)].lower() == _AZURE_PREFIX
+    )
 
-    Keys: resource ids (ARNs, app/client ids), normalised names and repository labels found in
-    metadata. Linked ids are stored in ``metadata['related']`` on both sides.
+
+def _repository_path(value: str) -> bool:
+    """Whether a code finding's ``projects/`` value is a repository path rather than a GCP resource name.
+
+    Code findings report repository locations ("projects/api/src/main.py:12").
+    From code, a GCP resource name must name a valid project id or number,
+    then a GCP collection, and carry no line suffix; a last segment with a
+    source-file extension ("projects/support-bot/agent/main.py") is a path.
     """
-    keys: dict[str, set[str]] = {}
-    for f in findings:
-        cand: set[str] = set()
-        res = _normalise_key(f.resource)
-        if res:
-            cand.add(f"res:{res}")
-        for k in _NAME_KEYS:
-            v = f.metadata.get(k)
-            if isinstance(v, str):
-                n = _normalise_key(v)
-                if n:
-                    cand.add(f"name:{n}")
-        if f.kind in {Kind.AGENT, Kind.BOT_APP, Kind.SERVICE_IDENTITY, Kind.OAUTH_GRANT, Kind.MCP_SERVER}:
-            tail = f.title.split(":", 1)[-1].strip() if ":" in f.title else None
-            n = _normalise_key(tail)
-            if n and len(n) >= 8:
-                cand.add(f"name:{n}")
-        for e in f.evidence:
-            if e.location and e.location.startswith(("arn:", "projects/", "/subscriptions/", "ocid1.")):
-                n = _normalise_key(e.location)
-                if n:
-                    cand.add(f"res:{n}")
-        for k in cand:
-            keys.setdefault(k, set()).add(f.id)
-    related: dict[str, set[str]] = {}
-    for ids in keys.values():
-        if 1 < len(ids) <= 25:
-            for i in ids:
-                related.setdefault(i, set()).update(ids - {i})
-    if not related:
-        return
-    by_id = {f.id: f for f in findings}
-    for fid, others in related.items():
-        linked_finding = by_id.get(fid)
-        if linked_finding:
-            links = sorted(
-                o
-                for o in others
-                if by_id.get(o)
+    components = value.split("/", 3)
+    last = value.rsplit("/", 1)[-1]
+    if "." in last and last[last.rfind(".") :].lower() in _SOURCE_FILE_SUFFIXES:
+        return True
+    return not (
+        _GCP_PROJECT.fullmatch(components[1])
+        and components[2] in _GCP_COLLECTIONS
+        and not _LINE_SUFFIX.search(value)
+    )
+
+
+@lru_cache(maxsize=65536)
+def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
+    """Recognize fully qualified resource references; return their type, comparison key and scope.
+
+    The identifier itself is the scope: an ARN, a GCP resource name, an Azure
+    resource id or an OCI OCID names its partition, account, project or
+    subscription, so it needs no scope from the finding that reported it.
+    A GCP service account address, bare or as
+    ``projects/<project>/serviceAccounts/<address>``, is one global identifier:
+    the caller of another project's API is the same service account, so a
+    project in which it is used is not its scope. Identifiers are compared
+    byte for byte, except Azure resource ids: Azure Resource Manager treats
+    them case-insensitively and reports one resource in different casings (a
+    lowercased role-assignment scope, an uppercased diagnostic-log resource
+    id), so they are compared lowercased. Findings keep the spelling they
+    reported.
+    """
+    if _SPACE_OR_PATTERN.search(value):
+        return None
+    parts = value.split(":", 5)
+    if len(parts) == 6 and parts[0] == "arn" and all(parts[i] for i in (1, 2, 5)):
+        if parts[4] and not re.fullmatch(r"[0-9]{12}", parts[4]):
+            return None
+        # A missing account cannot turn a truncated workload ARN into a global
+        # identity. Only accountless namespaces whose names are globally unique
+        # (an S3 bucket, a Route 53 zone) are. AWS-managed policies
+        # (arn:aws:iam::aws:policy/...) and Bedrock foundation models are
+        # shared catalog entries every account references: an equal reference
+        # says nothing about one workload, so it is neither a link nor a
+        # candidate.
+        if not parts[4] and parts[2] not in {"s3", "route53"}:
+            return None
+        scope = {"provider": "aws"}
+        if parts[3]:
+            scope["region"] = parts[3]
+        if parts[4]:
+            scope["account"] = parts[4]
+        return "resource:aws-arn", value, tuple(sorted(scope.items()))
+    components = value.split("/")
+    if value.startswith("projects/") and len(components) >= 4 and all(components):
+        if (
+            len(components) == 4
+            and components[1] not in {".", ".."}
+            and components[2] == "serviceAccounts"
+            and components[3].endswith(_GCP_SERVICE_ACCOUNT_DOMAIN)
+            and (account := _gcp_service_account(components[3])) is not None
+        ):
+            # The address identifies the account; "-" (any project) is a valid spelling.
+            return account
+        if components[1] in {"-", ".", ".."} or any(p in {".", ".."} for p in components):
+            return None
+        scope = {"provider": "gcp", "account": components[1]}
+        if len(components) >= 6 and components[2] in {"locations", "regions"}:
+            scope["region"] = components[3]
+        return "resource:gcp-name", value, tuple(sorted(scope.items()))
+    if value[:1] == "/" and value[: len(_AZURE_PREFIX)].lower() == _AZURE_PREFIX:
+        key = value.lower() if value.isascii() else value.translate(_ASCII_LOWER)
+        components = key.split("/")
+        if len(components) >= 7 and all(components[1:]) and not any(p in {".", ".."} for p in components):
+            return "resource:azure-id", key, (("account", components[2]), ("provider", "azure"))
+        return None
+    if re.fullmatch(r"ocid1\.[a-z0-9]+\.[a-z0-9]+\.[a-z0-9-]*\.[A-Za-z0-9.]+", value):
+        return "resource:oci-id", value, (("provider", "oci"),)
+    if value.endswith(_GCP_SERVICE_ACCOUNT_DOMAIN):
+        return _gcp_service_account(value)
+    return None
+
+
+def _gcp_service_account(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
+    if (
+        len(value) <= 254
+        and _GCP_SERVICE_ACCOUNT.fullmatch(value)
+        and not value.endswith(_SHARED_GCP_SERVICE_ACCOUNT_SUFFIXES)
+    ):
+        return "resource:gcp-service-account", value, (("provider", "gcp"),)
+    return None
+
+
+def _declared_scope(finding: Finding) -> tuple[dict[str, str], bool] | None:
+    """The identity scope a connector declares for its findings, and whether all of it is comparable.
+
+    Only namespaces with a documented meaning are used: a Microsoft tenant, a
+    cloud account, subscription or project, or an explicit tenant/workspace
+    in metadata. A redacted, padded or wildcard scope value (a display name
+    such as ``Acme [EU]`` looks like a wildcard) cannot be compared: it is left
+    out, and the finding gets no identifier link, exact or candidate. Its name
+    similarity is still a review candidate, as for a finding that declares no
+    such scope. Two different values for one scope (``tenant`` and
+    ``tenant_id``) refuse every link: ``None``. A finding whose connector
+    marks its ``account`` as not attributed to its records
+    (``metadata.account_attributed: false``, an Entra export of another
+    tenant) declares no account scope.
+    """
+    scope: dict[str, str] = {}
+    comparable = True
+    account_key = _ACCOUNT_SCOPE.get(finding.connector)
+    if (
+        account_key is not None
+        and finding.account is not None
+        and finding.metadata.get("account_attributed") is not False
+    ):
+        usable = _identity_text(finding.account)
+        if usable is None:
+            comparable = False
+        else:
+            scope[account_key] = usable
+    for key, canonical in _METADATA_SCOPE.items():
+        value = finding.metadata.get(key)
+        if value is None:
+            continue
+        usable = _identity_text(value)
+        if usable is None:
+            comparable = False
+            continue
+        if scope.get(canonical, usable) != usable:
+            return None
+        scope[canonical] = usable
+    return scope, comparable
+
+
+def _conflicts(left: dict[str, str], right: dict[str, str]) -> bool:
+    return any(key in right and right[key] != value for key, value in left.items())
+
+
+@dataclass
+class _CorrelationKey:
+    finding: Finding
+    scope: dict[str, str]
+    globally_scoped: bool
+    fields: set[str] = field(default_factory=set)
+
+
+_Groups = dict[tuple[str, str], dict[str, _CorrelationKey]]
+
+
+def _identifier_kind(finding: Finding, source: str) -> str:
+    if source in _ENTRA_APPLICATION_FIELDS and finding.connector in _ENTRA_APPLICATION_CONNECTORS:
+        return _ENTRA_APPLICATION_ID
+    if source == "resource":
+        return f"resource:{finding.resource_type.split('/', 1)[0]}"
+    if source == "metadata.agent_id":
+        return f"{source}:{finding.resource_type.split('/', 1)[0]}"
+    return source
+
+
+def _correlation_keys(findings: list[Finding]) -> tuple[_Groups, _Groups]:
+    """Group findings by exact identifier and by normalised name, computing each scope once."""
+    exact: _Groups = {}
+    names: _Groups = {}
+    for finding in findings:
+        scoped = _declared_scope(finding)
+        if scoped is None:
+            continue
+        declared, comparable = scoped
+        repository = finding.surface == Surface.CODE
+        identifiers: list[tuple[str, object]] = []
+        if comparable:
+            identifiers.append(("resource", finding.resource))
+            identifiers.extend((f"metadata.{key}", finding.metadata.get(key)) for key in _IDENTITY_KEYS)
+            identifiers.extend(
+                (f"evidence[{number}].location", evidence.location)
+                for number, evidence in enumerate(finding.evidence)
+                if evidence.location
                 and (
-                    by_id[o].connector != linked_finding.connector
-                    or by_id[o].surface != linked_finding.surface
+                    evidence.location.startswith(_GLOBAL_PREFIXES)
+                    or (evidence.location[:1] == "/" and _qualified_prefix(evidence.location))
                 )
             )
-            if links:
-                linked_finding.metadata["related"] = links
+        for source, raw in identifiers:
+            value = _identity_text(raw)
+            if value is None:
+                continue
+            qualified = _global_resource(value)
+            if qualified is None:
+                if _qualified_prefix(value):
+                    # A malformed qualified reference is not compared at all.
+                    continue
+                kind, key, scope = _identifier_kind(finding, source), value, declared
+            elif repository and qualified[0] == "resource:gcp-name" and _repository_path(value):
+                continue
+            else:
+                kind, key, scope = qualified[0], qualified[1], dict(qualified[2])
+            group = exact.setdefault((kind, key), {})
+            entry = group.setdefault(finding.id, _CorrelationKey(finding, scope, qualified is not None))
+            entry.fields.add(source)
+        labels: list[tuple[str, object]] = [
+            (f"metadata.{key}", finding.metadata.get(key)) for key in _NAME_KEYS
+        ]
+        if finding.kind in {
+            Kind.AGENT,
+            Kind.BOT_APP,
+            Kind.SERVICE_IDENTITY,
+            Kind.OAUTH_GRANT,
+            Kind.MCP_SERVER,
+        }:
+            tail = finding.title.split(":", 1)[1].strip() if ":" in finding.title else ""
+            if len(tail) >= 8:
+                labels.append(("title", tail))
+        for source, raw in labels:
+            normalised = _normalise_key(raw)
+            if normalised is None:
+                continue
+            group = names.setdefault(("name", normalised), {})
+            entry = group.setdefault(finding.id, _CorrelationKey(finding, declared, False))
+            entry.fields.add(source)
+    return exact, names
+
+
+def _exact_scope(kind: str, left: _CorrelationKey, right: _CorrelationKey) -> bool:
+    """Whether an equal identifier is exact: a global reference, or a local one in a verified shared scope."""
+    if left.globally_scoped and right.globally_scoped:
+        return True
+    required = _REQUIRED_SCOPE.get(kind)
+    if required is not None:
+        return all(key in left.scope and key in right.scope for key in required)
+    # One-sided tenant/account data must not silently widen a local identifier.
+    return any(key in right.scope for key in left.scope)
+
+
+def _add_link(
+    links: dict[str, dict[str, list[dict[str, Any]]]],
+    kind: str,
+    first: str,
+    second: str,
+    left: _CorrelationKey,
+    right: _CorrelationKey,
+) -> None:
+    first_links, second_links = links.get(first, {}), links.get(second, {})
+    if (second not in first_links and len(first_links) >= _MAX_CORRELATION_PEERS) or (
+        first not in second_links and len(second_links) >= _MAX_CORRELATION_PEERS
+    ):
+        return
+    scope = dict(sorted({**left.scope, **right.scope}.items()))
+    left_fields, right_fields = sorted(left.fields), sorted(right.fields)
+    for source, target, own, other in (
+        (first, second, left_fields, right_fields),
+        (second, first, right_fields, left_fields),
+    ):
+        match = {"key_type": kind, "source_fields": own, "target_fields": other, "scope": scope}
+        details = links.setdefault(source, {}).setdefault(target, [])
+        if match not in details:
+            details.append(match)
+
+
+def _pairs(groups: _Groups) -> Any:
+    shared = sorted(item for item in groups.items() if 1 < len(item[1]) <= _MAX_CORRELATION_GROUP)
+    for (kind, _), members in shared:
+        for first, second in combinations(sorted(members), 2):
+            left, right = members[first], members[second]
+            if (
+                left.finding.connector == right.finding.connector
+                and left.finding.surface == right.finding.surface
+            ):
+                continue
+            if _conflicts(left.scope, right.scope):
+                continue
+            yield kind, first, second, left, right
+
+
+def correlate(findings: list[Finding]) -> None:
+    """Rebuild exact identifier relationships and separate, scoped review candidates.
+
+    An exact edge proves only matching identifiers in the available declarations,
+    not ownership, execution or approval. Provenance states which fields matched.
+    Fuzzy names, and equal local identifiers without a verified shared tenant or
+    account, are candidates: they never enter ``related`` or feed
+    runtime/registry decisions. A conflicting declared tenant, account,
+    subscription, project or workspace prevents both kinds of link; a vendor or
+    gateway label is not scope.
+    """
+    for finding in findings:
+        for key in ("related", "related_details", "related_candidates"):
+            finding.metadata.pop(key, None)
+    # The grouping below allocates many short-lived, acyclic containers. Cyclic
+    # collection would rescan every finding repeatedly and make the pass
+    # superlinear in large scans; reference counting frees them regardless.
+    collecting = gc.isenabled()
+    gc.disable()
+    try:
+        _correlate(findings)
+    finally:
+        if collecting:
+            gc.enable()
+
+
+def _correlate(findings: list[Finding]) -> None:
+    identifier_groups, name_groups = _correlation_keys(findings)
+    exact: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    fuzzy: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for kind, first, second, left, right in _pairs(identifier_groups):
+        _add_link(exact if _exact_scope(kind, left, right) else fuzzy, kind, first, second, left, right)
+    for kind, first, second, left, right in _pairs(name_groups):
+        _add_link(fuzzy, kind, first, second, left, right)
+    for finding in findings:
+        if peers := exact.get(finding.id):
+            finding.metadata["related"] = sorted(peers)
+            finding.metadata["related_details"] = [
+                {"finding_id": other, "assurance": "exact-identifier", "matches": peers[other]}
+                for other in sorted(peers)
+            ]
+        candidates = {
+            key: value
+            for key, value in fuzzy.get(finding.id, {}).items()
+            if key not in exact.get(finding.id, {})
+        }
+        if candidates:
+            finding.metadata["related_candidates"] = [
+                {
+                    "finding_id": other,
+                    "assurance": "candidate",
+                    "matches": candidates[other],
+                    "limitation": _CANDIDATE_LIMITATION,
+                }
+                for other in sorted(candidates)
+            ]
 
 
 def _usable_code_identity(code: Finding) -> bool:
@@ -350,7 +794,64 @@ def _lifecycle_keys(f: Finding, device: str) -> set[tuple[str, str]]:
     return keys
 
 
-def correlate_lifecycle(findings: list[Finding]) -> None:
+def _lifecycle_observation(
+    running: list[Finding],
+    observation_window: tuple[str, str] | None,
+    runtime_coverage: str,
+) -> dict[str, Any]:
+    """Describe recency without treating a process snapshot as continuous surveillance."""
+    start = parse_timestamp(observation_window[0]) if observation_window else None
+    end = parse_timestamp(observation_window[1]) if observation_window else None
+    window = {"start": to_iso(start), "end": to_iso(end)} if start and end and start <= end else None
+    samples: list[dict[str, Any]] = []
+    times = []
+    missing = False
+    for process in sorted(running, key=lambda f: f.id):
+        # Runtime first/last_seen historically include process start times.
+        # Birth time cannot stand in for the inventory's observation time.
+        stamp = parse_timestamp(process.metadata.get("observed_at"))
+        if stamp is None:
+            missing = True
+        else:
+            times.append(stamp)
+        if len(samples) < 50:
+            samples.append({"finding_id": process.id, "observed_at": to_iso(stamp) if stamp else None})
+    status = "unknown"
+    reason = "no-linked-runtime-observation"
+    if running:
+        reason = "missing-observation-timestamp" if missing else "no-comparable-observation-window"
+    if window and start and end and times:
+        if any(start <= stamp <= end for stamp in times):
+            status, reason = "observed-in-window", "timestamped-process-observation"
+        elif all(stamp < start for stamp in times) and not missing:
+            status, reason = "historical", "outside-observation-window"
+        elif any(stamp > end for stamp in times):
+            reason = "future-observation-timestamp"
+    return {
+        "status": status,
+        "reason": reason,
+        "window": window,
+        "runtime_coverage": runtime_coverage,
+        "coverage_scope": "connector-run-only; not device or continuous time-window coverage",
+        "observations": samples,
+        "observation_count": len(running),
+        "observations_truncated": len(running) > len(samples),
+        "last_seen": to_iso(max(times)) if times else None,
+        "current_execution": "not-established",
+        "limitations": [
+            "Process inventories are point-in-time observations, not continuous runtime coverage.",
+            "Missing, denied or out-of-scope telemetry never establishes inactivity, zombie or ghost status.",
+            "Tool/device links describe observations, not a unique agent, process lifetime or approval.",
+        ],
+    }
+
+
+def correlate_lifecycle(
+    findings: list[Finding],
+    *,
+    observation_window: tuple[str, str] | None = None,
+    runtime_coverage: str = "unknown",
+) -> None:
     """Link endpoint findings to processes of the same tool on the same device.
 
     A configured or installed tool with a running process on the same device
@@ -359,11 +860,19 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
     risk. Devices match by their full account/device identity; a short host name
     does not implicitly match an FQDN or a host in another DNS domain. MCP
     configurations match a running MCP server only through the same package.
+    ``running`` and the legacy tag describe a recorded observation, not current
+    execution. ``lifecycle_observation`` describes its recency within the supplied
+    scan window; without a window or timestamps recency remains unknown. Coverage
+    is diagnostic only and never promotes an absence into inactivity or a state
+    such as zombie. Replaying the same window is deterministic.
     """
     groups: dict[tuple[str, str], list[Finding]] = {}
+    if runtime_coverage not in {"unknown", "collected", "export-only", "incomplete", "not-collected"}:
+        runtime_coverage = "unknown"
     for f in findings:
         # Repeated calls replace earlier results.
         f.metadata.pop("lifecycle", None)
+        f.metadata.pop("lifecycle_observation", None)
         f.evidence[:] = [ev for ev in f.evidence if ev.signal != "lifecycle:observed-running"]
         if f.surface == Surface.ENDPOINT:
             # Endpoint runtime tags are derived from this pass. Runtime
@@ -371,6 +880,9 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
             f.tags[:] = [tag for tag in f.tags if tag != "observed-running"]
         if _LIFECYCLE_STATES.get((f.surface, f.kind)) is None:
             continue
+        f.metadata["lifecycle_observation"] = _lifecycle_observation(
+            [f] if f.kind == Kind.RUNTIME_PROCESS else [], observation_window, runtime_coverage
+        )
         device = _device_key(f.account)
         if device is None:
             continue
@@ -384,19 +896,25 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
         running = [f for f in members if f.kind == Kind.RUNTIME_PROCESS]
         for f in members:
             entry = linked.setdefault(
-                f.id, {"finding": f, "states": set(), "subjects": set(), "related": set()}
+                f.id, {"finding": f, "states": set(), "subjects": set(), "related": set(), "processes": {}}
             )
             entry["states"].update(states)
             entry["subjects"].add(subject)
             entry["related"].update(o.id for o in members if o.id != f.id)
+            entry["processes"].update({o.id: o for o in running})
             if f.kind != Kind.RUNTIME_PROCESS:
                 entry.setdefault("running", set()).update((o.owner or "", o.id) for o in running)
     for entry in linked.values():
         f = entry["finding"]
+        observation = _lifecycle_observation(
+            list(entry["processes"].values()), observation_window, runtime_coverage
+        )
+        f.metadata["lifecycle_observation"] = observation
         lifecycle: dict[str, Any] = {
             "states": [s for s in _LIFECYCLE_ORDER if s in entry["states"]],
             "subjects": sorted(entry["subjects"]),
             "related": sorted(entry["related"])[:20],
+            "observation": observation,
         }
         if "running" in entry:
             same_user = sorted({fid for owner, fid in entry["running"] if owner and owner == f.owner})
@@ -406,7 +924,7 @@ def correlate_lifecycle(findings: list[Finding]) -> None:
                 Evidence(
                     signal="lifecycle:observed-running",
                     description=(
-                        f"{len(entry['running'])} running-process finding(s) for the same tool on this device"
+                        f"{len(entry['running'])} recorded process observation(s) for this tool and device"
                         + (" and account" if same_user else "")
                     ),
                     weight=0.0,

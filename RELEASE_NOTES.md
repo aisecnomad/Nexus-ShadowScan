@@ -1,20 +1,24 @@
 # Release notes
 
 What changed for people who install, configure or operate ShadowScan, one
-section per release. [CHANGELOG.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CHANGELOG.md)
+section per release. [CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
 is the detailed engineering log, recorded per change, and the
-[deployment and migration guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md)
+[deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
 ## Unreleased
 
 Changes on `main` since 0.1.2, for operators. They are not published or
 tagged; pin a reviewed commit SHA to use them. Details:
-[CHANGELOG.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CHANGELOG.md)
-and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md).
+[CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
+and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md).
 
 ### Before you upgrade
 
+- The repository is renamed to `aisecnomad/Nexus-ShadowScan`
+  (formerly `aisecnomad/Project-Nexus`); GitHub redirects the old URLs, and
+  commit SHAs are unchanged. OCSF events name the vendor `Nexus ShadowScan` instead of
+  `Project Nexus`; SARIF and CycloneDX keep the tool name `ShadowScan`.
 - Rebaseline. Path context, cross-signal corroboration and new signatures
   change confidence, risk, kind and the set of findings, and live collection
   scopes are fingerprinted after collection.
@@ -25,8 +29,9 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
 - Default risk changes: the new `mcp-server` capability adds 5; findings whose
   only evidence is documentation, example or generated code lose 8, 8 or 10;
   `hidden-instructions` (20), `remote-code-fetch` (15), `invisible-text`,
-  `autonomy-understated`, `a2a-plaintext-interface`, `a2a-card-signature-invalid`
-  (10 each) and the governance factor `mcp-not-in-approved-registry` (15) are new.
+  `autonomy-understated`, `a2a-plaintext-interface`, `a2a-card-signature-invalid`,
+  `tool-name-shadowing` (10 each) and the governance factor
+  `mcp-not-in-approved-registry` (15) are new.
 - On CPython 3.12.0 to 3.12.3 (Ubuntu 24.04 ships 3.12.3), a file with a very
   long line no longer stalls redaction: the finding is omitted and the scan is
   incomplete (exit 3). Run ShadowScan on 3.11, 3.12.4 or later, or 3.13.
@@ -43,6 +48,31 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
 - Live `cloud.aws` AgentCore gateway findings use the gateway ARN as their
   resource, so their finding ids change: re-baseline AWS scans that include
   gateways.
+- Atlassian finding ids change: exports scanned without a configured `site`
+  are bound to each export file's resolved path, and a `site` with an
+  uppercase host or an explicit `:443` is canonicalized. A `site` that is not
+  a plain HTTPS origin (for example a Data Center context path such as
+  `/jira`) stops the connector with exit 3. Configure `site` as
+  `https://<host>`, keep one site per input and rebaseline.
+- Kubernetes and OpenShift resources with names over 160 characters keep
+  their full name, so their finding ids change. These now end a scan
+  incomplete (exit 3): a namespace that is not an RFC 1123 DNS label, a
+  chunked `List` page (`metadata.continue` or `remainingItemCount`), a name
+  over 253 characters, and a container `command` or `args` that is not a list
+  of strings.
+- `gateway.logs`: Ollama-style requests to a host that is not a known or
+  declared model host are no longer callers. List internal model servers
+  behind a reverse proxy in the new `internal_model_hosts` option before
+  upgrading; setting it changes that source's finding ids.
+- More inputs end a scan incomplete (exit 3): a malformed or unsupported
+  `uv.lock`, `poetry.lock`, `pnpm-lock.yaml` or `Cargo.lock` with no manifest
+  beside it; a malformed or over-budget n8n, Flowise or Dify graph; a live
+  process command line over 65,536 bytes; a `SKILL.md` or MCP description
+  audit over 64 KiB, with malformed front matter or an unclosed fence; and
+  defective network log records (a malformed context, TTL, timestamp or JA4
+  value, or over 32 DNS answers). The
+  [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
+  lists each case and what it withholds.
 - Low-code autonomy evidence is read more strictly: triggers a person operates
   (n8n manual, chat and form triggers, Workato Workbot commands, Zapier
   Chrome extension or Interfaces steps), and Make on-demand scenarios, which a
@@ -190,6 +220,11 @@ and the [candidate change history](https://github.com/aisecnomad/Project-Nexus/b
 
 ### Operations
 
+- The next release uploads a source distribution beside the universal
+  `py3-none-any` wheel. The release workflow builds the wheel from that sdist
+  with `python -m build`, checks that both carry the same metadata and package
+  files, attests both and publishes both through PyPI trusted publishing. 0.1.2
+  was published as a wheel only.
 - `docs/operations/operational-controls.md` covers process supervision (systemd
   `Type=oneshot` with `TimeoutStartSec=`, Kubernetes and CI deadlines), egress,
   plugin trust and release evidence. `examples/k8s-network-policy.yaml` is a
@@ -229,7 +264,7 @@ Its production preflight failed before a PyPI upload. The immutable tag remains
 on its original commit; version 0.1.2 carries the correction through a new
 review and CI cycle. Confirm publication on
 [PyPI](https://pypi.org/project/NexusShadowScan/0.1.2/) and the
-[GitHub release](https://github.com/aisecnomad/Project-Nexus/releases/tag/v0.1.2)
+[GitHub release](https://github.com/aisecnomad/Nexus-ShadowScan/releases/tag/v0.1.2)
 before installing this version from the production index.
 
 ## 0.1.1 — 2026-10-08
@@ -237,12 +272,12 @@ before installing this version from the production index.
 Initial alpha candidate of `NexusShadowScan`, with 38 connectors across nine
 discovery surfaces. Install with `python -m pip install NexusShadowScan` and
 run `shadowscan --help`; see the
-[README](https://github.com/aisecnomad/Project-Nexus/blob/main/README.md#install)
+[README](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/README.md#install)
 for cloud extras and hash-locked deployment instructions.
 
 This version reached [TestPyPI](https://test.pypi.org/project/NexusShadowScan/0.1.1/)
 and the immutable `v0.1.1` tag, but not production PyPI.
-[PR #159](https://github.com/aisecnomad/Project-Nexus/pull/159#pullrequestreview-5458962521)
+[PR #159](https://github.com/aisecnomad/Nexus-ShadowScan/pull/159#pullrequestreview-5458962521)
 received a non-author approval on a source tree identical to the tagged commit.
 Publication and artifact attestations do not establish deployment acceptance.
 
@@ -288,7 +323,7 @@ Publication and artifact attestations do not establish deployment acceptance.
   that carry the heuristic level as `risk_level`. Rules no longer set
   `security-severity` or the `security` tag, so GitHub code scanning no longer
   rates ShadowScan alerts as security severities; the
-  [severity guide](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/severity.md)
+  [severity guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/severity.md)
   explains why.
 - Three new connectors and surfaces: `endpoint.inventory` (AI clients,
   coding agents, MCP servers, editor and browser extensions and local models
@@ -319,7 +354,7 @@ Publication and artifact attestations do not establish deployment acceptance.
   formula injection, and Markdown is defanged.
 - Credential redaction covers more forms, including keys passed positionally
   to well-known LLM SDK calls. Known gaps are listed in
-  [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md);
+  [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md);
   treat reports as confidential.
 - Scanned repositories are read without following links, git runs with
   hardened configuration, and live collection enforces HTTPS, origin and

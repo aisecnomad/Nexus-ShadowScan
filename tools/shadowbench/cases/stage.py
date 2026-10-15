@@ -3,16 +3,19 @@
 ``python -m tools.shadowbench.cases.stage SPEC.json OUT.json``
 
 The runner starts this module as root under ``unshare --net --pid --fork
---kill-child --mount --mount-proc`` so the tool sees no network, no host
-processes and a private mount table. Before anything from the case runs, the
-stage checks that it is the init of that fresh PID namespace and not in the
-runner's mount namespace, sets ``no_new_privs``, brings loopback up, mounts
-an empty tmpfs over ``/root`` and ``/home`` so the operator's homes and
-credentials are out of sight, and leaves the directory it was started in for
-``/``, so no process it starts inherits a working directory under a hidden
-path. It then serves the case's mock services, spawns the case's inert
-processes under their declared names and command lines, runs the adapter's
-invocations in order, and writes their results and the pid each process got.
+--kill-child --mount --mount-proc --ipc`` so the tool sees no network, no host
+processes, no host System V IPC or POSIX message queues and a private mount
+table. Before anything from the case runs, the stage checks that it is the
+init of that fresh PID namespace and not in the runner's mount namespace, sets
+``no_new_privs``, brings loopback up, mounts an empty tmpfs over ``/root`` and
+``/home`` so the operator's homes and credentials are out of sight, mounts a
+fresh, empty, world-writable tmpfs over ``/var/tmp`` and ``/dev/shm`` so
+nothing a tool leaves there outlives the case, and leaves the directory it was
+started in for ``/``, so no process it starts inherits a working directory
+under a hidden path. It then serves the case's mock services, spawns the
+case's inert processes under their declared names and command lines, runs the
+adapter's invocations in order, and writes their results and the pid each
+process got.
 
 Tools run as the unprivileged identity the spec names (the runner passes
 uid/gid 65534 with no supplementary groups) with exactly the environment
@@ -30,7 +33,9 @@ and reaped, including descendants that left the tool's process group with
 after that is an error for the case, never a silent leftover.
 
 This is not a filesystem sandbox: a tool can still read whatever is
-world-readable outside ``/root`` and ``/home``.
+world-readable outside ``/root`` and ``/home``, and the host's ``/tmp``, which
+usually holds the scratch directory, stays shared with the host and with
+other cases.
 """
 
 from __future__ import annotations
@@ -61,6 +66,8 @@ int main(void) { for (;;) pause(); return 0; }
 
 HIDDEN: tuple[str, ...] = ("/root", "/home")
 """Operator home directories the stage covers with an empty tmpfs."""
+PRIVATE_TMP: tuple[str, ...] = ("/var/tmp", "/dev/shm")
+"""Shared temporary directories the stage replaces with a fresh, world-writable tmpfs for each case."""
 INERT_ENV: dict[str, str] = {"PATH": SYSTEM_PATH, "LANG": "C.UTF-8"}
 """The whole environment of an inert process; nothing is inherited from the stage."""
 KILL_GRACE = 3.0
@@ -132,6 +139,15 @@ def _hide(paths: tuple[str, ...]) -> None:
         _check_call(rc, f"mount tmpfs on {path}")
         if os.listdir(path):
             raise RuntimeError(f"{path} is still populated after mounting over it")
+
+
+def _private_tmp(paths: tuple[str, ...]) -> None:
+    """Mount a fresh, empty, world-writable tmpfs over each path; only in a private mount namespace."""
+    for path in paths:
+        if not os.path.isdir(path):
+            continue
+        rc = _libc().mount(b"tmpfs", os.fsencode(path), b"tmpfs", _MS_NOSUID | _MS_NODEV, b"mode=1777")
+        _check_call(rc, f"mount tmpfs on {path}")
 
 
 def _loopback_up() -> None:
@@ -335,6 +351,7 @@ def main(argv: list[str]) -> int:
         _no_new_privs()
         _loopback_up()
         _hide(HIDDEN)
+        _private_tmp(PRIVATE_TMP)
         # The stage may have been started inside a now-hidden directory; children inherit the cwd.
         os.chdir("/")
         work = Path(spec["work"])

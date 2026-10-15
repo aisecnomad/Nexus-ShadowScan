@@ -86,7 +86,7 @@ RUN python3.12 -m venv --without-pip /opt/venv \
 
 FROM chainguard/wolfi-base:latest@sha256:824f77df45397eb954dfb963db255907ee8842e3446353ce93d688e5e862f51d
 
-LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Project-Nexus" \
+LABEL org.opencontainers.image.source="https://github.com/aisecnomad/Nexus-ShadowScan" \
       org.opencontainers.image.description="ShadowScan disposable scan worker" \
       org.opencontainers.image.licenses="Apache-2.0"
 

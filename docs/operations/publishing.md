@@ -5,7 +5,7 @@ per-release steps that put a reviewed ShadowScan release on PyPI as
 `NexusShadowScan`, so that `pip install NexusShadowScan` installs it.
 
 Publishing is a manual maintainer action and comes after the
-[release process](https://github.com/aisecnomad/Project-Nexus/blob/main/GOVERNANCE.md#release-process):
+[release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process):
 independent human review of the exact candidate commit and the acceptance
 evidence for its deployment scope. Coding agents prepare candidates. They
 never push a version tag, dispatch the workflow with `publish` set, or approve
@@ -13,7 +13,7 @@ a deployment.
 
 ## How an upload is gated
 
-The [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
+The [release-evidence workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/release.yml)
 (**Release candidate evidence**) is the only path to the package index. No
 package-index token exists: PyPI trusts this repository's workflow and
 environment through OpenID Connect (trusted publishing).
@@ -26,11 +26,11 @@ or replace independent human review.
 
 | Job | What it enforces | Permissions |
 |---|---|---|
-| `build` | Runs on `main` only. The commit must equal `expected_commit` and have successful push CI and CodeQL runs. Checks the live merge ruleset against the administrator readback passed at dispatch (see below), builds the wheel from a clean `git archive`, installs it outside the checkout, smoke-scans, and records the SBOM and `SHA256SUMS`. | read |
-| `attest` | GitHub provenance and SBOM attestations for the candidate files. No checkout. | `id-token`, `attestations` |
-| `publication-input` | Reassembles the attested bytes and checks for exactly one wheel. | none |
-| `publication-gate` | Runs only when `publish` is `testpypi` or `pypi`. Requires one wheel whose digest matches, a public release version (no `.dev`, `.post` or local part), and, for `pypi`, the tag `v<version>` on the reviewed commit. | `contents: read` |
-| `publish` | Waits for approval in the protected environment named by `publish`. Checks out nothing, verifies the digests, and uploads only that wheel with [`pypa/gh-action-pypi-publish`](https://github.com/pypa/gh-action-pypi-publish), which adds PEP 740 attestations. | `id-token` only |
+| `build` | Runs on `main` only. The commit must equal `expected_commit` and have successful push CI and CodeQL runs. Checks the live merge ruleset against the administrator readback passed at dispatch (see below). From a clean `git archive`, `python -m build --no-isolation` writes the sdist and then builds the wheel from that sdist with the hash-locked backend. `tools/release/distributions.py` requires one universal `py3-none-any` wheel and one sdist of the same version, with identical core metadata and package files, and an sdist of plain files under one root without the test suite. The job then installs the wheel outside the checkout, smoke-scans, and records the SBOM and `SHA256SUMS`. | read |
+| `attest` | GitHub provenance attestations for the candidate files and SBOM attestations for the wheel and sdist. No checkout. | `id-token`, `attestations` |
+| `publication-input` | Reassembles the attested bytes and checks for exactly one wheel and one sdist of the same version. | none |
+| `publication-gate` | Runs only when `publish` is `testpypi` or `pypi`. Requires one wheel and one sdist whose digests match, a public release version (no `.dev`, `.post` or local part), and, for `pypi`, the tag `v<version>` on the reviewed commit. | `contents: read` |
+| `publish` | Waits for approval in the protected environment named by `publish`. Checks out nothing, verifies the digests, and uploads only that wheel and sdist with [`pypa/gh-action-pypi-publish`](https://github.com/pypa/gh-action-pypi-publish), which checks their metadata and adds PEP 740 attestations. | `id-token` only |
 
 With the default `publish: none`, the workflow builds and attests a review
 bundle and uploads nothing. `tests/test_repository_policy.py` fails CI if any
@@ -49,7 +49,7 @@ package.
    |---|---|
    | PyPI project name | `NexusShadowScan` |
    | Owner | `aisecnomad` |
-   | Repository name | `Project-Nexus` |
+   | Repository name | `Nexus-ShadowScan` |
    | Workflow name | `release.yml` |
    | Environment name | `pypi` |
 
@@ -57,7 +57,9 @@ package.
    the environment name `testpypi`. A pending publisher does not reserve the
    name, and someone else can still register it. Publish the first release
    soon after you register the publisher. Do not remove the publisher
-   afterwards; it becomes the project's publisher.
+   afterwards; it becomes the project's publisher. The publisher names the
+   repository, so a rename needs the steps in
+   [Renaming the repository](#renaming-the-repository).
 3. **GitHub environments.** Under **Settings → Environments**, create `pypi`
    and `testpypi`:
    - **Required reviewers:** the maintainer. Add a second reviewer and turn on
@@ -77,18 +79,18 @@ package.
    Date the release headings in `CHANGELOG.md` and `RELEASE_NOTES.md` and
    remove "unreleased" from them. Merge through the normal review process.
 2. **Review and accept the exact commit**, as the
-   [release process](https://github.com/aisecnomad/Project-Nexus/blob/main/GOVERNANCE.md#release-process)
+   [release process](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md#release-process)
    requires. A green CI run is not that review.
 3. **Rehearse on TestPyPI.** Dispatch **Release candidate evidence** on `main`
    from an administrator-authenticated GitHub CLI, then approve the
    `testpypi` deployment:
 
    ```bash
-   gh workflow run release.yml --repo aisecnomad/Project-Nexus --ref main \
+   gh workflow run release.yml --repo aisecnomad/Nexus-ShadowScan --ref main \
      -f expected_commit=<reviewed-40-character-sha> \
      -f ci_run_id=<its successful push CI run> \
      -f codeql_run_id=<its successful push CodeQL run> \
-     -f ruleset_readback="$(gh api repos/aisecnomad/Project-Nexus/rulesets/23913372)" \
+     -f ruleset_readback="$(gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372)" \
      -f publish=testpypi
    ```
 
@@ -127,38 +129,80 @@ package.
    `ruleset_readback`, and `publish: pypi`, then approve the `pypi`
    deployment. The gate rejects the
    run unless `v<version>` points at `expected_commit`.
-6. **Verify what was published:**
+6. **Verify what was published.** Both files must be on the index, and each
+   must match its attestation. Download them into a hash-locked environment,
+   so that preparing the sdist's metadata uses the locked backend rather than
+   one resolved from the index:
 
    ```bash
-   python -m pip download --no-deps --dest wheels NexusShadowScan==0.1.2
-   gh attestation verify wheels/nexusshadowscan-0.1.2-py3-none-any.whl --repo aisecnomad/Project-Nexus
-   ```
-
-   Compare the wheel's SHA-256 with `SHA256SUMS` in the retained
-   `release-candidate-<SHA>` artifact. On PyPI, the file's provenance should
-   name this repository, `release.yml` and the `pypi` environment.
-
-   To confirm the bytes from source rather than from the attestation, rebuild
-   the wheel the way `release.yml` does and compare digests. Every archive
-   entry is stamped with the commit time (`SOURCE_DATE_EPOCH`), so a rebuild
-   of the tagged commit with the same hash-locked build backend yields the
-   same file; `make build` applies the same stamp to a local build.
-
-   ```bash
-   git -c advice.detachedHead=false checkout --detach v0.1.2
+   version=0.1.3
    python -m venv "${TMPDIR:-/tmp}/rebuild" && "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip install \
      --require-hashes --only-binary=:all: -r requirements-build.lock
-   SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip wheel . \
-     --no-deps --no-build-isolation --wheel-dir "${TMPDIR:-/tmp}/rebuild/dist"
-   sha256sum "${TMPDIR:-/tmp}/rebuild/dist/"nexusshadowscan-*.whl wheels/nexusshadowscan-*.whl
+   "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip download --no-deps --only-binary=:all: \
+     --dest dists "NexusShadowScan==$version"
+   "${TMPDIR:-/tmp}/rebuild/bin/python" -m pip download --no-deps --no-binary=:all: --no-build-isolation \
+     --dest dists "NexusShadowScan==$version"
+   for file in "dists/nexusshadowscan-$version-py3-none-any.whl" "dists/nexusshadowscan-$version.tar.gz"; do
+     gh attestation verify "$file" --repo aisecnomad/Nexus-ShadowScan
+   done
    ```
 
-   A differing digest means the published wheel was not built from that
-   commit with that backend; treat it as a release incident.
+   Compare both SHA-256 digests with `SHA256SUMS` in the retained
+   `release-candidate-<SHA>` artifact. On PyPI, each file's provenance should
+   name this repository, `release.yml` and the `pypi` environment.
+
+   To confirm the wheel from source rather than from the attestation, rebuild
+   it the way `release.yml` does and compare digests. The wheel is built from
+   the sdist, which normalizes file modes, and every wheel entry is stamped
+   with the commit time (`SOURCE_DATE_EPOCH`), so a rebuild of the tagged
+   commit with the same hash-locked backend and a default umask yields the
+   same wheel; `make build` applies the same stamp to a local build. The sdist
+   itself is not byte-reproducible, because setuptools records build-time file
+   times in it; its attestation and `SHA256SUMS` entry identify it.
+
+   ```bash
+   git -c advice.detachedHead=false checkout --detach "v$version"
+   SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" "${TMPDIR:-/tmp}/rebuild/bin/python" -m build \
+     --no-isolation --outdir "${TMPDIR:-/tmp}/rebuild/dist" .
+   sha256sum "${TMPDIR:-/tmp}/rebuild/dist/"nexusshadowscan-*.whl dists/nexusshadowscan-*.whl
+   ```
+
+   A differing wheel digest means the published wheel was not built from that
+   commit with that backend; treat it as a release incident. Release 0.1.2
+   predates the sdist: it was a wheel built with `pip wheel` from a
+   `git archive`, and was attested as `aisecnomad/Project-Nexus` before the rename.
 7. **Optionally, create the GitHub release by hand** from the tag, using the
    version's `RELEASE_NOTES.md` section. The workflow never creates one.
 8. **Open the next candidate.** Bump the version (for example to `0.1.3`) and
    add a new unreleased section to the changelog and release notes.
+
+## Renaming the repository
+
+The trusted publishers, the attestation identity and the Pages address all
+contain the repository name; GitHub's redirects cover only web, API and Git
+URLs. The repository was renamed from `aisecnomad/Project-Nexus` to
+`aisecnomad/Nexus-ShadowScan`. For this or any later rename, in this order:
+
+1. Rename it under **Settings → General → Repository name**. Rulesets,
+   environments, secrets and the numeric repository ID, which the scheduled
+   governance audit is pinned to, carry over.
+2. Merge the change that updates the in-repository references. The weekly
+   governance audit compares each ruleset's `source` with the name in
+   `tools/governance/rulesets.py`, so it fails, rather than skips, until that
+   change is on `main`.
+3. On PyPI and TestPyPI, add a trusted publisher with the new repository name
+   (same workflow `release.yml` and environment `pypi` or `testpypi`), then
+   remove the publisher that names the old repository. The OIDC token carries
+   the new name, so an upload fails until the publisher matches it.
+4. Check GitHub Pages: a project site is served only under the new name, and
+   the old path does not redirect. Update links to it, and dispatch the Docs
+   workflow with `publish: true` again if the site is deployed from it.
+5. Point local clones at the new URL with
+   `git remote set-url origin https://github.com/aisecnomad/Nexus-ShadowScan.git`.
+
+Attestations keep the name they were signed under. Verify files released
+before a rename with the old `--repo` value, as the install instructions do
+for 0.1.2.
 
 ## When something goes wrong
 
@@ -173,4 +217,4 @@ package.
   message and the release notes.
 - **Suspected compromise of the repository or its workflow.** Remove the trusted
   publisher on PyPI first; this stops further uploads with nothing to rotate.
-  Then follow [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+  Then follow [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md).

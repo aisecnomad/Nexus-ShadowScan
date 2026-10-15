@@ -56,9 +56,9 @@ jobs:
             echo "Set SHADOWSCAN_REVISION to an approved 40-character commit SHA" >&2
             exit 1
           fi
-          scanner_dir="$RUNNER_TEMP/project-nexus"
+          scanner_dir="$RUNNER_TEMP/nexus-shadowscan"
           git init -q "$scanner_dir"
-          git -C "$scanner_dir" remote add origin https://github.com/aisecnomad/Project-Nexus.git
+          git -C "$scanner_dir" remote add origin https://github.com/aisecnomad/Nexus-ShadowScan.git
           git -C "$scanner_dir" fetch --no-tags --depth 1 origin "$SHADOWSCAN_REVISION"
           git -C "$scanner_dir" checkout --detach -q FETCH_HEAD
           test "$(git -C "$scanner_dir" rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
@@ -94,7 +94,7 @@ jobs:
           if [ -f "$RUNNER_TEMP/shadowscan.sarif" ]; then
             echo 'exists=true' >> "$GITHUB_OUTPUT"
           fi
-      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         if: always() && steps.report.outputs.exists == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           sarif_file: ${{ runner.temp }}/shadowscan.sarif

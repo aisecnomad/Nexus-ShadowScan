@@ -95,6 +95,8 @@ class GitLabConnector(RemoteRepositoryConnector):
         "max_files": "forwarded to the filesystem scanner (see code.filesystem)",
         "max_entries": "forwarded to the filesystem scanner (see code.filesystem)",
         "scan_secrets": "forwarded to the filesystem scanner (see code.filesystem)",
+        "inspect_model_artifacts": "forwarded to the filesystem scanner (checkout mode; see code.filesystem)",
+        "model_metadata_bytes": "forwarded to the filesystem scanner (see code.filesystem)",
         "input": "offline: directory of cloned projects",
     }
     shared_config_keys: ClassVar[dict[str, str]] = {}  # clones are bounded by max_projects, not export limits
@@ -271,6 +273,8 @@ class GitLabConnector(RemoteRepositoryConnector):
                 "max_entries",
                 "scan_timeout",
                 "scan_secrets",
+                "inspect_model_artifacts",
+                "model_metadata_bytes",
                 "use_git",
                 "strict_coverage",
                 "include_tests",

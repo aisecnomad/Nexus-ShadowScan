@@ -40,3 +40,12 @@ tools/benchmark/results*/** linguist-generated
 tools/benchmark/realworld/results*/** linguist-generated
 tools/benchmark/realworld/*.jsonl linguist-generated
 tools/benchmark_realworld/results*/** linguist-generated
+tools/benchmark_realworld/*.json linguist-generated
+tools/benchmark_realworld/labels/** linguist-generated
+tools/benchmark_realworld/v2/**/*.json linguist-generated
+tools/benchmark_realworld/v2/**/*.jsonl linguist-generated
+tools/benchmark_realworld/v2/**/*.tsv linguist-generated
+
+# Retained, AI-assisted review records (archive/reviews/README.md): history,
+# not project source. Keep their harness scripts out of the language statistics.
+archive/** linguist-documentation

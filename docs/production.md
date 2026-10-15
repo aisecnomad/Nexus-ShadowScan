@@ -1,4 +1,4 @@
-# Deployment and migration
+# Production deployment and migration
 
 This is the rollout guide for version 0.1.2. It covers reviewed
 revisions, installation, validation, rollout, operation and migration.
@@ -6,6 +6,205 @@ revisions, installation, validation, rollout, operation and migration.
 Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
+
+## Unreleased Kubernetes and Atlassian migration
+
+Rescan Kubernetes and OpenShift exports after upgrading. Earlier observations
+could omit an unread export suffix at the object limit, collapse different long
+object names into one identity, or reject a valid CronJob. The corrected scan
+retains full valid names and analyzes the nested CronJob pod template. A limit
+that leaves objects unread, a chunked `List` page (`metadata.continue` or
+`remainingItemCount`), an overlong name, a namespace that is not an RFC 1123
+DNS label (not a string, or with uppercase letters, a `/` or more than 63
+characters) or a malformed template marks coverage incomplete; inspect
+retained findings without treating the report as complete estate coverage.
+
+Kubernetes resources with names longer than 160 characters now have their full
+name in `k8s:<cluster>/<namespace>/<kind>/<name>`. Regenerate and review cards
+for affected resources; an old shortened exact binding does not identify the
+full resource. Preserve previous reports as historical evidence and establish
+a fresh baseline under the reviewed revision. Collection fingerprints change
+with scanner code, so cross-revision differences do not establish resolution.
+
+Atlassian app keys identify a product across sites, rather than one site's
+installation. Configure `site` for offline exports as well as live collection,
+and bind approvals with `discovery.accounts: ["https://your-site.atlassian.net"]`.
+Existing cards without explicit accounts remain unregistered until their site
+scope is reviewed and added. Use separate bindings for unrelated sites.
+Discovery without a usable site remains incomplete and its generated stub
+leaves `discovery.resources` empty pending identity review. Merely adding that
+stub to an inventory cannot approve the installation. Configure the verified
+site, rescan and regenerate the card before reviewing its exact binding.
+
+Atlassian finding IDs change on upgrade. Exports scanned without a configured
+`site` get a new identity discriminator bound to the resolved path of each
+export file, so renaming or moving the file changes its IDs; two files in one
+directory input stay separate findings even when they share an app key. A
+configured site is canonicalized, so an operator whose `site` used an
+uppercase host or an explicit `:443` also sees new IDs (a trailing slash was
+already ignored). A `site` that is not a plain HTTPS origin now stops the
+connector with an error and exit 3 instead of scanning: a value without
+`https://`, `http://`, a path (including a Data Center context path such as
+`/jira` or `/wiki`), user information, a query or fragment, a trailing dot or a
+non-ASCII host. Configure the canonical `site` as `https://<host>`, keep one
+site's exports per scan input, rescan and establish a fresh baseline; earlier
+Atlassian IDs do not carry over.
+
+The new tests use offline exports. Live connector acceptance and independently
+labeled field accuracy still require the existing rollout acceptance procedure.
+
+## October 14 bounded evidence migration (Unreleased)
+
+Rescan affected inputs after updating to this revision. The scanner-source
+fingerprint changes; keep previous reports as historical observations and build
+a fresh comparison baseline. A reduced flow count is not proof that an agent
+stopped running.
+
+MCP inventory findings change score and metadata: tool descriptions are
+additionally screened for hidden HTML-comment content, fetch-and-execute
+phrasing and terminal control sequences, supported lockfiles are
+credential-scanned like every other read file, and a tool name duplicating
+another installed server's tool now carries the `tool-name-shadowing` threat
+mapping with a default risk weight of 10 (a default-weights change).
+Regenerate retained reports and comparison baselines that cover MCP inventory.
+
+**New opt-in settings** (all default off or to the values shown):
+
+- `code.filesystem` (and `code.github` / `code.gitlab` checkouts):
+  `inspect_model_artifacts` and `model_metadata_bytes` (default 65,536) for
+  bounded GGUF, safetensors, ONNX and PyInstaller metadata inventory. GGUF
+  array values (tokenizer vocabularies) are skipped under their own bounds,
+  so real llama.cpp models are inventoried. Hugging Face cache links are not
+  followed (see the source guide). An
+  extensionless file is searched for a PyInstaller cookie only when it starts
+  with an ELF, PE or Mach-O header. When a root's 32 MiB artifact budget is
+  spent, the remaining selected files are counted in one warning that marks
+  coverage incomplete; extensionless files still get normal text analysis.
+- `runtime.processes` (live Linux only): `inspect_maps`, `inspect_fds`,
+  `inspect_env_keys`, with `max_inspection_bytes`,
+  `max_inspection_total_bytes`, `max_inspection_entries`, `max_mappings` and
+  `inspection_timeout_seconds` bounds. Reading another user's maps or
+  descriptors needs the same user or `CAP_SYS_PTRACE`. Denied or truncated
+  selected inspection makes coverage incomplete; do not grant root merely to
+  erase that limitation. Kernel threads are not inspected, and a source that
+  fails with `ESRCH` on an unchanged zombie with no threads left (state `Z`
+  or `X`, `num_threads` 1) is recorded as `not_applicable` without making
+  coverage incomplete. `ESRCH` from any other process, and an empty maps or
+  descriptor read from a process whose leader thread exited while other
+  threads still run (state `Z` with more than one thread), is `unreadable`
+  and makes coverage incomplete (exit 3); earlier revisions reported such a
+  process as a complete, empty inspection.
+- `network.logs`: `dns_max_ttl_seconds` (default 86,400) and
+  `dns_clock_skew_seconds` (default 0) bound DNS attribution. These are on by
+  default; the options only tune them.
+
+**Exit-code impact.** These inputs can now end a scan incomplete (exit 3)
+where the previous revision completed:
+
+- A supported lockfile (`uv.lock`, `poetry.lock`, `pnpm-lock.yaml`,
+  `Cargo.lock`) that is malformed, an unsupported version (`Cargo.lock` v1/v2,
+  `pnpm-lock.yaml` 5.x), over a limit or a symbolic link, when no
+  `pyproject.toml`, `package.json` or `Cargo.toml` sits beside it. Beside its
+  manifest the same gap is a warning naming the lockfile and the reason, and
+  the scan stays complete; earlier revisions never read these files. A pnpm
+  git, tarball, URL or local package is inventoried by name with
+  `version: null`, its source kind and a limitation rather than rejecting
+  the file, so an AI package locked from a tarball still produces a
+  `lockfile-inventory` finding; an entry whose name cannot be told
+  (a v6 `github.com/...` key without a `name` field) is still a lockfile
+  gap. A `uv.lock` package without a version is inventoried with
+  `version: null`.
+- A malformed or over-budget n8n, Flowise or Dify graph (dangling or invalid
+  connections, duplicate node names). The workflow finding is kept with
+  `workflow_graph.status: incomplete`. A `null` n8n output slot is valid. A
+  graph that fails unexpectedly affects only its own n8n workflow; the rest
+  of the export is still reported. A JSON, YAML or TOML document whose
+  `nodes` list identifies no provider is not a graph, however long.
+- A live process command line over 65,536 bytes. The process is still
+  classified from its leading complete arguments, with
+  `metadata.command_lines_truncated`.
+- `SKILL.md` and MCP description audits over 64 KiB, with malformed front
+  matter (`SKILL.md` only) or an unclosed fence. An MCP description that
+  starts with a `---` line is audited as text: earlier revisions read it as
+  front matter, so lines after it other than `name` and `description` went
+  unaudited and an unclosed `---` made the scan incomplete. A line over 4,096 characters does not end the
+  scan incomplete: it is audited sentence by sentence, so an instruction in
+  its middle is reported. Only a single sentence over 4,096 characters is
+  audited in its first and last 4,096 characters and marks the audit
+  `partial` (`static_instruction_audit.partial`, status `partial` when
+  nothing was found). Earlier revisions audited only the two ends of the
+  line, so a long line that hid an instruction in its middle, and that the
+  audit marked `partial`, now reports `indicators-observed`, and a long line
+  of short sentences is no longer `partial`.
+- Network records with a malformed observation context, TTL, timestamp or JA4
+  value, or over 32 DNS answers. A malformed context in any record other
+  than a VPC flow record, an invalid JA4 value, or an answer list over 32
+  withholds flow attribution only for the client the record names, or for the
+  whole input when the client is unknown; reaching `max_records` withholds it
+  for the whole input. A
+  malformed TTL or timestamp keeps the record with that field unknown and
+  does not withhold attribution for its client (see the network guide).
+- CloudTrail exports with invalid timestamps or conflicting event IDs.
+  CloudTrail lineage sampling bounds (100 invocations per caller, 2,000
+  invocations and 2,000 STS assumptions per run) only mark lineage `partial`,
+  with a warning that leaves the scan complete; live collection never
+  retrieves STS events, so live lineage is always `unlinked`.
+
+**Finding changes.**
+
+- New finding identities: `lockfile-inventory` findings at
+  `<root label>/<lockfile path>` (dependency inventory only, possible
+  confidence); with `inspect_model_artifacts`, `binary-artifact` findings at
+  the artifact path; with runtime inspection, ML-runtime indicator findings
+  at `runtime:<host>:<pid namespace>:<pid>:<start ticks>:ml-runtime`. These
+  identities include the PID and start time, so they change with every
+  process restart.
+- DNS attribution now requires a matching client/context and an answer valid
+  at the flow time; flow times are grouped per connection in bounded buckets,
+  and a bucket that straddles an answer's validity is not attributed. Logs
+  without TTLs or timestamps keep service observations but claim no flow bytes
+  or cadence from them. In the bundled demo this removes one finding (a client
+  that borrowed another client's expired ChatGPT answer: 133 to 132 findings,
+  129 to 128 shadow, high risk 63 to 62) and lowers Cursor's confidence from
+  0.8 to 0.5 (risk high to medium). Other demo finding IDs are unchanged
+  (gateway caller IDs are scan-local in every run). JA4 log values are
+  context only. DNS answers are kept per client and address as merged
+  validity intervals, so repeated lookups use no extra storage. When a DNS
+  storage bound is reached, only the affected client/address loses DNS
+  attribution: its findings carry a limitation, a warning reports the count,
+  and the scan stays complete. The Ollama port rule never depends on DNS
+  storage. Provenance gains `valid_until` when later answers extended the
+  first answer's validity.
+- `cloud.aws` CloudTrail callers no longer count exact duplicate event IDs
+  twice, and offline `cloudtrail-event` records whose `eventName` is neither a
+  collected invocation operation nor an STS assumption are ignored instead of
+  reported as LLM callers. A record with no `eventName` (absent, `null` or
+  empty) is not ignored: it is skipped as malformed and the scan is incomplete
+  (exit 3). Regenerate such exports with the event name before relying on exit
+  codes.
+- MCP tools keep the `tool-poisoning` rules of the previous revision; a
+  bounded sentence audit adds zero-weight `instruction:*` evidence and
+  `metadata.static_instruction_audit`, and can also raise the tag. The
+  `SKILL.md` audit also covers the front matter `name` and `description`,
+  which skill loaders place in the agent context every session.
+- n8n workflows and exported graphs gain non-scoring `workflow_graph`
+  metadata; inventory and confidence do not depend on it. Lifecycle findings
+  gain `lifecycle_observation`, whose samples never name a finding the report
+  omits (`observations_omitted` counts them).
+
+Graph paths, AWS lineage and lifecycle assessments are explained metadata.
+They do not provide canonical agent identity, effective permissions, approval,
+exfiltration proof, or complete visibility. Missing runtime scope is unknown,
+and old observations remain historical even when they name the same tool.
+Static MCP/skill instruction heuristics cannot certify arbitrary instructions
+as safe, and the scanner never executes a discovered MCP server, skill or
+model. Lockfile inventory never runs a package manager and does not establish
+installation, execution or agency.
+
+The bundled evaluation corpora give the same predictions before and after this
+change. These author-written tests are not independent field precision or
+tenant acceptance. Review an independently labeled holdout before using new
+evidence for enforcement.
 
 ## Unreleased attribution migration
 
@@ -37,7 +236,7 @@ and executable shims. Freeze repository/family sampling and acceptance
 thresholds before showing scanner results to reviewers. These new authored
 regressions must be excluded from that holdout.
 
-The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+The [acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md)
 supports static code, AWS and Slack. A code change cannot substitute for human
 labels, approved tenant credentials or live acceptance receipts.
 
@@ -85,7 +284,7 @@ PowerShell and cmd continuations, commented or prefixed source argv and an
 executable passed separately from its argument list. Regenerate old reports,
 exports and cached evidence under the reviewed revision; changing the scanner
 cannot erase already retained copies. Continue to protect audit artifacts and
-follow the credential handling policy in [SECURITY.md](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md).
+follow the credential handling policy in [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md).
 The additive JSON `inventory_present` field distinguishes an explicitly supplied
 empty inventory from a scan without inventory reconciliation. CSV now retains
 the entire sanitized permission list, including permissions beyond position 30.
@@ -105,7 +304,7 @@ ambiguous bindings and registered versus unregistered source agents. Freeze
 sampling, labels and acceptance thresholds before showing results to reviewers;
 exclude the new authored regression fixtures. Follow
 [rollout acceptance](#rollout-acceptance) for complete and permission-denied
-tenant canaries. The [acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+tenant canaries. The [acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md)
 supports static code, AWS and Slack; passing those scopes does not grant
 acceptance to other connectors. Human labels and live receipts remain pending
 until operators supply them.
@@ -175,8 +374,8 @@ a tag that has not been published.
 
 ```bash
 SHADOWSCAN_REVISION="REPLACE_WITH_REVIEWED_40_CHARACTER_SHA"
-git clone https://github.com/aisecnomad/Project-Nexus.git
-cd Project-Nexus
+git clone https://github.com/aisecnomad/Nexus-ShadowScan.git
+cd Nexus-ShadowScan
 git checkout --detach "$SHADOWSCAN_REVISION"
 test "$(git rev-parse HEAD)" = "$SHADOWSCAN_REVISION"
 ```
@@ -298,7 +497,7 @@ image, and the daemon falls back to Docker Hub when the mirror fails. A builder
 elsewhere that hits the limit can set the same daemon mirror or authenticate to
 Docker Hub; the digest pin keeps the base image identical either way.
 
-The [Kubernetes offline Job example](https://github.com/aisecnomad/Project-Nexus/blob/main/examples/k8s-job.yaml) has a 20-minute
+The [Kubernetes offline Job example](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/examples/k8s-job.yaml) has a 20-minute
 active deadline, a placeholder for a reviewed image digest, and a matching
 NetworkPolicy that denies egress when enforced by the cluster CNI. Supply a
 reviewed `/input` volume before running it. For live API collection, use a
@@ -586,8 +785,10 @@ the interpreter lock indefinitely.
 
 Code scans follow a documented coverage policy. Links whose own names are never
 read, source-file links whose real targets are analyzed in the same project
-with the same test classification, and coding-agent instruction-document links
-to another instruction document under the same condition, are skipped because
+with the same test classification, coding-agent instruction-document links
+to another instruction document under the same condition, and (with
+`inspect_model_artifacts`) model-artifact links to a scanned artifact with the
+same suffix under the same condition, are skipped because
 nothing at the alias path is lost (see [scan semantics](scanning.md) for the
 exact rule). Directory
 links, configuration aliases, links into excluded or unread content, links
@@ -666,7 +867,7 @@ relying on enforcement. Neither the policy file nor this checker updates live
 repository administration settings.
 
 Ruleset
-[23913372, Require CI and CodeQL](https://github.com/aisecnomad/Project-Nexus/rules/23913372)
+[23913372, Require CI and CodeQL](https://github.com/aisecnomad/Nexus-ShadowScan/rules/23913372)
 is configured to require `test (3.11)`, `test (3.12)` and `analyze`, an
 up-to-date branch, and one approving review from a reviewer with write access,
 alongside `Protect main`. The 2026-10-10 readback below shows the aggregate
@@ -695,12 +896,13 @@ no bypass actors; `CI gate` is not yet among its required checks. `Protect
 main` adds linear history and deletion protection and still names bypass
 actors. At 08:05 UTC on 2026-10-02 both rulesets read back as
 `enforcement: disabled` again (last updated 04:28 UTC), and
-`GET /repos/aisecnomad/Project-Nexus/rules/branches/main` returned no active
-rules, so nothing enforced review, CI or linear history on `main` at that time.
+`GET /repos/aisecnomad/Project-Nexus/rules/branches/main` (the former name)
+returned no active rules, so nothing enforced review, CI or linear history on
+`main` at that time.
 At 19:08 UTC on 2026-10-02 both again read back as `enforcement: disabled`
 (last updated 18:39 UTC) with no active rules on `main`. The committed
 snapshots in
-[`.github/rulesets/observed/`](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets/observed)
+[`.github/rulesets/observed/`](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets/observed)
 recorded that 04:28 UTC state until they were refreshed from the 2026-10-10
 readback described below.
 On 2026-10-03 (19:06 UTC), both rulesets read back active again. The review/CI
@@ -778,7 +980,7 @@ own, on two Dependabot updates. A repository administrator can bypass or
 reconfigure rules, so a merged pull request, the
 version string and the internal AI-assisted hardening logs are not evidence of
 independent review. The review and merge policy is in
-[CONTRIBUTING.md](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy).
+[CONTRIBUTING.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#review-and-merge-policy).
 
 Rulesets, branch protection and pull request approvals are repository settings
 that can change at any time, so an
@@ -788,13 +990,13 @@ evidence:
 
 ```bash
 # Rules currently enforced on main; an empty list means nothing is enforced
-gh api repos/aisecnomad/Project-Nexus/rules/branches/main
+gh api repos/aisecnomad/Nexus-ShadowScan/rules/branches/main
 # The ruleset itself, including its enforcement state
-gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 --jq '{name, enforcement, rules: [.rules[].type]}'
+gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372 --jq '{name, enforcement, rules: [.rules[].type]}'
 # Classic branch protection; HTTP 404 means none is configured
-gh api repos/aisecnomad/Project-Nexus/branches/main/protection
+gh api repos/aisecnomad/Nexus-ShadowScan/branches/main/protection
 # Who authored, reviewed and merged the pull request that introduced a change
-gh pr view <number> --repo aisecnomad/Project-Nexus --json author,mergedBy,reviews
+gh pr view <number> --repo aisecnomad/Nexus-ShadowScan --json author,mergedBy,reviews
 ```
 
 The offline rules helper can prepare a reviewed PUT body from a fresh full
@@ -803,17 +1005,17 @@ GitHub can omit that field for identities without ruleset write access. Read
 the default branch first and confirm it is `main`:
 
 ```bash
-gh api repos/aisecnomad/Project-Nexus --jq .default_branch
-gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 > /secure/main-rules-before.json
+gh api repos/aisecnomad/Nexus-ShadowScan --jq .default_branch
+gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372 > /secure/main-rules-before.json
 python -m tools.release.rules prepare --input /secure/main-rules-before.json \
-  --output /secure/main-rules-update.json --repository aisecnomad/Project-Nexus \
+  --output /secure/main-rules-update.json --repository aisecnomad/Nexus-ShadowScan \
   --default-branch main
 # Review the generated body before this administrator operation.
-gh api --method PUT repos/aisecnomad/Project-Nexus/rulesets/23913372 \
+gh api --method PUT repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372 \
   --input /secure/main-rules-update.json
-gh api repos/aisecnomad/Project-Nexus/rulesets/23913372 > /secure/main-rules-after.json
+gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372 > /secure/main-rules-after.json
 python -m tools.release.rules verify --input /secure/main-rules-after.json \
-  --output /secure/merge-rule-verification.json --repository aisecnomad/Project-Nexus \
+  --output /secure/merge-rule-verification.json --repository aisecnomad/Nexus-ShadowScan \
   --default-branch main
 ```
 
@@ -832,10 +1034,10 @@ governance checker. The release workflow obtains its snapshot
 directly from GitHub; an offline receipt cannot authenticate its own API origin,
 establish historical enforcement or prove an actual human approved the final PR.
 
-The [two-ruleset payload helper](https://github.com/aisecnomad/Project-Nexus/tree/main/tools/governance)
+The [two-ruleset payload helper](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/tools/governance)
 additionally prepares `Protect main` and `Require CI and CodeQL` together,
 removing bypass actors from both. The observed snapshots and proposed PUT
-bodies are in [.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
+bodies are in [.github/rulesets](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets).
 The committed observed snapshots capture the 2026-10-10 readback: active
 rulesets that still list four `always` bypass actors. Refresh
 those observations and regenerate the bodies before applying them; the files
@@ -1034,12 +1236,39 @@ Redaction reads a text with a run glued after a `Bearer`, `Basic` or `SSWS`
 credential (`<token>--x`, `<token>=x`) twice, as every rule reads the run and
 as the earlier rules withheld it with the credential, and shows on each line
 only what both readings show; such a token's tail is withheld with it.
-Sanitized evidence around these credentials therefore withholds more: a line
-the readings differ on in more than one place is withheld whole, and a text
-with a name glued after a credential on the line after its scheme is
-withheld whole, keeping its line breaks. Finding identity does not use
-evidence text. Regenerate retained reports, as after any change that
-withholds more.
+Sanitized evidence around these credentials therefore withholds more: where
+one reading's line shows nothing the other's does not, that line is kept, and
+otherwise the whole line is withheld; a text with a name glued after a
+credential on the line after its scheme is withheld whole, keeping its line
+breaks. In such a text a run that starts the line after a scheme credential
+(`--verbose`, `---`), or a later line after only blank lines or other such
+runs, is withheld as well, with a marker in its place where the rest of the
+line is unchanged; so is a run that starts the line after a name glued to the
+credential that stays beside it (`<token>--token`), which was read only on the
+next sanitization, or never after `--token` and `--password`. Each run of a
+chain of such lines goes in its own reading, and the rest of a chain longer
+than three goes at once before one more reading: the value after the fourth
+run was withheld only on the next sanitization, and the value after the fifth
+on none. A text with no glued run reads as the earlier rules read it, those
+runs included where each is only a name or separator (`--verbose`, `---`,
+`=Section=`), unless removing them lets the rules withhold a value after them.
+A run there that holds a value (`--http1.1`, `--max-time=30`) is withheld,
+with a marker in its place: the earlier rules showed it, and until this
+correction it was removed with no marker, so an excerpt lost an option without
+showing that anything was withheld. Finding identity does not use evidence
+text. Regenerate retained reports, as after any change that withholds more.
+
+A record read this way keeps its shape. A mapping whose keys read alike once
+their credentials are withheld in one reading and not in the other
+(`SSWS a--auth` and `SSWS b`) stays a mapping: each member is merged with its
+own copy in the other reading, and only the members both readings keep are
+shown, a key two members share keeping one value as before. Such a mapping
+was withheld as one string, so agent definition front matter lost its fields
+(`tools`, `permissionMode`) with the scan still complete, an agent card
+stopped the connector's analysis of that file, and a finding with such keys in
+its metadata or evidence attributes failed to report. Readings of one value
+that do not pair up stop with a sanitization limit error, which marks the scan
+incomplete (exit 3), instead of changing a container into a string.
 
 Plugin approvals can pin the import target and the providing release
 (`--allow-plugin name=module:Class@distribution==version`); a pin is checked
@@ -1063,6 +1292,211 @@ These notes record unreleased corrections and earlier candidate changes.
 Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
+
+### October 14 detection precision, ambiguous app names and scoped correlation (unreleased)
+
+These changes can remove findings, lower confidence and risk, and add new
+findings. Finding ids do not change, except for `gateway.logs` sources that set
+the new `internal_model_hosts` option. Rescan affected sources and rebuild comparison baselines under the
+reviewed revision: scanner-source and signature fingerprints change. A finding
+or technology label that disappears after the upgrade does not establish that
+an agent was removed or stopped running.
+
+**Ambiguous app names.** Google Gemini names (`ambiguous: true` in the
+signature) no longer establish Google AI attribution without a same-product
+domain, client ID or other non-name signal. They stay under
+`metadata.potential_frameworks` with an `ai-name-hint` tag and add none of the
+signature's tags, capabilities or agent indicator. A Gemini-named app with no
+other AI evidence, such as a cryptocurrency-exchange integration, drops to
+possible confidence or out of the report. Once corroborated, the name keeps its
+full weight. More generally, a signature match that does not establish its
+signature (an ambiguous name hint, or a code pattern recorded under
+`metadata.potential_frameworks` or `potential_providers` because the library's
+import or dependency is missing) no longer adds that signature's tags (for
+example `assistant` or `agent-platform`). Tag-based risk weights, filters and
+downstream rules stop matching such findings, so their risk can fall; tags of
+established technologies are unchanged. The generic AI-name hint is never
+listed as a potential product. OAuth reply and homepage URLs corroborate a product by their
+parsed `http(s)` hostname only: a product domain in another site's path, query,
+fragment or userinfo no longer counts, and URL tokens with userinfo, a
+backslash or a control character are skipped. A field with several URLs
+(whitespace separated, or comma or semicolon separated before a new `http(s)://`
+URL, as in a ServiceNow `redirect_url`) is split, so an AI host listed second
+is still found; a separator inside a URL's query or fragment
+(`?next=a,https://chatgpt.com/`) does not split it.
+
+**Unattributed apps.** An app assessed by an identity or SaaS connector with no
+established AI product, provider, LLM-access permission, Entra agent identity
+or registry record now has its non-AI observations bounded at 0.35 as one
+group. Machine identities kept by policy remain in the report at that ceiling,
+so their confidence and risk fall. In the bundled demo five findings change:
+three machine identities drop from risk 69 to 61, 65 to 58 and 40 to 37, and
+two unattributed SaaS apps from 47 to 41 and 53 to 50, all within their
+previous severity levels. Domain
+matches are counted once per app across all of its URLs, so `agent_indicators`
+no longer grows with the number of reply URLs.
+
+**Correlation.** `metadata.related` now holds only exact identifier matches,
+with `metadata.related_details` describing the identifier type, matching
+fields and scope. A fully qualified ARN, GCP resource name, Azure resource id
+or OCI OCID links on its own: a cross-account caller ARN is the same principal.
+A GCP service account address (`<name>@<domain>.gserviceaccount.com`, bare
+or in `projects/<project>/serviceAccounts/<address>`) is one global identifier
+too: a Vertex AI caller in one project links exactly to the service account
+another project defines, which a declared project conflict used to block
+entirely. Lookalike addresses outside `gserviceaccount.com`, or with upper-case
+letters, stay local identifiers in their project. Google-managed accounts
+that many projects share (`@system.gserviceaccount.com`,
+`@firebase-sa-management.iam.gserviceaccount.com`) link nothing. Code findings
+report repository paths, so two monorepos that both hold
+`projects/api/src/main.py` no longer link as one GCP resource: from code, a
+`projects/` path is a GCP resource name only with a valid project id or
+number, a GCP collection after it (such as `locations`, `secrets` or
+`serviceAccounts`), no `:<line>` suffix and no source-file extension on its
+last segment.
+Azure resource ids compare case-insensitively, as Azure Resource Manager
+treats them, so a role assignment whose scope ARM returns lowercased still
+links to the resource listing; the findings keep the spelling they reported.
+AWS-managed policy ARNs (`arn:aws:iam::aws:policy/...`) and Bedrock
+foundation-model ARNs are shared by every account and relate no findings,
+exactly or as candidates; accountless S3 bucket and Route 53 ARNs still link.
+An Entra application id links exactly across `app_id`, `client_id`, a Teams
+`bot_id` and an Azure Bot `msa_app_id` only when both findings declare the same
+Entra tenant; other local identifiers need a shared declared tenant, workspace,
+cloud account, subscription or project. Vendor names and gateway labels are not
+compared as scope. Name similarity, and equal local identifiers whose shared
+scope cannot be verified, move to `metadata.related_candidates` with candidate
+assurance and a limitation. A declared tenant or account conflict blocks both.
+A declared scope value that cannot be compared (redacted, padded, or with
+wildcard characters, as a Notion workspace display name such as `Acme [EU]`
+has) gives its finding no identifier link, exact or candidate, but its name
+similarity is still a review candidate; such a finding used to drop out of
+correlation entirely. Entra findings replayed from an export of another tenant
+(or of an unknown one) carry `metadata.account_attributed: false` and declare
+no Entra tenant, so their application ids link to the configured tenant's
+Teams bots only as review candidates; they used to link exactly. (Two findings
+of one connector are never compared, so app registrations were never linked.)
+Their `account` and finding ids are unchanged.
+In the bundled demo, the three identifier links main produced stay exact and
+three new same-ARN links appear; the three links main made from a display name
+or a caller label (a Teams bot and an Entra service principal named Otter.ai,
+and an Azure OpenAI caller label equal to an Entra app id) are now review
+candidates. Do not merge candidate links with exact links in a downstream
+graph, and do not treat old `related` lists as exact identity evidence unless a
+new scan reproduces them. Neither relationship type changes registry approval,
+risk, confidence or runtime activity; confidence filtering prunes references to
+omitted findings from all three fields. The HTML and Markdown reports show
+candidates on their own "Possible related (review candidates)" line.
+
+**Gateway access logs.** Ollama-style `/api/chat`, `/api/generate` and
+`/api/tags` requests to a parsed host that is not a known model host are no
+longer callers, so a help-desk chat widget or a container registry stops being
+reported. Requests logged without a parsed host (`localhost:11434`) are still
+callers. If an internal Ollama or text-generation-inference server sits behind
+a reverse proxy with its own hostname, list that hostname in the new
+`gateway.logs` option `internal_model_hosts` before upgrading, or its callers
+disappear. The option takes a list or one hostname in a scan configuration
+or `--set internal_model_hosts=...`, and `shadowscan gateway` takes it as a
+repeatable `--internal-model-host`. Such excluded requests are reported in an advisory warning (not an
+incomplete scan) with their count and up to five host names; read it after
+the first scan and declare the hosts that are model servers. A bare
+`/generate` route counts only on a declared or known model host; such
+requests with no logged host are counted in the same warning. In text access
+logs a single-label or address host (`host=tgi:8080`, `host=10.20.0.5:8080`)
+now matches a declared `tgi` or `10.20.0.5` entry, as it already did in JSON
+logs. Gateway finding ids are unchanged when `internal_model_hosts` is unset;
+setting it changes that source's ids by design, so rebaseline that source.
+
+**Kubernetes.** Items of a raw API list (`kubectl get --raw /api/v1/pods`),
+which carry no `kind`, now take the kind their typed `List` names (`PodList`
+items are Pods) and are analyzed, so new findings can appear; earlier they were
+skipped without a warning. An object without a `kind` anywhere else, or with a
+non-string or empty `kind`, now makes a `cloud.kubernetes` or `cloud.openshift`
+scan incomplete (exit 3). Workloads that set `nvidia.com/gpu` only in `limits` are now
+reported as GPU workloads, while an `nvidia.com/gpu` of `0` or `"0"` no longer
+makes a GPU workload and a value that is not a resource quantity makes the scan
+incomplete. Private-registry serving images whose name
+starts with an engine name (`registry.example/ml/vllm-serving`, also when
+pinned by digest) are now agent workloads, so new findings can appear. Engine
+names elsewhere in an image path, exporters and operators named after an
+engine, and NVIDIA Triton images without an LLM backend tag
+(`tritonserver:24.01-py3`) are not. A model argument with a GPU but without an
+AI image or AI resource kind is not promoted. A container `command` or `args` field that is
+not a list of strings (a string, or a list with a non-string item) now makes a
+`cloud.kubernetes` or `cloud.openshift` scan incomplete (exit 3) with a
+"workload has malformed container command" or "workload has malformed
+container args" warning for each malformed field; the workload is still reported
+from its image, without the model-argument check. A `null` field is unset, as
+kubectl exports it. Regenerate exports that fail this way before relying on
+exit codes.
+
+**Low-code.** ServiceNow flows named only with the generic AI hint (for example
+"Copilot" licence administration) or only with an ambiguous product name (a
+"Gemini" account sync), and no ServiceNow AI marker, are no longer reported;
+flows named for an unambiguous AI product or provider (Claude, OpenAI), or
+with a marker, are. A genuine AI flow named only with a generic word or
+Gemini and no marker is a known false negative.
+n8n workflows whose only AI step is an HTTP Request POST to a model API are
+now reported as AI workflows, including HTTP Request v1 and v2 nodes (method
+in `requestMethod`) and expression-mode URLs whose host is literal; a host
+written as an expression is never classified. On a host that is not a known
+model host,
+`/v1/messages`, `/v1/responses`, `/api/chat` and a bare `/chat/completions`
+count only with an
+`anthropic-version` header or a body with `model` and `messages`, `prompt` or
+`input`, so WhatsApp Business and help-desk chat calls are not AI steps; a
+self-hosted model called without either is missed. `mcp` in a node type
+counts as its own token: custom `mcpClient` or `MCPServer` nodes, and
+camelCase types with `Mcp` or `MCP` after another word (`githubMcpClient`,
+`zapierMcp`), are AI steps, and node types that merely contain `mcp` inside
+another word or part number are not.
+
+**SaaS, identity and cloud inventory.** Notion bots are inventoried only with
+an established AI product or provider, or an AI-name hint in their name (a
+generic AI word such as "LLM", "GPT" or "AI Assistant", or an ambiguous product
+name such as Gemini, which stays a possible-product hint). Nameless bots,
+sync integrations and bots named only "... Bot" are no longer inventoried;
+hint-only bots keep a bounded, possible-level confidence. Slack apps can now match `client_id` rule-pack signals by their
+app id, and Wudpecker and Tactiq apps are recognised as meeting note-takers.
+Auth0 non-machine clients attributed only by a model provider are now kept.
+GCP Cloud Run services and Cloud Functions whose only AI evidence is an
+ambiguous product name (Gemini) in their name or description are no longer
+reported; a name or description that names an unambiguous product or provider
+(Anthropic Claude, OpenAI) is reported as before.
+
+Permission and machine-identity observations are not proof of agent execution,
+and observations in an offline export are not authenticated publisher evidence.
+Several of these rules were changed with the errors of the 2026-10-11
+ShadowBench estate run in view, so a later ShadowScan run on that estate is
+in-sample and does not measure them; see the estate README's
+[Bias and limits](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/README.md#bias-and-limits).
+
+### October 14 repository rename, source distribution and OCSF vendor name (unreleased)
+
+The repository is renamed from `aisecnomad/Project-Nexus` to
+`aisecnomad/Nexus-ShadowScan`, so that its URL, the `NexusShadowScan`
+distribution and the product name match. GitHub redirects web, API and Git
+URLs, and a reviewed 40-character commit SHA is unchanged by the rename, so
+existing pins keep resolving; update clone and `git+https` URLs, including
+copies of the consumer workflow examples, to the new name anyway. The GitHub
+Pages project site moves without a redirect. Attestations keep the repository
+name they were signed under: verify 0.1.2 with `--repo aisecnomad/Project-Nexus`
+and later releases with `--repo aisecnomad/Nexus-ShadowScan`.
+
+Reports change in one field. OCSF events carry `metadata.product.vendor_name`
+`Nexus ShadowScan` instead of `Project Nexus`; update SIEM parsers or filters that
+match on it. `metadata.product.name` stays `ShadowScan`, as do the SARIF
+`tool.driver.name` and the CycloneDX tool component, so GitHub code scanning keeps
+matching existing alerts to the same tool. SARIF `informationUri` and `helpUri` and
+the CycloneDX VCS reference now name the new repository URL.
+
+Releases after 0.1.2 upload a source distribution (`nexusshadowscan-<version>.tar.gz`)
+beside the universal wheel. `python -m build` writes the sdist and then builds the
+wheel from it; both are attested, and `tools/release/distributions.py` requires
+identical core metadata and package files in the pair. A pipeline that globs
+`dist/*` now sees both files. `make build` writes both and checks them, and
+`make install` and `make install-dev` also install `requirements-build.lock`, which
+now pins the `build` frontend.
 
 ### October 10 fleet dashboard, inventory export and fleet sources (unreleased)
 
@@ -1252,7 +1686,7 @@ tenant. See the [identity connector guide](connectors/identity.md#identityentra)
 | Registry records | Packages are `microsoft-agent-365` records with registry id `tenant_id`; deprecated agent registry records are `entra-agent-registry` and never approve. Only an organization's own package whose approval request was approved is `approved` with `approval_mode: manual`. An organization's own package (`custom`, `shared`, `lob`) with no request, such as an agent a user shared, is `registered` and approves in a trusted tenant only with `allow_registered_only`; `allow_auto_approved` does not accept it. Approved Microsoft and partner packages (`type` `microsoft` or `external`) have `approval_mode: unknown` and approve in a trusted tenant only with `allow_auto_approved`; a package with no request whose `type` is missing or unrecognized (such as `unknownFutureValue`) is `unknown` and approves nothing. A package whose detail call failed, was throttled or was beyond `max_package_lookups` is `unknown` and binds nothing, since `requestStatus` comes from the details. A package binds `entra:sp:<agentIdentityId>` only for a listed agent identity, and `entra:app:<appId>` only for an organization's own package, so a vendor package cannot approve a tenant app registration or an ordinary service principal. A binding is `in-scope` only when no record of the export was rejected as malformed, including a line the offline loader dropped. | Trust a tenant (`trusted_registries`, registry `microsoft-agent-365`, id `tenant_id`) only when the packages allowed in its catalog are ones your organization sanctions. Set `tenant_id`: without it the records cannot be trusted. Set `allow_registered_only` only if unrequested organization packages, including ones users shared, are sanctioned in that tenant: no person approved them. |
 | Credential policy | `auth_mode: delegated` reads a signed-in user's Graph token from the environment variable named by `delegated_token_env` (default `GRAPH_DELEGATED_TOKEN`); no configuration key holds the token. The tenant, Microsoft Graph audience (`aud` `https://graph.microsoft.com`, with or without a trailing slash, or `00000003-0000-0000-c000-000000000000`) and delegated claims are checked before any request; the token is never refreshed, logged, exported or reported, and app-only credentials are never used as a fallback. With `include_agent_registry` and `tenant_id`, a pre-issued app-only `access_token` (or `GRAPH_ACCESS_TOKEN`) must be a JWT whose `tid` is `tenant_id`; otherwise the connector is skipped. In every other configuration a pre-issued token whose claims decode is refused before any request when its `tid` differs from a `tenant_id` given as a tenant ID (GUID); a domain-name `tenant_id` cannot be compared, so the token is bound to its own tenant and an agent collection (`include_agent_identities`) then reads its records as another tenant's and exits 3. With either opt-in collection, a pre-issued token whose claims decode must have a Graph audience (otherwise the connector is skipped), and a token that is not app-only (`scp`, or no `idtyp: app`) or cannot be decoded gives caller-scoped listings and an incomplete scan with a fixed warning that names `auth_mode: delegated`. | Decide which operator signs in and with which role; a delegated scan sees only what that user may see. Do not put the token in configuration through `${VAR}`. Set the variable only for the scan: process-mode plugin workers inherit the environment. Expect exit 3 when the token expires during a long scan. With a pre-issued token, set `tenant_id` to the tenant ID (GUID) the token was issued for, not a domain name, and clear stale `GRAPH_ACCESS_TOKEN` values. Pass a signed-in user's token through `auth_mode: delegated`, not `access_token`; request a token for Microsoft Graph, not another resource. |
 | Comparison | Delegated package listings are caller-scoped and never complete, and their bindings have `unknown` coverage, so they produce no `observed-not-registered` or `registered-not-observed` statuses. A delegated scan with `include_agent_registry` or `include_agent_identities` always warns once and exits 3, even when the user sees nothing. Delegated and app-only scans cover different scopes. | Do not compare delegated and app-only scans for drift; keep `auth_mode` fixed for a baseline. Do not gate on a delegated scan's exit code: it is always 3 with an opt-in collection; use an app-only scan for gating. |
-| Replay attribution | The coverage marker of a live collection records the tenant its credential is bound to (`tenantId`: the decoded `tid` of a pre-issued or delegated token, also when `tenant_id` is not set, or `tenant_id` for client credentials; `null` when no tenant could be established). A replay whose `tenant_id` differs from it, or meets `tenantId: null`, is incomplete and its records get an empty registry id and no bindings, so no trusted entry approves another tenant's packages and they cannot mark the configured tenant's objects observed. A caller-scoped export replays as incomplete too. Only an older export without the `tenantId` field replays as before, attributed to the configured `tenant_id`. | Replay an export with the `tenant_id` it was collected with. Re-collect older exports to record their tenant before trusting their records. |
+| Replay attribution | The coverage marker of a live collection records the tenant its credential is bound to (`tenantId`: the decoded `tid` of a pre-issued or delegated token, also when `tenant_id` is not set, or `tenant_id` for client credentials; `null` when no tenant could be established). A replay whose `tenant_id` differs from it, or meets `tenantId: null`, is incomplete and its records get an empty registry id and no bindings, so no trusted entry approves another tenant's packages and they cannot mark the configured tenant's objects observed. Its findings carry `metadata.account_attributed: false`: `account` (part of the finding id) still names `tenant_id`, but correlation does not use it as their Entra tenant, so an application id equal to a configured-tenant Teams bot is a review candidate, not an exact link. A caller-scoped export replays as incomplete too. Only an older export without the `tenantId` field replays as before, attributed to the configured `tenant_id`. | Replay an export with the `tenant_id` it was collected with. Re-collect older exports to record their tenant before trusting their records. |
 
 ### October 10 A2A Agent Card probe (unreleased)
 
@@ -1862,7 +2296,7 @@ check-provider bindings require administrator review instead of silent
 replacement. The available repository integration cannot apply administration
 writes; versioned payloads are not evidence of active enforcement. Human review,
 a fresh human-labeled holdout and scope-specific live tenant receipts remain
-required evidence. Existing [acceptance tooling](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+required evidence. Existing [acceptance tooling](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md)
 checks supplied evidence; synthetic regression results cannot replace it.
 
 ### October 2 integration of #134 and hygiene review
@@ -2111,7 +2545,7 @@ disappearance of a comment-only finding as a remediation.
 The new regression cases are authored from observed defects. They do not replace
 the [fresh human-reviewed holdout](evaluation.md#build-a-genuinely-held-out-field-set),
 independent review of the final candidate, or [live tenant canaries](canaries.md).
-Run the existing [scope-specific acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md)
+Run the existing [scope-specific acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md)
 on real evidence for the intended population and tenant scopes. Record unmet
 requirements as unmet; do not substitute offline replays or AI-generated labels.
 
@@ -2216,7 +2650,7 @@ Complete AWS/Slack and separately credentialed permission-denied
 [tenant canaries](canaries.md) in the authorized deployment scope. For other
 connectors, retain connector-specific live evidence. Bind those receipts and a
 fresh human-reviewed holdout to this exact source/signature revision with the
-[acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+[acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md).
 Independent human review of the final revision remains required before release.
 Offline replay and the new CI checks cannot supply these attestations.
 
@@ -2438,7 +2872,7 @@ ruleset by declaring a job.
 
 The revised synthetic cases remain regression data. Freeze a fresh population,
 human labels and acceptance policy using [the holdout procedure](evaluation.md#gate-a-frozen-holdout),
-then run the [scope-specific evidence gate](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md).
+then run the [scope-specific evidence gate](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md).
 For AWS or Slack deployments, retain complete and separately credentialed
 permission-denied receipts from [approved tenant canaries](canaries.md).
 Other connectors need their own acceptance evidence. The existing bundled
@@ -2447,7 +2881,7 @@ corpora, replays and mocked transports do not meet these live requirements.
 After independent review, merge and successful exact-commit CI and CodeQL,
 exercise the manual release-evidence workflow described below. Retain its
 candidate, attestation and `release-publication-input-<SHA>` artifacts together.
-The latter contains the exact attested wheel bytes, which the workflow's
+The latter contains the exact attested wheel and sdist bytes, which the workflow's
 publish job uploads to PyPI only when the maintainer dispatches it with
 `publish` set and approves its protected environment; retaining it approves
 nothing. Evidence from an earlier main commit does not cover these source or
@@ -2508,7 +2942,7 @@ and locally shadowed execution calls. Reconcile a fresh code
 baseline and review changed finding identities before using `--fail-on` as an
 enforcement gate. Offline source tests establish these paths, not runtime use.
 
-Use the [offline acceptance verifier](https://github.com/aisecnomad/Project-Nexus/blob/main/tools/acceptance/README.md) to check the
+Use the [offline acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/acceptance/README.md) to check the
 required evidence for the intended deployment scope. It checks artifact identity,
 freshness and declared review/metric requirements. It does not authenticate
 reviewers, prove that a supplied receipt came from a real tenant, or turn synthetic
@@ -2516,12 +2950,13 @@ tests into operational evidence. Keep receipts and human attestations in control
 audit storage and review their origin. Unsupported live connectors still require
 their own acceptance work; they cannot inherit an AWS or Slack result.
 
-The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Project-Nexus/blob/main/.github/workflows/release.yml)
+The manually invoked [release-evidence workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/release.yml)
 requires successful main-branch CI and CodeQL runs for the exact selected commit.
 It rejects modified, untracked and ignored checkout files, builds from a clean
-`git archive`, checks the wheel, retains a runtime dependency SBOM and hashes,
-and produces GitHub artifact provenance. It then assembles the candidate and
-attestation bundles without rebuilding the wheel. With the default
+`git archive`, writes the sdist and builds the universal wheel from it, checks
+that the two match and that the wheel installs, retains a runtime dependency
+SBOM and hashes, and produces GitHub artifact provenance. It then assembles the
+candidate and attestation bundles without rebuilding either file. With the default
 `publish: none` it uploads nothing; it never creates a GitHub release or
 declares tenant acceptance. Review and retain its artifacts before a separate
 maintainer publication decision.
@@ -2530,7 +2965,7 @@ After merge and successful push CI, dispatch **Release candidate evidence** on
 `main` with `expected_commit` set to the full current main SHA, `ci_run_id`
 set to that commit's successful CI run ID, `codeql_run_id` set to its
 successful CodeQL run ID, and `ruleset_readback` set to an administrator's
-`gh api repos/aisecnomad/Project-Nexus/rulesets/23913372` output taken just
+`gh api repos/aisecnomad/Nexus-ShadowScan/rulesets/23913372` output taken just
 before dispatch. The workflow rejects stale commits, PR-only runs, failed
 checks and other workflows. GitHub withholds `bypass_actors` from the
 workflow's read-only token, so the build job accepts the readback only when it
@@ -2538,8 +2973,8 @@ matches the job's own read in every other field, `updated_at` included, and
 records in the evidence that `bypass_actors` came from that readback. Retain `release-candidate-<SHA>`,
 `release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
 hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
-attestations before publication. Publication uploads the wheel in that
-publication-input artifact and never rebuilds from a tag: the isolated
+attestations before publication. Publication uploads the wheel and sdist in
+that publication-input artifact and never rebuilds from a tag: the isolated
 `publish` job holds `id-token: write` as its only permission, waits for approval
 in the protected `testpypi` or `pypi` environment, checks out nothing, and uses
 PyPI trusted publishing, so no package-index token exists to leak. A `pypi`
@@ -3264,11 +3699,11 @@ against its expected issuer and allowed keys. This is signature evidence, not an
 authorization or token-acceptance decision. Key rotation during the same analysis
 requires a new scan.
 
-See the [consolidated hardening log](https://github.com/aisecnomad/Project-Nexus/blob/main/archive/reviews/consolidated-review-2026-09-24.md)
+See the [consolidated hardening log](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/archive/reviews/consolidated-review-2026-09-24.md)
 for the maintainer's verification notes and implementation choices. It is an
 internal, AI-assisted work log, not an independent review.
 
-The [round 2 production review](https://github.com/aisecnomad/Project-Nexus/blob/main/archive/reviews/production-review-2026-09-24-round2.md), also an
+The [round 2 production review](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/archive/reviews/production-review-2026-09-24-round2.md), also an
 internal AI-assisted work log rather than an independent review, records
 the later verified corrections to export sanitization, Bedrock/IAM/OCI collection,
 JWT classification, gateway detection and report rendering performance.

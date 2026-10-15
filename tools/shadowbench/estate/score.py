@@ -113,7 +113,7 @@ from statistics import median
 from typing import Any
 
 from tools.shadowbench.estate import taxonomy
-from tools.shadowbench.estate.corpus import CorpusError, Entity, EstateCorpus, open_regular
+from tools.shadowbench.estate.corpus import CorpusError, Entity, EstateCorpus, open_regular, parse_unit
 
 _ROUND = 4
 _UNIT_KINDS = ("code", "home")
@@ -292,7 +292,7 @@ def row_predictions(row: dict[str, Any]) -> list[dict[str, Any]]:
     targets, malformed = _recorded_targets(row)
     predictions: list[dict[str, Any]] = []
     for index, raw in enumerate(row.get("predictions", [])):
-        prediction = {**dict(raw), "unit": row.get("unit", ESTATE_UNIT)}
+        prediction = {**dict(raw), "unit": row.get("unit")}
         prediction.pop(SCAN_TARGET, None)
         if malformed:
             prediction[SCAN_TARGET] = NO_TARGET
@@ -526,7 +526,7 @@ def _completeness(
     complete_units: set[str] = set()
     result = Completeness([], set(), set())
     for row in rows:
-        unit = str(row.get("unit", ESTATE_UNIT))
+        unit = str(row.get("unit"))
         reason = incomplete_reason(row)
         if reason is None:
             complete_units.add(unit)
@@ -537,7 +537,7 @@ def _completeness(
                 result.commands += 1
                 if command.get("ok") is True and command.get("exit_code") not in (0, None):
                     result.accepted_nonzero += 1
-    seen = {str(row.get("unit", ESTATE_UNIT)) for row in rows}
+    seen = {str(row.get("unit")) for row in rows}
     # Only an `estate` row covers every code and home unit; a live-sim row covers none.
     if ESTATE_UNIT not in seen:
         for entity in corpus.entities:
@@ -765,6 +765,40 @@ def malformed_provenance(manifest: Mapping[str, Any]) -> str | None:
     return None
 
 
+def plain_unit(value: object) -> bool:
+    """True for a run unit the scorer accepts: `sim`, `estate`, `code:<name>` or `home:<name>`."""
+    if value == SIM_UNIT:
+        return True
+    if not isinstance(value, str):
+        return False
+    try:
+        parse_unit(value)
+    except CorpusError:
+        return False
+    return True
+
+
+def malformed_row(rows: list[Any]) -> str | None:
+    """Why runs.json's result rows cannot be scored, or None.
+
+    Every row names its tool and a valid unit, and no (tool, unit) pair
+    repeats: a row without a unit is not a whole-estate run, and a repeated
+    row would count its unattributed predictions twice.
+    """
+    seen: set[tuple[str, str]] = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict) or not isinstance(row.get("tool"), str) or not row["tool"]:
+            return f"row {index} has no tool"
+        if not plain_unit(row.get("unit")):
+            return f"row {index} has no valid unit"
+        key = (row["tool"], row["unit"])
+        if key in seen:
+            # repr() keeps a control character in a recorded tool name off the terminal.
+            return f"row {index} repeats {key[0]!r} on {key[1]}"
+        seen.add(key)
+    return None
+
+
 def score_all(
     corpus: EstateCorpus,
     manifest: dict[str, Any],
@@ -774,12 +808,16 @@ def score_all(
     """Score every tool in `specs` that the run did not skip; `services` is as `load_services` reads it.
 
     The run's provenance fields are copied as recorded when present; a
-    malformed one stops scoring (CorpusError) rather than reaching the metrics.
+    malformed one, a row without a tool or valid unit, or a repeated (tool,
+    unit) row stops scoring (CorpusError) rather than reaching the metrics.
     """
     malformed = malformed_provenance(manifest)
     if malformed is not None:
         raise CorpusError(f"runs.json: the {malformed} record is malformed")
     runs = list(manifest.get("results", []))
+    bad_row = malformed_row(runs)
+    if bad_row is not None:
+        raise CorpusError(f"runs.json: {bad_row}")
     expected_by_surface: dict[str, int] = defaultdict(int)
     for entity in corpus.by_class("positive"):
         expected_by_surface[entity.surface] += len(entity.expected)

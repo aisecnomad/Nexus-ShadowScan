@@ -7,7 +7,7 @@ The maintainer is accountable for project decisions, merge authority, releases,
 security advisories and repository administration. Contributors are welcome;
 there is currently no foundation, governing board or independent review team.
 
-The detailed [review and merge policy](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md#review-and-merge-policy)
+The detailed [review and merge policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#review-and-merge-policy)
 is authoritative. The merge policy requires one approving
 review from someone with write access, an up-to-date branch and passing
 `CI gate`, `test (3.11)`, `test (3.12)` and `analyze` checks before a pull request can
@@ -24,13 +24,13 @@ advisory, not an approval. Independent human review is also required before any
 tagged release.
 
 Repository settings may change. Consult the
-[live repository rules](https://github.com/aisecnomad/Project-Nexus/rules) and the
-[verification commands](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/production.md#merge-gate-and-review-status)
+[live repository rules](https://github.com/aisecnomad/Nexus-ShadowScan/rules) and the
+[verification commands](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#merge-gate-and-review-status)
 before relying on enforcement. The versioned policy requires no bypass actors.
 The 2026-10-10 readback listed four `always` bypass actors on both rulesets,
 the repository administrator role and three integrations, so an administrator
 can merge without the non-author approval until they are removed. A ruleset
-only blocks anything while it is enabled. The [versioned policy and verification procedure](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/merge-policy.md)
+only blocks anything while it is enabled. The [versioned policy and verification procedure](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/merge-policy.md)
 require the complete CI gate, final-push approval and an empty bypass list;
 applying that policy needs repository administration access. Do not weaken it,
 bypass review or checks, or count a green workflow as an independent review.
@@ -38,7 +38,7 @@ The release-evidence workflow reads the live ruleset back and verifies it
 before building a candidate; a prepared settings update is not evidence that
 an administrator applied it. Proposed updates for both existing rulesets,
 including removal of the bypass actors, are prepared under
-[.github/rulesets](https://github.com/aisecnomad/Project-Nexus/tree/main/.github/rulesets).
+[.github/rulesets](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/.github/rulesets).
 The observed snapshots there record the 2026-10-10 readback, on which
 `tools.governance_check` fails with `bypass_actors_not_empty`; merging those
 files does not activate them.
@@ -63,7 +63,7 @@ produced a change cannot supply its independent approval.
   maintenance cost before implementation.
 - **Architecture and trust boundaries:** discuss options in an issue and record
   the accepted rationale in an
-  [architecture decision record](https://github.com/aisecnomad/Project-Nexus/tree/main/docs/adrs).
+  [architecture decision record](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/docs/adrs).
   The maintainer makes the final decision after considering the discussion.
 - **Security changes:** use private security reporting where public details
   would expose users. Document the resulting policy and compatibility changes
@@ -76,7 +76,7 @@ State relevant conflicts of interest. A disputed technical decision can be
 revisited in the original issue with new evidence, alternatives or a narrower
 proposal. Record the rationale for accepting, rejecting or deferring significant
 changes so future contributors can understand it. Conduct concerns follow the
-[Code of conduct](https://github.com/aisecnomad/Project-Nexus/blob/main/CODE_OF_CONDUCT.md),
+[Code of conduct](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CODE_OF_CONDUCT.md),
 not a technical vote.
 
 ## Path to additional maintainers
@@ -97,7 +97,7 @@ Examples of low-effort, high-value contributions:
 - **Maintenance**: investigate CI failures, update dependencies, or improve tooling
 
 To express interest, open an issue titled `Maintainer interest` with your background
-and areas of focus. See the [maintainer roster](https://github.com/aisecnomad/Project-Nexus/blob/main/MAINTAINERS.md)
+and areas of focus. See the [maintainer roster](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/MAINTAINERS.md)
 for the current team.
 
 ### Reviewer role
@@ -166,8 +166,8 @@ When a reviewer or maintainer steps away:
    revision does not cover later changes. Retain the review record and re-review
    any changes made after approval.
 4. Run the `Release candidate evidence` workflow against the reviewed main
-   commit. It builds the wheel, records source identity and dependency pins,
-   and attests provenance and the SBOM.
+   commit. It builds the sdist and the wheel from it, records source identity
+   and dependency pins, and attests provenance and the SBOM.
 5. Verify required acceptance evidence for the intended deployment scope,
    including authorized live tenant checks where applicable. Offline tests,
    provenance and an AI-labeled corpus do not establish live tenant acceptance.
@@ -175,9 +175,9 @@ When a reviewer or maintainer steps away:
    candidate as a separate manual action: push an annotated tag `v<version>` on the
    reviewed commit, dispatch the evidence workflow again with `publish: pypi`,
    and approve the protected `pypi` environment. The workflow uploads only the
-   attested wheel through PyPI trusted publishing and never publishes on its
-   own; the
-   [publishing runbook](https://github.com/aisecnomad/Project-Nexus/blob/main/docs/operations/publishing.md)
+   attested wheel and sdist through PyPI trusted publishing and never publishes
+   on its own; the
+   [publishing runbook](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/operations/publishing.md)
    has the steps.
 
 Personal signatures on release tags are optional. The default path uses an
@@ -200,10 +200,10 @@ notes as third-party audits.
 ## Community policies
 
 Participation follows the
-[Code of conduct](https://github.com/aisecnomad/Project-Nexus/blob/main/CODE_OF_CONDUCT.md).
-Use the [support guide](https://github.com/aisecnomad/Project-Nexus/blob/main/SUPPORT.md)
+[Code of conduct](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CODE_OF_CONDUCT.md).
+Use the [support guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SUPPORT.md)
 for questions and the
-[security policy](https://github.com/aisecnomad/Project-Nexus/blob/main/SECURITY.md#reporting)
+[security policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#reporting)
 for private vulnerability reports. Policy changes should be proposed in a pull
 request with the reason and practical impact, following the same review process
 as other changes.

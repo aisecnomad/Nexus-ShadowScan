@@ -9,17 +9,30 @@ positional, so results recorded against another corpus (another seed, an
 edited rubric) would be scored against the wrong truth. Each ``<tool>.jsonl``
 must belong to a tool the manifest records as run (the runner never clears its
 output directory, and ``--only`` rewrites the manifest with the tools it ran,
-so files left from another run must not be scored), and the row statuses in
-the file must add up to the counts the manifest recorded for that tool (a
-truncated, swapped or missing file does not). Each of these is refused unless
-``--force`` is given, and a forced score records every override. A row with a
+so files left from another run must not be scored), the row statuses in the
+file must add up to the counts the manifest recorded for that tool (a
+truncated or missing file does not), and the file's SHA-256 must be the
+``rows_sha256`` the manifest recorded for it (an edited or swapped file is
+not). Each of these is refused unless ``--force`` is given, and a forced score
+records every override. A manifest written before the runner recorded digests,
+the committed 2026-10-11 run's among them, binds its rows only by their status
+counts, which another run of the same tool on the same corpus can match; such
+tools are listed in ``rows_unbound``. A row with a
 status other than ``ok``, ``error`` or ``unsupported``, a second row for the
 same case, a row for a case the corpus does not have, a row whose tool is not
 the file's, a row whose surface, modality, family, label or difficulty
-disagrees with its case, and an ``unsupported`` row on a (surface, modality)
-where the same tool has ``ok`` or ``error`` rows (the runner decides support
-per surface and modality) are refused, ``--force`` or not. A case with no row
-counts as an ``error`` and is also reported as missing.
+disagrees with its case, an ``out_of_taxonomy`` count that is not a
+non-negative integer or sits on a row outside the code surface, and an
+``unsupported`` row on a (surface, modality) where the same tool has ``ok`` or
+``error`` rows (the runner decides support per surface and modality) are
+refused, ``--force`` or not. A case with no row counts as an ``error`` and is
+also reported as missing, unless the tool does not run that case's surface and
+modality: its other rows there are ``unsupported``, or it has none there and
+its adapter does not declare that pair. The runner writes an ``unsupported``
+row for every such case, so a run of some surfaces or cases (``--surfaces``,
+``--cases``) left out only rows that would have been ``unsupported``, and such
+a missing row counts as ``unsupported``. A tool with no loaded adapter declares
+nothing, so its missing rows stay errors.
 
 Matching. A reported key equal to a tolerated key is neither credited nor
 penalized. Otherwise it matches an expected or decoy key when they are equal,
@@ -34,8 +47,12 @@ also counts against specificity.
 Code surface. Truth there is ``<category>:<value>`` facts from
 ``tools.discovery_benchmark.taxonomy``. A reported code key that is not such a
 fact (for example a file path an adapter could not map) is out of taxonomy:
-neither a true nor a false positive, and counted per tool. The rule is the
-same for every tool, whether its adapter drops such hits or passes them on.
+neither a true nor a false positive, and counted per tool. An adapter that
+drops such hits instead records how many in the row's ``out_of_taxonomy``,
+and they count exactly as keys passed on would. At case level an
+out-of-taxonomy report earns a positive case nothing and makes a negative case
+a false alarm, since the tool alarmed on a repository with nothing to find.
+The rule is the same for every tool.
 
 Rules. An ``error`` row (crash, timeout, unreadable output, missing row) is
 never a correct outcome: every expected entity counts as missed, its decoys
@@ -58,7 +75,8 @@ specificity and agent false-alarm denominators, whatever the row's status,
 unless the tool reports it anyway, which then counts against the tool like
 any other decoy hit; the count left out is reported as ``decoys_withheld``. A
 complete ``ok`` row on a negative case whose every decoy was withheld, and
-that reports no false positive, was shown nothing it could reject: it is
+that reports no false positive and nothing out of taxonomy, was shown nothing
+it could reject: it is
 left out of the tool's case-level negatives (``case.negatives_withheld``)
 and of the paired comparison. The declarations come from the adapter
 registry; an adapter module that does not load is refused unless ``--force``,
@@ -67,9 +85,11 @@ nothing.
 
 Case level. A positive case is found when the tool reports at least one
 expected entity; a negative case is a false alarm when the tool reports at
-least one false positive, and is correct only on a complete ``ok`` run. Case
-recall, specificity, balanced accuracy, MCC and the paired McNemar test all use
-these outcomes.
+least one false positive or anything out of taxonomy, and is correct only on a
+complete ``ok`` run. Case recall, specificity, balanced accuracy, MCC and the
+paired McNemar test all use these outcomes; ``case.out_of_taxonomy_alarms``
+counts the negative cases that are false alarms only through out-of-taxonomy
+reports.
 
 Agent tier. Among expected ``agent`` entities, agent recall is the share found
 by a report labeled ``agent``. The agent false-alarm rate is the share of
@@ -82,6 +102,7 @@ incomplete row adds only the entities it did call agents to the universe.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -106,14 +127,22 @@ ROW_FIELDS: tuple[str, ...] = ("surface", "modality", "family", "label", "diffic
 Withheld = dict[tuple[str, str], tuple[str, ...]]
 """Per (surface, modality), the key prefixes of the decoys an adapter never passes to its tool."""
 
+Support = frozenset[tuple[str, str]]
+"""The (surface, modality) pairs an adapter declares it runs."""
+
 
 class ResultsError(ValueError):
     """Stored results that cannot be scored against this corpus without misreporting."""
 
 
-def withheld_decoys(tools: Iterable[str]) -> tuple[dict[str, Withheld], list[str]]:
-    """Each tool's declared ``withheld_decoys``, and a problem for each adapter module that does not load."""
-    adapters, unloaded = load_adapters()
+def withheld_decoys(
+    tools: Iterable[str], registry: tuple[Mapping[str, Any], Mapping[str, str]] | None = None
+) -> tuple[dict[str, Withheld], list[str]]:
+    """Each tool's declared ``withheld_decoys``, and a problem for each adapter module that does not load.
+
+    ``registry`` is what ``load_adapters`` returned, loaded here when not given.
+    """
+    adapters, unloaded = registry if registry is not None else load_adapters()
     out: dict[str, Withheld] = {}
     for tool in tools:
         declared = getattr(adapters.get(tool), "withheld_decoys", None) or {}
@@ -139,6 +168,40 @@ def withheld_decoys(tools: Iterable[str]) -> tuple[dict[str, Withheld], list[str
         for module, why in sorted(unloaded.items())
     ]
     return out, problems
+
+
+def declared_support(adapter: object) -> Support | None:
+    """The (surface, modality) pairs ``adapter`` declares in ``surfaces``.
+
+    None without an adapter or without a well-formed declaration: then nothing is unsupported on its word.
+    """
+    surfaces = getattr(adapter, "surfaces", None)
+    if not isinstance(surfaces, Mapping):
+        return None
+    pairs: set[tuple[str, str]] = set()
+    for surface, modalities in surfaces.items():
+        if not isinstance(surface, str) or not isinstance(modalities, frozenset | set | tuple | list):
+            return None
+        if not all(isinstance(modality, str) for modality in modalities):
+            return None
+        pairs.update((surface, modality) for modality in modalities)
+    return frozenset(pairs)
+
+
+def missing_row_status(
+    pairs_run: Mapping[tuple[str, str], bool], support: Support | None, case: Case
+) -> Status:
+    """How a case the tool has no row for is scored: ``unsupported`` where the tool does not run.
+
+    The runner decides support per (surface, modality) and writes an ``unsupported`` row for every
+    case it does not run, so the tool's rows on the case's pair (``pairs_run``: whether they are
+    ``ok`` or ``error`` rather than ``unsupported``) say what this one would have been. With none
+    there, the adapter's declaration decides. Anything else is an ``error``.
+    """
+    where = (case.surface, case.modality)
+    if where in pairs_run:
+        return "error" if pairs_run[where] else "unsupported"
+    return "unsupported" if support is not None and where not in support else "error"
 
 
 def wilson(k: int, n: int) -> tuple[float | None, float | None, float | None]:
@@ -179,14 +242,21 @@ class CaseScore:
     """Entity-level outcome of one (tool, case); ``row`` is ``None`` when the tool has no row for it.
 
     ``withheld`` holds the key prefixes of the decoys the tool's adapter never passed to it on this
-    case's surface and modality.
+    case's surface and modality. ``missing_status`` is how a missing row is scored: an ``error``,
+    or ``unsupported`` where the tool does not run (``missing_row_status``).
     """
 
-    def __init__(self, case: Case, row: dict[str, Any] | None, withheld: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        case: Case,
+        row: dict[str, Any] | None,
+        withheld: tuple[str, ...] = (),
+        missing_status: Status = "error",
+    ) -> None:
         self.case = case
         self.missing = row is None
         if row is None:
-            row = {"status": "error", "entities": [], "incomplete": False, "seconds": 0.0}
+            row = {"status": missing_status, "entities": [], "incomplete": False, "seconds": 0.0}
         self.status = str(row["status"])
         self.incomplete = bool(row.get("incomplete"))
         # only a complete ok run can vouch for what it did not report
@@ -200,11 +270,14 @@ class CaseScore:
         self.decoy_hits: set[str] = set()
         self.agent_false_alarms: set[str] = set()
         self.out_of_taxonomy: set[str] = set()
+        self.dropped_out_of_taxonomy = 0
         self.extra = 0
         # decoys the tool was never shown; one it reports anyway is a hit, and leaves this set below
         self.withheld: set[str] = {d for d in case.decoys if withheld and d.startswith(withheld)}
         if self.status != "ok":
             return
+        # code hits the adapter could not map to a fact and dropped, counted in the row
+        self.dropped_out_of_taxonomy = int(row.get("out_of_taxonomy") or 0)
         seen: set[str] = set()
         for ent in row["entities"]:
             key = str(ent["key"])
@@ -245,6 +318,11 @@ class CaseScore:
         return len(self.decoy_hits) + self.extra
 
     @property
+    def out_of_taxonomy_reports(self) -> int:
+        """Code reports outside the fact taxonomy: keys passed on plus hits the adapter dropped."""
+        return len(self.out_of_taxonomy) + self.dropped_out_of_taxonomy
+
+    @property
     def decoy_universe(self) -> int:
         """The decoys this row is scored on: the case's, less those withheld from the tool."""
         return len(self.case.decoys) - len(self.withheld)
@@ -266,6 +344,7 @@ class CaseScore:
             and bool(self.case.decoys)
             and self.decoy_universe == 0
             and self.fp == 0
+            and not self.out_of_taxonomy_reports
         )
 
     @property
@@ -277,14 +356,17 @@ class CaseScore:
 
     @property
     def correct(self) -> bool:
-        """Case-level outcome: a positive case needs a true positive, a negative one no false positive.
+        """Case-level outcome: a positive case needs a true positive, a negative one no alarm at all.
 
         An ``error`` (or missing) row is never correct, whatever the case label, and an incomplete
-        run is never a correct negative.
+        run is never a correct negative. On a negative case an out-of-taxonomy report is an alarm
+        like a false positive, though at entity level it is neither.
         """
         if self.status != "ok":
             return False
-        return bool(self.tp) if self.case.positive else self.fp == 0 and not self.incomplete
+        if self.case.positive:
+            return bool(self.tp)
+        return self.fp == 0 and not self.out_of_taxonomy_reports and not self.incomplete
 
 
 def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict[str, Any]:
@@ -344,7 +426,7 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
         "fp": fp,
         "fn": fn,
         "tn": tn,
-        "out_of_taxonomy": sum(len(s.out_of_taxonomy) for s in ok),
+        "out_of_taxonomy": sum(s.out_of_taxonomy_reports for s in ok),
         "precision": precision[0],
         "precision_ci": precision[1:],
         "recall": recall[0],
@@ -365,6 +447,9 @@ def _aggregate(scores: list[CaseScore], reps: int = 2000, seed: int = 7) -> dict
             "positives": len(pos),
             "negatives": len(neg),
             "negatives_withheld": sum(1 for s in scored if s.blind),
+            "out_of_taxonomy_alarms": sum(
+                1 for s in neg if s.complete and s.fp == 0 and s.out_of_taxonomy_reports
+            ),
             "tp": ctp,
             "fn": cfn,
             "fp": cfp,
@@ -401,6 +486,12 @@ def _check_row(row: Any, where: str, cases: dict[str, Case], tool: str) -> dict[
             )
     if not isinstance(row.get("incomplete", False), bool):
         raise ResultsError(f"{where}: {cid}: incomplete must be true or false")
+    if "out_of_taxonomy" in row:
+        dropped = row["out_of_taxonomy"]
+        if not isinstance(dropped, int) or isinstance(dropped, bool) or dropped < 0:
+            raise ResultsError(f"{where}: {cid}: out_of_taxonomy must be a count, not {dropped!r}")
+        if case.surface != "code":
+            raise ResultsError(f"{where}: {cid}: out_of_taxonomy is for code rows only")
     entities = row.get("entities")
     if not isinstance(entities, list):
         raise ResultsError(f"{where}: {cid}: entities must be a list")
@@ -446,10 +537,12 @@ def load_rows(results: Path, corpus: Corpus) -> dict[str, dict[str, dict[str, An
 
 
 def _provenance(
-    rows: dict[str, dict[str, dict[str, Any]]], tool_runs: dict[str, Any]
-) -> tuple[set[str], list[str]]:
-    """The tools the manifest says ran, and every way the results files disagree with the manifest."""
+    rows: dict[str, dict[str, dict[str, Any]]], tool_runs: dict[str, Any], results: Path
+) -> tuple[set[str], list[str], list[str]]:
+    """The tools the manifest says ran, every way the results files disagree with it, and the
+    tools whose results file it records no digest of."""
     problems: list[str] = []
+    unbound: list[str] = []
     ran: set[str] = set()
     for name, run in tool_runs.items():
         if not isinstance(run, dict):
@@ -473,7 +566,13 @@ def _provenance(
                 f"{tool}.jsonl: row statuses {dict(sorted(found.items()))} differ from the "
                 f"{dict(sorted(recorded.items()))} the manifest recorded"
             )
-    return ran, problems
+        digest = run.get("rows_sha256")
+        path = results / f"{tool}.jsonl"
+        if digest is None:
+            unbound.append(tool)
+        elif not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            problems.append(f"{tool}.jsonl: its SHA-256 is not the one the manifest recorded ({digest})")
+    return ran, problems, unbound
 
 
 def score(
@@ -514,8 +613,9 @@ def score(
     tool_runs = manifest.get("tools", {})
     if not isinstance(tool_runs, dict):
         raise ResultsError(f"{manifest_path}: tools must be a JSON object")
-    ran, problems = _provenance(rows, tool_runs)
-    withheld, unloaded = withheld_decoys(sorted(set(rows) | ran))
+    ran, problems, unbound = _provenance(rows, tool_runs, results)
+    registry = load_adapters()
+    withheld, unloaded = withheld_decoys(sorted(set(rows) | ran), registry)
     for problem in problems + unloaded:
         refuse_unless_forced(problem)
     out: dict[str, Any] = {
@@ -523,6 +623,7 @@ def score(
         "corpus_sha256_now": corpus_sha256,
         "corpus_mismatch_forced": recorded != corpus_sha256,
         "forced": forced,
+        "rows_unbound": unbound,
         "generator_digest": corpus.generator_digest,
         "manifest": {k: v for k, v in manifest.items() if k != "tools"},
         "tool_runs": tool_runs,
@@ -539,11 +640,20 @@ def score(
             "modalities": sorted({c.modality for c in cs}),
         }
     all_scores: dict[str, dict[str, CaseScore]] = {}
-    # a forced score of a tool the manifest says ran but whose rows are gone scores as all missing
+    # a forced score of a tool the manifest says ran but whose rows are gone scores as all missing:
+    # errors, except on the pairs its adapter does not declare
     for tool in sorted(set(rows) | ran):
         by_case = rows.get(tool, {})
+        # load_rows refuses unsupported rows beside ok or error rows on one pair
+        pairs_run = {(r["surface"], r["modality"]): r["status"] != "unsupported" for r in by_case.values()}
+        support = declared_support(registry[0].get(tool))
         scores = {
-            c.case_id: CaseScore(c, by_case.get(c.case_id), withheld[tool].get((c.surface, c.modality), ()))
+            c.case_id: CaseScore(
+                c,
+                by_case.get(c.case_id),
+                withheld[tool].get((c.surface, c.modality), ()),
+                missing_row_status(pairs_run, support, c),
+            )
             for c in corpus.cases
         }
         all_scores[tool] = scores
@@ -610,8 +720,8 @@ def main(argv: list[str] | None = None) -> int:
         "--force",
         action="store_true",
         help="score results the manifest does not vouch for: another corpus digest, a results file for "
-        "a tool it does not record as run, or row statuses that differ from its counts (recorded in the "
-        "metrics)",
+        "a tool it does not record as run, row statuses that differ from its counts, or a results file "
+        "whose SHA-256 differs from the one it recorded (recorded in the metrics)",
     )
     args = ap.parse_args(argv)
     corpus = load_corpus(args.corpus)

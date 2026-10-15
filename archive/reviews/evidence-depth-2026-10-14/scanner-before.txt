@@ -1,0 +1,5 @@
+#!/workspace/scratch/59bbce174428/review-venv/bin/python
+import sys
+sys.path.insert(0, '/workspace/scratch/59bbce174428/nexus-baseline')
+from shadowscan.cli import main
+main()

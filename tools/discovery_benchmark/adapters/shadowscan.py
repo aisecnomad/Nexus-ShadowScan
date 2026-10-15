@@ -225,4 +225,6 @@ class ShadowScanAdapter:
                 mapped.append({"kind": kind, "resource": resource, "facts": sorted(facts)})
                 result.facts.update(facts)
         result.detail["mapped"] = mapped[:400]
+        # every finding that yielded no fact, credential findings included (the cases track counts them)
+        result.detail["unmapped"] = result.raw_count - len(mapped)
         return result

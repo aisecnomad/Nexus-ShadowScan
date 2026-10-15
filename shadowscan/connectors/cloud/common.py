@@ -335,6 +335,12 @@ def done(finding: Finding, index: SignatureIndex, kind: Kind) -> Finding:
 
 
 def name_hint(index: SignatureIndex, finding: Finding, *names: str | None) -> None:
+    """Match resource names and descriptions at half weight.
+
+    An ambiguous product name (Gemini) stays a possible-product hint under
+    ``metadata.potential_frameworks`` until a non-name signal corroborates it;
+    an unambiguous one (a description naming Anthropic Claude) establishes it.
+    """
     for n in names:
         if n:
             apply_matches(finding, index.match_name(str(n)), weight_scale=0.5)

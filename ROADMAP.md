@@ -37,7 +37,7 @@ a contract. Items move only when they keep the fail-closed trust model.
   process reading (`runtime.processes`) and opt-in A2A Agent Card fetches
   (`endpoint.mcp`) already exist.
 - Additional connectors on the existing surfaces, driven by
-  [connector requests](https://github.com/aisecnomad/Project-Nexus/issues?q=label%3Aconnector-request).
+  [connector requests](https://github.com/aisecnomad/Nexus-ShadowScan/issues?q=label%3Aconnector-request).
 - Field validation of the endpoint, network and runtime connectors on real
   osquery, Zeek, VPC and EDR exports, and a measured evaluation of LLM triage
   verdicts before anyone relies on them.

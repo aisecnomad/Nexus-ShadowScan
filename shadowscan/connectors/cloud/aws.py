@@ -43,6 +43,7 @@ from shadowscan.connectors.base import (
     _non_negative_limit,
     _positive_limit,
 )
+from shadowscan.connectors.cloud.aws_lineage import ASSUME_OPERATIONS, CloudTrailLineage, normalize_detail
 from shadowscan.connectors.cloud.aws_registry import (
     AGENT_REGISTRY,
     AGENTCORE_REGISTRY,
@@ -346,7 +347,37 @@ _CLOUDTRAIL_TEXT_FIELDS = (
     "sourceIp",
     "eventTime",
     "_region",
+    "eventSource",
 )
+
+
+# CloudTrail event sources whose API calls the caller tally counts, as every
+# cloudtrail-event record did before session lineage. Only CLOUDTRAIL_EVENTS
+# carry a session trace; a normalized record without a source is one of those.
+_LLM_EVENT_SOURCES = frozenset(
+    {
+        "bedrock",
+        "sagemaker",
+        "q",
+        "qbusiness",
+        "qapps",
+        "qdeveloper",
+        "qconnect",
+        "codewhisperer",
+        "wisdom",
+        "lex",
+        "kendra",
+    }
+)
+
+
+def _is_llm_event(rec: dict[str, Any]) -> bool:
+    """Whether a CloudTrail event is an AI-service call the caller tally counts."""
+    source = rec.get("eventSource")
+    if not source or not isinstance(source, str):
+        return rec.get("eventName") in CLOUDTRAIL_EVENTS
+    service = source.partition(".")[0].lower()
+    return service in _LLM_EVENT_SOURCES or service.partition("-")[0] in {"bedrock", "sagemaker"}
 
 
 def _action_has_ai_scope(action: str, resource_services: set[str] | None = None) -> bool:
@@ -1529,6 +1560,8 @@ class AwsConnector(BaseConnector):
         invalid_account = False
         failure: Exception | None = None
         callers: dict[str, dict[str, Any]] = {}
+        untraced = 0
+        lineage = CloudTrailLineage(self.ctx.warn)
         dispatch = RecordDispatch(self, "account", "cloudtrail-event")
         self._registry_tainted = False
         received = 0
@@ -1552,10 +1585,26 @@ class AwsConnector(BaseConnector):
                             raise ValueError("account")
                         accounts.add(account)
                     elif kind == "cloudtrail-event":
+                        if "userIdentity" in rec:
+                            rec = normalize_detail(rec, rec.get("_region"))
                         for field in _CLOUDTRAIL_TEXT_FIELDS:
                             if rec.get(field) is not None and not isinstance(rec[field], str):
                                 raise ValueError("event field")
-                        self._acc_caller(callers, rec)
+                        # Only a named operation outside the collected set is
+                        # ignored; an event without its name is malformed.
+                        if not rec.get("eventName"):
+                            raise ValueError("event field")
+                        if rec.get("eventName") in ASSUME_OPERATIONS:
+                            lineage.add(rec)  # STS context for callers, never a caller itself
+                        elif not _is_llm_event(rec):
+                            continue  # an ordinary service event in a full trail export
+                        elif rec.get("eventName") not in CLOUDTRAIL_EVENTS:
+                            # Counted for its caller as before lineage existed; only the
+                            # listed operations carry a session trace.
+                            untraced += 1
+                            self._acc_caller(callers, rec)
+                        elif lineage.add(rec):
+                            self._acc_caller(callers, rec)
                     else:
                         f = dispatch.handlers[kind](rec)
                         if f:
@@ -1569,6 +1618,12 @@ class AwsConnector(BaseConnector):
         if not self.offline and received < self._registry_inputs:
             # The export rejected a record collection produced, so analysis never saw it.
             self._registry_tainted = True
+        if untraced:
+            self.ctx.warn(
+                f"cloud.aws: {untraced} CloudTrail AI event(s) outside the lineage operation list "
+                "counted for callers without session lineage",
+                incomplete=False,
+            )
         expected_account = self.account  # configured offline, or verified by live STS
         if expected_account is not None:
             accounts.add(expected_account)
@@ -1581,7 +1636,9 @@ class AwsConnector(BaseConnector):
         for key, agg in callers.items():
             self.ctx.check_deadline()
             try:
-                pending.append(self._caller_finding(key, agg))
+                finding = self._caller_finding(key, agg)
+                finding.metadata["cloudtrail_lineage"] = lineage.for_principal(key)
+                pending.append(finding)
             except RECORD_ERRORS:
                 self.ctx.warn("cloud.aws: invalid aggregated caller fields")
         for f in pending:
@@ -3111,23 +3168,20 @@ def _cloudtrail_record(ev: dict[str, Any], region: str) -> dict[str, Any] | None
     """
     try:
         detail = strict_json_loads(ev.get("CloudTrailEvent") or "{}")
+        if not isinstance(detail, dict):
+            return None
+        return normalize_detail(
+            {
+                **detail,
+                "eventID": detail.get("eventID") or ev.get("EventId"),
+                "eventName": detail.get("eventName") or ev.get("EventName"),
+                "eventTime": detail.get("eventTime") or _optional_str(ev.get("EventTime")),
+                "eventSource": detail.get("eventSource") or ev.get("EventSource"),
+            },
+            region,
+        )
     except (ValueError, RecursionError):
         return None
-    ident = detail.get("userIdentity") or {}
-    return {
-        "_kind": "cloudtrail-event",
-        "_region": region,
-        "eventName": ev.get("EventName"),
-        "eventTime": str(ev.get("EventTime")),
-        "eventSource": ev.get("EventSource"),
-        "principal": ident.get("arn") or ident.get("principalId"),
-        "identityType": ident.get("type"),
-        "userAgent": detail.get("userAgent"),
-        "sourceIp": detail.get("sourceIPAddress"),
-        "modelId": (detail.get("requestParameters") or {}).get("modelId")
-        or (detail.get("requestParameters") or {}).get("agentId"),
-        "errorCode": detail.get("errorCode"),
-    }
 
 
 def _bedrock_malformed_functions(ags: list[Any]) -> int:

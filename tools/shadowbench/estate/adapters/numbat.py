@@ -67,8 +67,10 @@ class NumbatAdapter:
         agents = out / "agents.json"
         lines = [
             # `agents` exits 1 when no agent artifacts exist under HOME; an empty
-            # inventory is a valid result, so only a missing/empty file fails.
+            # inventory is a valid result. Any other non-zero status is a failure
+            # even when it printed something, and a missing/empty file fails too.
             sh_command((binary, "agents", "--format", "json"), stdout=agents) + "; status=$?",
+            'case "$status" in 0|1) ;; *) exit "$status" ;; esac',
             f'[ -s {shlex.quote(str(agents))} ] || exit "$status"',
             sh_command(
                 (binary, "scan", "--emit", "all"), stdout=out / "scan.ndjson", stderr=out / "scan.err"

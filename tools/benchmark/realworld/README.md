@@ -1,4 +1,4 @@
-# Real-world Shadow-AI discovery benchmark
+# Sampled real-world repositories benchmark (326)
 
 Runs open-source Shadow-AI / agent-discovery tools on **real public repositories** (GitHub and GitLab)
 and measures how often they notice LLM, agent, MCP and coding-agent integrations, and how often they raise

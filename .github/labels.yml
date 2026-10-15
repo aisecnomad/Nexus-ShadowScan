@@ -2,18 +2,11 @@
 #
 # The Labels workflow (.github/workflows/labels.yml) creates or updates every
 # label listed here on each push to main that changes this file; it never
-# deletes a label. Issue forms under .github/ISSUE_TEMPLATE/ may only apply
-# labels that exist here (tests/test_repository_policy.py checks this).
+# deletes a label. Issue forms, dependabot.yml and stale.yml may only apply or
+# exempt labels that exist here (tests/test_repository_policy.py checks this).
+# Retire a label by removing it here and deleting it in the repository by hand.
 
 # Type
-- name: "ai-review: blocked"
-  color: "b60205"
-  description: Maintainer block; the gate's next run on an evidence-carrying PR fails (review stays a comment).
-
-- name: "ai-review: high-risk"
-  color: "d93f0b"
-  description: Require additional security evidence; never an approval override.
-
 - name: bug
   color: "d73a4a"
   description: Something is not working correctly.
@@ -105,10 +98,31 @@
   color: "006b75"
   description: Exempt from stale-issue automation.
 
+# Resolution (GitHub's defaults, kept so the sync owns their wording)
+- name: duplicate
+  color: "cfd3d7"
+  description: Duplicates an existing issue or pull request; the closing comment links it.
+
+- name: invalid
+  color: "e4e669"
+  description: Not a valid report or change, for example a pull request that must not merge as is.
+
+- name: wontfix
+  color: "ffffff"
+  description: Will not be worked on or merged; the closing comment gives the reason.
+
 # Pull request triage
+- name: breaking-change
+  color: "b60205"
+  description: Changes CLI, configuration, output, exit-code or finding-identity behavior users rely on.
+
+- name: do-not-merge
+  color: "000000"
+  description: Must not merge yet; the pull request states what it waits for.
+
 - name: coding-assistant
   color: "5319e7"
-  description: Opened by a coding assistant (Claude Code or Copilot) for a maintainer; not independent review.
+  description: Written by a coding assistant (Claude Code, Codex or Copilot); not independent review.
 
 - name: "review: coding-assistant"
   color: "d4c5f9"
@@ -161,6 +175,15 @@
 - name: community
   color: "bfdadc"
   description: Community health files, templates and contributor guidance.
+
+# AI review gate (docs/security/ai-review-gate.md)
+- name: "ai-review: blocked"
+  color: "b60205"
+  description: Maintainer block; the gate's next run on an evidence-carrying PR fails (review stays a comment).
+
+- name: "ai-review: high-risk"
+  color: "d93f0b"
+  description: Require additional security evidence; never an approval override.
 
 # Dependencies
 - name: dependencies

@@ -5,6 +5,743 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Redaction review fixes, second round (October 14)
+
+- `sanitize` keeps every container of a record a container of its type. A
+  mapping whose keys read alike once their credentials are withheld in one
+  of its two readings and not in the other (`SSWS a--auth` and `SSWS b`)
+  was withheld as one string: agent definition front matter lost
+  `description`, `tools`, `model` and `permissionMode` while the scan stayed
+  complete (exit 0), an agent card with such keys stopped its analysis with
+  an `AttributeError`, and a finding with such keys in its metadata or
+  evidence attributes failed to report. Each reading now keeps a copy of
+  every member of the source mapping, so the readings pair up member by
+  member; only members both readings keep are shown, and a key two members
+  share keeps one value, as the earlier rules kept it. Readings that do not
+  pair up raise a sanitization limit error (scan incomplete, exit 3)
+  instead of changing a container into a string.
+- A run that starts the line after a name glued to a `Bearer`, `Basic` or
+  `SSWS` credential that stays beside it (`<token>--token`,
+  `<token>--password`, `<token>--auth`, `<token>--cookie`) is examined like
+  any run that starts a later line. The step that withholds the runs
+  resumed after the kept name and never read the next line, so a value the
+  passes read once that run goes (`<token>--token` then
+  `=abc.def = password: <value>` on the next line) was shown: after
+  `--auth` or `--cookie` until the next sanitization, after `--token` or
+  `--password` on every one. Such a text now withholds the value on the
+  first sanitization, and sanitizing it again changes nothing. In a chain
+  of lines that each start with a run, each run still goes in its own
+  reading, and the rest of a chain longer than three now goes at once before
+  one more reading: the value after the fourth run of a chain was withheld
+  only on the next sanitization, and the value after the fifth on none.
+- Correction to the October 14 redaction notes: in a text with no run
+  glued to the credential, a run at the start of a later line that holds a
+  value (`--http1.1 https://...`, `--max-time=30`, `--tlsv1.2`) was not
+  "still removed, as before". The earlier rules showed it; the October 14
+  change removed it with no marker, so an excerpt lost a curl option and
+  did not show that anything was withheld. Such a run stays withheld (the
+  current rules never show what they withheld), now with a marker in its
+  place, as in a text with a glued run: `Bearer <token>` then
+  `--max-time=30` reads `Bearer [REDACTED]` then `[REDACTED]`. A run that
+  is only a name or separator (`--verbose`, `---`) is still kept.
+
+### Whole-branch review fixes (October 14)
+
+An agent-run review of the integrated branch found these defects; each was
+reproduced before it was fixed and verified again after. The bundled
+evaluation corpora make no new prediction changes.
+
+Cross-checked against an independent parallel integration of the same pull
+requests, which found three more defects, fixed here with its regression
+tests: a CloudTrail AI-service event outside the lineage operation list
+(InvokeModelWithBidirectionalStream, Retrieve, ApplyGuardrail,
+InvokeEndpointAsync and the like) was silently skipped in offline exports —
+it now counts for its caller with a disclosed untraced warning, while only
+the listed operations carry a session trace; CloudTrail's display-format STS
+expirations ("Jan 20, 2024, 3:16:07 PM") were misread, silently unlinking
+the session — they are parsed first now, and an unreadable expiration is a
+disclosed invalid-timestamp gap; and n8n's registered openAiAssistant node
+now classifies its workflow as an agent. The same comparison carried an n8n
+sink and trigger registry keyed by the node type and operation names n8n
+declares, so email, database and messaging writes establish egress roles by
+declared operation.
+
+#### ShadowBench
+
+- Cases runner: after a stage, hard links, FIFOs, sockets and device nodes
+  in `work/` are removed instead of handed to root. A tool running as uid
+  65534 could hard link another account's file (any file it may read and
+  write) into `work/`, and the runner then made root its owner and the
+  adapter read it as root. Regular files and symlinks with a single link are
+  still handed to root, escaping symlinks are still swept, and the row's
+  note counts everything removed.
+- Cases scoring: a case with no row on a surface and modality the tool does
+  not run (its other rows there are `unsupported`, or it has none there and
+  its adapter does not declare the pair) counts as `unsupported`, as the row
+  the runner writes there would, instead of an in-scope error. Scoring a run
+  of some surfaces or cases (`--surfaces`, `--cases`) no longer charges a
+  tool with errors on surfaces it never runs or lists them as covered. A
+  missing row anywhere else, or for a tool without a loaded adapter, is
+  still an error. The committed 2026-10-11 metrics and report are unchanged.
+
+#### Correlation
+
+- Correlation compares Azure resource IDs case-insensitively, as Azure
+  Resource Manager does: a role assignment whose scope ARM returns lowercased,
+  or a diagnostic-log resource ID in upper case, links exactly to the listed
+  resource again. Only ASCII letters fold, and findings keep the spelling they
+  reported; ARNs, GCP names and OCIDs are still compared byte for byte.
+- Correlation treats a GCP service account address
+  (`<name>@<domain>.gserviceaccount.com`, bare or in
+  `projects/<project>/serviceAccounts/<address>`) as one global identifier: a
+  Vertex AI caller in one project links exactly to the service account another
+  project defines, where a declared project conflict used to block even a
+  review candidate. Lookalike addresses outside `gserviceaccount.com`, or with
+  upper-case letters, stay local identifiers in their project. Google-managed
+  accounts that many projects share (`@system.gserviceaccount.com`,
+  `@firebase-sa-management.iam.gserviceaccount.com`) link nothing.
+- Correlation no longer reads repository paths under `projects/` as GCP
+  resource names: two monorepos that both hold `projects/api/src/main.py` were
+  linked as one GCP resource. From a code finding, a `projects/` value is a GCP
+  resource name only with a valid project id or number, a GCP collection after
+  it, no `:<line>` suffix and no source-file extension on its last segment
+  (`projects/support-bot/agent/main.py` is a file); other findings' GCP names
+  parse as before.
+- A declared scope value that correlation cannot compare (redacted, padded, or
+  with wildcard characters, as a Notion workspace display name such as
+  `Acme [EU]` has) still refuses every identifier link for its finding, but no
+  longer removes the finding from name review candidates.
+- `identity.entra`: findings replayed from an export whose coverage marker
+  names another tenant than `tenant_id`, or no tenant, carry
+  `metadata.account_attributed: false`. Their `account` still names
+  `tenant_id` (finding ids are unchanged), but correlation no longer takes it
+  as the records' Entra tenant, so an application id equal to one of the
+  configured tenant's Teams bots is a review candidate,
+  not an exact link.
+
+#### Evidence analysis
+
+- Lockfile inventory: a pnpm package from a git, tarball, URL or local
+  source is inventoried by name with `version: null`, its source kind and a
+  limitation instead of being dropped. An AI package locked only from such a
+  source (directly or transitively) previously left an empty, complete scan;
+  it now produces a `lockfile-inventory` finding. An entry whose name cannot
+  be told is still reported as `unsupported pnpm package key` (security220-1).
+- Instruction audit (`SKILL.md` body and front matter, MCP tool
+  descriptions): a line over 4,096 characters is audited sentence by
+  sentence instead of only at its two 4,096-character ends, so an
+  instruction in the middle of a long line is reported (and an MCP tool
+  gets `tool-poisoning`). Only a single sentence over 4,096 characters is
+  still audited at both ends and marks the audit `partial`. Quoted spans are
+  removed with a linear scan, so a long line of unmatched curly quotes no
+  longer costs quadratic time (security220-2).
+- `runtime.processes` inspection: `ESRCH` is `not_applicable` only for a
+  zombie with no threads left (state `Z`/`X`, `num_threads` 1). A process
+  whose leader thread exited while other threads run (state `Z`,
+  `num_threads` above 1) showed an empty maps and descriptor read and
+  `ESRCH` on `environ`, and was reported as a complete, empty inspection;
+  those sources, and `ESRCH` from a process in any other state, are now
+  `unreadable` and leave the scan incomplete (exit 3) (security220-3).
+- `code.filesystem` with `inspect_model_artifacts`: a link with an artifact
+  suffix to a scanned artifact with the same suffix in the same project and
+  test classification (`latest.gguf` to `model-q4.gguf`) no longer makes the
+  scan incomplete; the target is inventoried at its real path. Links to
+  artifacts outside the root, in excluded directories, under test paths or
+  with another suffix remain gaps (C220-2).
+- `endpoint.mcp`: invisible operators (U+2061-U+2064) and bidirectional
+  isolates (U+2066-U+2069) in a tool description now raise `tool-poisoning`,
+  like the other invisible and bidirectional controls; they previously added
+  only `invisible-text`. The rule uses the instruction audit's invisible set
+  (C220-3).
+- `endpoint.mcp` instruction audit: a tool description that starts with a
+  `---` line is audited as text, not as `SKILL.md` YAML front matter. The
+  lines after it (other than `name` and `description`) were not audited, and
+  a leading `---` without a closing one marked the scan incomplete (C220-4).
+
+#### Connectors
+
+- Cloud: an offline `cloud.aws` `cloudtrail-event` record with no `eventName`
+  (absent, `null` or empty) is malformed, not an ignored non-AI operation: it
+  is skipped with a warning and the scan is incomplete (exit 3). A named
+  operation outside the collected set is still ignored. (C220-1)
+- Low-code: n8n node types that put `Mcp` or `MCP` after another word
+  (`githubMcpClient`, `acmeMcpTool`, `zapierMcp`) are MCP AI steps;
+  `mcp9808`, `smcp` and `SMCP` words still are not. (F7)
+- Low-code: the n8n HTTP model-call rule reads the method from `method`
+  (HTTP Request v3 and later) or `requestMethod` (v1 and v2), and reads an
+  expression-mode URL (`=https://...{{ $json.u }}`) without its leading `=`;
+  a host written as an expression is never classified. (F8)
+- Low-code: an n8n POST to a bare `/chat/completions` on a host that is not a
+  known model host counts with the same corroboration as `/v1/messages`
+  (an `anthropic-version` header, or a body with `model` and `messages`,
+  `prompt` or `input`); a bare `/messages`, `/responses` or `/completions`
+  still never counts. (F18)
+- Gateway: in text access logs, a server-written single-label or IPv4
+  `host=` token (`host=tgi:8080`, `host=10.20.0.5:8080`) matches a declared
+  `internal_model_hosts` entry, as it already did in JSON logs; undeclared, it
+  is named in the advisory and an undeclared `localhost:11434` keeps the
+  Ollama-route rule. Self-hosted-route requests with no logged host are
+  counted in the same advisory instead of being dropped without a
+  diagnostic. (F9)
+- Gateway: `internal_model_hosts` accepts one hostname as a string (YAML or
+  `--set internal_model_hosts=host`), and `shadowscan gateway` takes a
+  repeatable `--internal-model-host`; unset sources keep their finding
+  ids. (F15)
+- Kubernetes: items of a raw API list (`kubectl get --raw /api/v1/pods`), which
+  the API server sends without `kind`, take the kind their typed `List` names
+  (`PodList` items are Pods) and are analyzed, including on a chunked page
+  that stays incomplete. An object without a `kind` anywhere else, or with a
+  non-string or empty `kind`, makes the scan incomplete instead of being
+  skipped silently. (F10)
+- Kubernetes: `nvidia.com/gpu` counts only when it is a resource quantity
+  above zero; `0` and `"0"` no longer make a GPU workload, and a value that is
+  not a quantity makes the scan incomplete. (F19)
+- Docs: the production notes quote the Kubernetes "workload has malformed
+  container command" and "... container args" warnings as emitted. (F20)
+
+#### Documentation
+
+- Benchmark documentation: the README's estate row says the labels were
+  frozen after a label-completeness pass in which every runnable tool ran once
+  (it said "before any tool ran"), and the README, the ShadowBench README, the
+  estate README and the deployment guide say that ShadowScan's detection rules
+  were changed with the 2026-10-11 estate run's errors in view, so a later
+  ShadowScan run on that estate is in-sample. Consistency tests pin both
+  statements.
+- Operator documentation: the deployment guide and the bounded-evidence entry
+  now say which network record defects withhold flow attribution (a malformed
+  context outside VPC flow records, an invalid JA4 value, an answer list over
+  32, a record without a usable client) and that a malformed TTL or timestamp
+  withholds nothing. `RELEASE_NOTES.md` "Before you upgrade" now lists the
+  October 14 finding-id changes (Atlassian sites, Kubernetes names over 160
+  characters, `gateway.logs` `internal_model_hosts`) and the new exit-3 cases.
+
+### Bounded evidence analysis across connectors (October 14)
+
+Carried from #220 with the review fixes below. The bundled evaluation corpora
+give the same predictions before and after. The new tests are author-written
+synthetic fixtures; they establish implementation behavior, not independent
+review, live tenant acceptance or production precision.
+
+Also carried, from the reviewed parts of #217: MCP tool descriptions are
+screened with the code surface's bounded instruction-content rules (hidden
+HTML-comment content, fetch-and-execute or decode-and-execute phrasing) and
+for terminal control sequences, each a tool-poisoning review candidate with
+zero-weight explanatory evidence; the `tool-name-shadowing` tag gains its
+missing threat rule (OWASP LLM01/ASI01, ATLAS AML.T0051.001) and a default
+risk weight of 10 (a default-weights change; see the migration notes);
+supported lockfiles are credential-scanned like every other read file, with
+detected values redacted and never retained in the dependency inventory; and
+the Vertex AI, Bedrock and Azure OpenAI provider signatures record their
+endpoint and IP-range source references. Live DNS enrichment stays deferred
+(#210): an offline network scan performs no DNS resolution.
+
+- Low-code: a shared bounded, cycle-safe graph core for n8n, Flowise and Dify
+  exports adds non-scoring `workflow_graph` metadata: node and edge counts,
+  role counts and an example input → AI → outbound path by node ordinal. Exact
+  node types assign graph roles only. `lowcode.n8n` and the export reader
+  report the same workflows as before, for example OpenRouter, embeddings,
+  vector-store and community MCP nodes outside the registry. A malformed or
+  over-budget graph marks coverage incomplete and sets the graph status to
+  `incomplete`, but keeps the workflow finding. A `null` n8n output slot is an
+  unconnected branch, not a defect. In `lowcode.n8n` the graph and
+  `metadata.node_count` cover the same nodes, an n8n workflow that also
+  carries Dify-like `kind`/`workflow` fields is read as n8n, and a graph that
+  fails unexpectedly affects only its own workflow. A document is a graph only
+  when its nodes identify n8n or Flowise (or it is a Dify app): a long
+  `nodes` list alone is never reported as an over-budget graph.
+- Source inventory: bounded `uv.lock` v1, Poetry 1.1/2.0/2.1, `pnpm-lock.yaml`
+  6/9 and `Cargo.lock` 3/4 parsing adds `lockfile-inventory` findings
+  (dependency inventory only, possible confidence), with direct/transitive
+  labels only where roots and edges establish them. No package manager runs.
+  A lockfile that is malformed, an unsupported version, over a limit (1,000,000
+  bytes, 4,096 packages, 16,384 edges) or a symbolic link is reported against
+  that lockfile with a fixed reason. Beside its `pyproject.toml`,
+  `package.json` or `Cargo.toml` this is a warning and the scan stays complete;
+  without that manifest the scan is incomplete, as for an unparseable manifest.
+  A pnpm package from a git, tarball or URL source is skipped and counted in a
+  limitation while the rest of the file is inventoried; a `uv.lock` package
+  without a version (a workspace member or dynamic version) is inventoried
+  with `version: null`; an integer past Python's digit limit in a TOML lockfile
+  is reported as invalid TOML.
+- Model and binary artifacts: opt-in `inspect_model_artifacts` (with
+  `model_metadata_bytes`) inventories GGUF, safetensors, ONNX envelope and
+  PyInstaller structures through confined, bounded reads. Nothing is
+  unpickled, decompressed, loaded or executed. GGUF array values (tokenizer
+  vocabularies of 32,000-256,000 entries, scores, merges) are skipped without
+  being decoded, under their own element and byte bounds, so llama.cpp models
+  are inventoried. An extensionless file is searched for a PyInstaller cookie
+  only when it starts with an ELF, PE or Mach-O header; when a root's artifact
+  budget is spent, remaining selected files are counted in one warning that
+  marks coverage incomplete, and extensionless files still get normal text
+  analysis. Symlinked Hugging Face cache entries are not followed; the source
+  guide documents that gap.
+- `SKILL.md` files and MCP tool descriptions get a bounded static sentence
+  audit with fixed rule explanations and line numbers, and quoted-example and
+  prohibition controls. For MCP tools it is additional, zero-weight signal: the
+  existing `tool-poisoning` rules still apply unchanged, including to
+  documentation URLs and tool references, and an audit indicator can also
+  raise the tag. The `SKILL.md` audit also covers the front matter `name` and
+  `description`. A line over 4,096 characters is audited in its first and last
+  4,096 characters and marks the audit `partial`, not the scan incomplete.
+  Oversized text (over 64 KiB), malformed front matter and unclosed fences
+  mark coverage incomplete.
+- Runtime: opt-in Linux `inspect_maps`, `inspect_fds` and `inspect_env_keys`
+  read bounded mapped-library names, descriptor-link extensions and
+  allowlisted environment key names, with process identity checks and
+  budgets. They never read process memory, open descriptor targets or keep
+  environment values. Kernel threads are not inspected, and a source that
+  fails with `ESRCH` while the process identity is unchanged is recorded as
+  `not_applicable` without marking coverage incomplete. A live command line
+  over 65,536 bytes is classified from its leading complete arguments,
+  recorded in `metadata.command_lines_truncated`, and leaves the scan
+  incomplete.
+- Network: DNS-to-flow attribution requires a matching client and context and
+  an answer valid at the flow time (`dns_max_ttl_seconds`, default 86,400;
+  `dns_clock_skew_seconds`, default 0). Flows are grouped per connection, with
+  their times in at most 64 buckets each, and a bucket that straddles an
+  answer's validity is not attributed. DNS answers are stored per client and
+  address as merged validity intervals, so repeated lookups use no extra
+  storage and attribution looks intervals up by bisection. A storage bound
+  withholds DNS attribution only for the affected client/address, with a
+  limitation on its findings and a warning that leaves the scan complete; the
+  Ollama port rule does not depend on DNS storage. A record defect that could
+  hide DNS or TLS evidence (a malformed context outside VPC flow records, an
+  invalid JA4 value, an answer list over 32, a record without a usable client)
+  withholds flow attribution only for the client it names, or for the whole
+  input when no client is known or the record limit is reached; a malformed
+  TTL or timestamp keeps the record with that field unknown and withholds
+  nothing. Zeek JA4
+  values are validated,
+  non-scoring context. Offline scans make no DNS or fingerprint queries. In the
+  bundled demo one finding is removed (a client borrowing another client's
+  expired answer: 133 to 132 findings) and Cursor's confidence drops from 0.8
+  to 0.5.
+- AWS: CloudTrail exports retain bounded event provenance and exact
+  assumed-role lineage (session ARN, issuer, creation time and lifetime, up to
+  eight hops) as non-scoring metadata. Sampling bounds (100 invocations per
+  caller, 2,000 invocations and 2,000 STS assumptions per run) mark lineage
+  `partial` without marking the scan incomplete; invalid timestamps and
+  conflicting event IDs mark it incomplete. Exact duplicate event IDs no longer
+  inflate caller counts, and offline records with other event names are
+  ignored. Live `LookupEvents` retrieves no STS events, so live lineage is
+  always unlinked.
+- Lifecycle: endpoint and process findings gain a non-scoring
+  `lifecycle_observation` with the scan's observation window, runtime coverage
+  and historical/current/unknown recency. Samples never name a finding the
+  report omits; `observations_omitted` counts them.
+
+Rescan after upgrading and keep earlier reports as historical observations;
+lower attribution is not evidence that a workload stopped. See the
+[migration notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#october-14-bounded-evidence-migration-unreleased).
+The archived implementation record under
+`archive/reviews/evidence-depth-2026-10-14/` is author-written offline evidence;
+its full before/after reports were not committed.
+
+### Detection precision, ambiguous app names and scoped correlation (October 14)
+
+Integrates the reviewed parts of three draft pull requests, #216, #203
+and #204, into one design. Rollout and migration notes are in the
+[deployment guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#october-14-detection-precision-ambiguous-app-names-and-scoped-correlation-unreleased).
+
+- Name signals can be marked `ambiguous: true`. The Google Gemini identity
+  signature uses it: a Gemini display name, publisher or description stays a
+  possible-product hint (`metadata.potential_frameworks`, tag `ai-name-hint`)
+  until a same-product domain, client ID or other non-name signal corroborates
+  it. A hint adds none of the signature's tags, capabilities or agent
+  indicator, and more generally no match that does not establish its
+  signature adds tags, so tag-based risk weights and rules can stop matching
+  findings whose technologies are only potential. The generic AI-name hint is
+  never listed as a potential product. A corroborated name keeps its full
+  weight. Every bundled ambiguous name signal must have a corroborating signal
+  type (`tests/unit/test_field_precision.py`).
+- OAuth reply and homepage URLs corroborate a product by their parsed
+  `http(s)` hostname only. Path, query, fragment and userinfo mentions and
+  lookalike hosts no longer count. URL tokens with userinfo, a backslash or a
+  control character are skipped (Python and browsers disagree about their
+  host). A field holding several URLs, such as a ServiceNow `redirect_url`,
+  is split on whitespace, and on a comma or semicolon only where a new
+  `http(s)://` URL starts and before the current URL's query or fragment, so
+  `?next=a,https://chatgpt.com/` is not a host. Domain matches are counted
+  once per app across all of its URLs.
+- An app assessed by an identity or SaaS connector with no established AI
+  product, provider, LLM-access permission, Entra agent identity or registry
+  record has its non-AI observations bounded as one correlated group at 0.35
+  (`UNATTRIBUTED_APP_MAX_WEIGHT`, `confidence_group: unattributed-app`). The
+  bound is stored in evidence weights, so merging duplicate observations
+  reproduces it, and a generic AI-name hint stays separate so it never lowers a
+  score. In the bundled demo, five findings change risk score, all within their
+  previous severity level; this change keeps the demo at 133 findings (16
+  critical, 63 high, 54 medium), and the network change in the bounded
+  evidence entry above then removes one (132 findings, 62 high).
+- Correlation: `metadata.related` holds only exact identifier links, with
+  `metadata.related_details` provenance (identifier type, fields, scope).
+  Fully qualified ARNs, GCP resource names, Azure resource IDs and OCI OCIDs
+  carry their own scope; AWS-managed policy ARNs and Bedrock foundation-model
+  ARNs, which every account shares, are not compared at all, while accountless
+  S3 bucket and Route 53 ARNs still link. An Entra application ID reported as
+  `app_id`, `client_id`, a Teams `bot_id` or an Azure Bot `msa_app_id` is one
+  identifier type that links exactly within one declared Entra tenant. Other
+  local identifiers need a shared declared tenant, workspace, cloud account,
+  subscription or project; vendor names and gateway labels are not scope.
+  Name similarity, and equal identifiers whose shared scope cannot be
+  verified, go to `metadata.related_candidates` as review hints with a
+  limitation. A declared scope conflict blocks both. Correlation is rebuilt on
+  every run, and confidence filtering prunes all three fields. In the bundled
+  demo, the three identifier links stay exact, three new same-ARN links
+  appear, and the three name or caller-label links become candidates. HTML and
+  Markdown reports show candidates on their own line, and the HTML metadata
+  dump no longer includes the provenance records.
+- `gateway.logs` has a new `internal_model_hosts` option: exact, validated
+  hostnames of internal model servers, matched with or without a logged port
+  and with no DNS lookup. It is part of the source identity only when set, so
+  default-configuration finding IDs do not change. Ollama-style (`/api/chat`,
+  `/api/generate`, `/api/tags`) and bare text-generation-inference
+  (`/generate`) routes count as model traffic only with a model field, on a
+  known or declared model host, or, for the Ollama-style routes, when no host
+  was parsed. A help-desk chat widget or a registry on a parsed non-model host
+  is no longer a caller. Requests excluded this way are reported in one
+  advisory warning (the scan stays complete) with their count and up to five
+  of the busiest hosts, pointing to `internal_model_hosts`. User agents never
+  exclude a request.
+- `cloud.kubernetes` and `cloud.openshift` recognise serving-engine names
+  (`vllm`, `ollama`, `sglang`, `llama.cpp`, `text-generation-inference`) that
+  start an image's name, its last path component without tag or digest
+  (`registry.example/ml/vllm-serving`, also digest-pinned). An engine name
+  elsewhere in the path or followed by an exporter, operator, metrics or
+  monitor role does not count, and NVIDIA Triton counts only with a
+  TensorRT-LLM or vLLM backend tag. GPUs are read from `limits` as well as
+  `requests`, and `--model org/name` arguments are recorded without their
+  values. A model argument corroborates an AI image or AI resource kind
+  (`self-hosted-model-serving` tag and evidence); with only a GPU it never
+  makes a workload an agent. A `command` or `args` field that is not a list of
+  strings makes the scan incomplete; a `null` one is unset.
+- `lowcode.n8n` treats an HTTP Request node as a model step when it POSTs to a
+  generation route on a known model host, or to a versioned or namespaced
+  route (`/v1/chat/completions`, `/v1/completions`, `/api/generate`) on a host
+  that is not a known SMS or messaging API. On such a host `/v1/messages`,
+  `/v1/responses` and `/api/chat`, which are also WhatsApp Business and
+  help-desk chat routes, count only with an `anthropic-version` header or a
+  body with `model` and `messages`, `prompt` or `input`. A bare `/messages` or
+  `/responses`, GETs and bodies on other routes never count. `mcp` in a node
+  type counts as its own token: custom `mcpClient`, `MCPServer` and
+  `mcp_bridge` nodes are AI steps, part numbers and words containing it are
+  not.
+- `lowcode.servicenow` reports a flow only with a ServiceNow AI marker or a
+  name that establishes an AI product or provider; the generic AI-name hint
+  ("Copilot" licence administration) or an ambiguous product name (a Gemini
+  account sync) no longer qualifies a flow.
+- `saas.notion` inventories a bot with an established AI product or provider,
+  or an AI-name hint in its name (a generic AI word such as "LLM Agent" or
+  "Support GPT", or an ambiguous Gemini name kept as a potential product); a
+  name whose only hint is the word "bot" does not count, since every Notion
+  integration is a bot user, and a bot's id is not matched as a name.
+  `saas.slack` matches the app ID as the app's client ID, so a rule pack can
+  bind a reviewed Slack app. Wudpecker and Tactiq are recognised as meeting
+  note-takers by name and domain (benchmark-derived: Wudpecker is the
+  ShadowBench estate positive the 2026-10-11 run missed, and Tactiq was added
+  with it). `identity.auth0` keeps a client attributed
+  only by a model provider. A GCP Cloud Run service or Cloud Function name or
+  description establishes an unambiguous product (a function described as
+  using Anthropic Claude); an ambiguous Gemini name there stays a hint.
+- Finding ids do not change, except for `gateway.logs` sources that set
+  `internal_model_hosts`.
+- Not carried from the draft pull requests, with reasons in the integration
+  commits: a global name-weight cap, signature `negative_context`, the
+  `not_ai` inventory exceptions, Okta weight cuts, per-connector confidence
+  clamps, User-Agent and audit-read gateway exclusions, the browser-only
+  AI-app recast, Kubernetes agent-named environment and model-mount
+  heuristics, the n8n graph-reachability agent rule, the Lambda Bedrock agent
+  change, a benchmark-derived Slack client ID, and Slack `assistant:write` as
+  an LLM-access scope (it designates an assistant app and grants no model
+  access).
+- The bundled evaluation corpora and the ShadowBench estate replay are
+  author-written offline inputs. They show the intended behaviour on known
+  cases; they are not measured production precision, independent review or
+  live tenant acceptance. Several of these changes (ambiguous Gemini names,
+  Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
+  serving-engine images, n8n HTTP model calls, ServiceNow flow names,
+  Wudpecker) were made with the 2026-10-11 ShadowBench estate run's
+  ShadowScan errors in view, so a ShadowScan run on that estate after them is
+  in-sample: replayed on it, seven of that run's twelve ShadowScan errors no
+  longer occur, which is no evidence of better field accuracy. Rescan and
+  rebuild comparison baselines after upgrading: signature and scanner
+  fingerprints change.
+
+### Kubernetes discovery and Atlassian approval scope (October 14)
+
+- Kubernetes and OpenShift object limits now distinguish an exhausted export
+  from unread objects, including arrays of `List` envelopes. An unread suffix
+  marks collection incomplete instead of producing a complete partial report.
+- Kubernetes resource identities retain the full object name. Names exceeding
+  the 253-character resource-name bound are rejected with incomplete coverage;
+  distinct valid names no longer merge because they share a shortened prefix.
+- CronJob analysis reads `spec.jobTemplate.spec.template.spec`, including image,
+  privilege, environment, GPU and volume evidence. Malformed nested templates
+  remain incomplete and cannot substitute an unrelated top-level template.
+- Atlassian app approvals require an explicit site/account constraint. Discovery
+  without a usable site retains its evidence with incomplete coverage and
+  produces an unbound inventory stub. Existing unscoped cards need a reviewed
+  `discovery.accounts` binding before they can register app installations.
+- Added offline regression fixtures and boundary, identity and approval tests.
+  These establish implementation behavior, not live tenant acceptance.
+- A Kubernetes `List` page with a non-empty `metadata.continue` or a
+  `metadata.remainingItemCount` above zero (a chunked API page) now marks the
+  scan incomplete (exit 3), for a single `List` and for `List` envelopes in a
+  JSON array or JSONL. Its observed objects are still reported. Malformed
+  values of either field are also incomplete.
+- Kubernetes namespaces are no longer shortened to 160 characters, and a
+  non-string namespace is no longer replaced by `default`. A namespace that is
+  not an RFC 1123 DNS label (lowercase letters, digits and inner hyphens, at
+  most 63 characters) is rejected with incomplete coverage, so distinct objects
+  cannot merge into one resource identity, including through a `/` in the
+  namespace.
+- Atlassian finding IDs change on upgrade for exports scanned without a
+  configured `site` and for a `site` with an uppercase host or an explicit
+  `:443` (a trailing slash was already ignored). A `site` that is not a plain
+  HTTPS origin, such as a Data Center context path, now stops the connector
+  with exit 3. Without a site, IDs are bound to each export file's
+  resolved path, so two sites' exports in one directory input stay separate
+  findings. Configure the canonical site, keep one site per input, rescan and
+  establish a fresh baseline.
+  Carried from #218.
+
+### Redaction review fixes (October 14)
+
+- A run at the start of the line after a `Bearer`, `Basic` or `SSWS`
+  credential that holds no value (`--insecure`, `---`, `=Section=`, also
+  after blank lines) is no longer removed from a text that has no run glued
+  to the credential. The step that withholds a glued run ran on every text
+  and deleted such a run without a marker, so an excerpt lost a curl flag, a
+  YAML separator or a README option and did not show that anything was
+  withheld. A later-line run that holds a value is still removed, as before:
+  returning the established reading there would show option values that the
+  previous rules withheld. In a text with a glued run, a run at the start of
+  a later line is still withheld, now with a marker in its place where the
+  rest of the line is unchanged.
+- Where the two readings of a text with a glued run do not pair up line by
+  line, the whole text is still withheld, keeping its line breaks. Keeping
+  the lines both readings show alike was tried and not carried: those lines
+  included values the previous rules withheld.
+- The scheme pass, called outside `sanitize_text` and `sanitize`, withholds a
+  glued run with its credential again, as the established rules did. With no
+  reading set it left the run in the text for a later step that only those
+  two entry points run. Their output was not affected.
+- The merge of the two readings is tested directly: hypothesis properties for
+  `sanitize_text` and `sanitize` check that each output line is a line of one
+  reading, that line with a marker, or a withheld line, and shows only what
+  both readings show; unit tests cover the line comparison, the line merge
+  and the read-again caps, and pin tests keep value-holding later-line runs
+  withheld. Unreachable bytes and set branches in the merge helpers and a
+  duplicated glued-run pattern are removed, and `docs/production.md` states
+  the merge rule as above.
+
+### ShadowBench review fixes (October 14)
+
+Fixes from the agent-run review of #199, carried on the integration branch.
+That review is not independent human review.
+
+- Cases scoring: on the code surface a negative case where a tool reported
+  anything outside the fact taxonomy is now a case-level false alarm instead
+  of a true negative; such reports still earn no credit on a positive case and
+  stay neither true nor false positives at entity level. The code-surface
+  adapters (AgentDiscover, `agent-discovery`, vet, ShadowScan), which drop
+  hits that map to no fact, count them in each row's `out_of_taxonomy`, and
+  the scorer counts them as if passed on; it refuses a count that is not a
+  non-negative integer or sits on a non-code row. `metrics.json` reports
+  `case.out_of_taxonomy_alarms` per tool. `tools/discovery_benchmark`'s
+  ShadowScan normalizer records the findings it maps to no fact as
+  `detail["unmapped"]`, LLM-provider credential findings included.
+- Re-scored the 2026-10-11 cases run from the unchanged rows: only
+  AgentDiscover changes. Its 16 out-of-taxonomy keys on the encode/httpx
+  control (`code-checkout-017`) are now its one code false alarm: code case
+  specificity 90% (9 of 10; was 100%), in-scope case specificity 25 of 26
+  (was 26 of 26), case-level balanced accuracy 62% (was 64%), and the McNemar
+  comparison with ShadowScan 23 against 1 (was 22 against 1). The October 12
+  entry below now limits the statement that out-of-taxonomy code keys are
+  neither true nor false positives to entity level.
+- The run manifest now records each `<tool>.jsonl`'s SHA-256
+  (`rows_sha256`), and `score` refuses a results file whose digest differs
+  unless `--force`; before, only per-status row counts were checked, so an
+  edited or swapped file with the same statuses was scored. Tools whose
+  manifest entry has no digest, every tool of the 2026-10-11 run, are listed
+  in `metrics.json` under `rows_unbound`, and the report says their rows are
+  bound to the run only by status counts. The cases `REPORT.md` for a
+  manifest without harness fields now also states that its rows come from
+  earlier adapters under weaker isolation and were scored with rules revised
+  after the run.
+- Cases runner: version probes run in their own PID namespace with a fresh
+  `/proc`, under a root shell that stays the namespace's init, so a process a
+  probed binary detaches dies with the probe or its timeout instead of
+  staying on the host as uid 65534 with access to later work trees. After a
+  stage, `work/` is handed back to root with group and other write removed
+  before escaping symlinks are swept, so a uid-65534 process outside the stage
+  can no longer plant a symlink after the sweep and have the adapter read a
+  root-only file through it. Each stage gets its own IPC namespace and a fresh
+  tmpfs over `/var/tmp` and `/dev/shm`, and the runner refuses scratch or tool
+  paths under them; the host's `/tmp` is still shared between cases and
+  tools.
+- Cases `fetch_code` runs git without the system or global git configuration
+  and with `* !filter` in `.git/info/attributes`, so a repository's
+  `.gitattributes` can no longer start git-lfs or another operator-configured
+  filter driver on checkout; a proxy or CA bundle must come from
+  `HTTPS_PROXY` or `GIT_SSL_CAINFO`. The fetched commit is checked before
+  checkout. An existing checkout is kept only when this fetcher made it, its
+  origin is the pinned URL and it holds the pinned tree and nothing else;
+  `materialize` refuses a checkout with untracked, ignored or modified files
+  or a populated submodule directory.
+- The ShadowScan adapter records `-dirty` after the commit when `shadowscan/`
+  or `pyproject.toml` differs from it, and `unknown` when its version probe
+  exits non-zero.
+- `benchmarks/shadowbench/cases/README.md` no longer calls the author-written
+  benchmark "standardized".
+- Estate scoring fails closed on malformed `runs.json` rows: `score` exits 2
+  without writing anything when a result row has no tool, has no unit or a
+  unit other than `estate`, `sim`, `code:<name>` or `home:<name>`, or
+  repeats a (tool, unit) pair. A row without a unit was read as a
+  whole-estate run, which reached every entity, turned every unflagged
+  in-scope negative into a true negative and hid the missing code and home
+  units; a repeated row counted its unattributed predictions twice.
+- The estate Numbat wrapper fails the unit when `numbat agents` exits with
+  any status other than 0 or the documented empty-inventory 1, even if it
+  printed a report. A crash that had printed `[]` was recorded as a complete
+  empty inventory.
+- The estate vet wrapper checks a code repository's `vet.json` before the
+  code-surface adapter reads it: an unparseable report, one that is not a
+  list, or a list without a vet record (such as `{"error": ...}`) is an
+  adapter error, not an empty inventory. No report, an empty one, `null`
+  and `[]` still read as nothing found; `tools/discovery_benchmark` is
+  unchanged.
+- The estate README's rename erratum says the renamed artifacts and the
+  ShadowScan harness configuration still name Adatum tenants on real SaaS
+  parent domains (offline data that no harness contacts), and each estate
+  `tokens.txt` entry in `tools/secret_allowlist.json` gives a reason that
+  describes its own synthetic token.
+- None of these changes the committed 2026-10-11 estate results: the
+  committed `runs.json` re-scores to the committed `metrics.json` and
+  `REPORT.md` byte for byte.
+
+### Repository rename, source distribution and README matrix: review fixes (October 14)
+
+- `docs/testing.md` lists the build lock under `make install` and
+  `make install-dev`, CONTRIBUTING says why the release-evidence tests need it,
+  and a consistency test requires both CI test jobs and both Makefile install
+  targets to install it, the documented gates to start from `make install`,
+  and `docs/testing.md` to name it. An environment made before this change
+  needs `make install` again.
+- README benchmark summary: the code-surface row says that 4 of the 22
+  controls and near-misses reported clean came from incomplete runs, and
+  that an incomplete clean run is not a clean result; it no longer
+  qualifies only recall. The README test derives that count from the
+  committed `metrics.json` and `corpus.json`.
+- The former-repository-name check accepts the former slug only in listed
+  forms (the 0.1.2 `gh attestation verify --repo` command, "formerly",
+  "renamed from ... to", "attested as ... before the rename", a recorded path
+  marked "(the former name)" and the governance test constant), removed from
+  the line before checking, instead of any line that mentions "0.1.2",
+  "renam" or "former". It checks the Unreleased section of `CHANGELOG.md`,
+  exempting only released entries, and also matches the `%2F`-encoded slug.
+- `docs/production.md` again names the request path recorded in the
+  2026-10-02 08:05 UTC ruleset observation, under the former repository name
+  and marked as such, instead of a request under the new name that was never
+  made.
+- `tools/release/distributions.py` rejects a `.` or `./` sdist member as an
+  unsafe path; it previously failed with an uncaught `IndexError` and a
+  traceback. Tests also cover the member-count and member-size bounds for
+  both archives.
+- README detection matrix: the generator fails on an MCP dependency
+  ecosystem it has no display name for instead of leaving it out, lists
+  `**/` file globs once without the prefix (adding `.well-known/mcp.json`),
+  shows dependency name prefixes as `prefix*`, and says that hosts matching
+  the `protocol.mcp` regular expression are recognized too.
+
+### Dependency refresh and repository hygiene (October 14)
+
+- Dependabot's #200 and #201 are carried. #200 bumped nine reviewed inputs in
+  `requirements-ci-constraints.txt` (ast-serialize, filelock, hypothesis,
+  iniconfig, platformdirs, rpds-py, tomli, types-requests, virtualenv) but
+  cannot refresh the hash locks: `requirements-ci.lock` is regenerated with the
+  documented uv command, the docs lock's platformdirs follows the CI pin, and
+  the mypy pre-commit hook pins the new types-requests. #201 moves
+  upload-artifact to 7.0.2, download-artifact to 8.0.2 and codeql-action to
+  4.38.3, by full commit SHA in the workflows and `examples/`.
+- The macOS test legs install `requirements-build.lock` as the Linux job does;
+  the release evidence records the build frontend's version since #202.
+- Navigation: READMEs index `examples/`, `benchmarks/sab_realworld/`,
+  `benchmarks/sab-holdout/` and `archive/reviews/`; the four benchmarks that
+  were all titled some variant of "real-world" have distinct titles;
+  `.github/workflows/README.md` lists every workflow, its triggers and what it
+  may write; the docs site groups assurance evidence and maintainer runbooks
+  separately, adds API pages for signatures and reporters, and each connector
+  surface package's docstring names its modules.
+- Labels: `.github/labels.yml` adopts GitHub's `duplicate`, `invalid` and
+  `wontfix`, adds `breaking-change` and `do-not-merge`, and a policy test
+  checks that Dependabot and the stale workflow only use defined labels.
+- Developer commands: `make help` prints targets by section, `make
+  check-fast` runs the offline gates without tests, `make evaluate` writes its
+  reports to a temporary directory, `make install` fails fast on an
+  unsupported Python, pytest shows its summary line again, and CONTRIBUTING,
+  the pull request template and `docs/testing.md` list one gate set. The
+  coverage gate's inventory-mismatch error says what to run.
+- Consistency tests check that tracked files already pass the pre-commit
+  whitespace hooks, that the mypy hook excludes what pyproject excludes, that
+  `archive/` links resolve, and that anchors linked in pages the docs site
+  renders are ones both GitHub and MkDocs generate.
+- `.gitignore` covers local credential stores (PKCS#12 bundles, `.netrc`,
+  `.pypirc`, `.envrc`, Terraform state); `.editorconfig` and `.gitattributes`
+  leave frozen benchmark data and archived reviews exactly as committed.
+
+### Repository rename, source distribution and README detection matrix (October 14)
+
+- The repository is renamed from `aisecnomad/Project-Nexus` to
+  `aisecnomad/Nexus-ShadowScan`, so that the repository URL, the
+  `NexusShadowScan` distribution, the `shadowscan` command and the
+  *Nexus ShadowScan* name match; "Project Nexus" also collided with unrelated
+  projects in search. Every live link, badge, clone command, issue form,
+  `pyproject.toml` URL, `CITATION.cff`, `NOTICE`, the Dockerfile source label,
+  the docs site configuration, the SARIF `informationUri` and `helpUri` and the
+  CycloneDX VCS reference follow. Retained reviews, frozen benchmark results and
+  their harnesses, the recorded ruleset responses and released changelog
+  entries keep the former name; a consistency test rejects it elsewhere
+  except in a few listed forms that say it is the former name or the name 0.1.2
+  was attested under; the Unreleased section is checked too.
+- OCSF `metadata.product.vendor_name` is `Nexus ShadowScan` instead of
+  `Project Nexus`. The SARIF and CycloneDX tool name stays `ShadowScan`, so
+  GitHub code scanning keeps matching existing alerts to the same tool.
+- The scheduled governance audit job runs on the immutable repository ID
+  (`github.repository_id`) instead of the repository name, which a rename would
+  have turned into a silently skipped job. `tools/governance/rulesets.py`
+  expects the new name in each ruleset's `source`; the dated observed
+  snapshots keep the name GitHub returned at the time, and the tests read them
+  as GitHub now returns them.
+- Releases upload a source distribution beside the universal wheel. The
+  release workflow runs `python -m build --no-isolation` on the clean
+  `git archive`, which writes the sdist and then builds the wheel from it with
+  the hash-locked backend; `requirements-build.lock` pins `build` 1.6.1 and
+  `pyproject_hooks` 1.2.0 with the hash of every published file. The new
+  `tools/release/distributions.py` requires one `py3-none-any` wheel and one
+  sdist of the same version, byte-identical core metadata and package files,
+  an sdist of regular files under one root and no test suite in it. The
+  evidence manifest requires the pair, the SBOM is attested for both, and the
+  publication input, gate and publish job each require exactly one of each.
+  0.1.2 was published as a wheel only. CI and `make build` build the same way.
+- `MANIFEST.in` keeps `tests/` out of the sdist: setuptools otherwise added the
+  top-level `tests/test*.py` modules without the fixtures, conftest and tools
+  they need.
+- README: a name table, an abridged SARIF result from the offline demo, a
+  detection matrix and a benchmark summary at the top. `tools/readme_matrix.py`
+  (`make readme-matrix`) generates the matrix of frameworks by ecosystem, MCP
+  evidence and the identity, gateway, low-code, SaaS and network connectors
+  from the signature packs, the endpoint client locations and the connector
+  classes. Tests fail when the matrix is stale, when the SARIF excerpt stops
+  matching the demo's first result, or when a benchmark number differs from the
+  committed `metrics.json`. The benchmark section states that the maintainer
+  wrote the corpora, labels and harnesses, and that the code-surface run left 43
+  of 87 repositories incomplete.
+- The publishing runbook gains the rename steps: update the PyPI and TestPyPI
+  trusted publishers, republish the Pages site, and verify attestations signed
+  before a rename under the former name.
+
 ### ShadowBench, the nine-surface discovery benchmark (October 12)
 
 - `benchmarks/shadowbench/` and `tools/shadowbench/`: two benchmark tracks
@@ -22,8 +759,10 @@ summarizes each release for people who install and operate ShadowScan.
   (87 positive, 27 control, 23 near-miss). Both are author-written: neither
   is independent review, field precision or a verdict on another vendor.
 - Integration: each track keeps its own harness under `cases/` or
-  `estate/`; the estate's authored files sit under `estate/artifacts/` with
-  every frozen digest unchanged. The vendor letter grades (`grades.json`,
+  `estate/`; the estate's authored files moved under `estate/artifacts/`
+  without a change to any frozen digest; the rename and the data errata below
+  then changed the affected files' digests, and `FREEZE.json` and the four
+  synthetic-JWT allowlist digests were recomputed. The vendor letter grades (`grades.json`,
   `GRADES.md`) and the two PDFs are not carried: the grades were a judgment
   over author-written corpora, and neither PDF could be rebuilt from the
   repository. The estate's fictional organization is renamed from Vantor,
@@ -44,8 +783,10 @@ summarizes each release for people who install and operate ShadowScan.
   case is always refused. A
   reported directory no longer earns credit for the files under it, a
   positive case counts as found only with a true positive, code keys
-  outside the fact taxonomy are neither credited nor charged (246 of
-  AgentDiscover's 247 code "false positives" were such keys), and McNemar
+  outside the fact taxonomy are neither true nor false positives at entity
+  level (246 of AgentDiscover's 247 code "false positives" were such keys;
+  the review fixes above make one on a negative case a case-level false
+  alarm), and McNemar
   with no shared case reads n/a. Decoys an adapter declares it never passes
   to the tool (AWS IAM roles for ShadowScan) earn that tool no true
   negative. `verify` always rebuilds the corpus and compares the cases (it

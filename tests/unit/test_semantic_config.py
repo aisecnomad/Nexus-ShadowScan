@@ -557,3 +557,241 @@ def test_shared_documents_equal_a_fresh_parse_and_failures_stay_reported(index):
     assert errors == ["invalid structured configuration syntax"]
     # A format the shared parse never covers is parsed here even with documents.
     assert structured_code_matches(index, "metadata.xml", "<a/>", documents=[data]) == []
+
+
+@pytest.mark.parametrize("provider", ["n8n", "flowise", "dify"])
+def test_graph_projection_is_consistent_for_supported_formats(index, provider):
+    if provider == "n8n":
+        data = {
+            "nodes": [
+                {"name": "input", "type": "n8n-nodes-base.webhook"},
+                {"name": "ai", "type": "@n8n/n8n-nodes-langchain.agent"},
+                {
+                    "name": "out",
+                    "type": "n8n-nodes-base.httpRequest",
+                    "parameters": {"url": "https://example.invalid"},
+                },
+            ],
+            "connections": {"input": {"main": [[{"node": "ai"}]]}, "ai": {"main": [[{"node": "out"}]]}},
+        }
+    else:
+        edges = [{"source": "input", "target": "ai"}, {"source": "ai", "target": "out"}]
+        if provider == "dify":
+            nodes = [
+                {"id": "input", "data": {"type": "start"}},
+                {"id": "ai", "data": {"type": "agent"}},
+                {"id": "out", "data": {"type": "http-request", "url": "https://example.invalid"}},
+            ]
+            data = {
+                "kind": "app",
+                "app": {"mode": "workflow"},
+                "workflow": {"graph": {"nodes": nodes, "edges": edges}},
+            }
+        else:
+            nodes = [
+                {
+                    "id": "input",
+                    "data": {"name": "startAgentflow", "inputs": {"startInputType": "chatInput"}},
+                },
+                {"id": "ai", "data": {"category": "Agent Flows", "name": "agentAgentflow"}},
+                {
+                    "id": "out",
+                    "data": {"name": "httpAgentflow", "inputs": {"url": "https://example.invalid"}},
+                },
+            ]
+            data = {"nodes": nodes, "edges": edges}
+    matches = structured_code_matches(index, "workflow.json", json.dumps(data))
+    relevant = [m for m in matches if m.signature_id == "platform." + provider]
+    assert relevant
+    graph = relevant[0].extra["workflow_graph"]
+    assert graph["potential_input_ai_egress_path"] is True
+    assert graph["path_node_indices"] == [0, 1, 2]
+    assert graph["scoring"] is False
+
+
+@pytest.mark.parametrize(
+    ("data", "expected"),
+    [
+        ({"nodes": [{"name": "bad", "type": "@n8n/n8n-nodes-langchain.agentPretend"}]}, {"platform.n8n"}),
+        ({"nodes": [{"data": {"category": "Agents", "name": "unknownPretendAgent"}}]}, {"platform.flowise"}),
+        (
+            {"nodes": [{"name": "m", "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter"}]},
+            {"platform.n8n", "provider.openrouter"},
+        ),
+        (
+            {"nodes": [{"name": "m", "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi"}]},
+            {"provider.openai"},
+        ),
+        ({"nodes": [{"name": "m", "type": "@n8n/n8n-nodes-langchain.vectorStoreMilvus"}]}, {"platform.n8n"}),
+        (
+            {"nodes": [{"id": "x", "data": {"category": "Agents", "name": "csvAgent"}}], "edges": []},
+            {"platform.flowise"},
+        ),
+        (
+            {
+                "nodes": [{"id": "x", "data": {"category": "Agents", "name": "toolAgent", "disabled": True}}],
+                "edges": [],
+            },
+            {"platform.flowise"},
+        ),
+        (
+            {
+                "kind": "app",
+                "app": {"mode": "workflow"},
+                "workflow": {
+                    "graph": {
+                        "nodes": [{"id": "a", "data": {"type": "agent", "disabled": True}}],
+                        "edges": [],
+                    }
+                },
+            },
+            {"platform.dify"},
+        ),
+    ],
+    ids=[
+        "unregistered-langchain-type",
+        "unregistered-flowise-agent",
+        "openrouter-model",
+        "embeddings",
+        "vector-store",
+        "flowise-csv-agent",
+        "flowise-data-disabled",
+        "dify-disabled-agent",
+    ],
+)
+def test_graph_type_registry_never_removes_a_projected_signal(index, data, expected):
+    """Regression (#220 graph review F1): the exact registry assigns graph roles only.
+
+    These shapes were reported before the graph core; they still are, but
+    receive no AI graph role.
+    """
+    matches = structured_code_matches(index, "workflow.json", json.dumps(data))
+    assert {match.signature_id for match in matches} == expected
+    graphs = [match.extra["workflow_graph"] for match in matches if "workflow_graph" in match.extra]
+    assert all(graph.get("role_counts", {}).get("ai", 0) == 0 for graph in graphs)
+
+
+def test_malformed_supplied_graph_is_a_limit_that_keeps_the_projection(index):
+    """Regression (#220 graph review F2)."""
+    data = {
+        "nodes": [{"name": "a", "type": "@n8n/n8n-nodes-langchain.agent"}],
+        "connections": {"a": {"main": [[{"node": "missing"}]]}},
+    }
+    limits = []
+    matches = structured_code_matches(index, "workflow.json", json.dumps(data), limit_errors=limits)
+    assert {match.signature_id for match in matches} == {"platform.n8n"}
+    assert matches[0].extra["workflow_graph"]["status"] == "incomplete"
+    assert limits and "graph" in limits[0]
+
+
+def test_multiple_graph_documents_preserve_metadata_without_duplicate_scoring(tmp_path, index):
+    from copy import deepcopy
+    from pathlib import Path
+
+    source = Path(__file__).parents[1] / "fixtures" / "lowcode" / "graph_cases.json"
+    connected = json.loads(source.read_text())[0]["workflow"]
+    disconnected = deepcopy(connected)
+    disconnected["connections"] = {}
+    one = structured_code_matches(index, "workflow.yaml", yaml.safe_dump(connected))
+    two = structured_code_matches(index, "workflow.yaml", yaml.safe_dump_all([connected, disconnected]))
+    assert [(m.signature_id, m.weight, m.value) for m in one] == [
+        (m.signature_id, m.weight, m.value) for m in two
+    ]
+    assert {g["potential_input_ai_egress_path"] for g in two[0].extra["workflow_graphs"]} == {False, True}
+    findings, ctx = _scan(
+        index, tmp_path, {"flows/workflow.yaml": yaml.safe_dump_all([connected, disconnected])}
+    )
+    assert not ctx.stats.incomplete
+    finding = next(finding for finding in findings if finding.resource_type == "workflow-export")
+    assert {g["potential_input_ai_egress_path"] for g in finding.metadata["workflow_graphs"]} == {False, True}
+
+
+def test_graph_document_budget_marks_incomplete_without_extra_evidence(index, monkeypatch):
+    from shadowscan.connectors.code import semantic_config
+
+    monkeypatch.setattr(semantic_config, "MAX_GRAPH_DOCUMENTS", 1)
+    data = {"nodes": [{"name": "a", "type": "@n8n/n8n-nodes-langchain.agent"}], "connections": {}}
+    limits = []
+    matches = structured_code_matches(
+        index, "workflow.yaml", yaml.safe_dump_all([data, data]), limit_errors=limits
+    )
+    assert matches
+    assert limits == ["workflow graph export exceeds document budget"]
+
+
+def test_graph_node_budget_is_a_limit_and_keeps_the_projection(index, monkeypatch):
+    from shadowscan.connectors.lowcode import graph
+
+    monkeypatch.setattr(graph, "MAX_GRAPH_NODES", 2)
+    data = {"nodes": [{"type": "unknown"}, {"type": "unknown"}, {"type": "@n8n/n8n-nodes-langchain.agent"}]}
+    limits = []
+    matches = structured_code_matches(index, "workflow.json", json.dumps(data), limit_errors=limits)
+    assert {match.signature_id for match in matches} == {"platform.n8n"}
+    assert limits == ["workflow graph exceeds node budget"]
+
+
+@pytest.mark.parametrize(
+    "name,category",
+    [
+        ("seqAgent", "Sequential Agents"),
+        ("conversationalRetrievalToolAgent", "Agents"),
+        ("openAIAssistant", "Agents"),
+        ("reactAgentChat", "Agents"),
+    ],
+)
+def test_flowise_registered_agent_types_remain_detected(index, name, category):
+    data = {"nodes": [{"id": "agent", "data": {"name": name, "category": category}}], "edges": []}
+    matches = structured_code_matches(index, "workflow.json", json.dumps(data))
+    assert {match.signature_id for match in matches} == {"platform.flowise"}
+    assert matches[0].extra["workflow_graph"]["role_counts"]["ai"] == 1
+
+
+def test_graph_document_budget_stops_full_analysis(index, monkeypatch):
+    from shadowscan.connectors.code import semantic_config
+
+    original = semantic_config.analyze_workflow_graph
+    calls = []
+
+    def guarded_analysis(data):
+        calls.append(data)
+        assert len(calls) <= 1
+        return original(data)
+
+    monkeypatch.setattr(semantic_config, "MAX_GRAPH_DOCUMENTS", 1)
+    monkeypatch.setattr(semantic_config, "analyze_workflow_graph", guarded_analysis)
+    data = {"nodes": [{"name": "a", "type": "@n8n/n8n-nodes-langchain.agent"}], "connections": {}}
+    limits = []
+    assert structured_code_matches(
+        index, "workflow.yaml", yaml.safe_dump_all([data] * 3), limit_errors=limits
+    )
+    assert len(calls) == 1
+    assert limits == ["workflow graph export exceeds document budget"]
+
+
+@pytest.mark.parametrize("name", ["graph.json", "graph.yaml", "graph.toml"])
+def test_large_unidentified_nodes_list_is_not_a_workflow_graph(index, tmp_path, name):
+    """Regression (#220 verifier): any document with a long ``nodes`` list was an over-budget graph."""
+    nodes = [{"id": number, "label": f"n{number}"} for number in range(5000)]
+    text = {
+        "graph.json": json.dumps({"nodes": nodes}),
+        "graph.yaml": yaml.safe_dump({"nodes": nodes}),
+        "graph.toml": "".join(f'[[nodes]]\nid = {number}\nlabel = "n{number}"\n' for number in range(5000)),
+    }[name]
+    limits = []
+    structured_code_matches(index, name, text, limit_errors=limits)
+    assert limits == []
+    # A generous matching budget: the regression is the graph limit, and a
+    # 5,000-node document can outlast the default 2 s under coverage.
+    findings, ctx = _scan(index, tmp_path, {name: text}, scan_timeout=60)
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+
+
+def test_large_recognised_workflow_graph_is_still_over_budget(index):
+    nodes = [{"name": f"n{number}", "type": "community.unknown"} for number in range(5000)]
+    nodes.append({"name": "agent", "type": "@n8n/n8n-nodes-langchain.agent"})
+    limits = []
+    matches = structured_code_matches(
+        index, "workflow.json", json.dumps({"nodes": nodes}), limit_errors=limits
+    )
+    assert {match.signature_id for match in matches} == {"platform.n8n"}
+    assert limits == ["workflow graph exceeds node budget"]

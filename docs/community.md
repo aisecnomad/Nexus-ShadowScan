@@ -7,12 +7,12 @@ build an offline reproducer or review a change.
 
 | Start here | What it covers |
 |---|---|
-| [Support guide](https://github.com/aisecnomad/Project-Nexus/blob/main/SUPPORT.md) | Troubleshooting, useful reports and support expectations |
-| [Contributor guide](https://github.com/aisecnomad/Project-Nexus/blob/main/CONTRIBUTING.md) | First contributions, development setup, validation and pull requests |
-| [Code of conduct](https://github.com/aisecnomad/Project-Nexus/blob/main/CODE_OF_CONDUCT.md) | Participation standards, conduct reporting and moderation |
+| [Support guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SUPPORT.md) | Troubleshooting, useful reports and support expectations |
+| [Contributor guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md) | First contributions, development setup, validation and pull requests |
+| [Code of conduct](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CODE_OF_CONDUCT.md) | Participation standards, conduct reporting and moderation |
 | [Governance](governance.md) | Maintainer responsibilities, decisions, review and release requirements |
 | [Security policy](security.md) | Supported revisions and private vulnerability reporting |
-| [Open issues](https://github.com/aisecnomad/Project-Nexus/issues) | Existing work, reproducible bugs and proposed improvements |
+| [Open issues](https://github.com/aisecnomad/Nexus-ShadowScan/issues) | Existing work, reproducible bugs and proposed improvements |
 | [External reviewer packet](operations/reviewer-packet.md) | Reading list for a reviewer who did not author the change |
 
 Start with a small, focused improvement or ask for scope guidance on an issue.

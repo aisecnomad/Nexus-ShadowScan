@@ -13,6 +13,7 @@ from shadowscan.models import DERIVED_METADATA_KEYS, ScanResult
 from shadowscan.reporters._publication import (
     has_inventory,
     publication_stats,
+    related_candidate_ids,
     related_finding_ids,
     unassessed_count,
     visible_controls,
@@ -256,6 +257,10 @@ def render_html(result: ScanResult) -> str:
         if related:
             codes = " ".join(f"<code>{_e(r)}</code>" for r in related)
             parts.append("<div><b>Related</b> " + codes + "</div>")
+        candidates = related_candidate_ids(f.metadata)
+        if candidates:
+            codes = " ".join(f"<code>{_e(r)}</code>" for r in candidates)
+            parts.append("<div><b>Possible related (review candidates)</b> " + codes + "</div>")
         activity = f.metadata.get("runtime_activity")
         if isinstance(activity, dict):
             parts.append(
@@ -281,7 +286,15 @@ def render_html(result: ScanResult) -> str:
         if len(f.evidence) > 20:
             parts.append(f"<div class='muted'>… {len(f.evidence) - 20} more</div>")
         parts.append("</div>")
-        hidden = {"related", "technologies", "evidence_counts", "agent_indicators", "scan_root"}
+        hidden = {
+            "related",
+            "related_details",
+            "related_candidates",
+            "technologies",
+            "evidence_counts",
+            "agent_indicators",
+            "scan_root",
+        }
         hidden |= DERIVED_METADATA_KEYS
         if declared:
             # Shown above as declared facts; a malformed block stays visible in the dump.
