@@ -240,7 +240,7 @@ objects `registered-and-observed`. Every finding of such a replay carries
 `metadata.account_attributed: false`: its `account` still names `tenant_id`,
 because it is part of the finding id, but correlation does not take it as the
 records' Entra tenant, so an application id equal to one of the configured
-tenant's Teams bots or app registrations is only a review candidate. A marker
+tenant's Teams bots is only a review candidate. A marker
 with `tenantId: null` replays the same way when `tenant_id` is set. Only an
 older export whose marker has no
 `tenantId` field is attributed to `tenant_id` as before. An export without the marker, for example

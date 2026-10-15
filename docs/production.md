@@ -1324,8 +1324,8 @@ similarity is still a review candidate; such a finding used to drop out of
 correlation entirely. Entra findings replayed from an export of another tenant
 (or of an unknown one) carry `metadata.account_attributed: false` and declare
 no Entra tenant, so their application ids link to the configured tenant's
-Teams bots and app registrations only as review candidates; they used to link
-exactly. Their `account` and finding ids are unchanged.
+Teams bots only as review candidates; they used to link exactly. (Two findings
+of one connector are never compared, so app registrations were never linked.) Their `account` and finding ids are unchanged.
 In the bundled demo, the three identifier links main produced stay exact and
 three new same-ARN links appear; the three links main made from a display name
 or a caller label (a Teams bot and an Entra service principal named Otter.ai,

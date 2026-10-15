@@ -421,6 +421,7 @@ def _code(connector: str, resource: str, location: str) -> Finding:
         "projects/backend/src/main.py",
         "projects/backend-api/locations/main.py:7",
         "projects/api/locations/us/agents/a",
+        "projects/support-bot/agent/main.py",
     ],
 )
 def test_repository_paths_under_projects_are_not_gcp_resource_names(location):
@@ -526,6 +527,16 @@ def test_gcp_service_account_spellings_are_one_identifier_across_projects(spelli
     caller = _gcp(Surface.GATEWAY, "ml-prod-b", "audit:caller", principal=spelling)
     correlate([defined, caller])
     assert defined.metadata["related"] == [caller.id]
+
+
+def test_shared_google_service_accounts_do_not_link_projects():
+    """Google-managed service accounts act in many projects; sharing one is not a link."""
+    principal = "cloud-logs@system.gserviceaccount.com"
+    defined = _gcp(Surface.IDENTITY, "proj-alpha-1", "audit:defined", principal=principal)
+    caller = _gcp(Surface.GATEWAY, "proj-beta-22", "audit:caller", principal=principal)
+    correlate([defined, caller])
+    for item in (defined, caller):
+        assert "related" not in item.metadata
 
 
 @pytest.mark.parametrize(

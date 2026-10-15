@@ -98,6 +98,50 @@ _GCP_SERVICE_ACCOUNT_DOMAIN = ".gserviceaccount.com"
 _GCP_SERVICE_ACCOUNT = re.compile(
     r"[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+gserviceaccount\.com"
 )
+# Google-owned service accounts that every customer project shares identify no
+# workload, like AWS-managed policies, so they are not compared.
+_SHARED_GCP_SERVICE_ACCOUNT_SUFFIXES = (
+    "@system.gserviceaccount.com",
+    "@firebase-sa-management.iam.gserviceaccount.com",
+)
+# A repository file, not a resource: its last path segment carries a source extension.
+_SOURCE_FILE_SUFFIXES = frozenset(
+    [
+        ".py",
+        ".ipynb",
+        ".js",
+        ".mjs",
+        ".cjs",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".go",
+        ".java",
+        ".kt",
+        ".rb",
+        ".rs",
+        ".cs",
+        ".php",
+        ".swift",
+        ".scala",
+        ".sh",
+        ".ps1",
+        ".tf",
+        ".hcl",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".env",
+        ".md",
+        ".txt",
+        ".xml",
+        ".sql",
+        ".lock",
+    ]
+)
 # The strict form of a GCP resource name in a code finding (see _repository_path).
 _GCP_PROJECT = re.compile(
     r"[a-z][a-z0-9-]{4,28}[a-z0-9]|[0-9]{1,19}|[a-z0-9.-]{1,63}:[a-z][a-z0-9-]{4,28}[a-z0-9]"
@@ -171,9 +215,13 @@ def _repository_path(value: str) -> bool:
 
     Code findings report repository locations ("projects/api/src/main.py:12").
     From code, a GCP resource name must name a valid project id or number,
-    then a GCP collection, and carry no line suffix.
+    then a GCP collection, and carry no line suffix; a last segment with a
+    source-file extension ("projects/support-bot/agent/main.py") is a path.
     """
     components = value.split("/", 3)
+    last = value.rsplit("/", 1)[-1]
+    if "." in last and last[last.rfind(".") :].lower() in _SOURCE_FILE_SUFFIXES:
+        return True
     return not (
         _GCP_PROJECT.fullmatch(components[1])
         and components[2] in _GCP_COLLECTIONS
@@ -250,7 +298,11 @@ def _global_resource(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]]
 
 
 def _gcp_service_account(value: str) -> tuple[str, str, tuple[tuple[str, str], ...]] | None:
-    if len(value) <= 254 and _GCP_SERVICE_ACCOUNT.fullmatch(value):
+    if (
+        len(value) <= 254
+        and _GCP_SERVICE_ACCOUNT.fullmatch(value)
+        and not value.endswith(_SHARED_GCP_SERVICE_ACCOUNT_SUFFIXES)
+    ):
         return "resource:gcp-service-account", value, (("provider", "gcp"),)
     return None
 
