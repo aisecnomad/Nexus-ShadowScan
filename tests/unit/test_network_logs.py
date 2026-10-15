@@ -967,6 +967,43 @@ def test_answers_separated_by_expiry_keep_separate_windows(run_connector, tmp_pa
     }
 
 
+@pytest.mark.parametrize("shared", [False, True])
+def test_answer_spanning_several_windows_merges_them_whatever_the_record_order(
+    run_connector, tmp_path, shared
+):
+    # Windows 1000..1060, 1100..1160 and 1200..1210, then an answer 1050..1300
+    # that reaches all three. Fed last (a second file, an unordered Route 53
+    # batch) it must leave the one window 1000..1300 that chronological input
+    # gives, so the flow at 1250 is attributed the same way in both orders.
+    answer, flow = _temporal_rows(flow_time=1250)
+    rows = [
+        {**answer, "ts": ts, "TTLs": [ttl]} for ts, ttl in ((1000, 60), (1100, 60), (1200, 10), (1050, 250))
+    ]
+    if shared:
+        rows.append({**answer, "query": "api.anthropic.com", "ts": 1240})
+    rows.append(flow)
+    results = []
+    for ordered in (rows, sorted(rows, key=lambda row: row["ts"])):
+        found, stats = _scan_network_rows(run_connector, tmp_path, ordered)
+        metadata = {key: finding.metadata for key, finding in found.items()}
+        results.append((metadata, stats.warnings, stats.incomplete))
+    assert results[0] == results[1]
+    metadata, warnings, incomplete = results[0]
+    assert not incomplete
+    openai = metadata[("192.0.2.10", "provider.openai")]
+    if shared:
+        # Anthropic also resolves to the address at 1250: nothing is attributed through DNS.
+        assert warnings == ["network.logs: 1 flow(s) with ambiguous service attribution were not attributed"]
+        assert openai["flows"] == 0 and openai["ambiguous_flows_in_input"] == 1
+        assert metadata[("192.0.2.10", "provider.anthropic")]["flows"] == 0
+    else:
+        assert not warnings and openai["flows"] == 1
+        assert {
+            (item["observed_at"], item["refreshed_at"], item["expires_at"], item["ttl_seconds"])
+            for item in openai["dns_attribution"]
+        } == {("1970-01-01T00:16:40+00:00", "1970-01-01T00:20:00+00:00", "1970-01-01T00:21:40+00:00", 250)}
+
+
 def test_answers_with_decremented_ttls_share_one_window(run_connector, tmp_path, monkeypatch):
     # A caching resolver reports the remaining TTL: 60 at 1000, then 30 at 1040.
     monkeypatch.setattr(network_logs, "_MAX_DNS_PER_ADDRESS", 1)

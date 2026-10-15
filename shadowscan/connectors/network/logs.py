@@ -207,18 +207,28 @@ class _DNSAnswers:
         windows = self.windows.get((observation.signature, observation.host), [])
         index = bisect.bisect_right(windows, start, key=_start)
         merged: _DNSObservation | None = None
+        following = index
         left = windows[index - 1] if index else None
         if left is not None and left.expires_at is not None and left.expires_at >= start:
             left.extend(observation)
             merged = left
-        right = windows[index] if index < len(windows) else None
-        if right is not None and right.observed_at is not None and right.observed_at <= end:
-            if merged is None:
+        elif index < len(windows):
+            right = windows[index]
+            if right.observed_at is not None and right.observed_at <= end:
                 right.extend(observation)
                 merged = right
-            else:
-                merged.extend(windows.pop(index))  # the answer bridged two windows
-        return merged is not None
+                following = index + 1
+        if merged is None:
+            return False
+        # The answer may bridge any number of later windows: absorb every one
+        # the merged window now reaches, so windows stay disjoint and valid_at's
+        # single bisection cannot land on a shorter window that hides this one.
+        while following < len(windows):
+            nxt = windows[following]
+            if nxt.observed_at is None or merged.expires_at is None or nxt.observed_at > merged.expires_at:
+                break
+            merged.extend(windows.pop(following))
+        return True
 
     def append(self, observation: _DNSObservation) -> None:
         start = observation.observed_at
