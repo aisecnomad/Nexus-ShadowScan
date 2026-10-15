@@ -138,6 +138,7 @@ nav:
       - Maintainer onboarding: maintainer-onboarding.md
       - Merge policy enforcement: operations/merge-policy.md
       - Publishing a release: operations/publishing.md
+      - Threat model: security/threat-model.md
       - AI Review Gate: security/ai-review-gate.md
       - ADRs:
           - adrs/index.md

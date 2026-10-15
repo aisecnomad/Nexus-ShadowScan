@@ -130,10 +130,22 @@ _OPTION_FIELDS = {
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Keys every connector accepts: BaseConnector / ConnectorContext read the input
-# and offline limits, and the engine hands every connector its ``label``.
+# and offline limits, and the engine hands every connector its ``label`` and
+# reads its ``allow_private_origin`` before constructing it.
 SHARED_CONNECTOR_KEYS = frozenset(
-    {"input", "label", "max_input_bytes", "max_input_file_bytes", "max_input_files"}
+    {
+        "input",
+        "label",
+        "max_input_bytes",
+        "max_input_file_bytes",
+        "max_input_files",
+        "allow_private_origin",
+    }
 )
+# Shared switches the engine reads for every connector. They are normalised the
+# same way as the per-connector switches below, so environment interpolation
+# cannot turn the string ``"false"`` into a truthy private-origin grant.
+SHARED_BOOLEAN_CONNECTOR_KEYS = frozenset({"allow_private_origin"})
 # Built-in connector switches are normalised before connector construction so
 # environment expansion cannot turn the string ``"false"`` into a truthy
 # value.  Plugin configuration remains opaque: an approved plugin owns its
@@ -318,7 +330,7 @@ def normalize_connector_config(name: str, config: Mapping[Any, Any]) -> dict[str
     normalized = dict(config)
     if name == "code.filesystem" and "path" in normalized and "paths" in normalized:
         raise ConfigValidationError("connector 'code.filesystem': specify path or paths, not both")
-    for key in _BOOLEAN_CONNECTOR_KEYS.get(name, frozenset()):
+    for key in _BOOLEAN_CONNECTOR_KEYS.get(name, frozenset()) | SHARED_BOOLEAN_CONNECTOR_KEYS:
         if key in normalized:
             normalized[key] = connector_boolean(normalized[key], key)
     return normalized

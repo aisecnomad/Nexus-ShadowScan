@@ -400,16 +400,31 @@ class _ConnectorRunner:
             # measured runtime, even if completion precedes the next poll.
             state.completed_at = time.monotonic()
 
-    def _resolve(self, name: str, state: _JobState) -> _Resolved:
+    def _allow_private_origin(self, spec: ConnectorSpec) -> bool:
+        """This connector's private-origin policy: its own grant, else the scan's.
+
+        A connector-level ``allow_private_origin: true`` reaches private,
+        loopback and link-local destinations for that connector alone, so an
+        internal gateway or agent no longer needs the scan-wide grant that
+        would also let every other connector leave the public internet.
+        ``normalize_connector_config`` has already made the value a boolean.
+        """
+        granted = spec.config.get("allow_private_origin")
+        if isinstance(granted, bool):
+            return granted
+        return self._config.allow_private_origin
+
+    def _resolve(self, spec: ConnectorSpec, state: _JobState) -> _Resolved:
         """Look up a job's connector class once; ``_collect`` reports a failure.
 
         The lookup imports an approved plugin, so as in collection it runs
-        under the scan's private-origin policy and not at all for a job that
-        is already out of time: ``_collect`` reports the deadline first.
+        under that connector's private-origin policy and not at all for a job
+        that is already out of time: ``_collect`` reports the deadline first.
         """
         if state.cancelled.is_set() or (state.deadline is not None and time.monotonic() >= state.deadline):
             return ConnectorError("connector completion deadline exceeded")
-        origin_token = set_allow_private_origin(self._config.allow_private_origin)
+        name = spec.name
+        origin_token = set_allow_private_origin(self._allow_private_origin(spec))
         try:
             if self._config.plugins:
                 return get_connector_class(name, allowed_plugins=self._config.plugins)
@@ -422,7 +437,7 @@ class _ConnectorRunner:
             reset_allow_private_origin(origin_token)
 
     def _run_job(self, number: int, spec: ConnectorSpec, state: _JobState) -> _JobResult:
-        resolved = self._resolve(spec.name, state)
+        resolved = self._resolve(spec, state)
         if isinstance(resolved, type) and issubclass(resolved, BaseConnector):
             surface = resolved.surface
             if isinstance(surface, Surface):
@@ -554,7 +569,7 @@ class _ConnectorRunner:
         )
         fs: list[Finding] = []
         started_at = now_iso()
-        origin_token = set_allow_private_origin(self._config.allow_private_origin)
+        origin_token = set_allow_private_origin(self._allow_private_origin(spec))
         limits_token = set_request_deadline(state.deadline, state.cancelled)
         credential_token = set_credential_identity_key(self._run_identity_key)
         try:

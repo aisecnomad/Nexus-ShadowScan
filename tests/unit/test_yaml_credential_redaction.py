@@ -65,3 +65,56 @@ def test_yaml_source_secret_body_is_redacted_before_evidence_selection(tmp_path,
     assert all("framework.langchain" not in finding.frameworks for finding in findings)
     output = json.dumps([finding.to_dict() for finding in findings])
     assert SECRET not in output and TAIL not in output
+
+
+# A name that carries a credential only when its value is opaque. The
+# single-line 'key: <opaque>' assignment pass already withholds it; the block
+# forms below must read the same value the same way.
+OPAQUE = "Ab3Cd4Ef5Gh6Ij7Kl8Mn9Op0Qr1St2Uv"
+WRAPPED = ("U3ludGhldGljT3Bh", "cXVlVmFsdWUxMjM0", "NTY3ODkwQWJDZEVm")
+
+
+@pytest.mark.parametrize("marker", ["|", ">", "|-", ">+", "|2+", ">-2", ""])
+@pytest.mark.parametrize("key", ["key", '"key"', "'key'"])
+def test_yaml_conditional_name_block_withholds_an_opaque_value(marker, key):
+    source = f"{key}: {marker}\n  {OPAQUE}\nmodel: langchain\n"
+    clean = sanitize_text(source)
+    assert OPAQUE not in clean
+    assert REDACTED in clean and "model: langchain" in clean
+    assert clean.count("\n") == source.count("\n")
+    assert sanitize_text(clean) == clean
+
+
+def test_yaml_conditional_name_block_withholds_a_wrapped_opaque_value():
+    """A base64 blob split across lines is one value, not three short tokens."""
+    body = "".join(f"    {part}\n" for part in WRAPPED)
+    source = f"data:\n  key: |\n{body}kind: Secret\n"
+    clean = sanitize_text(source)
+    assert all(part not in clean for part in WRAPPED)
+    assert REDACTED in clean and "kind: Secret" in clean
+    assert clean.count("\n") == source.count("\n")
+    assert sanitize_text(clean) == clean
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "/etc/ssl/private/server.pem",
+        "This is the signing key used by the agent service.",
+        "CHANGEME",
+        "my-agent",
+    ],
+)
+def test_yaml_conditional_name_block_keeps_a_value_that_is_not_a_credential(body):
+    """A path, a sentence, a placeholder and a plain name keep their text."""
+    source = f"key: |\n  {body}\nmodel: langchain\n"
+    clean = sanitize_text(source)
+    assert body in clean and REDACTED not in clean
+    assert sanitize_text(clean) == clean
+
+
+def test_yaml_unrelated_name_block_keeps_an_opaque_value():
+    """'data' does not name a credential, so its block is not read as one."""
+    source = f"data: |\n  {OPAQUE}\nmodel: langchain\n"
+    clean = sanitize_text(source)
+    assert OPAQUE in clean and REDACTED not in clean

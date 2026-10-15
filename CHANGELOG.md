@@ -5,6 +5,43 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Per-connector private-origin grants, block-scalar opaque secrets, threat model (October 15)
+
+- **Redaction (credential policy).** A YAML block scalar under a name that
+  carries a credential only when its value is opaque — bare `key`, as opposed
+  to `password` or `api_key`, which always do — is now withheld when the block
+  holds an opaque value. `_redact_yaml_multiline_values` gated on the
+  always-sensitive name test alone, so `key: |` over a Kubernetes secret's
+  base64 blob kept its text while the single-line `key: <opaque>` beside it was
+  withheld by the assignment pass; only a value with a recognizable format
+  (`sk-`, a PEM header) was caught in the block form. The block's dedented
+  lines are joined without a separator and read with the same
+  `_credential_literal` test the single-line pass uses, so a wrapped base64
+  blob is tested as the one value it encodes, while a path, a sentence, a
+  placeholder and a name that does not name a credential (`data: |`) keep their
+  text. Regression tests cover every block marker, the quoted spellings of the
+  key, the wrapped form and each value that must survive.
+- **Egress policy.** Every connector now accepts `allow_private_origin`,
+  lifting the loopback, link-local, private and cloud-metadata refusal for that
+  connector alone. Reaching one internal gateway previously required
+  `options.allow_private_origin`, which applies to every connector in the
+  configuration, so a repository, endpoint or cloud connector in the same scan
+  also lost the refusal. A connector that sets the key uses its own value and
+  one that does not inherits the scan-wide setting, so a connector-level `false`
+  keeps a connector public under a scan-wide grant. The key is normalised like
+  the other connector switches, so an interpolated `"false"` cannot enable it,
+  and a non-boolean fails closed without echoing its value. The engine reads it
+  for both the connector lookup, which imports an approved plugin, and the
+  collection it wraps.
+- **Threat model.** `docs/security/threat-model.md` consolidates the trust
+  boundaries that `AGENTS.md` holds for contributors and the egress, limit and
+  fail-closed notes spread through `docs/production.md` into one page per
+  boundary, naming the control and the module that enforces it, with the
+  residual risks stated plainly: best-effort redaction, a plugin that is not a
+  sandbox, external transports outside the HTTPS client's policy, offline
+  replay that is not live acceptance, author-written corpora and the absence of
+  independent review.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

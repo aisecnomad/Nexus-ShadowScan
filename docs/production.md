@@ -240,6 +240,48 @@ The [acceptance verifier](https://github.com/aisecnomad/Nexus-ShadowScan/blob/ma
 supports static code, AWS and Slack. A code change cannot substitute for human
 labels, approved tenant credentials or live acceptance receipts.
 
+## Unreleased redaction and private-origin migration
+
+**Redaction (credential policy).** A YAML block scalar assigned to a name that
+carries a credential only when its value is opaque — bare `key`, unlike
+`password`, `api_key` or `client_secret`, which always carry one — is now
+withheld when the block holds an opaque value. Previously only the single-line
+`key: <opaque>` form was withheld, so a Kubernetes secret or Helm value written
+as `key: |` over a base64 blob kept its text unless the value itself had a
+recognizable format such as an `sk-` prefix or a PEM header. A path, a sentence,
+a placeholder and a block under a name that does not name a credential
+(`data: |`) still keep their text. Regenerate retained reports, exports and
+cached evidence under the reviewed revision: changing the scanner cannot erase
+copies already written. Redaction remains best-effort — it recognizes credential
+formats and credential-bearing names, so an arbitrary secret with neither can
+still survive, and reports hold sensitive inventory regardless. See the
+[threat model](security/threat-model.md).
+
+**Private-origin grants.** Every connector now accepts `allow_private_origin`,
+which lifts the loopback, link-local, private and cloud-metadata refusal for
+that connector alone. Reaching one internal gateway or agent previously required
+`options.allow_private_origin`, which applies to every connector in the
+configuration and therefore also let repository, endpoint and cloud connectors
+in the same scan leave the public internet. Move an existing scan-wide grant
+onto the connectors that need it:
+
+```yaml
+options:
+  allow_private_origin: false
+connectors:
+  - name: gateway.logs
+    allow_private_origin: true
+```
+
+A connector that sets the key uses its own value; one that does not inherits the
+scan-wide setting, so a connector-level `false` keeps a connector public under a
+scan-wide grant. The key takes a YAML boolean or the strings `true`/`false`, so
+an interpolated `"false"` cannot enable it, and any other value fails closed
+without echoing itself. The grant covers this scanner's HTTPS clients only: git
+and the cloud SDKs carry their own egress controls, so keep restricting egress
+at the network where that matters. No default changes, so a configuration that
+set neither key behaves as before.
+
 ## Unreleased review migration
 
 After upgrading to the review corrections, rescan source and regenerate retained
@@ -2225,8 +2267,9 @@ proxy, reads at most 1 MiB per card and never fetches a URL declared inside a
 card. Allow egress to exactly those hosts.
 
 - Agents on private or loopback addresses are refused unless
-  `options.allow_private_origin: true`, which applies to every connector in the
-  scan. Prefer a separate configuration for internal agents.
+  `allow_private_origin: true`. Set it on the `endpoint.mcp` connector so the
+  grant covers that connector alone; `options.allow_private_origin: true`
+  applies to every connector in the scan.
 - `ca_bundle` on `endpoint.mcp` trusts a private CA for the card and JWKS
   endpoints; verification stays on, and a relative path resolves beside the
   configuration file.
