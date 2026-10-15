@@ -800,3 +800,41 @@ def test_cloudtrail_q_developer_q_in_connect_lex_and_kendra_events_count_for_cal
     assert finding.metadata["events"] == 1
     assert finding.metadata["operations"] == {name: 1}
     assert any("1 CloudTrail AI event(s) outside the lineage operation list" in w for w in ctx.stats.warnings)
+
+
+def test_cloudtrail_sanitized_or_absent_principal_keys_the_tally_and_the_lineage_alike(index, monkeypatch):
+    # The tally keyed the raw principal while the lineage indexed its sanitized text, so a
+    # session name the redactor rewrites (or no principal at all) reported no observations
+    # and never received the event-limit disclosure.
+    from shadowscan.connectors.cloud import aws_lineage
+
+    monkeypatch.setattr(aws_lineage, "MAX_LINEAGE_EVENTS", 1)
+    session = "arn:aws:sts::222222222222:assumed-role/ml-worker/AKIAIOSFODNN7EXAMPLE"
+    first = {
+        "_kind": "cloudtrail-event",
+        "_region": "us-west-2",
+        "recipientAccountId": "222222222222",
+        "eventID": "sanitized-1",
+        "eventName": "InvokeModel",
+        "eventSource": "bedrock.amazonaws.com",
+        "eventTime": "2026-01-01T00:10:00Z",
+        "principal": session,
+        "identityType": "AssumedRole",
+    }
+    second = {**first, "eventID": "sanitized-2", "eventTime": "2026-01-01T00:20:00Z"}
+    findings, ctx = _lineage(index, [first, second])
+    assert not ctx.stats.incomplete
+    (finding,) = findings
+    assert finding.metadata["events"] == 2
+    assert "AKIAIOSFODNN7EXAMPLE" not in json.dumps(finding.to_dict())
+    lineage = finding.metadata["cloudtrail_lineage"]
+    assert [o["eventID"] for o in lineage["observations"]] == ["sanitized-1"]
+    assert lineage["coverage"] == "partial" and "event-limit" in lineage["limits"]
+    anonymous = {k: v for k, v in first.items() if k != "principal"}
+    findings, ctx = _lineage(index, [anonymous, {**anonymous, "eventID": "anonymous-2"}])
+    (finding,) = findings
+    assert finding.resource == "cloudtrail:unknown"
+    assert finding.metadata["events"] == 2
+    lineage = finding.metadata["cloudtrail_lineage"]
+    assert [o["eventID"] for o in lineage["observations"]] == ["sanitized-1"]
+    assert lineage["coverage"] == "partial" and "event-limit" in lineage["limits"]

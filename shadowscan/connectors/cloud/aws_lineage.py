@@ -21,6 +21,7 @@ MAX_LINEAGE_EVENTS = 10000  # per principal; the caller's invocation tally is ne
 MAX_CALLER_OBSERVATIONS = 100
 MAX_ASSUMPTION_HOPS = 8
 ASSUME_OPERATIONS = frozenset({"AssumeRole", "AssumeRoleWithSAML", "AssumeRoleWithWebIdentity"})
+UNKNOWN_PRINCIPAL = "unknown"
 _FIELDS = (
     "eventID",
     "eventName",
@@ -90,6 +91,16 @@ def normalize_detail(detail: dict[str, Any], region: str | None = None) -> dict[
     return {k: text(v, 2048) for k, v in raw.items()}
 
 
+def caller_key(principal: Any) -> str:
+    """The one key the caller tally and the lineage index share for a record's principal.
+
+    The sanitized text is the key, so a principal the redactor rewrites (an
+    access-key-shaped session name) or an absent one indexes the same caller
+    its finding is reported for.
+    """
+    return text(principal, 2048) or UNKNOWN_PRINCIPAL
+
+
 def _parse_time(value: Any) -> datetime | None:
     """A UTC timestamp, or None when no accepted spelling reads the value.
 
@@ -143,7 +154,7 @@ class CloudTrailLineage:
 
     def _bound(self, observation: dict[str, Any]) -> None:
         """Stop retaining a principal's events; the invocation tally stays complete, the ancestry does not."""
-        affected = {observation.get("principal") or ""}
+        affected = {caller_key(observation.get("principal"))}
         session = observation.get("assumedRoleArn")
         if observation.get("eventName") in ASSUME_OPERATIONS and _usable(session):
             # The session this hop created can no longer be traced through it.
@@ -173,7 +184,7 @@ class CloudTrailLineage:
                     observation.pop(name)
                 else:
                     observation[name] = to_iso(stamp)
-        principal = observation.get("principal") or ""
+        principal = caller_key(observation.get("principal"))
         retained = self.retained.get(principal, 0)
         if all(_usable(observation.get(k)) for k in ("eventID", "recipientAccountId", "_region")):
             key = (

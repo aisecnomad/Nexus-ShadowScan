@@ -43,7 +43,12 @@ from shadowscan.connectors.base import (
     _non_negative_limit,
     _positive_limit,
 )
-from shadowscan.connectors.cloud.aws_lineage import ASSUME_OPERATIONS, CloudTrailLineage, normalize_detail
+from shadowscan.connectors.cloud.aws_lineage import (
+    ASSUME_OPERATIONS,
+    CloudTrailLineage,
+    caller_key,
+    normalize_detail,
+)
 from shadowscan.connectors.cloud.aws_registry import (
     AGENT_REGISTRY,
     AGENTCORE_REGISTRY,
@@ -1590,6 +1595,9 @@ class AwsConnector(BaseConnector):
                         for field in _CLOUDTRAIL_TEXT_FIELDS:
                             if rec.get(field) is not None and not isinstance(rec[field], str):
                                 raise ValueError("event field")
+                        # One key for the tally and the lineage index: the finding for a
+                        # sanitized or absent principal must reach its own observations.
+                        key = caller_key(rec.get("principal"))
                         if rec.get("eventName") in ASSUME_OPERATIONS:
                             lineage.add(rec)  # STS context for callers, never a caller itself
                         elif not _is_llm_event(rec):
@@ -1598,9 +1606,9 @@ class AwsConnector(BaseConnector):
                             # Counted for its caller as before lineage existed; only the
                             # listed operations carry a session trace.
                             untraced += 1
-                            self._acc_caller(callers, rec)
+                            self._acc_caller(callers, key, rec)
                         elif lineage.add(rec):
-                            self._acc_caller(callers, rec)
+                            self._acc_caller(callers, key, rec)
                     else:
                         f = dispatch.handlers[kind](rec)
                         if f:
@@ -2844,10 +2852,10 @@ class AwsConnector(BaseConnector):
 
     # ------------------------------------------------------------ cloudtrail
     @staticmethod
-    def _acc_caller(callers: dict[str, dict[str, Any]], rec: dict[str, Any]) -> None:
+    def _acc_caller(callers: dict[str, dict[str, Any]], key: str, rec: dict[str, Any]) -> None:
         agg = aggregate_caller_event(
             callers,
-            rec.get("principal") or "unknown",
+            key,
             time=rec.get("eventTime"),
             tally_present={
                 "agents": rec.get("userAgent"),
