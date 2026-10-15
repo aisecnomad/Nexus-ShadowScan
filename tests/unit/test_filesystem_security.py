@@ -1892,6 +1892,19 @@ def test_extensionless_text_candidates_cost_only_a_probe(tmp_path):
     (tmp_path / "LICENSE").write_bytes(b"Apache License, Version 2.0\n" * 2048)
     assert model_artifacts.inspect_artifact(tmp_path / "LICENSE", charge=charged.append) is None
     assert sum(charged) <= model_artifacts.PROBE_BYTES
+    # A text file small enough to be an LFS pointer used to be read a second
+    # time for the pointer line; the probe head answers that now.
+    for name, text in (("Makefile", b"all:\n\techo hi\n" * 8), ("VERSION", b"1.2.3\n")):
+        charged.clear()
+        (tmp_path / name).write_bytes(text)
+        assert model_artifacts.inspect_artifact(tmp_path / name, charge=charged.append) is None
+        assert sum(charged) == min(len(text), model_artifacts.PROBE_BYTES)
+    # An extensionless LFS pointer is still told apart from the text it looks like.
+    (tmp_path / "weights").write_bytes(Path("tests/fixtures/model_artifacts/lfs-pointer.gguf").read_bytes())
+    charged.clear()
+    with pytest.raises(model_artifacts.LFSPointerError):
+        model_artifacts.inspect_artifact(tmp_path / "weights", charge=charged.append)
+    assert sum(charged) <= model_artifacts.PROBE_BYTES
     # A binary (NUL bytes among its first bytes) still gets the bounded tail read.
     charged.clear()
     cookie = Path("tests/fixtures/model_artifacts/empty-archive.bin").read_bytes()

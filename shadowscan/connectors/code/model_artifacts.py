@@ -413,14 +413,14 @@ def _pyinstaller(reader: _Reader) -> ArtifactInspection | None:
     )
 
 
-def _binary_probe(reader: _Reader, prefix: bytes) -> bool:
-    """Whether an extensionless candidate is a binary at all: a NUL among its first bytes.
+def _probe_head(reader: _Reader, prefix: bytes) -> bytes:
+    """The first ``PROBE_BYTES`` of an extensionless candidate, which decide whether it is a binary.
 
     Only the bytes after ``prefix`` are read, so the probe costs ``PROBE_BYTES``
-    at most, charged at that size; the tail read follows only for a binary.
+    at most, charged at that size; the tail read follows only for a binary (a
+    NUL among these bytes), and a text candidate's LFS check reuses the head.
     """
-    head = prefix + reader.read(max(0, min(PROBE_BYTES, reader.size) - len(prefix)))
-    return b"\x00" in head
+    return prefix + reader.read(max(0, min(PROBE_BYTES, reader.size) - len(prefix)))
 
 
 class LFSPointerError(ValueError):
@@ -442,20 +442,37 @@ def _lfs_pointer(reader: _Reader) -> bool:
     return reader.read(len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
 
 
-def _inspect(reader: _Reader, suffix: str) -> ArtifactInspection | None:
+def _lfs_pointer_head(reader: _Reader, head: bytes) -> bool:
+    """Whether a text candidate the probe passed over is a Git LFS pointer.
+
+    The probe head already holds the pointer line of any file long enough to
+    be a pointer, so nothing is read or charged again.
+    """
+    if not len(LFS_POINTER_PREFIX) <= reader.size <= LFS_POINTER_MAX_BYTES:
+        return False
+    if len(head) < len(LFS_POINTER_PREFIX):
+        return _lfs_pointer(reader)
+    return head.startswith(LFS_POINTER_PREFIX)
+
+
+def _inspect(reader: _Reader, suffix: str) -> tuple[ArtifactInspection | None, bytes]:
+    """Inspect by suffix or probe; the bytes read to decide come back with the result."""
     prefix = reader.read(min(4, reader.size))
     if suffix == ".gguf" or prefix == b"GGUF":
-        return _gguf(reader)
+        return _gguf(reader), prefix
     if suffix == ".safetensors":
-        return _safetensors(reader)
+        return _safetensors(reader), prefix
     if suffix == ".onnx":
-        return _onnx(reader)
-    if suffix in ARTIFACT_SUFFIXES or _binary_probe(reader, prefix):
-        return _pyinstaller(reader)
+        return _onnx(reader), prefix
+    if suffix in ARTIFACT_SUFFIXES:
+        return _pyinstaller(reader), prefix
+    head = _probe_head(reader, prefix)
+    if b"\x00" in head:
+        return _pyinstaller(reader), head
     # An extensionless file without a NUL among its first bytes is text
     # (LICENSE, Makefile, a script), not a packaged binary: the probe is
     # all it costs, and the walk goes on to read it as source.
-    return None
+    return None, head
 
 
 def inspect_artifact(
@@ -476,12 +493,12 @@ def inspect_artifact(
     with open_confined_file(path, label="model artifact", dir_fd=dir_fd) as (stream, before):
         reader = _Reader(stream, before.st_size, max_bytes, check, charge)
         try:
-            result = _inspect(reader, path.suffix.lower())
+            result, head = _inspect(reader, path.suffix.lower())
         except ValueError as exc:
             if _lfs_pointer(reader):
                 raise LFSPointerError("Git LFS pointer file, not the artifact it stands for") from exc
             raise
-        if result is None and _lfs_pointer(reader):
+        if result is None and _lfs_pointer_head(reader, head):
             raise LFSPointerError("Git LFS pointer file, not the artifact it stands for")
         if changed_since(before, stream.fileno()):
             raise ValueError("artifact changed while reading")
