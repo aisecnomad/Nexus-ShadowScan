@@ -40,8 +40,11 @@ MCP package name are kept.
   scan incomplete. A command line longer than 64 KiB is classified from the
   arguments read in full and the finding reports `truncated_command_lines`;
   when the arguments that would name a launcher's package lie past the limit,
-  the process is not classified and the scan is marked incomplete. Command
-  lines are never kept. Some views do not list other processes at all, and then
+  the process is not classified and the scan is marked incomplete; the warning
+  is raised only when the arguments read so far cannot decide the
+  classification (`ollama` is decided from its first two arguments, a
+  launcher from its first three positional arguments or an installing or
+  inspecting subcommand). Command lines are never kept. Some views do not list other processes at all, and then
   the scan is marked incomplete with a warning that says why: a `/proc` that
   belongs to a container's own PID namespace (detected from the namespace's
   inode, not from `NSpid`, which shows one entry inside a container as on the
@@ -94,7 +97,9 @@ Process namespace and start ticks are checked before and after inspection;
 those identity reads use a reserved 4 KiB allowance outside the inspection
 budgets. Kernel threads have no user-space mappings, descriptors or
 environment; they are skipped without marking the scan incomplete and the
-skipped count is listed in `inspection_limitations`. Changed or exited
+skipped count listed in `inspection_limitations` is the total for the scan:
+findings carrying inspection metadata are built after process enumeration
+completes. Changed or exited
 processes are omitted with a race warning. These identities
 lack a boot ID, so they must not be used for joins across host restarts.
 Permission denial, malformed input and exhausted budgets mark coverage

@@ -28,6 +28,14 @@ a second verification; each has a regression test.
   read in full and the finding carries `metadata.truncated_command_lines`; a
   launcher whose package argument may lie past the limit still marks the scan
   incomplete. Command lines are still never kept.
+- Runtime: a truncated `ollama` command line whose subcommand lies past the
+  64 KiB read limit marks the scan incomplete instead of being dropped
+  silently; a truncated launcher command line that the leading arguments
+  already decide (a `.py` script with its positional arguments read, or a
+  package-manager subcommand after which nothing runs) no longer marks the
+  scan incomplete; and the kernel-thread limitation on `ML runtime
+  indicators` findings reports the final count, such findings being emitted
+  once `/proc` enumeration has finished.
 - Runtime: process identity reads use a reserved allowance outside the
   inspection budgets, and `max_inspection_bytes` now caps each of `maps`,
   `environ` and the descriptor scan separately. A large `maps` (PyTorch,
