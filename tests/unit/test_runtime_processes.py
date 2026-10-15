@@ -779,3 +779,20 @@ def test_kernel_threads_are_skipped_without_marking_the_scan_incomplete(
     assert len(findings) == 1 and not ctx.stats.incomplete
     assert findings[0].metadata["pids"] == [12]
     assert any("1 kernel thread" in line for line in findings[0].metadata["inspection_limitations"])
+
+
+def test_truncated_ollama_subcommand_past_the_limit_is_incomplete(run_connector, monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    (proc / "12").mkdir(parents=True)
+    # `ollama` is decided from its first two arguments; the one naming the subcommand lies past the limit.
+    (proc / "12" / "cmdline").write_bytes(
+        b"ollama\0" + b"A" * (2 * runtime_processes._MAX_CMDLINE_BYTES) + b"\0serve\0"
+    )
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert findings == [] and ctx.stats.incomplete
+    assert any("command line byte limit" in w for w in ctx.stats.warnings)
+    assert not runtime_processes._classification_complete(["ollama"])
+    assert runtime_processes._classification_complete(["ollama", "list", "--verbose"])

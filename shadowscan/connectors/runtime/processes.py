@@ -320,6 +320,8 @@ def _classification_complete(argv: list[str]) -> bool:
     if not argv:
         return False
     base = _base(argv[0])
+    if base == "ollama":
+        return len(argv) >= 3  # classify() decides `ollama` from its first two arguments
     if base not in _LAUNCHERS and not _PYTHON.match(base):
         return True
     return sum(1 for _ in _packages(base, argv[1:])) >= _PACKAGE_ARGS
