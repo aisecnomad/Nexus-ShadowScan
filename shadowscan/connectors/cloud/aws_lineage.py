@@ -21,13 +21,23 @@ from shadowscan.utils.text import parse_timestamp, to_iso
 _CLOUDTRAIL_TIME_FORMAT = "%b %d, %Y, %I:%M:%S %p"
 
 
+_CLOUDTRAIL_TIME_SHAPE = re.compile(r"[A-Z][a-z]{2} \d{1,2}, \d{4}, ")
+
+
 def _parse_time(value: Any) -> datetime | None:
-    """CloudTrail's display format first: ``parse_timestamp`` reads it as RFC 2822 and drops the meridian."""
+    """CloudTrail's display format first: ``parse_timestamp`` reads it as RFC 2822 and drops the meridian.
+
+    A value shaped like the display format never falls back: a variant the
+    format string cannot read becomes a disclosed invalid-timestamp gap
+    rather than a silently misread time.
+    """
     if isinstance(value, str):
+        plain = value.replace("\u202f", " ").replace("\u00a0", " ")
         try:
-            return datetime.strptime(value, _CLOUDTRAIL_TIME_FORMAT).replace(tzinfo=UTC)
+            return datetime.strptime(plain, _CLOUDTRAIL_TIME_FORMAT).replace(tzinfo=UTC)
         except ValueError:
-            pass
+            if _CLOUDTRAIL_TIME_SHAPE.match(plain):
+                return None
     return parse_timestamp(value)
 
 

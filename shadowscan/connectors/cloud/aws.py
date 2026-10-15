@@ -354,7 +354,21 @@ _CLOUDTRAIL_TEXT_FIELDS = (
 # CloudTrail event sources whose API calls the caller tally counts, as every
 # cloudtrail-event record did before session lineage. Only CLOUDTRAIL_EVENTS
 # carry a session trace; a normalized record without a source is one of those.
-_LLM_EVENT_SOURCES = frozenset({"bedrock", "sagemaker", "q", "qbusiness", "qapps", "qdeveloper", "qconnect"})
+_LLM_EVENT_SOURCES = frozenset(
+    {
+        "bedrock",
+        "sagemaker",
+        "q",
+        "qbusiness",
+        "qapps",
+        "qdeveloper",
+        "qconnect",
+        "codewhisperer",
+        "wisdom",
+        "lex",
+        "kendra",
+    }
+)
 
 
 def _is_llm_event(rec: dict[str, Any]) -> bool:
