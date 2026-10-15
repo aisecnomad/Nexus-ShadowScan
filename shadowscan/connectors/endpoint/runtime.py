@@ -61,7 +61,8 @@ _BROAD_FILESYSTEM_CAPABILITIES = frozenset(
 )
 _SHELL_CAPABILITIES = frozenset({"shell", "command", "execute", "code-exec", "terminal"})
 _FILESYSTEM_GRANT = "filesystem:"
-_TRAILING_GLOB = re.compile(r"[\\/]\*{1,2}$")
+# Every trailing glob segment is stripped, so ``/**/*`` and ``~/**/*`` name their roots.
+_TRAILING_GLOB = re.compile(r"(?:[\\/]\*{1,2})+$")
 
 
 def _declared_grants(tool: dict[str, Any]) -> tuple[set[str], bool]:
@@ -90,7 +91,8 @@ def _broad_filesystem_grant(grant: str) -> bool:
     if not grant.casefold().startswith(_FILESYSTEM_GRANT):
         return False
     scope = grant[len(_FILESYSTEM_GRANT) :].strip()
-    # ``filesystem:/home/alice/**`` grants the home directory; ``filesystem:/srv/app/**`` does not.
+    # ``filesystem:/home/alice/**`` and ``filesystem:/home/alice/**/*`` grant the home directory;
+    # ``filesystem:/srv/app/**`` does not.
     root = _TRAILING_GLOB.sub("", scope) or "/"
     return root in {"*", "**"} or _broad_root(root)
 
