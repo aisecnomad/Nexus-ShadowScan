@@ -315,6 +315,11 @@ splitting the connector class itself.
 |---|---|
 | `filesystem.py` | the connector: tree walk, coverage accounting, file dispatch, ownership and finding construction |
 | `walk.py` | bounded, non-recursive directory walking that never follows links; project-root markers |
+| `path_context.py` | path-derived evidence context: test, documentation, example, generated and CI-pipeline paths, and the discounts they apply |
+| `project_evidence.py` | how a project's observations count toward its finding: corroboration, weak mentions, env-only and model-ids-only capping |
+| `model_identifiers.py` | model-identifier literal recognition: vendor stems, id shapes and tooling look-alikes |
+| `source_text.py` | offset-preserving text shaping: comment masking, front-matter quoting, notebook magics, crawler user-agent values, and the structured credential context excerpts are redacted with |
+| `excerpts.py` | excerpt sources and lazily cut, redacted snippet lines |
 | `remote.py` | shared by `code.github` and `code.gitlab`: offline clone loading, clone hardening and origin pinning, API snapshots and blob verification |
 | `manifests.py`, `mcp_config.py`, `semantic_config.py` | dependency manifests, containers, IaC and CI files; MCP client and server configuration; agent manifests and low-code exports |
 | `mcp_tools.py`, `instruction_content.py` | what an MCP server can do from the tools it registers; hidden content, fetched code and invisible text in agent instruction files |

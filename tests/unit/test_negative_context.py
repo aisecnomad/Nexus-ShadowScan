@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from shadowscan.connectors.code.filesystem import (
+from shadowscan.connectors.code.path_context import (
     DOCS_MAX_CONFIDENCE,
     DOCS_WEIGHT_SCALE,
     EXAMPLE_PATH_MAX_CONFIDENCE,

@@ -72,10 +72,13 @@ coverage, even when a response includes an empty collection field.
   environment proxy settings, are unsupported by this transport.
 * The shared HTTPS adapter bounds response acquisition, including status/header
   delivery, separately from body reads. Cancellation interrupts the active socket
-  before it can be pooled for another request. System DNS resolution cannot be
-  forcibly cancelled in a Python thread; a late result is rejected before
-  connection. A process/job supervisor remains necessary for a hard execution
-  limit, including external SDK transports.
+  before it can be pooled for another request. System DNS resolution runs in a
+  bounded worker: the resolver call itself cannot be cancelled, but the request
+  stops waiting at its budget (20 seconds, tightened by the client timeout and
+  the acquisition deadline), fails closed, and discards a late result before
+  any connection. The URL preflight applies the same bound, so a stalled
+  resolver cannot hold a worker. A process/job supervisor remains necessary for
+  a hard execution limit, including external SDK transports.
 * Default shared HTTP responses and JSON/pagination helpers are limited to 16 MiB
   of decoded bytes, and each body must arrive within twice the client timeout
   (60 seconds by default). Oversized, slow and malformed collection responses

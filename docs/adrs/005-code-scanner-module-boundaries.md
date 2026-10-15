@@ -93,3 +93,17 @@ into the proposed collaborators:
 
 `code/file_scan.py` and `code/project_findings.py` do not exist yet, and
 `code/ownership.py` still holds only CODEOWNERS matching.
+
+## Status (2026-10-15)
+
+The module-level helpers that sat beside the class in `filesystem.py` moved
+into five bounded helper modules — `path_context.py`, `project_evidence.py`,
+`model_identifiers.py`, `source_text.py` and `excerpts.py` (about 1,000
+lines; see [code scanner internals](../architecture.md#code-scanner-internals)) —
+continuing the beside-the-class pattern above, with behaviour checked by the
+evaluation corpora and the offline demo. `filesystem.py` re-imports the moved
+names, and the only monkeypatched moved name (`_redacted_source`) is called
+solely from `filesystem.py`, so existing test seams keep their meaning; the
+forwarding-pattern caveat above still applies to any further move of a
+patched name. The four collaborator-class moves of the decision remain open,
+and the class itself is unchanged.

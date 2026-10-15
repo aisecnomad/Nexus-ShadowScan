@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.exceptions import NameResolutionError
 from urllib3.response import HTTPResponse
 
 from shadowscan.utils.http import (
@@ -174,8 +175,9 @@ def test_injected_session_cannot_keep_a_longer_prefix_transport_adapter():
 
 def test_late_dns_resolution_cannot_start_a_connection_after_acquisition_deadline(monkeypatch):
     def resolve(*args, **kwargs):
-        # DNS is synchronous and cannot be forcibly cancelled; nevertheless
-        # its result must never authorize a connection after the budget expires.
+        # The resolver call cannot be forcibly cancelled; the bounded wait
+        # abandons it at the acquisition deadline, and its late result must
+        # never authorize a connection.
         time.sleep(0.1)
         return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))]
 
@@ -186,8 +188,10 @@ def test_late_dns_resolution_cannot_start_a_connection_after_acquisition_deadlin
     guard = _SocketDeadline(connection, time.monotonic() + 0.05)
     connection.acquisition_guard = guard
     try:
-        with pytest.raises(ValueError, match="acquisition deadline"):
+        with pytest.raises(NameResolutionError):
             connection._new_conn()
+        # Let the abandoned resolver deliver its late answer: it is discarded.
+        time.sleep(0.1)
     finally:
         guard.finish()
         connection.acquisition_guard = None

@@ -41,12 +41,15 @@ Dependabot receive no repository secrets, so they are skipped too.
 
 | Workflow | Enabled by | Starts on | Writes |
 |---|---|---|---|
-| [Black Duck](black-duck-security-scan-ci.yml) | variable `BLACKDUCKSCA_URL`, `COVERITY_URL`, `POLARIS_SERVER_URL` or `SRM_URL`, with its secret | push to `main`, pull requests, Wednesday 06:25 UTC | nothing |
+| [Black Duck](black-duck-security-scan-ci.yml) | variable `BLACKDUCKSCA_URL`, `COVERITY_URL`, `POLARIS_SERVER_URL` or `SRM_URL`, with its secret, plus variable `BRIDGECLI_DOWNLOAD_VERSION` | push to `main`, pull requests, Wednesday 06:25 UTC | nothing |
 | [Checkmarx One](checkmarx-one.yml) | variable `CX_BASE_URI` and the `CX_*` secrets | pull requests | `security-events` |
 | [Semgrep](semgrep.yml) | variable `SEMGREP_ENABLED=true` and secret `SEMGREP_APP_TOKEN` | push to `main`, pull requests, Friday 08:24 UTC | `security-events` |
 
-The Black Duck action downloads the vendor's current Bridge CLI at run time.
-Pin `bridgecli_download_version` to a reviewed version before enabling it.
+The Black Duck action downloads the Bridge CLI at run time, so the job also
+requires the repository variable `BRIDGECLI_DOWNLOAD_VERSION`, set to a
+reviewed Bridge CLI version and passed as `bridgecli_download_version`.
+Configuring a service without that pin keeps the job skipped rather than
+downloading the vendor's current, unreviewed CLI.
 
 ## Changing a workflow
 

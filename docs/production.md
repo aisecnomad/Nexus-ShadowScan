@@ -717,9 +717,11 @@ twice the client timeout (60 seconds by default), covering connection, request
 transmission, status line and headers. TCP candidates and TLS handshakes share
 the remaining acquisition time. The active socket is interrupted on expiry;
 the watchdog is cancelled and joined before the response can leave its checked-out
-connection. System DNS is synchronous and cannot be forcibly cancelled: late
-resolution is rejected before connection, but needs a process/job supervisor
-for a hard time limit.
+connection. System DNS runs in a bounded worker: the resolver call itself
+cannot be cancelled, but the request stops waiting at its budget (20 seconds,
+tightened by the client timeout and the acquisition deadline), fails closed,
+and a late resolution is discarded before connection. A process/job supervisor
+is still needed for a hard time limit.
 
 Each response body has a separate budget of twice the client timeout.
 The 30-second client timeout also bounds individual socket reads, so without
