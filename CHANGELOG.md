@@ -662,20 +662,31 @@ summarizes each release for people who install and operate ShadowScan.
 
 - Generic SaaS inventory retains whole-record credential context when selecting
   report and matching fields. Known credentials are removed before splitting or
-  shortening values, and cannot establish product or permission evidence. Raw
-  resource identity digests still distinguish resources whose display values
-  redact to the same text; credential context is never retained in findings.
-- Zapier and Workato reject provider error envelopes even beside empty result
-  arrays. Zapier also rejects malformed continuation metadata before publishing
-  a page. Earlier valid pages survive with incomplete coverage.
+  shortening values, and cannot establish product or permission evidence;
+  credential context is never retained in findings. Values under credential
+  names that are shorter than eight characters or placeholders (`N`, `-`,
+  `none`, `****`) are flags and withhold nothing. A name withheld entirely by a
+  credential leaves the scan incomplete instead of silently omitting the app.
+- Generic SaaS findings whose resource a credential redacts take their ID from
+  the redacted resource and a keyed pseudonym of the raw one, not a public
+  digest that confirmed guessed credentials. Their IDs change and are scan-local
+  (`metadata.identity_scope: run`) unless `SHADOWSCAN_IDENTITY_KEY` is set;
+  distinct raw resources keep distinct IDs.
+- Zapier and Workato reject provider error envelopes and malformed collections
+  even beside empty result arrays: that page is omitted. A missing or malformed
+  Zapier continuation keeps the page's Zaps and marks coverage incomplete.
+  Earlier valid pages survive with incomplete coverage.
 - Teams combines catalog and installed-version definitions with version, bot,
-  installation and team provenance. It reports requested RSC permissions, not
-  verified grants; contradictory observations of one definition mark coverage
-  incomplete. Scalar version/bot fields are populated only when unambiguous;
-  otherwise they are `null`.
+  installation and team provenance. Installations of one definition are counted
+  (`installation_count`, `team_count`) with a sample of at most 20 teams, so the
+  finding stays bounded however many teams install the app. It reports requested
+  RSC permissions, not verified grants; contradictory observations of one
+  definition mark coverage incomplete. Scalar version/bot fields are populated
+  only when unambiguous; otherwise they are `null`.
 - JavaScript/TypeScript destructuring declarations invalidate shadowed SDK
   constructor bindings, including aliases, nested patterns, defaults and rest
-  bindings. Property keys and initializer references do not declare bindings.
+  bindings. Property keys, initializer references and members named like a
+  declaration keyword (`options.const`) do not declare bindings.
 - Discovery benchmark comparisons reject newly unavailable runs independently
   of F1, require every selected repository in both metric sets, and never label
   failed or incomplete negative scans clean. Adapter-approved nonzero exits

@@ -1818,7 +1818,8 @@ class _JavascriptDeclarations:
             value = self.value(position)
             if value in {";", ")", "]", "}", ","}:
                 break
-            if value in {"const", "let", "var"} and self.value(position - 1) not in {"as", "<"}:
+            # A member name after '.' or '?.' ('options.const') is not a keyword.
+            if value in {"const", "let", "var"} and self.value(position - 1) not in {"as", "<", "."}:
                 break
             if position > start:
                 previous = self.tokens[position - 1]

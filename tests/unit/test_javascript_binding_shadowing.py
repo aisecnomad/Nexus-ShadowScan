@@ -284,6 +284,10 @@ def test_declaration_binding_names_shadow_imports(tmp_path, run_connector, decla
         "const { other: πvalue } = factories;",
         "const other = { constructor: Agent } as const;",
         "const { other = () => { const local = Agent; return local; } } = factories;",
+        # A member named like a declaration keyword is a read, not a new declaration.
+        "const { other = factories.const } = factories;",
+        "const { other = factories?.let, more = factories.var } = factories;",
+        "const { other = factories\n    .const } = factories;",
     ],
 )
 def test_property_keys_and_initializer_reads_do_not_shadow_imports(tmp_path, run_connector, declaration):
@@ -304,6 +308,7 @@ def test_property_keys_and_initializer_reads_do_not_shadow_imports(tmp_path, run
         "const fs = require('fs'), [Agent]: Options = factories;",
         "const first = {} as const, { Agent } = factories;",
         "const first = choose<Deps, Result>(), { Agent } = factories;",
+        "const { first = factories.const } = factories, { Agent } = more;",
         "const first = left < right, { Agent } = factories;",
         "let first = left < right, Agent = LocalAgent > value;",
         "let first = left < right, Agent\nother > (value);",

@@ -9,16 +9,18 @@ names are mapped through ``fields``; sensible defaults cover common exports.
 
 from __future__ import annotations
 
+import hashlib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import config_boolean, finalize
+from shadowscan.connectors.common import config_boolean, finalize, looks_like_placeholder
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
-from shadowscan.utils.redaction import sanitize
+from shadowscan.utils.credential_identity import credential_identity_scope, keyed_credential_digest
+from shadowscan.utils.redaction import REDACTED, _sensitive_key, sanitize
 
 DEFAULT_FIELDS: dict[str, list[str]] = {
     "name": [
@@ -54,6 +56,49 @@ DEFAULT_FIELDS: dict[str, list[str]] = {
     "last_used": ["last_used", "last_used_at", "last_activity", "last_seen", "updated_at"],
     "status": ["status", "state", "approval", "sanctioned", "risk", "risk_score"],
 }
+
+
+# Report sanitization withholds a whole field that contains a known credential
+# shorter than this, rather than replacing the credential (see utils.redaction).
+_SHORT_CREDENTIAL_CHARS = 8
+
+
+def _not_a_credential(value: Any) -> bool:
+    """A credential column's flag or placeholder ('N', '-', 'Yes', 'none', '****', 'changeme')."""
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    return len(text) < _SHORT_CREDENTIAL_CHARS or looks_like_placeholder(text)
+
+
+def _credential_context(item: Any, credential: bool = False) -> Any:
+    """``item`` as credential context, without the values under credential names that are not secrets.
+
+    Sanitization learns every value under a credential name and removes it from
+    the other fields; one shorter than eight characters withholds each field
+    that contains it. Exports often fill such columns with a flag or a
+    placeholder, which would then erase app names, dates and identities while
+    protecting nothing. Those values are left out; every other one is learned.
+    """
+    if isinstance(item, Mapping):
+        kept: dict[Any, Any] = {}
+        for key, value in item.items():
+            named = credential or _sensitive_key(str(key))
+            if not (named and _not_a_credential(value)):
+                kept[key] = _credential_context(value, named)
+        return kept
+    if isinstance(item, (list, tuple)):
+        return [
+            _credential_context(value, credential)
+            for value in item
+            if not (credential and _not_a_credential(value))
+        ]
+    return item
+
+
+def _withheld(raw: Any, clean: Any) -> bool:
+    """Whether sanitization left nothing of a nonblank ``raw`` text but markers and punctuation."""
+    return clean != raw and not any(character.isalnum() for character in str(clean).replace(REDACTED, ""))
 
 
 def _scope_values(value: Any) -> list[str]:
@@ -170,9 +215,21 @@ class GenericSaaSConnector(BaseConnector):
         # Credential context must survive field selection, before splitting,
         # joining or truncating can hide a known secret. Match this safe view
         # too: a credential's contents cannot establish product/permission
-        # evidence. Preserve the original resource only for its identity digest.
-        _, safe_values = sanitize((rec, [(self._get(rec, key),) for key in self.fields]))
-        safe = {key: value for key, (value,) in zip(self.fields, safe_values, strict=True)}
+        # evidence. The resource is sanitized with the same context.
+        app_id = self._get(rec, "id")
+        raw_resource = f"{self.platform}:app:{app_id or name}"
+        context = _credential_context(rec)
+        _, safe_values = sanitize(
+            (context, [(self._get(rec, key),) for key in self.fields] + [(raw_resource,)])
+        )
+        safe = {key: value for key, (value,) in zip(self.fields, safe_values[:-1], strict=True)}
+        (resource,) = safe_values[-1]
+        if _withheld(name, safe["name"]):
+            # Nothing of the name is left to match: an AI app could be hidden here.
+            self.ctx.warn(
+                "saas.generic: a credential in an app record withheld its name; coverage incomplete"
+            )
+            return None
         # JSON exports may carry non-string list members; coerce rather than crash.
         scopes = _scope_values(safe["scopes"])
         urls = safe["url"]
@@ -181,13 +238,12 @@ class GenericSaaSConnector(BaseConnector):
             if isinstance(urls, list)
             else [u.strip() for u in re.split(r"[,;\s]+", str(urls or "")) if u.strip()]
         )
-        app_id = self._get(rec, "id")
         f = Finding(
             surface=Surface.SAAS,
             connector=self.name,
             kind=Kind.OAUTH_GRANT if scopes else Kind.BOT_APP,
             title=f"{self.platform} app: {safe['name']}",
-            resource=f"{self.platform}:app:{app_id or name}",
+            resource=resource,
             resource_type="saas-app",
             provider=self.platform,
             owner=str(safe["owner"] or "") or None,
@@ -236,5 +292,13 @@ class GenericSaaSConnector(BaseConnector):
             }
         )
         finalize(f, self.index)
-        f.sanitize(credential_context=rec)
+        f.sanitize(credential_context=context)
+        if f.resource != raw_resource:
+            # A public digest of the raw resource would let a reader confirm a
+            # guessed credential offline. Keep redacted resources distinct with
+            # a keyed pseudonym instead: scan-local unless the operator's
+            # SHADOWSCAN_IDENTITY_KEY is set (metadata.identity_scope).
+            pseudonym = keyed_credential_digest(raw_resource)
+            f.id = "ss-" + hashlib.sha256(f"{f.compute_id()}|{pseudonym}".encode()).hexdigest()[:16]
+            f.update_metadata(identity_scope=credential_identity_scope())
         return f

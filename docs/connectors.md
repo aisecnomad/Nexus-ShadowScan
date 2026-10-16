@@ -902,10 +902,12 @@ and collect a fresh comparison baseline when upgrading from name-based IDs.
 Graph app catalog (custom apps with bot definitions and RSC permissions) and
 installed apps per team (capped by `max_teams`).
 Catalog and installed-version definitions are retained with version, bot,
-installation and team provenance in `definition_observations`. RSC permissions
-are requested permissions, not verified grants. Conflicting observations of one
-definition make coverage incomplete; scalar version/bot fields are populated
-only when unambiguous, with all observed values in `versions` and `bot_ids`.
+installation and team provenance in `definition_observations`, one entry per
+distinct definition with an installation count and at most 20 sample teams. RSC
+permissions are requested permissions, not verified grants. Conflicting
+observations of one definition make coverage incomplete; scalar version/bot
+fields are populated only when unambiguous, with all observed values in
+`versions` and `bot_ids`.
 Malformed app IDs, conflicting expanded identities and malformed nested
 definitions or permissions make collection incomplete. An installation ID is
 not a fallback catalog app ID. Valid neighboring records remain available.
@@ -972,8 +974,11 @@ neighboring records remain available. A partial export cannot resolve an
 earlier finding merely because that row lost its name.
 Whole-record credential context removes copied secrets before field projection,
 matching and excerpt truncation. Credential contents cannot establish product
-or permission evidence; raw resource digests preserve distinct finding IDs
-when displayed resources redact to the same value.
+or permission evidence. Short or placeholder values under credential names
+(`N`, `-`, `none`) are flags and withhold nothing; a name withheld entirely by a
+credential makes coverage incomplete. A resource with a redacted credential
+gets a keyed, distinct finding ID that is scan-local
+(`metadata.identity_scope: run`) unless `SHADOWSCAN_IDENTITY_KEY` is set.
 `platform` (default `saas`) names the export's source, for example
 `google-marketplace`, `hubspot` or `defender-mcas`. It prefixes finding titles
 and resource IDs and sets the provider, so keep it stable between scans.

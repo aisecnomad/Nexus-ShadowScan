@@ -27,6 +27,8 @@ from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.text import get_path
 
 GRAPH = "https://graph.microsoft.com/v1.0"
+# Team names (and IDs) a finding lists, in total and per observed definition.
+_TEAM_SAMPLE = 20
 
 
 class TeamsConnector(BaseConnector):
@@ -278,6 +280,8 @@ class TeamsConnector(BaseConnector):
         """
         definitions: list[dict[str, Any]] = []
         observations: dict[str, dict[str, Any]] = {}
+        # Per observation: its installations' known (team ID, team name) pairs and their count.
+        installed: dict[str, tuple[set[tuple[str, str]], list[int]]] = {}
         known: dict[tuple[str, str], dict[str, Any]] = {}
         conflicting = False
 
@@ -319,13 +323,16 @@ class TeamsConnector(BaseConnector):
                     else None
                 ),
             }
+            # One observation per distinct definition and source: a tenant can install
+            # an app in thousands of teams, so installations are counted and sampled.
+            key = json.dumps(record, sort_keys=True)
+            observations.setdefault(key, record)
             if installation is not None:
-                record.update(
-                    installation_id=installation.get("id"),
-                    team_id=installation.get("_team_id"),
-                    team_name=installation.get("_team"),
-                )
-            observations[json.dumps(record, sort_keys=True)] = record
+                teams, count = installed.setdefault(key, (set(), [0]))
+                count[0] += 1
+                team = (str(installation.get("_team_id") or ""), str(installation.get("_team") or ""))
+                if any(team):
+                    teams.add(team)
 
         if not app.get("_from_install"):
             for definition in app.get("appDefinitions") or []:
@@ -341,7 +348,22 @@ class TeamsConnector(BaseConnector):
                 "saas.microsoft-teams: conflicting Teams definition observations; "
                 "version and permission coverage incomplete"
             )
-        return definitions, [observations[key] for key in sorted(observations)], conflicting
+
+        def summary(key: str) -> dict[str, Any]:
+            if key not in installed:
+                return observations[key]
+            teams, (count,) = installed[key]
+            return {
+                **observations[key],
+                "installation_count": count,
+                "team_count": len(teams),
+                "teams": [
+                    {"team_id": team_id or None, "team_name": team_name or None}
+                    for team_id, team_name in sorted(teams)[:_TEAM_SAMPLE]
+                ],
+            }
+
+        return definitions, [summary(key) for key in sorted(observations)], conflicting
 
     def _app_finding(
         self, app_id: str, app: dict[str, Any], installs: list[dict[str, Any]]
@@ -355,6 +377,7 @@ class TeamsConnector(BaseConnector):
             return values[0] if len(values) == 1 else None
 
         names = values("displayName")
+        team_names = sorted({str(i.get("_team")) for i in installs if i.get("_team")})
         name = app.get("displayName") or only(names) or app_id
         bot_ids = values("bot.id")
         versions = values("version")
@@ -426,7 +449,7 @@ class TeamsConnector(BaseConnector):
                 "publishing_state": only(values("publishingState")),
                 "definition_observations": observations,
                 "definition_conflicts": conflicting,
-                "installed_teams": sorted({str(i.get("_team")) for i in installs if i.get("_team")})[:20],
+                "installed_teams": team_names[:_TEAM_SAMPLE],
                 "install_count": len(installs),
                 "rsc_permissions": summarize_scopes(perms),
                 "rsc_permission_basis": "definition-requested",

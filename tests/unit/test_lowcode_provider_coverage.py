@@ -102,9 +102,12 @@ def test_automation_live_missing_collection_is_incomplete(index, monkeypatch, cl
     assert connector.ctx.stats.incomplete
 
 
+# A page whose envelope and collection are valid keeps its records; its
+# continuation only decides whether every page was collected. An error
+# envelope or a malformed collection still rejects the whole page (above).
 @pytest.mark.parametrize("populated", [False, True])
 @pytest.mark.parametrize("next_url", [False, 0, [], {}, True, 1, " \t"])
-def test_zapier_live_invalid_continuation_rejects_whole_page(
+def test_zapier_live_invalid_continuation_keeps_page_but_is_incomplete(
     index, monkeypatch, automation_review_pages, populated, next_url
 ):
     page = automation_review_pages["zapier"]
@@ -112,24 +115,35 @@ def test_zapier_live_invalid_continuation_rejects_whole_page(
         page["data"] = []
     page["links"] = {"next": next_url}
     connector, http = _automation_live(index, monkeypatch, automation.ZapierConnector, [page])
-    assert connector.run() == []
-    assert connector.ctx.stats.incomplete and connector.ctx.stats.objects_examined == 0
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == (["zapier:zap:review-zap-1"] if populated else [])
+    assert connector.ctx.stats.objects_examined == int(populated)
+    assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
+    assert any("invalid pagination continuation" in warning for warning in connector.ctx.stats.warnings)
     assert http.get_json.call_count == 1
 
 
-@pytest.mark.parametrize("links", [None, False, 0, [], ""])
-def test_zapier_live_invalid_links_container_is_incomplete(index, monkeypatch, links):
-    connector, _ = _automation_live(
-        index, monkeypatch, automation.ZapierConnector, [{"data": [], "links": links}]
-    )
-    assert connector.run() == []
-    assert connector.ctx.stats.incomplete
+@pytest.mark.parametrize("populated", [False, True])
+@pytest.mark.parametrize(
+    "metadata",
+    [{}, {"links": {}}, {"links": None}, {"links": False}, {"links": 0}, {"links": []}, {"links": ""}],
+)
+def test_zapier_live_missing_or_invalid_links_keep_page_but_are_incomplete(
+    index, monkeypatch, automation_review_pages, populated, metadata
+):
+    page = {"data": automation_review_pages["zapier"]["data"] if populated else [], **metadata}
+    connector, http = _automation_live(index, monkeypatch, automation.ZapierConnector, [page])
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == (["zapier:zap:review-zap-1"] if populated else [])
+    assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
+    assert any("invalid pagination links" in warning for warning in connector.ctx.stats.warnings)
+    assert http.get_json.call_count == 1
 
 
-@pytest.mark.parametrize("metadata", [{}, {"links": {}}, {"links": {"next": None}}, {"links": {"next": ""}}])
-def test_zapier_live_terminal_continuations_are_complete(index, monkeypatch, metadata):
+@pytest.mark.parametrize("next_url", [None, ""])
+def test_zapier_live_terminal_continuations_are_complete(index, monkeypatch, next_url):
     connector, http = _automation_live(
-        index, monkeypatch, automation.ZapierConnector, [{"data": [], **metadata}]
+        index, monkeypatch, automation.ZapierConnector, [{"data": [], "links": {"next": next_url}}]
     )
     assert connector.run() == []
     assert not connector.ctx.stats.incomplete and http.get_json.call_count == 1

@@ -36,9 +36,12 @@ installed apps per team (capped by `max_teams`).
 Findings retain catalog and installed-version definitions together, without
 assuming catalog order identifies the current version. `definition_observations`
 records definition IDs, versions, bot IDs, requested RSC permissions and
-installation/team provenance. Requested permissions do not establish granted
-access. Contradictory observations of the same definition ID or version mark
-coverage incomplete while retaining the attributed evidence. `versions` and
+installation/team provenance, one entry per distinct definition and source: an
+installed definition carries `installation_count`, `team_count` and `teams`, a
+sorted sample of at most 20 team IDs and names, so the finding stays bounded
+however many teams install the app. Requested permissions do not establish
+granted access. Contradictory observations of the same definition ID or version
+mark coverage incomplete while retaining the attributed evidence. `versions` and
 `bot_ids` contain the observed values; scalar `version`, `bot_id` and
 `publishing_state` are populated only when one nonempty value was observed;
 otherwise they are `null`.
@@ -103,7 +106,14 @@ Whole-record credential context is applied before selecting, splitting or
 shortening fields for matching and reports. A known credential copied into an
 app name, scope or other display field is withheld even when its original
 credential column is omitted from findings. Credential contents do not establish
-product or permission evidence. Sanitization limits make coverage incomplete;
-distinct raw resource identities retain distinct finding IDs after redaction.
+product or permission evidence. A value under a credential column name that is
+shorter than eight characters or a documentation placeholder (`N`, `-`, `Yes`,
+`none`, `****`, `changeme`) is treated as a flag and withholds nothing. A record
+whose name a credential withholds entirely is skipped and makes the scan
+incomplete. Sanitization limits make coverage incomplete. When a credential is
+redacted from a resource, the finding ID combines the redacted resource with a
+keyed pseudonym of the raw one: distinct resources keep distinct IDs, and the
+finding records `metadata.identity_scope` (`run`, scan-local, unless
+`SHADOWSCAN_IDENTITY_KEY` makes it `keyed`).
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

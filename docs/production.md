@@ -167,25 +167,44 @@ Rescan generic SaaS, Teams and affected JavaScript/TypeScript inputs after
 upgrading, and establish a fresh comparison baseline under the reviewed
 revision. Generic SaaS reports now withhold copies of known credentials from
 projected fields before transformations; credential values no longer establish
-product or permission matches. Finding identity digests still distinguish raw
-resource identities even if both displayed resources are redacted. Previously
-saved reports are not rewritten: handle affected reports under your existing
-credential exposure and retention procedures.
+product or permission matches. A value under a credential column name that is
+shorter than eight characters or a documentation placeholder (`N`, `-`, `Yes`,
+`none`, `****`, `changeme`) is a flag, not a credential, and withholds nothing.
+A record whose app name a credential withholds entirely is skipped with a
+warning and leaves the scan incomplete (exit 3).
+
+**Finding identity.** When a credential is redacted from a generic SaaS
+finding's resource, its ID is now derived from the redacted resource and a keyed
+pseudonym of the raw one (`keyed_credential_digest`), not from a public digest
+of the raw resource, which let a reader confirm a guessed credential offline.
+Those findings change ID and record `metadata.identity_scope`: `run` without a
+stable key, so their IDs are scan-local and `diff` lists them as not comparable
+(exit 3) instead of new or resolved; `keyed` when the scan has the operator's
+`SHADOWSCAN_IDENTITY_KEY`, which keeps them comparable between scans using that
+key. Distinct raw resources keep distinct IDs. Findings whose resource is not
+redacted keep their resource-based IDs. Previously saved reports are not
+rewritten: handle affected reports under your existing credential exposure and
+retention procedures, and establish a fresh baseline for the changed IDs.
 
 Teams findings retain catalog and installed-version observations together.
 Consumers of scalar `version`, `bot_id` or `publishing_state` must allow those
 fields to be `null` when no nonempty value or multiple values were observed; use `versions`,
-`bot_ids` and `definition_observations` for attributed evidence. RSC permissions
+`bot_ids` and `definition_observations` for attributed evidence. Each
+`definition_observations` entry describes one distinct definition and source;
+installation entries carry `installation_count`, `team_count` and `teams`, a
+sorted sample of at most 20 team IDs and names, instead of one entry per
+installation, so a widely installed app keeps a bounded finding. RSC permissions
 remain definition-requested permissions, not proof of effective grants.
 Contradictory observations of one definition mark coverage incomplete.
 
-Zapier/Workato error envelopes and malformed collections, and malformed Zapier
-pagination, now produce incomplete coverage even beside empty result arrays.
-Retained earlier pages do not establish complete inventory. JavaScript
-destructuring shadowing can reduce SDK agent attribution; that correction is
-not proof an agent stopped running. Benchmark comparison also rejects newly
-unavailable scans independently of detection scores, and requires every
-selected repository in both baseline and current metrics. Re-score older
+Zapier/Workato error envelopes and malformed collections now produce incomplete
+coverage even beside empty result arrays, and that page is omitted. A missing
+or malformed Zapier continuation keeps the page's Zaps and leaves coverage
+incomplete. Retained earlier pages do not establish complete inventory.
+JavaScript destructuring shadowing can reduce SDK agent attribution; that
+correction is not proof an agent stopped running. Benchmark comparison also
+rejects newly unavailable scans independently of detection scores, and requires
+every selected repository in both baseline and current metrics. Re-score older
 metrics if the gate reports missing run status or completeness information.
 
 Validation uses offline exports, mocked API responses and authored source

@@ -29,11 +29,13 @@ ATLASSIAN_SITE = "https://approved.atlassian.net"
 OTHER_ATLASSIAN_SITE = "https://different.atlassian.net"
 
 
-def scan(tmp_path, connector, records, **settings):
+def scan(tmp_path, connector, records, *, index=None, **settings):
+    """Run one connector over ``records``; pass ``index`` when the test patches the index it uses."""
     source = tmp_path / "inventory.json"
     source.write_text(json.dumps(records), encoding="utf-8")
     return Engine(
-        ScanConfig(connectors=[ConnectorSpec(connector, {"input": str(source), **settings})], parallel=1)
+        ScanConfig(connectors=[ConnectorSpec(connector, {"input": str(source), **settings})], parallel=1),
+        index,
     ).run()
 
 
@@ -423,9 +425,8 @@ def test_teams_catalog_version_cannot_hide_installed_bot_or_requested_permission
     installed = next(item for item in observations if item["source"] == "installation")
     assert installed["definition_id"] == "definition-v1"
     assert installed["version"] == "1.0.0"
-    assert installed["installation_id"] == "installation-engineering"
-    assert installed["team_id"] == "team-engineering"
-    assert installed["team_name"] == "Engineering"
+    assert installed["installation_count"] == installed["team_count"] == 1
+    assert installed["teams"] == [{"team_id": "team-engineering", "team_name": "Engineering"}]
     assert installed["requested_rsc_permissions"] == [
         {"permission": "ChannelMessage.Read.Group", "type": "Application"}
     ]
@@ -442,9 +443,9 @@ def test_teams_retains_multiple_installed_versions_without_inventing_one_bot_ide
     assert finding.metadata["rsc_permissions"] == ["ChannelMessage.Read.Group", "TeamSettings.Read.Group"]
     assert finding.metadata["install_count"] == 2
     installed = [d for d in finding.metadata["definition_observations"] if d["source"] == "installation"]
-    assert {(d["version"], d["team_id"], d["bot_id"]) for d in installed} == {
-        ("1.0.0", "team-engineering", "review-bot-one"),
-        ("3.0.0", "team-security", "review-bot-two"),
+    assert {(d["version"], tuple(t["team_id"] for t in d["teams"]), d["bot_id"]) for d in installed} == {
+        ("1.0.0", ("team-engineering",), "review-bot-one"),
+        ("3.0.0", ("team-security",), "review-bot-two"),
     }
 
 
@@ -484,10 +485,57 @@ def test_teams_definition_text_is_matched_separately_without_synthesizing_produc
                 ],
             }
         ],
+        index=index,
         tenant_id="tenant-a",
     )
     assert result.complete
     assert "Claude" in inputs and "Code" in inputs and "Claude Code" not in inputs
+
+
+def test_teams_installations_of_one_definition_are_counted_with_a_bounded_team_sample(tmp_path):
+    # One observation per installation grew a finding by about 300 bytes per team: past
+    # the sanitization limit it was omitted and the scan was incomplete.
+    definition = {
+        "id": "definition-1",
+        "teamsAppId": "org-bot",
+        "version": "1.0.0",
+        "bot": {"id": "bot-1"},
+        "authorization": {
+            "requiredPermissionSet": {
+                "resourceSpecificPermissions": [
+                    {"permissionValue": "ChannelMessage.Read.Group", "permissionType": "Application"}
+                ]
+            }
+        },
+    }
+    catalog = {
+        **TEAMS_APP,
+        "id": "org-bot",
+        "displayName": "Ops Copilot",
+        "appDefinitions": [{**definition, "publishingState": "published"}],
+    }
+    installations = [
+        {
+            "_kind": "installedApp",
+            "id": f"installation-{number}",
+            "_team": f"Team {number:04d}",
+            "_team_id": f"team-{number:04d}",
+            "teamsApp": {"id": "org-bot", "distributionMethod": "organization"},
+            "teamsAppDefinition": definition,
+        }
+        for number in range(8000)
+    ]
+    result = scan(tmp_path, "saas.microsoft-teams", [catalog, *installations], tenant_id="tenant-a")
+    assert result.complete and len(result.findings) == 1
+    finding = result.findings[0]
+    assert finding.metadata["install_count"] == 8000 and not finding.metadata["definition_conflicts"]
+    (installed,) = [d for d in finding.metadata["definition_observations"] if d["source"] == "installation"]
+    assert installed["installation_count"] == installed["team_count"] == 8000
+    assert installed["teams"] == [
+        {"team_id": f"team-{number:04d}", "team_name": f"Team {number:04d}"} for number in range(20)
+    ]
+    assert len(finding.metadata["installed_teams"]) == 20
+    assert len(json.dumps(finding.to_dict())) < 10_000
 
 
 def test_teams_repeated_catalog_snapshot_with_reordered_definitions_is_not_a_conflict(tmp_path, fixtures):
@@ -606,5 +654,5 @@ def test_teams_live_installed_definition_keeps_team_id_and_version_provenance(in
     observation = next(
         d for d in result.findings[0].metadata["definition_observations"] if d["source"] == "installation"
     )
-    assert observation["team_id"] == "live-team-id" and observation["team_name"] == "Live team"
+    assert observation["teams"] == [{"team_id": "live-team-id", "team_name": "Live team"}]
     assert observation["version"] == "1.0.0"

@@ -613,11 +613,12 @@ def _identity_attested(report: dict[str, Any]) -> bool:
 def _scan_local(record: dict[str, Any]) -> bool:
     """Whether a finding's ID identifies its source only within its own report.
 
-    ``gateway.logs`` declares ``metadata.identity_scope``: ``run`` when its IDs
-    derive from a key that is random for each scan, ``keyed`` when they derive
-    from the operator's stable key. Any other declared scope, even a malformed
-    one, is treated as scan-local: absence of such an ID from another report
-    says nothing about the source it describes.
+    ``gateway.logs``, and ``saas.generic`` for a resource it redacted, declare
+    ``metadata.identity_scope``: ``run`` when the IDs derive from a key that is
+    random for each scan, ``keyed`` when they derive from the operator's stable
+    key. Any other declared scope, even a malformed one, is treated as
+    scan-local: absence of such an ID from another report says nothing about
+    the source it describes.
     """
     metadata = record.get("metadata")
     return (

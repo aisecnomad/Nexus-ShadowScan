@@ -17,7 +17,7 @@ import shadowscan.engine as engine_module
 import shadowscan.signatures.matcher as matcher
 from shadowscan.connectors import ConnectorContext, get_connector_class
 from shadowscan.models import Finding, Kind, Surface
-from shadowscan.signatures import SignatureIndex, get_index, schema
+from shadowscan.signatures import SignatureIndex, schema
 from shadowscan.signatures.loader import signature_source_digest
 from shadowscan.utils import http
 
@@ -291,8 +291,14 @@ def reuse_builtin_signature_index(
 
 
 @pytest.fixture(scope="session")
-def index():
-    return get_index()
+def index(builtin_signature_index: tuple[str, SignatureIndex]) -> SignatureIndex:
+    """The built-in index that an Engine constructed without one also receives.
+
+    ``get_index()`` would return whatever index the last ``reload=True`` caller
+    (a canary or acceptance run in an earlier test) left behind, so a test that
+    patches this fixture would miss such an Engine depending on test order.
+    """
+    return builtin_signature_index[1]
 
 
 @pytest.fixture(scope="session")

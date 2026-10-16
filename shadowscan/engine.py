@@ -590,7 +590,9 @@ class _ConnectorRunner:
         started_at = now_iso()
         origin_token = set_allow_private_origin(self._allow_private_origin(spec))
         limits_token = set_request_deadline(state.deadline, state.cancelled)
-        credential_token = set_credential_identity_key(self._run_identity_key)
+        credential_token = set_credential_identity_key(
+            self._run_identity_key, stable=self._identity_key_stable
+        )
         try:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
