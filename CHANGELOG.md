@@ -635,6 +635,21 @@ summarizes each release for people who install and operate ShadowScan.
   resort if the normal exit path blocks; the report may then be missing or
   truncated.
 
+### Collection completeness and registry assurance (October 15)
+
+- Make scenarios require a valid blueprint and an explicit flow array. Invalid
+  detail responses mark collection incomplete instead of reading as an empty
+  workflow. Zapier validates pagination metadata before accepting the end of
+  an inventory. Valid empty workflows and terminal pages remain supported.
+- CODEOWNERS reads stay relative to the directory opened for source collection.
+  A root replacement detected before ownership lookup leaves the scan incomplete;
+  later replacements cannot redirect the anchored ownership reads.
+- A gateway caller whose identity is operator-asserted, unverified or missing
+  authenticated assurance remains shadow when an inventory is supplied. Exact
+  card bindings are retained as review candidates; they no longer confer an
+  owner, declared governance or registration risk credit. Rescan gateway logs
+  and establish fresh comparison baselines after upgrading.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

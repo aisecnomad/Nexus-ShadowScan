@@ -293,7 +293,7 @@ from shadowscan.signatures.matcher import (
     _finditer,
     language_for_path,
 )
-from shadowscan.utils.files import open_confined_directory, read_policy_text
+from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
 from shadowscan.utils.git import (
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
@@ -765,7 +765,7 @@ class _ScanState:
 
     root: Path
     label: str  # resource prefix of every finding
-    # Descriptor of the directory files are read relative to, open during the walk.
+    # Descriptor files are read relative to, open through both the walk and ownership emission.
     root_fd: int = -1
     base: Path | None = None  # that directory (the scan root, or a single-file root's parent)
     projects: dict[str, _Project] = field(default_factory=lambda: {".": _Project(".")})
@@ -1393,6 +1393,7 @@ class FilesystemConnector(BaseConnector):
         self._ownership_exhausted: set[Path] = set()
         self._ownership_steps_remaining: dict[Path, int] = {}
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
+        self._ownership_scan: _ScanState | None = None
         self._symlink_warnings: set[Path] = set()
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
@@ -2137,7 +2138,16 @@ class FilesystemConnector(BaseConnector):
             self.ctx.error(f"code.filesystem: {rel}: {analysis} incomplete ({reason(exc)})")
 
     def scan_tree(self, root: Path) -> Iterator[Finding]:
+        root = root.absolute()
         scan = _ScanState(root, self._scan_label(root))
+        previous_scan = self._ownership_scan
+        self._ownership_scan = scan
+        # Ownership caches belong to this opened tree, not a pathname that a
+        # later scan on the same connector instance may find replaced.
+        self._codeowners_cache.pop(root, None)
+        self._ownership_exhausted.discard(root)
+        self._ownership_steps_remaining.pop(root, None)
+        self._owner_cache = {key: value for key, value in self._owner_cache.items() if key[0] != root}
         # Each root's gates read only its own listing (scan_tree walks and emits one root at a time).
         self._root_listing_incomplete = self.tree_listing_incomplete
         try:
@@ -2172,6 +2182,7 @@ class FilesystemConnector(BaseConnector):
                 yield f
         finally:
             # Closed whether or not the emit completes.
+            self._ownership_scan = previous_scan
             self._close_root(scan)
 
     @staticmethod
@@ -4079,65 +4090,106 @@ class FilesystemConnector(BaseConnector):
         )
         return {}
 
+    @contextmanager
+    def _codeowners_directory(self, root: Path) -> Iterator[int | None]:
+        """Keep ownership reads on the same directory descriptor as source collection.
+
+        Reopening the pathname only verifies that it still names that directory;
+        candidate file reads always use the original descriptor. A replacement
+        after this verification therefore cannot redirect ownership reads.
+        """
+        scan = self._ownership_scan
+        if scan is not None:
+            if scan.root != root:
+                raise ValueError("ownership root differs from the active scan")
+            if scan.root_fd < 0 or scan.base != root:
+                # A failed root open has already been reported. Single-file
+                # scans have never consulted their parent directory's owners.
+                yield None
+                return
+            current = open_confined_directory(root)
+            try:
+                original, present = os.fstat(scan.root_fd), os.fstat(current)
+                if (original.st_dev, original.st_ino) != (present.st_dev, present.st_ino):
+                    raise ValueError("scan root changed before ownership lookup")
+            finally:
+                os.close(current)
+            yield scan.root_fd
+            return
+        # Direct internal ownership callers have no collection descriptor.
+        directory = open_confined_directory(root)
+        try:
+            yield directory
+        finally:
+            os.close(directory)
+
     def _codeowners(self, root: Path) -> list[tuple[str, list[str]]]:
-        root = root.resolve()
+        root = root.absolute()
         if root in self._codeowners_cache:
             return self._codeowners_cache[root]
+        rules: list[tuple[str, list[str]]] = []
+        try:
+            with self._codeowners_directory(root) as directory:
+                if directory is not None:
+                    rules = self._read_codeowners(root, directory)
+        except (OSError, RuntimeError, ValueError):
+            self.ctx.error("code.filesystem: could not verify scan root for CODEOWNERS; ownership incomplete")
+        self._codeowners_cache[root] = rules
+        return rules
+
+    def _read_codeowners(self, root: Path, directory: int) -> list[tuple[str, list[str]]]:
+        """Read the first selected ownership file below the already anchored root."""
         rules: list[tuple[str, list[str]]] = []
         for cand in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS"):
             if not self._included(cand):
                 continue
-            p = root / cand
-            if p.exists() or p.is_symlink():
-                try:
-                    if not p.resolve().is_relative_to(root) or any(
-                        part.is_symlink() for part in [p, *p.parents] if part != root and root in part.parents
-                    ):
-                        self.ctx.error(f"code.filesystem: ignored unsafe CODEOWNERS path {cand}")
-                        break
-                    # The check above is for its diagnostic; the read itself
-                    # follows no link below the root, whatever changed since.
-                    errors: list[str] = []
-                    read_notes: list[str] = []
-                    directory = open_confined_directory(root)
-                    try:
-                        content = read_text(
-                            PurePosixPath(cand),
-                            self.max_file_size,
-                            errors,
-                            dir_fd=directory,
-                            notes=read_notes,
-                        )
-                    finally:
-                        os.close(directory)
-                    # Ownership comes from names in this file: bytes that were replaced could change an owner.
-                    errors.extend(f"{note}; ownership may be wrong" for note in read_notes)
-                    for issue in errors:
-                        self.ctx.error(f"code.filesystem: {cand}: {issue}")
-                    for line in (content or "").splitlines():
-                        line = line.split("#", 1)[0].strip()
-                        if not line:
-                            continue
-                        parts = line.split()
-                        if parts:
-                            if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
-                                self.ctx.error(
-                                    "code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete"
-                                )
-                                rules = []
-                                self._ownership_exhausted.add(root)
-                                break
-                            rules.append((parts[0], parts[1:]))
-                except (OSError, RuntimeError, ValueError):
-                    self.ctx.error(f"code.filesystem: could not read {cand}")
+            try:
+                # Distinguish a missing candidate from an unreadable one without
+                # following a link, including links in its parent components.
+                with open_confined_file(PurePosixPath(cand), dir_fd=directory):
+                    pass
+            except FileNotFoundError:
+                continue
+            except (OSError, RuntimeError, ValueError):
+                self.ctx.error(f"code.filesystem: could not read {cand}")
                 break
-        self._codeowners_cache[root] = rules
+            try:
+                errors: list[str] = []
+                read_notes: list[str] = []
+                content = read_text(
+                    PurePosixPath(cand),
+                    self.max_file_size,
+                    errors,
+                    dir_fd=directory,
+                    notes=read_notes,
+                )
+                # Ownership comes from names in this file: bytes that were replaced could change an owner.
+                errors.extend(f"{note}; ownership may be wrong" for note in read_notes)
+                for issue in errors:
+                    self.ctx.error(f"code.filesystem: {cand}: {issue}")
+                for line in (content or "").splitlines():
+                    line = line.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if parts:
+                        if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
+                            self.ctx.error(
+                                "code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete"
+                            )
+                            rules = []
+                            self._ownership_exhausted.add(root)
+                            break
+                        rules.append((parts[0], parts[1:]))
+            except (OSError, RuntimeError, ValueError):
+                self.ctx.error(f"code.filesystem: could not read {cand}")
+            break
         return rules
 
     def _owner_for(self, root: Path, rel_root: str) -> str | None:
         if self.owner:
             return self.owner
-        root = root.resolve()
+        root = root.absolute()
         rules = self._codeowners(root)
         if root in self._ownership_exhausted:
             return None

@@ -105,6 +105,48 @@ passing unit suite does not establish complete coverage of a particular estate.
   A clone authenticates only with the origin-scoped header ShadowScan sets, so
   nothing changes for configured connectors.
 
+## October 15 collection and registry assurance migration (Unreleased)
+
+Rescan Make, Zapier, code and gateway inputs after upgrading. Scanner-source
+fingerprints change; retain previous reports as historical evidence and establish
+a fresh comparison baseline under the reviewed revision. A finding that changes
+registration or ownership is not evidence that its runtime behavior changed.
+
+Make requires a valid scenario blueprint with an explicit flow array. Invalid
+or unreadable detail responses leave coverage incomplete (exit 3), including
+when the scenario listing succeeds. A valid empty flow remains supported.
+Zapier also validates pagination metadata: malformed continuation fields cannot
+establish that every page was collected. Check these diagnostics and correct the
+collection or export; do not suppress exit 3 to obtain a clean gate.
+
+CODEOWNERS reads use the same anchored scan directory as source collection.
+A root replacement detected before ownership lookup makes the scan incomplete;
+later replacements cannot redirect ownership reads to another directory.
+Continue to scan immutable checkouts and exports: confined reads do not provide
+an atomic filesystem snapshot.
+
+An exact inventory binding to a gateway caller name is now only a review
+candidate when the caller's identity assurance is operator-asserted, unverified
+or missing authenticated assurance. With an inventory supplied, the finding
+remains shadow and does not inherit the card's owner or declared governance, or
+receive registration risk credit. Review the candidate and authenticate the
+caller binding at the log producer; renaming a caller or editing its export does
+not establish authentication. Provider-authenticated caller fields retain their
+existing matching semantics, subject to the supplied log's provenance and scope.
+See [gateway inventory matching](inventory.md#matching-and-approval).
+
+These changes can increase risk scores and cause existing `--fail-on` gates to
+fail. Reconcile verified bindings before approving the new baseline. The
+`risk_basis: danger` option continues to exclude governance factors; it does not
+authenticate a caller or approve an inventory match. Stored historical reports
+are not retroactively reclassified; rescan their inputs before using the new
+assurance policy for an enforcement decision.
+
+Regression tests and offline evaluation establish implementation behavior only.
+Independent review, fresh held-out evaluation and scoped live tenant acceptance
+remain required by the existing rollout procedure; this change does not supply
+those approvals or credentials.
+
 ## Unreleased Kubernetes and Atlassian migration
 
 Rescan Kubernetes and OpenShift exports after upgrading. Earlier observations
@@ -2875,9 +2917,11 @@ finish incomplete because the earlier result hid a gap.
   notices before treating a clean report as estate-wide.
 - **New report fields.** `collection_scope.not_run`, finding metadata
   `registry_match_assurance` and tag `registry-identity-unverified`, and
-  `signature_verified` on JWT findings are additive. A gateway finding approved
-  only by an operator-asserted caller name is still registered; treat that match
-  as unverified until the caller binding is authenticated.
+  `signature_verified` on JWT findings are additive. Before the October 15
+  registry assurance migration, a gateway finding approved only by an
+  operator-asserted caller name was still registered. Current scans retain that
+  binding as an unverified candidate and leave it shadow; rescan older inputs
+  before relying on registration or risk credit.
 - **CSV consumers.** An incomplete CSV report has a first data row with
   `id=SCAN-INCOMPLETE`, `kind=scan-status` and the unfinished connectors in the
   `connector` column. Skip or alert on it; exit code 3 remains the primary signal.
@@ -3739,8 +3783,10 @@ source snapshot.
 
 Symlinked incremental roots or ancestor paths are ineligible for cache reuse.
 Filesystem scans reject selected roots whose paths traverse a symbolic link.
-They then open each root once and read every file, including `CODEOWNERS`,
-relative to it without following a link in any path component. A scan needs
+They anchor source and `CODEOWNERS` reads to the same open root directory,
+without following a link in any path component. A separate root identity check
+rejects replacement detected before ownership lookup; later replacement cannot
+redirect the descriptor-relative reads. A scan needs
 read and search permission on the root and the directories below it, but on
 Linux and macOS only search permission on the directories above it (they are
 opened with `O_PATH` on Linux; on macOS the root is opened in one call with

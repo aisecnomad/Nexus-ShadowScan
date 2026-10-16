@@ -126,7 +126,7 @@ def _has_usable_discriminator(finding: Finding) -> bool:
 
 
 # A gateway resource such as ``principal:svc-ops`` is a field the log producer
-# (often the caller itself) wrote. A match on it is flagged, not trusted.
+# (often the caller itself) wrote. An unauthenticated match is a review candidate.
 UNVERIFIED_IDENTITY_TAG = "registry-identity-unverified"
 
 
@@ -155,13 +155,19 @@ def _unauthenticated_caller_assurance(finding: Finding) -> str | None:
     if finding.surface != Surface.GATEWAY:
         return None
     observations = finding.metadata.get("runtime_observations")
-    levels = (
-        {item.get("identity_assurance") for item in observations if isinstance(item, dict)}
-        if isinstance(observations, list)
-        else set()
-    )
-    if not levels or not levels <= {"operator-asserted", "provider-authenticated-field"}:
+    if not isinstance(observations, list) or not observations:
         return "unverified"
+    levels: set[str] = set()
+    for item in observations:
+        level = item.get("identity_assurance") if isinstance(item, dict) else None
+        # Every observation must carry a recognizable assurance. Silently
+        # dropping malformed items would let one valid item bless the rest.
+        if not isinstance(level, str) or level not in {
+            "operator-asserted",
+            "provider-authenticated-field",
+        }:
+            return "unverified"
+        levels.add(level)
     return "operator-asserted" if "operator-asserted" in levels else None
 
 
@@ -465,8 +471,8 @@ class Inventory:
         a case-sensitive cloud ARN or repository path). Unknown scopes and
         conflicting inventory identities fail closed. A match on a gateway
         caller name whose identity is only operator-asserted or unverified is
-        kept but flagged with ``metadata['registry_match_assurance']`` and the
-        ``registry-identity-unverified`` tag.
+        a review candidate, never an approval. Its reason, assurance and candidate
+        entries remain in metadata with the ``registry-identity-unverified`` tag.
 
         ``extra`` entries (approvals of trusted vendor registries for this run) are matched
         together with the loaded entries, so an approval in both places is ambiguous. Extra
@@ -508,14 +514,14 @@ class Inventory:
             if approves(entry):
                 added.setdefault((entry.agent_id, entry.source), entry)
         matches = [entry for entry in self.entries if approves(entry)] + list(added.values())
+        if matches and (assurance := _unauthenticated_caller_assurance(finding)):
+            finding.metadata["registry_suggestions"] = sorted({entry.agent_id for entry in matches})
+            finding.metadata["registry_match_reason"] = "unverified-gateway-caller-identity"
+            finding.metadata["registry_match_assurance"] = assurance
+            finding.add_tag(UNVERIFIED_IDENTITY_TAG)
+            return None
         if len(matches) == 1:
             finding.metadata.pop("registry_suggestions", None)
-            assurance = _unauthenticated_caller_assurance(finding)
-            if assurance:
-                # Keep the documented match, but a caller name taken from a log
-                # does not prove the caller is the registered agent: say so.
-                finding.metadata["registry_match_assurance"] = assurance
-                finding.add_tag(UNVERIFIED_IDENTITY_TAG)
             return matches[0]
         if len(matches) > 1:
             finding.metadata["registry_suggestions"] = sorted({e.agent_id for e in matches})

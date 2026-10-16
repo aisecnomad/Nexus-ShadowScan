@@ -224,10 +224,17 @@ matching inventory entries require review and leave the resource unregistered.
 A gateway finding's resource (for example `principal:svc-ops`) is a caller name
 the log producer supplied, often the caller itself. When its identity assurance
 is `operator-asserted` or `unverified` (generic and access-log exports, shared or
-missing names), a matching card still registers it, but the finding carries
-`metadata.registry_match_assurance` and the `registry-identity-unverified` tag:
-the registration is only as trustworthy as the log's caller field. Review such
-registrations before treating the agent as sanctioned.
+missing names), a matching card produces a review candidate only. The finding
+stays shadow and inherits no card owner, declared autonomy, governance facts or
+registration score credit. Its `metadata.registry_suggestions` names the matching
+cards, `metadata.registry_match_reason` is `unverified-gateway-caller-identity`,
+and `metadata.registry_match_assurance` and the `registry-identity-unverified`
+tag describe the identity limitation. Missing or malformed observations are
+unverified; when observations carry different assurance, the weakest wins.
+Only observations consistently labeled `provider-authenticated-field` can use
+the normal explicit resource and scope checks. This label describes fields in
+the supplied export, not a cryptographic check of the export's provenance;
+assess its producer and delivery chain before trusting the data.
 
 ### Inventory placement and wildcard warnings
 

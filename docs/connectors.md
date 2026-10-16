@@ -232,7 +232,10 @@ Use the same six checks for each entry:
 ## Code
 
 ### `code.filesystem`
-Scans a directory tree. Project roots are detected from manifests
+Scans a directory tree. CODEOWNERS reads use the source scan's anchored
+directory. A root replacement detected before ownership lookup makes the scan
+incomplete; later replacements cannot redirect reads.
+Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
 package, …); by default each root yields one
 finding summarizing frameworks, model providers, capabilities, models and
@@ -722,6 +725,9 @@ usage exports count requests from provider counters; aggregate buckets are
 not individual timestamped transaction events. Log fields for environment
 and caller identity are evidence from the supplied export; assess the
 producer and delivery chain before treating them as verified production facts.
+An operator-asserted or unverified caller name can suggest an exact inventory
+binding, but cannot confer registered status, inherited ownership or registration
+risk credit. See [inventory matching](inventory.md#matching-and-approval).
 
 A caller is titled **Agentic caller** when at least one agent indicator
 holds: requests carried tool definitions or responses invoked tools; a user
@@ -841,6 +847,9 @@ Make scenarios with AI modules and AI Agents; triggers (`scheduling.type` →
 scenario adds neither), code steps (→ code-exec) and models. Live pagination is bounded by
 `max_pages` (default and maximum 1000). Make scans one `team_id`, or every team
 of an `organization_id` when `team_id` is unset.
+Each scenario must include a valid blueprint with an explicit flow array;
+malformed detail responses make collection incomplete, while an empty flow is
+valid.
 
 ### `lowcode.zapier`
 Zapier zaps and AI/Agents from account exports; triggers (schedule →
@@ -850,6 +859,8 @@ models. Live pagination is bounded by
 `max_pages` (default and maximum 1000). Wholly blank text rows are skipped only
 with a recognized identity column (`title`, `name`, `Title`, `Zap`, `id`, or
 `Id`); unknown schemas are incomplete.
+Malformed pagination metadata also makes live collection incomplete instead of
+ending the inventory successfully.
 
 ### `lowcode.workato`
 Workato recipes with GenAI/agentic providers; triggers (Scheduler →
