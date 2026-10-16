@@ -189,7 +189,7 @@ readme-matrix: ## Regenerate the README detection matrix from the signature pack
 	python -m tools.readme_matrix
 
 .PHONY: readme-visuals
-readme-visuals: ## Regenerate the README banner and architecture diagrams (docs/assets/*.svg) from the code
+readme-visuals: ## Regenerate the README banner, architecture diagrams and benchmark chart (docs/assets/*.svg)
 	python -m tools.readme_visuals
 
 .PHONY: mapping-reference

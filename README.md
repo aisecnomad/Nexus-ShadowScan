@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/hero-banner.svg" alt="Nexus ShadowScan — open-source AI agent discovery" width="100%">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/hero-banner.svg" alt="Nexus ShadowScan — open-source AI agent discovery" width="100%">
 </p>
 
 <p align="center">
@@ -74,7 +74,7 @@ registered in the agent registry supplied for this scan?*
 ## How it works
 
 <p align="center">
-  <img src="docs/assets/architecture-data-flow.svg" alt="Nexus ShadowScan architecture: connectors collect per surface, analysis and correlation score findings, reconciliation compares them with the sanctioned inventory" width="95%">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/architecture-data-flow.svg" alt="Nexus ShadowScan architecture: connectors collect per surface, analysis and correlation score findings, reconciliation compares them with the sanctioned inventory" width="95%">
 </p>
 
 ```
@@ -820,13 +820,18 @@ in-sample: fewer errors on it are not evidence of better field accuracy. The
 [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
 lists every benchmark with its protocol and limits.
 
-### Cross-tool comparison
-
 <p align="center">
-  <img src="docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool benchmark comparison — ShadowBench estate recall and Shadow AI Discovery value-level F1" width="95%">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-shadowbench-cases.svg" alt="Estate and in-scope recall per tool in the 2026-10-11 ShadowBench nine-surface cases run" width="95%">
 </p>
 
-<p align="center"><em>Left: estate recall on ShadowBench Cases (346 cases, 9 surfaces — unsupported surfaces count as misses). Right: value-level F1 on Shadow AI Discovery (87 repositories, code surface). Benchmarks are author-written and in-sample. See the <a href="https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md">benchmark index</a> for methodology, limits, and reproduction steps.</em></p>
+The chart is generated from the committed
+[ShadowBench cases run of 2026-10-11](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md):
+738 authored entities across nine surfaces. Estate recall charges each tool for
+the surfaces it does not cover, so it mostly measures coverage; compare the
+in-scope bars, and read the report's precision and decoy specificity before
+drawing any conclusion. ShadowScan marked 27 of its 326 scans incomplete there.
+The same authorship caveat applies: the maintainer wrote the corpus, the
+rubrics, the scorer and every tool's adapter.
 
 ---
 

@@ -1,12 +1,14 @@
-"""Render the README banner and the architecture diagrams as SVG from the code.
+"""Render the README banner, the architecture diagrams and the benchmark chart as SVG.
 
 The images under ``docs/assets/`` are generated so that what they show cannot
 drift from what ShadowScan ships: the surfaces come from ``Surface``, the
 connector names from the built-in connector registry, the report formats from
 the reporters and the package name from ``pyproject.toml``. No image carries a
 version, a count or the repository slug, which no text check could read once
-they were baked into pixels. Regenerate after adding a surface, a connector or
-a report format::
+they were baked into pixels. The one exception is the benchmark chart, whose
+figures are read from a dated, committed results file and name that run, so
+they change only when the source does. Regenerate after adding a surface, a
+connector or a report format, or after committing a new benchmark run::
 
     python -m tools.readme_visuals          # rewrite the SVG files
     python -m tools.readme_visuals --check  # exit 1 when one is stale
@@ -14,6 +16,7 @@ a report format::
 
 from __future__ import annotations
 
+import json
 import sys
 import textwrap
 import tomllib
@@ -32,6 +35,9 @@ ASSETS = ROOT / "docs" / "assets"
 BANNER = ASSETS / "hero-banner.svg"
 DATA_FLOW = ASSETS / "architecture-data-flow.svg"
 CONNECTORS = ASSETS / "architecture-detailed.svg"
+BENCHMARK = ASSETS / "benchmarks-shadowbench-cases.svg"
+# The committed ShadowBench cases run the chart is drawn from; move it to a newer run on purpose.
+BENCHMARK_RUN = ROOT / "benchmarks" / "shadowbench" / "cases" / "results" / "2026-10-11"
 
 SANS = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
@@ -191,7 +197,7 @@ def render_banner() -> str:
         _t(84, 252, "Nexus ShadowScan", size=128, weight="bold", fill="#eef3ff", letter_spacing="-3"),
         *(
             _t(90, 322 + 40 * index, line, size=30, fill="#c9d4ea")
-            for index, line in enumerate(textwrap.wrap(sentence, 70, break_on_hyphens=False))
+            for index, line in enumerate(textwrap.wrap(sentence, 68, break_on_hyphens=False))
         ),
         f'<g font-family="{MONO}" font-size="20">',
         f"  {_rect(90, 436, 160, 48, '#162544', '#2b4270', rx=24)}",
@@ -431,8 +437,124 @@ def render_connectors() -> str:
     return _svg(1200, height, "Nexus ShadowScan built-in connectors by surface", desc, body)
 
 
+def benchmark_rows() -> list[tuple[str, str, float, float, tuple[float, float]]]:
+    """(tool, coverage, estate recall, in-scope recall, its interval), best estate recall first."""
+    with (BENCHMARK_RUN / "metrics.json").open(encoding="utf-8") as handle:
+        tools = json.load(handle)["tools"]
+    rows = []
+    for name, tool in tools.items():
+        low, high = tool["in_scope"]["recall_ci"]
+        rows.append(
+            (
+                name,
+                str(tool["coverage"]),
+                float(tool["estate"]["recall"]),
+                float(tool["in_scope"]["recall"]),
+                (float(low), float(high)),
+            )
+        )
+    return sorted(rows, key=lambda row: (-row[2], row[0]))
+
+
+# Dark theme of the benchmark chart, with one bar colour per tool in rank order.
+_BENCH_BG, _BENCH_PANEL, _BENCH_RULE = "#0f1220", "#1b2033", "#2a3150"
+_BENCH_INK, _BENCH_MUTED = "#e6e9f2", "#9aa3b8"
+_BENCH_BARS = ("#60a5fa", "#a78bfa", "#34d399", "#fbbf24", "#f87171", "#22d3ee")
+
+
+def render_benchmark() -> str:
+    """Cross-tool comparison from the committed ShadowBench cases run: ranked bars, then a table."""
+    rows = benchmark_rows()
+    run = BENCHMARK_RUN.name
+    title = f"Cross-Tool Comparison: ShadowBench nine-surface cases (run {run})"
+    label_right, track, scale = 500, 520, 1000
+    bars_top, step = 236, 42
+    table_top = bars_top + step * len(rows) + 28
+    row_h = 52
+    height = table_top + 56 + row_h * len(rows) + 32
+    body: list[str] = [
+        _rect(0, 0, 1800, height, _BENCH_BG, "none", rx=0),
+        _t(80, 64, title, size=34, weight="bold", fill=_BENCH_INK),
+        f'<line x1="80" y1="88" x2="1720" y2="88" stroke="{_BENCH_RULE}" stroke-width="2"/>',
+        _t(
+            80,
+            124,
+            "Author-written synthetic corpus: ShadowScan's maintainer wrote the corpus, rubrics, scorer and "
+            "every tool's adapter.",
+            size=19,
+            fill=_BENCH_MUTED,
+        ),
+        _t(
+            80,
+            152,
+            "Not field accuracy and not a verdict on any product. Source: benchmarks/shadowbench/cases.",
+            size=19,
+            fill=_BENCH_MUTED,
+        ),
+        _t(
+            80,
+            204,
+            "Estate Recall (unsupported surfaces count as misses)",
+            size=26,
+            weight="bold",
+            fill=_BENCH_INK,
+        ),
+    ]
+    for index, (name, _, estate, _, _) in enumerate(rows):
+        y = bars_top + step * index
+        colour = _BENCH_BARS[index % len(_BENCH_BARS)]
+        body += [
+            _t(label_right, y + 24, name, size=21, fill=_BENCH_INK, text_anchor="end"),
+            _rect(track, y + 4, scale, 30, _BENCH_PANEL, "none", rx=6),
+            _rect(track, y + 4, max(scale * estate, 6), 30, colour, "none", rx=6),
+            _t(1720, y + 26, f"{estate:.2f}", size=21, fill=_BENCH_INK, font_family=MONO, text_anchor="end"),
+        ]
+    columns = (("TOOL", 104), ("SURFACES", 640), ("IN-SCOPE RECALL (95% CI)", 900), ("ESTATE RECALL", 1700))
+    body += [
+        _rect(80, table_top, 1640, 56 + row_h * len(rows), _BENCH_PANEL, _BENCH_RULE, rx=12),
+        *(
+            _t(
+                x,
+                table_top + 36,
+                label,
+                size=17,
+                weight="bold",
+                fill=_BENCH_MUTED,
+                **({"text_anchor": "end"} if label == "ESTATE RECALL" else {}),
+            )
+            for label, x in columns
+        ),
+    ]
+    for index, (name, coverage, estate, scope, (low, high)) in enumerate(rows):
+        y = table_top + 56 + row_h * index
+        body += [
+            f'<line x1="80" y1="{y}" x2="1720" y2="{y}" stroke="{_BENCH_RULE}" stroke-width="1"/>',
+            _t(104, y + 34, name, size=21, fill=_BENCH_INK),
+            _t(640, y + 34, coverage, size=21, fill=_BENCH_INK, font_family=MONO),
+            _t(
+                900, y + 34, f"{scope:.2f} ({low:.2f}-{high:.2f})", size=21, fill=_BENCH_INK, font_family=MONO
+            ),
+            _t(1700, y + 34, f"{estate:.2f}", size=21, fill=_BENCH_INK, font_family=MONO, text_anchor="end"),
+        ]
+    desc = (
+        f"Recall per tool in the ShadowBench nine-surface cases run of {run}, an author-written synthetic "
+        "corpus; compare tools on in-scope recall, as estate recall counts unsupported surfaces as misses: "
+        + "; ".join(
+            f"{name} ({coverage} surfaces) estate {estate:.2f}, in scope {scope:.2f}"
+            for name, coverage, estate, scope, _ in rows
+        )
+        + "."
+    )
+    return _svg(1800, height, title, desc, body)
+
+
 def rendered() -> dict[Path, str]:
-    return {BANNER: render_banner(), DATA_FLOW: render_data_flow(), CONNECTORS: render_connectors()}
+    return {
+        BANNER: render_banner(),
+        DATA_FLOW: render_data_flow(),
+        CONNECTORS: render_connectors(),
+        BENCHMARK: render_benchmark(),
+    }
 
 
 def main(argv: list[str]) -> int:

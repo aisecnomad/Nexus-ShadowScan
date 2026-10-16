@@ -24,8 +24,8 @@
   <text x="90" y="108" font-size="26" fill="#f4b942" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" letter-spacing="5">OPEN-SOURCE AI AGENT DISCOVERY</text>
   <text x="84" y="252" font-size="128" font-weight="700" fill="#eef3ff" letter-spacing="-3">Nexus ShadowScan</text>
   <text x="90" y="322" font-size="30" fill="#c9d4ea">Discovers evidence of AI agents across code, identity, gateways,</text>
-  <text x="90" y="362" font-size="30" fill="#c9d4ea">low-code, SaaS, cloud, endpoints, network logs and running processes,</text>
-  <text x="90" y="402" font-size="30" fill="#c9d4ea">then reconciles it against the agent registry you supply.</text>
+  <text x="90" y="362" font-size="30" fill="#c9d4ea">low-code, SaaS, cloud, endpoints, network logs and running</text>
+  <text x="90" y="402" font-size="30" fill="#c9d4ea">processes, then reconciles it against the agent registry you supply.</text>
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20">
     <rect x="90" y="436" width="160" height="48" rx="24" fill="#162544" stroke="#2b4270" stroke-width="1.5"/>
     <text x="170" y="466" font-size="20" fill="#c9d4ea" text-anchor="middle">Apache-2.0</text>
