@@ -22,12 +22,12 @@ options:
   fail_on: high                       # exit 2 if any finding reaches this level
   dump_records: ./exports             # sanitized records for offline re-runs
   connector_timeout_seconds: 120      # cooperative deadline per connector
-  allow_private_origin: false         # permit non-global IP addresses
+  allow_private_origin: false         # permit non-global IP addresses (every connector)
   allow_instance_credentials: false   # permit cloud instance-metadata credentials
   allow_credential_mixing: false      # permit repo + live tenant in one scan
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
   plugins: []                         # exact-name allowlist for third-party connectors
-  plugin_execution: thread            # or process: killable spawned plugin workers
+  plugin_execution: process           # or thread: in-process plugins (previous default)
 
 connectors:
   - name: code.github
@@ -46,12 +46,52 @@ file. Place it on a volume with room for the largest repository you scan.
 the highest-risk findings to a model you name and stores an advisory verdict.
 See [LLM triage](../operations/llm-triage.md) for its keys and what is sent.
 
-`plugin_execution: process` (or `--plugin-execution process`) runs each
-allowlisted third-party connector in its own spawned worker that the scanner
-can terminate at the connector deadline. Built-in connectors always use the
-thread backend. Workers keep the scanner's privileges and credentials: this is
-lifecycle isolation, not a sandbox. See
+`plugin_execution: process`, the default, runs each allowlisted third-party
+connector in its own spawned worker that the scanner can terminate at the
+connector deadline; `plugin_execution: thread` (or `--plugin-execution thread`)
+runs plugins in the scanner process instead, where a blocked plugin cannot be
+stopped. Built-in connectors always use the thread backend. Workers keep the
+scanner's privileges and credentials: this is lifecycle isolation, not a
+sandbox. See
 [third-party plugin execution](../connectors.md#third-party-plugin-execution).
+
+## Reaching an internal destination
+
+HTTPS clients refuse loopback, link-local, private and cloud-metadata
+destinations. Every connector accepts `allow_private_origin` to lift that
+refusal for itself alone, which is the narrower grant and the one to prefer:
+
+```yaml
+connectors:
+  - name: endpoint.mcp
+    allow_private_origin: true        # this connector only
+    agent_card_urls: [https://agent.internal.example]
+```
+
+The grant matters only to a connector that makes HTTPS requests, here the
+Agent Card fetch. An offline run that reads `input` makes no requests, so the
+key changes nothing there.
+
+`options.allow_private_origin: true` lifts it for *every* connector in the
+configuration, so one internal gateway would also let repository, endpoint and
+cloud connectors leave the public internet. A connector that sets the key uses
+its own value; one that does not inherits the scan-wide setting, so a
+connector-level `false` keeps a connector public under a scan-wide grant. An
+`options.allow_private_origin: false` in the file is only that default, which a
+connector grant overrides. `--deny-private-origin` on the command line is the
+operator's scan-wide refusal: it also overrides every connector-level
+`allow_private_origin: true` for that run, and a connector that sets the key
+reads `false` there. It refuses the `allow_private_origin` grant only and does
+not revoke `allow_instance_credentials`: under that opt-in cloud connectors
+still contact the instance metadata service, and the `cloud.gcp` credential
+transport accepts a private token endpoint. Pass `--deny-instance-credentials`
+as well to keep cloud connectors off both.
+
+The key takes a YAML boolean or the strings `true`/`false`, so an interpolated
+`"false"` cannot enable it. The grant covers this scanner's HTTPS clients
+and the addresses a `code.github` or `code.gitlab` clone is pinned to — the
+cloud SDKs carry their own egress controls, so restrict egress at the network
+when that matters.
 
 ## Trusted vendor registries
 

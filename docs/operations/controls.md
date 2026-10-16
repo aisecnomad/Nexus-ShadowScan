@@ -23,7 +23,9 @@ shadowscan controls laptops/*.json cloud.json --format json -o controls.json
 ```
 
 The default format is Markdown on standard output. `-o FILE` writes the file
-with mode 0600, atomically, and never through a symbolic link.
+with mode 0600, atomically, never to a symbolic link and never through a
+directory link that another user owns. `..` in `FILE` is resolved before any
+link is followed: `-o mylink/../controls.md` writes beside `mylink`.
 
 ## What each control shows
 

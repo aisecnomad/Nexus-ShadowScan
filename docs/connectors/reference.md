@@ -47,7 +47,7 @@ Offline input: n/a (path is the input).
 | `metadata` | mapping merged into every finding's metadata |
 | `diff_base` | git ref to diff against (branch, tag, or SHA); only files committed between its merge-base and HEAD are scanned, plus dependency manifests and .env files for context. Uncommitted, untracked and submodule changes are not scanned. The report is not a repository inventory: `shadowscan diff` never resolves findings from it and --incremental never reuses it. Requires Git 2.45+ and a local .git directory; falls back to a full scan when the diff cannot be computed |
 
-Also accepted: `input`, `max_input_bytes`, `max_input_file_bytes`, `max_input_files`.
+Also accepted: `allow_private_origin`, `input`, `max_input_bytes`, `max_input_file_bytes`, `max_input_files`.
 
 ### `code.github`
 
@@ -87,7 +87,7 @@ Offline input: directory of cloned repositories.
 | `topics` | only repositories with any of these topics |
 | `input` | offline: directory containing cloned repositories |
 
-Also accepted: `label`, `max_input_bytes`, `max_input_file_bytes`, `max_input_files`.
+Also accepted: `allow_private_origin`, `label`, `max_input_bytes`, `max_input_file_bytes`, `max_input_files`.
 
 ### `code.gitlab`
 
@@ -122,7 +122,7 @@ Offline input: directory of cloned projects.
 | `model_metadata_bytes` | forwarded to the filesystem scanner (see code.filesystem) |
 | `input` | offline: directory of cloned projects |
 
-Also accepted: `label`, `max_input_bytes`, `max_input_file_bytes`, `max_input_files`.
+Also accepted: `allow_private_origin`, `label`, `max_input_bytes`, `max_input_file_bytes`, `max_input_files`.
 
 ## Identity
 
@@ -144,7 +144,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `identity.entra`
 
@@ -171,7 +171,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `identity.google-workspace`
 
@@ -191,7 +191,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `identity.jwt`
 
@@ -211,7 +211,7 @@ Offline input: text (one JWT per line) / JSON.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `identity.okta`
 
@@ -231,7 +231,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ## Gateway
 
@@ -256,6 +256,8 @@ Offline input: JSONL / JSON / CSV / text access logs.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
+Also accepted: `allow_private_origin`.
+
 ### `gateway.otel`
 
 Aggregate OpenTelemetry GenAI span exports without retaining prompt content.
@@ -269,7 +271,7 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ## Low-code
 
@@ -291,7 +293,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `lowcode.n8n`
 
@@ -309,7 +311,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `lowcode.power-platform`
 
@@ -329,7 +331,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `lowcode.salesforce`
 
@@ -350,7 +352,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `lowcode.servicenow`
 
@@ -370,7 +372,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `lowcode.workato`
 
@@ -388,7 +390,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `lowcode.zapier`
 
@@ -405,7 +407,7 @@ Offline input: CSV / JSON export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ## SaaS
 
@@ -426,7 +428,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `saas.generic`
 
@@ -444,7 +446,7 @@ Offline input: CSV / JSON.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `saas.github-apps`
 
@@ -463,7 +465,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `saas.microsoft-teams`
 
@@ -484,7 +486,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `saas.notion`
 
@@ -501,7 +503,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `saas.slack`
 
@@ -518,7 +520,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `saas.zoom`
 
@@ -537,7 +539,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ## Cloud
 
@@ -565,7 +567,7 @@ Requires: `boto3`. Offline input: JSONL dump of records.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `cloud.azure`
 
@@ -585,7 +587,7 @@ Offline input: JSONL dump of records.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `cloud.gcp`
 
@@ -613,7 +615,7 @@ Offline input: JSONL dump of records.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `cloud.kubernetes`
 
@@ -629,7 +631,7 @@ Offline input: kubectl get -o json List envelope / JSONL / YAML export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `cloud.oci`
 
@@ -653,7 +655,7 @@ Requires: `oci`. Offline input: JSONL dump of records.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `cloud.openshift`
 
@@ -669,7 +671,7 @@ Offline input: kubectl get -o json List envelope / JSONL / YAML export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ## Endpoint
 
@@ -686,7 +688,7 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `endpoint.host`
 
@@ -701,7 +703,7 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `endpoint.inventory`
 
@@ -721,6 +723,8 @@ Offline input: JSON / JSONL (exported endpoint records or osquery results).
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
+Also accepted: `allow_private_origin`.
+
 ### `endpoint.mcp`
 
 MCP and A2A endpoint inventory: offline MCP tool-list exports and opt-in A2A Agent Card probes.
@@ -738,7 +742,7 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `endpoint.models`
 
@@ -753,7 +757,7 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ### `endpoint.ollama`
 
@@ -768,7 +772,7 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
 
-Also accepted: `label`.
+Also accepted: `allow_private_origin`, `label`.
 
 ## Network
 
@@ -789,6 +793,8 @@ Offline input: Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `allow_private_origin`.
 
 ## Runtime
 
@@ -815,3 +821,5 @@ Offline input: JSON / JSONL / CSV process inventories (osquery, Defender, CrowdS
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
+
+Also accepted: `allow_private_origin`.

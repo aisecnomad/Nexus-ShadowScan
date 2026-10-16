@@ -45,7 +45,8 @@ from shadowscan.connectors.common import (
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
-from shadowscan.utils.text import get_path, truncate
+from shadowscan.utils.redaction import sanitize_excerpt, sanitize_text_excerpt
+from shadowscan.utils.text import get_path
 
 ARM = "https://management.azure.com"
 # Classic Agent Service contract, verified against azure-ai-agents 1.0.0:
@@ -80,8 +81,14 @@ AI_ROLE_IDS = {
     "8e3af657-a8ff-443c-a75c-2fe8c4bcb635": "Owner",
     "b24988ac-6180-42a0-ab88-20f7382dd24c": "Contributor",
 }
-# Foundry project endpoints that may receive the Foundry bearer token.
-_FOUNDRY_HOST_SUFFIXES = (".services.ai.azure.com", ".cognitiveservices.azure.com", ".api.azureml.ms")
+# Foundry project endpoints that may receive the Foundry bearer token: DNS labels under a
+# Foundry service domain, matched against the whole host and never as a bare suffix, so a
+# host that other parsers read differently cannot pass.
+_FOUNDRY_HOST = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+    r"(?:services\.ai\.azure\.com|cognitiveservices\.azure\.com|api\.azureml\.ms)",
+    re.ASCII,
+)
 # Foundry agent tool types and the capability each grants.
 _BROWSING_TOOLS = {"bing_grounding", "bing_custom_search"}
 _ACTION_TOOLS = {
@@ -577,8 +584,10 @@ class AzureConnector(BaseConnector):
                 incomplete=True,
             )
             return
-        host = urlsplit(str(endpoint)).hostname or ""
-        if not any(host.endswith(suffix) for suffix in _FOUNDRY_HOST_SUFFIXES):
+        parts = urlsplit(str(endpoint))
+        host = parts.hostname or ""
+        # The netloc must be exactly the host: no port, userinfo or other authority text.
+        if len(host) > 253 or not _FOUNDRY_HOST.fullmatch(host) or parts.netloc.lower() != host:
             self.ctx.attest_operation("foundry", _FOUNDRY_AGENTS, None, "failed", enumeration=False)
             self.ctx.warn(
                 "cloud.azure: refusing Foundry credentials to an unrecognized endpoint origin; "
@@ -767,7 +776,7 @@ class AzureConnector(BaseConnector):
         f.metadata.update(
             {
                 "endpoints": props.get("endpoints"),
-                "description": truncate(props.get("description")),
+                "description": sanitize_text_excerpt(props.get("description")),
                 "tags": tags,
             }
         )
@@ -1100,7 +1109,7 @@ class AzureConnector(BaseConnector):
                 "agent_id": rec.get("id"),
                 "model": rec.get("model"),
                 "tools": tools,
-                "instructions": truncate(str(rec.get("instructions") or ""), 300),
+                "instructions": sanitize_excerpt(str(rec.get("instructions") or ""), 300),
                 "project": rec.get("_project_name"),
                 "metadata": rec.get("metadata"),
             }

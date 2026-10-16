@@ -14,20 +14,25 @@ import jwt
 import pytest
 from rich.console import Console
 
+from shadowscan.comparison import IDENTITY_KEY_ENV, compare_reports
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector, ConnectorContext
 from shadowscan.connectors.code.filesystem import _excerpt
 from shadowscan.connectors.identity.jwt import JwtConnector
 from shadowscan.connectors.saas.generic import GenericSaaSConnector
 from shadowscan.engine import Engine
-from shadowscan.models import Evidence, Finding, Kind, ScanResult, ScanStats, Surface
+from shadowscan.models import FINDING_IDENTITY_SCHEMA, Evidence, Finding, Kind, ScanResult, ScanStats, Surface
 from shadowscan.reporters import render
 from shadowscan.reporters.csv_ import render_csv
 from shadowscan.reporters.table import print_table
 from shadowscan.signatures.loader import Signature
 from shadowscan.signatures.matcher import SignatureIndex
 from shadowscan.utils import redaction_formats
-from shadowscan.utils.credential_identity import reset_credential_identity_key, set_credential_identity_key
+from shadowscan.utils.credential_identity import (
+    credential_identity_scope,
+    reset_credential_identity_key,
+    set_credential_identity_key,
+)
 from shadowscan.utils.redaction import REDACTED, credential_id, sanitize, sanitize_text
 
 SECRET = "opaque-synthetic-credential-value"
@@ -204,6 +209,22 @@ def test_credential_pseudonym_uses_a_private_key_and_restores_nested_context():
         reset_credential_identity_key(token)
 
 
+def test_credential_identity_scope_follows_the_active_key():
+    assert credential_identity_scope() == "run"
+    token = set_credential_identity_key(b"a" * 32, stable=True)
+    try:
+        assert credential_identity_scope() == "keyed"
+        nested = set_credential_identity_key(b"b" * 32)
+        try:
+            assert credential_identity_scope() == "run"
+        finally:
+            reset_credential_identity_key(nested)
+        assert credential_identity_scope() == "keyed"
+    finally:
+        reset_credential_identity_key(token)
+    assert credential_identity_scope() == "run"
+
+
 @pytest.mark.parametrize("key", [b"", b"short", "a" * 32, None])
 def test_credential_identity_context_rejects_unusable_keys(key):
     with pytest.raises(ValueError, match="32 secret bytes"):
@@ -293,6 +314,309 @@ def test_generic_saas_does_not_copy_arbitrary_export_columns():
     assert SECRET not in json.dumps(result[0].to_dict())
     assert result[0].metadata["users"] == 4
     assert "raw" not in result[0].metadata
+
+
+@pytest.mark.parametrize("fmt", ["json", "html", "markdown", "csv", "sarif", "cyclonedx", "ocsf", "table"])
+def test_generic_saas_preserves_record_credential_context_in_all_reports(fixtures, tmp_path, index, fmt):
+    source = fixtures / "saas" / "generic_review_credentials.json"
+    dumped = tmp_path / "dumped"
+    result = Engine(
+        ScanConfig(
+            connectors=[ConnectorSpec("saas.generic", {"input": str(source)})],
+            dump_records=str(dumped),
+        ),
+        index,
+    ).run()
+    assert result.complete and len(result.findings) == 1
+    finding = result.findings[0]
+    assert finding.resource == "saas:app:app-1"
+    assert finding.frameworks and "files:read" in finding.permissions
+    assert REDACTED in finding.title and "Claude" in finding.title
+    if fmt == "table":
+        output = io.StringIO()
+        print_table(result, console=Console(file=output, width=180))
+        rendered = output.getvalue()
+    else:
+        rendered = render(result, fmt)
+    assert SECRET not in rendered
+    assert SECRET not in result.to_json()
+    assert "not-for-publication" not in result.to_json()
+    (dump_file,) = dumped.glob("*.jsonl")
+    assert SECRET not in dump_file.read_text()
+    assert json.loads(source.read_text())[0]["api_key"] == SECRET
+
+
+@pytest.mark.parametrize("separator", [" ", ",", ";"])
+def test_generic_saas_removes_known_credentials_before_splitting_scopes(index, separator):
+    credential = separator.join(["privatefragmentone", "privatefragmenttwo"])
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    (finding,) = connector.analyze(
+        [{"id": "app-1", "name": "Claude", "scopes": credential, "api_key": credential}]
+    )
+    report = json.dumps(finding.to_dict())
+    assert "privatefragmentone" not in report and "privatefragmenttwo" not in report
+
+
+def test_generic_saas_removes_known_credentials_before_scope_excerpt_truncation(index):
+    credential = "privatefragment" * 30
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    (finding,) = connector.analyze(
+        [{"id": "app-1", "name": "Claude", "scopes": [credential], "api_key": credential}]
+    )
+    assert "privatefragment" not in json.dumps(finding.to_dict())
+
+
+def test_generic_saas_credential_values_do_not_establish_app_identity(index):
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    connector.ctx.stats = ScanStats(connector="saas.generic", started_at="now")
+    credential = "Claude-7Kq2Lp9x"
+    assert not list(connector.analyze([{"id": "app-1", "name": credential, "api_key": credential}]))
+    # Nothing of the name is left to classify: incomplete, never a silent omission.
+    assert connector.ctx.stats.incomplete
+    assert any("withheld its name" in warning for warning in connector.ctx.stats.warnings)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "N",
+        "Y",
+        "-",
+        "a",
+        "e",
+        "Yes",
+        "N/A",
+        "none",
+        "****",
+        "changeme",
+        "xxxxxxxx",
+        "xxxxxxxxxxxx",
+        "your_client_secret",
+        "<client-secret>",
+        "${CLIENT_SECRET}",
+    ],
+)
+def test_generic_saas_credential_flags_and_placeholders_do_not_withhold_fields(index, value, nested):
+    # Flags and whole-value placeholders. Learned as credentials, they withheld every
+    # field containing them: the name (so the app was silently not reported), dates, the
+    # resource type (so the finding was omitted) and columns holding the same flag.
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    connector.ctx.stats = ScanStats(connector="saas.generic", started_at="now")
+    record = {
+        "id": "app-7",
+        "name": "ChatGPT Notion Connector",
+        "installed_at": "2025-01-02",
+        "status": value,
+        **(
+            {"credentials": {"client_secret": value, "enabled": value}}
+            if nested
+            else {"client_secret": value}
+        ),
+    }
+    (finding,) = connector.analyze([record])
+    assert finding.title == "saas app: ChatGPT Notion Connector"
+    assert finding.resource == "saas:app:app-7" and finding.id == finding.compute_id()
+    assert finding.first_seen == "2025-01-02" and finding.metadata["status"] == value
+    assert "identity_scope" not in finding.metadata
+    assert not connector.ctx.stats.incomplete
+
+
+def test_generic_saas_csv_credential_flags_keep_findings_and_completeness(tmp_path, index):
+    export = tmp_path / "apps.csv"
+    export.write_text(
+        "id,name,publisher,url,scopes,installed_at,status,client_secret\n"
+        "app-1,ChatGPT Notion Connector,OpenAI,https://chatgpt.com,,2025-01-02,approved,N\n"
+        "app-7,Claude for Sheets,Anthropic,https://claude.ai/sheets,spreadsheets.readonly,2025-01-02,approved,-\n"
+        "app-8,ChatGPT for Slack,OpenAI,https://chatgpt.com,chat:write,2025-02-03,approved,s3cr3t-value-long\n",
+        encoding="utf-8",
+    )
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("saas.generic", {"input": str(export)})]), index
+    ).run()
+    assert result.complete, result.stats[0].warnings
+    assert sorted((f.title, f.resource, f.first_seen) for f in result.findings) == [
+        ("saas app: ChatGPT Notion Connector", "saas:app:app-1", "2025-01-02"),
+        ("saas app: ChatGPT for Slack", "saas:app:app-8", "2025-02-03"),
+        ("saas app: Claude for Sheets", "saas:app:app-7", "2025-01-02"),
+    ]
+
+
+def test_generic_saas_name_withheld_by_a_credential_is_incomplete(tmp_path, index):
+    export = tmp_path / "apps.csv"
+    export.write_text(
+        "id,name,api_key\napp-1,ChatGPT-9fQ2xLm7,ChatGPT-9fQ2xLm7\napp-2,Claude for Sheets,\n",
+        encoding="utf-8",
+    )
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("saas.generic", {"input": str(export)})]), index
+    ).run()
+    assert not result.complete
+    assert [finding.title for finding in result.findings] == ["saas app: Claude for Sheets"]
+    assert any("withheld its name" in warning for warning in result.stats[0].warnings)
+    assert "9fQ2xLm7" not in result.to_json()
+
+
+def _generic_scan(tmp_path, index, rows):
+    export = tmp_path / "apps.json"
+    export.write_text(json.dumps(rows), encoding="utf-8")
+    return Engine(ScanConfig(connectors=[ConnectorSpec("saas.generic", {"input": str(export)})]), index).run()
+
+
+def _unkeyed_identity_digest(resource):
+    identity = [FINDING_IDENTITY_SCHEMA, "saas", "saas.generic", "saas", None, None, resource, "saas-app"]
+    raw = json.dumps(identity, separators=(",", ":"), ensure_ascii=True)
+    return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def test_generic_saas_redacted_resource_id_is_keyed_and_scan_local(tmp_path, index, monkeypatch):
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    rows = [{"name": "Claude Summer2024!", "password": "Summer2024!"}]
+    first, second = _generic_scan(tmp_path, index, rows), _generic_scan(tmp_path, index, rows)
+    assert first.complete and second.complete
+    (one,), (two,) = first.findings, second.findings
+    assert one.resource == two.resource == "saas:app:Claude [REDACTED]"
+    # A public digest of the raw resource would confirm a guessed credential offline.
+    assert one.id != _unkeyed_identity_digest("saas:app:Claude Summer2024!")
+    assert one.id != one.compute_id()
+    assert one.id != two.id
+    assert one.metadata["identity_scope"] == two.metadata["identity_scope"] == "run"
+    comparison = compare_reports(first.to_dict(), second.to_dict())
+    assert not comparison["comparable"]
+    assert comparison["new"] == comparison["resolved"] == []
+    assert {side: [f["id"] for f in found] for side, found in comparison["not_comparable"].items()} == {
+        "baseline": [one.id],
+        "current": [two.id],
+    }
+
+    monkeypatch.setenv(IDENTITY_KEY_ENV, f"hex:{bytes(range(32)).hex()}")
+    first, second = _generic_scan(tmp_path, index, rows), _generic_scan(tmp_path, index, rows)
+    (one,), (two,) = first.findings, second.findings
+    assert one.id == two.id and one.metadata["identity_scope"] == "keyed"
+    assert one.id != _unkeyed_identity_digest("saas:app:Claude Summer2024!")
+    comparison = compare_reports(first.to_dict(), second.to_dict())
+    assert comparison["comparable"] and comparison["new"] == comparison["resolved"] == []
+
+
+def test_generic_saas_unredacted_resource_keeps_its_resource_digest(tmp_path, index, monkeypatch):
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    rows = [{"id": "app-1", "name": "Claude Summer2024!", "password": "Summer2024!"}]
+    (one,), (two,) = (
+        _generic_scan(tmp_path, index, rows).findings,
+        _generic_scan(tmp_path, index, rows).findings,
+    )
+    assert one.title == "saas app: Claude [REDACTED]" and one.resource == "saas:app:app-1"
+    assert one.id == two.id == one.compute_id() == _unkeyed_identity_digest("saas:app:app-1")
+    assert "identity_scope" not in one.metadata
+
+
+# looks_like_placeholder() calls these documentation examples: a word such as here, Test or
+# Demo, or a sequence such as Abcd1234 or 12345678. Under a credential name they are
+# credentials; only a placeholder as a whole value is not.
+PLACEHOLDER_LOOKING_CREDENTIALS = [
+    "prod-secret-here-7Hq2",
+    "MyTestPassword99",
+    "Hello-Demo-2024!",
+    "Abcd1234",
+    "12345678",
+]
+
+
+@pytest.mark.parametrize("field", ["name", "owner", "status", "id"])
+@pytest.mark.parametrize("credential", PLACEHOLDER_LOOKING_CREDENTIALS)
+def test_generic_saas_withholds_copies_of_credentials_that_look_like_placeholders(
+    tmp_path, index, monkeypatch, credential, field
+):
+    # They were left out of the credential context, so a copy in a display field was
+    # printed, the scan was complete, and an ID copy gave the public digest of the raw ID.
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    row = {"name": "ChatGPT Connector", "client_secret": credential, "installed_at": "2025-01-02"}
+    if field == "name":
+        row["name"] = f"ChatGPT Connector {credential}"
+    else:
+        row[field] = credential
+    result = _generic_scan(tmp_path, index, [row])
+    assert result.complete, result.stats[0].warnings
+    (finding,) = result.findings
+    assert credential not in result.to_json()
+    assert finding.first_seen == "2025-01-02"
+    if field == "name":
+        assert finding.title == "saas app: ChatGPT Connector [REDACTED]"
+    elif field == "owner":
+        assert finding.owner == REDACTED
+    elif field == "status":
+        assert finding.metadata["status"] == REDACTED
+    if field in ("name", "id"):
+        raw_resource = f"saas:app:{row[field]}"
+        assert finding.resource == (
+            "saas:app:ChatGPT Connector [REDACTED]" if field == "name" else "saas:app:[REDACTED]"
+        )
+        assert finding.id != finding.compute_id()
+        assert finding.id != _unkeyed_identity_digest(raw_resource)
+        assert finding.metadata["identity_scope"] == "run"
+    else:
+        assert finding.resource == "saas:app:ChatGPT Connector" and finding.id == finding.compute_id()
+
+
+@pytest.mark.parametrize("credential", [*PLACEHOLDER_LOOKING_CREDENTIALS, "hunter2", "Pa55!"])
+def test_generic_saas_name_equal_to_a_credential_is_withheld_and_incomplete(tmp_path, index, credential):
+    result = _generic_scan(
+        tmp_path, index, [{"name": credential, "client_secret": credential}, {"name": "Claude for Sheets"}]
+    )
+    assert not result.complete
+    assert [finding.title for finding in result.findings] == ["saas app: Claude for Sheets"]
+    assert any("withheld its name" in warning for warning in result.stats[0].warnings)
+    assert credential not in result.to_json()
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("field", ["owner", "status", "id"])
+@pytest.mark.parametrize("credential", ["hunter2", "Pa55!", "admin"])
+def test_generic_saas_withholds_a_field_equal_to_a_short_credential(
+    tmp_path, index, monkeypatch, credential, field, nested
+):
+    # A credential shorter than eight characters is not learned: it would withhold each
+    # field containing it. A field that equals it is withheld, and an ID equal to it gives
+    # a keyed finding ID, never the public digest of the raw resource.
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    secret = {"credentials": {"client_secret": credential}} if nested else {"client_secret": credential}
+    row = {"name": "ChatGPT Connector", "installed_at": "2025-01-02", field: f" {credential} ", **secret}
+    result = _generic_scan(tmp_path, index, [row])
+    assert result.complete, result.stats[0].warnings
+    (finding,) = result.findings
+    assert credential not in result.to_json()
+    assert finding.title == "saas app: ChatGPT Connector" and finding.first_seen == "2025-01-02"
+    if field == "id":
+        assert finding.resource == "saas:app:[REDACTED]"
+        assert finding.id != finding.compute_id()
+        assert finding.id != _unkeyed_identity_digest(f"saas:app: {credential} ")
+        assert finding.metadata["identity_scope"] == "run"
+    else:
+        assert (finding.owner if field == "owner" else finding.metadata["status"]) == REDACTED
+        assert finding.resource == "saas:app:ChatGPT Connector" and finding.id == finding.compute_id()
+
+
+@pytest.mark.parametrize("with_id", [False, True])
+def test_generic_saas_redacts_resource_without_collapsing_distinct_identities(index, with_id):
+    connector = GenericSaaSConnector(ConnectorContext(config={"keep_all": True}, index=index))
+    records = []
+    for suffix in ("one", "two"):
+        credential = f"private-identity-{suffix}"
+        records.append(
+            {"name": f"Claude {credential}", "api_key": credential, **({"id": credential} if with_id else {})}
+        )
+    findings = list(connector.analyze(records))
+    assert len(findings) == 2
+    assert findings[0].id != findings[1].id and findings[0].resource == findings[1].resource
+    assert all("private-identity-" not in json.dumps(finding.to_dict()) for finding in findings)
+
+
+def test_generic_saas_context_limit_omits_record_and_marks_incomplete(index, monkeypatch):
+    monkeypatch.setattr("shadowscan.utils.redaction._MAX_SANITIZATION_CHARS", 1000)
+    connector = GenericSaaSConnector(ConnectorContext(config={"keep_all": True}, index=index))
+    connector.ctx.stats = ScanStats(connector="saas.generic", started_at="now")
+    result = list(connector.analyze([{"name": "Claude", "irrelevant": "x" * 1001}]))
+    assert not result and connector.ctx.stats.incomplete
 
 
 @pytest.mark.parametrize(
@@ -632,6 +956,8 @@ def _token_samples() -> list[tuple[str, str]]:
         ("hv[sbr]\\.", "h" + "vs." + _run(_WORD, 30)),
         ("fw_", "fw_" + "aB3xY7" * 4),
         ("[A-Za-z0-9]{14}\\.atlasv1\\.", _run(_ALNUM, 14) + "." + "atl" + "asv1." + _run(_WORD, 70)),
+        ("ABSK", "AB" + "SK" + _run(_ALNUM + "+/", 80)),
+        ("bedrock-api-key-", "bedrock-" + "api-key-" + _run(_WORD, 60)),
     ]
 
 

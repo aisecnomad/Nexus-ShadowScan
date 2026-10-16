@@ -431,8 +431,8 @@ generates card skeletons from shadow findings. See
   findings) and register through the `shadowscan.connectors` entry-point group.
   A third-party connector runs only when an exact-name `options.plugins`
   allowlist entry (or `--allow-plugin`) names it. An allowlisted plugin runs
-  with the scanner's privileges: `plugin_execution: process` lets the scanner
-  stop it at its deadline, but it is not a sandbox. See
+  with the scanner's privileges: by default (`plugin_execution: process`) it runs
+  in a worker the scanner can stop at its deadline, but that is not a sandbox. See
   [writing a connector](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md#writing-a-connector)
   and [third-party plugin execution](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md#third-party-plugin-execution).
 

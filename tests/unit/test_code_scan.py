@@ -18,6 +18,7 @@ from shadowscan.connectors.code.filesystem import (
 )
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.connectors.code.source_text import foreign_cell
 from shadowscan.connectors.code.walk import _nearest_root
 from shadowscan.models import Kind
 from shadowscan.signatures import SignatureIndex
@@ -534,17 +535,18 @@ def test_python_that_does_not_parse_warns_that_the_import_binder_was_skipped(
         pytest.skip("the running Python can parse this snippet")
     (tmp_path / name).write_text(content)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    # Not a gap in what was asked of the scan (the lexical evidence stays), but never silent.
+    # Lexical evidence cannot replace the semantic analysis the interpreter could not perform.
     assert ctx.stats.warnings == [
         f"code.filesystem: {name}: import-bound analysis skipped (source did not parse); "
         "lexical evidence retained"
     ]
-    assert not ctx.stats.errors and not ctx.stats.incomplete
-    # The construction is kept as lexical evidence, corroborated by the import, as in a
-    # language without a binder; it used to be dropped, leaving only "LLM usage".
+    assert not ctx.stats.errors and ctx.stats.incomplete
+    # Keep the library and lexical construction without asserting agent behavior or capabilities.
     assert any(
-        finding.kind == Kind.AGENT and "framework.langchain" in finding.frameworks for finding in findings
+        finding.kind == Kind.FRAMEWORK_USAGE and "framework.langchain" in finding.frameworks
+        for finding in findings
     )
+    assert all(not finding.capabilities for finding in findings)
 
 
 def _notebook(*cells: str) -> str:
@@ -585,15 +587,30 @@ def test_percent_continuation_lines_in_a_notebook_are_python(tmp_path, run_conne
     [
         'notes = """scratch cell, left unfinished\n',  # used to mask every later cell: no finding at all
         "params = dict(\n",
-        '%%bash\necho "it\'s done"\n',
+        # Cell magics whose body IPython runs as Python.
+        "%%time\nparams = dict(\n",
+        "%%capture output\nparams = dict(\n",
+        "%%writefile helper.py\ndef helper(:\n",
+        "%%script python3\nparams = dict(\n",
+        "%%script env python3\nparams = dict(\n",
+        "%%script --bg ipython\nparams = dict(\n",
     ],
-    ids=["unterminated-string", "unclosed-bracket", "shell-cell"],
+    ids=[
+        "unterminated-string",
+        "unclosed-bracket",
+        "time",
+        "capture",
+        "writefile-module",
+        "script-python",
+        "script-env-python",
+        "script-ipython",
+    ],
 )
 def test_one_broken_notebook_cell_does_not_hide_the_others(tmp_path, run_connector, broken):
     # Jupyter runs each cell on its own: a cell that does not parse fails alone.
     (tmp_path / "agent.ipynb").write_text(_notebook(broken, _LANGCHAIN_AGENT))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert not ctx.stats.errors and ctx.stats.incomplete
     assert ctx.stats.warnings == [
         "code.filesystem: agent.ipynb: import-bound analysis skipped for notebook cell 1, which does not "
         "parse; lexical evidence retained"
@@ -601,15 +618,58 @@ def test_one_broken_notebook_cell_does_not_hide_the_others(tmp_path, run_connect
     assert any(finding.kind == Kind.AGENT for finding in findings)
 
 
+@pytest.mark.parametrize(
+    "cell",
+    [
+        '%%bash\necho "it\'s done"\npip install -q openai langchain\n',
+        "%%writefile requirements.txt\nopenai==1.30.0\nlangchain>=0.2\n",
+        "%%writefile -a notes.md\nNotes: it's done\n",
+        "%%html\n<div class='x'>it's done</div>\n",
+        "%%sql\nSELECT name FROM agents WHERE status = 'on';\n",
+        "\n%%script bash\nset -e; echo it's done\n",
+    ],
+    ids=["bash", "writefile-text", "writefile-append", "html", "sql", "script-bash"],
+)
+def test_a_cell_in_another_language_is_not_a_python_coverage_gap(tmp_path, run_connector, cell):
+    """Regression: a cell under a cell magic that runs or writes another language never parses as
+    Python, so the scan became incomplete for ordinary notebooks."""
+    (tmp_path / "agent.ipynb").write_text(_notebook(cell, _LANGCHAIN_AGENT))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.warnings and not ctx.stats.errors and not ctx.stats.incomplete
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize(
+    ("magic", "foreign"),
+    [
+        ("%%script python3", False),
+        ("%%script env python3", False),
+        ("%%script /usr/bin/env -S python3 -u", False),
+        ("%%script env -u PYTHONPATH LANG=C python3.12", False),
+        ("%%script ipython", False),
+        ("%%script --bg --out log ipython3", False),
+        ("%%script bash", True),
+        ("%%script env bash", True),
+        ("%%script --out log bash", True),
+        ("%%script", True),
+    ],
+)
+def test_script_cell_magics_are_read_by_the_interpreter_they_run(magic, foreign):
+    """Regression: `%%script env python3` and `%%script ipython` run their cell as Python, but the
+    first argument (env, ipython) was read as the interpreter, so the cell was declared foreign."""
+    assert foreign_cell(f"{magic}\nprint(1)\n") is foreign
+
+
 def test_a_broken_notebook_cell_keeps_its_own_construction(tmp_path, run_connector):
     setup = "from langchain.agents import AgentExecutor\n"
     broken = "executor = AgentExecutor(agent=a, tools=[])\nresult = (\n"
     (tmp_path / "agent.ipynb").write_text(_notebook(setup, broken))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert not ctx.stats.errors and ctx.stats.incomplete
     assert any("notebook cell 2" in warning for warning in ctx.stats.warnings)
-    # The construction in the cell the binder could not read counts as lexical evidence.
-    assert any(finding.kind == Kind.AGENT for finding in findings)
+    # The construction in the unread cell stays lexical evidence, with no semantic promotion.
+    assert findings and all(finding.kind == Kind.FRAMEWORK_USAGE for finding in findings)
+    assert all(not finding.capabilities for finding in findings)
 
 
 @pytest.mark.parametrize("stop", ["sys.exit(0)", "exit()", "quit()", "raise SystemExit('stop Run All here')"])

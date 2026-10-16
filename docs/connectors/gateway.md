@@ -30,6 +30,16 @@ not individual timestamped transaction events. Log fields for environment
 and caller identity are evidence from the supplied export; assess the
 producer and delivery chain before treating them as verified production facts.
 
+Inventory matches on an `operator-asserted` or `unverified` caller are review
+candidates only: they stay shadow, inherit no card owner or declared facts,
+and receive no registration score reduction. Missing or malformed identity
+assurance is unverified, and mixed observations use the weakest assurance.
+The candidate cards, reason and assurance remain in the finding metadata.
+Normal resource and scope approval requires every observation to carry
+`provider-authenticated-field`; that label identifies a provider's caller field
+in the supplied export and does not authenticate the export itself. See
+[inventory reconciliation](../inventory.md) for the exact approval rules.
+
 For text (combined-format) access logs the host is read only from a
 `host=`, `authority=`, `upstream_host=` or `server_name=` token that follows
 the final quoted field, as in `... "ua" host=api.openai.com`. The request line,

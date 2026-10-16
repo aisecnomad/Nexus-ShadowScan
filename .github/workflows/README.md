@@ -41,12 +41,19 @@ Dependabot receive no repository secrets, so they are skipped too.
 
 | Workflow | Enabled by | Starts on | Writes |
 |---|---|---|---|
-| [Black Duck](black-duck-security-scan-ci.yml) | variable `BLACKDUCKSCA_URL`, `COVERITY_URL`, `POLARIS_SERVER_URL` or `SRM_URL`, with its secret | push to `main`, pull requests, Wednesday 06:25 UTC | nothing |
+| [Black Duck](black-duck-security-scan-ci.yml) | variable `BLACKDUCKSCA_URL`, `COVERITY_URL`, `POLARIS_SERVER_URL` or `SRM_URL`, with its secret; the job then fails unless variable `BRIDGECLI_DOWNLOAD_VERSION` holds an `x.y.z` version | push to `main`, pull requests, Wednesday 06:25 UTC | nothing |
 | [Checkmarx One](checkmarx-one.yml) | variable `CX_BASE_URI` and the `CX_*` secrets | pull requests | `security-events` |
 | [Semgrep](semgrep.yml) | variable `SEMGREP_ENABLED=true` and secret `SEMGREP_APP_TOKEN` | push to `main`, pull requests, Friday 08:24 UTC | `security-events` |
 
-The Black Duck action downloads the vendor's current Bridge CLI at run time.
-Pin `bridgecli_download_version` to a reviewed version before enabling it.
+The Black Duck action downloads the Bridge CLI at run time, so once a service
+is configured the job also requires the repository variable
+`BRIDGECLI_DOWNLOAD_VERSION`, set to a reviewed Bridge CLI version (`x.y.z`)
+and passed as `bridgecli_download_version`. Without it the job fails at its
+first step instead of skipping, because a skipped job reports success and
+would look like an unconfigured integration. The variable pins the Bridge CLI
+by version, not by content: the action fetches that version's bundle from
+`repo.blackduck.com` over HTTPS without a checksum check, and the pin does not
+cover tools the Bridge CLI fetches for a scan.
 
 ## Changing a workflow
 

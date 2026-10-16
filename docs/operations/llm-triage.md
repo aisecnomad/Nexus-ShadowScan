@@ -96,8 +96,9 @@ A triage run is bounded. It sends no request after `budget_seconds` (default
 300) have passed since it started, and the HTTP client's retries,
 `Retry-After` waits, connection set-up and response reads end at the same
 time: a retry wait that would pass the budget fails the request instead. Name
-resolution is the exception: the operating system's resolver is not bounded,
-so a slow resolver can use part of the job deadline's reserve.
+resolution stops waiting then too: the operating system's resolver cannot be
+interrupted, so each lookup runs in a bounded worker that the request abandons
+at the budget, leaving the lookup to finish in the background.
 After three consecutive failed requests the run stops, so an endpoint that is
 down or rate-limited costs three failed requests, not one per selected
 finding. Selected findings that a stopped run did not reach are recorded as

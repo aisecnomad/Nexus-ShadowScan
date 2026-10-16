@@ -94,21 +94,23 @@ normalizes them, and an entry point without distribution metadata is refused.
 These checks read installed metadata before import. They bind a reviewed
 release, not file contents, so keep the plugin itself in a hash-locked install.
 
-The default `options.plugin_execution: thread` retains
-existing behavior. For reviewed plugins that can block inside an SDK or native
-extension, select a dedicated spawned process per connector:
+By default (`options.plugin_execution: process`) each allowlisted plugin runs
+in a dedicated spawned process per connector, so a plugin that blocks inside an
+SDK or native extension can be stopped at its deadline:
 
 ```yaml
 options:
   plugins: [platform.example=example_connectors.platform:ExampleConnector]
-  plugin_execution: process
+  plugin_execution: process   # the default; thread runs plugins in-process
   connector_timeout_seconds: 120
 connectors:
   - name: platform.example
 ```
 
-The equivalent CLI override is `--plugin-execution process`. Built-in connectors
-continue to use the existing thread backend. A plugin is imported only inside
+`options.plugin_execution: thread` or `--plugin-execution thread` runs plugins
+in the scanner process instead (the previous default), where a blocked plugin
+cannot be stopped. Built-in connectors always use the thread backend. In process
+mode a plugin is imported only inside
 its child process, and its original completion deadline includes import,
 collection, result serialization and transfer. The worker exits with
 `os._exit` as soon as its result is sent: plugin `atexit` handlers do not run,
@@ -145,7 +147,10 @@ applications must call the scanner behind Python's usual
 `if __name__ == "__main__":` guard. Plugin configuration and supplied signature
 objects must be serializable by Python's spawn machinery. Workers are daemonic,
 so a plugin cannot start its own `multiprocessing.Process` children. Choose the
-thread backend or an external supervised scanner process for such plugins.
+thread backend (`plugin_execution: thread`) or an external supervised scanner
+process for such plugins. The worker discards the plugin's standard output,
+standard error and logging, which may contain credentials; diagnostics reach the
+report only through the worker's sanitized result.
 Neither backend enforces CPU/memory quotas or prevents deliberate malicious
 filesystem or network activity.
 
@@ -227,7 +232,10 @@ Use the same six checks for each entry:
 ## Code
 
 ### `code.filesystem`
-Scans a directory tree. Project roots are detected from manifests
+Scans a directory tree. CODEOWNERS reads use the source scan's anchored
+directory. A root replacement detected before ownership lookup makes the scan
+incomplete; later replacements cannot redirect reads.
+Project roots are detected from manifests
 (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, a `setup.py` that builds a
 package, …); by default each root yields one
 finding summarizing frameworks, model providers, capabilities, models and
@@ -238,6 +246,10 @@ Continue, Kiro, Amazon Q…), coding-agent configs (`CLAUDE.md`, `.claude/agents
 A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
+
+JavaScript/TypeScript SDK attribution excludes bindings shadowed by object or
+array destructuring, including aliases, nesting, defaults and rest patterns.
+Property keys and initializer references do not themselves shadow an import.
 
 Supported `uv.lock`, `poetry.lock`, `pnpm-lock.yaml` and `Cargo.lock` inputs
 also provide bounded AI dependency inventory, with direct/transitive relationships
@@ -297,6 +309,12 @@ language, use lexical signatures and require matching framework import/dependenc
 corroboration before agent classification; uncorroborated lexical framework code
 is capped at 0.6 confidence. These are static candidate classifications, not proof
 that code ran or that a deployment is autonomous.
+
+Python files or notebook cells that the scanner's interpreter cannot parse
+retain lexical observations but make semantic coverage incomplete. Unparsed
+ranges cannot establish semantic agent construction or execution capabilities;
+supported neighboring source remains analyzable. Scan with a supported Python
+interpreter that understands the input syntax before accepting completeness.
 
 Supported Python and JavaScript/TypeScript tool registrations and model-selected
 dispatch establish execution capabilities. Unused or unrelated execution code
@@ -461,14 +479,19 @@ is scanned through the incomplete API fallback. A clone URL or API link that
 contains whitespace or control characters is refused outright rather than
 cleaned up, and an API tree path with a `.git` component (any case) aborts that
 repository's API snapshot.
-Cloning requires Git 2.32 or newer: the protections that keep a clone on its
+Cloning requires Git 2.45 or newer: the protections that keep a clone on its
 origin and out of local configuration are passed through `GIT_CONFIG_COUNT` and
-`GIT_CONFIG_GLOBAL`, which older versions ignore without an error. With an older
-or unidentifiable Git (`git --version` is read once per process) the connector
-uses sampled API mode and the scan is incomplete. The submodule inventory of a
-clone uses the hardened metadata path, which needs Git 2.45; with Git 2.32 to
-2.44 a clone is scanned but reports
-`could not inventory gitlinks safely; submodule coverage unknown`.
+`GIT_CONFIG_GLOBAL`, which versions before 2.32 ignore without an error, and the
+clone's revision and submodule inventory are read on the hardened metadata path
+with `--no-lazy-fetch`, which Git 2.45 added. With an older or unidentifiable Git
+(`git --version` is read once per process) the connector uses sampled API mode and
+the scan is incomplete.
+A clone connects directly (proxy variables are ignored) and only to the
+addresses ShadowScan resolved for the clone host and checked like any API
+destination: Git is pinned to them with `http.curloptResolve`, so it does not
+resolve the name again. A clone host with no answer in time, or a clone URL that
+is refused (off the API origin, naming another repository, or resolving to a
+refused address), falls back to sampled API mode and marks the scan incomplete.
 The provider's size is an estimate, and polling can overshoot between samples.
 Neither check limits network transfer or guarantees a hard disk ceiling. Run
 remote scans with a host/container wall-clock limit and a writable disk quota.
@@ -524,7 +547,8 @@ findings retain the scanned Git tree/commit identity in
 `metadata.source_snapshot`, and API mode pins tree pagination to an immutable
 commit before downloading files.
 `clone_max_bytes` and `clone_timeout_seconds` have the same defaults, sampled
-checkout measurement and incomplete-scan semantics as `code.github`. GitLab
+checkout measurement and incomplete-scan semantics as `code.github`, and clones
+are pinned to checked addresses in the same way. GitLab
 project details are queried for size statistics when the listing omits them.
 Without a usable estimate, the connector falls back to sampled API mode
 without launching Git.
@@ -711,6 +735,9 @@ usage exports count requests from provider counters; aggregate buckets are
 not individual timestamped transaction events. Log fields for environment
 and caller identity are evidence from the supplied export; assess the
 producer and delivery chain before treating them as verified production facts.
+An operator-asserted or unverified caller name can suggest an exact inventory
+binding, but cannot confer registered status, inherited ownership or registration
+risk credit. See [inventory matching](inventory.md#matching-and-approval).
 
 A caller is titled **Agentic caller** when at least one agent indicator
 holds: requests carried tool definitions or responses invoked tools; a user
@@ -830,6 +857,9 @@ Make scenarios with AI modules and AI Agents; triggers (`scheduling.type` →
 scenario adds neither), code steps (→ code-exec) and models. Live pagination is bounded by
 `max_pages` (default and maximum 1000). Make scans one `team_id`, or every team
 of an `organization_id` when `team_id` is unset.
+Each scenario must include a valid blueprint with an explicit flow array;
+malformed detail responses make collection incomplete, while an empty flow is
+valid.
 
 ### `lowcode.zapier`
 Zapier zaps and AI/Agents from account exports; triggers (schedule →
@@ -839,6 +869,10 @@ models. Live pagination is bounded by
 `max_pages` (default and maximum 1000). Wholly blank text rows are skipped only
 with a recognized identity column (`title`, `name`, `Title`, `Zap`, `id`, or
 `Id`); unknown schemas are incomplete.
+Live error envelopes and malformed collections make coverage incomplete, even
+beside an empty collection; that page is omitted and earlier valid pages remain.
+Missing or malformed pagination metadata also makes live collection incomplete
+instead of ending the inventory successfully; that page's records are kept.
 
 ### `lowcode.workato`
 Workato recipes with GenAI/agentic providers; triggers (Scheduler →
@@ -846,6 +880,8 @@ Workato recipes with GenAI/agentic providers; triggers (Scheduler →
 `autonomous`; a Workbot command adds neither), code steps (→ code-exec), and
 models. Live pagination is bounded by
 `max_pages` (default and maximum 1000).
+Live error envelopes and malformed collections make coverage incomplete even
+beside an empty `items` array. Bare recipe arrays remain supported.
 
 ## SaaS
 
@@ -871,6 +907,15 @@ and collect a fresh comparison baseline when upgrading from name-based IDs.
 ### `saas.microsoft-teams`
 Graph app catalog (custom apps with bot definitions and RSC permissions) and
 installed apps per team (capped by `max_teams`).
+Catalog and installed-version definitions are retained with version, bot,
+installation and team provenance in `definition_observations`, one entry per
+distinct definition with an installation count and at most 20 sample teams; at
+most 20 entries are listed and `definition_observations_omitted` counts the
+rest. RSC permissions are requested permissions, not verified grants.
+Conflicting observations of one definition make coverage incomplete; scalar
+version/bot fields are populated only when unambiguous, with up to 20 observed
+values in `versions` and `bot_ids` (`versions_omitted` and `bot_ids_omitted`
+count the rest).
 Malformed app IDs, conflicting expanded identities and malformed nested
 definitions or permissions make collection incomplete. An installation ID is
 not a fallback catalog app ID. Valid neighboring records remain available.
@@ -890,6 +935,12 @@ of its own for it (for example `token: ${GITHUB_APPS_TOKEN}`) rather than relyin
 on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
 untrusted repositories; the rule that code scans and live connectors run
 separately does not narrow a shared token's scope.
+
+Installation envelopes validate declared totals against unique collected IDs,
+across all pages of a live listing or of an offline export file (one page
+envelope per line is accepted). Malformed or contradictory count information
+marks coverage incomplete while retaining valid observations. See the
+[SaaS guide](connectors/saas.md) for offline export forms and collection limits.
 
 ### `saas.atlassian`
 UPM user-installed apps for Jira and Confluence. Provider error envelopes make
@@ -935,6 +986,16 @@ and privileged/data scopes (`keep_all: true` to emit everything). Records
 without a usable string app name make coverage incomplete while valid
 neighboring records remain available. A partial export cannot resolve an
 earlier finding merely because that row lost its name.
+Whole-record credential context removes copied secrets before field projection,
+matching and excerpt truncation. Credential contents cannot establish product
+or permission evidence. Values under credential names are learned however
+they look, except whole-value placeholders (`none`, `****`, `changeme`), which
+withhold nothing, and values shorter than eight characters, which withhold only
+a field equal to them and nothing when they are flags (`N`, `-`, `Yes`); a short
+credential inside a longer field is still shown. A name withheld entirely by a
+credential makes coverage incomplete. A resource with a redacted credential
+gets a keyed, distinct finding ID that is scan-local
+(`metadata.identity_scope: run`) unless `SHADOWSCAN_IDENTITY_KEY` is set.
 `platform` (default `saas`) names the export's source, for example
 `google-marketplace`, `hubspot` or `defender-mcas`. It prefixes finding titles
 and resource IDs and sets the provider, so keep it stable between scans.
@@ -989,7 +1050,11 @@ timestamps; missing or ambiguous predecessors remain unknown. This metadata
 does not add confidence, and its sampling bounds report partial lineage
 without marking the scan incomplete. Live `LookupEvents` retrieves no STS
 events, so live lineage is always unlinked, and it is not invocation
-data-event coverage; see the [cloud guide](connectors/cloud.md).
+data-event coverage; see the [cloud guide](connectors/cloud.md). A CloudTrail
+caller names the principal AWS authenticated
+(`metadata.caller_identity_assurance: provider-authenticated-field`), so an
+exact inventory binding approves it; events without a principal share the
+`unverified` caller `cloudtrail:unknown`, a review candidate only.
 
 Opt-in registry records (`services` including `registry`): AWS Agent Registry
 and AgentCore registry records of every status, from the control-plane APIs,
@@ -1066,7 +1131,11 @@ Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,
 service accounts (user-managed keys), API keys restricted to Gemini, Secret
 Manager names, optional Cloud Audit Log callers (`audit_days`). An ambiguous
 product name (Gemini) on a Cloud Run service or Cloud Function stays a hint
-until another signal corroborates it. Auth: ADC via
+until another signal corroborates it. An audit caller names the principal
+Google authenticated
+(`metadata.caller_identity_assurance: provider-authenticated-field`), so an
+exact inventory binding approves it; events without a principal share the
+`unverified` caller `audit:unknown`. Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows potential access, not observed agent execution. Project IAM collection
@@ -1141,7 +1210,8 @@ converted is skipped with a warning and makes the scan incomplete.
 ### `cloud.kubernetes` and `cloud.openshift`
 Analyze offline Kubernetes and OpenShift workload exports (images, exposure,
 GPU, privilege and egress-policy indicators), including nested CronJob pod
-templates. Resource identities preserve full valid object names and
+templates and init and ephemeral containers (a null one is absent). Resource
+identities preserve full valid object names and
 namespaces; object-limit truncation, a chunked `List` page with
 `metadata.continue` or `remainingItemCount`, a malformed namespace and an
 object without a `kind` leave coverage incomplete; items of a raw API list
@@ -1252,6 +1322,21 @@ command line or executable; live mode reads `/proc` on Linux. The engine
 links these findings to endpoint findings for the same tool on the same
 device (`metadata.lifecycle`, tag `observed-running`) without changing
 scores.
+
+Launcher parsing identifies the executed script, module or package rather than
+its application arguments, including package runners an interpreter runs
+(`node /usr/local/bin/npx ...`, `python3 /usr/bin/pipx run ...`) and process
+titles (`npm exec ...` on a node executable, or as the single argument with
+spaces that `/proc` shows). A command line cut by a parsing limit, or by its
+export (`argv_truncated: true`, whose possibly cut final argument is dropped),
+marks coverage incomplete, even when no tool can be identified, when the
+dropped arguments could change what runs (none left, or a launcher's target
+unread); other long command lines are classified from their leading arguments
+and reported in one counted warning. Launches with options a launcher's grammar
+does not recognize are not reported. Full validated host and user
+identities are used for aggregation; display shortening never merges devices
+or users. See the [migration notes](production.md#unreleased-runtime-identity-and-completeness-migration)
+before rebuilding inventory bindings and comparison baselines.
 
 Lifecycle assessments additionally disclose their observation window, runtime
 coverage and whether activity is current, historical or unknown. Unobservable

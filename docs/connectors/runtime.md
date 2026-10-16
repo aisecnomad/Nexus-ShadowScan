@@ -20,6 +20,40 @@ One `runtime-process` finding is reported per host, user and tool, with the
 process count, up to ten process ids, the executable names and, for an MCP
 server, its package name.
 
+Launcher classification follows the executed target: Python `-m`, a Node
+script, `npx`/`uvx`/`bunx`, `npm exec`, `pnpm`/`yarn exec` or `dlx`,
+`pipx run`, `uv run` (with `-m`/`--module`)/`uv tool run`, `bun x`, and
+`deno run`. Recognized nested wrappers such as `uv run python -m aider` retain
+that target. A runner's first positional argument is the command it runs; a
+later package is an argument of that command. Without `--package` or `--from`,
+`npx` and `uvx` install a package of that name to run it, and the classifier
+reads the name as the command: `npx claude`, `npx codex` and `uvx ollama serve`
+are reported as Claude Code, Codex and Ollama, although the npm or PyPI package
+of that name need not be that tool. Package runners are interpreter scripts,
+so the kernel shows `node /usr/local/bin/npx -y pkg`, `node.exe
+...\npm\bin\npx-cli.js -y pkg` or `python3 /usr/bin/pipx run ...`: when a
+Node, Deno or Python interpreter runs a script named `npx` (`npx-cli.js`),
+`npm` (`npm-cli.js`), `pnpm` (`pnpm.cjs`), `yarn` (`yarn.js`), `pipx`, `uv` or
+`uvx`, or Python runs `-m pipx` or `-m uv`, the command line is read as that
+runner's. When the executable (osquery's `path`, Defender's `FolderPath`) does
+not identify a tool, the command line's first argument is read as well: a
+process title can name the launcher or tool there (npm sets `npm exec pkg`)
+while the executable is node. A title that replaced the command line is one
+argument with spaces in `/proc/<pid>/cmdline`, so a first argument with
+whitespace is also read split into words, ahead of the arguments after it:
+a live `npm exec @modelcontextprotocol/server-github` is that MCP server.
+
+Arguments after a script or module, inline Python/Node code (`-c`, `--eval`,
+`npx --call`), and dependency options such as `--package`, `--from`, or
+`--require` do not identify a running tool. Launch options are read with each
+launcher's grammar: `--name=value` carries its own value, Deno permission flags
+(`-A`, `--allow-*`, `--deny-*`) and common options (`node --inspect`,
+`npx --prefer-offline`, `uv run --frozen`, combined Python flags such as
+`-Im`) are skipped. Other options are not guessed, so launches with options the
+grammar does not recognize are not reported; custom wrappers and unsupported
+launch syntax can remain undetected too. Package scripts such as `npm run`
+require additional source evidence and are not resolved from the process name.
+
 **Command lines never enter a finding.** They can carry credentials
 (`--api-key …`), so only the matched tool, the executable's base name and an
 MCP package name are kept.
@@ -49,13 +83,38 @@ MCP package name are kept.
   `-p`, a JVM classpath) is classified from its leading complete arguments: the
   final argument the limit may have cut is dropped, so a partial name never
   matches a rule. The finding records `metadata.command_lines_truncated` with a
-  limitation, and the scan is incomplete because the unread arguments could
-  hold evidence.
+  limitation. The scan is incomplete only when the unread arguments could
+  change what runs, as described below: `claude -p` with a 70 KB prompt stays
+  complete, while `npx --registry URL` cut before its package does not.
 
 Options: `label` (host name for records that carry none; default the host
 name), `max_processes` (live mode bound, default 100,000; reaching it makes
 the scan incomplete) and `input`. A record with neither a command line nor an
 executable nor a valid inspection record makes the scan incomplete.
+
+Both live and offline command lines are bounded to 64 arguments and 65,536
+UTF-8 bytes. Only complete leading arguments are classified; a cut text token
+is discarded. A row its export marks `argv_truncated: true` may have been cut
+inside its final argument, so that argument (or the final word of its command
+line) is dropped too, unless one of these bounds already left it out. A
+command line cut by a limit or by its export makes coverage incomplete when
+what runs could depend on the arguments that were dropped: when no argument is
+left, or when a launcher's target was not among the leading arguments
+(`python -B ... -m` cut before its module, `npx --registry URL` cut before its
+package, or an exported `npx -y @modelcontextprotocol/s` whose cut final
+argument was npx's target). A program that is no launcher (a JVM or compiler
+with hundreds of options), or a launcher whose target was read before the
+dropped argument, is classified from its leading arguments and stays complete.
+One counted warning per scan reports the cut command lines and how many could
+not be classified. Retained findings record `metadata.command_lines_truncated`.
+A malformed argument array is rejected with incomplete coverage.
+
+Host and user strings retain their complete identities in aggregation, finding
+IDs and lifecycle links. They are never shortened to fit a display limit.
+Control characters, non-string identities and identities longer than 4,096
+characters cause the record to be omitted and the scan to be incomplete.
+After upgrading from a version that clipped identities to 120 characters,
+regenerate baselines and review inventory bindings for affected records.
 
 ### Optional Linux inspection
 

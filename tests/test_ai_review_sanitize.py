@@ -240,3 +240,28 @@ def test_plain_text_passes_through() -> None:
 def test_redaction_is_idempotent() -> None:
     text = "token ghp_" + "a1" * 20 + " here"
     assert redact(redact(text)) == redact(text)
+
+
+def test_jwt_with_whitespace_header_is_redacted():
+    import base64
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    token = b64(b' {"alg":"HS256"}') + "." + b64(b'{"sub":"synthetic"}') + "." + b64(bytes(range(40)))
+    assert token not in redact(f"leaked {token} here")
+
+
+def test_jwt_with_any_json_whitespace_around_the_header_brace_is_redacted():
+    import base64
+    import itertools
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    # Up to three whitespace bytes before the '{' and two after it ('{\t"' is ewki, '  {' is
+    # ICB7, '\r\n{' is DQp7); the first token, with none, is the compact 'eyJ' one.
+    runs = [bytes(run) for size in range(4) for run in itertools.product(b" \t\r\n", repeat=size)]
+    tail = "." + b64(b'{"sub":"synthetic"}') + "." + b64(bytes(range(40)))
+    tokens = [b64(before + b"{" + after + b'"alg":"HS256"}') + tail for before in runs for after in runs[:21]]
+    assert redact(" ".join(tokens[1:])) == " ".join(["[redacted]"] * (len(tokens) - 1))

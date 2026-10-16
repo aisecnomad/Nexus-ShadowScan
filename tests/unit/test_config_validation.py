@@ -562,3 +562,27 @@ def test_mutated_mcp_registries_are_revalidated():
     with pytest.raises(ConfigValidationError, match="repeats the id"):
         cfg.validate_security_options()
     assert validate_mcp_registries([]) == []
+
+
+@pytest.mark.parametrize("name", ["gateway.logs", "endpoint.mcp", "code.filesystem", "identity.okta"])
+def test_every_connector_accepts_a_private_origin_grant(name):
+    """The engine reads the shared switch, so each built-in connector accepts it."""
+    assert "allow_private_origin" in accepted_connector_keys(name)
+    cfg = ScanConfig(connectors=[ConnectorSpec(name, {"allow_private_origin": True})])
+    assert cfg.connectors[0].config["allow_private_origin"] is True
+
+
+def test_environment_expanded_false_never_grants_a_private_origin(monkeypatch):
+    """A security switch must not be enabled by the truthy string 'false'."""
+    monkeypatch.setenv("NEXUS_CONNECTOR_BOOLEAN", "false")
+    cfg = ScanConfig.from_dict(
+        {"connectors": [{"name": "gateway.logs", "allow_private_origin": "${NEXUS_CONNECTOR_BOOLEAN}"}]}
+    )
+    assert cfg.connectors[0].config["allow_private_origin"] is False
+
+
+@pytest.mark.parametrize("value", ["yes", "0", "perhaps", 0, 1, None, [], {}])
+def test_invalid_private_origin_grant_fails_closed_without_echoing_value(value):
+    with pytest.raises(ConfigValidationError, match="connector option allow_private_origin") as failure:
+        ScanConfig.from_dict({"connectors": [{"name": "gateway.logs", "allow_private_origin": value}]})
+    assert repr(value) not in str(failure.value)

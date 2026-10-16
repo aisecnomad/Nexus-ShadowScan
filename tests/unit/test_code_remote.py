@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
+import os
 import shutil
+import socket
 import subprocess
 from pathlib import Path
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from time import monotonic
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -33,7 +36,13 @@ from shadowscan.connectors.code.remote import (
 from shadowscan.models import Kind, ScanStats
 from shadowscan.utils import git as git_module
 from shadowscan.utils.git import checkout_has_lfs_pointers, safe_git_env
-from shadowscan.utils.http import HttpError
+from shadowscan.utils.http import (
+    HttpError,
+    reset_allow_private_origin,
+    reset_request_deadline,
+    set_allow_private_origin,
+    set_request_deadline,
+)
 
 COMMIT = "a" * 40
 PROVIDERS = [GitHubConnector, GitLabConnector]
@@ -295,6 +304,212 @@ def test_github_enterprise_clone_stays_on_the_api_origin(tmp_path, index, monkey
     assert cmd[-3:] == ["--", "https://ghe.example.com/acme/app.git", str(tmp_path / "repo")]
     keys = [env[f"GIT_CONFIG_KEY_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))]
     assert "http.https://ghe.example.com/.extraheader" in keys
+
+
+def _git_settings(env):
+    return {
+        env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+
+
+def _resolving(monkeypatch, host, *answers, stall=None):
+    """Answer the n-th lookup of *host* with answers[n] (the last answer from then on).
+
+    Other names get a public address. With *stall*, every lookup of *host* after the
+    answers run out waits for that event instead. Returns the names looked up, in order.
+    """
+    calls: list[str] = []
+
+    def getaddrinfo(name, port, *args, **kwargs):
+        calls.append(name)
+        address = "93.184.216.34"
+        if name == host:
+            seen = calls.count(host)
+            if stall is not None and seen > len(answers):
+                stall.wait(10)
+            address = answers[min(seen, len(answers)) - 1]
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (address, port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    return calls
+
+
+def _clone_mode(index, monkeypatch, cls, **config):
+    """A connector whose _fetch clones: Git 2.45 present, git itself never run."""
+    monkeypatch.setattr(git_module, "git_version", lambda: (2, 45, 0))
+    monkeypatch.setattr(remote.shutil, "which", lambda name: "/usr/bin/git")
+    return _connector(index, cls, mode="clone", token="synthetic", **config)
+
+
+def test_clone_runs_git_pinned_to_the_address_it_checked(tmp_path, index, monkeypatch):
+    # validate_url's preflight, then the pin's own lookup. Git connects only to the pinned answer,
+    # so a later rebinding to loopback (every further answer here) never reaches it.
+    calls = _resolving(monkeypatch, "github.com", "93.184.216.34", "93.184.216.35", "127.0.0.1")
+    run = Mock(return_value=True)
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    assert _connector(index, GitHubConnector, token="synthetic")._clone(
+        {"full_name": "acme/app"}, str(tmp_path)
+    )
+    settings = _git_settings(run.call_args.args[1])
+    assert settings["http.curloptResolve"] == "github.com:443:93.184.216.35"
+    assert settings["http.proxy"] == ""  # an inherited HTTPS_PROXY cannot route around the pin
+    assert calls.count("github.com") == 2
+
+
+@pytest.mark.parametrize(
+    "cls,host,answers",
+    [
+        # Every lookup before the pin's own (the API origin's, then the clone URL preflight) is public.
+        (GitHubConnector, "github.com", ("93.184.216.34", "127.0.0.1")),
+        (GitLabConnector, "gitlab.com", ("93.184.216.34", "93.184.216.34", "127.0.0.1")),
+    ],
+)
+def test_clone_host_rebound_to_a_private_address_falls_back_to_api_mode(
+    tmp_path, index, monkeypatch, cls, host, answers
+):
+    calls = _resolving(monkeypatch, host, *answers)
+    connector = _clone_mode(index, monkeypatch, cls)
+    run = Mock(side_effect=AssertionError("a refused address must not reach git"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    api = Mock(return_value=str(tmp_path / "api"))
+    monkeypatch.setattr(connector, "_fetch_via_api", api)
+    record = _record(
+        size=1, statistics={"repository_size": 1}, http_url_to_repo="https://gitlab.com/acme/app.git"
+    )
+    assert getattr(connector, _fetch_name(cls))(record, str(tmp_path)) == str(tmp_path / "api")
+    run.assert_not_called()
+    assert calls.count(host) == len(answers)  # refused at the pin's lookup, the last one
+    stats = connector.ctx.stats
+    assert stats.incomplete and stats.errors == []
+    assert any("Refusing loopback" in warning for warning in stats.warnings)
+    assert f"{cls.name}: clone failed for acme/app; using sampled API mode" in stats.warnings
+
+
+def test_unresolvable_clone_host_falls_back_to_api_mode_without_git(tmp_path, index, monkeypatch):
+    # The preflight lets a name that does not resolve pass (HttpClient refuses it at connect), but
+    # there is nothing to pin Git to, so Git is not run and the scan is incomplete.
+    connector = _clone_mode(index, monkeypatch, GitHubConnector, api_url="https://ghe.invalid/api/v3")
+    run = Mock(side_effect=AssertionError("an unresolved host must not reach git"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    api = Mock(return_value=str(tmp_path / "api"))
+    monkeypatch.setattr(connector, "_fetch_via_api", api)
+    assert not connector._clone({"full_name": "acme/app"}, str(tmp_path / "repo"))
+    assert connector._fetch({"full_name": "acme/app", "size": 1}, str(tmp_path)) == str(tmp_path / "api")
+    run.assert_not_called()
+    stats = connector.ctx.stats
+    assert stats.incomplete and stats.errors == []
+    assert stats.warnings == ["code.github: clone failed for acme/app; using sampled API mode"]
+
+
+def test_stalled_clone_lookup_stops_at_the_request_deadline(tmp_path, index, monkeypatch):
+    release = Event()
+    _resolving(monkeypatch, "github.com", "93.184.216.34", stall=release)
+    run = Mock(side_effect=AssertionError("git must not run without a pinned address"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    connector = _connector(index, GitHubConnector)
+    token = set_request_deadline(monotonic() + 1, None)
+    started = monotonic()
+    try:
+        assert not connector._clone({"full_name": "acme/app"}, str(tmp_path / "repo"))
+    finally:
+        reset_request_deadline(token)
+        release.set()
+    assert monotonic() - started < 5  # the request deadline, not the resolver, ended the wait
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "cls,record,reason",
+    [
+        (
+            GitHubConnector,
+            {"full_name": "acme/app", "size": 1, "clone_url": "https://github.com/other/repo.git"},
+            "clone URL does not name the listed repository",
+        ),
+        (
+            GitLabConnector,
+            {
+                "path_with_namespace": "acme/app",
+                "id": 7,
+                "statistics": {"repository_size": 1},
+                "http_url_to_repo": "https://gitlab.com/other/repo.git",
+            },
+            "clone URL does not name the listed repository",
+        ),
+        (
+            GitHubConnector,
+            {"full_name": "acme/app", "size": 1, "clone_url": "https://evil.example/acme/app.git"},
+            "outside the configured credential origin",
+        ),
+        (
+            # Read as the default port, :0 matched the origin, while Git looked "github.com:0" up
+            # itself and missed the pin keyed to 443.
+            GitHubConnector,
+            {"full_name": "acme/app", "size": 1, "clone_url": "https://github.com:0/acme/app.git"},
+            "Invalid API URL",
+        ),
+    ],
+)
+def test_refused_clone_url_falls_back_to_incomplete_api_mode(
+    tmp_path, index, monkeypatch, cls, record, reason
+):
+    # Like any other failed clone; it used to end the repository with an error and scan none of it.
+    connector = _clone_mode(index, monkeypatch, cls)
+    run = Mock(side_effect=AssertionError("a refused clone URL must not reach git"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    api = Mock(return_value=str(tmp_path / "api"))
+    monkeypatch.setattr(connector, "_fetch_via_api", api)
+    assert getattr(connector, _fetch_name(cls))(dict(record), str(tmp_path)) == str(tmp_path / "api")
+    run.assert_not_called()
+    api.assert_called_once()
+    stats = connector.ctx.stats
+    assert stats.incomplete and stats.errors == []
+    assert any(reason in warning for warning in stats.warnings)
+    assert f"{cls.name}: clone failed for acme/app; using sampled API mode" in stats.warnings
+
+
+@pytest.mark.parametrize("host", ["pinned.invalid", "PINNED.invalid", "pinned.invalid."])
+def test_real_git_clone_connects_only_to_the_pinned_address(tmp_path, index, monkeypatch, host):
+    version = git_module.git_version()
+    if shutil.which("git") is None or version is None or version[:2] < (2, 37):
+        pytest.skip("needs Git 2.37 or newer (http.curloptResolve)")
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(4)
+    listener.settimeout(60)  # bounds the accept thread where shutdown() below does not wake it
+    port = listener.getsockname()[1]
+    first: list[bytes] = []
+
+    def accept():
+        with contextlib.suppress(OSError):
+            conn, _ = listener.accept()
+            with conn:
+                conn.settimeout(30)
+                first.append(conn.recv(1))
+
+    # Only this process resolves the name; real DNS cannot (.invalid), and the proxy below is a
+    # closed port. Git reaches the listener only through the pin, under the exact URL spelling.
+    _resolving(monkeypatch, host.lower(), "127.0.0.1")
+    for name in ("HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    server = Thread(target=accept, daemon=True)
+    server.start()
+    token = set_allow_private_origin(True)  # the listener is on loopback
+    try:
+        connector = _connector(index, GitHubConnector, api_url=f"https://{host}:{port}/api/v3")
+        cloned = connector._clone({"full_name": "acme/app"}, str(tmp_path / "repo"))
+    finally:
+        reset_allow_private_origin(token)
+        # When Git never connects (a missed pin), accept() is still waiting: close() alone does not
+        # wake it on Linux, so the test would wait out the join and leave the thread behind.
+        with contextlib.suppress(OSError):
+            listener.shutdown(socket.SHUT_RDWR)
+        listener.close()
+        server.join(10)
+    assert not cloned  # the listener is no Git server
+    assert first == [b"\x16"]  # Git's TLS ClientHello reached the pinned address
 
 
 # ------------------------------------------------------------ GitHub API
@@ -741,7 +956,10 @@ def test_nested_repository_scan_inherits_cancellation_and_publication_fence(
     "cls, record",
     [
         (GitHubConnector, {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}),
-        (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/org/repo.git"}),
+        (
+            GitLabConnector,
+            {"path_with_namespace": "org/repo", "http_url_to_repo": "https://gitlab.com/org/repo.git"},
+        ),
     ],
 )
 def test_clone_process_is_bounded_by_connector_deadline(tmp_path, index, monkeypatch, cls, record):
@@ -1145,6 +1363,196 @@ def test_lfs_pointer_scan_is_bounded_and_honours_the_deadline(tmp_path, monkeypa
         checkout_has_lfs_pointers(tmp_path, check_deadline=expired)
 
 
+@pytest.mark.parametrize("linked_component", ["root", "ancestor"])
+def test_lfs_scan_refuses_symlinks_in_the_root_path(tmp_path, linked_component):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "pointer").write_text(LFS_POINTER)
+    link = tmp_path / "link"
+    link.symlink_to(checkout, target_is_directory=True)
+    if linked_component == "ancestor":
+        (checkout / "nested").mkdir()
+        (checkout / "nested" / "pointer").write_text(LFS_POINTER)
+        link = link / "nested"
+    assert checkout_has_lfs_pointers(link) is None
+
+
+@pytest.mark.parametrize(
+    "missing", ["O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK", "non-posix", "dir-fd", "scandir-fd"]
+)
+def test_lfs_scan_returns_unknown_when_safe_platform_primitives_are_unavailable(
+    tmp_path, monkeypatch, missing
+):
+    root = str(tmp_path)
+    with monkeypatch.context() as platform:
+        if missing == "non-posix":
+            platform.setattr(git_module.os, "name", "nt")
+        elif missing == "dir-fd":
+            platform.setattr(git_module.os, "supports_dir_fd", set())
+        elif missing == "scandir-fd":
+            platform.setattr(git_module.os, "supports_fd", set())
+        else:
+            platform.delattr(git_module.os, missing)
+        result = checkout_has_lfs_pointers(root)
+    assert result is None
+
+
+@pytest.mark.parametrize("swap_at", ["directory-open", "file-open"])
+def test_lfs_scan_never_retraverses_a_replaced_directory(tmp_path, monkeypatch, swap_at):
+    root = tmp_path / "checkout"
+    source = root / "src"
+    source.mkdir(parents=True)
+    (source / "model").write_text("ordinary content " * 4)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "model").write_text(LFS_POINTER)
+    original_open = os.open
+    original_read = os.read
+    reads = []
+    swapped = False
+
+    def racing_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        target = "src" if swap_at == "directory-open" else "model"
+        if path == target and not swapped:
+            swapped = True
+            source.rename(tmp_path / "detached")
+            source.symlink_to(outside, target_is_directory=True)
+        return original_open(path, flags, *args, **kwargs)
+
+    def record_read(fd, size):
+        content = original_read(fd, size)
+        reads.append(content)
+        return content
+
+    monkeypatch.setattr(git_module.os, "open", racing_open)
+    monkeypatch.setattr(git_module.os, "supports_dir_fd", {*os.supports_dir_fd, racing_open})
+    monkeypatch.setattr(git_module.os, "read", record_read)
+    result = checkout_has_lfs_pointers(root)
+    assert swapped
+    assert result is (None if swap_at == "directory-open" else False)
+    assert all(not content.startswith(git_module.LFS_POINTER_PREFIX) for content in reads)
+
+
+def test_lfs_scan_refuses_a_directory_replaced_by_another_real_directory(tmp_path, monkeypatch):
+    # A real directory, not a link, takes the listed one's place: O_NOFOLLOW opens it, and only
+    # the opened directory's identity, compared with its listing, keeps the walk out of it.
+    root = tmp_path / "checkout"
+    source = root / "src"
+    source.mkdir(parents=True)
+    (source / "model").write_text("ordinary content " * 4)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "model").write_text(LFS_POINTER)
+    original_open = os.open
+    reads = Mock(wraps=os.read)
+    swapped = False
+
+    def racing_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if path == "src" and not swapped:
+            swapped = True
+            source.rename(tmp_path / "detached")
+            other.rename(source)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(git_module.os, "open", racing_open)
+    monkeypatch.setattr(git_module.os, "supports_dir_fd", {*os.supports_dir_fd, racing_open})
+    monkeypatch.setattr(git_module.os, "read", reads)
+    assert checkout_has_lfs_pointers(root) is None
+    assert swapped
+    reads.assert_not_called()
+
+
+@pytest.mark.parametrize("replacement", ["large", "fifo", "symlink", "regular"])
+def test_lfs_scan_checks_the_open_file_not_stale_entry_metadata(tmp_path, monkeypatch, replacement):
+    root = tmp_path / "checkout"
+    root.mkdir()
+    target = root / "model"
+    target.write_text(LFS_POINTER)
+    outside = tmp_path / "outside"
+    outside.write_text(LFS_POINTER)
+    original_open = os.open
+    reads = Mock(wraps=os.read)
+
+    def racing_open(path, flags, *args, **kwargs):
+        if path == "model":
+            target.unlink()
+            if replacement == "large":
+                target.write_text(LFS_POINTER + "x" * 2048)
+            elif replacement == "fifo":
+                os.mkfifo(target)
+            elif replacement == "symlink":
+                target.symlink_to(outside)
+            else:
+                target.write_text(LFS_POINTER)
+                # Within one coarse clock tick a new file can reuse the inode and every
+                # timestamp of the old one; a distinct mtime keeps the case deterministic.
+                os.utime(target, ns=(0, 0))
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(git_module.os, "open", racing_open)
+    monkeypatch.setattr(git_module.os, "supports_dir_fd", {*os.supports_dir_fd, racing_open})
+    monkeypatch.setattr(git_module.os, "read", reads)
+    assert checkout_has_lfs_pointers(root) is None
+    reads.assert_not_called()
+
+
+def test_lfs_scan_refuses_a_file_changed_in_place_while_it_is_read(tmp_path, monkeypatch):
+    # The opened file matches its listing, then changes under the descriptor: the pointer
+    # bytes already read describe content that is no longer there.
+    root = tmp_path / "checkout"
+    root.mkdir()
+    target = root / "model"
+    target.write_text(LFS_POINTER)
+    original_read = os.read
+    read: list[bytes] = []
+
+    def racing_read(fd, size):
+        content = original_read(fd, size)
+        if not read:
+            read.append(content)
+            with target.open("r+b") as stream:  # same inode, same size
+                stream.write(b"X")
+            # A distinct mtime keeps the change visible within one coarse clock tick.
+            os.utime(target, ns=(0, 0))
+        return content
+
+    monkeypatch.setattr(git_module.os, "read", racing_read)
+    assert checkout_has_lfs_pointers(root) is None
+    assert read and read[0].startswith(git_module.LFS_POINTER_PREFIX)
+
+
+def test_lfs_scan_closes_descriptors_on_depth_limits_and_deadlines(tmp_path, monkeypatch):
+    root = tmp_path / "checkout"
+    (root / "one" / "two").mkdir(parents=True)
+    opened = []
+    closed = []
+    original_open, original_close = os.open, os.close
+
+    def track_open(*args, **kwargs):
+        fd = original_open(*args, **kwargs)
+        opened.append(fd)
+        return fd
+
+    def track_close(fd):
+        closed.append(fd)
+        return original_close(fd)
+
+    monkeypatch.setattr(git_module.os, "open", track_open)
+    monkeypatch.setattr(git_module.os, "supports_dir_fd", {*os.supports_dir_fd, track_open})
+    monkeypatch.setattr(git_module.os, "close", track_close)
+    monkeypatch.setattr(git_module, "_MAX_GIT_METADATA_DEPTH", 1)
+    assert checkout_has_lfs_pointers(root) is None
+    assert sorted(opened) == sorted(closed)
+    opened.clear()
+    closed.clear()
+    deadline = Mock(side_effect=[None, ConnectorError("deadline exceeded")])
+    with pytest.raises(ConnectorError, match="deadline"):
+        checkout_has_lfs_pointers(root, check_deadline=deadline)
+    assert sorted(opened) == sorted(closed)
+
+
 def _api_snapshot_with_a_pointer(tmp_path, index, monkeypatch, cls, **config):
     connector = _connector(index, cls, **config)
     pointer = LFS_POINTER.encode()
@@ -1359,11 +1767,13 @@ def test_blank_target_names_are_unset_like_an_empty_variable(index, monkeypatch)
         (GitLabConnector, {"path_with_namespace": "org/repo", "id": 123}),
     ],
 )
-@pytest.mark.parametrize("version", [(2, 30, 2), (2, 31, 9), (1, 9, 5), None], ids=str)
+@pytest.mark.parametrize(
+    "version", [(2, 30, 2), (2, 31, 9), (2, 43, 0), (2, 44, 9), (1, 9, 5), None], ids=str
+)
 def test_clone_with_an_old_or_unreadable_git_uses_incomplete_api_fallback(
     tmp_path, monkeypatch, index, cls, record, version
 ):
-    """Git before 2.32 ignores GIT_CONFIG_COUNT/GIT_CONFIG_GLOBAL: a redirect to another host was followed."""
+    """Git before 2.32 ignores GIT_CONFIG_COUNT/GIT_CONFIG_GLOBAL; before 2.45 it rejects --no-lazy-fetch."""
     ctx = ConnectorContext(config={"mode": "clone"}, index=index)
     ctx.stats = ScanStats(connector=cls.name, started_at="2026-01-01T00:00:00Z")
     connector = cls(ctx)
@@ -1375,12 +1785,12 @@ def test_clone_with_an_old_or_unreadable_git_uses_incomplete_api_fallback(
     assert fetch(record, str(tmp_path)) == str(tmp_path)
     assert ctx.stats.incomplete
     assert ctx.stats.warnings == [
-        f"{cls.name}: Git 2.32 or newer is required to clone org/repo; using sampled API mode"
+        f"{cls.name}: Git 2.45 or newer is required to clone org/repo; using sampled API mode"
     ]
     clone.assert_not_called()
 
 
-@pytest.mark.parametrize("version", [(2, 32, 0), (2, 43, 0), (3, 0, 1)])
+@pytest.mark.parametrize("version", [(2, 45, 0), (2, 51, 2), (3, 0, 1)])
 def test_clone_proceeds_with_a_supported_git(tmp_path, monkeypatch, index, version):
     ctx = ConnectorContext(index=index)
     ctx.stats = ScanStats(connector="code.github", started_at="2026-01-01T00:00:00Z")
@@ -1400,8 +1810,10 @@ def test_clone_proceeds_with_a_supported_git(tmp_path, monkeypatch, index, versi
     "version,supported",
     [
         ((2, 31, 9), False),
-        ((2, 32, 0), True),
-        ((2, 43, 0), True),
+        ((2, 32, 0), False),
+        ((2, 43, 0), False),
+        ((2, 44, 9), False),
+        ((2, 45, 0), True),
         ((3, 0, 0), True),
         ((1, 99, 0), False),
         (None, False),
@@ -1507,3 +1919,45 @@ def test_offline_clone_with_an_lfs_pointer_is_incomplete(tmp_path, index, run_co
     _, ctx = run_connector(cls.name, input=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
     assert any("agent.py: Git LFS pointer file" in warning for warning in ctx.stats.warnings)
+
+
+@pytest.mark.parametrize(
+    "cls,record",
+    [
+        (GitHubConnector, {"full_name": "acme/app", "clone_url": "https://github.com/other/repo.git"}),
+        (GitHubConnector, {"full_name": "acme/app", "clone_url": "https://github.com/acme/app-fork.git"}),
+        (
+            GitLabConnector,
+            {"path_with_namespace": "acme/app", "http_url_to_repo": "https://gitlab.com/other/acme/app.git"},
+        ),
+        (GitLabConnector, {"http_url_to_repo": "https://gitlab.com/acme/app.git"}),
+    ],
+)
+def test_clone_url_must_name_the_listed_repository(tmp_path, index, monkeypatch, cls, record):
+    run = Mock(side_effect=AssertionError("another repository must not be cloned"))
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    with pytest.raises(ValueError, match="does not name the listed repository"):
+        _connector(index, cls, token="synthetic")._clone(record, str(tmp_path / "repo"))
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "cls,record,api_url",
+    [
+        (GitHubConnector, {"full_name": "Acme/App", "clone_url": "https://github.com/acme/app.git"}, None),
+        (GitHubConnector, {"full_name": "acme/app"}, None),
+        (
+            GitLabConnector,
+            {
+                "path_with_namespace": "grp/sub/app",
+                "http_url_to_repo": "https://git.example.com/gitlab/grp/sub/app.git",
+            },
+            "https://git.example.com/gitlab/api/v4",
+        ),
+    ],
+)
+def test_clone_url_naming_the_repository_is_cloned(tmp_path, index, monkeypatch, cls, record, api_url):
+    run = Mock(return_value=True)
+    monkeypatch.setattr(remote, "run_bounded_clone", run)
+    config = {"token": "synthetic", **({"api_url": api_url} if api_url else {})}
+    assert _connector(index, cls, **config)._clone(record, str(tmp_path / "repo"))

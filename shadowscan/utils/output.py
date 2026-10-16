@@ -2,12 +2,49 @@
 
 from __future__ import annotations
 
+import errno
 import os
+import secrets
 import stat
-import tempfile
+import unicodedata
 from pathlib import Path
 
-from shadowscan.utils.files import require_no_symlinks
+from shadowscan.utils.files import open_confined_directory, require_no_symlinks
+
+# Characters outside the format category that also show nothing: the combining grapheme
+# joiner, the variation selectors (which can carry a hidden message as tag characters
+# can), the Hangul fillers and the blank Braille pattern.
+# The bidi, zero-width and tag blocks are escaped whole, including their unassigned
+# code points, which a later Unicode version may assign.
+_INVISIBLE = frozenset(
+    {
+        0x034F,
+        0x115F,
+        0x1160,
+        0x2800,
+        0x3164,
+        0xFFA0,
+        *range(0x200B, 0x2010),
+        *range(0x202A, 0x202F),
+        *range(0x2060, 0x2070),
+        *range(0xFE00, 0xFE10),
+        *range(0xE0000, 0xE0080),
+        *range(0xE0100, 0xE01F0),
+    }
+)
+
+
+def shown_escaped(char: str) -> bool:
+    """Whether :func:`terminal_text` renders ``char`` as an escape rather than as itself."""
+    code = ord(char)
+    return (
+        code < 32
+        or 0x7F <= code <= 0x9F
+        or 0x2028 <= code <= 0x2029
+        or 0xD800 <= code <= 0xDFFF
+        or code in _INVISIBLE
+        or unicodedata.category(char) == "Cf"
+    )
 
 
 def terminal_text(value: object) -> str:
@@ -17,27 +54,19 @@ def terminal_text(value: object) -> str:
     through ANSI escape sequences. Render control and bidi-formatting characters
     visibly so repository names, evidence and diagnostics cannot alter terminal
     state or conceal/reorder a report. The same goes for the characters that
-    show nothing at all: zero-width characters and the byte-order mark, Unicode tag
-    characters (U+E0000 to U+E007F, which can carry a hidden message) and the lone
-    surrogates that no encoder accepts. Call before adding intentional newlines.
+    show nothing at all: every format character (zero-width characters, the
+    byte-order mark, the soft hyphen, interlinear annotation marks, Unicode tag
+    characters, which can carry a hidden message), the variation selectors and
+    other blank characters in ``_INVISIBLE``, and the lone surrogates that no
+    encoder accepts. Call before adding intentional newlines.
     """
     out = []
     for char in str(value):
-        code = ord(char)
-        if (
-            code < 32
-            or 0x7F <= code <= 0x9F
-            or 0x200B <= code <= 0x200F
-            or 0x2028 <= code <= 0x202E
-            or 0x2060 <= code <= 0x2069
-            or code in (0x061C, 0xFEFF)
-            or 0xD800 <= code <= 0xDFFF
-        ):
-            out.append(f"\\u{code:04x}")
-        elif 0xE0000 <= code <= 0xE007F:
-            out.append(f"\\U{code:08x}")
-        else:
+        if not shown_escaped(char):
             out.append(char)
+            continue
+        code = ord(char)
+        out.append(f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}")
     return "".join(out)
 
 
@@ -131,12 +160,71 @@ def _write_in_place(target: Path, data: bytes) -> None:
         os.close(fd)
 
 
+# Linux's MAXSYMLINKS: more links than this on the way to an output is a loop.
+_MAX_OUTPUT_LINKS = 40
+
+
+def _private_output_parent(target: Path) -> Path:
+    """The real directory an output goes into, refusing a link another user could have planted.
+
+    ``..`` in the given path is resolved lexically first (``mylink/../r.json`` names
+    ``r.json`` beside ``mylink``). The directory is then resolved one component at a
+    time, following each symbolic link as the kernel would, links inside another link's
+    target included. Every link met must be owned by root (a system link such as macOS's
+    ``/tmp``) or by the current user: another local user can plant a link in a shared
+    directory and receive the report. A missing component raises ``FileNotFoundError``
+    rather than being resolved later, unchecked, and one that is not a directory raises
+    ``NotADirectoryError`` as the kernel's ``ENOTDIR`` does, so a link to ``notes.txt/../a``
+    does not step back out of the file into ``a``. The directory is then named by its real
+    path, with no link left in it.
+    """
+    absolute = Path(os.path.abspath(target)).parent
+    resolved = Path(absolute.anchor)
+    pending = list(reversed(absolute.parts[1:]))
+    links = 0
+    while pending:
+        part = pending.pop()
+        if part == "..":
+            resolved = resolved.parent
+            continue
+        candidate = resolved / part
+        info = os.lstat(candidate)
+        if not stat.S_ISLNK(info.st_mode):
+            if not stat.S_ISDIR(info.st_mode):
+                raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), os.fspath(candidate))
+            resolved = candidate
+            continue
+        if info.st_uid not in (0, os.geteuid()):
+            raise ValueError("refusing an output path through a symbolic link owned by another user")
+        links += 1
+        if links > _MAX_OUTPUT_LINKS:
+            raise ValueError("refusing an output path through too many symbolic links")
+        link = Path(os.readlink(candidate))
+        if link.is_absolute():
+            resolved = Path(link.anchor)
+        pending.extend(reversed(link.parts[1:] if link.is_absolute() else link.parts))
+    return resolved
+
+
+def _temporary_name(name: str) -> str:
+    # NAME_MAX (255) counts bytes, not characters: keep whole characters of the name
+    # up to 200 bytes, so ".<name>.<8 hex>" fits for any legal destination name.
+    kept = name[:200]
+    while len(os.fsencode(kept)) > 200:
+        kept = kept[:-1]
+    return f".{kept}.{secrets.token_hex(4)}"
+
+
 def write_private_text(path: str | Path, text: str) -> None:
     """Replace an output atomically without following an existing file symlink.
 
-    The parent directory is chosen by the trusted operator. A temporary file in
-    that directory is created with mode 0600, including when replacing a more
-    permissive report. Failed writes leave the previous report intact.
+    The output's directory is opened without following a link in any component of
+    its real path, after a check that no link on the way to it belongs to another
+    user (see :func:`_private_output_parent`); the temporary file is created and
+    renamed relative to that open directory, so a directory swapped for a link
+    afterwards is not written through. The temporary file is created with mode
+    0600, including when replacing a more permissive report. Failed writes leave
+    the previous report intact.
 
     An existing character device (``-o /dev/null``) is written in place:
     renaming a temporary file over it would replace the device node itself,
@@ -145,7 +233,11 @@ def write_private_text(path: str | Path, text: str) -> None:
     reader already has it open. Any other existing path that is not a regular
     file (a socket, directory or block device) is refused.
     """
-    target = Path(path)
+    name = Path(path).name
+    if name in ("", ".", ".."):
+        raise ValueError("refusing a non-regular output file")
+    parent = _private_output_parent(Path(path))
+    target = parent / name
     info = _existing_stat(target)
     if info is not None:
         mode = info.st_mode
@@ -158,12 +250,27 @@ def write_private_text(path: str | Path, text: str) -> None:
             return
         if not stat.S_ISREG(mode):
             raise ValueError("refusing a non-regular output file")
-    fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
+    directory = open_confined_directory(parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as stream:
-            stream.write(text)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        while True:
+            temporary = _temporary_name(name)
+            try:
+                fd = os.open(temporary, flags, 0o600, dir_fd=directory)
+                break
+            except FileExistsError:
+                continue
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as stream:
+                os.fchmod(stream.fileno(), 0o600)
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, name, src_dir_fd=directory, dst_dir_fd=directory)
+        finally:
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except FileNotFoundError:
+                pass
     finally:
-        Path(temporary).unlink(missing_ok=True)
+        os.close(directory)

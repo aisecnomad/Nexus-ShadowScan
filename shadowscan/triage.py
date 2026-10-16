@@ -18,8 +18,10 @@ descriptions. Resource ids, owners, accounts, locations and code snippets are
 not sent as fields, and their values (with the host, user, path and file
 names a connector records) are replaced by ``[withheld]`` wherever they appear
 in the title or an evidence description (a one- or two-character value
-wherever it stands as a whole word). Other free text can still name a
-product, repository or app. Every value has already passed the report
+wherever it stands as a whole word). As a backstop over that free text, every
+e-mail address and IP address is withheld wherever it appears, even inside a
+larger string the field-value pass did not match. Other free text can still
+name a product, repository or app. Every value has already passed the report
 sanitizer, so redacted credentials stay redacted.
 
 Finding text comes from scanned repositories and remote APIs and is
@@ -149,7 +151,7 @@ class TriageSettings:
         if not isinstance(enabled, bool):
             raise TriageConfigError("llm_triage.enabled must be a YAML boolean")
         provider = value.get("provider", "anthropic")
-        if provider not in PROVIDERS:
+        if not isinstance(provider, str) or provider not in PROVIDERS:
             raise TriageConfigError(f"llm_triage.provider must be one of {sorted(PROVIDERS)}")
         model = value.get("model", "")
         if not isinstance(model, str) or (enabled and not model.strip()):
@@ -168,7 +170,7 @@ class TriageSettings:
         ):
             raise TriageConfigError("llm_triage.max_findings must be an integer from 1 to 500")
         min_level = value.get("min_level", "medium")
-        if min_level not in {level.value for level in RiskLevel}:
+        if not isinstance(min_level, str) or min_level not in {level.value for level in RiskLevel}:
             raise TriageConfigError("llm_triage.min_level must be critical, high, medium, low or info")
         timeout = value.get("timeout_seconds", 30)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not 1 <= timeout <= 300:
@@ -197,8 +199,47 @@ def _text(value: Any, limit: int = _MAX_TEXT) -> str:
     return " ".join(str(value).split())[:limit]
 
 
-_IDENTIFYING_METADATA = ("path", "host", "user", "device", "home", "caller", "network", "files")
+_IDENTIFYING_METADATA = (
+    "path",
+    "host",
+    "hosts",
+    "user",
+    "device",
+    "home",
+    "caller",
+    "network",
+    "files",
+    # Identity and workload principals a connector records under its own key names.
+    "member",
+    "members",
+    "subject",
+    "principal",
+    "email",
+    "endpoint",
+    "context",
+    "actor",
+)
 _WITHHELD = "[withheld]"
+# A backstop over the free text that actually leaves the machine (title and evidence
+# descriptions): an identifier can sit inside a differently shaped string (an email within a
+# resource id, an address in a log title) that the exact-value pass above never matched. These
+# withhold the two unambiguous kinds of personal/host data regardless of the key that carried them.
+# Bounded repetition (RFC local-part/domain limits) keeps the search linear: a long run with
+# no '@' does at most a constant amount of work at each start position.
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}")
+_IPV4 = re.compile(r"(?<![\w.])(?:\d{1,3}\.){3}\d{1,3}(?![\w.])")
+# Empty groups ({0,4}) so a '::'-compressed address such as fd00::1 is matched too; two or more
+# colon groups keeps ordinary one-colon tokens (a time, a key:value) from matching.
+_IPV6 = re.compile(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])")
+
+
+def _scrub_pii(text: str) -> str:
+    """Withhold emails and IP addresses wherever they appear in free text sent to the model."""
+    text = _EMAIL.sub(_WITHHELD, text)
+    text = _IPV4.sub(_WITHHELD, text)
+    return _IPV6.sub(_WITHHELD, text)
+
+
 # A value this short is withheld only where it stands as a whole word, so that
 # a two-letter user or host name cannot erase part of an ordinary word.
 _SHORT_VALUE = 3
@@ -232,7 +273,7 @@ def _scrub(value: Any, withheld: list[str]) -> str:
             text = text.replace(item, _WITHHELD)
         else:
             text = re.sub(rf"(?<![\w.-]){re.escape(item)}(?![\w.-])", _WITHHELD, text)
-    return _text(text)
+    return _text(_scrub_pii(text))
 
 
 def finding_summary(f: Finding, index: SignatureIndex | None = None) -> dict[str, Any]:

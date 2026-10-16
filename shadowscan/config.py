@@ -130,10 +130,22 @@ _OPTION_FIELDS = {
 }
 _RISK_LEVELS = {"critical", "high", "medium", "low", "info"}
 # Keys every connector accepts: BaseConnector / ConnectorContext read the input
-# and offline limits, and the engine hands every connector its ``label``.
+# and offline limits, and the engine hands every connector its ``label`` and
+# reads its ``allow_private_origin`` before constructing it.
 SHARED_CONNECTOR_KEYS = frozenset(
-    {"input", "label", "max_input_bytes", "max_input_file_bytes", "max_input_files"}
+    {
+        "input",
+        "label",
+        "max_input_bytes",
+        "max_input_file_bytes",
+        "max_input_files",
+        "allow_private_origin",
+    }
 )
+# Shared switches the engine reads for every connector. They are normalised the
+# same way as the per-connector switches below, so environment interpolation
+# cannot turn the string ``"false"`` into a truthy private-origin grant.
+SHARED_BOOLEAN_CONNECTOR_KEYS = frozenset({"allow_private_origin"})
 # Built-in connector switches are normalised before connector construction so
 # environment expansion cannot turn the string ``"false"`` into a truthy
 # value.  Plugin configuration remains opaque: an approved plugin owns its
@@ -178,6 +190,8 @@ _BOOLEAN_CONNECTOR_KEYS: dict[str, frozenset[str]] = {
     "saas.microsoft-teams": frozenset({"include_store"}),
 }
 _IDENTIFIER_RX = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+# The identifiers a diagnostic quotes back (see _plain_identifier).
+_DISPLAYED_IDENTIFIER_RX = re.compile(r"[a-z][a-z0-9_.-]{0,39}")
 _deprecations_warned: set[str] = set()
 
 
@@ -244,11 +258,20 @@ def _warn_deprecated_once(key: str, message: str) -> None:
 
 
 def _plain_identifier(value: Any) -> bool:
-    """Whether a key or connector name is plainly an identifier that redaction leaves alone."""
-    if isinstance(value, str) and _IDENTIFIER_RX.fullmatch(value):
-        shown = sanitize_text(value)
-        return shown == value and REDACTED not in shown
-    return False
+    """Whether a key or connector name is plainly an identifier that redaction leaves alone.
+
+    Configuration keys and connector names are lowercase words ('fetch_tokens',
+    'identity.auth0'). A credential pasted where a key belongs has no prefix
+    redaction recognizes when it is an opaque token (an Okta API token, a hex
+    key), so only a lowercase name of at most 40 characters with at most three
+    digits is quoted back; anything else is described instead.
+    """
+    if not isinstance(value, str) or not _IDENTIFIER_RX.fullmatch(value):
+        return False
+    if not _DISPLAYED_IDENTIFIER_RX.fullmatch(value) or sum(char.isdigit() for char in value) > 3:
+        return False
+    shown = sanitize_text(value)
+    return shown == value and REDACTED not in shown
 
 
 def _display_identifier(value: Any, fallback: str) -> str:
@@ -318,7 +341,7 @@ def normalize_connector_config(name: str, config: Mapping[Any, Any]) -> dict[str
     normalized = dict(config)
     if name == "code.filesystem" and "path" in normalized and "paths" in normalized:
         raise ConfigValidationError("connector 'code.filesystem': specify path or paths, not both")
-    for key in _BOOLEAN_CONNECTOR_KEYS.get(name, frozenset()):
+    for key in _BOOLEAN_CONNECTOR_KEYS.get(name, frozenset()) | SHARED_BOOLEAN_CONNECTOR_KEYS:
         if key in normalized:
             normalized[key] = connector_boolean(normalized[key], key)
     return normalized
@@ -482,9 +505,13 @@ class ScanConfig:
     incremental: bool = False
     state_dir: str | None = None
     plugins: list[str] = field(default_factory=list)
-    plugin_execution: str = "thread"
+    plugin_execution: str = "process"
     allow_signature_override: bool = False
     allow_private_origin: bool = False
+    # An explicit refusal (--deny-private-origin, or a library caller): unlike
+    # allow_private_origin=False it also overrides every connector-level grant.
+    # Never read from a configuration file.
+    deny_private_origin: bool = field(default=False, kw_only=True)
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
     connector_timeout_seconds: float = 120.0
@@ -523,6 +550,9 @@ class ScanConfig:
             self.allow_signature_override, "allow_signature_override"
         )
         self.allow_private_origin = _boolean_option(self.allow_private_origin, "allow_private_origin")
+        self.deny_private_origin = _boolean_option(self.deny_private_origin, "deny_private_origin")
+        if self.allow_private_origin and self.deny_private_origin:
+            raise ConfigValidationError("allow_private_origin and deny_private_origin cannot both be true")
         self.allow_instance_credentials = _boolean_option(
             self.allow_instance_credentials, "allow_instance_credentials"
         )
@@ -678,7 +708,7 @@ class ScanConfig:
             incremental=_boolean_option(opts.get("incremental", False), "incremental"),
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
-            plugin_execution=opts.get("plugin_execution", "thread"),
+            plugin_execution=opts.get("plugin_execution", "process"),
             allow_signature_override=_boolean_option(
                 opts.get("allow_signature_override", False), "allow_signature_override"
             ),
@@ -712,7 +742,15 @@ class ScanConfig:
                 f"scan configuration {p} is a symbolic link or inside one; links are not followed,"
                 " so pass the file's real path"
             ) from None
-        text = read_policy_text(p)
+        try:
+            text = read_policy_text(p)
+        except (OSError, ValueError):
+            # The OS error can name other paths; the type, size and encoding limits are what
+            # to fix (a file that is not UTF-8 raises UnicodeDecodeError, a ValueError).
+            raise ConfigValidationError(
+                f"scan configuration {p} could not be read: it must be a readable regular UTF-8"
+                " text file of at most 8 MiB"
+            ) from None
         try:
             data = yaml.load(text, Loader=_ConfigLoader)
         except ConfigValidationError:

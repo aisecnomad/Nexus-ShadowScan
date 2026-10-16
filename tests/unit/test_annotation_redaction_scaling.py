@@ -43,14 +43,19 @@ def test_unfinished_annotations_complete_quickly_in_a_full_scan(tmp_path, index)
     # Generous for slow CI runners; the quadratic scan took about 45 seconds.
     assert elapsed < 5, elapsed
     errors = [error for stats in result.stats for error in stats.errors]
-    # The C tokenizer of Python 3.12+ refuses more than 200 nested brackets, so
-    # the lexical pass fails closed there independently of redaction; only that
-    # diagnostic may remain. Redaction itself must finish within its budget.
+    warnings = [warning for stats in result.stats for warning in stats.warnings]
+    # The fixture is not valid Python on any interpreter, and unparsed source is a coverage
+    # gap, so the scan is incomplete everywhere. The C tokenizer of Python 3.12+ also refuses
+    # more than 200 nested brackets, so the lexical pass fails closed there independently of
+    # redaction. No other diagnostic may remain: redaction must finish within its budget.
     lexical = "code.filesystem: app.py: incomplete source lexical analysis"
-    if sys.version_info < (3, 12):
-        assert result.complete, errors
-    else:
-        assert errors == [lexical], errors
+    syntax = (
+        "code.filesystem: app.py: import-bound analysis skipped (source did not parse); "
+        "lexical evidence retained"
+    )
+    assert not result.complete
+    assert warnings == [syntax], warnings
+    assert errors == ([lexical] if sys.version_info >= (3, 12) else []), errors
     assert any("OpenAI" in finding.title for finding in result.findings)
 
 

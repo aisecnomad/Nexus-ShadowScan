@@ -46,14 +46,31 @@ def test_metadata_with_a_lone_surrogate_is_sanitized():
     assert sanitize(record) == {"description": f'password = "{REDACTED}"', "model": "gpt-4o"}
 
 
-def test_a_carriage_return_before_non_ascii_text_leaves_the_scan_complete(tmp_path, index):
+@pytest.mark.parametrize(
+    ("following_line", "unparsed"),
+    [("étape = 1", False), ("\xa0", True)],
+    ids=["valid-identifier", "invalid-nbsp"],
+)
+def test_a_carriage_return_before_non_ascii_text_preserves_the_scan_result(
+    tmp_path, index, following_line, unparsed
+):
     (tmp_path / "app.py").write_bytes(
-        f'import openai\nclient = openai.OpenAI()\npassword = "{SECRET}"\r \n'.encode()
+        f'import openai\nclient = openai.OpenAI()\npassword = "{SECRET}"\r{following_line}\n'.encode()
     )
     config = ScanConfig(
         connectors=[ConnectorSpec(name="code.filesystem", config={"path": str(tmp_path), "use_git": False})]
     )
     result = Engine(config, index).run()
-    assert result.complete, [error for stats in result.stats for error in stats.errors]
+    assert result.complete is not unparsed
+    assert result.stats[0].incomplete is unparsed
+    assert not result.stats[0].errors
+    assert result.stats[0].warnings == (
+        [
+            "code.filesystem: app.py: import-bound analysis skipped (source did not parse); "
+            "lexical evidence retained"
+        ]
+        if unparsed
+        else []
+    )
     assert any("OpenAI" in finding.title for finding in result.findings)
     assert SECRET not in render_json(result)

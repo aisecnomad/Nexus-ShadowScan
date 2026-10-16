@@ -33,6 +33,16 @@ coverage, even when a response includes an empty collection field.
 
 ## Implemented controls and limits
 
+* Gateway inventory reconciliation requires authenticated caller-field
+  assurance before an exact card binding grants registration or ownership.
+  Operator-asserted and unverified names remain review candidates, without
+  registration risk credit. Provider-field assurance still depends on the log
+  producer's integrity and the supplied export's provenance; the scanner does
+  not authenticate an offline export merely by parsing it.
+* Make blueprint and Zapier pagination metadata are validated before collection
+  can be considered complete. CODEOWNERS reads remain anchored to the source
+  scan's directory descriptor. A root replacement detected before ownership
+  lookup makes the scan incomplete; later replacements cannot redirect reads.
 * Optional filesystem model/artifact inspection uses confined regular-file
   access, file identity checks and bounded metadata reads. It never executes
   packaged code, unpickles objects, loads tensor data or follows ONNX external
@@ -62,20 +72,40 @@ coverage, even when a response includes an empty collection field.
   ordinary binary assets are not text evidence. IAM wildcard and
   agent-definition front-matter matching shares the bounded matcher budget;
   keep an external worker/job deadline for hard isolation.
-* Shared `HttpClient` requests require HTTPS without embedded credentials.
+* Shared `HttpClient` requests require HTTPS without embedded credentials, and
+  a URL containing a backslash is refused (it reads as one host to the URL
+  parser and another to the transport). A credentialed endpoint taken from a
+  remote response is also matched against an exact host, not a hostname suffix.
   Redirects and pagination stay on the configured origin. By default, private,
   loopback, link-local, metadata and other non-global addresses are rejected.
   The HTTPS adapter checks the addresses at connection time and connects directly
   to the checked address, retaining hostname TLS verification. A trusted private
-  API requires `options.allow_private_origin: true` or `--allow-private-origin`.
+  API requires `allow_private_origin: true` on its connector,
+  `options.allow_private_origin: true` (every connector) or
+  `--allow-private-origin`; `--deny-private-origin` refuses that grant for
+  every connector, connector-level grants included. It does not revoke
+  `options.allow_instance_credentials`: under that opt-in cloud connectors
+  still contact the instance metadata service, and the `cloud.gcp` credential
+  transport accepts a private token endpoint. Pass `--deny-instance-credentials`
+  as well to keep cloud connectors off both.
   This exception does not relax origin or TLS checks. HTTP proxies, including
   environment proxy settings, are unsupported by this transport.
 * The shared HTTPS adapter bounds response acquisition, including status/header
   delivery, separately from body reads. Cancellation interrupts the active socket
-  before it can be pooled for another request. System DNS resolution cannot be
-  forcibly cancelled in a Python thread; a late result is rejected before
-  connection. A process/job supervisor remains necessary for a hard execution
-  limit, including external SDK transports.
+  before it can be pooled for another request. System DNS resolution runs in a
+  bounded worker: the resolver call itself cannot be cancelled, but each wait
+  fails closed at its budget, at most 20 seconds, and a late result is
+  discarded before any connection. At connection the client timeout and the
+  acquisition deadline tighten the budget. The `validate_url` preflight is
+  tightened by the connector deadline and, for `HttpClient` requests, by the
+  client timeout and the client's deadline; its other callers (Git clone
+  checks, SDK, MCP registry and JWKS preflights) and the clone pin lookup get
+  only the connector deadline. A spent budget refuses without starting a
+  lookup, and at most 32 lookups wait on the resolver at once; further ones
+  fail closed once their budget passes without a free slot. A stalled resolver
+  therefore holds a worker for a bounded time and cannot pile up threads. A
+  process/job supervisor remains necessary for a hard execution limit,
+  including external SDK transports.
 * Default shared HTTP responses and JSON/pagination helpers are limited to 16 MiB
   of decoded bytes, and each body must arrive within twice the client timeout
   (60 seconds by default). Oversized, slow and malformed collection responses
@@ -130,8 +160,10 @@ coverage, even when a response includes an empty collection field.
 * Azure App Service settings and OCI Function configuration are exported under
   `environment`, so record dumps redact every value; Salesforce token
   values are never requested.
-* Cloud SDKs and Git use separate transports. Network egress rules remain needed
-  for those paths. URL preflight checks alone do not pin Git's later DNS lookup.
+* Cloud SDKs and Git use separate transports. A clone is pinned to the addresses
+  ShadowScan resolved and checked (`http.curloptResolve`, proxy variables
+  ignored), so Git does not resolve the clone host again; the cloud SDKs get no
+  such pin. Network egress rules remain needed for those paths.
   Custom non-Requests transport doubles remain trusted extension/test mechanisms.
 * JWT classification remains unverified by default. Optional `jwks_url` signature
   verification uses the shared transport with a bounded JWKS body and key count.
@@ -176,7 +208,12 @@ coverage, even when a response includes an empty collection field.
   branch values are dropped with incomplete diagnostics.
   Remote repository data cannot select an internal offline filesystem path.
   Keep Git patched and use disposable workers for untrusted inputs.
-* Reports and generated inventory stubs are written atomically with mode 0600.
+* Reports and generated inventory stubs are written atomically with mode 0600,
+  never to a symbolic link and never through a directory link that another user
+  owns, a link inside another link's target included; the file is created and
+  renamed relative to the opened real directory. `..` in the output path is
+  resolved before any link is followed: `-o mylink/../r.json` writes `r.json`
+  beside `mylink`, not in the parent of the link's target.
   An existing character device given as the output path (such as `/dev/null`)
   is written in place, and an existing named pipe only when the current user
   owns it with mode 0600; other non-regular paths are refused.
@@ -186,12 +223,18 @@ coverage, even when a response includes an empty collection field.
   option exists.
 ### What is redacted
 
-- **By token shape:** Report evidence is redacted before it is shortened. Redaction withholds
+- **By token shape:** Source excerpts and the provider text connectors shorten for a report
+  (descriptions, instructions and prompts, welcome messages, trigger conditions, matching rules
+  and policy statements) are redacted before they are shortened; lists of names (scopes,
+  permissions, variable names) are cut first. Redaction withholds
   recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
-  `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
+  `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-`, `dop_v1_`,
+  `ABSK` and `bedrock-api-key-`),
   JWTs, private key blocks (PEM, PGP, SSH2 and PuTTY, an unterminated one to the
-  end of the text), URL userinfo, credential query keys (including `auth`,
-  `pwd` and `pat`) and webhook path segments, every cookie in a `Cookie`
+  end of the text), URL userinfo (including schemes whose name contains an
+  underscore, such as SQLAlchemy dialect URLs), credential query keys (including
+  `auth`, `pwd` and `pat`) and webhook or MCP-server path segments (Slack,
+  Discord, Teams, Zapier hooks and Zapier MCP server URLs), every cookie in a `Cookie`
   header, and compact `name:value` headers and passwords (`x-api-key:value`).
   A token or JWT is withheld behind a JSON-escaped line break or tab
   (`\n`, `\t`), a percent escape (`%3D`) or an underscore, and the prefixes no

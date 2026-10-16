@@ -139,6 +139,27 @@ def test_summary_is_redacted_and_omits_identifiers(index):
     assert summary["technologies"] == ["LangGraph"] and summary["heuristic_risk"] == "high"
 
 
+def test_summary_withholds_emails_and_ips_inside_other_text(index):
+    """Regression (October 15 review M8): PII inside a differently shaped title or evidence
+    description (an email within a resource id, an address in a log title) was sent to the model."""
+    f = _finding("ss-2", 70, RiskLevel.HIGH)
+    f.title = "Vertex AI caller crew-runner@proj.iam.gserviceaccount.com from 10.9.0.5"
+    f.evidence[0] = Evidence(
+        signal="jwt:delegated-agent",
+        description="RFC 8693 actor chain: alice@corp.example via fd00::1",
+        weight=0.5,
+    )
+    summary = finding_summary(f, index)
+    text = json.dumps(summary)
+    for leaked in ("crew-runner@proj.iam.gserviceaccount.com", "alice@corp.example", "10.9.0.5", "fd00::1"):
+        assert leaked not in text, leaked
+    # Benign product and protocol names are kept.
+    assert (
+        "Vertex AI caller" in summary["title"]
+        and "RFC 8693 actor chain" in summary["evidence"][0]["description"]
+    )
+
+
 def test_selection_order_and_floor():
     findings = [
         _finding("a", 40, RiskLevel.MEDIUM),

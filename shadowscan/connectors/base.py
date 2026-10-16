@@ -713,7 +713,9 @@ class BaseConnector(ABC):
                 records = self._tee(records, str(dump))
             for f in self.analyze(records):
                 self.ctx.check_deadline()
-                f.connector = self.name
+                # Built-in connectors build findings under their own name; a plugin's finding
+                # built under another name gets this connector's name and an id derived from it.
+                f.reattribute(self.name)
                 if f.provider is None:
                     f.provider = self.provider
                 try:

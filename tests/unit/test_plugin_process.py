@@ -24,7 +24,15 @@ from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.models import DERIVED_METADATA_KEYS, ScanStats
-from shadowscan.plugin_process import _decode_result, _encode_result, _receive, _worker, _WorkerHandle
+from shadowscan.plugin_process import (
+    _decode_result,
+    _descriptor_limit,
+    _encode_result,
+    _keep_descriptors_from_programs,
+    _receive,
+    _worker,
+    _WorkerHandle,
+)
 from shadowscan.signatures import SignatureIndex
 
 ENTRY = "platform.process-probe"
@@ -76,19 +84,40 @@ class Connector(BaseConnector):
             import sys
             helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], close_fds=False)
             Path(os.environ["SHADOWSCAN_PROCESS_PID"] + ".helper").write_text(str(helper.pid))
+        if mode == "origin":
+            from shadowscan.utils import http
+            return [{
+                "pid": os.getpid(),
+                "policy": http._allow_private_origin.get(),
+                "configured": self.ctx.config.get("allow_private_origin"),
+            }]
         return [{"pid": os.getpid()}]
 
     def analyze(self, records):
         for record in records:
             metadata = {"pid": record["pid"]}
+            if mode == "origin":
+                metadata.update(policy=record["policy"], configured=record["configured"])
             if mode == "metadata-types":
                 import datetime
                 metadata.update(seen=datetime.datetime(2026, 1, 1), scopes={"read"}, raw=b"ab")
-            yield Finding(
-                surface=self.surface, connector=self.name, kind=Kind.AGENT,
-                title="process probe", resource="probe", resource_type="test",
-                metadata=metadata,
+            # "forge" builds the finding under a built-in connector's name; "forge-id" gives a
+            # finding under its own name that finding's id, and "forge-replace" re-labels a copy.
+            shape = dict(
+                surface=self.surface, kind=Kind.AGENT, title="process probe", resource="probe",
+                resource_type="test", metadata=metadata,
             )
+            if not mode.startswith("forge"):
+                yield Finding(connector=self.name, **shape)
+                continue
+            claimed = Finding(connector="code.filesystem", **shape)
+            if mode == "forge":
+                yield claimed
+            elif mode == "forge-id":
+                yield Finding(connector=self.name, id=claimed.id, **shape)
+            else:
+                import dataclasses
+                yield dataclasses.replace(claimed, connector=self.name)
 """
 
 
@@ -410,6 +439,26 @@ def test_non_json_metadata_round_trips_like_thread_mode(installed_probe, monkeyp
     assert connector_metadata == {"seen": "2026-01-01 00:00:00", "scopes": ["read"], "raw": "ab"}
 
 
+@pytest.mark.parametrize("deny", [True, False])
+def test_spawned_plugin_sees_the_scan_wide_private_origin_refusal(installed_probe, monkeypatch, deny):
+    """--deny-private-origin reaches the worker's transport policy and the plugin's own ctx.config."""
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "origin")
+    config = ScanConfig(
+        connectors=[ConnectorSpec(ENTRY, {"allow_private_origin": True})],
+        plugins=[ENTRY],
+        plugin_execution="process",
+        deny_private_origin=deny,
+    )
+    result = Engine(config, SignatureIndex([])).run()
+    assert result.complete, result.stats
+    [finding] = result.findings
+    assert finding.metadata["pid"] != os.getpid()
+    assert finding.metadata["policy"] is (not deny)
+    assert finding.metadata["configured"] is (not deny)
+    assert MODULE not in sys.modules
+    _assert_reaped(installed_probe)
+
+
 def test_plugin_allowlist_still_required_without_parent_import(installed_probe):
     engine = Engine(
         ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugin_execution="process"), SignatureIndex([])
@@ -510,6 +559,71 @@ def test_kill_during_worker_cleanup_waits_instead_of_failing_the_scan():
     assert not killer.is_alive() and failures == []
 
 
+def test_descriptor_listing_failure_covers_high_descriptors(monkeypatch):
+    resource = pytest.importorskip("resource")
+    visited = {}
+    listings = []
+
+    def unavailable(path):
+        listings.append(path)
+        raise OSError("descriptor listing unavailable")
+
+    monkeypatch.setattr(os, "listdir", unavailable)
+    monkeypatch.setattr(resource, "getrlimit", lambda kind: (5002, 6000))
+    monkeypatch.setattr(os, "set_inheritable", lambda fd, inheritable: visited.update({fd: inheritable}))
+    _keep_descriptors_from_programs()
+    assert listings == ["/proc/self/fd", "/dev/fd"]
+    assert visited[5001] is False
+    assert min(visited) == 3 and max(visited) == 5001
+    assert not any(visited.values())
+
+
+@pytest.mark.parametrize("soft", [1 << 22, "infinity"])
+def test_descriptor_resource_limit_is_capped(monkeypatch, soft):
+    resource = pytest.importorskip("resource")
+    # RLIM_INFINITY is -1 on Linux and 2**63 - 1 on macOS: use the platform's own value.
+    limit = resource.RLIM_INFINITY if soft == "infinity" else soft
+    monkeypatch.setattr(resource, "getrlimit", lambda kind: (limit, resource.RLIM_INFINITY))
+    assert _descriptor_limit() == 1 << 20
+
+
+def test_descriptor_limit_without_resource_uses_sysconf(monkeypatch):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    names = []
+
+    def limit(name):
+        names.append(name)
+        return 8192
+
+    monkeypatch.setattr(os, "sysconf", limit, raising=False)
+    assert _descriptor_limit() == 8192
+    assert names == ["SC_OPEN_MAX"]
+
+
+def test_descriptor_resource_failure_uses_sysconf(monkeypatch):
+    resource = pytest.importorskip("resource")
+
+    def unavailable(kind):
+        raise OSError("resource limit unavailable")
+
+    monkeypatch.setattr(resource, "getrlimit", unavailable)
+    monkeypatch.setattr(os, "sysconf", lambda name: 9000, raising=False)
+    assert _descriptor_limit() == 9000
+
+
+@pytest.mark.parametrize("limit", [-1, 1 << 22])
+def test_descriptor_sysconf_limit_is_capped_or_unknown(monkeypatch, limit):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    monkeypatch.setattr(os, "sysconf", lambda name: limit, raising=False)
+    assert _descriptor_limit() == 1 << 20
+
+
+def test_descriptor_limit_without_platform_limits_uses_cap(monkeypatch):
+    monkeypatch.setitem(sys.modules, "resource", None)
+    monkeypatch.delattr(os, "sysconf", raising=False)
+    assert _descriptor_limit() == 1 << 20
+
+
 def test_result_encoder_enforces_limit(monkeypatch):
     import shadowscan.plugin_process as transport
 
@@ -550,7 +664,7 @@ def test_execution_backend_configuration_rejects_invalid_values(value):
 
 
 def test_execution_backend_defaults_and_mutation_validation():
-    assert ScanConfig().plugin_execution == "thread"
+    assert ScanConfig().plugin_execution == "process"
     config = ScanConfig.from_dict({"options": {"plugin_execution": "process"}})
     engine = Engine(config, SignatureIndex([]))
     config.plugin_execution = "fork"
@@ -561,3 +675,82 @@ def test_execution_backend_defaults_and_mutation_validation():
 def test_plugin_execution_cli_option():
     result = CliRunner().invoke(main, ["scan", "--help"])
     assert result.exit_code == 0 and "--plugin-execution" in result.output
+
+
+@pytest.mark.parametrize("previous", [None, "keep"])
+def test_process_plugin_spawn_leaves_the_scanner_environment_unchanged(
+    installed_probe, monkeypatch, previous
+):
+    """Regression: PYTHONSAFEPATH was set in os.environ for the spawn and never restored, so every
+    later child of the scanner (or of an embedding program) lost its script directory on sys.path."""
+    # setenv then delenv: monkeypatch restores the original state even if the code leaks a value.
+    monkeypatch.setenv("PYTHONSAFEPATH", "sentinel")
+    if previous is None:
+        monkeypatch.delenv("PYTHONSAFEPATH")
+    else:
+        monkeypatch.setenv("PYTHONSAFEPATH", previous)
+    before = dict(os.environ)
+    result = _engine().run()
+    assert result.complete, result.stats
+    assert dict(os.environ) == before
+    assert os.environ.get("PYTHONSAFEPATH") == previous
+
+
+def test_planted_module_in_the_working_directory_does_not_run_in_the_worker(
+    installed_probe, monkeypatch, tmp_path
+):
+    """The spawned worker runs ``python -c``; the scan's working directory (possibly the scanned
+    checkout) must not be on its sys.path when it first imports multiprocessing."""
+    work = tmp_path / "checkout"
+    (work / "multiprocessing").mkdir(parents=True)
+    marker = tmp_path / "planted-ran"
+    (work / "multiprocessing" / "__init__.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+    monkeypatch.chdir(work)
+    result = _engine().run()
+    assert result.complete, result.stats
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("mode", ["forge", "forge-id", "forge-replace"])
+def test_process_plugin_finding_built_under_a_builtin_name_gets_the_plugin_id(
+    installed_probe, monkeypatch, mode
+):
+    """A finding a plugin builds under a built-in connector's name, or gives that finding's id
+    (``id=``, ``dataclasses.replace``), is attributed to the plugin with the id the plugin's name
+    gives, never the built-in finding's id (as in thread mode)."""
+    from shadowscan.models import Finding, Kind
+
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", mode)
+    result = _engine().run()
+    assert result.complete, result.stats
+    [finding] = result.findings
+    shape = {"kind": Kind.AGENT, "title": "t", "resource": "probe", "resource_type": "test"}
+    # The id the claimed name gives, which the finding kept before it was recomputed.
+    claimed = Finding(
+        surface=finding.surface, connector="code.filesystem", provider=finding.provider, **shape
+    )
+    plugin = Finding(surface=finding.surface, connector=ENTRY, provider=finding.provider, **shape)
+    assert finding.connector == ENTRY
+    assert finding.id == plugin.id != claimed.id
+
+
+def test_a_decoded_plugin_finding_never_keeps_the_id_it_carries():
+    """The worker's engine derives each plugin finding's id, but the parent reads what the plugin
+    process wrote: a payload carrying a built-in finding's id under the plugin's name gets the id
+    the plugin's name derives."""
+    from shadowscan.models import Finding, Kind, Surface
+
+    shape = {
+        "surface": Surface.CODE,
+        "kind": Kind.AGENT,
+        "title": "t",
+        "resource": "r",
+        "resource_type": "repo",
+    }
+    builtin = Finding(connector="code.filesystem", **shape)
+    forged = {**Finding(connector=ENTRY, **shape).to_dict(), "id": builtin.id}
+    stats = {**asdict(ScanStats(ENTRY, "now")), "findings": 1}
+    payload = json.dumps({"stats": stats, "findings": [forged], "exports": []}).encode()
+    [finding], _, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert finding.connector == ENTRY
+    assert finding.id == Finding(connector=ENTRY, **shape).id != builtin.id

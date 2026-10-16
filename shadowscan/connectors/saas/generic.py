@@ -9,15 +9,18 @@ names are mapped through ``fields``; sensible defaults cover common exports.
 
 from __future__ import annotations
 
+import hashlib
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import config_boolean, finalize
+from shadowscan.connectors.common import _PLACEHOLDER, config_boolean, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
+from shadowscan.utils.credential_identity import credential_identity_scope, keyed_credential_digest
+from shadowscan.utils.redaction import REDACTED, _sensitive_key, sanitize
 
 DEFAULT_FIELDS: dict[str, list[str]] = {
     "name": [
@@ -53,6 +56,91 @@ DEFAULT_FIELDS: dict[str, list[str]] = {
     "last_used": ["last_used", "last_used_at", "last_activity", "last_seen", "updated_at"],
     "status": ["status", "state", "approval", "sanctioned", "risk", "risk_score"],
 }
+
+
+# Report sanitization withholds a whole field that contains a known credential
+# shorter than this, rather than replacing the credential (see utils.redaction).
+_SHORT_CREDENTIAL_CHARS = 8
+# A short value in a credential column that is a flag, not a secret: a yes/no or
+# not-applicable word, or at most one letter or digit ('N', '-', '1', '****').
+_FLAG = re.compile(r"(?i)[\W_]*[^\W_]?[\W_]*|y(?:es)?|no?|true|false|on|off|n/?a|nil")
+
+
+def _left_out(value: Any, copies: set[str]) -> bool:
+    """Whether a value under a credential name stays out of the credential context.
+
+    A placeholder as a whole value ('none', '****', 'xxxxxxxx', 'changeme',
+    'your_secret', '<secret>', '${SECRET}') is not a secret. A value shorter
+    than eight characters is not learned either: sanitization would withhold
+    each field containing it, and exports fill such columns with flags ('N',
+    '-', 'Yes'). Unless it is a flag, it is added to ``copies``, and a field
+    equal to it is withheld. Every other value is learned whatever it looks
+    like: a word such as 'test', 'demo' or 'here', a run of x or * beside other
+    text, or a sequence such as 'Abcd1234' does not make it a placeholder
+    (``looks_like_placeholder`` suppresses detections; it cannot tell a
+    credential column's secret from an example).
+    """
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if _PLACEHOLDER.fullmatch(text):
+        return True
+    if len(text) >= _SHORT_CREDENTIAL_CHARS:
+        return False
+    if not _FLAG.fullmatch(text):
+        copies.add(text)
+    return True
+
+
+def _credential_context(item: Any, copies: set[str], credential: bool = False) -> Any:
+    """``item`` as credential context, without the values under credential names that are not learned.
+
+    Sanitization learns every value under a credential name and removes it from
+    the other fields; one shorter than eight characters withholds each field
+    that contains it. Exports often fill such columns with a flag or a
+    placeholder, which would then erase app names, dates and identities while
+    protecting nothing. Those values are left out (see ``_left_out``, which
+    collects the short ones that are not flags in ``copies``); every other one
+    is learned.
+    """
+    if isinstance(item, Mapping):
+        kept: dict[Any, Any] = {}
+        for key, value in item.items():
+            named = credential or _sensitive_key(str(key))
+            if not (named and _left_out(value, copies)):
+                kept[key] = _credential_context(value, copies, named)
+        return kept
+    if isinstance(item, (list, tuple)):
+        return [
+            _credential_context(value, copies, credential)
+            for value in item
+            if not (credential and _left_out(value, copies))
+        ]
+    return item
+
+
+def _without_copies(value: Any, copies: set[str]) -> Any:
+    """``value`` with each text equal to a short credential in ``copies`` withheld."""
+    if isinstance(value, str):
+        return REDACTED if value.strip() in copies else value
+    if isinstance(value, Mapping):
+        return {key: _without_copies(member, copies) for key, member in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_without_copies(member, copies) for member in value]
+    return value
+
+
+def _withheld(raw: Any, clean: Any) -> bool:
+    """Whether sanitization left nothing of a nonblank ``raw`` text but markers and punctuation."""
+    return clean != raw and not any(character.isalnum() for character in str(clean).replace(REDACTED, ""))
+
+
+def _scope_values(value: Any) -> list[str]:
+    return (
+        [str(scope) for scope in value if scope not in (None, "")]
+        if isinstance(value, list)
+        else [scope.strip() for scope in re.split(r"[,;\s]+", str(value or "")) if scope.strip()]
+    )
 
 
 class GenericSaaSConnector(BaseConnector):
@@ -158,46 +246,63 @@ class GenericSaaSConnector(BaseConnector):
             # evidence that the exported app is outside the scan's scope.
             self.ctx.warn("saas.generic: app record has no valid name; coverage incomplete")
             return None
-        raw_scopes = self._get(rec, "scopes")
+        # Credential context must survive field selection, before splitting,
+        # joining or truncating can hide a known secret. Match this safe view
+        # too: a credential's contents cannot establish product/permission
+        # evidence. The resource is sanitized with the same context.
+        app_id = self._get(rec, "id")
+        raw_resource = f"{self.platform}:app:{app_id or name}"
+        copies: set[str] = set()
+        context = _credential_context(rec, copies)
+        selected = {key: self._get(rec, key) for key in self.fields}
+        if copies:
+            # A short credential is not learned, but a field equal to one is withheld,
+            # and so is an ID equal to one in the resource.
+            selected = {key: _without_copies(value, copies) for key, value in selected.items()}
+        shown_resource = f"{self.platform}:app:{selected['id'] or selected['name']}"
+        _, safe_values = sanitize((context, [(value,) for value in selected.values()] + [(shown_resource,)]))
+        safe = {key: value for key, (value,) in zip(self.fields, safe_values[:-1], strict=True)}
+        (resource,) = safe_values[-1]
+        if _withheld(name, safe["name"]):
+            # Nothing of the name is left to match: an AI app could be hidden here.
+            self.ctx.warn(
+                "saas.generic: a credential in an app record withheld its name; coverage incomplete"
+            )
+            return None
         # JSON exports may carry non-string list members; coerce rather than crash.
-        scopes = (
-            [str(s) for s in raw_scopes if s not in (None, "")]
-            if isinstance(raw_scopes, list)
-            else [s.strip() for s in re.split(r"[,;\s]+", str(raw_scopes or "")) if s.strip()]
-        )
-        urls = self._get(rec, "url")
+        scopes = _scope_values(safe["scopes"])
+        urls = safe["url"]
         url_list = (
             [str(u) for u in urls if u not in (None, "")]
             if isinstance(urls, list)
             else [u.strip() for u in re.split(r"[,;\s]+", str(urls or "")) if u.strip()]
         )
-        app_id = self._get(rec, "id")
         f = Finding(
             surface=Surface.SAAS,
             connector=self.name,
             kind=Kind.OAUTH_GRANT if scopes else Kind.BOT_APP,
-            title=f"{self.platform} app: {name}",
-            resource=f"{self.platform}:app:{app_id or name}",
+            title=f"{self.platform} app: {safe['name']}",
+            resource=resource,
             resource_type="saas-app",
             provider=self.platform,
-            owner=str(self._get(rec, "owner") or "") or None,
-            first_seen=str(self._get(rec, "installed_at") or "") or None,
-            last_seen=str(self._get(rec, "last_used") or "") or None,
+            owner=str(safe["owner"] or "") or None,
+            first_seen=str(safe["installed_at"] or "") or None,
+            last_seen=str(safe["last_used"] or "") or None,
         )
         assess_app(
             self.index,
             f,
-            name=str(name),
-            publisher=str(self._get(rec, "publisher") or "") or None,
-            description=str(self._get(rec, "description") or "") or None,
+            name=str(safe["name"]),
+            publisher=str(safe["publisher"] or "") or None,
+            description=str(safe["description"] or "") or None,
             urls=url_list,
             scopes=scopes,
-            client_id=str(app_id) if app_id else None,
+            client_id=str(safe["id"]) if safe["id"] else None,
         )
         interesting = bool(f.frameworks) or any(t.startswith("policy.") for t in f.tags)
         if not interesting and not self.keep_all:
             return None
-        users = self._get(rec, "users")
+        users = safe["users"]
         try:
             user_count = (
                 int(str(users).replace(",", ""))
@@ -210,7 +315,7 @@ class GenericSaaSConnector(BaseConnector):
             Evidence(
                 signal=f"{self.platform}:app",
                 description=(
-                    f"'{name}' from {self.platform} export; status {self._get(rec, 'status') or 'n/a'}; "
+                    f"'{safe['name']}' from {self.platform} export; status {safe['status'] or 'n/a'}; "
                     f"users {user_count if user_count is not None else users or '?'}; scopes "
                     f"{', '.join(scopes)[:300] or 'n/a'}"
                 ),
@@ -220,11 +325,19 @@ class GenericSaaSConnector(BaseConnector):
         f.metadata.update(
             {
                 "platform": self.platform,
-                "status": self._get(rec, "status"),
+                "status": safe["status"],
                 "users": user_count if user_count is not None else users,
                 "scopes": summarize_scopes(scopes),
             }
         )
         finalize(f, self.index)
-        f.sanitize()
+        f.sanitize(credential_context=context)
+        if f.resource != raw_resource:
+            # A public digest of the raw resource would let a reader confirm a
+            # guessed credential offline. Keep redacted resources distinct with
+            # a keyed pseudonym instead: scan-local unless the operator's
+            # SHADOWSCAN_IDENTITY_KEY is set (metadata.identity_scope).
+            pseudonym = keyed_credential_digest(raw_resource)
+            f.id = "ss-" + hashlib.sha256(f"{f.compute_id()}|{pseudonym}".encode()).hexdigest()[:16]
+            f.update_metadata(identity_scope=credential_identity_scope())
         return f

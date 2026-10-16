@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 import subprocess
+import threading
+import time
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -16,11 +20,20 @@ from shadowscan.signatures.loader import load_signatures, signature_source_diges
 from shadowscan.utils import files as files_mod
 from shadowscan.utils.files import policy_files
 from shadowscan.utils.git import (
+    MINIMUM_CLONE_GIT,
     clone_environment,
+    clone_pins,
     git_argv_prefix,
     git_config_overlay,
     safe_git_env,
     validate_git_ref,
+)
+from shadowscan.utils.http import (
+    DestinationUnresolved,
+    reset_allow_private_origin,
+    reset_request_deadline,
+    set_allow_private_origin,
+    set_request_deadline,
 )
 
 
@@ -66,6 +79,146 @@ def test_clone_environment_ignores_system_config_and_sets_hooks(monkeypatch):
     assert os.devnull in values
     assert any(k.startswith("http.https://github.com/.extraheader") for k in keys)
     assert git_argv_prefix()[1:3] == ["-c", f"core.hooksPath={os.devnull}"]
+
+
+def _answers(*addresses):
+    """A resolver that answers every name with *addresses*, recording each lookup."""
+    calls: list[str] = []
+
+    def getaddrinfo(host, port, *args, **kwargs):
+        calls.append(host)
+        return [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", (address, port, 0, 0))
+            if ":" in address
+            else (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port))
+            for address in addresses
+        ]
+
+    return getaddrinfo, calls
+
+
+@pytest.mark.parametrize(
+    "url,pin",
+    [
+        # Each answer once, in order; an IPv6 address in brackets, as libcurl requires.
+        (
+            "https://git.acme.com/acme/app.git",
+            "git.acme.com:443:93.184.216.34,[2001:4860:4860::8888]",
+        ),
+        ("https://git.acme.com:8443/acme/app.git", "git.acme.com:8443:93.184.216.34,[2001:4860:4860::8888]"),
+        # libcurl matches the entry case-insensitively but keeps a trailing dot: a pin for
+        # "git.acme.com" would miss "git.acme.com." and Git would resolve the name itself.
+        ("https://Git.Acme.COM./acme/app.git", "git.acme.com.:443:93.184.216.34,[2001:4860:4860::8888]"),
+    ],
+)
+def test_clone_pins_hold_git_to_the_checked_answers(monkeypatch, url, pin):
+    resolver, calls = _answers("93.184.216.34", "2001:4860:4860::8888", "93.184.216.34")
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+    assert clone_pins(url) == [("http.curloptResolve", pin)]
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "url", ["https://93.184.216.34/acme/app.git", "https://[2001:4860:4860::8888]/a.git"]
+)
+def test_ip_literal_clone_needs_no_pin(monkeypatch, url):
+    resolver = Mock(side_effect=AssertionError("an IP literal is not resolved"))
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+    assert clone_pins(url) == []
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [("127.0.0.1",), ("10.0.0.1",), ("169.254.169.254",), ("fd00::1",), ("93.184.216.34", "10.0.0.1")],
+)
+def test_clone_pins_refuse_a_private_answer_unless_allowed(monkeypatch, answers):
+    resolver, _ = _answers(*answers)
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+    with pytest.raises(ValueError, match="Refusing loopback") as refused:
+        clone_pins("https://git.acme.com/acme/app.git")
+    assert not isinstance(refused.value, DestinationUnresolved)
+    token = set_allow_private_origin(True)  # this connector's private-origin grant
+    try:
+        pins = clone_pins("https://git.acme.com/acme/app.git")
+    finally:
+        reset_allow_private_origin(token)
+    expected = ",".join(f"[{a}]" if ":" in a else a for a in answers)
+    assert pins == [("http.curloptResolve", f"git.acme.com:443:{expected}")]
+
+
+@pytest.mark.parametrize(
+    "resolver",
+    [
+        Mock(side_effect=socket.gaierror(socket.EAI_AGAIN, "Temporary failure in name resolution")),
+        Mock(return_value=[]),
+        Mock(return_value=[(socket.AF_UNIX, socket.SOCK_STREAM, 0, "", "/run/socket")]),
+    ],
+)
+def test_clone_pins_fail_closed_without_an_address(monkeypatch, resolver):
+    # Never an empty pin: Git would resolve the name itself and connect to whatever it got.
+    monkeypatch.setattr(socket, "getaddrinfo", resolver)
+    with pytest.raises(DestinationUnresolved):
+        clone_pins("https://git.acme.com/acme/app.git")
+
+
+def test_stalled_clone_resolver_fails_closed_at_the_request_deadline(monkeypatch):
+    release = threading.Event()
+
+    def stalled(*args, **kwargs):
+        release.wait(10)
+        return _answers("93.184.216.34")[0](*args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", stalled)
+    token = set_request_deadline(time.monotonic() + 0.2, None)
+    started = time.monotonic()
+    try:
+        with pytest.raises(DestinationUnresolved):
+            clone_pins("https://git.acme.com/acme/app.git")
+    finally:
+        reset_request_deadline(token)
+        release.set()
+    assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize(
+    "url,reason",
+    [
+        ("https://bücher.acme.com/acme/app.git", "ASCII DNS name"),  # libcurl looks up the IDNA form
+        ("https://a%62c.acme.com/acme/app.git", "ASCII DNS name"),  # libcurl looks up "abc..."
+        ("https://-x.acme.com/acme/app.git", "ASCII DNS name"),  # a "-host:port" entry removes a pin
+        # urlsplit lowercases U+212A KELVIN SIGN to an ASCII "k", but Git hands libcurl the sign: a
+        # libcurl without IDN looks it up as written and misses a pin for "git.kube.example".
+        ("https://git.\u212aube.example/acme/app.git", "ASCII DNS name"),
+        # "port or 443" keyed the pin to 443, while libcurl looked "host:0" up itself.
+        ("https://git.acme.com:0/acme/app.git", "Invalid clone URL"),
+        ("https://93.184.216.34:00/acme/app.git", "Invalid clone URL"),
+    ],
+)
+def test_clone_host_git_would_spell_differently_is_refused(monkeypatch, url, reason):
+    monkeypatch.setattr(socket, "getaddrinfo", Mock(side_effect=AssertionError("not resolved")))
+    token = set_allow_private_origin(True)  # refused for its spelling, not for its address
+    try:
+        with pytest.raises(ValueError, match=reason):
+            clone_pins(url)
+    finally:
+        reset_allow_private_origin(token)
+
+
+def test_clone_environment_applies_the_pins_and_ignores_proxies(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.acme.com:3128")
+    pin = ("http.curloptResolve", "github.com:443:93.184.216.34")
+    settings = _clone_settings(clone_environment("https://github.com", "token", "x-access-token", pins=[pin]))
+    assert settings["http.curloptResolve"] == "github.com:443:93.184.216.34"
+    # An empty http.proxy makes Git ignore HTTPS_PROXY and ALL_PROXY: a proxy resolves the host itself.
+    assert settings["http.proxy"] == ""
+    assert (
+        _clone_settings(clone_environment("https://github.com", None, "x-access-token"))["http.proxy"] == ""
+    )
+
+
+def test_minimum_clone_git_supports_curlopt_resolve():
+    # Git 2.32 to 2.36 silently ignore http.curloptResolve, which would leave every clone unpinned.
+    assert MINIMUM_CLONE_GIT >= (2, 37)
 
 
 def test_github_clone_skips_hostile_branch(index, monkeypatch):

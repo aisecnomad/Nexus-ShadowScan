@@ -152,7 +152,11 @@ Three views are reported for every tool (see `tools/discovery_benchmark/score.py
 * **category level** - facts collapsed to their category;
 * **value level** - exact facts; `<category>:generic` is a wildcard that matches
   one expected fact of that category (for tools that report "an MCP config" but
-  not which client).
+  not which client), and is also credited — never penalised — when that category
+  is present but its specific values were already matched. Through that second
+  case the value-level `tp + fn` (the recall denominator) can exceed a category's
+  required `expected_facts`, so the headline "expected facts" count and the
+  recall denominator need not be equal.
 
 Precision, recall and F1 are micro-averaged over all repositories. *In-scope*
 numbers count only a tool's declared categories; the *all-category* number

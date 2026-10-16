@@ -177,6 +177,17 @@ class TestDiffChangedFiles:
             assert ".." not in path.split("/")
             assert not path.startswith("/")
 
+    def test_repo_local_diff_external_is_never_run(self, repo: Path, ctx, tmp_path: Path) -> None:
+        """A checked-out repository's diff.external command must not execute (--no-ext-diff)."""
+        marker = tmp_path / "PWNED"
+        _git(repo, "config", "diff.external", f"touch {marker}")
+        (repo / "app.py").write_text("import langchain\nprint('changed')\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-m", "change", "--quiet")
+        result = self.diff(repo, "main~1", ctx)
+        assert "app.py" in result
+        assert not marker.exists(), "diff.external was executed"
+
 
 # =========================================================================
 # _diff_included

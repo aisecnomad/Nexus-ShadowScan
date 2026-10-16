@@ -70,9 +70,11 @@ from shadowscan.connectors.cloud.aws_registry import (
 )
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
+    UNKNOWN_CALLER,
     InvalidPageTokenError,
     RecordDispatch,
     aggregate_caller_event,
+    audit_caller_assurance,
     cloud_finding,
     credential_name_matches,
     done,
@@ -96,7 +98,7 @@ from shadowscan.connectors.mcp_risk import record_server_risks
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.registries import RECORD_KEY, RECORD_SCHEMA, registry_evidence
 from shadowscan.utils.identity import has_aws_account_scope
-from shadowscan.utils.redaction import SanitizationLimitError
+from shadowscan.utils.redaction import SanitizationLimitError, sanitize_text_excerpt
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import truncate
 
@@ -1914,7 +1916,7 @@ class AwsConnector(BaseConnector):
                 signal="aws:knowledge-base",
                 description=(
                     f"Knowledge base '{rec.get('name')}' ({rec.get('status')}): "
-                    f"{truncate(rec.get('description'), 120)}"
+                    f"{sanitize_text_excerpt(rec.get('description'), 120)}"
                 ),
                 weight=0.6,
                 signature="cloud.aws-bedrock-agents",
@@ -2057,7 +2059,7 @@ class AwsConnector(BaseConnector):
                 "protocol": protocol,
                 "network": network,
                 "authorizer": bool(auth),
-                "description": truncate(rec.get("description")),
+                "description": sanitize_text_excerpt(rec.get("description")),
             }
         )
         return done(f, self.index, Kind.AGENT)
@@ -2851,7 +2853,7 @@ class AwsConnector(BaseConnector):
     def _acc_caller(callers: dict[str, dict[str, Any]], rec: dict[str, Any]) -> None:
         agg = aggregate_caller_event(
             callers,
-            rec.get("principal") or "unknown",
+            rec.get("principal") or UNKNOWN_CALLER,
             time=rec.get("eventTime"),
             tally_present={
                 "agents": rec.get("userAgent"),
@@ -2905,6 +2907,7 @@ class AwsConnector(BaseConnector):
         f.metadata.update(
             {
                 "principal": principal,
+                "caller_identity_assurance": audit_caller_assurance(principal),
                 "identity_type": agg.get("identity_type"),
                 "events": agg["events"],
                 "models": agg["models"],
@@ -3259,7 +3262,7 @@ def _bedrock_agent_metadata(
         "status": rec.get("agentStatus"),
         "foundation_model": rec.get("foundationModel"),
         "role": rec.get("agentResourceRoleArn"),
-        "instruction": truncate(rec.get("instruction"), 300),
+        "instruction": sanitize_text_excerpt(rec.get("instruction"), 300),
         "versions_scanned": rec.get("_versions_scanned") or [],
         "version_models": {v: d.get("foundationModel") for v, d in details.items()},
         "version_guardrails": {v: d.get("guardrailConfiguration") for v, d in details.items()},

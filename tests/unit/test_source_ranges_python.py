@@ -87,3 +87,41 @@ def test_resumed_python_lexing_keeps_offsets_after_unicode_separators():
     assert any(
         start <= secret_start and secret_start + len("opaque-credential") <= end for start, end in spans
     )
+
+
+def test_python_tokenizer_charges_the_matching_budget_mid_line(monkeypatch):
+    # The C tokenizer runs without a Python check point and is quadratic on one long
+    # logical line in CPython 3.12.0 to 3.12.3. The loop must charge the per-input budget
+    # between tokens, so a single-line file cannot run unbounded: patch the budget hook to
+    # fire after a few blocks and confirm tokenizing one long line surfaces the timeout.
+    from shadowscan.signatures.matcher import MatchTimeoutError
+
+    calls = 0
+
+    def fake_pattern_timeout(default: float = 0.0) -> float:
+        nonlocal calls
+        calls += 1
+        if calls >= 3:
+            raise MatchTimeoutError("budget exhausted")
+        return default
+
+    monkeypatch.setattr(source_ranges, "pattern_timeout", fake_pattern_timeout)
+    # One logical line with far more than 3 * 1024 tokens and no newline to resume at.
+    source = "x=[" + "0," * 20_000 + "]\n"
+    with pytest.raises(MatchTimeoutError):
+        noncode_ranges(source, "python")
+    assert calls >= 3
+
+
+def test_short_python_file_does_not_exhaust_the_budget(monkeypatch):
+    # A normal file tokenizes within one budget block, so the scan stays complete.
+    calls = 0
+
+    def counting_pattern_timeout(default: float = 0.0) -> float:
+        nonlocal calls
+        calls += 1
+        return default
+
+    monkeypatch.setattr(source_ranges, "pattern_timeout", counting_pattern_timeout)
+    _, ambiguous = noncode_ranges("import openai\nx = client()\n", "python")
+    assert ambiguous is False and calls >= 1

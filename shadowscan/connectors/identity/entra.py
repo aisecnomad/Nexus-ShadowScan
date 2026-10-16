@@ -64,6 +64,7 @@ from shadowscan.registries import (
     registry_evidence,
 )
 from shadowscan.utils.http import HttpClient, HttpError
+from shadowscan.utils.redaction import sanitize_excerpt
 from shadowscan.utils.safe_json import strict_json_loads
 
 GRAPH = "https://graph.microsoft.com/v1.0"
@@ -2073,7 +2074,7 @@ def _card_summary(card: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": card.get("id"),
         "name": card.get("displayName"),
-        "description": (card.get("description") or "")[:300] or None,
+        "description": sanitize_excerpt(card.get("description") or "", 300) or None,
         "protocol_version": card.get("protocolVersion"),
         "version": card.get("version"),
         "provider": provider.get("organization"),

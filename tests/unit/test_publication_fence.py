@@ -163,12 +163,12 @@ def test_engine_timeout_returns_while_record_replacement_is_blocked(tmp_path, mo
             self.ctx.stats = ScanStats(connector="gateway.logs", started_at=now_iso(), finished_at=now_iso())
             return []
 
-    def held_replace(source, target):
+    def held_replace(source, target, **kwargs):
         if str(target).endswith(".jsonl"):
             target_paths.append(Path(target))
             replacing.set()
             assert release_replace.wait(6)
-        original_replace(source, target)
+        original_replace(source, target, **kwargs)
 
     monkeypatch.setattr(base.os, "replace", held_replace)
     monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: ExportConnector)

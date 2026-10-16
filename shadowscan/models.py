@@ -368,7 +368,24 @@ class Finding:
             )
         return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
-    def sanitize(self) -> None:
+    def reattribute(self, connector: str, *, derive_id: bool = False) -> None:
+        """Attribute this finding to ``connector``, recomputing its id if it named another connector.
+
+        The connector enters the id, so a finding built under another connector's name and only
+        re-stamped would keep that connector's id, and could replace or merge with that
+        connector's own finding for the same resource: baselines, diffs and fleet merges key on
+        the id. An id the finding claimed under another name is not kept either.
+
+        ``derive_id`` recomputes the id even when the finding already names ``connector``. The
+        engine passes it for every plugin finding: a plugin can set any id (``id=`` or
+        ``dataclasses.replace`` of a finding built under another name), and only the id derived
+        from the plugin's own name can never be a built-in finding's.
+        """
+        if self.connector != connector or derive_id:
+            self.connector = connector
+            self.id = self.compute_id()
+
+    def sanitize(self, *, credential_context: Any = None) -> None:
         """Remove credentials from every persisted/reportable field in place.
 
         A finding is sanitized many times between collection and reporting,
@@ -377,9 +394,16 @@ class Finding:
         The digest covers every field, nested evidence, risk factors and
         metadata by content, so a mutation made in place through a container
         is caught by the next pass exactly as an attribute assignment is.
+
+        Producers that project only part of a source record can supply that
+        record as ``credential_context``. Known secrets in omitted fields then
+        also redact their copies in report fields. The context is never stored,
+        and supplying it always performs a fresh pass, even on clean state.
         """
-        if _verified_clean(self):
+        if credential_context is None and _verified_clean(self):
             return
+        if credential_context is not None:
+            object.__setattr__(self, "_clean_digest", None)
         identity_names = (
             "connector",
             "resource",
@@ -401,13 +425,15 @@ class Finding:
             for name in _FINDING_SCALAR_FIELDS
             if not (generated_id and name == "id") and not (trusted_schema and name == "identity_schema")
         ]
-        values, evidence_values, risk_values = sanitize(
-            (
-                [(getattr(self, name),) for name in names],
-                [[(getattr(ev, name),) for name in _EVIDENCE_FIELDS] for ev in self.evidence],
-                [[(factor.id,), (factor.description,)] for factor in self.risk.factors],
-            )
+        state = (
+            [(getattr(self, name),) for name in names],
+            [[(getattr(ev, name),) for name in _EVIDENCE_FIELDS] for ev in self.evidence],
+            [[(factor.id,), (factor.description,)] for factor in self.risk.factors],
         )
+        if credential_context is None:
+            values, evidence_values, risk_values = sanitize(state)
+        else:
+            (values, evidence_values, risk_values), _ = sanitize((state, credential_context))
         for name, (value,) in zip(names, values, strict=True):
             setattr(self, name, value)
         changed = {

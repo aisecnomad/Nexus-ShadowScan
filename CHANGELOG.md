@@ -5,6 +5,858 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Integration review fixes (October 15)
+
+- **Redaction time under a conditional name (#235).**
+  `_redact_yaml_multiline_values` read a kept block under a name that carries
+  a credential only when its value is opaque (`key`) again from every such
+  name nested in it, and blank lines below the deepest one once per name
+  above them. A 500 KB staircase of nested `key:` lines took five to seven
+  seconds and 200 KB of them over blank lines about twenty, so one file in an
+  untrusted repository could exhaust its matching budget and leave the scan
+  incomplete (exit 3). A conditional name inside a block already kept is no
+  longer read again, and a bare `key:` whose first nested entry is read again
+  under its own name is left to the mapping's own entries, so the pass is
+  linear again (milliseconds for the same inputs and for a 1 MB staircase of
+  alternating `key:` and `x:` lines). Names that always carry a credential
+  (`password`, `api_key`) are read as before. Timing regressions pin the
+  staircase shapes.
+- **A note inside a block scalar kept its credential (#235).** `key: |` over an
+  opaque value kept it when a `# rotate quarterly` comment or a sentence sat
+  in the block, before or after the value: every line was joined into one
+  value, and the note's whitespace failed the opaque test. The lines that can
+  be part of a wrapped value (no whitespace, no leading `#`, not a URL or a
+  path) are now joined at each indentation, those on either side of a note,
+  sentence, URL or path apart and together. Each run of lines without
+  whitespace is also joined across indentation, `#`-led lines included, and
+  ends at a line that cannot be joined, at a mapping entry and where the block
+  of the innermost entry above it ends: `pwd: |` over `b39f` and a
+  tab-indented `9fc2`, `sshKey: |` over `q7Rk2Xw` and a deeper `9pLm4Tz`, and
+  `pwd: |` over `#aXV5bY` and `g4Sy` are withheld (an earlier revision of this
+  fix split them at the change of indentation or at the `#` and showed them).
+  A nested `key:` or `pwd:` block inside a kept outer block therefore yields
+  the same joined values as when read alone, also under a sequence entry
+  (`- pwd: |`), and an outer URL, path or placeholder line never hides its
+  wrapped value. Indentation is the blanks and tabs before a line, as the
+  block boundary measures it: a form feed after them no longer moved a line
+  into a nested block's group, where its placeholder text kept the outer block
+  and hid the nested one. Each line is also tested on its own, after a
+  trailing ` # note` (`tlsKey:` over `<opaque>  # rotated 2026-01`) or a `- `
+  sequence marker (`key:` over `- <opaque>`) is set aside, as the single-line
+  form `key: <line>` reads its value: an identifier made of words
+  (`ipv4Addr6To4`) and a digest after its algorithm (`sha256:<hex>`) keep
+  their text, as on one line, where the earlier revision withheld
+  `cacheKey:` over `- ipv4Addr6To4` and about four times as many synthetic
+  non-secret blocks as #235. A line that form never reads as a value is tested
+  as written: a block scalar's leading `#` is content (`pwd: |` over
+  `#<opaque>`), and a line with other symbols or `sha256:<opaque>` is withheld
+  when it holds an opaque run. A random value of about 8 to 16 characters that
+  happens to read as words now keeps its text on a line of its own, as it
+  does after `key: ` on one line. A bare `key:` is left to its nested mapping
+  only when the first entry is read again under its own name: one with its
+  value on its line (`algorithm: RS256`), or one over its own block whose name
+  this pass reads (`key:`, `password:`). Over an entry that nothing reads
+  again (`private:`, `stringData:` or `value: |` over an opaque line, the same
+  with a tag or an anchor before the indicator such as `value: !!binary |`,
+  or any entry after a lone carriage return) the whole block is read, as #235
+  did. On 63,000 generated documents no output shows a credential that
+  `main` withholds; against #235 the remaining shown values are such
+  word-like random values and values #235 withheld only by joining them with
+  a following `next:` key or a path line. Regression tests cover a note
+  before, between and after the wrapped lines, a trailing note, a sequence
+  entry, a `#`-prefixed value in `|`, `|-` and `>-` blocks, a path or URL
+  beside the value, nested blocks inside a kept block, wrapped values across
+  indentation (tab, deeper and shallower lines, a nested block's end, a
+  sequence entry, a form feed), node properties, the identifier and digest
+  lines that stay, a bare conditional name over `private:`, `stringData:`
+  and `value:` with LF and CRLF line ends and over a nested `key:` after a
+  lone carriage return, through `sanitize_text` and `sanitize`. Operators
+  with Kubernetes secrets or Helm values written this way should regenerate
+  retained reports and cached evidence and rotate any key they show.
+- **`--deny-private-origin` lost to a connector grant (#235).** The flag only
+  set `allow_private_origin` to false, which is also the default, and the
+  engine preferred a connector's own `allow_private_origin: true`, so a
+  configured grant (or `run ... --set allow_private_origin=true`) still reached
+  loopback, private and cloud-metadata addresses for that connector although
+  the operator had refused them for the scan. Before #235 built-in connectors
+  rejected the key, so no connector key could lift the flag. `ScanConfig` gains
+  a keyword-only `deny_private_origin`, which `--deny-private-origin` sets on
+  every scanning command, and the engine checks it before the connector's key,
+  for the plugin lookup as well as collection, as a scan-wide
+  `allow_instance_credentials` already overrides a connector key. A conflicting
+  connector key is overridden without an error, and the connector's own
+  configuration (`ctx.config`) reads the value the engine enforces, in thread
+  and process plugin workers alike, so a plugin whose own transport honours
+  the documented key is refused too; under the refusal it read `true`. The
+  flag refuses the `allow_private_origin` grant only. It does not revoke
+  `allow_instance_credentials`, under which cloud connectors still contact the
+  instance metadata service and the `cloud.gcp` credential transport accepts a
+  private token endpoint; `SECURITY.md`, the threat model,
+  `docs/production.md`, `docs/api/http.md` and the configuration guide say so
+  and tell operators to pass `--deny-instance-credentials` as well. A
+  `ScanConfig` with both `allow_private_origin` and `deny_private_origin` true
+  is refused, and a configuration file cannot set the refusal; an in-file
+  `options.allow_private_origin: false` stays a default that a connector grant
+  overrides. Affects operators and pipelines that pass `--deny-private-origin`
+  with a configuration that grants a connector; library callers can now refuse
+  with `ScanConfig(deny_private_origin=True)`. Regression tests cover `scan`
+  with and without the flag, `run --set allow_private_origin=true
+  --deny-private-origin`, the engine and plugin-lookup policy, the connector's
+  `ctx.config` with and without the refusal in threads and in a spawned plugin
+  worker, and the both-true rejection.
+- **Private-origin documentation (#235).** The per-connector grant examples in
+  `docs/getting-started/configuration.md` and `docs/production.md` used
+  `gateway.logs` with `input:`, which reads an export and makes no HTTPS
+  request, so an operator who copied them granted nothing and the real internal
+  connector still failed closed. They now use `endpoint.mcp` with
+  `agent_card_urls` and say that an offline `input` run makes no requests. The
+  A2A probe docstring, `SECURITY.md`, `docs/connectors/endpoint.md` and the
+  `endpoint.mcp` egress row in `docs/production.md` named only
+  `options.allow_private_origin`; they now name the connector-level key and
+  `--deny-private-origin`. The threat model's symlink row joined `O_NOFOLLOW`
+  and `O_DIRECTORY` with a full-width vertical line (U+FF5C) that neither
+  pastes nor greps as the ASCII flag operator; it is now an escaped `|` outside
+  the code spans, which keeps the table intact.
+- **Clone host pinning (#234, #236, #237).** #234's
+  `validate_clone_destination()` resolved the clone host again before Git ran
+  and refused private answers, but it pinned nothing: Git resolved the name
+  itself afterwards, so an answer that changed in between (DNS rebinding) still
+  reached an unchecked address, and an inherited `HTTPS_PROXY` resolved it
+  elsewhere. It also passed when the name did not resolve, and its
+  `getaddrinfo` had no time limit, bringing back the unbounded lookup #236
+  removed. It is replaced by `clone_pins()`: after `validate_url`'s preflight
+  the host is resolved once more with #236's bounded resolver
+  (`resolve_destination` in `utils/http.py`), every answer of that second
+  lookup is checked, and Git is pinned to those answers with
+  `http.curloptResolve` under the URL's own spelling of the host (trailing dot
+  included), with `http.proxy` empty so proxy variables are ignored; the
+  preflight's answers never reach Git. A host with no answer in time is not
+  cloned and the repository uses sampled API mode (incomplete); a refused
+  answer is refused like `validate_url`'s, and a host libcurl would spell
+  differently from the pin (non-ASCII as written in the URL, percent-encoded or
+  starting with `-`) is refused rather than left unpinned. The ASCII check
+  reads the URL's own host, not urlsplit's lowercased one, which turns U+212A
+  KELVIN SIGN into an ASCII `k` that a libcurl without IDN never looks up.
+  `validate_url` and `clone_pins` refuse port 0: read as the default port
+  (`port or 443`), `https://host:0/...` matched the origin and the pin was
+  keyed to 443 while libcurl looked up `host:0` itself. `validate_url` refuses
+  port 0 in every API URL, and an origin written with it matches no URL. Git
+  2.37 added the option, below #237's 2.45 floor, and `MINIMUM_CLONE_GIT`
+  asserts the tie. Clones need direct HTTPS egress to the clone host. For
+  `code.github` on github.com that is `github.com`, which API listing
+  (`api.github.com`) never needed, so a worker that reached `github.com` only
+  through a proxy variable now scans every repository in sampled API mode
+  (incomplete); for GitHub Enterprise Server and GitLab the clone host is the
+  API origin's host, which API listing already reaches directly. Regression
+  tests drive a real Git clone of an unresolvable `.invalid` host to a loopback
+  listener (mixed case and trailing dot, with a proxy variable set) and cover a
+  rebinding between the lookups, an unresolvable or stalled lookup, IPv6
+  brackets, refused spellings (the Kelvin sign included) and port 0. The real
+  Git test bounds its listener's `accept()` and wakes it on the way out, so a
+  run whose pin is missed fails at once instead of waiting out its join and
+  leaving the thread behind.
+- **A refused clone URL ended the repository (#237).** `_clone` raises
+  `ValueError` for a provider clone URL off the API origin or naming another
+  repository (and now for a clone host that resolves to a refused address), and
+  `_fetch` did not catch it, so the repository was recorded as an error and none
+  of it was scanned, while `docs/production.md` said it fell back to sampled API
+  mode. `_fetch` now warns with the reason, marks the scan incomplete and falls
+  back to API mode, which reads the listed repository by its own name from the
+  configured origin, like any other failed clone. Affects `code.github` and
+  `code.gitlab` scans whose provider returns such URLs; a regression test covers
+  both providers and both refusals.
+- **Plugin isolation default: documentation and compatibility (#234).** #234
+  changed the `plugin_execution` default from `thread` to `process`, but
+  `docs/production.md` (its security-policy example, and a paragraph saying the
+  default "remains `thread`"), `docs/connectors.md`, `docs/architecture.md` and
+  `docs/getting-started/configuration.md` still gave `thread` as the default,
+  and the changelog listed none of the new failure modes. The pages now give
+  `process` as the default and `thread` as the opt-out, and
+  `docs/production.md` carries an upgrade note. With `plugin_execution` unset,
+  these now make a scan incomplete (exit 3) where the thread backend completed:
+  a plugin result above the 16 MiB JSON transport limit; connector
+  configuration or signature objects that Python cannot pickle, which only an
+  application building `ScanConfig` itself can pass; an embedding script
+  without an `if __name__ == "__main__":` guard, which runs again in each plugin
+  worker before the plugin starts, repeating its side effects, including output,
+  which the worker does not discard, and fails the plugin if that run exits or
+  raises at module level (for example `sys.exit(main())`) or uses up the
+  connector deadline; and a plugin that starts
+  `multiprocessing` or `ProcessPoolExecutor` children, which the daemonic
+  worker refuses. The worker also discards the plugin's standard output,
+  standard error and logging. `options.plugin_execution: thread` or
+  `--plugin-execution thread` keeps such a plugin in the scanner process. The
+  engine's allowlist check now calls `shadowscan.config.plugin_names()` instead
+  of repeating its parsing; behavior is unchanged. Affects operators and
+  embedding applications with allowlisted third-party plugins. A repository
+  consistency test ties the documented default to `ScanConfig`.
+- **The abandoned-worker exit watchdog cut a job deadline short and outlived
+  its call (#234).** After a connector worker was abandoned, the CLI armed a
+  30-second process exit for report output even when `--job-deadline-seconds`
+  or `job_deadline_seconds` was set, so output the operator's deadline allowed
+  (a slow disk under `-o`, a slow reader of standard output) was cut off at 30
+  seconds: standard output stopped mid-document and an existing `-o` file kept
+  the previous report, while the message ("abandoned-worker exit deadline
+  exceeded") said neither. The watchdog was also never cancelled: where the
+  hard exit is replaced (the test suite, in-process callers), it fired 30
+  seconds after the call had returned, called the exit again and stopped any
+  clone running at that moment. It is now armed only when no job deadline is
+  set, or when Ctrl-C interrupts report output: the interrupt also cancels the
+  job deadline, and interpreter exit would then wait for the blocked worker
+  indefinitely. It is cancelled when the call ends with any other exception,
+  including a failed report, and its message says that coverage is incomplete,
+  that the report may be missing or truncated and that an existing output file
+  may not have been replaced. Affects CLI scans in which a connector timed out;
+  `docs/production.md` documents the limit, and `docs/scanning.md` now gives
+  exit 1 when the report could not be written. Regression tests cover a set job
+  deadline, Ctrl-C during output with and without one, the cancelled watchdog
+  after a written and a failed report, and the message.
+- **A whitespace-header JWT after a long dotted segment was kept (#237).**
+  #237's second reading, which withholds a JWT whose header JSON is written
+  with whitespace (`IHsi…`, `eyAi…`, `ewoi…`), took three dotted segments from
+  the first one of 16 or more characters. When that segment was no header, the
+  search went on after the third segment, so the token's own header, read only
+  as the second or third segment of that run, was never tried. A token right
+  after such a segment (`com.example.authenticationservice.<token>`,
+  `request_identifier_0001.<token>`, a URL path segment of that length) was
+  kept whole in report text, evidence and logs, still verifiable. A run that is
+  no token is now searched again from its second segment. Each segment is
+  matched at most three times, so the pass stays linear. Affects scans whose
+  evidence holds such a token after a dotted name: its report text, and finding
+  ids derived from it, change, and reports written before this change may
+  still show it. Regression tests cover five prefixes and three header layouts
+  through `sanitize_text` and `sanitize`, and time dotted runs of 256 KB and
+  1 MB.
+- **The secret gate and the AI review sanitizer missed most whitespace JWT
+  headers (#237).** `tools/check_secrets.py` (`make secrets`, the
+  `no-hardcoded-secrets` hook and CI) and `tools/ai_review/sanitize.py`
+  recognized such a header by seven fixed base64url prefixes (`IHsi`, `eyAi`,
+  `eyAg`, `eyAK`, `ewo`, `CXsi`, `Cnsi`). Of the 440 layouts with up to two
+  whitespace bytes before and after the `{`, all of which PyJWT accepts, they
+  caught 11: a tab or carriage return after the `{` (`ewki`, `ew0K`), two bytes
+  before it (`ICB7`, `DQp7`) or three or more (`ICAg…`) passed the gate and
+  could reach posted review text. Both now match the base64url encoding of any
+  number of spaces, tabs, line feeds and carriage returns before the `{` and
+  any after it, as a regular expression that stays linear. As before they do
+  not decode the header or require `alg`; runtime redaction remains the
+  complete check. Affects contributors, whose tracked file holding such a token
+  now fails `make secrets`, and AI review gate output; every tracked file still
+  passes. Regression tests cover every layout with up to four bytes before and
+  two after the `{`, longer runs, and three hostile inputs for linear time.
+- **A JWT in a dotted chain or after a doubly encoded separator kept its
+  payload and signature.** Both leaks pre-date #237, whose
+  `docs/production.md` entry said whitespace-header tokens were withheld
+  everywhere. The `eyJ` rule took three dotted segments from the first `eyJ`
+  it met, and that `eyJ` can be an unrelated segment or the `eyJ` payload of a
+  whitespace-header token: `eyJ4IjoxfQ.v2.<token>`, `<token>.<token>` and
+  `<token>-<token>` withheld up to the next token's header and kept its
+  payload and signature, verifiable once the header is guessed. An encrypted
+  token (JWE, five segments) kept its ciphertext and tag under either reading.
+  A token is now withheld to the end of its dotted chain, with any text joined
+  on by a dot (`<token>.json`, a full stop right after it); the chain is read
+  once after the match, not by the pattern that is searched again after a run
+  that is no token, so the pass stays linear. A token right after a doubly
+  percent-encoded separator (`%253D`, `%252F`, as in a redirect URL nested in
+  another's query) followed a hex letter, which neither reading took as a
+  boundary, and was kept whole for every header layout; both readings now
+  start after such an escape as after a single one. `docs/production.md` now
+  describes the coverage and names the gaps that remain: a token glued
+  directly to letters, one after a separator encoded three times, and a UTF-16
+  header. Affects report text, evidence and logs that held such a token, and
+  finding ids derived from them; reports written before this change may still
+  show it. Regression tests cover seven chains and a JWE with compact and
+  whitespace headers through `sanitize_text` and `sanitize`, and three doubly
+  encoded prefixes with four header layouts; the hostile-input timing test
+  gains a long chain after each kind of token and a run of double-encoded
+  candidates.
+- **A report could land behind another user's link (#237).**
+  `write_private_text` checked only the links named in the output path itself,
+  then let `os.path.realpath` follow the rest unchecked. An operator's link to
+  another user's link (`mine -> shared -> victim/`), a link inside another
+  link's target (`mine -> shared/sub`), or a link planted where a component was
+  missing when it was checked put the report, mode 0600 and owned by the
+  operator, in a directory the other user chose. The output directory is now
+  resolved one component at a time, as the kernel resolves it: every link met,
+  in the path or in a link's target, must be owned by root or the current user,
+  more than 40 links are refused as a loop, and a missing component, or one
+  that is not a directory, is an error instead of being resolved later (as
+  first written, a link to `notes.txt/../a` put the report in `a`, as
+  `realpath` had, where the kernel fails with `ENOTDIR`). `..` in the output
+  path is resolved lexically first, as since #237 (before it the kernel
+  resolved `..` after the link), so `-o mylink/../r.json` writes beside
+  `mylink`, not in the parent of the link's target; `SECURITY.md`,
+  `docs/production.md` and the controls guide now say so, and the dashboard
+  guide states the link rule. Affects `-o` and `--inventory-json` paths that
+  run through a chain of links; links owned by the operator or root (macOS
+  `/tmp`) are followed as before. Regression tests give links to another uid
+  with `lchown` (as root) and cover a chain, a link inside a target, a link
+  planted after the check, own and root-owned links, relative links with `..`
+  (`L -> M/../x` with `M -> far/deep` lands in `far/x`, not in the `x` beside
+  `L`), a link through a regular file, a loop and a missing directory.
+- **Long output names in multibyte characters failed (#237).**
+  `_temporary_name` cut the destination name at 200 characters, but `NAME_MAX`
+  counts bytes: a legal name of 253 to 255 bytes in CJK, accented or emoji
+  characters (83 CJK characters and `.json`) gave a temporary name over 255
+  bytes, and the write failed with "could not write report", although #237
+  said long legal names no longer fail. The name is now cut at whole characters
+  to at most 200 bytes. Affects every output written under such a name.
+  Regression tests cover CJK, accented and emoji names.
+- **The configuration read diagnostic did not mention the encoding (#237).** A
+  configuration file that is not UTF-8 got "it must be a readable regular file
+  of at most 8 MiB", which leaves out the actual cause; the message now asks
+  for "a readable regular UTF-8 text file of at most 8 MiB". Affects operators
+  with a Latin-1 or UTF-16 configuration file. A regression test covers a
+  Latin-1 file.
+- **identity.jwt shortened `kid` and claim names before redacting them
+  (#237).** #237 bounded both but cut them before the finding was sanitized,
+  against its own "sanitize before shortening" comment: a token inside a `kid`
+  or a claim name that straddled the 200- or 64-character cut lost its third
+  segment, no longer looked like a token, and its header and the start of its
+  payload were reported. Both are now sanitized first and cut after, as agent
+  claim values already were; only the 100 claim names reported are sanitized,
+  which keeps a token of many claims cheap. Affects identity.jwt findings for
+  tokens that carry such a header or claim: their `metadata.kid` and
+  `metadata.claim_names` change. A regression test places a token across both
+  cuts.
+- **HTTP transport contracts carried from draft #231; the private-address
+  claim is qualified.** Copilot's commit 82093b7 is cherry-picked with its
+  authorship: `docs/api/http.md` and the `shadowscan/utils/http.py` module
+  docstring state the transport's invariants, and
+  `tests/unit/test_http_contracts.py` fails when a urllib3 upgrade changes the
+  request hook, the response shutdown and release methods or the per-client
+  pool-class mapping the transport relies on. As written, both texts called the
+  refusal of private and cloud-metadata addresses unconditional, although the
+  trusted `allow_private_origin` opt-in (scan-wide, or per connector since
+  #235) lifts it and `--deny-private-origin` overrides both, and they predated
+  #236's bounded DNS resolution. They now call the refusal the default, name
+  the opt-in and its override, say that the numeric connection and TLS hostname
+  verification still apply under it, and describe the bounded lookup (at most
+  20 seconds, less under the client timeout, the acquisition deadline or the
+  connector deadline) and the refused duck-typed `session`. `docs/api/http.md`
+  first named urllib3's `NameResolutionError` as the failure at connection, a
+  type an `HttpClient` caller never sees: the client reports it as
+  `requests.ConnectionError`, or as `ValueError` once the acquisition deadline
+  has passed, as the page now says and a test of both pins. A contract
+  assertion pins that the private connection class differs from the public one
+  only in that flag. Documentation and tests only; runtime behavior is
+  unchanged. Affects readers of the API reference and contributors who change
+  the urllib3 constraint or lock. The rest of #231 (the process plugin default,
+  schema-aware `--set` coercion, the `engine_state.py` and `http_transport.py`
+  split and the Docker Python pin guard) is not carried, and the draft stays
+  open for it.
+- **Four hardening hunks carried from draft #232.** Rewritten as one commit
+  that credits Copilot as co-author:
+  - `safe_git_env` passed the scanner's `GITHUB_TOKEN`, `GH_TOKEN` and
+    `GITLAB_TOKEN` to every Git child process, which runs on untrusted
+    repository content, although Git never needs them: a clone authenticates
+    with its origin-scoped header. They are now removed like the report
+    identity key. Affects workers that export those variables; configured
+    connectors behave as before.
+  - `checkout_has_lfs_pointers` walked the clone by path names saved from
+    `scandir` and followed links in the checkout's own path, so a directory
+    replaced by a link between the listing and the open was walked outside the
+    checkout, and a file swapped after its `lstat` was read unchecked. It now
+    opens the root with `open_confined_directory` and each directory and file
+    relative to an open descriptor without following links, compares the
+    opened file with its listing before and after reading it, and gives
+    "unknown" (the clone "could not be inspected", incomplete) instead of a
+    clean result for a replaced entry, a directory nested more than 64 levels
+    deep, or a platform without descriptor-relative no-follow opens. Affects
+    `code.github` and `code.gitlab` clones; only such deep checkouts change
+    outcome in practice.
+  - Process-mode plugin workers, where neither `/proc/self/fd` nor `/dev/fd`
+    lists descriptors, made only descriptors 3 to 4095 non-inheritable, so a
+    worker with a higher descriptor could pass it to a program the plugin
+    starts. The range now runs to the open-file soft limit (`RLIMIT_NOFILE`,
+    else `SC_OPEN_MAX`), capped at 2^20. Linux and macOS list descriptors and
+    are unaffected.
+  - The Dockerfile comment and `docs/production.md` said to drop the Wolfi
+    Python pin once `python3.12 -c "import hashlib; hashlib.sha224"` passes;
+    that only looks the name up. The check is now `hashlib.sha224(b'')`, which
+    builds a hash.
+
+  Regression tests: provider token variables in `safe_git_env`; a link in the
+  checkout path, missing platform primitives, a directory replaced by a link or
+  by another real directory during the walk, a file replaced before it is
+  opened or changed in place while it is read, and descriptors closed at the
+  depth limit and the deadline; the descriptor-limit fallbacks. Each fails
+  without its code hunk, and the directory identity check and the after-read
+  comparison, which no carried test reached, each fail a test of their own
+  when removed alone; the comment fix has no test. Two of #232's tests are
+  adapted: the infinite soft limit uses the platform's `RLIM_INFINITY` (-1 is
+  not infinity on macOS, where the suite also runs), and a same-content file
+  replacement gets a distinct modification time, because within one coarse
+  clock tick a new file can reuse the old inode and every timestamp. Not
+  carried, and left in the open draft: the clone credential temporary file,
+  plugin worker key separation, triage `allow_custom_base_url`, the Python pin
+  CI probe, the parser fuzz tests and the `validate_url` `is not None` change.
+- **A spent DNS budget raced the resolver, and stalled lookups piled up
+  threads (#236).** `_resolve_bounded` started its worker before looking at
+  the budget, so once a connector deadline had passed each lookup still
+  started a thread and then waited zero seconds: a fast answer could win that
+  race and the lookup went ahead (its answer still checked), a slower one was
+  refused, so the outcome after the deadline depended on scheduling. Nothing
+  limited the abandoned workers either, and connectors that check one endpoint
+  per project or repository (Azure Foundry, remote repositories) keep calling
+  `validate_url` after their deadline: in a probe, 500 lookups against a
+  stalled resolver left 500 live threads. A spent (or NaN) budget now refuses
+  before any thread starts, and at most 32 workers (`_MAX_RESOLVER_THREADS`)
+  run at once; a lookup waits within its budget for a free slot and otherwise
+  fails closed. A slot is returned exactly once: by the worker when the
+  resolver returns, or by the lookup when its budget is spent once the slot
+  is taken or when its worker cannot be built or started. That release
+  covered only `RuntimeError`, so 32 thread starts failing with `MemoryError`
+  under memory pressure left no slot, and every later lookup in the process
+  refused; a one-shot guard keeps an interrupt that arrives after the thread
+  started from returning the slot twice. The clone pin lookup
+  (`resolve_destination`) shares the resolver and gains both bounds. Every
+  new refusal is the `TimeoutError` callers already turn into a
+  refusal (`ValueError` in the preflight, `NameResolutionError` at connection,
+  `DestinationUnresolved` for a clone), so no lookup goes ahead without an
+  answer to check. Affects scans whose resolver stalls or whose connector
+  deadline passes during collection, which were already incomplete.
+  Regression tests cover a spent budget with an instant resolver (no thread
+  and a refusal every time, directly, through `validate_url` and through
+  `resolve_destination`), 20 lookups against a stalled resolver with three
+  slots, a lookup that waits for a slot, slots freed once the resolver
+  returns, a worker thread that cannot be built or started (`RuntimeError`
+  and `MemoryError`), one interrupted after it started, and lookups whose
+  budget ends right after they take the only slot.
+- **The late-DNS test was flaky and left the post-resolution check
+  untested (#236).** The test gave the acquisition deadline 50 ms and the
+  resolver a 100 ms sleep, so a scheduler stall raised the guard's
+  `ValueError` instead of the expected `NameResolutionError` (45 of 300 runs
+  under CPU load). And since the bounded wait gives up on that resolver first,
+  deleting the check after resolution in `_new_conn`, which keeps a late
+  answer from opening a connection, failed no test. Two deterministic tests
+  replace it: a resolver that fires the acquisition timer's callback and then
+  answers, which only that check refuses, and a guard pinned at 50 ms with a
+  resolver blocked on an event, where a spy requires the DNS wait budget to be
+  exactly the guard's. Deleting either guard line in `_new_conn` now fails a
+  test. Tests only.
+- **The URL preflight ignored the client timeout and deadline (#236).**
+  `SECURITY.md` said the `validate_url` preflight applied the same bound as the
+  connection-time lookup, tightened by the client timeout and the acquisition
+  deadline, but only the worker's connector deadline tightened it: a request
+  from `HttpClient(timeout=5)`, or from a client with its own `deadline` (LLM
+  triage sets its budget that way), waited up to 20 seconds on a stalled
+  resolver before its connection-time lookup. `validate_url` gains a
+  keyword-only `dns_budget`, and `HttpClient` passes its timeout, cut to its
+  remaining deadline, for the request, redirect and Link and OData pagination
+  preflights. Other callers (Git clone checks, SDK, MCP registry and JWKS
+  preflights) and the clone pin lookup still get only the connector deadline;
+  `SECURITY.md`, `docs/production.md`, `docs/api/http.md` and the LLM triage
+  guide (which still called the resolver unbounded) now say so, and that one
+  request can wait on DNS twice. Affects `HttpClient` requests whose resolver
+  stalls. Regression tests spy on the budget of every preflight with and
+  without a deadline, end a stalled preflight at the client timeout and at
+  the deadline, and pin the client timeout at connection, which no test
+  covered.
+- **A Black Duck service without a Bridge CLI pin skipped the job (#236).**
+  #236 put `vars.BRIDGECLI_DOWNLOAD_VERSION != ''` in the job's `if:`, so a
+  configured service without the pin skipped the job, and a skipped job
+  reports success: a misconfigured integration looked like an unconfigured
+  one. The job is gated on the service variables alone again, and its first
+  step, before checkout, fails with an `::error::` unless the variable holds
+  an `x.y.z` version (an empty, blank or `latest` value would let the action
+  download the vendor's current CLI). The pin fixes a version, not content:
+  the action downloads that version's bundle from `repo.blackduck.com` over
+  HTTPS with no checksum check, and tools the Bridge CLI fetches for a scan are
+  not covered. The workflow comment, the workflow README and the #236 entry
+  below now say so instead of claiming that unpinned vendor code can no longer
+  run. Affects maintainers who enable Black Duck. Policy tests check that the
+  job requires and passes the pin, and run the committed check against empty,
+  blank, padded, partial, pre-release and valid values.
+- **Names importable from `filesystem.py` before the helper move were dropped
+  (#236).** The move left 40 names that
+  `shadowscan.connectors.code.filesystem` exposed on main unimportable from
+  it, among them `NegativeContext`, `negative_context`, the `*_WEIGHT_SCALE`
+  constants and the docs, example and generated path predicates; main's own
+  `tests/unit/test_negative_context.py` no longer imported, while ADR-005 and
+  the #236 entry said the moved names were re-imported. `filesystem.py` now
+  re-imports each of them from its defining module, the names it had only
+  imported for itself (`ast`, `tomllib`, `has_template_markers`, the CI
+  pipeline name sets and the marked JSONC loader) included, so the module's
+  names match main again. Patch such a name in its defining module: rebinding
+  it in `filesystem.py` does not change the helpers. Affects plugins and
+  scripts that import these names from `filesystem`. A regression test pins
+  each name to its defining module's object.
+
+### Cap runtime dep ranges at the next major (October 15)
+
+- `pyproject.toml` now caps `click`, `rich`, `PyYAML`, `requests` and
+  `PyJWT[crypto]` at the next major, and does the same for the optional
+  cloud SDKs (`boto3`, `google-auth`, `azure-identity`, `oci`) in `aws`,
+  `gcp`, `azure`, `oci` and the aggregate `cloud` extra. `urllib3` already
+  carried `<3`. `regex` stays uncapped: it is calendar-versioned with no
+  major to cap, and a year cap would shut out every later release,
+  security fixes included.
+- The caps protect the unlocked `pip install NexusShadowScan` path from
+  silently resolving a user into an untested upstream major; deployment
+  and CI continue to install the hash-locked `requirements.lock`, so
+  the reviewed version set does not change.
+- All current `requirements.lock` pins sit inside the new caps (click
+  8.5.0, rich 15.0.0, PyYAML 6.0.3, requests 2.34.2, PyJWT 2.15.0,
+  regex 2026.9.10, boto3 1.43.101, google-auth 2.58.0, azure-identity
+  1.25.3, oci 2.187.0); the lock does not need regeneration.
+
+### Per-connector private-origin grants, block-scalar opaque secrets, threat model (October 15)
+
+- **Redaction (credential policy).** A YAML block scalar under a name that
+  carries a credential only when its value is opaque — bare `key`, as opposed
+  to `password` or `api_key`, which always do — is now withheld when the block
+  holds an opaque value. `_redact_yaml_multiline_values` gated on the
+  always-sensitive name test alone, so `key: |` over a Kubernetes secret's
+  base64 blob kept its text while the single-line `key: <opaque>` beside it was
+  withheld by the assignment pass; only a value with a recognizable format
+  (`sk-`, a PEM header) was caught in the block form. The block's lines
+  without whitespace are joined without a separator at each indentation, and
+  each line is read on its own (see Integration review fixes above), with the
+  same `_credential_literal` test the single-line pass uses, so a wrapped base64
+  blob is tested as the one value it encodes, while a path, a sentence, a
+  placeholder and a name that does not name a credential (`data: |`) keep their
+  text. Regression tests cover every block marker, the quoted spellings of the
+  key, the wrapped form and each value that must survive.
+- **Egress policy.** Every connector now accepts `allow_private_origin`,
+  lifting the loopback, link-local, private and cloud-metadata refusal for that
+  connector alone. Reaching one internal gateway previously required
+  `options.allow_private_origin`, which applies to every connector in the
+  configuration, so a repository, endpoint or cloud connector in the same scan
+  also lost the refusal. A connector that sets the key uses its own value and
+  one that does not inherits the scan-wide setting, so a connector-level `false`
+  keeps a connector public under a scan-wide grant; an explicit
+  `--deny-private-origin` overrides both (see Integration review fixes above).
+  The key is normalised like the other connector switches, so an interpolated
+  `"false"` cannot enable it, and a non-boolean fails closed without echoing
+  its value. The engine reads it
+  for both the connector lookup, which imports an approved plugin, and the
+  collection it wraps.
+- **Threat model.** `docs/security/threat-model.md` consolidates the trust
+  boundaries that `AGENTS.md` holds for contributors and the egress, limit and
+  fail-closed notes spread through `docs/production.md` into one page per
+  boundary, naming the control and the module that enforces it, with the
+  residual risks stated plainly: best-effort redaction, a plugin that is not a
+  sandbox, external transports outside the HTTPS client's policy, offline
+  replay that is not live acceptance, author-written corpora and the absence of
+  independent review.
+
+### Filesystem connector helpers move into bounded modules (October 15)
+
+- The module-level helpers of `connectors/code/filesystem.py` (6,249 lines)
+  moved, verbatim, into five modules beside it: `path_context.py` (test,
+  documentation, example, generated and CI-pipeline paths and their
+  discounts), `project_evidence.py` (`_ProjectEvidence`, corroboration and
+  weak mentions), `model_identifiers.py` (model-id literal recognition),
+  `source_text.py` (offset-preserving text shaping and the structured
+  credential context for excerpt redaction) and `excerpts.py`. The
+  connector class is unchanged and `filesystem.py` (now about 5,200 lines)
+  re-imports every name that was importable from it before the move,
+  including those it no longer uses (see Integration review fixes above).
+  `_LazyExcerpt` takes the connector's redacted-lines reader instead of the
+  connector, which removes the helper module's dependency on the class.
+- No behaviour change: with a fixed `SHADOWSCAN_IDENTITY_KEY`, the offline
+  demo report before and after the move is identical apart from timestamps
+  and `collection_scope.fingerprint`, which covers the scanner source digest
+  by design; the evaluation corpora and the full test suite are unchanged.
+  ADR-005 records this as continuing its beside-the-class pattern; its four
+  collaborator-class moves remain open.
+
+### Bounded DNS resolution and a typed HttpClient session seam (October 15)
+
+- `shadowscan.utils.http` now resolves names in a bounded worker
+  (`_resolve_bounded`): `socket.getaddrinfo` has no timeout of its own, so a
+  stalled system resolver could previously hold a connector worker past every
+  cooperative deadline check. Each wait is at most 20 seconds
+  (`_RESOLVE_TIMEOUT`): at connection it is tightened by the client timeout
+  and the acquisition deadline, and in the `validate_url` preflight by the
+  connector deadline and, for `HttpClient`, by the client timeout and
+  deadline (see Integration review fixes above; as first merged, the
+  preflight followed the connector deadline alone). On expiry the request
+  fails closed (`NameResolutionError` at connection, `ValueError` in the
+  preflight, so transports such as git that rely on the preflight stop too)
+  and the abandoned worker's late answer is discarded, never connected to. A
+  name that does not resolve (NXDOMAIN) keeps its existing meaning at both
+  sites. The late-DNS regression tests in
+  `tests/unit/test_http_response_integrity.py` pin the DNS wait budget to the
+  acquisition deadline and refuse an answer that arrives after it (as first
+  merged, one timing-dependent test stood for both and asserted no timing),
+  and `tests/unit/test_http_dns_deadline.py` covers the stalled-resolver,
+  expired-deadline, late-answer, NXDOMAIN, client-timeout, client-deadline
+  and worker-cap cases.
+  SECURITY.md and the production resource-limit notes describe the bounded
+  wait; a process/job supervisor is still the only hard execution limit.
+- `HttpClient` refuses a duck-typed `session` at construction with
+  `TypeError`: the proxy, adapter-identity and verify checks assume requests
+  semantics, and a stand-in that is neither a `requests.Session` nor a
+  `unittest.mock` double (the documented test seam, which carries no real
+  transport) would previously have sent requests with those checks silently
+  skipped.
+
+### Black Duck job requires a reviewed Bridge CLI pin (October 15)
+
+- The optional Black Duck workflow job now also requires the repository
+  variable `BRIDGECLI_DOWNLOAD_VERSION` and passes it to the action as
+  `bridgecli_download_version` (an input verified against the pinned
+  action revision). The wrapper action was already pinned by commit SHA,
+  but at run time it downloads the Bridge CLI, and the committed
+  configuration would have fetched the vendor's current, unreviewed CLI
+  the moment a service variable was set. Configuring a service without
+  an `x.y.z` pin now fails the job at its first step, before checkout (as
+  first merged, it skipped the job, which reports success; see Integration
+  review fixes above). The variable pins the Bridge CLI by version, not by
+  content: the action downloads that version's bundle from
+  `repo.blackduck.com` over HTTPS with no checksum check, and tools the
+  Bridge CLI fetches for a scan are not covered. The workflow README
+  documents the second variable.
+
+### Review hardening: redaction, clone mode, output paths, SARIF and diagnostics (October 15)
+
+- Redaction withholds JWTs whose header JSON is written with whitespace and so
+  does not encode to `eyJ` (`IHsi`, `eyAi`, `ewo`...); PyJWT and the
+  identity.jwt decoder accept them, and a nested one in a claim was persisted
+  verbatim. A second, budgeted reading accepts a dotted run when its first
+  segment decodes to a JSON object with an `alg` member. `tools/check_secrets.py`
+  and the AI review sanitizer recognize such a header by its base64url shape,
+  with any JSON whitespace before or after its `{` (`ewki`, `ew0K`, `ICB7`,
+  `DQp7`...); unlike redaction they do not decode it or require `alg`, and they
+  report a compact `eyJ` header only with an `eyJ` payload.
+- Clone mode requires Git 2.45 (`MINIMUM_CLONE_GIT`): the clone's metadata
+  reads pass `--no-lazy-fetch`, which older Git rejects, so every clone on 2.32
+  to 2.44 ended incomplete without provenance while the docs promised a scan.
+  The three doc passages are corrected and the version tests assert 2.43 and
+  2.44 fall back to API mode.
+- A provider clone URL must name the listed repository, not just the API
+  origin; GitLab under a relative URL root is supported.
+- `write_private_text` refuses a path through a directory link owned by another
+  user and creates and renames the temporary file relative to the opened real
+  directory, matching the documented "never through a symbolic link" claim,
+  which now states that rule. Long legal output names no longer fail.
+- SARIF artifact locations resolve `.`/`..`, drop locations that climb above
+  the root or name a network path, cap `startLine` at the 32-bit limit and
+  escape lone surrogates instead of failing the render.
+- identity.jwt refuses `expected_issuer`/`allowed_algorithms` without
+  `jwks_url`, classifies tokens with a non-string `kid` or a `crit` header as
+  unverified instead of dropping them, and bounds agent claim values and claim
+  names.
+- Configuration diagnostics quote an unknown key or connector name only when it
+  is a lowercase name of at most 40 characters with at most three digits, so an
+  unprefixed token pasted as a key is not echoed; an unreadable, oversized or
+  special configuration file gets a read diagnostic; `llm_triage.provider` and
+  `min_level` of the wrong type raise `TriageConfigError`.
+- `terminal_text` and saved reports escape every Unicode format character, the
+  variation selectors and other blank characters.
+
+### Security hardening: plugin isolation, pre-clone DNS check, exit watchdog (October 15)
+
+- **Plugin process isolation by default.** `plugin_execution` now defaults
+  to `process` so third-party plugins run in isolated child processes
+  instead of sharing the scanner's address space.  Operators can still set
+  `plugin_execution: thread` in configuration to restore the previous
+  behavior. Some plugins and embedding scripts now fail closed (exit 3) under
+  the new default; the integration review fixes above list them.
+- **Pre-clone DNS validation.** `validate_clone_destination()` resolved the
+  clone URL hostname and rejected private, loopback, link-local, and
+  cloud-metadata addresses before handing the URL to git. It did not pin Git
+  to those addresses or narrow the gap to Git's own lookup, and it repeated
+  `validate_url`'s check; the integration review fixes above replace it with
+  `clone_pins()`, which does pin Git.
+- **Bounded exit watchdog for abandoned workers.** When the engine detects
+  timed-out connector workers and no job deadline is set (see the integration
+  review fixes above), a 30-second daemon-thread watchdog arms
+  automatically so the CLI process cannot hang indefinitely during report
+  emission or clone cleanup.  The watchdog calls `os._exit()` as a last
+  resort if the normal exit path blocks; the report may then be missing or
+  truncated.
+
+### Collection completeness and registry assurance (October 15)
+
+- Make scenarios require a valid blueprint and an explicit flow array. Invalid
+  detail responses mark collection incomplete instead of reading as an empty
+  workflow. Zapier validates pagination metadata before accepting the end of
+  an inventory. Valid empty workflows and terminal pages remain supported.
+- CODEOWNERS reads stay relative to the directory opened for source collection.
+  A root replacement detected before ownership lookup leaves the scan incomplete;
+  later replacements cannot redirect the anchored ownership reads. A candidate
+  below a file named like its directory (`docs`, `.github`) is absent; a link in
+  its path is not followed and leaves ownership incomplete.
+- A gateway caller whose identity is operator-asserted, unverified or missing
+  authenticated assurance remains shadow when an inventory is supplied. Exact
+  card bindings are retained as review candidates; they no longer confer an
+  owner, declared governance or registration risk credit. Rescan gateway logs
+  and establish fresh comparison baselines after upgrading.
+- CloudTrail (`cloud.aws`) and Cloud Audit Log (`cloud.gcp`) callers record
+  `metadata.caller_identity_assurance`: `provider-authenticated-field` for the
+  principal the provider authenticated, so exact bindings keep approving them
+  (without the `registry-identity-unverified` tag earlier scans added), and
+  `unverified` for the `unknown` caller of events without a principal, which is
+  a review candidate.
+
+### Medium-severity review corrections
+
+- Generic SaaS inventory retains whole-record credential context when selecting
+  report and matching fields. Known credentials are removed before splitting or
+  shortening values, and cannot establish product or permission evidence;
+  credential context is never retained in findings. Every value under a
+  credential name is learned however it looks (`Abcd1234`, `12345678`,
+  `MyTestPassword99`, `prod-secret-here-7Hq2`), except a placeholder as the
+  whole value (`none`, `****`, `xxxxxxxx`, `changeme`, `your_secret`), which
+  withholds nothing, and a value shorter than eight characters, which would
+  withhold every field containing it: it withholds only a field equal to it,
+  and nothing when it is a flag (`N`, `-`, `Yes`, `N/A`). A short credential
+  inside a longer field (`ChatGPT hunter2`) is still shown. An earlier
+  revision of this change also left out every value the placeholder heuristic
+  (`looks_like_placeholder`) matches, such as one containing `test`, `demo` or
+  `here`, so a copy of such a credential in the name, owner, status or ID was
+  printed in a complete scan; regenerate reports made with it. A name withheld
+  entirely by a credential leaves the scan incomplete instead of silently
+  omitting the app.
+- Generic SaaS findings whose resource a credential redacts take their ID from
+  the redacted resource and a keyed pseudonym of the raw one, not a public
+  digest that confirmed guessed credentials. Their IDs change and are scan-local
+  (`metadata.identity_scope: run`) unless `SHADOWSCAN_IDENTITY_KEY` is set;
+  distinct raw resources keep distinct IDs. `diff` names these apps beside
+  gateway callers when it asks for the key.
+- Zapier and Workato reject provider error envelopes and malformed collections
+  even beside empty result arrays: that page is omitted. A missing or malformed
+  Zapier continuation keeps the page's Zaps and marks coverage incomplete.
+  Earlier valid pages survive with incomplete coverage.
+- Teams combines catalog and installed-version definitions with version, bot,
+  installation and team provenance. Installations of one definition are counted
+  (`installation_count`, `team_count`) with a sample of at most 20 teams, so the
+  finding stays bounded however many teams install the app. At most 20 definition
+  observations, versions and bot IDs are listed, in sorted order, and the rest
+  are counted (`definition_observations_omitted`, `versions_omitted`,
+  `bot_ids_omitted`): 3,000 installations of distinct definitions made a 953 KB
+  finding, and at 8,000 it was omitted and the scan incomplete. Permissions and
+  conflict detection read every observation. It reports requested
+  RSC permissions, not verified grants; contradictory observations of one
+  definition mark coverage incomplete. Scalar version/bot fields are populated
+  only when unambiguous; otherwise they are `null`.
+- JavaScript/TypeScript destructuring declarations invalidate shadowed SDK
+  constructor bindings, including aliases, nested patterns, defaults and rest
+  bindings. Property keys, initializer references and members named like a
+  declaration keyword (`options.const`) do not declare bindings.
+- Discovery benchmark comparisons reject newly unavailable runs independently
+  of F1, require every selected repository in both metric sets, and never label
+  failed or incomplete negative scans clean. Adapter-approved nonzero exits
+  remain successful runs; partial facts remain diagnostic evidence.
+- Added offline fixtures and regression tests for all five corrections. These
+  automated checks do not establish live tenant acceptance or field accuracy.
+
+### Review-driven hardening: redaction, SSRF, parser cost, detection coverage (October 15)
+
+- **Credential destinations.** `validate_url` rejects a backslash anywhere in the URL: a host
+  such as `evil.example\.services.ai.azure.com` reads as a Foundry host to `urlsplit` but as
+  `evil.example` to the HTTP transport. The Azure Foundry bearer-token endpoint is now matched
+  against a full-host regex with a canonical-netloc check instead of a hostname suffix.
+- **Redaction.** Amazon Bedrock API keys (`ABSK…` and `bedrock-api-key-…`), Zapier MCP server
+  URLs whose path is the credential (`mcp.zapier.com/api/mcp/s/…`, `actions.zapier.com/mcp/…`),
+  and `user:password` in URLs whose scheme contains an underscore (SQLAlchemy dialects such as
+  `oracle+cx_oracle://`) are now withheld. A handful of credential environment-variable names
+  whose last word is not a credential word (`AWS_BEARER_TOKEN_BEDROCK`, `LOBE_ACCESS_CODE`,
+  `FLOWISE_SECRETKEY_OVERWRITE`, `MODAL_TOKEN_ID`, `ZAPIER_MCP_URL`) are covered, and a test
+  derives the required coverage from the signature packs. Source excerpts, semantic
+  configuration metadata and the provider text connectors shorten for a report (agent,
+  knowledge-base and flow descriptions, instructions and system prompts, welcome messages,
+  trigger conditions, dynamic-group matching rules and policy statements from the AWS, Azure,
+  GCP, OCI, Entra, Make, Salesforce and ServiceNow connectors) are redacted before they are
+  shortened, so a cut can no longer separate a credential from the context that identifies it.
+  Lists of names (scopes, permissions, variable names) are still cut first. A provider text
+  field that is not a string (a list or a number in an AWS, Azure, GCP, OCI, Salesforce or
+  ServiceNow description, instruction, welcome message or trigger condition) still rejects its
+  record as malformed, which leaves the scan incomplete, as when the text was cut first; it
+  never reaches the report whole.
+- **LLM triage.** The redacted summary sent to the model now withholds e-mail addresses and IP
+  addresses wherever they appear in a title or evidence description, and covers more
+  identity-bearing metadata keys, matching the privacy the documentation describes.
+- **Bounded parsing.** The runtime-process connector no longer runs a backtracking package regex
+  on an over-long argument (an unprivileged local process or one offline row could otherwise
+  stall every connector while the GIL is held), and the Python source tokenizer charges the
+  per-input matching budget between tokens, so a single very long line fails closed on CPython
+  3.12.0–3.12.3 instead of burning a core. A source excerpt judges random-looking literals before
+  its cut by reading only the part it shows and a 256-character lookahead, not the whole line:
+  a minified bundle line with a few dozen credential-shaped tokens no longer exhausts the
+  matching budget and leaves the scan incomplete. A literal that runs past the part read and is
+  withheld ends the excerpt.
+- **Detection coverage.** MCP client configurations and CloudFormation/ARM JSON templates are
+  recognised from their parsed structure rather than a byte-prefix window, so leading padding
+  can no longer hide a server table or an AI resource on a complete scan. The MCP tool-poisoning
+  rules read the same window the instruction audit inspects. The Kubernetes connector inspects
+  `initContainers` (native sidecars) and `ephemeralContainers`; a privileged one adds the
+  `privileged-pod` tag, and a null one (an empty field as Helm renders it) is absent, not
+  malformed. An endpoint record value past the sanitizer's safety limits is withheld with one
+  fixed-text warning that marks the scan incomplete, instead of aborting the connector.
+- **Fleet and reporters.** A fleet merge drops any advisory `llm_triage` block a source carries,
+  so one source cannot plant a verdict on another's finding. Out-of-range report timestamps are
+  omitted from OCSF, CycloneDX and SARIF output instead of aborting the whole report.
+- **Engine, CLI and plugins.** Every plugin finding is attributed to the plugin, in thread and
+  process mode, with the id the plugin's own name and the finding's resource give, whatever name
+  it was built under or id it was given (`id=`, `dataclasses.replace` of a finding built under
+  another name), so a plugin can neither report under a built-in connector's name nor take the
+  id of that connector's finding for the same resource, which merged the two. Plugin worker
+  processes are started with `PYTHONSAFEPATH` so a scanned checkout in the working directory
+  cannot shadow `multiprocessing`; it is set only while a worker starts, and the previous
+  environment is restored, so programs the scanner or an embedding application starts later keep
+  their script directory on `sys.path`. The changed-file git diff passes
+  `--no-ext-diff`/`--no-textconv`. Plugin names must be lowercase ASCII `namespace.provider`, so
+  a confusable cannot read as a built-in; a plugin whose name has an uppercase letter or an
+  underscore no longer loads. The `urllib3` logger is pinned to ERROR so a malformed upstream
+  response cannot log a request URL. The `inventory check` and `signatures list` commands strip
+  terminal control sequences from untrusted fields.
+
+### Runtime identity, collection completeness and semantic fallback (October 15)
+
+- Runtime process classification now reads the executed target of supported
+  launchers, rather than treating later application arguments or package-source
+  options as executed AI tools. A package runner an interpreter runs
+  (`node /usr/local/bin/npx -y pkg`, `node.exe ...\npx-cli.js`,
+  `python3 /usr/bin/pipx run ...`, `python -m pipx`) is read as that runner, and
+  the command line's first argument is read when the executable is only the
+  interpreter (npm's `npm exec pkg` process title on node), split into words
+  when it is one argument with spaces, as a live `/proc` shows a title. Launch
+  options are read with each launcher's grammar (`--name=value`, Deno permission
+  flags, `node --inspect`, `npx --prefer-offline`, `uv run --frozen`,
+  `uv run -m`, `python -P` and combined flags such as `-Im`); launches with
+  options the grammar does not recognize are not reported. A command line cut by
+  an argument/byte bound marks coverage incomplete, even when the retained
+  prefix produces no finding, when the dropped arguments could change what runs
+  (none left, or a launcher's target unread); a long command line of another
+  program, or one whose tool was read, is classified from its leading arguments,
+  and one counted warning reports them. A row an export marks
+  `argv_truncated: true` loses its final argument, which the cut may have
+  shortened, as a live command line over the byte limit does: a launcher target
+  in it is undecided (coverage incomplete) rather than classified as complete or
+  reported under a cut name (`server-gi`). Host and user identities are retained
+  in full within validated input limits, so different devices or users cannot
+  merge through a shortened display prefix.
+- GitHub App installation inventories validate declared totals against unique
+  returned installation IDs, across all pages of a live listing or of an offline
+  export file (one page envelope per line is accepted). Inconsistent or
+  malformed count information marks coverage incomplete while retaining valid
+  observations; the existing HTTP origin, pagination and response-size
+  protections remain in effect.
+- Python source and notebook cells that the scanner's interpreter cannot parse
+  retain lexical observations but mark semantic analysis incomplete. Unparsed
+  ranges cannot acquire agent classification or execution capabilities from
+  semantic claims that were not established; independently parsed neighboring
+  source remains usable. In a test path the scan discounts, source that does not
+  parse only warns unless `strict_coverage` is set. Notebook cells declared
+  another language (under `%%bash`, `%%sql`, `%%writefile requirements.txt` and
+  similar cell magics, or in an R or Julia notebook) are still parsed, since the
+  repository writes the declaration and Jupyter starts a kernel by its name: a
+  cell that parses as Python is bound, and one that does not keeps lexical
+  evidence only, without a gap. A kernel named like a Python kernel (`python3`)
+  makes a Python notebook whatever its `language` field says, and `%%script`
+  with a Python or IPython interpreter (`%%script env python3`,
+  `%%script ipython`) holds Python. Python 2 modules and templates stay a gap
+  until listed in `exclude`.
+- Rescan affected inputs and rebuild comparison baselines after upgrading.
+  Long runtime identities now produce their full resource bindings and may
+  change finding IDs. Review and regenerate affected inventory cards instead
+  of treating a missing old, shortened resource as resolved. These changes are
+  verified with authored regression fixtures; they do not establish independent
+  field accuracy or live tenant acceptance.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

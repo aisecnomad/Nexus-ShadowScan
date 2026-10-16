@@ -171,6 +171,48 @@ def test_env_file_and_cloudformation():
     assert ("iac", "AWS::Bedrock::Agent") in {(a.kind, a.value) for a in res.artifacts}
 
 
+def _cfn_json(include_version: bool) -> str:
+    template: dict = {
+        "Metadata": {"notes": "x" * 8000},  # pushes any version key past a byte-prefix window
+        "Parameters": {f"p{i}": {"Type": "String"} for i in range(50)},
+        "Resources": {"Agent": {"Type": "AWS::Bedrock::Agent", "Properties": {"AgentName": "ops"}}},
+    }
+    if include_version:
+        template = {"AWSTemplateFormatVersion": "2010-09-09", **template}
+    # Real templates are pretty-printed; indent keeps "Type" at a line start for extraction
+    # while the Metadata block still pushes any version key well past the old 4000-byte window.
+    return json.dumps(template, indent=2)
+
+
+@pytest.mark.parametrize("include_version", [True, False])
+def test_cloudformation_json_is_recognized_from_its_structure(include_version):
+    """Regression (October 15 review M3): .json CloudFormation was sniffed from text[:4000], so a
+    leading Metadata/Parameters block (or an omitted optional version) hid AWS resources."""
+    text = _cfn_json(include_version)
+    result = parse_manifest("template.json", text, document=json.loads(text))
+    assert result is not None
+    assert ("iac", "AWS::Bedrock::Agent") in {(a.kind, a.value) for a in result.artifacts}
+
+
+def test_arm_json_is_recognized_from_its_schema():
+    text = json.dumps(
+        {
+            "Metadata": {"notes": "x" * 8000},
+            "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+            "contentVersion": "1.0.0.0",
+            "resources": [{"type": "Microsoft.MachineLearningServices/workspaces", "name": "ml"}],
+        },
+        indent=2,
+    )
+    result = parse_manifest("main.json", text, document=json.loads(text))
+    assert result is not None and any(a.kind == "iac" for a in result.artifacts)
+
+
+def test_ordinary_json_with_a_resources_key_is_not_cloudformation():
+    text = json.dumps({"Resources": {"team": {"Type": "internal", "members": 3}}})
+    assert parse_manifest("data.json", text, document=json.loads(text)) is None
+
+
 def test_non_manifest_returns_none():
     assert parse_manifest("src/app.py", "print('hi')") is None
 

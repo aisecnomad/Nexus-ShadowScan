@@ -216,6 +216,39 @@ def _positive_quantity(value: Any) -> bool | None:
     return None
 
 
+# A pod runs regular containers, init containers (a native sidecar is one with
+# restartPolicy: Always) and debug ephemeral containers; all three share the container
+# shape and can carry a model image, a GPU request or provider configuration.
+_CONTAINER_FIELDS = ("containers", "initContainers", "ephemeralContainers")
+# The optional container fields: a null one (common in Helm-rendered YAML, `initContainers:`
+# with no entries) is absent, not malformed. Every pod has `containers`.
+_OPTIONAL_CONTAINER_FIELDS = frozenset({"initContainers", "ephemeralContainers"})
+
+
+def _malformed_container_fields(pod_spec: dict[str, Any]) -> bool:
+    """Whether a container field of a pod spec is present but not a list (a null optional one is absent)."""
+    return any(
+        field in pod_spec
+        and not isinstance(pod_spec[field], list)
+        and not (pod_spec[field] is None and field in _OPTIONAL_CONTAINER_FIELDS)
+        for field in _CONTAINER_FIELDS
+    )
+
+
+def _pod_containers(pod_spec: dict[str, Any]) -> list[Any]:
+    """Every container entry of a pod spec across the three container fields, bounded.
+
+    A field that is not a list (a null optional field, or one ``_malformed_container_fields``
+    reports) contributes nothing.
+    """
+    entries: list[Any] = []
+    for field in _CONTAINER_FIELDS:
+        value = pod_spec.get(field)
+        if isinstance(value, list):
+            entries.extend(value)
+    return entries[:100]
+
+
 def _workload_images(spec: dict[str, Any]) -> list[str]:
     template = spec.get("template", spec)
     if not isinstance(template, dict):
@@ -223,12 +256,9 @@ def _workload_images(spec: dict[str, Any]) -> list[str]:
     pod_spec = template.get("spec", template)
     if not isinstance(pod_spec, dict):
         return []
-    containers = pod_spec.get("containers", [])
-    if not isinstance(containers, list):
-        return []
     return [
         image[:300]
-        for container in containers[:100]
+        for container in _pod_containers(pod_spec)
         if isinstance(container, dict) and isinstance((image := container.get("image")), str) and image
     ]
 
@@ -383,7 +413,7 @@ class KubernetesConnector(BaseConnector):
                 else {}
             )
             pod_spec = pod_spec_value if isinstance(pod_spec_value, dict) else {}
-            if "containers" in pod_spec and not isinstance(pod_spec["containers"], list):
+            if _malformed_container_fields(pod_spec):
                 self.ctx.warn(f"{self.name}: workload has malformed containers")
                 continue
             if "imagePullSecrets" in pod_spec and not isinstance(pod_spec["imagePullSecrets"], list):
@@ -394,13 +424,14 @@ class KubernetesConnector(BaseConnector):
             pod_security = pod_spec.get("securityContext")
             if isinstance(pod_security, dict) and pod_security.get("privileged") is True:
                 tags.append("privileged-pod")
-            containers = pod_spec.get("containers", [])
+            containers = _pod_containers(pod_spec)
             model_argument = False
             gpu_workload = False
             if isinstance(containers, list):
-                if len(containers) > 100:
+                total = sum(len(pod_spec[f]) for f in _CONTAINER_FIELDS if isinstance(pod_spec.get(f), list))
+                if total > 100:
                     self.ctx.warn(f"{self.name}: container limit reached")
-                for container in containers[:100]:
+                for container in containers:
                     if not isinstance(container, dict):
                         self.ctx.warn(f"{self.name}: malformed container")
                         continue

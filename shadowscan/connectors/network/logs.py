@@ -554,6 +554,11 @@ class NetworkLogConnector(BaseConnector, _NoDump):
                 directive, _, value = line.partition(separator if line.startswith("#fields") else " ")
                 if line.startswith("#separator"):
                     separator = _zeek_escape(line.split(" ", 1)[1]) if " " in line else "\t"
+                    if not separator:
+                        # str.split("") raises ValueError; one malformed header must not
+                        # abort the connector and lose the other log files. Fail this file closed.
+                        self.ctx.warn(f"network.logs: {source.name}: empty Zeek #separator", incomplete=True)
+                        return
                 elif line.startswith("#set_separator"):
                     set_separator = line.split(separator, 1)[1] if separator in line else ","
                 elif directive == "#fields":

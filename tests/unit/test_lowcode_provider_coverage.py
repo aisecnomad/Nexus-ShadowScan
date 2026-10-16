@@ -6,16 +6,16 @@ import json
 from unittest.mock import Mock
 
 import pytest
-from requests import ConnectionError
+from requests import ConnectionError, Response
 
-from shadowscan.connectors.base import ConnectorContext
+from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.lowcode import automation, salesforce, servicenow
 from shadowscan.connectors.lowcode.automation import MakeConnector, N8nConnector
 from shadowscan.connectors.lowcode.salesforce import SalesforceConnector
 from shadowscan.connectors.lowcode.servicenow import ServiceNowConnector
 from shadowscan.models import Kind, ScanStats
 from shadowscan.signatures.matcher import MatchTimeoutError
-from shadowscan.utils.http import HttpError
+from shadowscan.utils.http import HttpClient, HttpError
 
 
 def _live(index, cls, responses, **config):
@@ -24,6 +24,204 @@ def _live(index, cls, responses, **config):
     connector.http = Mock()
     connector.http.get_json.side_effect = responses
     return connector
+
+
+_CUSTOM_AUTOMATION = [
+    (automation.ZapierConnector, "zapier", "data"),
+    (automation.WorkatoConnector, "workato", "items"),
+]
+
+
+@pytest.fixture
+def automation_review_pages(fixtures):
+    return json.loads((fixtures / "lowcode_review_pages.json").read_text(encoding="utf-8"))
+
+
+def _automation_live(index, monkeypatch, cls, responses, **config):
+    http = Mock()
+    http.get_json.side_effect = responses
+    monkeypatch.setattr(automation, "HttpClient", Mock(return_value=http))
+    connector = cls(ConnectorContext(index=index, config={"token": "test", **config}))
+    return connector, http
+
+
+@pytest.mark.parametrize("cls,platform,key", _CUSTOM_AUTOMATION)
+@pytest.mark.parametrize("populated", [False, True])
+@pytest.mark.parametrize(
+    "error",
+    [
+        {"error": "opaque-provider-diagnostic"},
+        {"errors": [{"message": "opaque-provider-diagnostic"}]},
+        {"ok": False},
+        {"error": None},
+    ],
+)
+def test_automation_live_error_envelope_is_rejected_before_any_records(
+    index, monkeypatch, automation_review_pages, cls, platform, key, populated, error
+):
+    page = automation_review_pages[platform]
+    if not populated:
+        page[key] = []
+    connector, http = _automation_live(index, monkeypatch, cls, [{**page, **error}])
+    assert connector.run() == []
+    assert connector.ctx.stats.incomplete and connector.ctx.stats.errors
+    assert connector.ctx.stats.objects_examined == 0
+    assert http.get_json.call_count == 1
+    assert "opaque-provider-diagnostic" not in str(connector.ctx.stats)
+
+
+@pytest.mark.parametrize("cls,platform,key", _CUSTOM_AUTOMATION)
+@pytest.mark.parametrize("populated", [False, True])
+def test_automation_live_valid_page_preserves_findings_and_completeness(
+    index, monkeypatch, automation_review_pages, cls, platform, key, populated
+):
+    page = automation_review_pages[platform]
+    if not populated:
+        page[key] = []
+    connector, http = _automation_live(index, monkeypatch, cls, [page])
+    findings = connector.run()
+    assert len(findings) == int(populated)
+    assert not connector.ctx.stats.incomplete and not connector.ctx.stats.errors
+    assert http.get_json.call_count == 1
+
+
+@pytest.mark.parametrize("cls,platform,key", _CUSTOM_AUTOMATION)
+@pytest.mark.parametrize("items", [None, False, 0, {}, "invalid", [None], [{"id": "1"}, "invalid"]])
+def test_automation_live_collection_shape_is_validated_before_yielding(
+    index, monkeypatch, cls, platform, key, items
+):
+    connector, _ = _automation_live(index, monkeypatch, cls, [{key: items}])
+    assert connector.run() == []
+    assert connector.ctx.stats.incomplete and connector.ctx.stats.objects_examined == 0
+
+
+@pytest.mark.parametrize("cls,platform,key", _CUSTOM_AUTOMATION)
+def test_automation_live_missing_collection_is_incomplete(index, monkeypatch, cls, platform, key):
+    connector, _ = _automation_live(index, monkeypatch, cls, [{}])
+    assert connector.run() == []
+    assert connector.ctx.stats.incomplete
+
+
+# A page whose envelope and collection are valid keeps its records; its
+# continuation only decides whether every page was collected. An error
+# envelope or a malformed collection still rejects the whole page (above).
+@pytest.mark.parametrize("populated", [False, True])
+@pytest.mark.parametrize("next_url", [False, 0, [], {}, True, 1, " \t"])
+def test_zapier_live_invalid_continuation_keeps_page_but_is_incomplete(
+    index, monkeypatch, automation_review_pages, populated, next_url
+):
+    page = automation_review_pages["zapier"]
+    if not populated:
+        page["data"] = []
+    page["links"] = {"next": next_url}
+    connector, http = _automation_live(index, monkeypatch, automation.ZapierConnector, [page])
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == (["zapier:zap:review-zap-1"] if populated else [])
+    assert connector.ctx.stats.objects_examined == int(populated)
+    assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
+    assert any("invalid pagination continuation" in warning for warning in connector.ctx.stats.warnings)
+    assert http.get_json.call_count == 1
+
+
+@pytest.mark.parametrize("populated", [False, True])
+@pytest.mark.parametrize(
+    "metadata",
+    [{}, {"links": {}}, {"links": None}, {"links": False}, {"links": 0}, {"links": []}, {"links": ""}],
+)
+def test_zapier_live_missing_or_invalid_links_keep_page_but_are_incomplete(
+    index, monkeypatch, automation_review_pages, populated, metadata
+):
+    page = {"data": automation_review_pages["zapier"]["data"] if populated else [], **metadata}
+    connector, http = _automation_live(index, monkeypatch, automation.ZapierConnector, [page])
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == (["zapier:zap:review-zap-1"] if populated else [])
+    assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
+    assert any("invalid pagination links" in warning for warning in connector.ctx.stats.warnings)
+    assert http.get_json.call_count == 1
+
+
+@pytest.mark.parametrize("next_url", [None, ""])
+def test_zapier_live_terminal_continuations_are_complete(index, monkeypatch, next_url):
+    connector, http = _automation_live(
+        index, monkeypatch, automation.ZapierConnector, [{"data": [], "links": {"next": next_url}}]
+    )
+    assert connector.run() == []
+    assert not connector.ctx.stats.incomplete and http.get_json.call_count == 1
+
+
+def test_zapier_live_later_bad_page_keeps_preceding_findings(index, monkeypatch, automation_review_pages):
+    first = automation_review_pages["zapier"]
+    first["links"] = {"next": "/v2/zaps?cursor=second"}
+    connector, http = _automation_live(
+        index,
+        monkeypatch,
+        automation.ZapierConnector,
+        [first, {"data": [], "error": "opaque-provider-diagnostic"}],
+    )
+    assert len(connector.run()) == 1
+    assert connector.ctx.stats.incomplete and http.get_json.call_count == 2
+    assert "opaque-provider-diagnostic" not in str(connector.ctx.stats)
+
+
+@pytest.mark.parametrize("max_pages,expected_calls", [(1, 1), (10, 2)])
+@pytest.mark.parametrize("cls,platform,key", _CUSTOM_AUTOMATION)
+def test_automation_custom_page_limits_and_repetition_remain_bounded(
+    index, monkeypatch, cls, platform, key, max_pages, expected_calls
+):
+    items = [{"id": str(number)} for number in range(100)] if platform == "workato" else []
+    page = {key: items, "links": {"next": "/v2/zaps?cursor=repeat"}}
+    connector, http = _automation_live(index, monkeypatch, cls, [page, page], max_pages=max_pages)
+    connector.ctx.stats = ScanStats(connector.name, "")
+    assert list(connector.collect()) == items
+    assert connector.ctx.stats.incomplete and connector.ctx.stats.warnings
+    assert http.get_json.call_count == expected_calls
+
+
+@pytest.mark.parametrize("as_array", [False, True])
+def test_workato_live_pages_and_bare_arrays_preserve_previous_records(index, monkeypatch, as_array):
+    first = [{"id": str(number)} for number in range(100)]
+    last = [{"id": "last"}]
+    pages = [first, last] if as_array else [{"items": first}, {"items": last}]
+    connector, http = _automation_live(index, monkeypatch, automation.WorkatoConnector, pages)
+    connector.ctx.stats = ScanStats(connector.name, "")
+    assert list(connector.collect()) == [*first, *last]
+    assert not connector.ctx.stats.incomplete
+    assert [call.kwargs["params"]["page"] for call in http.get_json.call_args_list] == [1, 2]
+
+
+def test_workato_live_later_error_preserves_only_preceding_page(index, monkeypatch):
+    first = [{"id": str(number)} for number in range(100)]
+    pages = [{"items": first}, {"items": [{"id": "untrusted"}], "error": "opaque-provider-diagnostic"}]
+    connector, http = _automation_live(index, monkeypatch, automation.WorkatoConnector, pages)
+    observed = []
+    with pytest.raises(ConnectorError, match="API collection failed") as failure:
+        observed.extend(connector.collect())
+    assert observed == first and http.get_json.call_count == 2
+    assert "opaque-provider-diagnostic" not in str(failure.value)
+
+
+@pytest.mark.parametrize("cross_origin", [False, True])
+def test_zapier_live_continuation_stays_on_configured_http_origin(index, monkeypatch, cross_origin):
+    host = "untrusted.example.com" if cross_origin else "api.zapier.com"
+    pages = [
+        {"data": [], "links": {"next": f"https://{host}/v2/zaps?cursor=second"}},
+        {"data": [], "links": {"next": None}},
+    ]
+    responses = []
+    for page in pages:
+        response = Response()
+        response.status_code = 200
+        response._content = json.dumps(page).encode()
+        response._content_consumed = True
+        responses.append(response)
+    session = Mock(headers={})
+    session.request.side_effect = responses
+    http = HttpClient("https://api.zapier.com", session=session)
+    monkeypatch.setattr(automation, "HttpClient", Mock(return_value=http))
+    connector = automation.ZapierConnector(ConnectorContext(index=index, config={"token": "test"}))
+    assert connector.run() == []
+    assert connector.ctx.stats.incomplete is cross_origin
+    assert session.request.call_count == (1 if cross_origin else 2)
 
 
 @pytest.mark.parametrize(

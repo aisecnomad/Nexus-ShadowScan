@@ -161,8 +161,9 @@ first read's SHA-256. History never changes the exit code.
 The dashboard holds resource identifiers, owners, accounts and registry
 identifiers, so it is as confidential as the reports behind it.
 
-- Both files are written with mode 0600, atomically, and never through a
-  symbolic link. A failed render leaves earlier files unchanged.
+- Both files are written with mode 0600, atomically, never to a symbolic link
+  and never through a directory link that another user owns. A failed render
+  leaves earlier files unchanged.
 - Report values are untrusted input. Every value is HTML-escaped and terminal
   controls are shown as `\uXXXX`. The Content Security Policy allows only
   the page's own script and inline styles; there are no images, links to

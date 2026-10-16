@@ -410,17 +410,19 @@ def test_unparsed_file_without_bindable_imports_keeps_its_lexical_framework_evid
     )
     report = tmp_path / "report.json"
     result = CliRunner().invoke(main, ["code", str(repository), "--format", "json", "-o", str(report)])
-    assert result.exit_code == 0
+    assert result.exit_code == 3
     document = json.loads(report.read_text())
     assert document["stats"][0]["warnings"] == [
         "code.filesystem: legacy_tool.py: import-bound analysis skipped (source did not parse); "
         "lexical evidence retained"
     ]
-    agents = [finding for finding in document["findings"] if finding["kind"] == "agent"]
-    assert [finding["title"] for finding in agents] == ["Agent in repository root: LangChain"]
+    assert document["stats"][0]["incomplete"]
+    usage = [finding for finding in document["findings"] if finding["kind"] == "framework-usage"]
+    assert [finding["title"] for finding in usage] == ["LLM usage in repository root: LangChain"]
     assert any(
-        evidence["description"].endswith("LangChain: AgentExecutor(") for evidence in agents[0]["evidence"]
+        evidence["description"].endswith("LangChain: AgentExecutor(") for evidence in usage[0]["evidence"]
     )
+    assert not usage[0]["capabilities"]
 
 
 def test_nesting_budget_applies_only_when_a_binding_can_resolve(index):

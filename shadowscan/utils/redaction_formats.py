@@ -9,8 +9,12 @@ fields.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import contextvars
+import json
 import re
+from collections.abc import Callable
 from urllib.parse import unquote
 
 from shadowscan.utils.redaction_assignments import _wordy
@@ -20,6 +24,7 @@ from shadowscan.utils.redaction_rules import (
     _REFERENCE,
     _VALUE_SEMICOLON,
     REDACTED,
+    SanitizationLimitError,
     _credential_name,
     _kept_value,
     _redact_value,
@@ -41,8 +46,13 @@ from shadowscan.utils.redaction_rules import (
 # boundary are found by ``_SECRET_TOKEN``; the rest start at the character before them,
 # which the regular expression reads first and the replacement keeps.
 _ESCAPE = r"\\[nrt]|\\x[0-9A-Fa-f]{2}|\\u[0-9A-Fa-f]{4}|%[0-9A-Fa-f]{2}"
-# The same boundaries as lookbehinds, for the JWT rule.
-_ESCAPED_BOUNDARY = r"(?<=\\[nrt])|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})|(?<=%[0-9A-Fa-f]{2})"
+# The same boundaries as lookbehinds, for the JWT rule, which also stands after a
+# doubly encoded escape ('%253D' in a redirect URL nested in another's query): its hex
+# pair can end in a letter, and the token that follows is just as much a credential.
+_ESCAPED_BOUNDARY = (
+    r"(?<=\\[nrt])|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\u[0-9A-Fa-f]{4})|(?<=%[0-9A-Fa-f]{2})"
+    r"|(?<=%25[0-9A-Fa-f]{2})"
+)
 _SPECIFIC_TOKEN_START = r"(?:(?<![A-Za-z])|" + _ESCAPED_BOUNDARY + ")"
 # Prefixes no ordinary word contains.
 _SPECIFIC_TOKEN = (
@@ -71,6 +81,8 @@ _GENERIC_TOKEN = (
     r"|sntry[su]_[A-Za-z0-9+/=_-]{30,}|hv[sbr]\.[A-Za-z0-9_-]{24,}"
     r"|fw_(?=[A-Za-z]*\d)[A-Za-z0-9]{24,}"
     r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}"
+    # Amazon Bedrock API keys: long-term 'ABSK...' and short-term 'bedrock-api-key-...'.
+    r"|ABSK[A-Za-z0-9+/]{60,}={0,2}|bedrock-api-key-[A-Za-z0-9+/_-]{40,}={0,2}"
 )
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
@@ -93,22 +105,58 @@ _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     (re.compile(r"(?:[a-z0-9-]+\.)*webhook\.office\.com"), re.compile(r"/webhook(?:b2)?/")),
     (re.compile(r"outlook\.office(?:365)?\.com"), re.compile(r"/webhook(?:b2)?/")),
     (re.compile(r"hooks\.zapier\.com"), re.compile(r"/hooks/")),
+    # Zapier MCP server URLs carry their credential in the path.
+    (re.compile(r"mcp\.zapier\.com"), re.compile(r"/api/mcp/s/")),
+    (re.compile(r"actions\.zapier\.com"), re.compile(r"/mcp/")),
     (re.compile(r"hook\.(?:[a-z0-9-]+\.)?(?:make|integromat)\.com"), re.compile(r"/")),
     (re.compile(r"maker\.ifttt\.com"), re.compile(r"/trigger/[^/]+/(?:json/)?with/key/")),
     (re.compile(r"api\.telegram\.org"), re.compile(r"/(?:file/)?bot")),
     # n8n (commonly self-hosted, so any host): /webhook/<id> and /webhook-test/<id>.
     (re.compile(r".+"), re.compile(r"(?:/[^/]+)*?/webhook(?:-test|-waiting)?/")),
 )
-# A JWT starts at an 'eyJ' that follows the boundary rule above and runs to the end of
-# its third dotted segment. Each attempt starts at a run of base64url characters and
-# reads the characters before the first such 'eyJ' as 'lead', which is kept: an attempt
-# from every 'eyJ' would read a run of 'eyJ-eyJ-eyJ-...' without dots once per 'eyJ',
-# which takes quadratic time, and every run is read once here. Use ``_redact_jwts``.
+# A JWT starts at an 'eyJ' that follows the boundary rule above and has at least three
+# dotted segments. Each attempt starts at a run of base64url characters and reads the
+# characters before the first such 'eyJ' as 'lead', which is kept: an attempt from every
+# 'eyJ' would read a run of 'eyJ-eyJ-eyJ-...' without dots once per 'eyJ', which takes
+# quadratic time, and every run is read once here. The match runs on to the end of the
+# dotted chain (``_CHAIN``): that first 'eyJ' can be an unrelated segment or the payload
+# of a token whose header has whitespace ('eyJ4IjoxfQ.v2.<token>', '<token>.<token>',
+# '<token>-<token>'), and three segments from it ended at the next token's header and
+# showed that token's payload and signature; an encrypted token (JWE, five segments)
+# kept its ciphertext and tag. Use ``_redact_jwts``.
 _JWT_HEADER = r"(?=eyJ)" + _SPECIFIC_TOKEN_START + "eyJ"
+_CHAIN = re.compile(r"(?:\.[A-Za-z0-9_-]*+)*+")
 _JWT = re.compile(
     r"(?<![A-Za-z0-9_-])(?P<lead>(?:(?!" + _JWT_HEADER + r")[A-Za-z0-9_-])*+)"
-    r"(?P<jwt>" + _JWT_HEADER + r"[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+)"
+    r"(?P<jwt>" + _JWT_HEADER + r"[A-Za-z0-9_-]*+\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+" + _CHAIN.pattern + ")"
 )
+# 'eyJ' is the base64url of '{"': a header written with whitespace does not start with
+# it (' {"alg"' is 'IHsi', '{ "alg"' is 'eyAi', a pretty-printed '{\n"' is 'ewoi'), and
+# PyJWT and the identity.jwt decoder accept such a token. Every run of three dotted
+# base64url segments is therefore read as well (``_dotted_token_reader``): its first
+# segment is withheld as a header, from the run's start or from any boundary the 'eyJ'
+# rule admits before a token (a non-letter, or an escape before the run), when it
+# decodes to a JSON object with an ``alg`` member; the rest of the run's dotted chain
+# goes with it. The candidate starts are many; each costs one cheap reading of the
+# first bytes (JSON whitespace, '{', whitespace, '"'), only a start that passes it is
+# decoded and parsed, and the decoded text is charged against a budget, so a hostile
+# run is read in linear time. A run that is no token is searched again from its second
+# segment, which may be a token's header after a long first segment
+# ('com.example.authenticationservice.<token>'), so every segment is matched at most
+# three times. The chain after a token is read once, by ``_CHAIN``: in this pattern,
+# every search again would read the rest of the chain again.
+_DOTTED_RUN = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<header>[A-Za-z0-9_-]{16,}+)\.[A-Za-z0-9_-]++\.[A-Za-z0-9_-]*+"
+)
+_JSON_WHITESPACE = frozenset(b" \t\r\n")
+# JSON whitespace read around the opening braces of all the candidate headers in one
+# text. Once it is spent, the cheap reading stops at the next whitespace byte and passes
+# the start, which is then decoded, charged against the budget and parsed like any other.
+_JWT_HEADER_WHITESPACE_BYTES = 4096
+# A candidate header longer than this that passes the cheap reading is withheld without
+# a parse.
+_JWT_HEADER_MAX_CHARS = 16 * 1024
+_HEX_PAIR = re.compile(r"[0-9A-Fa-f]{2}")
 # Private key blocks, to the end of the text when unterminated: PEM ('BEGIN PRIVATE KEY',
 # 'BEGIN OPENSSH PRIVATE KEY', PGP's '... PRIVATE KEY BLOCK'), RFC 4716's
 # '---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----' and a PuTTY key file, whose private part
@@ -164,7 +212,9 @@ _AUTH_GLUED = r"(?P<glued>" + _GLUED + r")?"
 _AUTH_ESTABLISHED = re.compile(_AUTH.pattern + _AUTH_GLUED)
 _ESCAPED_AUTH_ESTABLISHED = re.compile(_ESCAPED_AUTH.pattern + _AUTH_GLUED)
 _ASSIGNED = re.compile(r"[ \t]*[:=]")
-_URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
+# A scheme may hold '_' and run past 21 characters: SQLAlchemy dialect URLs such as
+# 'oracle+cx_oracle://' and 'postgresql+py_postgresql://' carry user:password like any other.
+_URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+._-]{0,40}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
 _QUERY_TEXT = re.compile(r"\?[^\s<>\"']+")
 
@@ -410,11 +460,109 @@ def _later_line_runs(text: str) -> dict[int, str]:
     return runs
 
 
+def _base64url_bytes(segment: str) -> bytes | None:
+    try:
+        return base64.urlsafe_b64decode(segment + "=" * (-len(segment) % 4))
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _dotted_token_reader(text: str) -> Callable[[re.Match[str]], str | None]:
+    """The replacement for a ``_DOTTED_RUN`` match in ``text``, or None when it is no token."""
+    whitespace = _JWT_HEADER_WHITESPACE_BYTES
+    budget = 8 * len(text) + 65_536
+
+    def opens_object(header: str, start: int) -> bool:
+        """Whether the segment from ``start`` decodes to whitespace, '{', whitespace and '"'."""
+        nonlocal whitespace
+        brace = False
+        position = start
+        while position < len(header):
+            chunk = header[position : position + 4]
+            position += 4
+            data = _base64url_bytes(chunk) if len(chunk) != 1 else None
+            if data is None:
+                return False
+            for byte in data:
+                if byte in _JSON_WHITESPACE:
+                    whitespace -= 1
+                    if whitespace < 0:
+                        return True
+                elif byte == 0x7B and not brace:
+                    brace = True
+                else:
+                    return brace and byte == 0x22
+        return False
+
+    def is_header(header: str, start: int) -> bool:
+        nonlocal budget
+        if len(header) - start < 16 or not opens_object(header, start):
+            return False
+        segment = header[start:]
+        if len(segment) > _JWT_HEADER_MAX_CHARS:
+            return True
+        budget -= len(segment)
+        if budget < 0:
+            raise SanitizationLimitError("credential replacement work limit exceeded")
+        data = _base64url_bytes(segment)
+        if data is None:
+            return False
+        try:
+            parsed = json.loads(data)
+        except (ValueError, RecursionError):
+            return False
+        return isinstance(parsed, dict) and "alg" in parsed
+
+    def read(match: re.Match[str]) -> str | None:
+        header = match.group("header")
+        starts = {0}
+        before = text[match.start() - 1] if match.start() else ""
+        # The boundaries of the 'eyJ' rule: an escaped line break, byte or code point
+        # ('\n', '\x2e', '.'), a percent escape, a doubly encoded one ('%253D'), and any
+        # non-letter.
+        if before == "\\":
+            if header[0] in "nrt":
+                starts.add(1)
+            if header[0] == "x" and _HEX_PAIR.fullmatch(header[1:3]):
+                starts.add(3)
+            if header[0] == "u" and _HEX_PAIR.fullmatch(header[1:3]) and _HEX_PAIR.fullmatch(header[3:5]):
+                starts.add(5)
+        elif before == "%" and _HEX_PAIR.fullmatch(header[:2]):
+            starts.add(2)
+            if header[:2] == "25" and _HEX_PAIR.fullmatch(header[2:4]):
+                starts.add(4)
+        starts.update(position for position in range(1, len(header)) if not header[position - 1].isalpha())
+        for start in sorted(starts):
+            if is_header(header, start):
+                return match.group()[:start] + REDACTED
+        return None
+
+    return read
+
+
 def _redact_jwts(text: str) -> str:
-    """Withhold every JSON Web Token in ``text``, keeping what precedes its 'eyJ'."""
-    if "eyJ" not in text:
+    """Withhold every JSON Web Token in ``text``, keeping what precedes its header."""
+    if "eyJ" in text:
+        text = _JWT.sub(lambda match: match.group("lead") + REDACTED, text)
+    if "." not in text:
         return text
-    return _JWT.sub(lambda match: match.group("lead") + REDACTED, text)
+    read = _dotted_token_reader(text)
+    parts: list[str] = []
+    kept = position = 0
+    while (match := _DOTTED_RUN.search(text, position)) is not None:
+        replacement = read(match)
+        if replacement is None:
+            # Not a token: its second segment may be a token's header, so search on from there.
+            position = match.end("header")
+            continue
+        # The rest of its dotted chain goes with it, as with an 'eyJ' token: an encrypted
+        # token's ciphertext and tag, or a token joined on by a dot ('<token>.<token>'),
+        # would otherwise be kept.
+        parts += (text[kept : match.start()], replacement)
+        chain = _CHAIN.match(text, match.end())
+        kept = position = chain.end() if chain else match.end()
+    parts.append(text[kept:])
+    return "".join(parts)
 
 
 def _url_host(authority: str) -> str:
@@ -508,7 +656,7 @@ def _sanitize_url(match: re.Match[str]) -> str:
 
 
 # The scheme of a URL inside the text of another (see ``_redact_nested_urls``).
-_NESTED_SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]{0,20}://")
+_NESTED_SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+._-]{0,40}://")
 
 
 def _redact_nested_urls(text: str) -> str:

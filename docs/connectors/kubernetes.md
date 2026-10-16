@@ -44,6 +44,13 @@ Workload analysis includes Deployments, StatefulSets, DaemonSets, Jobs, Pods
 and, for OpenShift, DeploymentConfigs.
 CronJobs use `spec.jobTemplate.spec.template.spec` for image and posture
 analysis. Missing or malformed nested templates leave coverage incomplete.
+A pod's `containers`, `initContainers` (a native sidecar is an init container
+with `restartPolicy: Always`) and `ephemeralContainers` are read alike, up to
+100 in all: any of them can carry a model image, a GPU request, provider
+configuration or a privileged security context. A null `initContainers` or
+`ephemeralContainers` (an empty field as Helm renders it) is absent; a
+container field that is present but not a list, including a null `containers`,
+skips the workload with a warning that marks the scan incomplete.
 
 The analyzers identify known inference and agent images, GPU requests, exposed
 Services/Ingresses/Routes, privileged and host-network workloads, hostPath

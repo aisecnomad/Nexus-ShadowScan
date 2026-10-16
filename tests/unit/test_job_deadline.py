@@ -14,6 +14,7 @@ from unittest.mock import Mock
 import pytest
 from click.testing import CliRunner
 
+from shadowscan import cli as cli_module
 from shadowscan.cli import _run_and_emit, main
 from shadowscan.config import ScanConfig
 from shadowscan.utils.deadline import arm_job_deadline
@@ -366,3 +367,170 @@ time.sleep(60)  # the stand-in for a scan that is still busy when the deadline p
     finally:
         if _alive(clone_pid):
             os.killpg(clone_pid, signal.SIGKILL)
+
+
+def test_exit_guard_armed_when_abandoned_workers_exist(monkeypatch):
+    """An exit guard ensures the process cannot hang during emission with abandoned workers."""
+    import contextlib
+
+    from shadowscan.cli import _run_and_emit_with_deadline
+    from shadowscan.models import ScanResult
+
+    engine_mock = Mock()
+    engine_mock.run.return_value = ScanResult()
+    engine_mock.abandoned_workers = ["stuck_worker"]
+    monkeypatch.setattr("shadowscan.cli.Engine", Mock(return_value=engine_mock))
+    monkeypatch.setattr("shadowscan.cli._plugin_registry_problems", lambda: ())
+    monkeypatch.setattr("shadowscan.cli._emit", Mock())
+    monkeypatch.setattr("shadowscan.cli.terminate_clones_on_signal", contextlib.nullcontext)
+    monkeypatch.setattr("shadowscan.cli._exit_abandoned_workers", Mock(side_effect=SystemExit(3)))
+
+    arm_mock = Mock(return_value=Mock(expires_at=time.monotonic() + 30))
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm_mock)
+
+    with pytest.raises(SystemExit):
+        _run_and_emit_with_deadline(ScanConfig(), "json", None, 0, None)
+
+    arm_mock.assert_called_once_with(30.0, message=cli_module._ABANDONED_WORKER_EXIT_MESSAGE)
+    # The operator must learn that the report and any -o file cannot be trusted.
+    message = cli_module._ABANDONED_WORKER_EXIT_MESSAGE
+    assert "coverage is incomplete" in message
+    assert "report may be missing or truncated" in message
+    assert "output file may not have been replaced" in message
+
+
+def test_exit_guard_not_armed_without_abandoned_workers(monkeypatch):
+    """No exit guard when all workers complete normally."""
+    import contextlib
+
+    from shadowscan.cli import _run_and_emit_with_deadline
+    from shadowscan.models import ScanResult
+
+    engine_mock = Mock()
+    engine_mock.run.return_value = ScanResult()
+    engine_mock.abandoned_workers = []
+    monkeypatch.setattr("shadowscan.cli.Engine", Mock(return_value=engine_mock))
+    monkeypatch.setattr("shadowscan.cli._plugin_registry_problems", lambda: ())
+    monkeypatch.setattr("shadowscan.cli._emit", Mock())
+    monkeypatch.setattr("shadowscan.cli.terminate_clones_on_signal", contextlib.nullcontext)
+
+    arm_mock = Mock(return_value=Mock(expires_at=time.monotonic() + 30))
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm_mock)
+
+    with pytest.raises(SystemExit):
+        _run_and_emit_with_deadline(ScanConfig(), "json", None, 0, None)
+
+    arm_mock.assert_not_called()
+
+
+def _abandoned_worker_scan(monkeypatch):
+    """Stub a scan that abandoned a timed-out worker; the hard exit raises instead."""
+    import contextlib
+
+    from shadowscan.models import ScanResult
+
+    engine_mock = Mock()
+    engine_mock.run.return_value = ScanResult()
+    engine_mock.abandoned_workers = ["stuck_worker"]
+    monkeypatch.setattr("shadowscan.cli.Engine", Mock(return_value=engine_mock))
+    monkeypatch.setattr("shadowscan.cli._plugin_registry_problems", lambda: ())
+    monkeypatch.setattr("shadowscan.cli._emit", Mock())
+    monkeypatch.setattr("shadowscan.cli.terminate_clones_on_signal", contextlib.nullcontext)
+    monkeypatch.setattr("shadowscan.cli._exit_abandoned_workers", Mock(side_effect=SystemExit(3)))
+
+
+def test_exit_guard_defers_to_the_operator_job_deadline(monkeypatch):
+    """An armed job deadline already bounds output; a 30-second guard must not cut it short."""
+    _abandoned_worker_scan(monkeypatch)
+    arm_mock = Mock()
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm_mock)
+
+    with pytest.raises(SystemExit):
+        cli_module._run_and_emit_with_deadline(
+            ScanConfig(), "json", None, 0, None, job_deadline=time.monotonic() + 300
+        )
+
+    arm_mock.assert_not_called()
+
+
+def test_exit_guard_is_cancelled_when_the_hard_exit_returns(monkeypatch):
+    """An in-process caller must not have its process exited by the guard after the call."""
+    _abandoned_worker_scan(monkeypatch)
+    fired: list[int] = []
+    guards = []
+
+    def arm(seconds, **kwargs):
+        guard = arm_job_deadline(seconds, _exit=fired.append, **kwargs)
+        guards.append(guard)
+        return guard
+
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm)
+    try:
+        with pytest.raises(SystemExit):
+            cli_module._run_and_emit_with_deadline(ScanConfig(), "json", None, 0, None)
+        [guard] = guards
+        # A cancelled guard's thread returns at once instead of waiting 30 seconds.
+        guard.thread.join(timeout=2)
+        assert not guard.thread.is_alive()
+        assert fired == []
+    finally:
+        for guard in guards:
+            guard.cancel()
+
+
+@pytest.mark.parametrize("deadline", ["none", "yaml", "option"])
+def test_ctrl_c_during_output_leaves_the_exit_guard_armed(tmp_path, monkeypatch, deadline):
+    """Interpreter exit joins the blocked worker after Ctrl-C, and the callers cancel any job deadline."""
+    _abandoned_worker_scan(monkeypatch)
+    monkeypatch.setattr("shadowscan.cli._emit", Mock(side_effect=KeyboardInterrupt))
+    handles: dict[float, Mock] = {}
+
+    def arm(seconds, **kwargs):
+        handles[seconds] = Mock(expires_at=time.monotonic() + seconds)
+        return handles[seconds]
+
+    arm_mock = Mock(side_effect=arm)
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm_mock)
+    if deadline == "option":
+        path = tmp_path / "scan.yaml"
+        path.write_text("connectors: []\n")
+        args = ["scan", "--config", str(path), "--format", "json", "--job-deadline-seconds", "600"]
+        result = CliRunner().invoke(main, args)
+        assert result.exit_code == 1  # Click turns the interrupt into Abort
+    else:
+        cfg = ScanConfig(job_deadline_seconds=600) if deadline == "yaml" else ScanConfig()
+        with pytest.raises(KeyboardInterrupt):
+            _run_and_emit(cfg, "json", None, 0, None)
+
+    arm_mock.assert_any_call(30.0, message=cli_module._ABANDONED_WORKER_EXIT_MESSAGE)
+    handles[30.0].cancel.assert_not_called()
+    if deadline != "none":
+        handles[600.0].cancel.assert_called_once_with()
+
+
+def test_exit_guard_is_cancelled_when_output_fails_and_the_hard_exit_returns(monkeypatch):
+    """A failed report must not leave the guard to exit an in-process caller after the call."""
+    _abandoned_worker_scan(monkeypatch)
+    monkeypatch.setattr("shadowscan.cli._emit", Mock(side_effect=OSError("disk full")))
+    monkeypatch.setattr("shadowscan.cli._exit_abandoned_workers", Mock(return_value=None))
+    monkeypatch.setattr("shadowscan.cli._ABANDONED_WORKER_EXIT_GRACE_SECONDS", 0.2)
+    fired: list[int] = []
+    guards = []
+
+    def arm(seconds, **kwargs):
+        guard = arm_job_deadline(seconds, _exit=fired.append, **kwargs)
+        guards.append(guard)
+        return guard
+
+    monkeypatch.setattr("shadowscan.cli.arm_job_deadline", arm)
+    try:
+        with pytest.raises(OSError, match="disk full"):
+            cli_module._run_and_emit_with_deadline(ScanConfig(), "json", None, 0, None)
+        [guard] = guards
+        # An uncancelled guard fires 0.2 seconds after the call returned.
+        guard.thread.join(timeout=5)
+        assert not guard.thread.is_alive()
+        assert fired == []
+    finally:
+        for guard in guards:
+            guard.cancel()

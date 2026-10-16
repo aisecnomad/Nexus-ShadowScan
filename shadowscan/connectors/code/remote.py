@@ -25,6 +25,7 @@ from abc import abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, failure_summary
 from shadowscan.connectors.code.filesystem import FilesystemConnector
@@ -39,6 +40,7 @@ from shadowscan.utils.git import (
     checkout_has_lfs_pointers,
     clone_environment,
     clone_git_supported,
+    clone_pins,
     exceeds_clone_size,
     git_argv_prefix,
     has_clone_size_estimate,
@@ -48,7 +50,7 @@ from shadowscan.utils.git import (
     unregister_checkout,
     validate_git_ref,
 )
-from shadowscan.utils.http import HttpClient, HttpError, validate_url
+from shadowscan.utils.http import DestinationUnresolved, HttpClient, HttpError, validate_url
 
 INTERESTING_DIRS = (
     ".github/",
@@ -526,7 +528,16 @@ class RemoteRepositoryConnector(BaseConnector):
                     incomplete=True,
                 )
             else:
-                if self._clone(repo, dest):
+                try:
+                    cloned = self._clone(repo, dest)
+                except ValueError as exc:
+                    # Refused before Git runs: a clone URL off the credential origin or naming another
+                    # repository, or a host that resolves to a refused address. API mode reads the listed
+                    # repository by its own name from the configured origin, through HttpClient's own
+                    # address checks, like any other failed clone.
+                    self.ctx.warn(f"{self.name}: {full}: {failure_summary(exc)}", incomplete=True)
+                    cloned = False
+                if cloned:
                     self._set_clone_snapshot(repo, dest)
                     self._report_clone_gaps(full, dest)
                     return dest
@@ -542,7 +553,7 @@ class RemoteRepositoryConnector(BaseConnector):
         elif self.mode == "clone" and shutil.which("git"):
             # An older (or unreadable) Git ignores protections that keep the clone on its origin.
             self.ctx.warn(
-                f"{self.name}: Git 2.32 or newer is required to clone {full}; using sampled API mode",
+                f"{self.name}: Git 2.45 or newer is required to clone {full}; using sampled API mode",
                 incomplete=True,
             )
         elif self.mode == "clone":
@@ -599,6 +610,10 @@ class RemoteRepositoryConnector(BaseConnector):
             **snapshot,
         }
 
+    def _clone_path_prefix(self) -> str:
+        """The path an instance serves repositories under ('' at the root of its origin)."""
+        return ""
+
     def _clone(self, repo: dict[str, Any], dest: str) -> bool:
         target = self._clone_target(repo)
         if target is None:
@@ -607,7 +622,22 @@ class RemoteRepositoryConnector(BaseConnector):
         # The token is scoped to the API origin: a clone URL from provider JSON
         # must stay on it, and git may not follow redirects away from it.
         url = validate_url(candidate, origin)
-        env = clone_environment(origin, self.token, self.clone_username)
+        # It must also name the listed repository: findings from another
+        # repository on the same origin would be attributed to this one.
+        name = repo.get(self.name_field)
+        path = urlsplit(url).path.rstrip("/").removesuffix(".git").lower()
+        if not isinstance(name, str) or path != f"{self._clone_path_prefix()}/{name.strip('/')}".lower():
+            raise ValueError("clone URL does not name the listed repository")
+        # Git would resolve the host again after the check above; pin it to the addresses checked
+        # now. A refused answer raises like validate_url.
+        try:
+            pins = clone_pins(url)
+        except DestinationUnresolved:
+            # No address was checked, so there is none to pin Git to: do not run it. The caller
+            # falls back to sampled API mode and marks the scan incomplete.
+            self.log.debug("clone host did not resolve")
+            return False
+        env = clone_environment(origin, self.token, self.clone_username, pins=pins)
         cmd = [
             *git_argv_prefix(),
             "clone",

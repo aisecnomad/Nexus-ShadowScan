@@ -84,6 +84,25 @@ Zapier export record needs an `id`, `title`,
 and makes the scan incomplete. A CSV row whose cells are all blank is skipped
 without a diagnostic.
 
+Make scenario analysis requires a direct blueprint or a
+`response.blueprint` API envelope with an explicit `flow` array. Provider
+errors, missing definitions and malformed modules or nested `routes[].flow`
+branches mark the scan incomplete; they cannot establish an inventory with no
+AI workflows. An explicit `flow: []` remains a valid empty definition. Router
+branches are inspected for AI modules within budgets of 4,096 modules, 16,384
+branches and 64 nesting levels. Observations from other valid scenarios remain
+available when a scenario cannot be analyzed.
+
+Zapier and Workato live collection reject provider error envelopes and
+malformed collections, even when a response includes an empty result array:
+that page is omitted and coverage is incomplete. Zapier live pages also require
+a `links` object with a `next` continuation. Only `null` or an empty string ends
+pagination successfully; a missing `links` object or `next` field, a non-string
+continuation or a whitespace-only string keeps that page's Zaps but marks
+coverage incomplete. Zaps observed on earlier pages remain in the report when a
+later page fails. Workato accepts both an `items` object envelope and a bare
+recipe array.
+
 An n8n step counts as AI when its node type is a LangChain, model-provider,
 agent or MCP node (`mcp` matched as its own token: custom `mcpClient`,
 `MCPServer` and `mcp_bridge` node types count, and so do camelCase types that

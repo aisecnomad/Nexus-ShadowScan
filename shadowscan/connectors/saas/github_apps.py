@@ -13,7 +13,9 @@ Offline export: installations JSON (``installations`` array or list).
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextvars import ContextVar
+from pathlib import Path
 from typing import Any, ClassVar
 
 from requests import RequestException
@@ -21,6 +23,7 @@ from requests import RequestException
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import cap_confidence, config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
+from shadowscan.connectors.offline import OfflineInputBudget
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
 
@@ -28,6 +31,59 @@ from shadowscan.utils.http import HttpClient, HttpError
 # is a candidate for review, never a strong or likely AI agent.
 UNRECOGNISED_APP_MAX_CONFIDENCE = 0.3
 _SLUG_SEPARATORS = re.compile(r"[-_]+")
+
+
+class _InstallationInventory:
+    """Check provider totals against unique installation IDs without discarding observations.
+
+    ``deferred`` collects the issues of an offline export file's pages and reports them when
+    the file ends, and only if one of its pages declares a total: an export of envelopes
+    without totals keeps its documented, unchecked form.
+    """
+
+    def __init__(self, warn: Callable[[str], None], *, deferred: bool = False):
+        self.warn = warn
+        self.deferred = deferred
+        self.declared = False
+        self.total: int | None = None
+        self.ids: set[int] = set()
+        self.issues: list[str] = []
+
+    def _issue(self, reason: str) -> None:
+        if reason not in self.issues:
+            self.issues.append(reason)
+            if not self.deferred:
+                self.warn(f"installation inventory {reason}; coverage incomplete")
+
+    def observe(self, page: dict[str, Any]) -> None:
+        self.declared = self.declared or "total_count" in page
+        total = page.get("total_count")
+        if type(total) is not int or total < 0:
+            self._issue("has missing or invalid total_count")
+        elif self.total is None:
+            self.total = total
+        elif total != self.total:
+            self._issue("total_count changed during collection")
+        for item in page["installations"]:
+            identity = item.get("id") if isinstance(item, dict) else None
+            if type(identity) is not int or identity <= 0:
+                self._issue("has a missing or invalid installation id")
+            elif identity in self.ids:
+                self._issue("contains repeated installation ids")
+            else:
+                self.ids.add(identity)
+
+    def finish(self) -> None:
+        if self.total is not None and len(self.ids) != self.total:
+            self._issue("unique installation count does not match total_count")
+        if self.deferred and self.declared:
+            for reason in self.issues:
+                self.warn(f"installation inventory {reason}; coverage incomplete")
+
+
+# The installation inventory of the offline export file being read; set only while that file
+# produces a record (see GitHubAppsConnector._load_offline_file).
+_FILE_INVENTORY: ContextVar[_InstallationInventory | None] = ContextVar("_FILE_INVENTORY", default=None)
 
 
 class GitHubAppsConnector(BaseConnector):
@@ -73,11 +129,16 @@ class GitHubAppsConnector(BaseConnector):
             },
             on_warning=lambda msg: self.ctx.warn(msg, incomplete=True),
         )
+        inventory = _InstallationInventory(lambda message: self.ctx.warn(f"{self.name}: {message}"))
         try:
             for inst in http.paginate_link(
-                f"/orgs/{self.org}/installations", params={"per_page": 100}, item_key="installations"
+                f"/orgs/{self.org}/installations",
+                params={"per_page": 100},
+                item_key="installations",
+                on_data=inventory.observe,
             ):
                 yield {**inst, "_kind": "installation"}
+            inventory.finish()
         except (HttpError, RequestException, ValueError, RuntimeError) as exc:
             self._collection_warning("installation inventory", exc)
         try:
@@ -96,6 +157,63 @@ class GitHubAppsConnector(BaseConnector):
                 yield {**pat, "_kind": "pat"}
         except (HttpError, RequestException, ValueError, RuntimeError) as exc:
             self._collection_warning("fine-grained PAT inventory", exc)
+
+    @staticmethod
+    def _is_native_offline_record(data: dict[str, Any]) -> bool:
+        # An installation has no nested installation collection. Extra page
+        # metadata such as id/name/type must not hide an envelope or bypass
+        # the shared validation of a malformed installations collection.
+        return "installations" not in data and BaseConnector._is_native_offline_record(data)
+
+    def _load_offline_file(self, source: Path, budget: OfflineInputBudget) -> Iterator[dict[str, Any]]:
+        """Read one export file, checking provider totals across all of its envelopes.
+
+        ``gh api --paginate`` writes one page envelope after another (one per line once
+        compacted with ``jq -c``), so a file can hold every page of one listing: their totals
+        must agree, and the unique installations across the file must match them. The file's
+        inventory is current only while this file produces a record, never across a yield.
+        """
+        inventory = _InstallationInventory(
+            lambda message: self.ctx.warn(f"{self.name}: {message}"), deferred=True
+        )
+        records = super()._load_offline_file(source, budget)
+        while True:
+            token = _FILE_INVENTORY.set(inventory)
+            try:
+                record = next(records)
+            except StopIteration:
+                break
+            finally:
+                _FILE_INVENTORY.reset(token)
+            yield record
+        inventory.finish()
+
+    @classmethod
+    def _unwrap(cls, data: Any, on_error: Callable[[str], None] | None = None) -> Iterator[dict[str, Any]]:
+        # Provider totals assert a count for this export. Legacy envelopes
+        # without a total, bare lists and records retain their documented form.
+        if (
+            isinstance(data, dict)
+            and not cls._is_native_offline_record(data)
+            and isinstance(data.get("installations"), list)
+        ):
+            inventory = _FILE_INVENTORY.get()
+            if inventory is not None:
+                # One page of the file being read: counted with its other pages, which
+                # settle whether the file declares a total at all.
+                inventory.observe(data)
+            elif "total_count" in data:
+
+                def report(message: str) -> None:
+                    if on_error is None:
+                        raise ConnectorError(message)
+                    on_error(message)
+
+                # Not read from an export file: the envelope is the whole export.
+                inventory = _InstallationInventory(report)
+                inventory.observe(data)
+                inventory.finish()
+        yield from super()._unwrap(data, on_error)
 
     def _collection_warning(self, source: str, exc: Exception) -> None:
         # Sources need different grants. Keep findings from available sources,

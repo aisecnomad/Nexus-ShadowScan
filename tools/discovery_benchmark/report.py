@@ -158,14 +158,18 @@ def render(metrics: dict[str, Any], corpus: Corpus, *, title: str) -> str:
                 continue
             pr = t["per_repo"].get(repo.id) or {}
             fps = pr.get("fp") or []
-            cells.append(
-                (
-                    "clean"
-                    if not fps and pr.get("status") in {"ok", "failed"}
-                    else (", ".join(fps) if fps else pr.get("status", "?"))
-                )
-                + _incomplete_suffix(pr)
-            )
+            status = pr.get("status") or "missing"
+            if status != "ok":
+                cell = f"{', '.join(fps)} ({status})" if fps else status
+            elif fps:
+                cell = ", ".join(fps)
+            elif pr.get("incomplete") is False:
+                cell = "clean"
+            else:
+                # Neither a partial run nor legacy metrics without a coverage
+                # flag establish a clean negative, even with no reported facts.
+                cell = "no facts" if pr.get("incomplete") else "no facts (completeness unknown)"
+            cells.append(cell + _incomplete_suffix(pr))
         rows.append(cells)
     out.append(_table(header, rows))
     out.append("")

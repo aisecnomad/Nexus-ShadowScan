@@ -58,6 +58,12 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 Python and common JavaScript/TypeScript constructors are resolved against imports,
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
+JavaScript/TypeScript object and array destructuring declarations, including
+aliases, nested patterns, rest bindings and defaults, invalidate shadowed SDK
+bindings under the existing conservative whole-file policy. Property keys and
+initializer references do not declare names. Unsupported binding syntax retains
+usage evidence without proving an imported constructor; analysis limits make
+coverage incomplete. Scanned source is never executed.
 Confidence groups cap repeated observations of the same technology. Python also
 resolves absolute `from local_shim import Alias` imports through already-read
 `.py` files at the same manifest project root (or scan root without a manifest).
@@ -79,6 +85,27 @@ walk; its import binding runs after the walk under the walk's deadline rule,
 starting only while its matching budget and the walk's safety margin fit. A
 consumer left unbound is named, keeps that lexical evidence and makes the scan
 incomplete.
+
+Python syntax support follows the interpreter running the scanner. Invalid
+source, or newer syntax that interpreter cannot parse, makes coverage incomplete
+(exit 3), including when no finding is produced: every Python file is parsed,
+whatever it imports. Syntax newer than the interpreter is such a gap too: a
+PEP 695 `type` statement on Python 3.11, or Python 3.14's unparenthesized
+`except A, B:` on 3.13. Imports and lexical observations remain visible as
+library usage or potential evidence, but code in an unparsed range cannot
+establish agent behavior, workload capabilities or an MCP server. Notebook cells
+are parsed separately: an unparsed cell does not remove the bound evidence or
+registered tools of other cells. In a test path the scan discounts
+(`include_tests` off), source that does not parse, often a deliberately invalid
+fixture, is a warning that leaves coverage complete unless `strict_coverage` is
+set, as for a test file over the binder's budget. Python 2 modules, templates
+(`{{cookiecutter.slug}}/main.py`, Jinja-rendered `.py` files) and other files
+that are not Python 3 but carry a `.py` name stay a gap elsewhere: list them in
+`exclude` to leave them out of the scan, and use an interpreter that supports
+the repository's Python syntax for full semantic coverage. Existing
+AST/work-budget exhaustion handling is separate: it retains corroborated lexical
+candidates and its existing coverage diagnostics; this syntax rule does not
+change those budgets.
 
 Packages, nested source layouts, dynamic imports, other re-exports and uncertain
 bindings remain usage evidence when ordinary signatures identify them.
@@ -602,26 +629,37 @@ favour of the installed package, so it does not hide that SDK's imports.
 A notebook's IPython magic (`%pip`, `%%time`) and shell (`!pip`) lines are read
 as inert expressions, as IPython rewrites them, so they do not keep the import
 binder from the notebook. Jupyter runs code cells one at a time, so each cell is
-lexed on its own, and a cell that still does not parse (a `%%bash` cell, an
-unfinished scratch cell) is left out of import binding on its own: the warning
+lexed on its own. A cell can be declared another language: by a cell magic that
+runs, renders or writes its body as something else (`%%bash`, `%%sh`,
+`%%script bash`, `%%html`, `%%javascript`, `%%latex`, `%%markdown`, `%%sql`,
+`%%R`, `%%writefile requirements.txt`), or, for every cell, by notebook metadata
+that names another kernel language (an R or Julia notebook). The declaration is
+the scanned repository's own text, and Jupyter starts a kernel by its name, not
+by its `language` field, so such a cell is still parsed: one that parses as
+Python is bound like any other cell, and one that does not keeps its lexical
+evidence, with no warning and no coverage gap. A notebook whose kernel name is a
+Python kernel's (`python3`, `conda-env-...-py`) is a Python notebook whatever
+its `language` field says. Other cell magics (`%%time`, `%%capture`,
+`%%writefile app.py`, and `%%script` with a Python or IPython interpreter, such
+as `%%script python3`, `%%script env python3` or `%%script ipython`) hold Python.
+A Python cell that still does not parse (an unfinished scratch cell) is left out
+of import binding on its own: the warning
 `import-bound analysis skipped for notebook cell N, which does not parse;
-lexical evidence retained` names it, and the other cells are bound as usual. A
-string left open in one cell no longer masks the cells after it, and a cell that
-stops (`raise SystemExit`, `sys.exit()`, `exit()` or `quit()` to halt Run All)
-ends only its own statements: the later cells stay reachable.
+lexical evidence retained` names it and makes coverage incomplete, and the other
+cells are bound as usual. A string left open in one cell no longer masks the
+cells after it, and a cell that stops (`raise SystemExit`, `sys.exit()`,
+`exit()` or `quit()` to halt Run All) ends only its own statements: the later
+cells stay reachable.
 
-A Python source the running interpreter cannot parse (syntax newer than it,
-such as a PEP 695 `type` statement on Python 3.11) has no import binding: its
-framework patterns are kept as lexical evidence, which counts toward an agent
-only when the same library is imported or declared as a dependency, as in a
-language without a binder, and the scan records the warning `import-bound
-analysis skipped (source did not parse); lexical evidence retained` without
-becoming incomplete. The warning is recorded for a module that imports
-something a signature can bind; a module whose imports cannot bind any
-signature is not parsed (the binder could find nothing in it), so its syntax
-is not checked. The same lexical evidence stands in for a notebook cell
-that does not parse, and when a binder budget is exhausted; that scan is
-incomplete.
+A Python source the running interpreter cannot parse (syntax newer than it, a
+Python 2 module, a template) has no import binding. Its framework patterns are
+kept as lexical evidence of library usage, but code in it cannot establish an
+agent, workload capabilities or an MCP server, and the scan records the warning `import-bound
+analysis skipped (source did not parse); lexical evidence retained` and is
+incomplete (exit 3), apart from discounted test paths as described above. Every
+Python source is parsed, whatever it imports, so a module with no AI import is
+checked too. The same lexical evidence stands in for a notebook cell that does
+not parse, and when a binder budget is exhausted; that scan is incomplete.
 
 Malformed YAML front matter in an agent
 definition, including a YAML value PyYAML cannot construct (an impossible date,
@@ -1007,7 +1045,10 @@ see the [coverage policy](../scanning.md#coverage-policy)) and runs no Git LFS
 smudge filter: a repository whose files include LFS pointer files is reported as
 `Git LFS pointer files in <repo> are not resolved` and makes the scan incomplete
 (an error under `strict_coverage`), as does a clone that could not be checked for
-them. API mode reports LFS pointer files the same way.
+them. The check walks the checkout through open directory descriptors and follows
+no link; a directory nested more than 64 levels below the repository root, or an
+entry replaced while it is read, means the clone could not be checked.
+API mode reports LFS pointer files the same way.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) first checks the provider's repository
@@ -1020,11 +1061,16 @@ removed. Directory symlinks are not followed during measurement. Checks occur
 between Git writes, so brief overshoot is possible, and this is not a network
 transfer limit. Use a dedicated filesystem/container disk quota to enforce a
 strict disk ceiling; `clone_timeout_seconds` (default 120) bounds clone time.
-Cloning requires Git 2.32 or newer (older versions ignore the environment
-settings that confine a clone); with an older or unidentifiable Git the
-connector uses sampled API mode and the scan is incomplete. (The gitlink
-inventory of a clone needs Git 2.45; with 2.32 to 2.44 a clone is scanned but
-reports that submodule coverage is unknown.)
+Cloning requires Git 2.45 or newer (older versions ignore the environment
+settings that confine a clone, or reject the `--no-lazy-fetch` option the
+clone's metadata reads use); with an older or unidentifiable Git the
+connector uses sampled API mode and the scan is incomplete.
+A clone connects directly (proxy variables are ignored) and only to the
+addresses ShadowScan resolved for the clone host and checked like any API
+destination: Git is pinned to them with `http.curloptResolve`, so it does not
+resolve the name again. A clone host with no answer in time, or a clone URL that
+is refused (off the API origin, naming another repository, or resolving to a
+refused address), falls back to sampled API mode and makes the scan incomplete.
 
 ## `code.gitlab`
 Group (with subgroups) or `projects:` list on gitlab.com or self-managed;
@@ -1045,8 +1091,8 @@ The group listing is ordered by project `id`, read to the end before the first
 project is cloned, and compared with the `X-Total` / `X-Total-Pages` totals GitLab
 reports (it omits them for very large groups); a mismatch makes the scan
 incomplete. LFS pointer files are reported as for GitHub.
-GitLab clones use the same observed `clone_max_bytes` and timeout behavior as
-GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
+GitLab clones use the same observed `clone_max_bytes` and timeout behavior,
+address pinning and fallback as GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
 it does not replace a filesystem/container disk quota.
 
 

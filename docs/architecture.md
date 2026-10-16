@@ -78,9 +78,9 @@ cannot fill is recorded in the scan statistics and makes the scan incomplete
 2. **Collection.** Each connector entry runs as one job in a thread pool of
    `options.parallel` workers. A supervisor enforces each job's
    `connector_timeout_seconds` deadline. A live job calls `collect()`; an entry
-   with `input` calls `load_offline()`. With `plugin_execution: process`, an
-   allowlisted plugin runs in a spawned worker that can be killed at its
-   deadline (`plugin_process.py`). `--incremental` reuses a cached result for an
+   with `input` calls `load_offline()`. With `plugin_execution: process`, the
+   default, an allowlisted plugin runs in a spawned worker that can be killed at
+   its deadline (`plugin_process.py`). `--incremental` reuses a cached result for an
    unchanged `code.filesystem` checkout or an unchanged `input` export of a code
    or cloud connector (`incremental.py`); a diff-scoped or `include` scan always
    runs in full. `--dump-records` publishes sanitized records for offline
@@ -205,8 +205,8 @@ Options are keys under `options:`; most also have a command-line flag.
 | `parallel` | 4 | worker threads shared by all connector jobs |
 | `connector_timeout_seconds` | 120 | each connector's completion deadline; an expired job's results are discarded and the scan is incomplete ([deadlines and parallelism](scanning.md#connector-deadlines-and-parallelism)) |
 | `job_deadline_seconds`, `--job-deadline-seconds` | off | the CLI process and its output from the moment the deadline is armed: the flag while the command line is parsed, the option once the configuration is read; expiry exits 3 |
-| `plugin_execution` | `thread` | `process` runs each allowlisted plugin in a spawned worker that is killed at its deadline; built-in connectors always use threads ([plugin execution](connectors.md#third-party-plugin-execution)) |
-| `allow_private_origin` | `false` | HTTPS clients refuse loopback, link-local, private and cloud-metadata destinations (`utils/http.py`) |
+| `plugin_execution` | `process` | each allowlisted plugin runs in a spawned worker that is killed at its deadline; `thread` runs plugins in-process; built-in connectors always use threads ([plugin execution](connectors.md#third-party-plugin-execution)) |
+| `allow_private_origin` | `false` | HTTPS clients refuse loopback, link-local, private and cloud-metadata destinations (`utils/http.py`); every connector accepts the same key to grant itself the exception alone, which the engine prefers over this scan-wide setting; `--deny-private-origin` (`ScanConfig.deny_private_origin`) overrides both ([threat model](security/threat-model.md)) |
 | `allow_credential_mixing` | `false` | repository scans and live tenant collection run as separate scans |
 | `allow_instance_credentials` | `false` | cloud connectors use an explicit audit identity, not instance or managed-identity credentials |
 
@@ -315,6 +315,11 @@ splitting the connector class itself.
 |---|---|
 | `filesystem.py` | the connector: tree walk, coverage accounting, file dispatch, ownership and finding construction |
 | `walk.py` | bounded, non-recursive directory walking that never follows links; project-root markers |
+| `path_context.py` | path-derived evidence context: test, documentation, example, generated and CI-pipeline paths, and the discounts they apply |
+| `project_evidence.py` | how a project's observations count toward its finding: corroboration, weak mentions, env-only and model-ids-only capping |
+| `model_identifiers.py` | model-identifier literal recognition: vendor stems, id shapes and tooling look-alikes |
+| `source_text.py` | offset-preserving text shaping: comment masking, front-matter quoting, notebook magics, crawler user-agent values, and the structured credential context excerpts are redacted with |
+| `excerpts.py` | excerpt sources and lazily cut, redacted snippet lines |
 | `remote.py` | shared by `code.github` and `code.gitlab`: offline clone loading, clone hardening and origin pinning, API snapshots and blob verification |
 | `manifests.py`, `mcp_config.py`, `semantic_config.py` | dependency manifests, containers, IaC and CI files; MCP client and server configuration; agent manifests and low-code exports |
 | `mcp_tools.py`, `instruction_content.py` | what an MCP server can do from the tools it registers; hidden content, fetched code and invisible text in agent instruction files |
@@ -441,10 +446,14 @@ operator approval; it is not a sandbox. Built-in connector names remain reserved
 The entry-point name is the plugin's identity: it is what operators approve in
 `options.plugins`, what `connectors:` entries reference, and what every finding
 (`Finding.connector`, which enters the finding id) and scan statistic is
-attributed to. Listing (`shadowscan connectors`) never imports plugin code. When
-an approved plugin is loaded, the registry verifies the class the entry point
-names and refuses the plugin if any rule fails; that connector then produces no
-findings, the scan is incomplete, and the reason is available through
+attributed to. The engine stamps every plugin finding with that name and derives
+its id from it, in thread and process mode, so an id a plugin sets (or copies
+from a finding built under another name) is never kept and a plugin finding
+cannot take a built-in finding's id. Listing (`shadowscan connectors`) never
+imports plugin code. When an approved plugin is loaded, the registry verifies
+the class the entry point names and refuses the plugin if any rule fails; that
+connector then produces no findings, the scan is incomplete, and the reason is
+available through
 `shadowscan.connectors.plugin_registry_errors()` as printable, credential-free
 `PluginDiagnostic` records (`entry`, `rule`, `message`).
 
@@ -461,7 +470,10 @@ findings, the scan is incomplete, and the reason is available through
   connector name, a variant of one that differs only by case or surrounding
   whitespace, or a bare built-in namespace (`code`, `identity`, `gateway`,
   `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime`). Names must be
-  single printable tokens.
+  lowercase ASCII `namespace.provider` names, like every built-in: two or more
+  dot-separated parts of letters and digits, joined within a part by single
+  hyphens. Uppercase letters, underscores and non-ASCII characters (which could
+  make a confusable such as a Cyrillic `cloud.аws` read as a built-in) are refused.
 * A name registered by more than one entry point with different targets is
   ambiguous; none of those entries is listed or loaded, whatever the
   installation order.

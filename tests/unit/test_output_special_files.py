@@ -229,3 +229,246 @@ def test_cli_report_to_named_pipe_keeps_the_pipe(tmp_path):
     assert result.exit_code == 0, result.output
     assert stat.S_ISFIFO(os.lstat(pipe).st_mode)
     assert "findings" in json.loads(received)
+
+
+def test_report_is_not_written_through_a_directory_link_another_user_owns(tmp_path, monkeypatch):
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    link = tmp_path / "reports"
+    link.symlink_to(victim, target_is_directory=True)
+    real_lstat = os.lstat
+
+    def foreign_link(path, *args, **kwargs):
+        info = real_lstat(path, *args, **kwargs)
+        if os.fspath(path) == os.fspath(link):
+            fields = list(info)
+            fields[stat.ST_UID] = os.geteuid() + 4242
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(output.os, "lstat", foreign_link)
+    with pytest.raises(ValueError, match="symbolic link owned by another user"):
+        write_private_text(link / "report.json", "report body")
+    assert list(victim.iterdir()) == []
+
+
+def test_report_through_the_operators_own_directory_link_lands_in_its_target(tmp_path):
+    target = tmp_path / "real"
+    target.mkdir()
+    (tmp_path / "alias").symlink_to(target, target_is_directory=True)
+    write_private_text(tmp_path / "alias" / "report.json", "report body")
+    written = target / "report.json"
+    assert written.read_text() == "report body"
+    assert stat.S_IMODE(written.stat().st_mode) == 0o600
+    assert sorted(entry.name for entry in target.iterdir()) == ["report.json"]
+
+
+def test_a_long_legal_output_name_is_written(tmp_path):
+    name = "r" * 250 + ".json"
+    write_private_text(tmp_path / name, "report body")
+    assert (tmp_path / name).read_text() == "report body"
+
+
+_FOREIGN_UID = 4242
+
+
+@pytest.fixture(params=["lchown", "lstat"])
+def give_away(request, monkeypatch):
+    """Make a link another user's: really, with lchown (root only), or as lstat reports it.
+
+    Only a link that is really another user's shows that ``os.path.realpath`` and the
+    kernel follow it whatever a patched lstat says; the lstat variant runs everywhere.
+    """
+    if request.param == "lchown":
+        if not hasattr(os, "lchown") or not hasattr(os, "geteuid") or os.geteuid() != 0:
+            pytest.skip("giving a symbolic link to another user needs root and lchown")
+        return lambda link: os.lchown(link, _FOREIGN_UID, -1)
+    foreign: set[str] = set()
+    real_lstat = os.lstat
+
+    def lstat(path, *args, **kwargs):
+        info = real_lstat(path, *args, **kwargs)
+        if os.fspath(path) in foreign:
+            fields = list(info)
+            fields[stat.ST_UID] = os.geteuid() + _FOREIGN_UID
+            return os.stat_result(fields)
+        return info
+
+    monkeypatch.setattr(output.os, "lstat", lstat)
+    return lambda link: foreign.add(os.fspath(link))
+
+
+def _directory_link(link: Path, target: Path) -> Path:
+    link.symlink_to(target, target_is_directory=True)
+    return link
+
+
+def test_report_is_not_written_through_a_foreign_link_behind_the_operators_own(tmp_path, give_away):
+    # mine (the operator's) -> shared (another user's) -> victim/
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    shared = _directory_link(tmp_path / "shared", victim)
+    give_away(shared)
+    _directory_link(tmp_path / "mine", shared)
+    with pytest.raises(ValueError, match="symbolic link owned by another user"):
+        write_private_text(tmp_path / "mine" / "report.json", "report body")
+    assert list(victim.iterdir()) == []
+
+
+def test_report_is_not_written_through_a_foreign_link_inside_a_link_target(tmp_path, give_away):
+    # mine -> shared/sub, where shared is another user's link to victim/
+    victim = tmp_path / "victim"
+    (victim / "sub").mkdir(parents=True)
+    give_away(_directory_link(tmp_path / "shared", victim))
+    _directory_link(tmp_path / "mine", Path("shared") / "sub")
+    with pytest.raises(ValueError, match="symbolic link owned by another user"):
+        write_private_text(tmp_path / "mine" / "report.json", "report body")
+    assert list((victim / "sub").iterdir()) == []
+
+
+def test_a_foreign_link_planted_where_a_component_was_missing_is_not_followed(
+    tmp_path, monkeypatch, give_away
+):
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    late = tmp_path / "late"
+    checked_lstat = os.lstat
+    planted: list[Path] = []
+
+    def lstat(path, *args, **kwargs):
+        try:
+            return checked_lstat(path, *args, **kwargs)
+        except FileNotFoundError:
+            # Another user plants the link right after the component was found missing.
+            if os.fspath(path) == os.fspath(late) and not planted:
+                planted.append(_directory_link(late, victim))
+                give_away(late)
+            raise
+
+    monkeypatch.setattr(output.os, "lstat", lstat)
+    with pytest.raises(FileNotFoundError):
+        write_private_text(late / "report.json", "report body")
+    assert planted == [late]
+    assert list(victim.iterdir()) == []
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "lchown") or not hasattr(os, "geteuid") or os.geteuid() != 0,
+    reason="links owned by root and by another operator need root and lchown",
+)
+def test_report_through_the_operators_own_and_root_owned_links_lands_in_the_target(tmp_path, monkeypatch):
+    # Run as a non-root operator: their own link and a root-owned system link (macOS's
+    # /tmp -> private/tmp) are followed, here chained, the second written relative.
+    operator = _FOREIGN_UID + 1
+    real = tmp_path / "private" / "reports"
+    real.mkdir(parents=True)
+    os.lchown(_directory_link(tmp_path / "system", Path("private")), 0, -1)
+    os.lchown(_directory_link(tmp_path / "mine", tmp_path / "system" / "reports"), operator, -1)
+    monkeypatch.setattr(output.os, "geteuid", lambda: operator)
+    write_private_text(tmp_path / "mine" / "report.json", "report body")
+    monkeypatch.undo()
+    written = real / "report.json"
+    assert written.read_text() == "report body"
+    assert stat.S_IMODE(written.stat().st_mode) == 0o600
+    assert sorted(entry.name for entry in real.iterdir()) == ["report.json"]
+
+
+def test_report_through_relative_links_and_parent_steps_lands_in_the_real_directory(tmp_path):
+    real = tmp_path / "deep" / "real"
+    real.mkdir(parents=True)
+    _directory_link(tmp_path / "deep" / "inner", Path("real"))
+    _directory_link(tmp_path / "outer", Path("deep") / "inner" / ".." / "real")
+    write_private_text(tmp_path / "outer" / "report.json", "report body")
+    assert (real / "report.json").read_text() == "report body"
+    assert sorted(entry.name for entry in real.iterdir()) == ["report.json"]
+
+
+def test_a_parent_step_in_a_link_target_is_taken_after_the_link_before_it(tmp_path):
+    # L -> M/../x with M -> far/deep: '..' steps out of far/deep, so the kernel puts L at
+    # far/x. Read lexically, 'M/../x' would be the unrelated x beside L.
+    (tmp_path / "far" / "deep").mkdir(parents=True)
+    (tmp_path / "far" / "x").mkdir()
+    (tmp_path / "x").mkdir()
+    _directory_link(tmp_path / "M", tmp_path / "far" / "deep")
+    _directory_link(tmp_path / "L", Path("M") / ".." / "x")
+    assert os.path.samefile(tmp_path / "L", tmp_path / "far" / "x")  # the kernel's resolution
+    write_private_text(tmp_path / "L" / "report.json", "report body")
+    assert (tmp_path / "far" / "x" / "report.json").read_text() == "report body"
+    assert list((tmp_path / "x").iterdir()) == []
+
+
+def test_a_link_through_a_regular_file_is_refused_as_the_kernel_refuses_it(tmp_path):
+    # The kernel fails 'notes.txt/../a' with ENOTDIR instead of stepping back out of the file.
+    (tmp_path / "notes.txt").write_text("notes")
+    (tmp_path / "a").mkdir()
+    _directory_link(tmp_path / "L", Path("notes.txt") / ".." / "a")
+    with pytest.raises(NotADirectoryError):  # the kernel's resolution
+        os.stat(tmp_path / "L")
+    with pytest.raises(NotADirectoryError):
+        write_private_text(tmp_path / "L" / "report.json", "report body")
+    assert list((tmp_path / "a").iterdir()) == []
+    assert (tmp_path / "notes.txt").read_text() == "notes"
+
+
+def test_parent_steps_in_the_output_path_are_resolved_before_links(tmp_path):
+    # '..' in the given path is lexical: 'mine/../r.json' lands beside the link, not in
+    # the parent of its target, where the kernel's own resolution would put it.
+    real = tmp_path / "elsewhere" / "real"
+    real.mkdir(parents=True)
+    _directory_link(tmp_path / "mine", real)
+    write_private_text(tmp_path / "mine" / ".." / "report.json", "report body")
+    assert (tmp_path / "report.json").read_text() == "report body"
+    assert not (tmp_path / "elsewhere" / "report.json").exists()
+
+
+def test_report_in_a_plain_nested_directory_is_written(tmp_path):
+    directory = tmp_path / "a" / "b"
+    directory.mkdir(parents=True)
+    write_private_text(directory / "report.json", "report body")
+    assert (directory / "report.json").read_text() == "report body"
+    assert stat.S_IMODE((directory / "report.json").stat().st_mode) == 0o600
+
+
+def test_report_into_a_missing_directory_is_refused(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        write_private_text(tmp_path / "missing" / "report.json", "report body")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_directory_link_loop_is_refused(tmp_path):
+    (tmp_path / "a").symlink_to(tmp_path / "b")
+    (tmp_path / "b").symlink_to(tmp_path / "a")
+    with pytest.raises(ValueError, match="too many symbolic links"):
+        write_private_text(tmp_path / "a" / "report.json", "report body")
+
+
+# NAME_MAX counts bytes. Each name is a legal destination of 253-255 bytes but well under
+# 200 code points, so a temporary name cut by code points would exceed NAME_MAX.
+_MULTIBYTE_NAMES = [
+    pytest.param("文" * 83 + ".json", id="cjk-254-bytes"),
+    pytest.param("\U0001f600" * 62 + ".json", id="emoji-253-bytes"),
+    pytest.param("é" * 125 + ".json", id="latin1-255-bytes"),
+]
+
+
+@pytest.mark.parametrize("name", _MULTIBYTE_NAMES)
+def test_temporary_name_fits_name_max_in_bytes_and_keeps_whole_characters(name):
+    assert len(os.fsencode(name)) <= 255
+    temporary = output._temporary_name(name)
+    assert len(os.fsencode(temporary)) <= 255
+    os.fsencode(temporary).decode("utf-8")  # no character split at the cut
+    assert temporary.startswith(".")
+
+
+@pytest.mark.parametrize("name", _MULTIBYTE_NAMES)
+def test_a_long_legal_multibyte_output_name_is_written(tmp_path, name):
+    target = tmp_path / name
+    try:
+        target.touch()
+    except OSError as exc:  # pragma: no cover - a filesystem with a smaller limit
+        pytest.skip(f"filesystem refuses the destination name itself: {exc}")
+    target.unlink()
+    write_private_text(target, "report body")
+    assert target.read_text() == "report body"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert [entry.name for entry in tmp_path.iterdir()] == [name]

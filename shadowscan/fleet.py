@@ -22,10 +22,9 @@ sources matched it to one agent, ambiguous (shadow, with
 to different agents, as two matching inventory entries are in one scan, and
 unassessed when no such source reported it, even if other sources were given
 an inventory. A ``shadow: false`` that names no match is not a registration.
-The match state written beside a verdict (``registry_match_reason`` and
-``registry_suggestions`` of a shadow finding, ``registry_match_assurance`` and
-the ``registry-identity-unverified`` tag of a registered one) comes only from
-the sources whose verdict the merged finding adopts.
+The match state written beside a verdict (candidate IDs, reason, identity
+assurance and any ``registry-identity-unverified`` tag) comes only from the
+sources whose verdict the merged finding adopts.
 
 The merged report is comparable with ``shadowscan diff`` only when every
 source is complete and carries a comparable collection scope; its fingerprint
@@ -145,8 +144,13 @@ def _source_findings(report: dict[str, Any], name: str) -> tuple[list[Finding], 
     findings = [Finding.from_dict(entry) for entry in report["findings"]]
     _inventory_size(report)
     present = _inventory_presence(report, name)
-    if not present:
-        for finding in findings:
+    for finding in findings:
+        # LLM triage is advisory, per-scan and never authoritative (triage.py). A source report
+        # is untrusted, so a carried verdict (merge() keeps the first source's metadata) would let
+        # one source plant a "benign" verdict on a finding another source owns. Drop it; triage, if
+        # wanted, runs on the merged result.
+        finding.metadata.pop("llm_triage", None)
+        if not present:
             finding.shadow = None
             finding.registry_match = None
     return findings, present
@@ -197,12 +201,12 @@ class _Assessment(NamedTuple):
 
     registry_match: str | None  # None: the source found the finding unregistered
     metadata: dict[str, Any]  # the match state the source wrote beside that verdict
-    unverified: bool  # the match was flagged ``registry-identity-unverified``
+    unverified: bool  # the verdict was flagged ``registry-identity-unverified``
 
 
 # Match state a reconciliation writes beside its verdict: why no entry approved the finding, or
 # how far a match on an operator-asserted caller name is trusted. Each describes one verdict only.
-_SHADOW_STATE = ("registry_match_reason", "registry_suggestions")
+_SHADOW_STATE = ("registry_match_reason", "registry_suggestions", "registry_match_assurance")
 _MATCH_STATE = ("registry_match_assurance",)
 
 
@@ -218,7 +222,7 @@ def _assessment(finding: Finding) -> _Assessment | None:
     else:
         return None
     metadata = {key: finding.metadata[key] for key in keys if key in finding.metadata}
-    unverified = finding.shadow is False and UNVERIFIED_IDENTITY_TAG in finding.tags
+    unverified = UNVERIFIED_IDENTITY_TAG in finding.tags
     return _Assessment(finding.registry_match if finding.shadow is False else None, metadata, unverified)
 
 

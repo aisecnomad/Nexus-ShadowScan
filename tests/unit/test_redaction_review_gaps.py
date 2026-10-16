@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
@@ -329,3 +334,384 @@ def test_labels_nested_in_an_auth_value_container_never_wipe_other_fields() -> N
     out = sanitize(postman)
     assert out["request"] == postman["request"]
     assert SECRET not in repr(out)
+
+
+# October 15 review: credential formats the scanner detects but did not withhold.
+_BASE64_BODY = "QmVkcm9ja0FQSUtleS1zeW50aGV0aWMtZXhhbXBsZS0" + "0" * 60
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "AWS_BEARER_TOKEN_BEDROCK=" + "ABSK" + _BASE64_BODY + "==",
+        "client = Bedrock(api_key='" + "ABSK" + _BASE64_BODY + "')",
+        "value " + "bedrock-api-key-" + _BASE64_BODY,
+    ],
+)
+def test_bedrock_api_keys_are_withheld(text: str) -> None:
+    out = sanitize_text(text)
+    assert _BASE64_BODY not in out and REDACTED in out
+
+
+def test_bedrock_words_in_prose_stay() -> None:
+    text = "Rotate the bedrock-api-key every 12 hours; ABSK is the long-term prefix."
+    assert sanitize_text(text) == text
+
+
+@pytest.mark.parametrize(
+    ("url", "kept"),
+    [
+        ("https://mcp.zapier.com/api/mcp/s/" + SECRET + "/mcp", "https://mcp.zapier.com/api/mcp/s/"),
+        ("https://actions.zapier.com/mcp/" + SECRET + "/sse", "https://actions.zapier.com/mcp/"),
+    ],
+)
+def test_zapier_mcp_urls_withhold_their_path_credential(url: str, kept: str) -> None:
+    out = sanitize_text(f"url: {url}")
+    assert SECRET not in out and kept + REDACTED in out
+    assert sanitize({"servers": [{"url": url}]})["servers"][0]["url"] == kept + REDACTED
+
+
+@pytest.mark.parametrize(
+    "scheme",
+    ["oracle+cx_oracle", "ibm_db_sa", "postgresql+py_postgresql", "redis_sentinel", "mssql+pyodbc"],
+)
+def test_url_userinfo_is_withheld_for_schemes_with_underscores(scheme: str) -> None:
+    # Assembled from pieces so the repository secret scanner does not flag a literal user:pass@host.
+    url = f"{scheme}://svc-user:" + SECRET + "@db.internal:1521/app"
+    out = sanitize_text(f"DATABASE_URI = {url}")
+    assert SECRET not in out
+    assert f"{scheme}://{REDACTED}@db.internal:1521/app" in sanitize_text(url)
+
+
+def test_snake_case_words_are_not_read_as_url_schemes() -> None:
+    text = "set my_scheme_name and other_value to configure the pool"
+    assert sanitize_text(text) == text
+
+
+def _url_password_across(limit: int) -> str:
+    """Prose whose URL password starts before ``limit`` and whose '@' falls after it."""
+    # 35 characters short of the limit: the password then starts 16 characters before the cut.
+    lead = "Agent instructions: call " + "x" * (limit - 60)
+    return f"{lead} https://svc-agent:" + SECRET + "@agents.example/v1 for every request"
+
+
+def test_excerpts_are_redacted_before_they_are_shortened() -> None:
+    from shadowscan.utils.redaction import sanitize_excerpt
+
+    text = _url_password_across(300)
+    assert len(text) > 300 and text.index(SECRET) < 300 < text.index("@agents")
+    out = sanitize_excerpt(text, 300)
+    assert SECRET[:8] not in out and len(out) <= 300
+    assert sanitize_excerpt(None, 10) is None and sanitize_excerpt(7, 10) == 7
+
+
+def test_connector_summaries_redact_before_shortening() -> None:
+    from shadowscan.connectors.code.semantic_config import _CLIP_CHARS, bounded_metadata
+    from shadowscan.connectors.identity.entra import _card_summary
+
+    assert SECRET[:8] not in repr(bounded_metadata({"note": _url_password_across(_CLIP_CHARS)}))
+    assert SECRET[:8] not in repr(_card_summary({"description": _url_password_across(300)}))
+
+
+def _connector(cls_path: str, index: Any) -> Any:
+    """A connector built for calling its record handlers directly."""
+    from importlib import import_module
+
+    from shadowscan.connectors import ConnectorContext
+    from shadowscan.models import ScanStats
+
+    module, name = cls_path.rsplit(".", 1)
+    ctx = ConnectorContext(config={}, index=index)
+    ctx.stats = ScanStats(connector="test", started_at="2026-10-16")
+    return getattr(import_module(module), name)(ctx)
+
+
+def _registry_agent(text: str) -> dict[str, Any]:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "cloud" / "gcp_registry_records.jsonl"
+    records = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines() if line]
+    return {**next(r for r in records if r.get("_kind") == "agent-registry-agent"), "description": text}
+
+
+_AWS = "shadowscan.connectors.cloud.aws.AwsConnector"
+_AZURE = "shadowscan.connectors.cloud.azure.AzureConnector"
+_GCP = "shadowscan.connectors.cloud.gcp.GcpConnector"
+_OCI = "shadowscan.connectors.cloud.oci.OciConnector"
+_SFDC = "shadowscan.connectors.lowcode.salesforce.SalesforceConnector"
+_SNOW = "shadowscan.connectors.lowcode.servicenow.ServiceNowConnector"
+_RE = "projects/123/locations/us-central1/reasoningEngines/456"
+_DF = "projects/acme/locations/global/agents/7f1c"
+_RUNTIME = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/ops-1"
+_PROJECT = "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a1/projects/p1"
+
+# Each connector summary that shortens provider text: (limit, offset, build). ``build(index, text)``
+# returns the finding that carries ``text`` shortened to ``limit`` characters, ``offset`` of them
+# being the record text the summary puts ahead of ``text``.
+_SHORTENED_SUMMARIES: dict[str, tuple[int, int, Callable[[Any, str], Any]]] = {
+    "aws knowledge base evidence": (
+        120,
+        0,
+        lambda index, text: _connector(_AWS, index)._h_bedrock_knowledge_base(
+            {
+                "knowledgeBaseId": "KB1",
+                "name": "kb",
+                "status": "ACTIVE",
+                "_region": "us-east-1",
+                "description": text,
+            }
+        ),
+    ),
+    "aws agentcore runtime description": (
+        200,
+        0,
+        lambda index, text: _connector(_AWS, index)._h_agentcore_runtime(
+            {
+                "agentRuntimeArn": _RUNTIME,
+                "agentRuntimeName": "ops",
+                "_region": "us-east-1",
+                "description": text,
+            }
+        ),
+    ),
+    "aws bedrock agent instruction": (
+        300,
+        0,
+        lambda index, text: _connector(_AWS, index)._h_bedrock_agent(
+            {"agentId": "A1", "agentName": "ops", "_region": "us-east-1", "instruction": text}
+        ),
+    ),
+    "azure foundry project description": (
+        200,
+        0,
+        lambda index, text: _connector(_AZURE, index)._resource_finding(
+            {
+                "type": "microsoft.cognitiveservices/accounts/projects",
+                "id": _PROJECT,
+                "name": "p1",
+                "properties": {"description": text},
+            },
+            [],
+            None,
+        ),
+    ),
+    "gcp agent engine evidence": (
+        120,
+        0,
+        lambda index, text: _connector(_GCP, index)._h_reasoning_engine(
+            {
+                "name": _RE,
+                "displayName": "eng",
+                "description": text,
+                "_project": "acme",
+                "_location": "us-central1",
+            }
+        ),
+    ),
+    "gcp agent engine description": (
+        300,
+        0,
+        lambda index, text: _connector(_GCP, index)._h_reasoning_engine(
+            {
+                "name": _RE,
+                "displayName": "eng",
+                "description": text,
+                "_project": "acme",
+                "_location": "us-central1",
+            }
+        ),
+    ),
+    "gcp dialogflow description": (
+        200,
+        0,
+        lambda index, text: _connector(_GCP, index)._h_dialogflow_agent(
+            {
+                "name": _DF,
+                "displayName": "bot",
+                "description": text,
+                "_project": "acme",
+                "_location": "global",
+            }
+        ),
+    ),
+    "gcp registry record description": (
+        300,
+        0,
+        lambda index, text: _connector(_GCP, index)._h_agent_registry_agent(_registry_agent(text)),
+    ),
+    "oci agent description": (
+        200,
+        0,
+        lambda index, text: _connector(_OCI, index)._agent_finding(
+            {"id": "ocid1.genaiagent.oc1..a1", "display_name": "ops", "description": text}, []
+        ),
+    ),
+    "oci agent welcome message": (
+        120,
+        0,
+        lambda index, text: _connector(_OCI, index)._agent_finding(
+            {"id": "ocid1.genaiagent.oc1..a1", "display_name": "ops", "welcome_message": text}, []
+        ),
+    ),
+    "oci dynamic group rule": (
+        200,
+        len("genai "),
+        lambda index, text: _connector(_OCI, index)._h_dynamic_group(
+            {"id": "ocid1.dynamicgroup.oc1..d1", "name": "agents", "matching_rule": "genai " + text}
+        ),
+    ),
+    "oci policy statements": (
+        400,
+        len("Allow group GenAIUsers to use generative-ai-family in tenancy | "),
+        lambda index, text: _connector(_OCI, index)._h_policy(
+            {
+                "id": "ocid1.policy.oc1..p1",
+                "name": "genai",
+                "statements": ["Allow group GenAIUsers to use generative-ai-family in tenancy", text],
+            }
+        ),
+    ),
+    "salesforce bot description": (
+        200,
+        0,
+        lambda index, text: _connector(_SFDC, index)._bot_finding(
+            {"Id": "0Xx1", "DeveloperName": "helper", "Description": text}, []
+        ),
+    ),
+    "salesforce agentforce description": (
+        200,
+        0,
+        lambda index, text: _connector(_SFDC, index)._agentforce_finding(
+            "planner", {"Id": "0Pl1", "DeveloperName": "planner", "Description": text}, [], []
+        ),
+    ),
+    "salesforce flow evidence": (
+        160,
+        len("f Einstein flow "),
+        lambda index, text: _connector(_SFDC, index)._flow_finding(
+            {"Id": "301", "ApiName": "f", "Label": "Einstein flow", "Description": text}
+        ),
+    ),
+    "servicenow agent description": (
+        200,
+        0,
+        lambda index, text: _connector(_SNOW, index)._agent_finding(
+            {"sys_id": "a1", "name": "agent", "description": text}, []
+        ),
+    ),
+    "servicenow agent instructions": (
+        300,
+        0,
+        lambda index, text: _connector(_SNOW, index)._agent_finding(
+            {"sys_id": "a1", "name": "agent", "instructions": text}, []
+        ),
+    ),
+    "servicenow use case description": (
+        200,
+        0,
+        lambda index, text: _connector(_SNOW, index)._usecase_finding(
+            {"sys_id": "u1", "name": "case", "description": text}, []
+        ),
+    ),
+    "servicenow trigger condition": (
+        120,
+        0,
+        lambda index, text: _connector(_SNOW, index)._usecase_finding(
+            {"sys_id": "u1", "name": "case"},
+            [{"trigger_type": "record", "table": "incident", "condition": text}],
+        ),
+    ),
+    "servicenow flow evidence": (
+        160,
+        len("genai flow "),
+        lambda index, text: _connector(_SNOW, index)._flow_finding(
+            {"sys_id": "f1", "name": "genai flow", "description": text}
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize("site", sorted(_SHORTENED_SUMMARIES))
+def test_shortened_connector_summaries_are_redacted_first(index: Any, site: str) -> None:
+    """Regression: these summaries were shortened before the report sanitizer read them, so a
+    cut between a URL password and its '@' left the start of the password in the report."""
+    limit, offset, build = _SHORTENED_SUMMARIES[site]
+    text = _url_password_across(limit - offset)
+    finding = build(index, text)
+    finding.sanitize()
+    report = json.dumps(finding.to_dict(), default=str)
+    assert SECRET[:8] not in report
+    assert REDACTED in report
+
+
+# The summaries whose record field reaches the excerpt as the provider sent it. The OCI matching
+# rule and policy statements and the Salesforce and ServiceNow flow text are strings the
+# connector builds itself.
+_RAW_TEXT_FIELDS = sorted(site for site, (_, offset, _) in _SHORTENED_SUMMARIES.items() if offset == 0)
+
+
+@pytest.mark.parametrize("value", [[f"chunk-{n} " + "y" * 50 for n in range(300)], 42], ids=["list", "int"])
+@pytest.mark.parametrize("site", _RAW_TEXT_FIELDS)
+def test_a_summary_field_that_is_not_text_rejects_the_record(index: Any, site: str, value: Any) -> None:
+    """Regression: sanitize_excerpt returns a value that is not text unchanged, where the truncate
+    it replaced raised TypeError, which the cloud connectors report as an invalid record (coverage
+    incomplete, exit 3). A 300-element list or a number in a description, instruction or welcome
+    message went into finding metadata whole, on a complete scan. (Salesforce and ServiceNow
+    reject such a record before these handlers; the GCP registry validator rejects it too.)"""
+    from shadowscan.connectors.cloud.common import RECORD_ERRORS
+
+    _, _, build = _SHORTENED_SUMMARIES[site]
+    with pytest.raises(RECORD_ERRORS):
+        build(index, value)
+
+
+@pytest.mark.parametrize(
+    ("connector", "record"),
+    [
+        (
+            "cloud.oci",
+            {
+                "_kind": "genai-agent",
+                "_region": "us-chicago-1",
+                "_compartment": "ocid1.compartment.oc1..cmp1",
+                "id": "ocid1.genaiagent.oc1.us-chicago-1.agent9",
+                "display_name": "x-assistant",
+                "description": [f"chunk-{n} " + "y" * 50 for n in range(300)],
+            },
+        ),
+        (
+            "cloud.oci",
+            {
+                "_kind": "genai-agent",
+                "_region": "us-chicago-1",
+                "id": "ocid1.genaiagent.oc1.us-chicago-1.agent9",
+                "display_name": "x-assistant",
+                "welcome_message": 12345,
+            },
+        ),
+        (
+            "cloud.aws",
+            {
+                "_kind": "bedrock-agent",
+                "_region": "us-east-1",
+                "agentId": "AGENT1",
+                "agentArn": "arn:aws:bedrock:us-east-1:123456789012:agent/AGENT1",
+                "agentName": "ops-provisioning-04",
+                "agentStatus": "PREPARED",
+                "foundationModel": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+                "instruction": 42,
+            },
+        ),
+    ],
+    ids=["oci-description-list", "oci-welcome-message-int", "aws-instruction-int"],
+)
+def test_a_mistyped_provider_text_field_leaves_the_scan_incomplete(
+    index: Any, tmp_path: Path, connector: str, record: dict[str, Any]
+) -> None:
+    from shadowscan.config import ConnectorSpec, ScanConfig
+    from shadowscan.engine import Engine
+
+    export = tmp_path / "export.jsonl"
+    export.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    result = Engine(ScanConfig(connectors=[ConnectorSpec(connector, {"input": str(export)})]), index).run()
+    assert not result.complete and not result.findings
+    [stats] = result.stats
+    assert any("record has invalid" in warning for warning in stats.warnings), stats.warnings

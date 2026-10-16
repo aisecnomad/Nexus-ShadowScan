@@ -259,3 +259,125 @@ def test_engine_propagates_and_restores_private_origin_policy(index, monkeypatch
     result = Engine(config, index).run()
     assert not result.complete and observed == [True, True]
     assert http._allow_private_origin.get() is False
+
+
+@pytest.mark.parametrize("parallel", [1, 2])
+def test_connector_private_origin_grant_applies_to_that_connector_alone(index, monkeypatch, parallel):
+    """A connector-level grant reaches private destinations without the scan-wide one."""
+    from shadowscan.utils import http
+
+    observed = {}
+
+    class Probe(BaseConnector):
+        def collect(self):
+            observed[self.ctx.get("label")] = http._allow_private_origin.get()
+            raise RuntimeError("simulated failure")
+
+        def analyze(self, records):
+            yield from ()
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda *args, **kwargs: Probe)
+    config = ScanConfig(
+        connectors=[
+            ConnectorSpec("probe.internal", {"allow_private_origin": True}, label="internal"),
+            ConnectorSpec("probe.public", label="public"),
+        ],
+        allow_private_origin=False,
+        parallel=parallel,
+    )
+    result = Engine(config, index).run()
+    assert not result.complete
+    assert observed == {"internal": True, "public": False}
+    assert http._allow_private_origin.get() is False
+
+
+@pytest.mark.parametrize("parallel", [1, 2])
+def test_connector_can_refuse_private_origin_the_scan_allows(index, monkeypatch, parallel):
+    """A connector-level false narrows a scan-wide grant for that connector."""
+    from shadowscan.utils import http
+
+    observed = {}
+
+    class Probe(BaseConnector):
+        def collect(self):
+            observed[self.ctx.get("label")] = http._allow_private_origin.get()
+            raise RuntimeError("simulated failure")
+
+        def analyze(self, records):
+            yield from ()
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda *args, **kwargs: Probe)
+    config = ScanConfig(
+        connectors=[
+            ConnectorSpec("probe.kept", {"allow_private_origin": False}, label="kept"),
+            ConnectorSpec("probe.inherits", label="inherits"),
+        ],
+        allow_private_origin=True,
+        parallel=parallel,
+    )
+    result = Engine(config, index).run()
+    assert not result.complete
+    assert observed == {"kept": False, "inherits": True}
+    assert http._allow_private_origin.get() is False
+
+
+@pytest.mark.parametrize("deny", [True, False])
+@pytest.mark.parametrize("parallel", [1, 2])
+def test_explicit_scan_wide_deny_overrides_a_connector_grant(index, monkeypatch, parallel, deny):
+    """deny_private_origin (--deny-private-origin) wins over a connector-level grant.
+
+    The plugin lookup, collection and the connector's own ``ctx.config`` all
+    see the refusal, so a plugin whose own transport honours the key cannot
+    reach a private address either; without the refusal the grant holds.
+    """
+    from shadowscan.utils import http
+
+    observed = {}
+    configured = {}
+    lookups = []
+
+    class Probe(BaseConnector):
+        def collect(self):
+            label = self.ctx.get("label")
+            observed[label] = http._allow_private_origin.get()
+            configured[label] = self.ctx.config.get("allow_private_origin", "absent")
+            raise RuntimeError("simulated failure")
+
+        def analyze(self, records):
+            yield from ()
+
+    def lookup(*args, **kwargs):
+        lookups.append(http._allow_private_origin.get())
+        return Probe
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lookup)
+    config = ScanConfig(
+        connectors=[
+            ConnectorSpec("probe.internal", {"allow_private_origin": True}, label="internal"),
+            ConnectorSpec("probe.public", label="public"),
+        ],
+        deny_private_origin=deny,
+        parallel=parallel,
+    )
+    result = Engine(config, index).run()
+    assert not result.complete
+    granted = not deny
+    assert observed == {"internal": granted, "public": False}
+    # The engine replaces a connector's key with the policy it enforces and adds none.
+    assert configured == {"internal": granted, "public": "absent"}
+    assert sorted(lookups) == sorted([granted, False])
+    assert http._allow_private_origin.get() is False
+
+
+def test_allow_and_deny_private_origin_together_are_rejected():
+    with pytest.raises(ValueError, match="cannot both be true"):
+        ScanConfig(allow_private_origin=True, deny_private_origin=True)
+    config = ScanConfig(deny_private_origin=True)
+    config.allow_private_origin = True
+    with pytest.raises(ValueError, match="cannot both be true"):
+        config.validate_security_options()
+    with pytest.raises(ValueError, match="deny_private_origin"):
+        ScanConfig(deny_private_origin=1)  # type: ignore[arg-type]
+    # Only the command line or a library caller sets the refusal; a file cannot.
+    with pytest.raises(ValueError, match="unsupported field"):
+        ScanConfig.from_dict({"options": {"deny_private_origin": True}})

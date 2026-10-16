@@ -302,6 +302,36 @@ def sanitize_text(text: str) -> str:
     return _merge_readings(plain, established)
 
 
+def sanitize_excerpt(value: Any, limit: int = 200) -> Any:
+    """A text ``value`` redacted whole, then shortened to ``limit`` characters.
+
+    Shortening first can cut a credential away from what identifies it (a URL password from
+    its '@', a value from its name), and the later report sanitizer then sees an ordinary
+    string. Text beyond the sanitizer's safety limits is withheld entirely. Anything other
+    than text is returned unchanged for the report sanitizer.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        text = sanitize_text(value)
+    except SanitizationLimitError:
+        return REDACTED
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def sanitize_text_excerpt(value: str | None, limit: int = 200) -> str | None:
+    """``sanitize_excerpt`` of a provider record's text field, which must be text or absent.
+
+    Any other value (a list, a number) raises TypeError, as the ``truncate`` it replaces did,
+    so the connector rejects the record as malformed and coverage is incomplete, instead of
+    reporting the raw value in place of a shortened summary.
+    """
+    if value is not None and not isinstance(value, str):
+        raise TypeError("provider text field is not a string")
+    excerpt: str | None = sanitize_excerpt(value, limit)
+    return excerpt
+
+
 # How often a reading of a text with a glued run is read again (see _settled).
 _GLUED_READINGS_AGAIN = 4
 

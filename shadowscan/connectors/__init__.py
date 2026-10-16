@@ -146,8 +146,19 @@ def _display(text: str) -> str:
     return repr(sanitize_text(text))
 
 
+# A connector name is ``namespace.provider`` in lowercase ASCII letters, digits and hyphens,
+# like every built-in. Restricting to ASCII stops a confusable (Cyrillic ``cloud.аws``) from
+# being listed and approved while reading like a built-in in a report.
+_PLUGIN_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+")
+
+
 def _malformed_name(name: str) -> bool:
-    return name != name.strip() or not name.isprintable() or any(ch.isspace() for ch in name)
+    return (
+        name != name.strip()
+        or not name.isprintable()
+        or any(ch.isspace() for ch in name)
+        or _PLUGIN_NAME.fullmatch(name) is None
+    )
 
 
 def _reserved_name_reason(name: str) -> str | None:
@@ -333,18 +344,22 @@ def available_connectors() -> dict[str, str]:
         candidates.setdefault(name, []).append(value)
     for name, values in candidates.items():
         shown = _display(name)
+        # A built-in name or namespace (and its case/whitespace variants) is reported as
+        # reserved before the grammar check, so a bare 'cloud' or 'SaaS.Slack' still reads
+        # as a claim on the built-in rather than a generic malformed-name error.
+        reserved = _reserved_name_reason(name)
+        if reserved is not None:
+            errors.append(PluginDiagnostic(name, "reserved-name", f"plugin {shown} {reserved}"))
+            continue
         if _malformed_name(name):
             errors.append(
                 PluginDiagnostic(
                     name,
                     "invalid-name",
-                    f"plugin {shown} must be a single printable token without whitespace",
+                    f"plugin {shown} must be a lowercase ASCII namespace.provider name "
+                    "(letters, digits, hyphens and dots)",
                 )
             )
-            continue
-        reserved = _reserved_name_reason(name)
-        if reserved is not None:
-            errors.append(PluginDiagnostic(name, "reserved-name", f"plugin {shown} {reserved}"))
             continue
         if any(value != values[0] for value in values[1:]):
             errors.append(

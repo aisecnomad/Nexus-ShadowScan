@@ -20,6 +20,13 @@ from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitiz
 SECRET = "opaque-synthetic-credential-for-review"
 TAIL = "private-credential-suffix"
 
+MALFORMED_EXPRESSIONS = [
+    f'"""{SECRET}\n{TAIL}',
+    f'"{SECRET};{TAIL}',
+    f'(\n "{SECRET}"\n "{TAIL}"',
+    f'("{SECRET}"]\n"{TAIL}"',
+]
+
 EXPRESSIONS = [
     f'"""{SECRET}\n{TAIL}"""',
     f"'''{SECRET}\n{TAIL}'''",
@@ -31,10 +38,7 @@ EXPRESSIONS = [
     f'bytes("{SECRET}{TAIL}", "utf-8")',
     f'{{"part": ["{SECRET}", "{TAIL}"]}}',
     f'"{SECRET}", "{TAIL}"',
-    f'"""{SECRET}\n{TAIL}',
-    f'"{SECRET};{TAIL}',
-    f'(\n "{SECRET}"\n "{TAIL}"',
-    f'("{SECRET}"]\n"{TAIL}"',
+    *MALFORMED_EXPRESSIONS,
     f'[REDACTED] + "{SECRET}{TAIL}"',
 ]
 
@@ -159,10 +163,17 @@ def test_long_sensitive_key_never_reaches_json_or_sarif(tmp_path, scan_secrets):
 
 
 @pytest.mark.parametrize("scan_secrets", [False, True])
-def test_complete_engine_scan_never_exports_python_credentials(tmp_path, index, scan_secrets):
+@pytest.mark.parametrize(
+    ("expressions", "unparsed"),
+    [
+        pytest.param([rhs for rhs in EXPRESSIONS if rhs not in MALFORMED_EXPRESSIONS], False, id="valid"),
+        pytest.param(MALFORMED_EXPRESSIONS, True, id="malformed"),
+    ],
+)
+def test_engine_scan_never_exports_python_credentials(tmp_path, index, scan_secrets, expressions, unparsed):
     # Each expression sits beside a framework signal, forcing its line into the
     # normal filesystem evidence path before any reporter shortens the snippet.
-    for number, rhs in enumerate(EXPRESSIONS):
+    for number, rhs in enumerate(expressions):
         (tmp_path / f"agent_{number}.py").write_text(
             f"import langchain; API_KEY = {rhs}\n",
             encoding="utf-8",
@@ -180,7 +191,18 @@ def test_complete_engine_scan_never_exports_python_credentials(tmp_path, index, 
         ]
     )
     result = Engine(config, index).run()
-    assert result.complete and result.findings
+    assert result.findings and result.complete is not unparsed
+    assert result.stats[0].incomplete is unparsed
+    assert not result.stats[0].errors
+    assert sorted(result.stats[0].warnings) == (
+        sorted(
+            f"code.filesystem: agent_{number}.py: import-bound analysis skipped (source did not parse); "
+            "lexical evidence retained"
+            for number in range(len(expressions))
+        )
+        if unparsed
+        else []
+    )
     assert any("framework.langchain" in finding.frameworks for finding in result.findings)
     for render in (render_json, render_sarif, render_html, render_markdown):
         output = render(result)

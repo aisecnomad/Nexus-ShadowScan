@@ -791,6 +791,39 @@ def test_link_pagination_callback_never_sees_an_invalid_page():
     assert seen == []
 
 
+def test_link_pagination_reports_validated_envelopes_without_forwarding_callback():
+    link = '<https://api.example.com/v1/items?page=2>; rel="next"'
+    first = {"total_count": 2, "items": [{"id": 1}]}
+    last = {"total_count": 2, "items": [{"id": 2}]}
+    http, session = client(response(first, headers={"Link": link}), response(last))
+    pages = []
+    assert list(http.paginate_link("/items", item_key="items", on_data=pages.append)) == [
+        {"id": 1},
+        {"id": 2},
+    ]
+    assert pages == [first, last]
+    assert all("on_data" not in call.kwargs for call in session.request.call_args_list)
+
+
+@pytest.mark.parametrize("page", [{"error": "denied"}, {"items": ["invalid"]}])
+def test_link_pagination_data_callback_never_sees_an_invalid_page(page):
+    http, _ = client(response(page))
+    seen = []
+    with pytest.raises(RuntimeError):
+        list(http.paginate_link("/items", item_key="items", on_data=seen.append))
+    assert seen == []
+
+
+def test_link_pagination_data_callback_failure_propagates():
+    http, _ = client(response({"items": [{"id": 1}]}))
+
+    def reject(page):
+        raise RuntimeError("provider envelope rejected")
+
+    with pytest.raises(RuntimeError, match="provider envelope rejected"):
+        list(http.paginate_link("/items", item_key="items", on_data=reject))
+
+
 def test_get_json_reports_the_response_headers_once_the_body_is_decoded():
     http, session = client(response({"result": []}, headers={"X-Total-Count": "7"}))
     totals = []
@@ -950,6 +983,40 @@ def test_urls_with_whitespace_or_control_characters_are_refused_not_cleaned(url)
         validate_url(url)
     with pytest.raises(ValueError, match="whitespace or control characters"):
         validate_url(url, "https://api.example.com", allow_private=True)
+
+
+@pytest.mark.parametrize(
+    "url", ["https://api.example.com:0/x", "https://api.example.com:000/x", "https://8.8.8.8:0/x"]
+)
+def test_port_zero_is_refused(url, monkeypatch):
+    # "port or 443" read port 0 as the default port, so the URL matched the origin and its checks
+    # were keyed to 443, while libcurl looks up the port written: a clone pin for :443 went unused.
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(side_effect=AssertionError))
+    with pytest.raises(ValueError, match="Invalid API URL"):
+        validate_url(url)
+    with pytest.raises(ValueError, match="Invalid API URL"):
+        validate_url(url, "https://api.example.com", allow_private=True)
+    # An origin written with port 0 matches no URL either.
+    with pytest.raises(ValueError, match="outside the configured credential origin"):
+        validate_url("https://api.example.com/x", "https://api.example.com:0")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://other.example\\.api.example.com/x",
+        "https://api.example.com\\@other.example/x",
+        "https://api.example.com/x\\y",
+        "https://api.example.com/x?q=a\\b",
+    ],
+    ids=lambda url: repr(url),
+)
+def test_urls_with_a_backslash_are_refused(url):
+    """urlsplit keeps a backslash in the host; requests reads it as a path separator."""
+    with pytest.raises(ValueError, match="backslash"):
+        validate_url(url)
+    with pytest.raises(ValueError, match="backslash"):
+        validate_url(url, allow_private=True)
 
 
 def test_a_valid_url_is_returned_exactly_as_validated():

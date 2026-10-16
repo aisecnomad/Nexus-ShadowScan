@@ -75,11 +75,13 @@ def _parse_timestamp(value: object) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value)
-    except ValueError:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)  # the engine only records aware UTC timestamps
+        return parsed.astimezone(UTC)
+    except (ValueError, OverflowError, OSError):
+        # astimezone/normalisation overflows at the edge of the datetime range; a malformed
+        # source timestamp omits the field rather than aborting the whole report.
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)  # the engine only records aware UTC timestamps
-    return parsed.astimezone(UTC)
 
 
 def _utc_timestamp(value: object) -> str | None:
@@ -91,7 +93,12 @@ def _utc_timestamp(value: object) -> str | None:
 def _epoch_millis(value: object) -> int | None:
     """OCSF ``timestamp_t`` (milliseconds since the epoch), or None for the key to be omitted."""
     parsed = _parse_timestamp(value)
-    return round(parsed.timestamp() * 1000) if parsed else None
+    if parsed is None:
+        return None
+    try:
+        return round(parsed.timestamp() * 1000)
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def _confidence_score(value: float) -> int | float:

@@ -12,7 +12,11 @@ from hypothesis import strategies as st  # noqa: E402
 
 from shadowscan.models import Evidence  # noqa: E402
 from shadowscan.utils.redaction import REDACTED  # noqa: E402
-from shadowscan.utils.redaction_entropy import looks_random, withhold_random_literals  # noqa: E402
+from shadowscan.utils.redaction_entropy import (  # noqa: E402
+    looks_random,
+    withhold_random_literals,
+    withhold_random_literals_cut,
+)
 
 _BASE62 = string.ascii_letters + string.digits
 # Shapes the name- and format-based passes do not recognize: no credential-like
@@ -112,12 +116,85 @@ def test_the_filesystem_excerpt_cannot_leave_a_truncated_literal() -> None:
 
     line = "client = Widget(" + ", ".join(f"opt{i}=True" for i in range(11)) + f', "{_SECRET}")'
     snippet = _excerpt([line], 1)
-    assert snippet.endswith("\u2026") and _SECRET not in snippet
+    # The whole line is read before the cut, so the literal is withheld in the excerpt itself.
+    assert _SECRET[:6] not in snippet and REDACTED in snippet
     cleaned = Evidence(signal="s", description="d", snippet=snippet).snippet
-    assert cleaned is not None and _SECRET[:20] not in cleaned and REDACTED in cleaned
+    assert cleaned is not None and _SECRET[:6] not in cleaned and REDACTED in cleaned
+
+
+def test_a_literal_the_excerpt_cut_shortens_below_the_minimum_is_withheld() -> None:
+    from shadowscan.connectors.code.filesystem import _excerpt
+
+    line = "client = Client(region='eu-west-1', " + "timeout_seconds=30, " * 5 + f'token="{_SECRET}")'
+    start = line.index(_SECRET)
+    # Fewer than the 20 characters the snippet pass needs would remain after the cut.
+    assert start < 159 < start + 20
+    snippet = _excerpt([line], 1)
+    cleaned = Evidence(signal="s", description="d", snippet=snippet).snippet or ""
+    assert _SECRET[:6] not in snippet and _SECRET[:6] not in cleaned
 
 
 def test_a_random_literal_has_no_upper_length_bound() -> None:
     long_secret = (_SECRET * 160)[:5000]
     assert looks_random(long_secret)
     assert withhold_random_literals(f'token = "{long_secret}"') == f'token = "{REDACTED}"'
+
+
+def _cut_whole_line(text: str, width: int) -> str:
+    """The excerpt the whole line read before the cut gives: the reference for the bounded read."""
+    text = withhold_random_literals(text)
+    return text if len(text) <= width else text[: width - 1] + "\u2026"
+
+
+# Separators carry no literal character, so every run of literal characters starts at a quote
+# and is no longer than the generated body: a literal always fits the lookahead.
+_LINE_PART = st.one_of(
+    st.text(alphabet=" .=()+,;:\u2026", min_size=1, max_size=40),
+    st.builds(
+        lambda quote, body, close: quote + body + close,
+        st.sampled_from(['"', "'", "`"]),
+        st.text(alphabet=_BASE62 + "_-+/=", min_size=1, max_size=200),
+        st.sampled_from(['"', "'", "`", "", "."]),
+    ),
+)
+
+
+@given(parts=st.lists(_LINE_PART, min_size=1, max_size=80), width=st.sampled_from([40, 160]))
+@settings(max_examples=300, deadline=5000)
+def test_a_bounded_read_cuts_a_line_as_reading_the_whole_line_does(parts: list[str], width: int) -> None:
+    line = "".join(parts)
+    assert withhold_random_literals_cut(line, width) == _cut_whole_line(line, width)
+
+
+def test_a_literal_the_shortened_excerpt_reaches_is_judged_before_it_shows() -> None:
+    """A withheld literal shortens the line, so the excerpt shows text from past its width.
+
+    A literal there must still be judged before it shows: a fixed window of the first
+    ``width + 256`` characters ends inside this second literal, leaving fewer than the 20
+    characters the snippet pass needs, and the shortened excerpt showed its start.
+    """
+    from shadowscan.connectors.code.filesystem import _excerpt
+
+    first = (_SECRET * 10)[:300]
+    second = _SECRET.swapcase()[::-1]
+    assert looks_random(first) and looks_random(second)
+    head = f'x = "{first}" + '
+    line = head + "(" * (400 - len(head)) + f'"{second}" + y' + " ;" * 200
+    assert line.index(second) < 416 < line.index(second) + 20
+    snippet = _excerpt([line], 1)
+    cleaned = Evidence(signal="s", description="d", snippet=snippet).snippet or ""
+    assert second[:6] not in snippet and second[:6] not in cleaned
+    assert snippet.count(REDACTED) == 2 and snippet.endswith("\u2026") and len(snippet) == 160
+
+
+def test_a_withheld_literal_running_past_the_part_read_ends_the_excerpt() -> None:
+    from shadowscan.connectors.code.filesystem import _excerpt
+
+    long_secret = (_SECRET * 40)[:1200]
+    line = f'blob = "{long_secret}"; other = 1'
+    # Where the literal ends is not read, so nothing after its marker can show: not the
+    # remainder of the literal, nor what follows it.
+    assert _excerpt([line], 1) == f'blob = "{REDACTED}\u2026'
+    assert _excerpt([f'blob = "{long_secret[:200]}"; other = 1' + " " * 300], 1).startswith(
+        f'blob = "{REDACTED}"; other = 1'
+    )

@@ -7,8 +7,8 @@ OpenSSF Scorecard look for exist, `CITATION.cff` matches `pyproject.toml`, the
 CI matrix matches the classifiers, the Makefile and pre-commit hooks run what CI
 runs, every CodeQL action step is pinned to the same release, the docs toolchain
 comes from its lock everywhere, and documented counts, the README's demo output,
-CSV report markers and the HTTP read deadline match the shipped code. Run both
-modules with ``make policy``.
+CSV report markers, the HTTP read deadline and the plugin execution default match
+the shipped code. Run both modules with ``make policy``.
 """
 
 from __future__ import annotations
@@ -1380,6 +1380,32 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
 
 
+_PLUGIN_EXECUTION_ROW = re.compile(r"^\| `plugin_execution` \| `(\w+)` \|", re.MULTILINE)
+_PLUGIN_EXECUTION_DEFAULT_CLAIM = re.compile(
+    r"\bdefaults?\b[^.;`]{0,40}`(?:options\.)?(?:plugin_execution: )?(thread|process)`"
+)
+
+
+def test_documented_plugin_execution_default_matches_the_config() -> None:
+    # A page that still names the former thread default tells operators that
+    # plugins run in the scanner process, where they cannot be stopped.
+    default = ScanConfig().plugin_execution
+    assert ScanConfig.from_dict({"options": {}}).plugin_execution == default
+    [row] = _PLUGIN_EXECUTION_ROW.findall(_read(ROOT / "docs" / "architecture.md"))
+    assert row == default, f"docs/architecture.md lists {row!r}; the default is {default!r}"
+    claims = [
+        (path, match)
+        for path in _current_docs()
+        for paragraph in _paragraphs(path)
+        for match in _PLUGIN_EXECUTION_DEFAULT_CLAIM.finditer(paragraph)
+    ]
+    assert {"production.md", "connectors.md"} <= {path.name for path, _ in claims}
+    for path, match in claims:
+        assert match.group(1) == default, (
+            f"{_relative(path)} says {match.group(0)!r}; the default is {default!r}"
+        )
+
+
 _FIXTURE_CLAIM = re.compile(r"(\d+) of (\d+) connectors ship fixtures")
 
 
@@ -1875,4 +1901,29 @@ def test_workflow_readme_lists_every_workflow() -> None:
     assert linked == {path.name for path in WORKFLOWS}, (
         f"update .github/workflows/README.md: missing {sorted({p.name for p in WORKFLOWS} - linked)}, "
         f"stale {sorted(linked - {p.name for p in WORKFLOWS})}"
+    )
+
+
+def test_assurance_results_synthetic_case_count_matches_corpus() -> None:
+    """docs/assurance-results.md's synthetic-corpus count tracks tools/evaluation/corpus.json.
+
+    The prose states a current total ("has since grown to N authored synthetic
+    cases (P positives, Q negatives)"). That is a live count of the committed
+    corpus, so it earns the same documented-count guard the signature and
+    connector totals get; a synthetic case is a positive when it sets
+    ``present: true``. Whitespace is collapsed so a claim wrapped across lines is
+    still found.
+    """
+    text = " ".join(_read(ROOT / "docs" / "assurance-results.md").split())
+    match = re.search(r"(\d+) authored synthetic cases \((\d+) positives, (\d+) negatives\)", text)
+    assert match, "docs/assurance-results.md no longer states the synthetic corpus case count"
+    stated = tuple(int(match.group(index)) for index in (1, 2, 3))
+    cases = json.loads(_read(ROOT / "tools" / "evaluation" / "corpus.json"))["cases"]
+    present = sum(1 for case in cases if case.get("present") is True)
+    absent = sum(1 for case in cases if case.get("present") is False)
+    assert present + absent == len(cases), "every evaluation case must set present true or false"
+    assert stated == (len(cases), present, absent), (
+        f"docs/assurance-results.md says {stated[0]} cases ({stated[1]} positives, {stated[2]} "
+        f"negatives) but tools/evaluation/corpus.json has {len(cases)} ({present} positives, "
+        f"{absent} negatives)"
     )

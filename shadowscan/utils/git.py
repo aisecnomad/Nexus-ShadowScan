@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import math
 import os
 import re
@@ -18,6 +19,7 @@ from configparser import ConfigParser
 from configparser import Error as ConfigError
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from shadowscan.utils.files import open_confined_directory, open_confined_file
 
@@ -659,6 +661,11 @@ def diff_changed_files(
                 "-C",
                 root_str,
                 "diff",
+                # Belt and suspenders with --name-only: suppress any repo-local diff.external,
+                # textconv or signature command, as the other metadata commands do, so a change
+                # that ever emits patch/stat output cannot run a checked-out repository's config.
+                "--no-ext-diff",
+                "--no-textconv",
                 "--name-only",
                 "--diff-filter=ACDMRT",
                 "-z",
@@ -712,6 +719,10 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     # Git never needs the report identity key (comparison.IDENTITY_KEY_ENV),
     # so a child process of untrusted content never receives it.
     env.pop("SHADOWSCAN_IDENTITY_KEY", None)
+    # Nor the provider tokens the code connectors read by default: a clone
+    # carries only its own origin-scoped header.
+    for key in ("GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN"):
+        env.pop(key, None)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -724,8 +735,15 @@ def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 # The clone protections (no redirects, origin-scoped credentials, no hooks, no helpers, no
 # system or global configuration) are applied through GIT_CONFIG_COUNT (Git 2.31) and
 # GIT_CONFIG_GLOBAL (Git 2.32). An older Git ignores both silently, follows a redirect to
-# another host and finishes the scan, so cloning requires at least this version.
-MINIMUM_CLONE_GIT = (2, 32)
+# another host and finishes the scan. The metadata reads of the finished clone (its
+# immutable revision and gitlink inventory) pass --no-lazy-fetch, which Git 2.45 added:
+# with 2.32 to 2.44 every clone was scanned without provenance and reported incomplete,
+# so cloning requires at least 2.45. Clones are also pinned to the addresses the scanner checked with
+# http.curloptResolve (clone_pins), which Git 2.37 added; an older Git ignores the key and resolves
+# the name itself, so the floor must never drop below it.
+MINIMUM_CLONE_GIT = (2, 45)
+_CURLOPT_RESOLVE_GIT = (2, 37)
+assert MINIMUM_CLONE_GIT >= _CURLOPT_RESOLVE_GIT, "clone pinning needs http.curloptResolve"
 _GIT_VERSION_RX = re.compile(rb"git version (\d+)\.(\d+)(?:\.(\d+))?")
 _git_version_cache: tuple[int, int, int] | None = None
 
@@ -769,13 +787,67 @@ def git_config_overlay(pairs: list[tuple[str, str]]) -> dict[str, str]:
     return env
 
 
-def clone_environment(origin: str, token: str | None, username: str) -> dict[str, str]:
-    """Scope authentication to a verified HTTPS origin and disable redirects."""
+# Git compares an http.curloptResolve entry with the host as libcurl reads the URL: percent-decoded
+# and converted to IDNA, and an entry that starts with "-" or "+" means something else. On any
+# mismatch the pin is unused and Git resolves the name itself, so only a host that every reader spells
+# the same way is pinned: lowercase ASCII letters, digits, "_", "." and "-" (urlsplit lowercases it;
+# libcurl matches entries case-insensitively), not starting with "-" or ".". The URL's own spelling
+# must be ASCII too: urlsplit lowercases U+212A KELVIN SIGN to "k", but Git hands libcurl the sign.
+_PINNABLE_HOST = re.compile(r"[a-z0-9_][a-z0-9_.-]*\Z")
+
+
+def clone_pins(url: str) -> list[tuple[str, str]]:
+    """Git configuration that connects a clone of *url* only to the addresses checked here.
+
+    ``validate_url`` checks the answers of its own lookup, but Git resolves the name again before it
+    connects, so an answer that changes in between (DNS rebinding) would reach an address nothing
+    checked. The host is resolved once with ``resolve_destination`` (bounded by the worker's request
+    deadline; a loopback, private or metadata answer is refused unless private origins are allowed
+    for this connector) and Git is pinned to those answers with ``http.curloptResolve``. The entry
+    keeps the URL's spelling of the host, trailing dot included: libcurl matches it literally, and a
+    miss sends Git back to DNS. An IP literal needs no pin. Raises ``DestinationUnresolved`` when the
+    name gives no address, and ``ValueError`` when an answer is refused.
+    """
+    from shadowscan.utils.http import resolve_destination
+
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        port = 443 if parsed.port is None else parsed.port
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("Invalid clone URL") from None
+    if not host:
+        raise ValueError("Clone URL has no hostname")
+    if port == 0:  # names no service; validate_url refuses it as well
+        raise ValueError("Invalid clone URL")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return []
+    if not parsed.netloc.isascii() or not _PINNABLE_HOST.match(host):
+        raise ValueError("Clone host must be an ASCII DNS name or an IP address")
+    addresses = resolve_destination(host, port)
+    pinned = ",".join(f"[{address}]" if ":" in address else address for address in addresses)
+    return [("http.curloptResolve", f"{host}:{port}:{pinned}")]
+
+
+def clone_environment(
+    origin: str, token: str | None, username: str, *, pins: list[tuple[str, str]] | None = None
+) -> dict[str, str]:
+    """Scope authentication to a verified HTTPS origin and disable redirects.
+
+    *pins* (``clone_pins``) hold Git to the addresses the scanner resolved and checked.
+    """
     import base64
 
     config = [
         ("core.hooksPath", os.devnull),
         ("http.followRedirects", "false"),
+        # Connect directly, as HttpClient does: a proxy from HTTPS_PROXY or ALL_PROXY would resolve
+        # the host itself and route around the pinned addresses.
+        ("http.proxy", ""),
         ("credential.helper", ""),
         ("protocol.allow", "never"),
         ("protocol.https.allow", "always"),
@@ -788,6 +860,7 @@ def clone_environment(origin: str, token: str | None, username: str) -> dict[str
     if token:
         basic = base64.b64encode(f"{username}:{token}".encode()).decode()
         config.append((f"http.{origin.rstrip('/')}/.extraheader", f"Authorization: Basic {basic}"))
+    config.extend(pins or ())
     extra.update(git_config_overlay(config))
     return safe_git_env(extra)
 
@@ -1140,43 +1213,91 @@ def checkout_has_lfs_pointers(
 
     Only small regular files are opened, and only for their first bytes. Links are never followed and
     the repository metadata directory is not entered. The walk is bounded by the same entry limit as the
-    size measurement, so a checkout that was accepted can be walked.
+    size measurement, so a checkout that was accepted can be walked. A link in the checkout's own path,
+    an entry replaced while it is read, nesting deeper than the metadata depth limit, or a platform
+    without descriptor-relative no-follow opens gives None, never False.
     """
     root = os.fspath(path)
     if not root or "\x00" in root:
         return None
+    if (
+        os.name != "posix"
+        or not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK"))
+        or os.scandir not in os.supports_fd
+    ):
+        return None
     entries = 0
-    pending = [root]
-    while pending:
-        directory = pending.pop()
-        try:
-            with os.scandir(directory) as scan:
-                for entry in scan:
-                    entries += 1
-                    if entries > _MAX_CLONE_ENTRIES:
-                        return None
-                    if check_deadline is not None and entries % 1000 == 0:
-                        check_deadline()
-                    info = entry.stat(follow_symlinks=False)
-                    if stat.S_ISDIR(info.st_mode):
-                        if directory != root or entry.name != ".git":
-                            pending.append(entry.path)
-                    elif (
-                        stat.S_ISREG(info.st_mode)
-                        and len(LFS_POINTER_PREFIX) <= info.st_size <= LFS_POINTER_MAX_BYTES
-                        and _opens_with_lfs_pointer(entry.path)
-                    ):
-                        return True
-        except OSError:
+
+    def walk(directory: int, depth: int) -> bool | None:
+        nonlocal entries
+        if depth > _MAX_GIT_METADATA_DEPTH:
             return None
-    return False
+        if check_deadline is not None:
+            check_deadline()
+        with os.scandir(directory) as scan:
+            for entry in scan:
+                entries += 1
+                if entries > _MAX_CLONE_ENTRIES:
+                    return None
+                if check_deadline is not None and entries % 1000 == 0:
+                    check_deadline()
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    if depth == 0 and entry.name == ".git":
+                        continue
+                    child = os.open(
+                        entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+                    )
+                    try:
+                        opened = os.fstat(child)
+                        if (info.st_dev, info.st_ino) != (opened.st_dev, opened.st_ino):
+                            return None
+                        result = walk(child, depth + 1)
+                        if result is not False:
+                            return result
+                    finally:
+                        os.close(child)
+                elif (
+                    stat.S_ISREG(info.st_mode)
+                    and len(LFS_POINTER_PREFIX) <= info.st_size <= LFS_POINTER_MAX_BYTES
+                    and _opens_with_lfs_pointer(entry.name, dir_fd=directory, expected=info)
+                ):
+                    return True
+        return False
 
-
-def _opens_with_lfs_pointer(path: str) -> bool:
-    # O_NOFOLLOW and O_NONBLOCK: never traverse a link or wait on a special file.
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    fd = os.open(path, flags)
     try:
-        return os.read(fd, len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
+        # Anchor every descendant open to a live descriptor. A saved pathname
+        # would re-traverse a directory replaced by a symlink after scandir.
+        anchor = open_confined_directory(Path(root))
+        try:
+            directory = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=anchor)
+            try:
+                return walk(directory, 0)
+            finally:
+                os.close(directory)
+        finally:
+            os.close(anchor)
+    except (OSError, ValueError):
+        return None
+
+
+def _opens_with_lfs_pointer(path: str, *, dir_fd: int, expected: os.stat_result) -> bool:
+    # O_NOFOLLOW and O_NONBLOCK: never traverse a link or wait on a special file.
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    fd = os.open(path, flags, dir_fd=dir_fd)
+    try:
+        before = os.fstat(fd)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or not len(LFS_POINTER_PREFIX) <= before.st_size <= LFS_POINTER_MAX_BYTES
+            or any(getattr(before, field) != getattr(expected, field) for field in fields)
+        ):
+            raise ValueError("checkout file changed during LFS inspection")
+        pointer = os.read(fd, len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
+        after = os.fstat(fd)
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise ValueError("checkout file changed during LFS inspection")
+        return pointer
     finally:
         os.close(fd)

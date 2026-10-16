@@ -73,6 +73,13 @@ _SENSITIVE_NAMES = {
     "authorization",
     "cookie",
     "setcookie",
+    # Credential variables whose last word does not name one, from the signature packs
+    # (tests/unit/test_redaction_pack_env_names.py keeps every credential-named pack variable covered).
+    "awsbearertokenbedrock",
+    "flowisesecretkeyoverwrite",
+    "lobeaccesscode",
+    "modaltokenid",
+    "zapiermcpurl",
 }
 _MAX_SANITIZATION_NODES = 100_000
 _MAX_SANITIZATION_CHARS = 64 * 1024 * 1024

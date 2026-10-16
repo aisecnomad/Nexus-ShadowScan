@@ -475,9 +475,13 @@ when listing and scanning together would have finished; raise
 On expiry, the engine discards that connector's results, records incomplete
 coverage and the reason, retains other completed connectors' findings, and
 returns an incomplete scan (CLI exit 3). Cancellation is cooperative: Python
-cannot forcibly interrupt a thread blocked in a vendor SDK or plugin call. Such
-a call may outlive `Engine.run()`; once timeout handling returns, the CLI writes
-the incomplete report and exits without joining the abandoned thread. A worker
+cannot forcibly interrupt a thread blocked in a vendor SDK call, or in a plugin
+call under `plugin_execution: thread` (a plugin in its default spawned worker is
+killed). Such a call may outlive `Engine.run()`; once timeout handling returns,
+the CLI writes the incomplete report and exits 3 without joining the abandoned
+thread, or exits 1 if the report could not be written. Without a job deadline it
+gives that output 30 seconds; output still unfinished then is cut off and the
+CLI exits 3 ([resource limits](production.md#resource-limits-and-incomplete-scans)). A worker
 already publishing a cache or record artifact can delay timeout handling while
 its filesystem replacement finishes. Embedded callers must supervise their
 process, and a reusable Engine refuses another scan while an abandoned worker
@@ -802,11 +806,11 @@ one scan: it is `shadow: true` with
 `registry_suggestions`. The `shadow` and `registry_match` of a source without
 an inventory, and a `shadow: false` that names no `registry_match`, are
 ignored. The match state written beside a verdict follows the verdict the
-merged finding adopts: a shadow finding keeps the `registry_match_reason` and
-`registry_suggestions` of the sources that found it unregistered (the first
-such source's value of each key), a registered finding keeps the
-`registry_match_assurance` and `registry-identity-unverified` tag of the
-sources that matched it, and neither carries the other's. Scans made without
+merged finding adopts: a shadow finding keeps the candidate reason, suggestions,
+identity assurance and `registry-identity-unverified` tag of the sources that
+found it unregistered (the first such source's value of each key). A registered
+finding keeps only the match diagnostics of the sources that approved it;
+neither carries the other's diagnostics. Scans made without
 an inventory never make a finding look unregistered: in a mixed fleet, a
 finding seen only on machines scanned without one stays `null` although the
 merged `inventory_present` is true. The terminal table, CSV, Markdown and HTML
@@ -999,8 +1003,9 @@ incomplete (that is operator intent), but the JSON report lists them as
 digest.
 
 A finding with `metadata.identity_scope: run`, which `gateway.logs` findings
-carry unless `SHADOWSCAN_IDENTITY_KEY` is set, has an ID derived from a key that
-is random for each scan: the same caller has a different ID in the next report.
+and `saas.generic` findings whose resource a credential redacted carry unless
+`SHADOWSCAN_IDENTITY_KEY` is set, has an ID derived from a key that is random
+for each scan: the same caller or app has a different ID in the next report.
 Diff therefore never reports such a finding as new, resolved or unknown because
 the other report lacks its ID. It lists it under `not_comparable` (`baseline` or
 `current`; marked `<` or `>` in text output), states the reason and exits 3. A

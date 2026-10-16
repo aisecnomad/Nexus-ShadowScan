@@ -440,7 +440,14 @@ def _python_ranges_from(
         if hasattr(tokenize, name)
     }
     try:
-        for token in tokenize.generate_tokens(reader.readline):
+        for count, token in enumerate(tokenize.generate_tokens(reader.readline)):
+            # The C tokenizer runs without a Python check point, and on CPython 3.12.0 to
+            # 3.12.3 it is quadratic in the tokens of one long logical line. Charge the
+            # per-input matching budget between tokens, as the JavaScript lexer does, so a
+            # hostile single-line file fails closed instead of burning a core (the deadline
+            # watchdog cannot interrupt a thread holding the GIL in C).
+            if count % 1024 == 0:
+                pattern_timeout()
             if token.type == tokenize.STRING:
                 prefix = _FSTRING_PREFIX.match(token.string)
                 if prefix is not None and "f" in prefix.group(1).lower():

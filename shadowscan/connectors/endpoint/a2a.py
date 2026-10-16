@@ -5,8 +5,9 @@ The operator lists card URLs or agent origins. A bare origin (no path, or
 at the older ``/.well-known/agent.json``. URLs a card declares (interfaces,
 provider, documentation, icons, a signature header's ``jku``) are never
 fetched. Every fetch uses the shared HTTPS client: same-origin redirects only,
-private, loopback and metadata addresses refused unless the scan sets
-``options.allow_private_origin``, a 1 MiB body cap and strict JSON
+private, loopback and metadata addresses refused unless ``endpoint.mcp`` sets
+``allow_private_origin`` (or the scan sets ``options.allow_private_origin``)
+and always under ``--deny-private-origin``, a 1 MiB body cap and strict JSON
 (duplicate keys and non-finite numbers refused).
 
 Signatures are verified only against the operator's ``agent_card_jwks_url``

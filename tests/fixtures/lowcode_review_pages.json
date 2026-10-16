@@ -1,0 +1,23 @@
+{
+  "zapier": {
+    "data": [
+      {
+        "id": "review-zap-1",
+        "title": "Summarize incoming tickets",
+        "steps": ["Webhook", "ChatGPT"],
+        "is_enabled": true
+      }
+    ],
+    "links": {"next": null}
+  },
+  "workato": {
+    "items": [
+      {
+        "id": "review-recipe-1",
+        "name": "Summarize incoming tickets",
+        "config": [{"provider": "openai"}],
+        "running": true
+      }
+    ]
+  }
+}

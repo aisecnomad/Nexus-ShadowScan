@@ -18,7 +18,8 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 from multiprocessing.process import BaseProcess
 from pathlib import Path
@@ -42,6 +43,34 @@ _MAX_WAIT_SECONDS = 86_400.0
 # A worker stops itself this long after its deadline, matching the parent's
 # supervision guard, in case nothing in the scanner is left to terminate it.
 _WORKER_GRACE_SECONDS = 2.0
+# Without a descriptor listing, descriptors up to the open-file limit are
+# visited, but never more than this many.
+_MAX_DESCRIPTOR_LIMIT = 1 << 20
+# Serializes the brief PYTHONSAFEPATH window around a spawn (see _safe_path_spawn).
+_SPAWN_ENVIRONMENT = threading.Lock()
+
+
+@contextmanager
+def _safe_path_spawn() -> Iterator[None]:
+    """Give an interpreter spawned in this block PYTHONSAFEPATH=1, then restore os.environ.
+
+    The spawned child runs ``python -c``, which would put the working directory (possibly an
+    untrusted checkout) first on sys.path before its first ``import multiprocessing``.
+    multiprocessing has no per-child environment, so the variable is set only for the
+    duration of the spawn, under a lock so concurrent spawns cannot restore it early, and
+    the previous value (or its absence) is put back: the scanner's and an embedder's own
+    later children must not inherit it.
+    """
+    with _SPAWN_ENVIRONMENT:
+        previous = os.environ.get("PYTHONSAFEPATH")
+        os.environ["PYTHONSAFEPATH"] = "1"
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop("PYTHONSAFEPATH", None)
+            else:
+                os.environ["PYTHONSAFEPATH"] = previous
 
 
 def _remaining(deadline: float) -> float:
@@ -96,6 +125,27 @@ def _exit_with_scanner(deadline: float) -> None:
     threading.Thread(target=watch, name="shadowscan-plugin-watchdog", daemon=True).start()
 
 
+def _descriptor_limit() -> int:
+    """Bound descriptor enumeration when the platform has no descriptor listing."""
+    try:
+        import resource
+
+        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft == resource.RLIM_INFINITY:
+            return _MAX_DESCRIPTOR_LIMIT
+        if soft >= 0:
+            return min(soft, _MAX_DESCRIPTOR_LIMIT)
+    except (ImportError, OSError, ValueError, OverflowError):
+        pass
+    try:
+        limit = os.sysconf("SC_OPEN_MAX")
+        if limit >= 0:
+            return min(limit, _MAX_DESCRIPTOR_LIMIT)
+    except (AttributeError, OSError, ValueError, OverflowError):
+        pass
+    return _MAX_DESCRIPTOR_LIMIT
+
+
 def _keep_descriptors_from_programs() -> None:
     """Programs a plugin starts must not inherit this worker's descriptors.
 
@@ -111,7 +161,7 @@ def _keep_descriptors_from_programs() -> None:
         except (OSError, ValueError):
             continue
     else:
-        descriptors = range(3, 4096)
+        descriptors = range(3, _descriptor_limit())
     for descriptor in descriptors:
         if descriptor > 2:
             try:
@@ -285,6 +335,10 @@ def _decode_result(
     findings = [Finding.from_dict(item) for item in data["findings"]]
     if any(finding.connector != spec.name for finding in findings) or stats.findings != len(findings):
         raise ValueError("invalid plugin finding attribution or count")
+    for finding in findings:
+        # The worker's engine derives each id from the plugin's name, but this payload is the
+        # plugin process's own output: an id it carries is never kept (as in _ConnectorRunner._collect).
+        finding.reattribute(spec.name, derive_id=True)
     exports = data["exports"]
     for entry in exports:
         if not isinstance(entry, dict) or set(entry) != {
@@ -359,7 +413,10 @@ def _run_plugin_process(
         _remaining(deadline)
         if state.cancelled.is_set():
             raise TimeoutError
-        process.start()
+        # A planted ``multiprocessing/`` in an untrusted working directory must not run in the
+        # worker (or the resource tracker the first start launches): see _safe_path_spawn.
+        with _safe_path_spawn():
+            process.start()
         if state.cancelled.is_set():
             raise TimeoutError
         child.close()

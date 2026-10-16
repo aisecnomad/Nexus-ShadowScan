@@ -21,7 +21,13 @@ from typing import Any
 from shadowscan import __version__
 from shadowscan.autonomy import apply_autonomy
 from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
-from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig, validate_min_confidence
+from shadowscan.config import (
+    ConfigValidationError,
+    ConnectorSpec,
+    ScanConfig,
+    plugin_names,
+    validate_min_confidence,
+)
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.correlation import correlate, correlate_lifecycle, correlate_runtime
@@ -400,16 +406,40 @@ class _ConnectorRunner:
             # measured runtime, even if completion precedes the next poll.
             state.completed_at = time.monotonic()
 
-    def _resolve(self, name: str, state: _JobState) -> _Resolved:
+    def _allow_private_origin(self, spec: ConnectorSpec) -> bool:
+        """This connector's private-origin policy: its own grant, else the scan's.
+
+        A connector-level ``allow_private_origin: true`` reaches private,
+        loopback and link-local destinations for that connector alone, so an
+        internal gateway or agent no longer needs the scan-wide grant that
+        would also let every other connector leave the public internet.
+        ``normalize_connector_config`` has already made the value a boolean.
+        An explicit scan-wide refusal (``deny_private_origin``, which
+        ``--deny-private-origin`` sets) wins over both, and
+        ``_connector_config`` hands the connector this value in place of its
+        own key, as it does for ``allow_instance_credentials``. The refusal
+        does not revoke ``allow_instance_credentials``: a cloud connector it
+        approves still reaches the instance metadata service.
+        """
+        if self._config.deny_private_origin:
+            # An explicit scan-wide refusal cannot be bypassed by a connector-level key.
+            return False
+        granted = spec.config.get("allow_private_origin")
+        if isinstance(granted, bool):
+            return granted
+        return self._config.allow_private_origin
+
+    def _resolve(self, spec: ConnectorSpec, state: _JobState) -> _Resolved:
         """Look up a job's connector class once; ``_collect`` reports a failure.
 
         The lookup imports an approved plugin, so as in collection it runs
-        under the scan's private-origin policy and not at all for a job that
-        is already out of time: ``_collect`` reports the deadline first.
+        under that connector's private-origin policy and not at all for a job
+        that is already out of time: ``_collect`` reports the deadline first.
         """
         if state.cancelled.is_set() or (state.deadline is not None and time.monotonic() >= state.deadline):
             return ConnectorError("connector completion deadline exceeded")
-        origin_token = set_allow_private_origin(self._config.allow_private_origin)
+        name = spec.name
+        origin_token = set_allow_private_origin(self._allow_private_origin(spec))
         try:
             if self._config.plugins:
                 return get_connector_class(name, allowed_plugins=self._config.plugins)
@@ -422,7 +452,7 @@ class _ConnectorRunner:
             reset_allow_private_origin(origin_token)
 
     def _run_job(self, number: int, spec: ConnectorSpec, state: _JobState) -> _JobResult:
-        resolved = self._resolve(spec.name, state)
+        resolved = self._resolve(spec, state)
         if isinstance(resolved, type) and issubclass(resolved, BaseConnector):
             surface = resolved.surface
             if isinstance(surface, Surface):
@@ -520,6 +550,10 @@ class _ConnectorRunner:
         if "allow_instance_credentials" in cfg or inherits_approval:
             # Scan-wide approval cannot be bypassed by a connector-level key.
             cfg["allow_instance_credentials"] = self._config.allow_instance_credentials
+        if "allow_private_origin" in cfg:
+            # A connector (or plugin transport) that reads its own key sees the
+            # policy the engine enforces, so --deny-private-origin holds there too.
+            cfg["allow_private_origin"] = self._allow_private_origin(spec)
         if spec.label:
             cfg.setdefault("label", spec.label)
         if self._dump_directory:
@@ -554,9 +588,11 @@ class _ConnectorRunner:
         )
         fs: list[Finding] = []
         started_at = now_iso()
-        origin_token = set_allow_private_origin(self._config.allow_private_origin)
+        origin_token = set_allow_private_origin(self._allow_private_origin(spec))
         limits_token = set_request_deadline(state.deadline, state.cancelled)
-        credential_token = set_credential_identity_key(self._run_identity_key)
+        credential_token = set_credential_identity_key(
+            self._run_identity_key, stable=self._identity_key_stable
+        )
         try:
             st, reused = self._collect(spec, resolved, ctx, started_at, fs)
             if reused:
@@ -650,7 +686,17 @@ class _ConnectorRunner:
         )
         st.connector = spec.id
         st.incomplete = st.incomplete or bool(st.errors) or st.skipped
+        # BaseConnector.run() stamps every finding with the connector's own name; a plugin that
+        # overrides run() can skip that and claim a built-in connector's name (the process worker
+        # refuses such a finding — plugin_process._decode_result), and any plugin can set a
+        # finding's id itself (``id=``, or ``dataclasses.replace`` of a finding built under a
+        # built-in name). Re-stamp every plugin finding with the plugin's own name and the id
+        # that name and the finding's resource derive, so a plugin can never report under a
+        # built-in name nor with a built-in finding's id. Built-in findings keep their ids.
+        plugin = spec.name not in builtin_connector_names()
         for finding in collected:
+            if plugin:
+                finding.reattribute(spec.name, derive_id=True)
             try:
                 finding.sanitize()
             except SanitizationLimitError:
@@ -1190,10 +1236,15 @@ class Engine:
         scopes: _ScopeLedger | None = None,
     ) -> tuple[dict[int, _JobResult], set[int]]:
         """Run every selected connector under deadline supervision."""
+        # A name the allowlist does not approve cannot resolve to a plugin and
+        # fails closed in either backend; keeping it in-thread only avoids
+        # spawning a worker for that refused lookup.
+        approved = plugin_names(self.config.plugins)
         states = {
             number: _JobState(
                 isolated_process=self.config.plugin_execution == "process"
                 and spec.name not in builtin_connector_names()
+                and spec.name in approved
             )
             for number, spec in jobs
         }

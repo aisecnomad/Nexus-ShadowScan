@@ -60,7 +60,12 @@ Precision safeguards
 
 from __future__ import annotations
 
-import ast
+# Every name importable from this module before its helpers moved into
+# path_context, project_evidence, model_identifiers, source_text and excerpts
+# (ADR-005) stays importable: the imports marked `noqa: F401 - re-exported`
+# carry names this module does not use itself. Patch such a name in its
+# defining module; rebinding it here does not change what the helpers use.
+import ast  # noqa: F401 - re-exported
 import errno
 import fnmatch
 import hashlib
@@ -69,7 +74,7 @@ import re
 import stat
 import subprocess
 import time
-import tomllib
+import tomllib  # noqa: F401 - re-exported
 from bisect import bisect_right
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from collections.abc import Set as AbstractSet
@@ -82,7 +87,7 @@ import regex
 import yaml
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.code.catalogs import (
+from shadowscan.connectors.code.catalogs import (  # noqa: F401 - re-exported
     _PIPELINE_DIRECTORIES,
     _PIPELINE_NAMES,
     CATALOG_MIN_SIGNATURES,
@@ -96,6 +101,7 @@ from shadowscan.connectors.code.catalogs import (
     references_could_change,
 )
 from shadowscan.connectors.code.dotnet_semantics import microsoft_tool_loop_matches
+from shadowscan.connectors.code.excerpts import _excerpt, _ExcerptSource, _LazyExcerpt, _Snippet
 from shadowscan.connectors.code.go_semantics import langchaingo_agent_matches
 from shadowscan.connectors.code.import_provenance import local_module_conflict
 from shadowscan.connectors.code.instruction_content import (
@@ -122,6 +128,25 @@ from shadowscan.connectors.code.model_artifacts import (
     ArtifactBudgetExhausted,
     inspect_artifact,
 )
+from shadowscan.connectors.code.model_identifiers import (  # noqa: F401 - re-exported
+    _MODEL_FAMILY_SHAPES,
+    _MODEL_FILE_NAME_RE,
+    _MODEL_KEY_VALUE_RE,
+    _MODEL_LITERAL_CONFIG_EXTENSIONS,
+    _MODEL_QUOTED_RE,
+    _MODEL_ROUTE_PREFIXES,
+    _MODEL_SEGMENT_RE,
+    _MODEL_STEM_RE,
+    _MODEL_STEMS,
+    _MODEL_TOOLING_NAMES,
+    _MODEL_TOOLING_SEGMENTS,
+    MAX_MODEL_LITERALS_PER_FILE,
+    MAX_MODEL_MATCHES_PER_SIGNATURE,
+    MODEL_IDS_ONLY_MAX_CONFIDENCE,
+    MODEL_LITERAL_MAX_WEIGHT,
+    _has_model_stem,
+    _model_lookalike,
+)
 from shadowscan.connectors.code.ownership import (
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
@@ -131,6 +156,39 @@ from shadowscan.connectors.code.ownership import (
 )
 from shadowscan.connectors.code.ownership import (
     codeowners_match as _codeowners_match,
+)
+from shadowscan.connectors.code.path_context import (  # noqa: F401 - re-exported
+    _DOCS_DIR_NAMES,
+    _EXAMPLE_DIR_NAMES,
+    _GENERATED_FILE_RE,
+    _TEST_DIR_NAMES,
+    _TEST_FILE_RE,
+    DOCS_MAX_CONFIDENCE,
+    DOCS_WEIGHT_SCALE,
+    EXAMPLE_PATH_MAX_CONFIDENCE,
+    EXAMPLE_PATH_WEIGHT_SCALE,
+    GENERATED_MAX_CONFIDENCE,
+    GENERATED_WEIGHT_SCALE,
+    NegativeContext,
+    _is_docs_path,
+    _is_example_path,
+    _is_generated_path,
+    _is_pipeline_file,
+    _is_test_path,
+    negative_context,
+)
+from shadowscan.connectors.code.project_evidence import (  # noqa: F401 - re-exported
+    _CORROBORATING_SIGNALS,
+    _MENTION_SIGNAL_TYPES,
+    ENV_ONLY_MAX_CONFIDENCE,
+    ENV_ONLY_WEIGHT_SCALE,
+    WEAK_MENTION_WEIGHT,
+    _corroborates,
+    _mention,
+    _Observation,
+    _ProjectEvidence,
+    _uncorroborated_signatures,
+    _weak_mention_signatures,
 )
 from shadowscan.connectors.code.python_reexports import (
     MAX_PENDING_BYTES,
@@ -142,7 +200,7 @@ from shadowscan.connectors.code.python_reexports import (
     project_path,
 )
 from shadowscan.connectors.code.rule_packs import detection_rule_format
-from shadowscan.connectors.code.semantic_config import (
+from shadowscan.connectors.code.semantic_config import (  # noqa: F401 - re-exported
     a2a_card_metadata,
     a2a_card_tags,
     a2a_unsupported_protocol_version,
@@ -161,6 +219,36 @@ from shadowscan.connectors.code.source_semantics import (
     SourceBudgetExceeded,
     SourceNotParsed,
     bound_source_matches,
+)
+from shadowscan.connectors.code.source_text import (  # noqa: F401 - re-exported
+    _COMMENT_OPENERS,
+    _COMMENT_START,
+    _CRAWLER_UA_MARK,
+    _FRONTMATTER,
+    _GLOB_KEYS,
+    _IPYTHON_LINE,
+    _JSON_SUFFIXES,
+    _LINE_BREAK,
+    _NO_STRUCTURE,
+    _QUOTE_START,
+    _QUOTED_VALUE,
+    _YAML_SUFFIXES,
+    _cell_noncode_ranges,
+    _CellSpans,
+    _comment_spans,
+    _crawler_ua_text,
+    _notebook_binder_source,
+    _quote_glob_values,
+    _quote_plain_values,
+    _quoted_values,
+    _redacted_source,
+    _strip_comment,
+    _structured_context,
+    _within,
+    _without_ipython_lines,
+    _without_source_ranges,
+    _without_xml_comments,
+    foreign_cell,
 )
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
@@ -207,7 +295,7 @@ from shadowscan.signatures.matcher import (
     _finditer,
     language_for_path,
 )
-from shadowscan.utils.files import open_confined_directory, read_policy_text
+from shadowscan.utils.files import link_in_path, open_confined_directory, open_confined_file, read_policy_text
 from shadowscan.utils.git import (
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
@@ -222,7 +310,9 @@ from shadowscan.utils.git import (
     run_bounded_metadata,
 )
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
-from shadowscan.utils.jsonc import load_json_lenient_marked as _load_json_lenient_marked
+from shadowscan.utils.jsonc import (
+    load_json_lenient_marked as _load_json_lenient_marked,  # noqa: F401 - re-exported
+)
 from shadowscan.utils.jsonc import strip_json_comments as _strip_json_comments  # noqa: F401 - historical name
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError
@@ -277,33 +367,6 @@ _MAX_GIT_TIMESTAMP_CHARS = 64
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
 # Signals that name a product without configuring it.
 _MENTION_SIGNALS = frozenset({"env", "name"})
-# Signals that mention a product (a host, a variable, a display name) rather
-# than declare, import, configure or run it. A model identifier read from a
-# data file (``extra["data_mention"]``) and a job image in a CI pipeline
-# (``extra["ci_image"]``) are mentions too; see ``_mention``.
-_MENTION_SIGNAL_TYPES = frozenset({"domain", "env", "name"})
-# Signals that corroborate a code pattern of the same signature: the library is
-# declared, imported, configured by name, deployed, or one of its models is
-# named (a model id in a Modelfile, in IaC, or as a literal in code or
-# configuration). An import-bound call (``extra["import_bound"]``), a
-# recognised configuration shape (``extra["config_projection"]``) and a
-# manifest artifact (``extra["manifest_artifact"]``) corroborate as well; see
-# ``_uncorroborated_signatures``.
-_CORROBORATING_SIGNALS = frozenset({"import", "dependency", "file", "image", "iac", "model"})
-# A signature whose evidence in a project is only mentions, none of them at
-# this weight or more, is recorded as potential (``metadata.potential_*``),
-# not established. The two-tier domain weights (``huggingface.co`` 0.15 against
-# ``router.huggingface.co`` 0.8) were written as corroboration-only hints.
-WEAK_MENTION_WEIGHT = 0.3
-# A model identifier found as a literal is medium-weight evidence: it names a
-# model the code may call, not an installed SDK (see _scan_model_literals).
-MODEL_LITERAL_MAX_WEIGHT = 0.5
-MODEL_IDS_ONLY_MAX_CONFIDENCE = 0.6
-# Model-id candidates (literals with a vendor stem) the model-identifier pass
-# reads per file before it stops; ordinary strings do not count.
-MAX_MODEL_LITERALS_PER_FILE = 400
-# Model matches kept per signature per file.
-MAX_MODEL_MATCHES_PER_SIGNATURE = 3
 # A container image that runs a CI job is a mention of that product at this
 # share of the image signal's weight; a deployed image keeps full weight.
 CI_IMAGE_WEIGHT_SCALE = 0.3
@@ -609,82 +672,6 @@ def _analyzed_by_name(name: str) -> bool:
     )
 
 
-# One quoted value, matched from its opening quote; none spans a line break.
-_QUOTED_VALUE = {
-    '"': re.compile(r'"(?:[^"\\\r\n]|\\[^\r\n])*"'),
-    "'": re.compile(r"'(?:[^'\\\r\n]|\\[^\r\n])*'"),
-}
-# The next opening quote of the kinds that can still close on the line.
-_QUOTE_START = {kinds: re.compile(f"[{kinds}]") for kinds in ("\"'", '"', "'")}
-_CRAWLER_UA_MARK = re.compile("mozilla/", re.IGNORECASE)
-_LINE_BREAK = re.compile(r"[\r\n]")
-
-
-def _quoted_values(text: str, start: int, end: int) -> Iterator[tuple[int, int]]:
-    """Yield the spans of the quoted values on the line ``text[start:end]``, left to right.
-
-    A quote that never closes is scanned to the end of the line, passing
-    every later quote of its kind as an escaped character, so none of those
-    can close either. Each kind therefore fails at most once per line, and
-    a planted line of escaped quotes costs linear time, not one scan to the
-    end of the line per quote.
-    """
-    live = "\"'"
-    pos = start
-    while live:
-        quote = _QUOTE_START[live].search(text, pos, end)
-        if quote is None:
-            return
-        value = _QUOTED_VALUE[quote.group(0)].match(text, quote.start(), end)
-        if value is None:
-            live = live.replace(quote.group(0), "")
-            pos = quote.end()
-        else:
-            yield value.span()
-            pos = value.end()
-
-
-def _crawler_ua_text(text: str) -> tuple[str, str]:
-    """Separate quoted crawler UA values from other text, preserving offsets.
-
-    User-agent parsers and crawler lists quote strings such as
-    ``Mozilla/5.0 (compatible; HuggingFace-Bot/1.0; +https://huggingface.co/)``;
-    the domain there identifies the bot's operator, never use of the
-    provider. Only a complete quoted value with the crawler UA shape is
-    discounted. Other values on its line, and later uses of the same host,
-    must reach domain matching before the matcher deduplicates occurrences.
-    Only lines naming ``mozilla/`` are tokenized, each once.
-    """
-    spans = []
-    pos = 0
-    while (mark := _CRAWLER_UA_MARK.search(text, pos)) is not None:
-        # The line around the mark; ``pos`` is the previous line's end.
-        start = max(text.rfind("\n", pos, mark.start()), text.rfind("\r", pos, mark.start()), pos - 1) + 1
-        line_break = _LINE_BREAK.search(text, mark.end())
-        end = len(text) if line_break is None else line_break.start()
-        for value_start, value_end in _quoted_values(text, start, end):
-            value = text[value_start + 1 : value_end - 1].lower()
-            if (
-                value.startswith("mozilla/")
-                and "(compatible;" in value
-                and ("+https://" in value or "+http://" in value)
-                and value.endswith(")")
-            ):
-                spans.append((value_start, value_end))
-        pos = end
-    if not spans:
-        return text, ""
-    content: list[str] = []
-    ua: list[str] = []
-    previous = 0
-    for start, end in spans:
-        content.extend((text[previous:start], " " * (end - start)))
-        ua.append(text[start:end])
-        previous = end
-    content.append(text[previous:])
-    return "".join(content), "\n".join(ua)
-
-
 def _scan_priority(rel: str, name: str) -> int:
     """Deadline-ordering rank: the highest-signal files are scanned first.
 
@@ -710,20 +697,6 @@ _WORKFLOW_EXTENSIONS = frozenset({".json", ".yaml", ".yml"})
 # Coding-agent sub-agent and rule definitions (Markdown with YAML front matter).
 _AGENT_DEFINITION_DIRS = (".claude/agents/", ".github/agents/", ".cursor/rules/", ".windsurf/rules/")
 
-# Agent definition front matter. Only horizontal whitespace may follow a
-# marker: ``\s*`` before a required newline backtracks quadratically over a
-# run of blank lines, which a planted file makes as long as it likes. The
-# possessive quantifier never backtracks, and the bounded engine applies the
-# per-input matching budget where the pattern runs (_parse_agent_definition).
-_FRONTMATTER = regex.compile(r"^---[ \t\r]*+\n(.*?)\n---[ \t\r]*+\n", regex.S)
-# Front-matter keys whose bare glob values _quote_glob_values quotes.
-_GLOB_KEYS = ("globs", "paths")
-# A YAML comment starts at a "#" that follows a space or tab.
-_COMMENT_START = re.compile(r"[ \t]#")
-# Files whose parsed structure supplies credential context for excerpt
-# redaction (see _structured_context).
-_JSON_SUFFIXES = (".json", ".jsonc", ".json5")
-_YAML_SUFFIXES = (".yaml", ".yml")
 # File names that only ever hold MCP client/server configuration. Any other
 # file is MCP configuration only when its parsed structure configures a server.
 _DEDICATED_MCP_CONFIG_NAMES = frozenset(
@@ -740,23 +713,35 @@ _DEDICATED_MCP_CONFIG_NAMES = frozenset(
     }
 )
 
+
+def _document_declares_mcp(document: dict[str, Any], depth: int = 0) -> bool:
+    """Whether a parsed JSON/TOML object configures MCP servers, wherever the table sits.
+
+    Decided from the structure, not a text prefix: a key named ``mcpServers`` or
+    ``mcp_servers`` holding a mapping, or an ``mcp`` mapping with a ``servers`` mapping,
+    at the top level or nested within a client's section. Bounded in depth and breadth so
+    a hostile document cannot make the walk expensive.
+    """
+    if depth > 6:
+        return False
+    # The key's presence is the signal, whatever its value: a malformed value (``mcpServers:
+    # "x"``) must still route to the server parser, which records the input defect, exactly as
+    # the former substring check did — only now it cannot be hidden behind leading padding.
+    if "mcpServers" in document or "mcp_servers" in document:
+        return True
+    mcp = document.get("mcp")
+    if isinstance(mcp, dict) and "servers" in mcp:
+        return True
+    for value in list(document.values())[:256]:
+        if isinstance(value, dict) and _document_declares_mcp(value, depth + 1):
+            return True
+    return False
+
+
 # Documentation placeholders are informational: enough to be listed, never
 # enough to establish a technology or raise risk.
 EXAMPLE_CREDENTIAL_WEIGHT = 0.1
 MAX_EXAMPLE_CREDENTIAL_EVIDENCE = 20
-# Environment-variable names alone are a weak signal (see module docstring):
-# weights are halved and confidence stays inside the "likely" band.
-ENV_ONLY_WEIGHT_SCALE = 0.5
-ENV_ONLY_MAX_CONFIDENCE = 0.8
-# Paths whose evidence describes examples, documentation or generated output
-# rather than a deployed agent. Like tests, evidence in these paths is kept
-# but discounted so it does not inflate the finding.
-DOCS_WEIGHT_SCALE = 0.5
-DOCS_MAX_CONFIDENCE = 0.85
-EXAMPLE_PATH_WEIGHT_SCALE = 0.5
-EXAMPLE_PATH_MAX_CONFIDENCE = 0.85
-GENERATED_WEIGHT_SCALE = 0.4
-GENERATED_MAX_CONFIDENCE = 0.7
 # Capability implied by an MCP server's launch command; the first matching
 # group wins, so a database server launched through docker keeps code-exec.
 _MCP_CAPABILITY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -765,50 +750,6 @@ _MCP_CAPABILITY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("browsing", ("puppeteer", "playwright", "browser")),
     ("saas-actions", ("github", "gitlab", "slack", "gmail", "google-drive", "aws", "gcloud", "azure")),
 )
-
-
-@dataclass
-class _ExcerptSource:
-    """The text one file's excerpts are cut from, redacted once its analysis ends.
-
-    Excerpt lines are cut from the redacted lines of the file and sanitized at
-    emit time for the evidence a report keeps. Whether redaction exceeds a
-    sanitization limit is known only by redacting, so every file that recorded
-    excerpted evidence is redacted when its analysis ends (see
-    ``_settle_excerpts``), as the eager excerpts were; its text and redacted
-    lines are then dropped and only the excerpts of the ``wanted`` lines are
-    kept. ``structure`` is the credential context of ``_structured_context``;
-    None withholds every excerpt of the file.
-    """
-
-    rel: str
-    path: Path
-    text: str | None
-    structure: Any
-    safe_lines: list[str] | None = None  # redacted lines, produced when an excerpt first needs them
-    wanted: set[int] = field(default_factory=set)  # lines recorded matches asked excerpts of
-    kept: dict[int, str] | None = None  # line -> excerpt, once the file's analysis ended
-
-
-class _LazyExcerpt:
-    """One excerpt line, cut and sanitized only when a report retains its evidence."""
-
-    __slots__ = ("connector", "line", "source")
-
-    def __init__(self, connector: FilesystemConnector, source: _ExcerptSource, line: int | None) -> None:
-        self.connector = connector
-        self.source = source
-        self.line = line
-
-    def __call__(self) -> str:
-        line = self.line or 1
-        if self.source.kept is not None:
-            return sanitize_text(self.source.kept.get(line, ""))
-        return sanitize_text(_excerpt(self.connector._redacted_lines_of(self.source), line))
-
-
-# A recorded snippet: text, an excerpt produced on demand, or none.
-_Snippet = str | _LazyExcerpt | None
 
 
 @dataclass
@@ -851,7 +792,7 @@ class _ScanState:
 
     root: Path
     label: str  # resource prefix of every finding
-    # Descriptor of the directory files are read relative to, open during the walk.
+    # Descriptor files are read relative to, open through both the walk and ownership emission.
     root_fd: int = -1
     base: Path | None = None  # that directory (the scan root, or a single-file root's parent)
     projects: dict[str, _Project] = field(default_factory=lambda: {".": _Project(".")})
@@ -894,10 +835,6 @@ class _ScanState:
         )
 
 
-# The span of each code cell in a notebook's text; empty for any other file.
-_CellSpans = tuple[tuple[int, int], ...]
-
-
 @dataclass
 class _SourceFile:
     """One file under analysis and the state its analysis passes share."""
@@ -925,6 +862,10 @@ class _SourceFile:
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
     cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
+    # Notebook cells declared another language (a non-Python kernel or cell magic): bound when
+    # they parse as Python; when they do not, lexical evidence only, and not a coverage gap.
+    foreign: _CellSpans = ()
+    unparsed: _CellSpans = ()  # syntax the import binder could not read; lexical evidence only
     source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
     reexport_pending: bool = False  # queued for re-export analysis after the walk
     # Tool regions a project-level construction, registration or dispatch path may also reach.
@@ -955,315 +896,10 @@ class _MatchedSource:
     code_matches: list[Match]
 
 
-_Observation = tuple[Match, str, _Snippet]  # match, relpath, snippet
-
-
-def _mention(m: Match) -> bool:
-    """Whether ``m`` names a product without declaring, importing, configuring or running it."""
-    return (
-        m.signal.type in _MENTION_SIGNAL_TYPES
-        or bool(m.extra.get("data_mention"))
-        or bool(m.extra.get("ci_image"))
-    )
-
-
-def _corroborates(m: Match) -> bool:
-    """Whether ``m`` shows the library of its signature is declared, imported, configured or deployed.
-
-    A CI job image (``extra["ci_image"]``) is a mention: the pipeline runs a
-    container, it does not deploy or install the library, so it corroborates
-    nothing, whatever its signal type.
-    """
-    if m.extra.get("ci_image"):
-        return False
-    return (
-        m.signal.type in _CORROBORATING_SIGNALS
-        or bool(m.extra.get("import_bound"))
-        or bool(m.extra.get("config_projection"))
-        or bool(m.extra.get("manifest_artifact"))
-    )
-
-
-def _uncorroborated_signatures(
-    observations: Iterable[_Observation], in_tests: Callable[[str], bool]
-) -> set[str]:
-    """Signatures whose project evidence is lexical code patterns no library evidence backs.
-
-    A lexical code match (``extra["lexical_source"]``: every code match in a
-    language without an import binder, and in Python or JavaScript a framework
-    pattern the binder did not claim) is a word that other code can use too,
-    whatever the language: Spring AI's ``ToolCallback`` is a Rust trait name,
-    LangChain's ``create_agent(`` a Goose function, ``AgentType.Validate(`` a
-    Semantic Kernel method. It establishes the library only when the same
-    signature also has an import, a dependency, a file-name, image, IaC or
-    model match, an import-bound call, a recognised configuration shape or a
-    manifest artifact somewhere in the project, or a mention (a host, a
-    variable, a display name) strong enough to establish the product on its
-    own (``WEAK_MENTION_WEIGHT`` after the test-path discount): a C# client
-    built against ``contoso.openai.azure.com`` is Azure OpenAI, a Rust
-    ``create_agent(`` next to a documentation link is not LangChain. Python
-    and JavaScript code patterns of provider, protocol, platform and
-    cloud-service signatures are written for idioms of generic SDKs
-    (``boto3.client("bedrock-agent-runtime")``) and stay supporting evidence,
-    as before. Heuristics are judged elsewhere.
-    """
-    corroborated: set[str] = set()
-    lexical: set[str] = set()
-    for m, rel, _ in observations:
-        if m.signature.category == "heuristic":
-            continue
-        if _corroborates(m) or (
-            m.signal.type != "code" and m.weight * (0.5 if in_tests(rel) else 1.0) >= WEAK_MENTION_WEIGHT
-        ):
-            corroborated.add(m.signature_id)
-        elif m.signal.type == "code" and m.extra.get("lexical_source"):
-            lexical.add(m.signature_id)
-    return lexical - corroborated
-
-
-def _weak_mention_signatures(
-    observations: Iterable[_Observation], in_tests: Callable[[str], bool]
-) -> set[str]:
-    """Signatures whose project evidence is only mentions, all below ``WEAK_MENTION_WEIGHT``.
-
-    A model-hub link in a comment, an OAuth endpoint or a gallery entry names a
-    product at a weight written as corroboration. Alone, such mentions are
-    recorded as potential technology, never as a provider or framework the
-    project uses. The test-path discount applies; the env-names-only halving
-    does not, so a configured variable at weight 0.5 still establishes.
-    """
-    strongest: dict[str, float] = {}
-    anchored: set[str] = set()
-    for m, rel, _ in observations:
-        if m.signature.category == "heuristic":
-            continue
-        # A model id in a test file names what the test exercises, as a host there does.
-        if _mention(m) or (m.extra.get("model_literal") and in_tests(rel)):
-            weight = min(m.weight, MODEL_LITERAL_MAX_WEIGHT) if m.extra.get("model_literal") else m.weight
-            scaled = weight * (0.5 if in_tests(rel) else 1.0)
-            strongest[m.signature_id] = max(strongest.get(m.signature_id, 0.0), scaled)
-        else:
-            anchored.add(m.signature_id)
-    return {sid for sid, weight in strongest.items() if sid not in anchored and weight < WEAK_MENTION_WEIGHT}
-
-
-class _ProjectEvidence:
-    """How a project's observations count toward its finding (see the module docstring)."""
-
-    def __init__(
-        self,
-        observations: list[_Observation],
-        *,
-        discount_tests: bool,
-        mcp_tools: dict[str, str],
-        project_root: str = ".",
-    ) -> None:
-        self.discount_tests = discount_tests
-        # Environment-variable and display-name references are weak
-        # anchors, so they are judged before heuristics join: an agent
-        # loop or subprocess.run next to a .env.example must not promote
-        # the project to a strong agent with autonomous or code-exec
-        # capabilities. Such a finding is built from the name references
-        # alone. A live credential is not a name: it keeps full weights
-        # and lets the heuristics count. Every anchor is non-heuristic,
-        # so the judgement below is never vacuous.
-        technology = [m for m, _, _ in observations if m.signature.category != "heuristic"]
-        self.env_only = all(m.signal.type in {"env", "name"} for m in technology)
-        # Model identifiers alone name what the code may call, not an SDK it
-        # installs: the finding is built from them, capped below the strong
-        # band, and heuristics are dropped as for name references.
-        self.model_ids_only = bool(technology) and all(m.extra.get("model_literal") for m in technology)
-        if self.env_only:
-            self.matches = [t for t in observations if t[0].signal.type in {"env", "name"}]
-        elif self.model_ids_only:
-            self.matches = [t for t in observations if t[0].extra.get("model_literal")]
-        else:
-            self.matches = observations
-        self.library_evidence = {
-            m.signature_id for m, _, _ in self.matches if m.signal.type in {"import", "dependency"}
-        }
-        self.uncorroborated = _uncorroborated_signatures(self.matches, self.in_tests)
-        self.weak_mentions = _weak_mention_signatures(self.matches, self.in_tests)
-        # Capabilities describe what the deployed code can do. Evidence
-        # from tests (unless the project is only tests) and vendor-neutral
-        # idioms in an MCP tool server (whose tools are read below) is
-        # kept as evidence but implies no capability.
-        self.test_only = discount_tests and all(_is_test_path(rel) for _, rel, _ in self.matches)
-        java_tool_types = {
-            m.extra["java_tool_type"]
-            for m, rel, _ in self.matches
-            if m.extra.get("java_tool_type") and (self.test_only or not self.in_tests(rel))
-        }
-        for m, _, _ in self.matches:
-            if m.extra.get("java_tool_registration_type"):
-                verified = m.extra["java_tool_registration_type"] in java_tool_types
-                m.extra["verified_agent"] = verified
-                m.extra["source_capabilities"] = ["tool-use"] if verified else []
-        # Tools registered only in tests imply nothing, like other test evidence.
-        self.server_tools = {
-            tool: rel for tool, rel in mcp_tools.items() if self.test_only or not self.in_tests(rel)
-        }
-        # The project implements an MCP server: a server construction, transport
-        # or tool registration outside tests, corroborated by the SDK (an
-        # import binding, or library evidence for a lexical pattern).
-        self.server_implemented = any(
-            self.mcp_server_evidence(m, rel) and m.signature_id not in self.uncorroborated
-            for m, rel, _ in self.matches
-        )
-        # A tool server's capabilities come from its tools; vendor-neutral idioms
-        # in its code describe the tools, not an agent. Execution sinks still
-        # count (see implies_capabilities), as do the capabilities its own
-        # protocol evidence implies when no tool name was recognised.
-        self.mcp_server = (bool(self.server_tools) or self.server_implemented) and {
-            m.signature_id for m, _, _ in self.matches if m.signature.category != "heuristic"
-        } == {"protocol.mcp"}
-
-        self.negative_contexts: dict[str, NegativeContext] = {}
-        if discount_tests:
-            for _, rel, _ in self.matches:
-                if rel not in self.negative_contexts:
-                    ctx = negative_context(rel, project_root)
-                    if ctx is not None:
-                        self.negative_contexts[rel] = ctx
-        self.docs_only = (
-            bool(self.negative_contexts)
-            and all(rel in self.negative_contexts for _, rel, _ in self.matches if not _is_test_path(rel))
-            and any(
-                self.negative_contexts.get(rel, NegativeContext("", 1.0)).reason == "documentation"
-                for _, rel, _ in self.matches
-            )
-        )
-        self.example_only = (
-            bool(self.negative_contexts)
-            and all(rel in self.negative_contexts for _, rel, _ in self.matches if not _is_test_path(rel))
-            and any(
-                self.negative_contexts.get(rel, NegativeContext("", 1.0)).reason == "example-code"
-                for _, rel, _ in self.matches
-            )
-        )
-        self.generated_only = (
-            bool(self.negative_contexts)
-            and all(rel in self.negative_contexts for _, rel, _ in self.matches if not _is_test_path(rel))
-            and any(
-                self.negative_contexts.get(rel, NegativeContext("", 1.0)).reason == "generated-code"
-                for _, rel, _ in self.matches
-            )
-        )
-        # 4a: Cross-signal corroboration — track which independent signal
-        # type categories are present so the scoring phase can reward diversity.
-        signal_types: set[str] = set()
-        for m, rel, _ in self.matches:
-            if m.signature.category != "heuristic" and not self.in_tests(rel):
-                signal_types.add(m.signal.type)
-        self.has_library_and_code = bool(signal_types & {"import", "dependency"} and signal_types & {"code"})
-        diverse_types = signal_types & {"import", "dependency", "code", "file", "domain", "env"}
-        self.has_multi_signal = len(diverse_types) >= 3
-
-    def in_tests(self, rel: str) -> bool:
-        return self.discount_tests and _is_test_path(rel)
-
-    def established(self, signature_id: str) -> bool:
-        """Whether the project's evidence for ``signature_id`` establishes that technology.
-
-        Code patterns without library evidence and mentions below
-        ``WEAK_MENTION_WEIGHT`` stay potential: their evidence is kept, but
-        they join neither ``frameworks[]`` nor ``model_providers[]``.
-        """
-        return signature_id not in self.uncorroborated and signature_id not in self.weak_mentions
-
-    def mcp_server_evidence(self, match: Match, rel: str) -> bool:
-        """Whether ``match`` is MCP server code evidence that counts (not test-only).
-
-        The ambiguous ``Server(`` pattern names HTTP and socket servers in
-        projects that only use an MCP client, and a lexical construction the
-        binder did not resolve in a file without the SDK's server import may
-        name a local class: neither establishes a server. The bound
-        construction, the specific idioms and their registrations do.
-        """
-        return (
-            match.signature_id == "protocol.mcp"
-            and match.signal.type == "code"
-            and "mcp-server" in match.signal.capabilities
-            and not match.signal.ambiguous
-            and not match.extra.get("mcp_construction_unbound")
-            and (self.test_only or not self.in_tests(rel))
-        )
-
-    def verified_indicator(self, match: Match) -> bool:
-        if match.signature.category == "heuristic" or match.signature_id == "protocol.mcp":
-            return False
-        if not self.established(match.signature_id):
-            return False
-        if "verified_agent" in match.extra:
-            return bool(match.extra["verified_agent"])
-        if match.extra.get("lexical_source"):
-            return match.agent_indicator and match.signature_id in self.library_evidence
-        return match.agent_indicator
-
-    def implies_capabilities(self, match: Match, rel: str) -> bool:
-        if match.signal.type in {"import", "dependency", "env", "name"} or match.extra.get("model_literal"):
-            return False
-        if not self.established(match.signature_id):
-            return False
-        if self.in_tests(rel) and not self.test_only:
-            return False
-        if match.extra.get("contextual_capabilities"):
-            return False
-        if (
-            match.signature.category == "framework"
-            and match.extra.get("lexical_source")
-            and match.signature_id not in self.library_evidence
-        ):
-            return False
-        # Tool names are not an exhaustive description of their implementations.
-        # An independently observed execution sink must survive when a harmless
-        # named tool is added, or when a tool's name does not mention commands.
-        return not (
-            self.mcp_server
-            and match.signature.category == "heuristic"
-            and match.signature_id not in {"heuristic.code-execution", "heuristic.llm-command-execution"}
-        )
-
-    def weight_scale(self, rel: str) -> float:
-        base = ENV_ONLY_WEIGHT_SCALE if self.env_only else 1.0
-        if self.in_tests(rel):
-            base *= 0.5
-        ctx = self.negative_contexts.get(rel)
-        if ctx is not None:
-            base *= ctx.weight_scale
-        return base
-
-
 _ROOT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 # The ":<line>" suffix of an evidence location.
 _LOCATION_LINE = re.compile(r":\d+\Z")
 
-# Test suites routinely construct agents to exercise a library. Evidence found
-# only there describes the library's tests, not a deployed agent, so it cannot
-# establish an agent on its own unless ``include_tests`` is set.
-_TEST_DIR_NAMES = frozenset(
-    {
-        "test",
-        "tests",
-        "__tests__",
-        "spec",
-        "specs",
-        "testing",
-        "fixtures",
-        "__fixtures__",
-        "__mocks__",
-        "cassettes",
-        "testdata",
-        "test_data",
-        "test-data",
-        "e2e",
-    }
-)
-_TEST_FILE_RE = re.compile(
-    r"(?:^|/)(?:test_[^/]*\.py|[^/]*_test\.(?:py|go)|conftest\.py|[^/]*\.(?:test|spec)\.[cm]?[jt]sx?"
-    r"|tests\.rs|[^/]*_tests?\.rs)$",
-    re.IGNORECASE,
-)
 # Categories whose evidence shows that a file itself talks to a model.
 _LLM_CATEGORIES = frozenset({"provider", "framework", "protocol", "platform", "cloud-service"})
 # Signatures that are only meaningful when the same file also invokes an LLM.
@@ -1282,248 +918,6 @@ _IAC_MODEL_RE = re.compile(
     r"""["']?\s*[:=]\s*["']([A-Za-z0-9][A-Za-z0-9._:/@-]{2,199})["']"""
 )
 _IAC_EXTENSIONS = frozenset({".tf", ".hcl", ".bicep", ".json", ".yaml", ".yml"})
-
-# Model identifiers in source and configuration (see _scan_model_literals). A
-# quoted literal of the id alphabet, closed by the quote that opened it; the
-# run is possessive, so a quote that no matching quote follows costs one pass
-# over at most 161 characters. Unquoted values follow a model-ish key in YAML,
-# TOML, INI and dotenv files (``model: gpt-4o``, ``OPENAI_MODEL=gpt-4o``,
-# ``deployment: my-gpt4``, ``spring.ai.openai.chat.options.model=gpt-4o``); the
-# key search is anchored to a line start, the dotted prefix before ``model`` or
-# ``deployment`` is bounded and lazy and the rest of the key possessive, so a
-# line that is one long run of key characters costs a bounded number of
-# attempts rather than a quadratic backtrack.
-_MODEL_QUOTED_RE = regex.compile(r"""(["'`])([A-Za-z0-9][A-Za-z0-9._:/@-]{2,160}+)\1""")
-_MODEL_KEY_VALUE_RE = regex.compile(
-    r"""(?im)^[ \t]*+(?:-[ \t]*+)?["']?"""
-    r"""(?:[A-Za-z0-9_.-]{0,80}?(?:model|deployment)[A-Za-z0-9_.-]*+|llm|engine)["']?"""
-    r"""[ \t]*+[:=][ \t]*+["'`]?+([A-Za-z0-9][A-Za-z0-9._:/@-]{2,160}+)"""
-)
-# A literal that reaches the matcher through an open-ended family names a model
-# only in the vendor's own shape. ``gpt-`` is followed by a version digit or
-# the open-weight ``oss-`` family: ``gpt-j``, ``gpt-neox-20b`` (EleutherAI),
-# ``gpt-tokenizer`` and ``gpt-engineer`` are not OpenAI models. The reasoning
-# series carries a variant or a release date: ``o1-visa`` and ``o3-build`` do
-# not. For every family (``grok-`` and ``qwen`` included) a segment that names
-# a tool, package or product (``gpt-3-encoder``, ``gpt-4all``,
-# ``grok-1-formatter``, ``qwen-agent``) is never a model id, whatever the stem.
-_MODEL_FAMILY_SHAPES: tuple[tuple[str, regex.Pattern[str]], ...] = (
-    ("gpt-", regex.compile(r"^gpt-(?:\d|oss-)")),
-    ("o1-", regex.compile(r"^o1-(?:mini|preview|pro|\d{4}-\d{2}-\d{2})")),
-    ("o3-", regex.compile(r"^o3-(?:mini|pro|deep-research|\d{4}-\d{2}-\d{2})")),
-    ("o4-", regex.compile(r"^o4-(?:mini)")),
-)
-_MODEL_TOOLING_SEGMENTS = frozenset(
-    {
-        "4all",
-        "academic",
-        "agent",
-        "agents",
-        "app",
-        "bench",
-        "bot",
-        "build",
-        "cli",
-        "client",
-        "crawler",
-        "encoder",
-        "engineer",
-        "formatter",
-        "kit",
-        "lib",
-        "parser",
-        "pattern",
-        "patterns",
-        "pilot",
-        "plugin",
-        "researcher",
-        "sdk",
-        "server",
-        "tokenizer",
-        "tools",
-        "ui",
-        "utils",
-        "visa",
-        "web",
-    }
-)
-_MODEL_TOOLING_NAMES = frozenset({"qwen-code", "qwen-cli", "gpt4all", "gpt-4all", "gpt-3-encoder"})
-_MODEL_SEGMENT_RE = regex.compile(r"[-_./:@]")
-
-
-# A literal ending in a file extension names a file (``sonar-project.properties``,
-# ``gpt-4-turbo-docs.md``), never a model id; ``gpt-4.1`` ends in a digit.
-_MODEL_FILE_NAME_RE = re.compile(
-    r"\.(?:properties|json|jsonc|ya?ml|toml|ini|cfg|conf|md|mdx|txt|rst|html?|xml|csv|lock|log"
-    r"|py|[cm]?[jt]sx?|go|rs|java|kt|cs|rb|php|sh|ps1|bat)$"
-)
-
-
-def _model_lookalike(candidate: str) -> bool:
-    """Whether a vendor-stemmed literal names a tool, package or product instead of a model.
-
-    ``candidate`` is lower-cased. The ``gpt-`` and ``o1-``/``o3-``/``o4-``
-    families, whose signature patterns are open-ended, are held to the vendor's
-    id shape (``_MODEL_FAMILY_SHAPES``); a known tool name
-    (``_MODEL_TOOLING_NAMES``) and any id whose segments name tooling
-    (``_MODEL_TOOLING_SEGMENTS``) are rejected whatever the family.
-    """
-    if candidate in _MODEL_TOOLING_NAMES or _MODEL_FILE_NAME_RE.search(candidate):
-        return True
-    for stem, shape in _MODEL_FAMILY_SHAPES:
-        if candidate.startswith(stem):
-            if shape.match(candidate) is None:
-                return True
-            break
-    return any(segment in _MODEL_TOOLING_SEGMENTS for segment in _MODEL_SEGMENT_RE.split(candidate))
-
-
-# A literal is handed to the anchored ``model`` signatures only when it carries
-# a vendor stem; everything else in a source file is an ordinary string. Where
-# a signature's family prefix is open-ended (``gemini-``, ``mistral-``,
-# ``grok-``, ``embed-``, ``rerank-``, ``sonar``) the stems name the vendor's id
-# families, so ``gemini-python/1.8.2`` (an exchange client's user agent),
-# ``grok-pattern`` and ``sonar-scanner`` never reach the matcher.
-_MODEL_STEMS = (
-    "claude",
-    "gpt-",
-    "o1-",
-    "o3-",
-    "o4-",
-    "text-embedding",
-    "gemini-1",
-    "gemini-2",
-    "gemini-3",
-    "gemini-pro",
-    "gemini-flash",
-    "gemini-embedding",
-    "gemini-exp",
-    "gemini-live",
-    "gemini/",
-    "mistral-large",
-    "mistral-medium",
-    "mistral-small",
-    "mistral-tiny",
-    "mistral-embed",
-    "mistral-nemo",
-    "mistral-saba",
-    "mistral-ocr",
-    "mistral-moderation",
-    "mistral-7b",
-    "open-mistral",
-    "mistral/",
-    "mixtral-",
-    "codestral",
-    "ministral-",
-    "pixtral-",
-    "magistral",
-    "devstral",
-    "command-",
-    "embed-english",
-    "embed-multilingual",
-    "embed-v",
-    "rerank-english",
-    "rerank-multilingual",
-    "rerank-v",
-    "grok-1",
-    "grok-2",
-    "grok-3",
-    "grok-4",
-    "grok-beta",
-    "grok-vision",
-    "grok-code",
-    "deepseek",
-    "titan",
-    "nova-",
-    "anthropic.",
-    "amazon.",
-    "meta.",
-    "cohere.",
-    "bedrock/",
-    "vertex_ai/",
-    "azure/",
-    "openai/",
-    "anthropic/",
-    "ollama/",
-    "ollama_chat/",
-    "openrouter/",
-    "together_ai/",
-    "groq/",
-    "huggingface/",
-    "perplexity/",
-    "sonar-pro",
-    "sonar-reasoning",
-    "sonar-deep",
-    "sonar-small",
-    "sonar-medium",
-    "sonar-large",
-    "cerebras/",
-    "xai/",
-    "voyage-",
-    "llama",
-    "qwen",
-    "@cf/",
-    "@hf/",
-    "arn:aws:bedrock",
-)
-# A value under one of these prefixes is a route (``bedrock/anthropic.claude-...``,
-# ``openrouter/anthropic/claude-3.5-sonnet``): its last path segment is the
-# model id and is matched too. Any other ``/`` (``EleutherAI/gpt-neox-20b``, an
-# npm scope, a URL path) is a namespace, and the value is read whole only.
-_MODEL_ROUTE_PREFIXES = tuple(stem for stem in _MODEL_STEMS if stem.endswith("/")) + ("arn:aws:bedrock",)
-# The stems as one alternation of plain strings: the per-literal test runs for
-# every quoted string of a file inside the match iterator, where an ``any``
-# over each stem costs several times more.
-_MODEL_STEM_RE = re.compile("|".join(map(re.escape, _MODEL_STEMS)))
-
-
-def _has_model_stem(value: str) -> bool:
-    """Whether ``value`` carries a vendor stem, so it is a model-id candidate."""
-    return _MODEL_STEM_RE.search(value.lower()) is not None
-
-
-# Configuration formats whose literals the model-identifier pass reads. Prose
-# (.md, .mdc, .mdx, .txt) is never read; dotenv files are recognised by name.
-_MODEL_LITERAL_CONFIG_EXTENSIONS = frozenset(
-    {
-        ".yaml",
-        ".yml",
-        ".json",
-        ".jsonc",
-        ".json5",
-        ".toml",
-        ".tf",
-        ".tfvars",
-        ".hcl",
-        ".bicep",
-        ".env",
-        ".cfg",
-        ".ini",
-        ".properties",
-    }
-)
-# What opens a comment in the languages the lexer masks; every other masked
-# span is a string literal, which the model-identifier pass reads.
-_COMMENT_OPENERS = ("#", "//", "/*", "<!--", "=begin")
-
-
-def _comment_spans(text: str, ignored: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
-    """The comment spans among the lexer's ``ignored`` spans of ``text`` (strings are kept)."""
-    return [(start, end) for start, end in ignored if text.startswith(_COMMENT_OPENERS, start)]
-
-
-def _is_pipeline_file(rel: str) -> bool:
-    """Whether ``rel`` is a CI pipeline, whose ``image:`` lines name job containers, not deployments."""
-    path = PurePosixPath(rel)
-    parts = path.parts
-    name = path.name
-    return (
-        (".github" in parts and "workflows" in parts)
-        or name in _PIPELINE_NAMES
-        or name == "Jenkinsfile"
-        or name.startswith(".woodpecker")
-        or not _PIPELINE_DIRECTORIES.isdisjoint(parts[:-1])
-    )
 
 
 def _exception_name(exc: Exception) -> str:
@@ -1558,87 +952,6 @@ def _root_open_failure(exc: OSError | ValueError) -> str:
     if isinstance(exc, ValueError):
         return str(exc)
     return _ROOT_OPEN_REASONS.get(exc.errno or 0) or errno.errorcode.get(exc.errno or 0, type(exc).__name__)
-
-
-def _is_test_path(rel: str) -> bool:
-    parts = rel.lower().split("/")
-    return any(part in _TEST_DIR_NAMES for part in parts[:-1]) or bool(_TEST_FILE_RE.search(rel))
-
-
-_DOCS_DIR_NAMES = frozenset({"docs", "doc", "documentation", "wiki", "guides", "tutorials"})
-
-_EXAMPLE_DIR_NAMES = frozenset(
-    {
-        "examples",
-        "example",
-        "samples",
-        "sample",
-        "demos",
-        "demo",
-        "quickstart",
-        "quickstarts",
-        "tutorial",
-        "tutorials",
-        "starter",
-        "starters",
-        "templates",
-        "boilerplate",
-        "cookbooks",
-        "cookbook",
-        "recipes",
-    }
-)
-
-# Generated code is recognized by the file name a generator gives it, never by a
-# directory name: "codegen" or "generated" also names a service that runs an
-# LLM code-generation agent. "*.auto.*" is not a marker either (Terraform loads
-# "*.auto.tfvars" into the deployment).
-_GENERATED_FILE_RE = re.compile(
-    r"(?:^|/)(?:[^/]*\.generated\.[^/]+|[^/]*_pb2\.py|[^/]*_pb2_grpc\.py)$",
-    re.IGNORECASE,
-)
-
-
-def _is_docs_path(rel: str) -> bool:
-    parts = rel.lower().split("/")
-    return any(part in _DOCS_DIR_NAMES for part in parts[:-1])
-
-
-def _is_example_path(rel: str) -> bool:
-    parts = rel.lower().split("/")
-    return any(part in _EXAMPLE_DIR_NAMES for part in parts[:-1])
-
-
-def _is_generated_path(rel: str) -> bool:
-    return bool(_GENERATED_FILE_RE.search(rel.lower()))
-
-
-@dataclass(frozen=True, slots=True)
-class NegativeContext:
-    """A recognized context that discounts evidence without discarding it."""
-
-    reason: str
-    weight_scale: float
-    confidence_cap: float | None = None
-
-
-def negative_context(rel: str, project_root: str = ".") -> NegativeContext | None:
-    """Return the strongest negative context for a file path, or None.
-
-    Documentation and example directories count only inside the file's project
-    (below ``project_root``): a directory that is itself a project root holds a
-    manifest and is a deployable unit, whatever it is called.
-    """
-    if _is_generated_path(rel):
-        return NegativeContext("generated-code", GENERATED_WEIGHT_SCALE, GENERATED_MAX_CONFIDENCE)
-    inner = rel
-    if project_root not in ("", ".") and rel.startswith(project_root + "/"):
-        inner = rel[len(project_root) + 1 :]
-    if _is_docs_path(inner):
-        return NegativeContext("documentation", DOCS_WEIGHT_SCALE, DOCS_MAX_CONFIDENCE)
-    if _is_example_path(inner):
-        return NegativeContext("example-code", EXAMPLE_PATH_WEIGHT_SCALE, EXAMPLE_PATH_MAX_CONFIDENCE)
-    return None
 
 
 # A signature's source names its pack file (as the validator's namespace check reads it).
@@ -2111,6 +1424,7 @@ class FilesystemConnector(BaseConnector):
         self._ownership_exhausted: set[Path] = set()
         self._ownership_steps_remaining: dict[Path, int] = {}
         self._owner_cache: dict[tuple[Path, str], str | None] = {}
+        self._ownership_scan: _ScanState | None = None
         self._symlink_warnings: set[Path] = set()
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
@@ -2855,7 +2169,16 @@ class FilesystemConnector(BaseConnector):
             self.ctx.error(f"code.filesystem: {rel}: {analysis} incomplete ({reason(exc)})")
 
     def scan_tree(self, root: Path) -> Iterator[Finding]:
+        root = root.absolute()
         scan = _ScanState(root, self._scan_label(root))
+        previous_scan = self._ownership_scan
+        self._ownership_scan = scan
+        # Ownership caches belong to this opened tree, not a pathname that a
+        # later scan on the same connector instance may find replaced.
+        self._codeowners_cache.pop(root, None)
+        self._ownership_exhausted.discard(root)
+        self._ownership_steps_remaining.pop(root, None)
+        self._owner_cache = {key: value for key, value in self._owner_cache.items() if key[0] != root}
         # Each root's gates read only its own listing (scan_tree walks and emits one root at a time).
         self._root_listing_incomplete = self.tree_listing_incomplete
         try:
@@ -2890,6 +2213,7 @@ class FilesystemConnector(BaseConnector):
                 yield f
         finally:
             # Closed whether or not the emit completes.
+            self._ownership_scan = previous_scan
             self._close_root(scan)
 
     @staticmethod
@@ -3222,7 +2546,7 @@ class FilesystemConnector(BaseConnector):
         if loaded is None:
             _note_unread_settings(proj, rel)
             return
-        text, raw_notebook, cells = loaded
+        text, raw_notebook, cells, foreign = loaded
         if path.name.lower() in LOCKFILE_NAMES:
             manifest = parse_manifest(rel, text)
             if manifest is not None:
@@ -3265,6 +2589,7 @@ class FilesystemConnector(BaseConnector):
             file_matches=file_matches,
             raw_notebook=raw_notebook,
             cells=cells,
+            foreign=foreign,
         )
         file.structure, file.structure_strict = self._structure_for(rel, text)
         file.excerpts = _ExcerptSource(rel, path, text, file.structure)
@@ -3322,8 +2647,10 @@ class FilesystemConnector(BaseConnector):
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
-    ) -> tuple[str, str | None, _CellSpans] | None:
+    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
+
+        A notebook's last element lists the cells declared another language (``_notebook_source``).
 
         The file is read relative to the open scan root ``root_fd``: by its on-disk
         name (``path`` below ``base``), while ``rel`` is the report-safe name used in
@@ -3369,7 +2696,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
             return None
         if path.suffix.lower() != ".ipynb":
-            return text, None, ()
+            return text, None, (), ()
         return self._notebook_source(rel, text)
 
     def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
@@ -3385,19 +2712,33 @@ class FilesystemConnector(BaseConnector):
         directory_wide = {(m.signature.id, id(m.signal)) for m in self.index.match_file(probe)}
         return any((m.signature.id, id(m.signal)) not in directory_wide for m in file_matches)
 
-    def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None, _CellSpans] | None:
-        """Return a notebook's code cells, their spans and, within max_file_size, its raw document."""
+    def _notebook_source(
+        self, rel: str, document: str
+    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | None:
+        """Return a notebook's code cells, their spans, within max_file_size its raw document, and
+        the spans of cells declared another language.
+
+        A cell is declared another language when the notebook's kernel is not a Python one (an R
+        or Julia notebook) or when a cell magic runs, renders or writes its body as something else
+        (``%%bash``, ``%%writefile requirements.txt``; see ``foreign_cell``). Such a cell is still
+        bound when it parses as Python; one that does not is not a coverage gap.
+        """
         notebook_errors: list[str] = []
         oversized_notebook = len(document) > self.max_file_size
         raw_notebook = None if oversized_notebook else document
         sources: list[str] = []
-        text = notebook_to_source(document, notebook_errors, cells=sources)
+        language: list[str] = []
+        text = notebook_to_source(document, notebook_errors, cells=sources, language=language)
         self._file_errors(rel, dict.fromkeys(notebook_errors), defect=True)
+        python_kernel = not language or language[0] in {"python", "python3", "ipython", "ipython3"}
         # The cells are joined by one line break each.
         spans: list[tuple[int, int]] = []
+        foreign: list[tuple[int, int]] = []
         offset = 0
         for source in sources:
             spans.append((offset, offset + len(source)))
+            if not python_kernel or foreign_cell(source):
+                foreign.append(spans[-1])
             offset += len(source) + 1
         # Unread analyzable content leaves coverage incomplete, as
         # for any oversize file; strict_coverage only raises the
@@ -3419,7 +2760,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
         if len(text) > self.max_file_size:
             return None
-        return text, raw_notebook, tuple(spans)
+        return text, raw_notebook, tuple(spans), tuple(foreign)
 
     def _structure_for(self, rel: str, text: str) -> tuple[Any, bool]:
         """Parse the credential context of a structured file; None withholds its excerpts.
@@ -3555,7 +2896,7 @@ class FilesystemConnector(BaseConnector):
         if source.structure is None:
             return ""
         source.wanted.add(line_number or 1)
-        return _LazyExcerpt(self, source, line_number)
+        return _LazyExcerpt(self._redacted_lines_of, source, line_number)
 
     def _record_file_matches(self, file: _SourceFile) -> None:
         """Record file-name evidence; MCP file names wait for a parsed configuration."""
@@ -4127,14 +3468,29 @@ class FilesystemConnector(BaseConnector):
         if lang not in {"python", "javascript"}:
             return [], []
         whole = [(0, len(content_text))]
+        file.unparsed = ()
         truncated: list[int] = []
         unparsed: list[int] = []
         try:
             source = content_text
             if file.cells:
                 # Jupyter runs the cells one at a time: one that does not parse
-                # fails alone, so the binder reads the others without it.
-                source, unparsed = _notebook_binder_source(content_text, file.cells)
+                # fails alone, so the binder reads the others without it. A cell
+                # declared another language is bound when it parses as Python;
+                # when it does not, it is lexical evidence only, without a gap.
+                source, unparsed, unread = _notebook_binder_source(content_text, file.cells, file.foreign)
+                file.unparsed = tuple(unread)
+                if unparsed:
+                    # Report before binding the other cells: a later AST
+                    # budget failure must not erase this syntax coverage gap.
+                    numbers = ", ".join(str(number + 1) for number in unparsed[:10])
+                    cells = "cell" if len(unparsed) == 1 else "cells"
+                    verb = "does" if len(unparsed) == 1 else "do"
+                    self.ctx.warn(
+                        f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook "
+                        f"{cells} {numbers}, which {verb} not parse; lexical evidence retained",
+                        incomplete=self._syntax_gap(file),
+                    )
             bound = bound_source_matches(
                 self.index,
                 source,
@@ -4161,25 +3517,15 @@ class FilesystemConnector(BaseConnector):
             return [], whole
         except SourceNotParsed as exc:
             # Newer syntax than the interpreter knows, or invalid source: no
-            # import binding, but the lexical evidence, framework patterns
-            # included, stays. A warning, not a gap in what the file was asked
-            # to show.
+            # import binding. Lexical observations stay visible, but cannot
+            # replace the missing proof of agent behavior or capabilities.
+            file.unparsed = tuple(whole)
             self.ctx.warn(
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
-                incomplete=False,
+                incomplete=self._syntax_gap(file),
             )
             return [], whole
-        if unparsed:
-            # As for a source that does not parse, but for these cells alone.
-            numbers = ", ".join(str(number + 1) for number in unparsed[:10])
-            cells = "cell" if len(unparsed) == 1 else "cells"
-            verb = "does" if len(unparsed) == 1 else "do"
-            self.ctx.warn(
-                f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook {cells} {numbers}, "
-                f"which {verb} not parse; lexical evidence retained",
-                incomplete=False,
-            )
         if truncated:
             # An option past the limit (tools, a stop condition) was not read: the
             # call-analysis budget is a coverage gap like the one above, but the
@@ -4193,7 +3539,16 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(message, incomplete=self.strict_coverage)
             else:
                 self.ctx.error(message)
-        return bound, [file.cells[number] for number in unparsed]
+        return bound, list(file.unparsed)
+
+    def _syntax_gap(self, file: _SourceFile) -> bool:
+        """Whether source that does not parse leaves coverage incomplete.
+
+        It does, except in a test path the scan discounts (include_tests off), where a
+        deliberately invalid fixture is common: there it only warns, unless strict_coverage
+        is set, as for a source over the binder's budget.
+        """
+        return self.strict_coverage or self.include_tests or not _is_test_path(file.rel)
 
     def _record_code_matches(
         self,
@@ -4223,6 +3578,21 @@ class FilesystemConnector(BaseConnector):
         ]
         for m in code_matches:
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
+                continue
+            if _within(m.extra.get("start", -1), file.unparsed):
+                # An import/dependency corroborates a library name, not the
+                # semantics of code this interpreter could not parse. Keep
+                # every lexical observation without promoting an agent,
+                # claiming workload capabilities or constructing an MCP server.
+                m.extra.update(
+                    lexical_source=file.lang,
+                    verified_agent=False,
+                    source_capabilities=[],
+                    source_unparsed=True,
+                )
+                if m.signature_id == "protocol.mcp":
+                    m.extra["mcp_construction_unbound"] = True
+                self._record_content(file, m, self._lazy_excerpt(file, m.line))
                 continue
             if file.lang not in {"python", "javascript"}:
                 # Lexical candidates in these languages need
@@ -4338,10 +3708,15 @@ class FilesystemConnector(BaseConnector):
 
     def _register_mcp_tools(self, file: _SourceFile, ignored: list[tuple[int, int]]) -> None:
         """Remember the MCP tool names a source file registers, bounded per project."""
+        if file.unparsed == ((0, len(file.text)),):
+            return  # No independent tool-name pass may restore rejected source semantics.
+        text = _without_ipython_lines(file.text) if file.cells else file.text
+        if file.unparsed:
+            text = _without_source_ranges(text, file.unparsed)
         tools = file.proj.mcp_tools
         try:
             names = mcp_tool_names(
-                file.text,
+                text,
                 file.lang,
                 ignored=ignored,
                 max_ast_nodes=self.max_ast_nodes,
@@ -4702,17 +4077,24 @@ class FilesystemConnector(BaseConnector):
         if lower in _DEDICATED_MCP_CONFIG_NAMES:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
-            head = text[:200_000]
+            # Decide from the parsed structure when it is held (JSON/TOML): leading
+            # padding before the keys then cannot hide a server table. A JSON object
+            # must be decided structurally; the text fallback below never sees past
+            # its truncation, so a string search of a prefix could miss the keys.
+            if isinstance(document, dict):
+                return _document_declares_mcp(document)
+            # No parse is held for YAML here. Substring and anchored searches are linear,
+            # so read the whole (size-bounded) text rather than a prefix a server can be pushed past.
             return (
-                '"mcpServers"' in head
-                or '"mcp_servers"' in head
-                or "mcpServers:" in head
-                or "mcp_servers:" in head
-                or "[mcp_servers." in head
-                or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", head) is not None
-                or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", head) is not None
-                or ('"mcp"' in head and '"servers"' in head)
-                or ("mcp:" in head and "servers:" in head)
+                '"mcpServers"' in text
+                or '"mcp_servers"' in text
+                or "mcpServers:" in text
+                or "mcp_servers:" in text
+                or "[mcp_servers." in text
+                or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", text) is not None
+                or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", text) is not None
+                or ('"mcp"' in text and '"servers"' in text)
+                or ("mcp:" in text and "servers:" in text)
             )
         return False
 
@@ -4797,65 +4179,114 @@ class FilesystemConnector(BaseConnector):
         )
         return {}
 
+    @contextmanager
+    def _codeowners_directory(self, root: Path) -> Iterator[int | None]:
+        """Keep ownership reads on the same directory descriptor as source collection.
+
+        Reopening the pathname only verifies that it still names that directory;
+        candidate file reads always use the original descriptor. A replacement
+        after this verification therefore cannot redirect ownership reads.
+        """
+        scan = self._ownership_scan
+        if scan is not None:
+            if scan.root != root:
+                raise ValueError("ownership root differs from the active scan")
+            if scan.root_fd < 0 or scan.base != root:
+                # A failed root open has already been reported. Single-file
+                # scans have never consulted their parent directory's owners.
+                yield None
+                return
+            current = open_confined_directory(root)
+            try:
+                original, present = os.fstat(scan.root_fd), os.fstat(current)
+                if (original.st_dev, original.st_ino) != (present.st_dev, present.st_ino):
+                    raise ValueError("scan root changed before ownership lookup")
+            finally:
+                os.close(current)
+            yield scan.root_fd
+            return
+        # Direct internal ownership callers have no collection descriptor.
+        directory = open_confined_directory(root)
+        try:
+            yield directory
+        finally:
+            os.close(directory)
+
     def _codeowners(self, root: Path) -> list[tuple[str, list[str]]]:
-        root = root.resolve()
+        root = root.absolute()
         if root in self._codeowners_cache:
             return self._codeowners_cache[root]
+        rules: list[tuple[str, list[str]]] = []
+        try:
+            with self._codeowners_directory(root) as directory:
+                if directory is not None:
+                    rules = self._read_codeowners(root, directory)
+        except (OSError, RuntimeError, ValueError):
+            self.ctx.error("code.filesystem: could not verify scan root for CODEOWNERS; ownership incomplete")
+        self._codeowners_cache[root] = rules
+        return rules
+
+    def _read_codeowners(self, root: Path, directory: int) -> list[tuple[str, list[str]]]:
+        """Read the first selected ownership file below the already anchored root."""
         rules: list[tuple[str, list[str]]] = []
         for cand in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS"):
             if not self._included(cand):
                 continue
-            p = root / cand
-            if p.exists() or p.is_symlink():
-                try:
-                    if not p.resolve().is_relative_to(root) or any(
-                        part.is_symlink() for part in [p, *p.parents] if part != root and root in part.parents
-                    ):
-                        self.ctx.error(f"code.filesystem: ignored unsafe CODEOWNERS path {cand}")
-                        break
-                    # The check above is for its diagnostic; the read itself
-                    # follows no link below the root, whatever changed since.
-                    errors: list[str] = []
-                    read_notes: list[str] = []
-                    directory = open_confined_directory(root)
-                    try:
-                        content = read_text(
-                            PurePosixPath(cand),
-                            self.max_file_size,
-                            errors,
-                            dir_fd=directory,
-                            notes=read_notes,
-                        )
-                    finally:
-                        os.close(directory)
-                    # Ownership comes from names in this file: bytes that were replaced could change an owner.
-                    errors.extend(f"{note}; ownership may be wrong" for note in read_notes)
-                    for issue in errors:
-                        self.ctx.error(f"code.filesystem: {cand}: {issue}")
-                    for line in (content or "").splitlines():
-                        line = line.split("#", 1)[0].strip()
-                        if not line:
-                            continue
-                        parts = line.split()
-                        if parts:
-                            if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
-                                self.ctx.error(
-                                    "code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete"
-                                )
-                                rules = []
-                                self._ownership_exhausted.add(root)
-                                break
-                            rules.append((parts[0], parts[1:]))
-                except (OSError, RuntimeError, ValueError):
-                    self.ctx.error(f"code.filesystem: could not read {cand}")
+            try:
+                # Distinguish a missing candidate from an unreadable one without
+                # following a link, including links in its parent components.
+                with open_confined_file(PurePosixPath(cand), dir_fd=directory):
+                    pass
+            except FileNotFoundError:
+                continue
+            except NotADirectoryError:
+                # A file named like its parent (``docs``, ``.github``) leaves the
+                # candidate absent. A link there fails the same way and is not
+                # followed, so what it might name stays unread.
+                if not link_in_path(cand, dir_fd=directory):
+                    continue
+                self.ctx.error(f"code.filesystem: could not read {cand}")
                 break
-        self._codeowners_cache[root] = rules
+            except (OSError, RuntimeError, ValueError):
+                self.ctx.error(f"code.filesystem: could not read {cand}")
+                break
+            try:
+                errors: list[str] = []
+                read_notes: list[str] = []
+                content = read_text(
+                    PurePosixPath(cand),
+                    self.max_file_size,
+                    errors,
+                    dir_fd=directory,
+                    notes=read_notes,
+                )
+                # Ownership comes from names in this file: bytes that were replaced could change an owner.
+                errors.extend(f"{note}; ownership may be wrong" for note in read_notes)
+                for issue in errors:
+                    self.ctx.error(f"code.filesystem: {cand}: {issue}")
+                for line in (content or "").splitlines():
+                    line = line.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if parts:
+                        if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
+                            self.ctx.error(
+                                "code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete"
+                            )
+                            rules = []
+                            self._ownership_exhausted.add(root)
+                            break
+                        rules.append((parts[0], parts[1:]))
+            except (OSError, RuntimeError, ValueError):
+                self.ctx.error(f"code.filesystem: could not read {cand}")
+            break
         return rules
 
     def _owner_for(self, root: Path, rel_root: str) -> str | None:
         if self.owner:
             return self.owner
-        root = root.resolve()
+        root = root.absolute()
         rules = self._codeowners(root)
         if root in self._ownership_exhausted:
             return None
@@ -5327,6 +4758,9 @@ class FilesystemConnector(BaseConnector):
             if contextual:
                 for item in f.evidence[before:]:
                     item.attributes["capability_basis"] = "contextual-unlinked-source"
+            if m.extra.get("source_unparsed"):
+                for item in f.evidence[before:]:
+                    item.attributes["source_analysis"] = "unparsed"
             neg_ctx = evidence.negative_contexts.get(rel)
             if neg_ctx is not None:
                 for item in f.evidence[before:]:
@@ -5631,11 +5065,7 @@ class FilesystemConnector(BaseConnector):
             key=lambda s: order[s.category],
         )
         names = [s.name for s in ranked[:4]]
-        provs = [
-            self.index.get(sid).name  # type: ignore[union-attr]
-            for sid in f.model_providers[:3]
-            if self.index.get(sid)
-        ]
+        provs = [sig.name for sid in f.model_providers[:3] if (sig := self.index.get(sid))]
         where = "repository root" if proj.root == "." else proj.root
         what = "Agent" if f.kind == Kind.AGENT else "LLM usage"
         if f.kind != Kind.AGENT and "mcp_server" in f.metadata:
@@ -6022,228 +5452,5 @@ class FilesystemConnector(BaseConnector):
         return info
 
 
-def _strip_comment(text: str) -> str:
-    """Remove a trailing YAML comment and the blanks before it."""
-    start = _COMMENT_START.search(text)
-    return text if start is None else text[: start.start()].rstrip(" \t")
-
-
-def _quote_plain_values(front_matter: str) -> str:
-    """Quote the top-level plain values that YAML rejects, so the front matter can be parsed again.
-
-    A value is rejected when it contains ": ", ends in ":" or starts with "@", a backtick or "%".
-    Generated agent definitions routinely write ``description: Use this agent when: ...`` or
-    ``Examples: <example>Context: ...`` unquoted. Coding agents quote such a value and parse the
-    front matter again, so this does the same. Only a key at the start of a line followed by a
-    one-line plain value is rewritten (flow collections, block scalars, quoted values, anchors,
-    aliases and explicit tags are left alone, so they fail as before), and lines are split with
-    string methods rather than backtracking patterns: the front matter is untrusted.
-    """
-    out: list[str] = []
-    for raw in front_matter.split("\n"):
-        line = raw.rstrip("\r")
-        key, colon, rest = line.partition(":")
-        # A trailing " #" comment is not part of the value: `model: sonnet # note: fast` is valid as it is.
-        value = rest.partition(" #")[0].strip(" \t") if rest[:1] == " " else rest.strip(" \t")
-        if (
-            colon
-            and key
-            and rest[:1] in {" ", "\t"}
-            and all(character.isalnum() or character in "_-" for character in key)
-            and value
-            and value[0] not in "\"'|>[{&*!#"
-            and (": " in value or value.endswith(":") or value[0] in "@`%")
-        ):
-            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-            line = f'{key}: "{escaped}"'
-        out.append(line)
-    return "\n".join(out)
-
-
-def _quote_glob_values(front_matter: str) -> str:
-    """Quote bare ``globs``/``paths`` values that start with ``*``.
-
-    Cursor and Claude Code rule files routinely write ``globs: **/*.ts``
-    unquoted, which YAML reads as an alias and rejects. Only those two keys
-    (a scalar, a flow list or block list items) are rewritten, so a real alias
-    elsewhere is untouched and the bounded loader still parses the result.
-    Lines are split with string methods, not backtracking patterns: the front
-    matter is untrusted, and the scan budget cannot interrupt stdlib ``re``,
-    so a long run of blanks must cost linear time.
-    """
-
-    def quote(value: str) -> str:
-        return "'" + value.replace("'", "''") + "'"
-
-    out: list[str] = []
-    in_list = False
-    for raw in front_matter.split("\n"):
-        line = raw.rstrip("\r")
-        head, colon, rest = line.partition(":")
-        name = head.rstrip(" \t")
-        if colon and name in _GLOB_KEYS:
-            value = rest.strip(" \t")
-            if value.startswith("#"):
-                value = ""
-            elif value.startswith("*"):
-                value = _strip_comment(value)
-            in_list = not value
-            if value.startswith("*"):
-                raw = f"{name}: {quote(value)}"
-            elif (
-                value.startswith("[")
-                and value.endswith("]")
-                and "*" in value
-                and not re.search(r"[\"']", value)
-            ):
-                items = [item.strip() for item in value[1:-1].split(",")]
-                raw = f"{name}: [{', '.join(quote(i) if i.startswith('*') else i for i in items)}]"
-        elif in_list:
-            # A block item is blanks, "-", at least one blank, then the glob.
-            item = _strip_comment(line)
-            body = item.lstrip(" \t")
-            glob = body[1:].lstrip(" \t")
-            if body.startswith("-") and glob.startswith("*") and len(glob) < len(body) - 1:
-                raw = item[: len(item) - len(glob)] + quote(glob.rstrip(" \t"))
-            elif line[:1] not in ("", " ", "\t", "-", "#"):
-                in_list = False
-        out.append(raw)
-    return "\n".join(out)
-
-
 _MAX_CARD_FILES = 200
 _MAX_AGENT_DEFINITIONS = 50
-
-
-def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int = 160) -> str:
-    """Return one trimmed source line; a matched credential is redacted before truncation.
-
-    Truncating first can leave a recognisable prefix of a long credential in
-    the snippet when the full value no longer appears in the shortened text.
-    """
-    try:
-        text = lines[line - 1]
-    except IndexError:
-        return ""
-    text = text.strip()
-    if secret:
-        text = text.replace(secret, redact(secret))
-    return text if len(text) <= width else text[: width - 1] + "…"
-
-
-# IPython line and cell magics (%pip, %%time) and shell escapes (!pip), each
-# alone on its line, as IPython rewrites them before Python reads the cell.
-# "% name" continuing an expression is the modulo operator and stays.
-_IPYTHON_LINE = re.compile(r"^([ \t]*+)((?:%%?[A-Za-z_]|!)[^\n]*)", re.MULTILINE)
-
-
-def _without_ipython_lines(text: str) -> str:
-    """Replace a notebook's magic and shell lines with an inert expression, keeping every offset.
-
-    IPython turns each into an expression statement, so an indented one can be a
-    block's only statement: it becomes ``0`` padded to its length, not blanks.
-    """
-    return _IPYTHON_LINE.sub(lambda match: match[1] + "0" + " " * (len(match[2]) - 1), text)
-
-
-def _within(offset: int, spans: Sequence[tuple[int, int]]) -> bool:
-    return any(start <= offset < end for start, end in spans)
-
-
-def _cell_noncode_ranges(text: str, cells: _CellSpans) -> tuple[list[tuple[int, int]], bool]:
-    """Lex each notebook cell on its own; return the ignored spans in ``text``'s offsets."""
-    spans: list[tuple[int, int]] = []
-    ambiguous = False
-    for start, end in cells:
-        cell_spans, cell_ambiguous = noncode_ranges(text[start:end], "python")
-        spans.extend((start + low, start + high) for low, high in cell_spans)
-        ambiguous = ambiguous or cell_ambiguous
-    return spans, ambiguous
-
-
-def _notebook_binder_source(text: str, cells: _CellSpans) -> tuple[str, list[int]]:
-    """Return a notebook's cells as the import binder reads them, and which cells do not parse.
-
-    Magic and shell lines become inert expressions (``_without_ipython_lines``).
-    A cell that still does not parse is blanked, its line breaks kept, so the
-    other cells are bound together, as Jupyter runs them, and every offset and
-    line stays that of ``text``.
-    """
-    source = _without_ipython_lines(text)
-    unparsed: list[int] = []
-    pieces: list[str] = []
-    previous = 0
-    for number, (start, end) in enumerate(cells):
-        try:
-            ast.parse(source[start:end])
-        except (SyntaxError, ValueError):
-            unparsed.append(number)
-            pieces.extend((source[previous:start], re.sub(r"[^\n]", " ", source[start:end])))
-            previous = end
-        except RecursionError as exc:
-            raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
-    pieces.append(source[previous:])
-    return "".join(pieces), unparsed
-
-
-def _without_xml_comments(text: str) -> str:
-    """Mask XML comments while preserving character offsets and source lines."""
-    return re.sub(r"<!--.*?(?:-->|$)", lambda match: re.sub(r"[^\n]", " ", match.group()), text, flags=re.S)
-
-
-_NO_STRUCTURE = object()
-
-
-def _structured_context(rel: str, text: str, strict_json: list[bool] | None = None) -> Any:
-    """Parse the structure that supplies credential context for excerpt redaction.
-
-    ``strict_json`` receives True when a JSON document was accepted by the
-    strict decoder (no comments or trailing commas were stripped).
-
-    Returns ``_NO_STRUCTURE`` for plain text and for structured files whose
-    syntax or shape the dedicated parser rejects; lexical redaction then
-    applies. Resource-limit and integrity failures (duplicate fields,
-    non-finite numbers) propagate: they must reach the per-file isolation
-    boundary even when nothing is excerpted, since lexical fallback would
-    otherwise disguise an incomplete analysis. An unrendered Helm, Jinja or
-    Go template is the exception to the integrity rule: its raw text is not
-    YAML, so a placeholder such as ``{{ .Values.image }}`` reads as a mapping
-    key and conditional branches repeat fields. It falls back to lexical
-    redaction like any other template the parser rejects.
-    """
-    try:
-        if rel.endswith(_JSON_SUFFIXES):
-            document, strict = _load_json_lenient_marked(text)
-            if strict and strict_json is not None:
-                strict_json.append(True)
-            return document
-        if rel.endswith(".toml"):
-            return tomllib.loads(text)
-        if rel.endswith(_YAML_SUFFIXES):
-            return strict_bounded_safe_load(text, require_string_keys=False)
-    except YAMLIntegrityError:
-        if has_template_markers(text):
-            return _NO_STRUCTURE
-        raise
-    except (JSONIntegrityError, YAMLResourceLimitError, SanitizationLimitError):
-        raise
-    except (ValueError, RecursionError, yaml.YAMLError):
-        return _NO_STRUCTURE
-    return _NO_STRUCTURE
-
-
-def _redacted_source(text: str, structure: Any) -> str:
-    """Redact ``text`` with the structured context from ``_structured_context``, keeping line positions.
-
-    An opaque argv value is identifiable only alongside its flag, and environment
-    values must not reappear in source snippets after being removed from metadata.
-    """
-    if structure is _NO_STRUCTURE:
-        return sanitize_text(text)
-    try:
-        result: str = sanitize((structure, text))[1]
-        return result
-    except (YAMLResourceLimitError, SanitizationLimitError):
-        raise
-    except (ValueError, RecursionError, yaml.YAMLError):
-        return sanitize_text(text)

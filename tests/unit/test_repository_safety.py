@@ -82,6 +82,13 @@ def test_git_children_never_receive_the_report_identity_key(monkeypatch):
     assert IDENTITY_KEY_ENV not in safe_git_env({"GIT_CONFIG_COUNT": "0"})
 
 
+def test_git_children_never_inherit_provider_token_variables(monkeypatch):
+    keys = {"GITHUB_TOKEN", "GH_TOKEN", "GITLAB_TOKEN"}
+    for key in keys:
+        monkeypatch.setenv(key, "synthetic-token")
+    assert not keys & safe_git_env().keys()
+
+
 def test_git_environment_discards_injected_configs_and_execution_overrides(monkeypatch):
     hostile = {
         "GIT_CONFIG_COUNT": "1",
@@ -135,6 +142,7 @@ def test_clone_callers_enforce_hooks_auth_and_branch_validation(provider, branch
     monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", fake_clone)
     repo = {
         "full_name": "acme/app",
+        "path_with_namespace": "acme/app",
         "default_branch": branch,
         "clone_url": "https://github.com/acme/app.git",
         "http_url_to_repo": "https://gitlab.com/acme/app.git",

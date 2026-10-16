@@ -33,6 +33,16 @@ ALLOWLIST_PATH = Path(__file__).with_name("secret_allowlist.json")
 # lookbehinds also start every match at the beginning of a token, which keeps
 # the scan linear on long runs of token characters.
 _END = r"(?![A-Za-z0-9_])"
+# The base64url start of a JWT header with JSON whitespace (space, tab, LF, CR) before or
+# after its '{', which does not encode to 'eyJ' and which token libraries accept. Every
+# three whitespace bytes before the '{' encode to one four-character group; a tail follows:
+# '{' and whitespace, one whitespace byte, '{' and '"' or whitespace, two whitespace bytes
+# and '{', or, after at least one group, '{"'. No group can start a tail, so the
+# possessive groups keep the scan linear.
+_WHITESPACE_JWT_HEADER = (
+    r"(?:(?:I[AC]|C[QSgi]|D[QS])[Ako0][gJKN])*+"
+    r"(?:e(?:yA|w[ko0])|(?:IH|CX|Cn|DX)s[igJKN]|(?:I[AC]|C[QSgi]|D[QS])[Blp1]7|(?<=[gJKN])ey[IJKL])"
+)
 PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("OpenAI API key", re.compile(r"(?<![\w-])sk-[A-Za-z0-9]{20,}")),
     ("OpenAI project key", re.compile(r"(?<![\w-])sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{32,}")),
@@ -54,6 +64,13 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "JSON Web Token",
         re.compile(r"(?<![\w-])eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
+    ),
+    (
+        "JSON Web Token",
+        re.compile(
+            r"(?<![\w-])" + _WHITESPACE_JWT_HEADER + r"[A-Za-z0-9_-]{10,}"
+            r"\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+        ),
     ),
     ("private key", re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")),
     (

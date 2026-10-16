@@ -105,6 +105,14 @@ log = logging.getLogger("shadowscan.cli")
 LEVELS = ["critical", "high", "medium", "low", "info"]
 SETUP_FAILED = "scan setup failed; check connector configuration, signature packs and inventory"
 _JOB_DEADLINE_CONTEXT_KEY = "shadowscan.cli.job_deadline_watchdog"
+# Without a job deadline, nothing else bounds report output and clone cleanup
+# once a timed-out connector worker has been abandoned.
+_ABANDONED_WORKER_EXIT_GRACE_SECONDS = 30.0
+_ABANDONED_WORKER_EXIT_MESSAGE = (
+    f"report output did not finish within {_ABANDONED_WORKER_EXIT_GRACE_SECONDS:g} seconds after a"
+    " connector timed out; exiting (scan coverage is incomplete; the report may be missing or"
+    " truncated, and an existing output file may not have been replaced)"
+)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -129,7 +137,10 @@ def _setup_logging(verbose: int, quiet: bool) -> None:
         level = logging.DEBUG
     handler = RichHandler(console=err_console, show_path=False, show_time=verbose >= 2, rich_tracebacks=False)
     logging.basicConfig(level=level, format="%(message)s", handlers=[handler], force=True)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    # urllib3 logs the full request URL (path and pagination cursor, which can name users) in
+    # a WARNING when an upstream returns malformed headers; SECURITY.md promises paths and
+    # queries stay out of diagnostics, so keep its records at ERROR.
+    logging.getLogger("urllib3").setLevel(logging.ERROR)
     logging.getLogger("botocore").setLevel(logging.WARNING)
 
 
@@ -284,28 +295,51 @@ def _run_and_emit_with_deadline(
         _log_masked_failure("scan setup failed", exc)
         raise click.ClickException(f"{SETUP_FAILED} ({type(exc).__name__})") from None
     result.stats.extend(extra_stats or [])
-    try:
-        # The scan's own index names custom-pack signatures in the CycloneDX output.
-        index = getattr(engine, "index", None)
-        _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows, index=index)
-    except Exception:  # any emission failure must still release an abandoned CLI worker
-        if engine.abandoned_workers:
-            _exit_abandoned_workers(
-                1,
-                "[red]could not emit the incomplete report; exiting without waiting for timed-out"
-                " workers[/red]",
-            )
-        raise
-    code = _exit_code(result, cfg.fail_on)
-    if engine.abandoned_workers:
-        # A timed-out connector's thread may still be blocked in an SDK call.
-        # Python joins worker threads at interpreter exit, which would hold the
-        # process (and its CI job) open indefinitely. The report is written.
-        abandoned = len(engine.abandoned_workers)
-        _exit_abandoned_workers(
-            code, f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]"
+    # With abandoned workers, arm a bounded exit watchdog so the process cannot
+    # hang indefinitely during report emission or clone cleanup. An armed job
+    # deadline already bounds both, and its report time must not be cut short.
+    exit_guard: JobDeadline | None = None
+    if engine.abandoned_workers and job_deadline is None:
+        exit_guard = arm_job_deadline(
+            _ABANDONED_WORKER_EXIT_GRACE_SECONDS, message=_ABANDONED_WORKER_EXIT_MESSAGE
         )
-    sys.exit(code)
+    try:
+        try:
+            # The scan's own index names custom-pack signatures in the CycloneDX output.
+            index = getattr(engine, "index", None)
+            _emit(result, fmt, output, verbose=bool(verbose), max_rows=max_rows, index=index)
+        except Exception:  # any emission failure must still release an abandoned CLI worker
+            if engine.abandoned_workers:
+                _exit_abandoned_workers(
+                    1,
+                    "[red]could not emit the incomplete report; exiting without waiting for timed-out"
+                    " workers[/red]",
+                )
+            raise
+        code = _exit_code(result, cfg.fail_on)
+        if engine.abandoned_workers:
+            # A timed-out connector's thread may still be blocked in an SDK call.
+            # Python joins worker threads at interpreter exit, which would hold the
+            # process (and its CI job) open indefinitely. The report is written.
+            abandoned = len(engine.abandoned_workers)
+            _exit_abandoned_workers(
+                code,
+                f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]",
+            )
+        sys.exit(code)
+    except KeyboardInterrupt:
+        # Interpreter exit would join the blocked workers, so keep an exit
+        # armed. The callers cancel any job deadline while this unwinds.
+        if engine.abandoned_workers and exit_guard is None:
+            arm_job_deadline(_ABANDONED_WORKER_EXIT_GRACE_SECONDS, message=_ABANDONED_WORKER_EXIT_MESSAGE)
+        raise
+    except BaseException:
+        # With abandoned workers, only a replaced hard exit (tests, in-process
+        # callers) returns here: disarm the watchdog so it cannot exit the
+        # process after the call.
+        if exit_guard is not None:
+            exit_guard.cancel()
+        raise
 
 
 def _min_confidence_option(ctx: click.Context, param: click.Parameter, value: float) -> float:
@@ -374,7 +408,7 @@ security_options = [
         "--plugin-execution",
         type=click.Choice(["thread", "process"]),
         default=None,
-        help="third-party connector execution backend (default: thread); process enables worker termination",
+        help="third-party connector execution backend (default: process); process enables worker termination",
     ),
     click.option(
         "--allow-plugin",
@@ -390,7 +424,8 @@ security_options = [
     click.option(
         "--allow-private-origin/--deny-private-origin",
         default=None,
-        help="allow private HTTPS endpoints for this scan; origin restrictions still apply",
+        help="allow private HTTPS endpoints for this scan; origin restrictions still apply;"
+        " --deny-private-origin also overrides every connector-level allow_private_origin",
     ),
 ]
 
@@ -527,6 +562,8 @@ def _apply_security_options(cfg: ScanConfig, opts: ScanOptions) -> None:
         cfg.allow_signature_override = opts.allow_signature_override
     if opts.allow_private_origin is not None:
         cfg.allow_private_origin = opts.allow_private_origin
+        # --deny-private-origin also overrides connector-level grants.
+        cfg.deny_private_origin = not opts.allow_private_origin
     if opts.allow_instance_credentials is not None:
         cfg.allow_instance_credentials = opts.allow_instance_credentials
     if opts.allow_credential_mixing is not None:
@@ -1089,11 +1126,12 @@ def signatures_list(
     table.add_column("Agent?", justify="center")
     for s in sigs:
         agent = "✓" if s.agent_indicator else ""
+        # A custom signature pack is untrusted: strip terminal control sequences from its fields.
         table.add_row(
-            Text(s.id),
-            Text(s.name),
-            Text(s.category),
-            Text(s.vendor or ""),
+            Text(terminal_text(s.id)),
+            Text(terminal_text(s.name)),
+            Text(terminal_text(s.category)),
+            Text(terminal_text(s.vendor or "")),
             str(len(s.signals)),
             agent,
         )
@@ -1282,17 +1320,19 @@ def inventory_check(paths: tuple[str, ...]) -> None:
     table.add_column("EU AI Act class (declared)")
     table.add_column("Source")
     for e in inv.entries:
+        # Inventory cards come from a scanned tree or an operator path: strip terminal control
+        # sequences (ESC/CSI/OSC, bidi overrides) as well as Rich markup from every field.
         if e.resources:
-            resources = Text("\n".join(e.resources))
+            resources = Text("\n".join(terminal_text(r) for r in e.resources))
         else:
             resources = Text("none (suggestions only)", style="dim")
         table.add_row(
-            Text(e.agent_id),
-            Text(e.name or ""),
-            Text(e.owner or ""),
+            Text(terminal_text(e.agent_id)),
+            Text(terminal_text(e.name or "")),
+            Text(terminal_text(e.owner or "")),
             resources,
-            Text((e.governance or {}).get("eu_ai_act_risk_class", "")),
-            Text(e.source or ""),
+            Text(terminal_text((e.governance or {}).get("eu_ai_act_risk_class", ""))),
+            Text(terminal_text(e.source or "")),
         )
     console.print(table)
 
@@ -1778,7 +1818,7 @@ def _as_of_option(ctx: click.Context, param: click.Parameter, value: str | None)
     "--output",
     required=True,
     type=click.Path(dir_okay=False),
-    help="write the dashboard HTML to this file (mode 0600, never through a symbolic link)",
+    help="write the dashboard HTML to this file (mode 0600, never through a symbolic link another user owns)",
 )
 @click.option(
     "--inventory-json",

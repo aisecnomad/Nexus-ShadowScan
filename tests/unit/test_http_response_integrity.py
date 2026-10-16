@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import json
 import socket
+import threading
 import time
 from io import BytesIO
 from unittest.mock import Mock
@@ -12,8 +13,10 @@ from unittest.mock import Mock
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.exceptions import NameResolutionError
 from urllib3.response import HTTPResponse
 
+from shadowscan.utils import http as http_module
 from shadowscan.utils.http import (
     DEFAULT_MAX_RESPONSE_BYTES,
     HttpClient,
@@ -173,17 +176,21 @@ def test_injected_session_cannot_keep_a_longer_prefix_transport_adapter():
 
 
 def test_late_dns_resolution_cannot_start_a_connection_after_acquisition_deadline(monkeypatch):
+    # Deterministic: the resolver holds the lookup until the acquisition timer
+    # has fired, then answers. The guard is set far out so no scheduler stall
+    # can expire it before DNS starts; only the resolver expires it. The answer
+    # arrives within the DNS budget, so only the post-resolution guard check
+    # stands between it and a connection.
+    connection = _PublicHTTPSConnection("service.example", timeout=30)
+    guard = _SocketDeadline(connection, time.monotonic() + 60)
+
     def resolve(*args, **kwargs):
-        # DNS is synchronous and cannot be forcibly cancelled; nevertheless
-        # its result must never authorize a connection after the budget expires.
-        time.sleep(0.1)
+        guard._abort()  # what the acquisition timer runs at the deadline
         return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))]
 
     monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolve)
     create_socket = Mock(side_effect=AssertionError("must not connect after late DNS"))
     monkeypatch.setattr("shadowscan.utils.http.socket.socket", create_socket)
-    connection = _PublicHTTPSConnection("service.example", timeout=1)
-    guard = _SocketDeadline(connection, time.monotonic() + 0.05)
     connection.acquisition_guard = guard
     try:
         with pytest.raises(ValueError, match="acquisition deadline"):
@@ -191,6 +198,42 @@ def test_late_dns_resolution_cannot_start_a_connection_after_acquisition_deadlin
     finally:
         guard.finish()
         connection.acquisition_guard = None
+    create_socket.assert_not_called()
+
+
+def test_acquisition_deadline_bounds_the_dns_wait_and_discards_the_late_answer(monkeypatch):
+    # Deterministic: the guard reports a fixed 50 ms of budget, so the wait is
+    # bounded by the acquisition deadline (not the 30 s timeout or the 20 s
+    # resolver cap) however the test thread is scheduled.
+    release = threading.Event()
+
+    def resolve(*args, **kwargs):
+        release.wait(10)
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("8.8.8.8", 443))]
+
+    budgets: list[float] = []
+    bounded = http_module._resolve_bounded
+
+    def spy(host, port, budget, **kwargs):
+        budgets.append(budget)
+        return bounded(host, port, budget, **kwargs)
+
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolve)
+    monkeypatch.setattr("shadowscan.utils.http._resolve_bounded", spy)
+    create_socket = Mock(side_effect=AssertionError("must not connect after late DNS"))
+    monkeypatch.setattr("shadowscan.utils.http.socket.socket", create_socket)
+    connection = _PublicHTTPSConnection("service.example", timeout=30)
+    guard = _SocketDeadline(connection, time.monotonic() + 60)
+    monkeypatch.setattr(guard, "remaining", Mock(return_value=0.05))
+    connection.acquisition_guard = guard
+    try:
+        with pytest.raises(NameResolutionError):
+            connection._new_conn()
+    finally:
+        release.set()  # the abandoned worker now delivers its late answer
+        guard.finish()
+        connection.acquisition_guard = None
+    assert budgets == [0.05]
     create_socket.assert_not_called()
 
 

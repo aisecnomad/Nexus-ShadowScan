@@ -28,7 +28,7 @@ import socket
 import stat
 import time
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -121,7 +121,88 @@ _NOT_RUNNING = {
     "publish", "pip", "sync", "lock", "build", "audit", "outdated", "info", "view", "show",
 }  # fmt: skip
 _PYTHON = re.compile(r"^python(?:\d+(?:\.\d+)?)?w?$")
-_SKIP_ARGS = {"-y", "--yes", "-q", "--quiet", "x", "dlx", "exec", "run", "tool", "--", "-u", "-b", "-e"}
+_WHITESPACE = re.compile(r"\s")
+# Single-letter interpreter options without a value (-W and -X take one; -m names the module).
+_PYTHON_FLAGS = frozenset("bBdEiIOPqRsSuvx")
+
+
+@dataclass(frozen=True, slots=True)
+class _Grammar:
+    """The options a launcher may put before its target, so they are skipped rather than guessed."""
+
+    flags: frozenset[str]  # options without a value
+    values: frozenset[str]  # options that take the next argument as their value
+    prefixes: tuple[str, ...] = ()  # option families without a value (deno's --allow-net)
+    stops: frozenset[str] = frozenset()  # inline code or a shell command: no target runs
+    modules: frozenset[str] = frozenset()  # options naming a Python module to run (uv run -m)
+
+
+_RUN_GRAMMAR = _Grammar(
+    flags=frozenset(
+        {
+            "-y", "--yes", "-q", "--quiet", "--no-cache", "--offline", "--isolated", "--prefer-offline",
+            "--prefer-online", "--no-install", "--ignore-existing", "--silent", "--frozen", "--locked",
+            "--no-sync", "--no-project", "--no-dev", "--all-extras", "--exact", "--no-config",
+        }
+    ),
+    values=frozenset(
+        {
+            "--from", "--with", "--with-requirements", "--with-editable", "--python", "--index",
+            "--index-url", "--default-index", "--extra-index-url", "--find-links", "--directory",
+            "--project", "--package", "--spec", "--registry", "--cache", "--cwd", "--extra", "--group",
+            "--env-file", "-p",
+        }
+    ),
+    stops=frozenset({"-c", "--call"}),
+)  # fmt: skip
+# uv run also runs a Python module: `uv run -m aider`.
+_UV_RUN_GRAMMAR = _Grammar(
+    _RUN_GRAMMAR.flags, _RUN_GRAMMAR.values, stops=_RUN_GRAMMAR.stops, modules=frozenset({"-m", "--module"})
+)
+_NODE_GRAMMAR = _Grammar(
+    flags=frozenset(
+        {
+            "--no-warnings", "--enable-source-maps", "--experimental-strip-types", "--inspect",
+            "--inspect-brk", "--inspect-wait", "--no-deprecation", "--trace-warnings",
+            "--trace-deprecation", "--expose-gc", "--preserve-symlinks", "--preserve-symlinks-main",
+        }
+    ),
+    values=frozenset({"-r", "--require", "--import", "--loader", "--experimental-loader", "--env-file"}),
+    stops=frozenset(
+        {"-e", "--eval", "-p", "--print", "-c", "--check", "-i", "--interactive", "--test", "--run"}
+    ),
+)  # fmt: skip
+_DENO_GRAMMAR = _Grammar(
+    flags=frozenset(
+        {
+            "-A", "-R", "-W", "-N", "-E", "-S", "-I", "-q", "--quiet", "--no-prompt", "--no-check",
+            "--reload", "-r", "--watch", "--lock", "--no-lock", "--cached-only", "--no-remote", "--no-npm",
+            "--node-modules-dir", "--env-file",
+        }
+    ),
+    values=frozenset({"-c", "--config", "--import-map", "--cert", "--location", "--seed"}),
+    prefixes=("--allow-", "--deny-", "--unstable"),
+)  # fmt: skip
+# Subcommands that run a target, per launcher; any other subcommand runs none.
+_RUN_SUBCOMMANDS = {
+    "npm": {"exec", "x"},
+    "pnpm": {"exec", "dlx"},
+    "yarn": {"exec", "dlx"},
+    "pipx": {"run"},
+    "bun": {"x"},
+    "deno": {"run"},
+    "uv": {"run", "tool"},
+}
+# Package runners are interpreter scripts (a shebang, or a .cmd shim on Windows): the kernel
+# shows `node /usr/bin/npx -y pkg` or `python3 /usr/bin/pipx run ...`. These script names run
+# as the runner they name.
+_RUNNER_SCRIPTS = {
+    "npx": "npx", "npx-cli.js": "npx", "npm": "npm", "npm-cli.js": "npm", "pnpm": "pnpm",
+    "pnpm.cjs": "pnpm", "pnpm.js": "pnpm", "yarn": "yarn", "yarn.js": "yarn", "pipx": "pipx",
+    "uv": "uv", "uvx": "uvx",
+}  # fmt: skip
+# Python modules that are package runners: `python -m pipx run ...`, `python -m uv run ...`.
+_RUNNER_MODULES = frozenset({"pipx", "uv"})
 
 # Field names of process exports, in order of preference.
 _HOST_FIELDS = (
@@ -142,6 +223,13 @@ _TIME_FIELDS = ("start_time", "Timestamp", "timestamp", "ts", "time", "ProcessCr
 _PID_FIELDS = ("pid", "ProcessId", "process_id", "TargetProcessId")
 _PROC = Path("/proc")
 _MAX_CMDLINE_BYTES = 64 * 1024
+# No package or module name is longer (npm allows 214 characters, with room for a version
+# spec). The package patterns backtrack on long arguments, and Python's re holds the GIL
+# for a whole match: an unprivileged process's argument, or one offline row, must not
+# stall every connector and the deadline that would stop them.
+_MAX_PACKAGE_CANDIDATE = 256
+_MAX_ARGV = 64
+_MAX_IDENTITY_CHARS = 4096
 
 # Only these fixed labels leave collection. Paths and environment values never do.
 _LIBRARIES = {
@@ -322,61 +410,214 @@ def _fd_indicators(
     return sorted(formats), sorted(packaging)
 
 
-def classify(executable: str | None, argv: list[str]) -> tuple[ProcessRule, str | None] | None:
+_Match = tuple[ProcessRule, str | None]
+# A launcher's target: the name it runs, the arguments after it, and whether the name is a
+# "command" (a runner's positional), a "module" (python -m) or a "script" (an interpreter's file).
+_Target = tuple[str, list[str], str]
+
+
+def classify(executable: str | None, argv: list[str]) -> _Match | None:
     """The AI tool a process runs, and an MCP package name when it is an MCP server."""
+    return _classify(executable, argv)[0]
+
+
+def classify_command(executable: str | None, argv: list[str]) -> tuple[_Match | None, bool]:
+    """``classify`` of a process, and whether more arguments could have changed a None.
+
+    When the executable does not identify a tool, ``argv[0]`` is read as well: a process title
+    or shebang can name the launcher there while the executable is its interpreter (osquery's
+    ``path`` is node for ``npm exec ...``). A process title that replaced the command line is a
+    single argument with spaces in ``/proc/<pid>/cmdline`` (npm's ``npm exec pkg``), so an
+    ``argv[0]`` with whitespace is also read split into words, ahead of the other arguments. The
+    flag is true when the arguments ran out before a launcher's target was read, or when there
+    were none: only then can arguments an argument or byte limit dropped change the result.
+    """
+    match, exhausted = _classify(executable, argv)
+    if match is None and executable and argv:
+        match, title_exhausted = _classify(None, argv)
+        exhausted = exhausted or title_exhausted
+    if match is None and argv and _WHITESPACE.search(argv[0]):
+        title, cut = _split_bounded(argv[0])
+        if len(title) > 1:
+            # A title cut by the bounds is not followed by the arguments after it.
+            match, title_exhausted = _classify(None, title if cut else [*title, *argv[1:]])
+            exhausted = exhausted or title_exhausted
+    return match, match is None and (exhausted or not argv)
+
+
+def _classify(executable: str | None, argv: list[str], depth: int = 0) -> tuple[_Match | None, bool]:
+    """``classify``, and whether more arguments could change a None (the launcher's target was unread)."""
+    if depth >= _MAX_ARGV:
+        return None, False
     exe = (executable or (argv[0] if argv else "") or "").replace("\\", "/")
+    if not exe:
+        return None, True
     base = exe.rsplit("/", 1)[-1].lower()
     base = base[:-4] if base.endswith(".exe") else base
     lowered = exe.lower()
     for name, fragment, rule in DESKTOP_APPS:
         if base == name and fragment in lowered:
-            return rule, None
+            return (rule, None), False
     if base in EXECUTABLES:
-        rule = EXECUTABLES[base]
-        if base == "ollama" and not any(a in {"serve", "run", "runner"} for a in argv[1:3]):
-            return None  # `ollama list` and `ollama pull` do not run a model
-        return rule, None
+        if base == "ollama":
+            # `ollama list` and `ollama pull` do not run a model.
+            if len(argv) < 2:
+                return None, True
+            if argv[1] not in {"serve", "run", "runner"}:
+                return None, False
+        return (EXECUTABLES[base], None), False
     if base not in _LAUNCHERS and not _PYTHON.match(base):
+        return None, False
+    target, exhausted = _target(base, argv[1:])
+    if target is None:
+        return None, exhausted
+    name, rest, kind = target
+    if name in _NOT_RUNNING:
+        return None, False
+    name = name.replace("\\", "/")
+    leaf = name.rsplit("/", 1)[-1].lower()
+    if kind == "script":
+        runner = _RUNNER_SCRIPTS.get(leaf.removesuffix(".exe"))
+        if runner is not None:
+            return _classify(runner, [runner, *rest], depth + 1)
+        if _PYTHON.match(base):
+            return None, False  # a Python script names no package; only -m does
+        if "/node_modules/" in name and base in {"node", "nodejs"}:
+            tail = name.split("/node_modules/")[-1].split("/")
+            name = "/".join(tail[:2]) if tail[0].startswith("@") else tail[0]
+        elif base == "deno" and name.startswith("npm:"):
+            name = name[4:]
+    elif kind == "module":
+        if name in _RUNNER_MODULES:
+            return _classify(name, [name, *rest], depth + 1)
+    else:
+        # A package runner executes its positional command, not the package named by
+        # --from/--package, nor a later argument to that command.
+        leaf = leaf.removesuffix(".exe")
+        if leaf in EXECUTABLES or leaf in _LAUNCHERS or _PYTHON.match(leaf):
+            return _classify(name, [name, *rest], depth + 1)
+    return _package_rule(name), False
+
+
+def _package_rule(name: str) -> _Match | None:
+    """The rule a package or module name matches."""
+    if len(name) > _MAX_PACKAGE_CANDIDATE:
         return None
-    for package in _packages(base, argv[1:]):
-        for pattern, rule in PACKAGES:
-            if pattern.search(package):
-                return rule, None
-        if _MCP_PACKAGE.match(package):
-            name = (
-                package.rsplit("@", 1)[0]
-                if package.count("@") > (1 if package.startswith("@") else 0)
-                else package
-            )
-            return ProcessRule(f"mcp:{name.lower()}", "MCP server", "protocol.mcp", "mcp-server"), name
+    for pattern, rule in PACKAGES:
+        if pattern.search(name):
+            return rule, None
+    if _MCP_PACKAGE.match(name):
+        package = name.rsplit("@", 1)[0] if name.count("@") > (1 if name.startswith("@") else 0) else name
+        return ProcessRule(f"mcp:{package.lower()}", "MCP server", "protocol.mcp", "mcp-server"), package
     return None
 
 
-def _packages(launcher: str, args: list[str]) -> Iterator[str]:
-    """Candidate package or module names in a launcher's arguments (the first few positional ones)."""
-    seen = 0
+def _target(launcher: str, args: list[str]) -> tuple[_Target | None, bool]:
+    """Only the executed module, script or command, using the launcher's grammar.
+
+    Unknown options are not guessed. Dependencies supplied with --from, --package,
+    --require or --import do not establish the executed tool. The flag is true when the
+    arguments ran out before the target, so more arguments could have named one.
+    """
+    if _PYTHON.match(launcher):
+        return _python_target(args)
+    if launcher in {"node", "nodejs"}:
+        found, exhausted = _positional(args, _NODE_GRAMMAR)
+        return (None, exhausted) if found is None else ((found[0], found[1], "script"), False)
+    grammar = _DENO_GRAMMAR if launcher == "deno" else _RUN_GRAMMAR
+    found, exhausted = _positional(args, grammar)
+    if found is None:
+        return None, exhausted
+    name, rest, kind = found
+    if launcher in _RUN_SUBCOMMANDS:
+        if name not in _RUN_SUBCOMMANDS[launcher]:
+            return None, False
+        if launcher == "uv" and name == "tool":
+            found, exhausted = _positional(rest, grammar)
+            if found is None:
+                return None, exhausted
+            if found[0] != "run":
+                return None, False
+            rest = found[1]
+        elif launcher == "uv":
+            grammar = _UV_RUN_GRAMMAR
+        found, exhausted = _positional(rest, grammar)
+        if found is None:
+            return None, exhausted
+        name, rest, kind = found
+        return (name, rest, "script" if launcher == "deno" else kind), False
+    return (name, rest, kind), False
+
+
+def _python_target(args: list[str]) -> tuple[_Target | None, bool]:
+    """The module (-m) or script a Python interpreter runs, reading its options as CPython does."""
     i = 0
-    while i < len(args) and seen < 3:
+    while i < len(args):
         arg = args[i]
         i += 1
-        if arg in {"-m", "--from", "-p", "--package"} and i < len(args):
-            yield args[i]
-            seen += 1
+        if not arg.startswith("-") or arg == "-" or arg == "--" or arg.startswith("--"):
+            if arg == "--":
+                return ((args[i], args[i + 1 :], "script"), False) if i < len(args) else (None, True)
+            if arg.startswith("-"):
+                return None, False  # stdin, or a long option not read here
+            return (arg, args[i:], "script"), False
+        # Short options can be combined (-Im, -BW ignore): read them a letter at a time.
+        for position in range(1, len(arg)):
+            letter = arg[position]
+            if letter in _PYTHON_FLAGS:
+                continue
+            if letter in "mWX":
+                value = arg[position + 1 :]
+                if not value:
+                    if i >= len(args):
+                        return None, True
+                    value = args[i]
+                    i += 1
+                if letter == "m":
+                    return (value, args[i:], "module"), False
+                break  # the rest of this argument was the -W or -X value
+            # -c (inline code) and any option not known here: no module or script runs, or
+            # it is not guessed which one does.
+            return None, False
+    return None, True
+
+
+def _positional(args: list[str], grammar: _Grammar) -> tuple[tuple[str, list[str], str] | None, bool]:
+    """Read one positional operand, consuming only recognized option values.
+
+    Returns the operand, the arguments after it and its kind ("module" when a module option
+    named it, else "command"), or None and whether the arguments ran out before an operand.
+    A ``--name=value`` option carries its own value, so an unknown one is skipped rather than
+    read as taking the next argument; one that runs inline code stops the search.
+    """
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if arg == "--":
+            return ((args[i], args[i + 1 :], "command"), False) if i < len(args) else (None, True)
+        name, assigned, value = arg.partition("=") if arg.startswith("-") else (arg, "", "")
+        if name in grammar.stops:
+            return None, False
+        if name in grammar.modules:
+            if assigned:
+                return (value, args[i:], "module"), False
+            return ((args[i], args[i + 1 :], "module"), False) if i < len(args) else (None, True)
+        if assigned:
+            if name.startswith("--") or name in grammar.flags or name in grammar.values:
+                continue
+            return None, False
+        if name in grammar.values:
+            if i >= len(args):
+                return None, True
             i += 1
+        elif name in grammar.flags or (grammar.prefixes and name.startswith(grammar.prefixes)):
             continue
-        if arg.startswith("-") or arg in _SKIP_ARGS:
-            continue
-        if arg in _NOT_RUNNING:
-            return
-        seen += 1
-        name = arg.replace("\\", "/")
-        if "/node_modules/" in name:
-            # node /usr/lib/node_modules/@scope/pkg/dist/cli.js -> @scope/pkg
-            tail = name.split("/node_modules/")[-1].split("/")
-            name = "/".join(tail[:2]) if tail and tail[0].startswith("@") else tail[0]
-        elif _PYTHON.match(launcher) and name.endswith(".py"):
-            continue
-        yield name
+        elif arg.startswith("-"):
+            return None, False
+        else:
+            return (arg, args[i:], "command"), False
+    return None, True
 
 
 @dataclass
@@ -469,6 +710,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         seen = 0
         unreadable = 0
         truncated = 0
+        unread = 0
         inspection_stopped = False
         users: dict[int, str] = {}
         budget = _InspectionBudget(
@@ -518,7 +760,6 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                         # arguments), dropping the final argument the limit may
                         # have cut: a partial name must not match a rule alone.
                         raw = raw[: raw.rfind(b"\0", 0, _MAX_CMDLINE_BYTES) + 1]
-                        truncated += 1
                     uid = os.fstat(directory).st_uid
                     if before is not None:
                         inspection = self._inspect(directory, budget)
@@ -545,7 +786,13 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 unreadable += 1
                 continue
             argv = [a.decode("utf-8", "replace") for a in raw.split(b"\0") if a]
-            if classify(None, argv) is None and not inspection:
+            argv, limited = _bounded_argv(argv)
+            cut = cut or limited
+            match, undecided = classify_command(None, argv)
+            if cut:
+                truncated += 1
+                unread += undecided
+            if match is None and not inspection:
                 continue
             if uid not in users:
                 users[uid] = _user_name(uid)
@@ -562,14 +809,28 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 record["argv_truncated"] = True
             yield record
         if truncated:
-            # Unread arguments could hold evidence (an MCP package name, a model
-            # path), so coverage is incomplete; the readable prefix still counts.
-            self.ctx.warn(
-                f"runtime.processes: {truncated} command line(s) exceeded {_MAX_CMDLINE_BYTES:,} bytes; "
-                "classified from the leading complete arguments"
-            )
+            self._warn_truncated(truncated, unread)
         if unreadable:
             self.ctx.warn(f"runtime.processes: {unreadable} process(es) could not be read")
+
+    def _warn_truncated(self, truncated: int, unread: int) -> None:
+        """One counted warning for command lines cut by a limit or by their source.
+
+        Only a command line whose leading complete arguments leave its tool undecided (none
+        retained, or a launcher whose target was cut away) is a coverage gap: arguments after
+        the executed tool, or any of a program that is no launcher, cannot change what runs.
+        """
+        source = "" if not self.offline else " or were truncated by their source export"
+        outcome = (
+            f"{unread} could not be classified from their leading complete arguments"
+            if unread
+            else "each was classified from its leading complete arguments"
+        )
+        self.ctx.warn(
+            f"runtime.processes: {truncated} command line(s) exceeded argument/byte limits "
+            f"({_MAX_ARGV} arguments, {_MAX_CMDLINE_BYTES:,} bytes){source}; {outcome}",
+            incomplete=bool(unread),
+        )
 
     def _inspection_identity(self, directory: int, budget: _InspectionBudget) -> dict[str, str] | None:
         """Unavailable enrichment never erases readable, independent command-line evidence."""
@@ -681,12 +942,17 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
     # --------------------------------------------------------------- analyse
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         runs: dict[tuple[str, str, str], _Run] = {}
+        truncated = unread = 0
         for raw in records:
             self.ctx.examined()
             rec = self._normalise(raw)
             if rec is None:
                 continue
-            match = classify(rec["exe"], rec["argv"])
+            match, undecided = classify_command(rec["exe"], rec["argv"])
+            # Live collection counts every cut command line itself, AI tool or not.
+            if rec["argv_truncated"] and self.offline:
+                truncated += 1
+                unread += undecided
             if match is None:
                 inspection = rec["inspection"]
                 if inspection and (inspection["mapped_libraries"] or inspection["open_model_formats"]):
@@ -700,9 +966,10 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             run.processes += 1
             if isinstance(rec["pid"], int) and len(run.pids) < 10:
                 run.pids.append(rec["pid"])
-            exe = (
-                (rec["exe"] or (rec["argv"][0] if rec["argv"] else "")).replace("\\", "/").rsplit("/", 1)[-1]
-            )
+            exe = rec["exe"] or (rec["argv"][0] if rec["argv"] else "")
+            if not rec["exe"] and _WHITESPACE.search(exe) and classify(None, rec["argv"]) is None:
+                exe = exe.split(None, 1)[0]  # matched as a process title (`npm exec pkg`): its program
+            exe = exe.replace("\\", "/").rsplit("/", 1)[-1]
             run.executables[exe[:80]] += 1
             if package:
                 run.packages[package[:120]] += 1
@@ -716,17 +983,35 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
                 run.inspections.append({"pid": rec["pid"], **rec["inspection"]})
             if rec["argv_truncated"]:
                 run.truncated += 1
+        if truncated:
+            self._warn_truncated(truncated, unread)
         for run in sorted(runs.values(), key=lambda r: (r.host, r.user, r.rule.tool)):
             yield self._finding(run)
 
     def _normalise(self, raw: dict[str, Any]) -> dict[str, Any] | None:
         nested = raw.get("columns")
         row: dict[str, Any] = nested if isinstance(nested, dict) else raw
-        if "argv" in row and isinstance(row["argv"], list):
-            argv = [str(a) for a in row["argv"] if isinstance(a, (str, int))]
+        if "argv" in row:
+            if not isinstance(row["argv"], list) or any(
+                not isinstance(arg, (str, int)) or isinstance(arg, bool) for arg in row["argv"]
+            ):
+                self.ctx.warn("runtime.processes: malformed argument list; process omitted")
+                return None
+            argv, limited = _bounded_argv([str(arg) for arg in row["argv"]])
         else:
             command = _first(row, _CMD_FIELDS)
-            argv = _split(command) if isinstance(command, str) else []
+            argv, limited = _split_bounded(command) if isinstance(command, str) else ([], False)
+        listed = bool(argv)
+        exported_cut = row.get("argv_truncated") is True
+        if exported_cut and not limited and self.offline:
+            # The export cut this command line, possibly inside its final argument. That argument
+            # is dropped, as live collection drops the one its byte limit cut, so a partial name
+            # never matches a rule and a launcher target it held leaves the tool undecided. A
+            # bound applied above has already left the export's final argument out. (A live
+            # record's arguments are complete: collect() dropped the cut one.)
+            argv = argv[:-1]
+        # Counted once per scan in analyze(), which knows whether the cut left the tool undecided.
+        truncated = limited or exported_cut
         exe = _first(row, _EXE_FIELDS)
         name = _first(row, _NAME_FIELDS)
         if not isinstance(exe, str) or not exe:
@@ -739,13 +1024,27 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             # Defender FolderPath is a directory; FileName is the executable.
             exe = f"{exe.rstrip('/').rstrip(chr(92))}/{name}"
         inspection = self._normalise_inspection(row.get("inspection"))
-        if not argv and not exe and not inspection:
+        if not listed and not exe and not inspection:
             self.ctx.warn("runtime.processes: record has no command line or executable")
             return None
-        host = _first(raw, ("hostIdentifier", "host_identifier")) or _first(row, _HOST_FIELDS) or self.label
+        host = _first(raw, ("hostIdentifier", "host_identifier"))
+        if host is None:
+            host = _first(row, _HOST_FIELDS)
+        if host is None:
+            host = self.label
         user = _first(row, _USER_FIELDS)
         if user is None and row.get("uid") not in (None, ""):
             user = f"uid-{row['uid']}"
+        user = "unknown" if user is None else user
+        if any(
+            not isinstance(value, str)
+            or not value.strip()
+            or len(value) > _MAX_IDENTITY_CHARS
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)
+            for value in (host, user)
+        ):
+            self.ctx.warn("runtime.processes: invalid or oversized host/user identity; process omitted")
+            return None
         pid = _first(row, _PID_FIELDS)
         if inspection is not None and _pid(pid) is None:
             self.ctx.warn("runtime.processes: inspection has no valid PID; indicators omitted")
@@ -753,15 +1052,15 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         started = parse_timestamp(_first(row, _TIME_FIELDS))
         observed = parse_timestamp(row.get("observed_at"))
         return {
-            "host": str(host)[:120],
-            "user": str(user or "unknown")[:120],
-            "argv": argv[:64],
+            "host": host,
+            "user": user,
+            "argv": argv,
             "exe": exe,
             "pid": _pid(pid),
             "started": started.isoformat() if started else None,
             "observed_at": observed.isoformat() if observed else None,
             "inspection": inspection,
-            "argv_truncated": row.get("argv_truncated") is True,
+            "argv_truncated": truncated,
         }
 
     def _normalise_inspection(self, raw: Any) -> dict[str, Any] | None:
@@ -933,7 +1232,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
         if run.truncated:
             f.metadata["command_lines_truncated"] = run.truncated
             f.metadata.setdefault("limitations", []).append(
-                f"{run.truncated} command line(s) were truncated at {_MAX_CMDLINE_BYTES:,} bytes; "
+                f"{run.truncated} command line(s) were truncated by an argument/byte limit or source export; "
                 "only their leading complete arguments were classified."
             )
         return finalize(f, self.index)
@@ -1067,9 +1366,36 @@ _TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|(\S+)')
 
 def _split(command: str) -> list[str]:
     """Split a command line into arguments, honouring simple quoting on any platform."""
-    out = []
-    for match in _TOKEN.finditer(command[: 64 * 1024]):
-        out.append(next(group for group in match.groups() if group is not None))
-        if len(out) >= 64:
+    return _split_bounded(command)[0]
+
+
+def _bounded_argv(args: list[str]) -> tuple[list[str], bool]:
+    """Keep only complete arguments inside the shared count and UTF-8 byte budgets."""
+    out: list[str] = []
+    remaining = _MAX_CMDLINE_BYTES
+    for arg in args[:_MAX_ARGV]:
+        # Bound encoding as well as storage; a single input operand may be huge.
+        if len(arg) > remaining:
+            return out, True
+        size = len(arg.encode("utf-8", "replace")) + bool(out)
+        if size > remaining:
+            return out, True
+        remaining -= size
+        out.append(arg)
+    return out, len(args) > _MAX_ARGV
+
+
+def _split_bounded(command: str) -> tuple[list[str], bool]:
+    """Bound command text without letting a partial final token identify a tool."""
+    encoded = command[: _MAX_CMDLINE_BYTES + 1].encode("utf-8", "replace")
+    cut = len(command) > _MAX_CMDLINE_BYTES or len(encoded) > _MAX_CMDLINE_BYTES
+    prefix = encoded[:_MAX_CMDLINE_BYTES].decode("utf-8", "ignore")
+    out: list[str] = []
+    for match in _TOKEN.finditer(prefix):
+        if cut and match.end() == len(prefix) and not prefix[-1:].isspace():
             break
-    return out
+        out.append(next(group for group in match.groups() if group is not None))
+        if len(out) > _MAX_ARGV:
+            break
+    bounded, limited = _bounded_argv(out)
+    return bounded, cut or limited

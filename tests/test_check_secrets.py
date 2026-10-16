@@ -8,7 +8,9 @@ private-key pre-commit check to find.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import itertools
 import json
 import random
 import string
@@ -327,6 +329,9 @@ def test_patterns_stay_linear_on_hostile_input() -> None:
         "sk-" * 70_000,
         "aws_secret_access_key" + " " * 200_000,
         "AccountKey" + " " * 200_000 + "=",
+        "ICAg" * 70_000,
+        ".ICAg" * 56_000,
+        "ICAg" * 50_000 + "ewoi" + "A" * 100_000 + ".",
     ]
     started = time.perf_counter()
     for text in hostile:
@@ -343,3 +348,33 @@ def test_reported_file_names_cannot_forge_a_report_line_or_a_workflow_command(tm
     out = capsys.readouterr().out
     assert out.count("\n") == 1 and "\\x0a::error::forged" in out
     assert display("plain/name.py") == "plain/name.py"
+
+
+@pytest.mark.parametrize(
+    "header", [b' {"alg":"HS256"}', b'{ "alg":"HS256"}', b'{\n "alg":"RS256"}', b'\t{"alg":"none"}']
+)
+def test_jwt_with_whitespace_header_is_reported(header):
+    import base64
+
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    token = b64(header) + "." + b64(b'{"sub":"synthetic-subject"}') + "." + b64(bytes(range(40)))
+    ((_, family, value),) = findings(f"auth = {token}\n")
+    assert family == "JSON Web Token" and value == token
+
+
+def test_jwt_with_any_json_whitespace_around_the_header_brace_is_reported():
+    # json.loads, and so PyJWT, accepts any JSON whitespace before or after the header's '{':
+    # '{\t"' (ewki), '{\r\n' (ew0K), '  {' (ICB7), '\r\n{' (DQp7), three or more bytes before it.
+    def b64(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    runs = [bytes(run) for size in range(5) for run in itertools.product(b" \t\r\n", repeat=size)]
+    tail = "." + b64(b'{"sub":"synthetic-subject"}') + "." + b64(bytes(range(40)))
+    for before in [*runs, b" " * 5, b"\r\n" * 4, b"\n\t" * 3 + b" " * 4]:
+        for after in runs[:21]:
+            for key in (b'"alg":"HS256"}', b'"0":1,"alg":"none"}'):
+                if before or after:
+                    token = b64(before + b"{" + after + key) + tail
+                    assert [value for _, _, value in findings(token)] == [token], (before, after, key)

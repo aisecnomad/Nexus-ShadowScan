@@ -174,6 +174,7 @@ def _scan(tmp_path, plugin_options="", extra_options=""):
     config.write_text(
         "options:\n"
         f"  plugins: [{PLUGIN}]\n"
+        "  plugin_execution: thread\n"
         "  allow_credential_mixing: true\n"
         f"{extra_options}"
         "connectors:\n"
@@ -234,6 +235,7 @@ def test_keyboard_interrupt_at_plugin_import_still_aborts_the_scan(monkeypatch, 
     config = ScanConfig(
         connectors=[repository, ConnectorSpec(PLUGIN)],
         plugins=[PLUGIN],
+        plugin_execution="thread",
         allow_credential_mixing=True,
     )
     with pytest.raises(KeyboardInterrupt):
@@ -360,3 +362,182 @@ def test_plugin_exiting_while_its_class_is_verified_is_an_incomplete_connector(
     result, out = _scan(tmp_path)
 
     _assert_plugin_incomplete(result, out, "connector lookup raised SystemExit")
+
+
+_FORGING_PLUGIN = """
+from shadowscan.connectors.base import BaseConnector
+from shadowscan.models import Finding, Kind, Surface
+
+
+class Connector(BaseConnector):
+    name = "code.acme-exit"
+    surface = Surface.CODE
+    description = "Overrides run() to forge a built-in connector's finding."
+    config_keys = {"paths": "roots"}
+
+    def collect(self):
+        return []
+
+    def analyze(self, records):
+        return []
+
+    def run(self):
+        # Bypass BaseConnector.run()'s attribution stamp and claim a built-in name.
+        self.ctx.examined(1)
+        forged = Finding(
+            connector="code.filesystem",
+            kind=Kind.AGENT,
+            surface=Surface.CODE,
+            title="forged built-in finding",
+            resource="forged",
+            resource_type="repo",
+        )
+        return [forged]
+"""
+
+
+def test_thread_mode_plugin_cannot_report_under_a_builtin_connector_name(monkeypatch, tmp_path):
+    """Regression (October 15 review F4): thread-mode plugin findings were not attribution-checked,
+    so a plugin overriding run() could report under a built-in connector's name."""
+    monkeypatch.setattr(registry, "_cache", {})
+    monkeypatch.setattr(registry, "_load_errors", {})
+    monkeypatch.setattr(registry, "_listing_errors", [])
+    _install_plugin(monkeypatch, tmp_path, "acme_forging_plugin", _FORGING_PLUGIN)
+
+    result, out = _scan(tmp_path)
+
+    report = json.loads(out.read_text(encoding="utf-8"))
+    # The forged finding is re-attributed to the plugin, never left under the built-in name it
+    # claimed, so no finding reports under code.filesystem on behalf of the plugin.
+    forged = [f for f in report["findings"] if f["title"] == "forged built-in finding"]
+    assert forged and all(f["connector"] == PLUGIN for f in forged), [f["connector"] for f in forged]
+
+
+# The same forgery through analyze(): BaseConnector.run() stamps the plugin's name on it.
+_ANALYZE_FORGING_PLUGIN = _FORGING_PLUGIN.replace(
+    "    def analyze(self, records):\n        return []\n\n    def run(self):\n"
+    "        # Bypass BaseConnector.run()'s attribution stamp and claim a built-in name.\n"
+    "        self.ctx.examined(1)\n",
+    "    def collect(self):\n        return [{}]\n\n    def analyze(self, records):\n",
+).replace("        return [forged]\n", "        yield forged\n")
+
+
+# The same finding under the plugin's own name, with the built-in finding's id set explicitly, or
+# copied with dataclasses.replace from one built under the built-in name: the connector is the
+# plugin's, so nothing re-stamps it, and the id is the one the built-in name gives.
+_EXPLICIT_ID_PLUGIN = _ANALYZE_FORGING_PLUGIN.replace(
+    "        yield forged\n",
+    "        yield Finding(\n"
+    "            connector=self.name, id=forged.id, kind=forged.kind, surface=forged.surface,\n"
+    "            title=forged.title, resource=forged.resource, resource_type=forged.resource_type,\n"
+    "        )\n",
+)
+_REPLACE_PLUGIN = _ANALYZE_FORGING_PLUGIN.replace(
+    "        yield forged\n",
+    "        import dataclasses\n\n        yield dataclasses.replace(forged, connector=self.name)\n",
+)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [_FORGING_PLUGIN, _ANALYZE_FORGING_PLUGIN, _EXPLICIT_ID_PLUGIN, _REPLACE_PLUGIN],
+    ids=["run", "analyze", "explicit-id", "replace"],
+)
+def test_a_reattributed_plugin_finding_does_not_keep_the_builtin_id(monkeypatch, tmp_path, source):
+    """Regression: the re-stamp changed the connector of a finding a plugin built under a built-in
+    name but kept the id that name entered, so it had the id of the built-in connector's own
+    finding for the same resource (baselines, diffs and fleet merges key on the id). A finding
+    built under the plugin's own name kept any id the plugin gave it in the same way."""
+    assert "def run(self)" not in _ANALYZE_FORGING_PLUGIN and "yield forged" in _ANALYZE_FORGING_PLUGIN
+    assert _ANALYZE_FORGING_PLUGIN not in {_EXPLICIT_ID_PLUGIN, _REPLACE_PLUGIN}
+    monkeypatch.setattr(registry, "_cache", {})
+    monkeypatch.setattr(registry, "_load_errors", {})
+    monkeypatch.setattr(registry, "_listing_errors", [])
+    _install_plugin(monkeypatch, tmp_path, "acme_forging_plugin", source)
+
+    result, out = _scan(tmp_path)
+
+    report = json.loads(out.read_text(encoding="utf-8"))
+    [forged] = [f for f in report["findings"] if f["title"] == "forged built-in finding"]
+    shape = {
+        "kind": Kind.AGENT,
+        "surface": Surface.CODE,
+        "title": "t",
+        "resource": "forged",
+        "resource_type": "repo",
+    }
+    builtin_id = Finding(connector="code.filesystem", **shape).id
+    plugin_id = Finding(connector=PLUGIN, provider=forged["provider"], **shape).id
+    assert forged["connector"] == PLUGIN
+    assert forged["id"] == plugin_id != builtin_id
+
+
+_COLLIDING_PLUGIN = """
+import dataclasses
+import json
+import os
+
+from shadowscan.connectors.base import BaseConnector
+from shadowscan.models import Evidence, Finding, Kind, Surface
+
+TARGET = json.loads(os.environ["SHADOWSCAN_FORGE_TARGET"])
+
+
+class Connector(BaseConnector):
+    name = "code.acme-exit"
+    surface = Surface.CODE
+    description = "Gives its finding the id of a built-in connector's finding."
+    config_keys = {"paths": "roots"}
+
+    def collect(self):
+        return [{}]
+
+    def analyze(self, records):
+        shape = {**TARGET, "surface": Surface(TARGET["surface"]), "kind": Kind.AGENT, "title": "FORGED"}
+        claimed = Finding(connector="code.filesystem", tags=["plugin-injected"], **shape)
+        if os.environ["SHADOWSCAN_FORGE_MODE"] == "explicit-id":
+            forged = Finding(connector=self.name, id=claimed.id, tags=["plugin-injected"], **shape)
+        else:
+            forged = dataclasses.replace(claimed, connector=self.name)
+        forged.add_evidence(Evidence(signal="plugin:forged", description="injected", weight=0.9))
+        yield forged
+"""
+
+
+@pytest.mark.parametrize("plugin_first", [True, False], ids=["plugin-first", "plugin-second"])
+@pytest.mark.parametrize("mode", ["explicit-id", "replace"])
+def test_a_plugin_finding_never_merges_with_the_builtin_finding_it_imitates(
+    monkeypatch, tmp_path, index, mode, plugin_first
+):
+    """Regression: a plugin finding that kept a built-in finding's id merged with that finding: run
+    first, the plugin's finding absorbed the built-in one (its title replaced it); run second, the
+    plugin's tags and evidence were merged into the built-in finding."""
+    repository = ConnectorSpec("code.filesystem", {"path": str(_repository(tmp_path)), "use_git": False})
+    alone = Engine(ScanConfig(connectors=[repository]), index).run()
+    target = alone.findings[0]
+    identity = ("resource", "resource_type", "provider", "account", "region", "identity_discriminator")
+    fields = {name: getattr(target, name) for name in identity}
+    monkeypatch.setenv("SHADOWSCAN_FORGE_TARGET", json.dumps({**fields, "surface": target.surface.value}))
+    monkeypatch.setenv("SHADOWSCAN_FORGE_MODE", mode)
+    monkeypatch.setattr(registry, "_cache", {})
+    monkeypatch.setattr(registry, "_load_errors", {})
+    monkeypatch.setattr(registry, "_listing_errors", [])
+    _install_plugin(
+        monkeypatch, tmp_path, f"acme_colliding_plugin_{mode.replace('-', '_')}", _COLLIDING_PLUGIN
+    )
+    plugin = ConnectorSpec(PLUGIN)
+    connectors = [plugin, repository] if plugin_first else [repository, plugin]
+    config = ScanConfig(
+        connectors=connectors, plugins=[PLUGIN], plugin_execution="thread", allow_credential_mixing=True
+    )
+
+    result = Engine(config, index).run()
+
+    assert result.complete, result.stats
+    [builtin] = [finding for finding in result.findings if finding.id == target.id]
+    assert builtin.connector == "code.filesystem" and builtin.title == target.title
+    assert "plugin-injected" not in builtin.tags
+    assert all(evidence.signal != "plugin:forged" for evidence in builtin.evidence)
+    [forged] = [finding for finding in result.findings if finding.connector == PLUGIN]
+    expected = Finding(connector=PLUGIN, surface=target.surface, kind=Kind.AGENT, title="FORGED", **fields).id
+    assert forged.id == expected != target.id

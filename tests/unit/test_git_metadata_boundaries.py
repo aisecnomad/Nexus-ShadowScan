@@ -18,6 +18,7 @@ from shadowscan.connectors.code.gitlab import GitLabConnector
 from shadowscan.models import ScanStats, now_iso
 from shadowscan.utils.git import (
     clone_environment,
+    diff_changed_files,
     metadata_git_argv_prefix,
     metadata_git_env,
     read_git_snapshot,
@@ -103,6 +104,18 @@ def test_read_git_snapshot_returns_checked_out_commit_and_tree_without_inherited
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.repositoryformatversion")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "9999")
     assert read_git_snapshot(repo) == expected
+
+
+def test_diff_changed_files_suppresses_command_running_diff_config(tmp_path, index, monkeypatch):
+    """The changed-file diff must pass --no-ext-diff/--no-textconv so a checked-out repository's
+    diff.external or textconv command cannot run if the command ever emits patch output."""
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr("shadowscan.utils.git.require_local_git_metadata", lambda *a, **k: None)
+    call = Mock(return_value=SimpleNamespace(returncode=0, stdout="app.py\x00"))
+    monkeypatch.setattr("shadowscan.utils.git.run_bounded_metadata", call)
+    diff_changed_files(tmp_path, "main", _context(index))
+    cmd = call.call_args.args[0]
+    assert {"--no-ext-diff", "--no-textconv"} <= set(cmd)
 
 
 @pytest.mark.parametrize("output", ["main\n", "../outside\n", "a" * 39 + "\n"])

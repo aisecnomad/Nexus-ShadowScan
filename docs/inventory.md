@@ -224,10 +224,26 @@ matching inventory entries require review and leave the resource unregistered.
 A gateway finding's resource (for example `principal:svc-ops`) is a caller name
 the log producer supplied, often the caller itself. When its identity assurance
 is `operator-asserted` or `unverified` (generic and access-log exports, shared or
-missing names), a matching card still registers it, but the finding carries
-`metadata.registry_match_assurance` and the `registry-identity-unverified` tag:
-the registration is only as trustworthy as the log's caller field. Review such
-registrations before treating the agent as sanctioned.
+missing names), a matching card produces a review candidate only. The finding
+stays shadow and inherits no card owner, declared autonomy, governance facts or
+registration score credit. Its `metadata.registry_suggestions` names the matching
+cards, `metadata.registry_match_reason` is `unverified-gateway-caller-identity`,
+and `metadata.registry_match_assurance` and the `registry-identity-unverified`
+tag describe the identity limitation. `gateway.logs` labels each runtime
+observation; missing or malformed observations are unverified, and when
+observations carry different assurance, the weakest wins. A `cloud.aws`
+CloudTrail caller (`cloudtrail:<principal>`) or `cloud.gcp` Cloud Audit Log
+caller (`audit:<principal>`) carries one label,
+`metadata.caller_identity_assurance`: `provider-authenticated-field`, because
+AWS and Google write the principal they authenticated, or `unverified` for the
+`unknown` caller that collects events naming no principal. A gateway finding
+without a label, such as a `gateway.otel` service named by its own spans, is
+unverified. Only callers whose labels are all `provider-authenticated-field`
+can use the normal explicit resource and scope checks; the `cloudtrail:`
+pattern of the example card above approves its role's sessions this way. This
+label describes fields in the supplied export, not a cryptographic check of the
+export's provenance; assess its producer and delivery chain before trusting the
+data.
 
 ### Inventory placement and wildcard warnings
 

@@ -36,7 +36,7 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
-from shadowscan.utils.text import truncate
+from shadowscan.utils.redaction import sanitize_text_excerpt
 
 TABLES = {
     "sn_aia_agent": (
@@ -493,8 +493,8 @@ class ServiceNowConnector(BaseConnector):
         f.metadata.update(
             {
                 "active": _val(a.get("active")),
-                "description": truncate(_val(a.get("description"))),
-                "instructions": truncate(_val(a.get("instructions")), 300),
+                "description": sanitize_text_excerpt(_val(a.get("description"))),
+                "instructions": sanitize_text_excerpt(_val(a.get("instructions")), 300),
                 "role": _val(a.get("role")),
                 "model": _val(a.get("model")) or _val(a.get("llm_model")),
                 "tools": [
@@ -544,13 +544,13 @@ class ServiceNowConnector(BaseConnector):
         f.metadata.update(
             {
                 "active": _val(u.get("active")),
-                "description": truncate(_val(u.get("description"))),
+                "description": sanitize_text_excerpt(_val(u.get("description"))),
                 "agents": _val(u.get("agents")),
                 "triggers": [
                     {
                         "type": _val(t.get("trigger_type")),
                         "table": _val(t.get("table")),
-                        "condition": truncate(_val(t.get("condition")), 120),
+                        "condition": sanitize_text_excerpt(_val(t.get("condition")), 120),
                     }
                     for t in triggers
                 ][:20],
@@ -607,7 +607,7 @@ class ServiceNowConnector(BaseConnector):
                 signal="servicenow:flow",
                 description=(
                     f"Flow '{name}' ({_val(rec.get('type'))}, active={_val(rec.get('active'))}) references "
-                    f"AI: {truncate(text, 160)}"
+                    f"AI: {sanitize_text_excerpt(text, 160)}"
                 ),
                 weight=0.4,
             )

@@ -33,6 +33,22 @@ and `tactiq.io` homepage domains.
 ## `saas.microsoft-teams`
 Graph app catalog (custom apps with bot definitions and RSC permissions) and
 installed apps per team (capped by `max_teams`).
+Findings retain catalog and installed-version definitions together, without
+assuming catalog order identifies the current version. `definition_observations`
+records definition IDs, versions, bot IDs, requested RSC permissions and
+installation/team provenance, one entry per distinct definition and source: an
+installed definition carries `installation_count`, `team_count` and `teams`, a
+sorted sample of at most 20 team IDs and names, so the finding stays bounded
+however many teams install the app. At most 20 observations are listed, in
+sorted order, and `definition_observations_omitted` counts the rest; `versions`
+and `bot_ids` list at most 20 observed values each, with `versions_omitted` and
+`bot_ids_omitted`, so the finding stays bounded however many distinct
+definitions an export holds. Requested permissions do not establish granted
+access. Permissions, scalar fields and conflict detection read every
+observation: contradictory observations of the same definition ID or version
+mark coverage incomplete while retaining the attributed evidence. Scalar
+`version`, `bot_id` and `publishing_state` are populated only when one nonempty
+value was observed; otherwise they are `null`.
 
 ## `saas.github-apps`
 Org installations with permissions and repository selection (AI reviewers,
@@ -43,6 +59,23 @@ AI-like name; write access alone does not make an app an agent. Set
 tagged `unrecognized-app` and capped at possible confidence. `workflows` or
 `actions` write access implies `code-exec`; contents and pull-request writes
 are SaaS write actions.
+
+Live installation pages must report a nonnegative integer `total_count` that
+stays unchanged throughout pagination. The connector compares it with unique
+installation IDs; missing or malformed counts, duplicate or invalid IDs,
+changed totals, and a listing that ends before its declared total all make
+coverage incomplete. Already collected observations remain available.
+Offline `{"total_count": ..., "installations": [...]}` envelopes receive
+the same count checks across each export file: one envelope holding every
+installation, or one page envelope per line as `gh api --paginate
+/orgs/ORG/installations | jq -c .` writes them. Every page in a file must
+declare the same total, and the unique installations across the file must
+match it; each problem is reported once per file. A file is one listing, so
+keep each organisation's pages in a file of their own. Legacy offline
+`{"installations": [...]}` envelopes and bare record lists remain supported
+without asserting a provider total, as long as no page of the same file declares
+one. These checks detect inconsistent inventories but cannot guarantee snapshot
+consistency when apps change during collection.
 
 ## `saas.atlassian`
 UPM user-installed apps for Jira and Confluence. Set `site` to the concrete
@@ -90,5 +123,23 @@ and privileged/data scopes (`keep_all: true` to emit everything). A record witho
 skipped and makes the scan incomplete (fully blank rows are ignored); valid
 neighboring records are still reported. An export where no record maps to a
 name is reported with the accepted column names instead of looking empty.
+Whole-record credential context is applied before selecting, splitting or
+shortening fields for matching and reports. A known credential copied into an
+app name, scope or other display field is withheld even when its original
+credential column is omitted from findings. Credential contents do not establish
+product or permission evidence. Every value under a credential column name is
+learned however it looks (`Abcd1234`, `12345678`, `MyTestPassword99`), except a
+placeholder as the whole value (`none`, `****`, `xxxxxxxx`, `changeme`,
+`your_secret`, `<secret>`, `${SECRET}`), which withholds nothing, and a value
+shorter than eight characters. A short value withholds only a field equal to it
+(an app ID equal to it is withheld from the resource), and nothing when it is a
+flag (`N`, `-`, `Yes`, `N/A`: a yes/no or not-applicable word, or at most one
+letter or digit); a short credential inside a longer field (`ChatGPT hunter2`)
+is still shown. A record whose name a credential withholds entirely is skipped
+and makes the scan incomplete. Sanitization limits make coverage incomplete.
+When a credential is redacted from a resource, the finding ID combines the
+redacted resource with a keyed pseudonym of the raw one: distinct resources keep
+distinct IDs, and the finding records `metadata.identity_scope` (`run`,
+scan-local, unless `SHADOWSCAN_IDENTITY_KEY` makes it `keyed`).
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.
