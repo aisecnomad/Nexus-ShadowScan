@@ -188,11 +188,16 @@ def _worker(
         os.dup2(sink.fileno(), 1)
         os.dup2(sink.fileno(), 2)
     try:
+        from shadowscan.comparison import IDENTITY_KEY_ENV
         from shadowscan.engine import Engine, _ConnectorRunner, _ExportLedger, _JobState
         from shadowscan.incremental import IncrementalCache
 
         index = SignatureIndex(signatures)
         engine = Engine(config, index)
+        # Remove the operator's raw identity key from the process environment
+        # before importing or running the plugin; connectors that declare
+        # ``uses_run_identity_key`` receive the decoded key via ConnectorContext.
+        os.environ.pop(IDENTITY_KEY_ENV, None)
         exports = _ExportLedger()
         runner = _ConnectorRunner(
             engine,
