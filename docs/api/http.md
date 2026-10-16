@@ -29,8 +29,10 @@ it runs in a worker thread and the caller waits at most 20 seconds
 or the remaining acquisition deadline, and in the `validate_url` preflight no
 longer than the connector deadline or its `dns_budget`, which `HttpClient`
 sets to its timeout cut to its remaining deadline. A lookup that does not
-finish in time fails the request closed (`NameResolutionError` at connection,
-`ValueError` in the preflight), and the abandoned worker's late answer is
+finish in time fails the request closed (urllib3 `NameResolutionError` at
+connection, which `HttpClient` reports as `requests.ConnectionError`, or
+`ValueError` once the acquisition deadline has passed; `ValueError` in the
+`validate_url` preflight), and the abandoned worker's late answer is
 discarded, never connected to. A spent budget refuses without starting a
 worker, and at most 32 workers (`_MAX_RESOLVER_THREADS`) run at once: a lookup
 waits within its budget for a free one and otherwise fails closed, so a

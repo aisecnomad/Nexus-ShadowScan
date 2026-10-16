@@ -253,17 +253,21 @@ summarizes each release for people who install and operate ShadowScan.
   operator, in a directory the other user chose. The output directory is now
   resolved one component at a time, as the kernel resolves it: every link met,
   in the path or in a link's target, must be owned by root or the current user,
-  more than 40 links are refused as a loop, and a missing component is an error
-  instead of being resolved later. `..` in the output path is resolved
-  lexically first, as since #237 (before it the kernel resolved `..` after the
-  link), so `-o mylink/../r.json` writes beside `mylink`, not in the parent of
-  the link's target; `SECURITY.md`, `docs/production.md` and the controls guide
-  now say so, and the dashboard guide states the link rule. Affects `-o` and
-  `--inventory-json` paths that run through a chain of links; links owned by
-  the operator or root (macOS `/tmp`) are followed as before. Regression tests
-  give links to another uid with `lchown` (as root) and cover a chain, a link
-  inside a target, a link planted after the check, own and root-owned links,
-  relative links with `..`, a loop and a missing directory.
+  more than 40 links are refused as a loop, and a missing component, or one
+  that is not a directory, is an error instead of being resolved later (as
+  first written, a link to `notes.txt/../a` put the report in `a`, as
+  `realpath` had, where the kernel fails with `ENOTDIR`). `..` in the output
+  path is resolved lexically first, as since #237 (before it the kernel
+  resolved `..` after the link), so `-o mylink/../r.json` writes beside
+  `mylink`, not in the parent of the link's target; `SECURITY.md`,
+  `docs/production.md` and the controls guide now say so, and the dashboard
+  guide states the link rule. Affects `-o` and `--inventory-json` paths that
+  run through a chain of links; links owned by the operator or root (macOS
+  `/tmp`) are followed as before. Regression tests give links to another uid
+  with `lchown` (as root) and cover a chain, a link inside a target, a link
+  planted after the check, own and root-owned links, relative links with `..`
+  (`L -> M/../x` with `M -> far/deep` lands in `far/x`, not in the `x` beside
+  `L`), a link through a regular file, a loop and a missing directory.
 - **Long output names in multibyte characters failed (#237).**
   `_temporary_name` cut the destination name at 200 characters, but `NAME_MAX`
   counts bytes: a legal name of 253 to 255 bytes in CJK, accented or emoji
@@ -303,7 +307,11 @@ summarizes each release for people who install and operate ShadowScan.
   the opt-in and its override, say that the numeric connection and TLS hostname
   verification still apply under it, and describe the bounded lookup (at most
   20 seconds, less under the client timeout, the acquisition deadline or the
-  connector deadline) and the refused duck-typed `session`. A contract
+  connector deadline) and the refused duck-typed `session`. `docs/api/http.md`
+  first named urllib3's `NameResolutionError` as the failure at connection, a
+  type an `HttpClient` caller never sees: the client reports it as
+  `requests.ConnectionError`, or as `ValueError` once the acquisition deadline
+  has passed, as the page now says and a test of both pins. A contract
   assertion pins that the private connection class differs from the public one
   only in that flag. Documentation and tests only; runtime behavior is
   unchanged. Affects readers of the API reference and contributors who change
@@ -343,12 +351,15 @@ summarizes each release for people who install and operate ShadowScan.
     builds a hash.
 
   Regression tests: provider token variables in `safe_git_env`; a link in the
-  checkout path, missing platform primitives, a directory or file replaced
-  during the walk, a changed open file, and descriptors closed at the depth
-  limit and the deadline; the descriptor-limit fallbacks. Each fails without
-  its code hunk; the comment fix has no test. Two of #232's tests are adapted:
-  the infinite soft limit uses the platform's `RLIM_INFINITY` (-1 is not
-  infinity on macOS, where the suite also runs), and a same-content file
+  checkout path, missing platform primitives, a directory replaced by a link or
+  by another real directory during the walk, a file replaced before it is
+  opened or changed in place while it is read, and descriptors closed at the
+  depth limit and the deadline; the descriptor-limit fallbacks. Each fails
+  without its code hunk, and the directory identity check and the after-read
+  comparison, which no carried test reached, each fail a test of their own
+  when removed alone; the comment fix has no test. Two of #232's tests are
+  adapted: the infinite soft limit uses the platform's `RLIM_INFINITY` (-1 is
+  not infinity on macOS, where the suite also runs), and a same-content file
   replacement gets a distinct modification time, because within one coarse
   clock tick a new file can reuse the old inode and every timestamp. Not
   carried, and left in the open draft: the clone credential temporary file,

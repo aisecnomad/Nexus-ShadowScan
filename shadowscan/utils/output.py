@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import secrets
 import stat
@@ -172,7 +173,9 @@ def _private_output_parent(target: Path) -> Path:
     target included. Every link met must be owned by root (a system link such as macOS's
     ``/tmp``) or by the current user: another local user can plant a link in a shared
     directory and receive the report. A missing component raises ``FileNotFoundError``
-    rather than being resolved later, unchecked. The directory is then named by its real
+    rather than being resolved later, unchecked, and one that is not a directory raises
+    ``NotADirectoryError`` as the kernel's ``ENOTDIR`` does, so a link to ``notes.txt/../a``
+    does not step back out of the file into ``a``. The directory is then named by its real
     path, with no link left in it.
     """
     absolute = Path(os.path.abspath(target)).parent
@@ -187,6 +190,8 @@ def _private_output_parent(target: Path) -> Path:
         candidate = resolved / part
         info = os.lstat(candidate)
         if not stat.S_ISLNK(info.st_mode):
+            if not stat.S_ISDIR(info.st_mode):
+                raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), os.fspath(candidate))
             resolved = candidate
             continue
         if info.st_uid not in (0, os.geteuid()):

@@ -1434,6 +1434,36 @@ def test_lfs_scan_never_retraverses_a_replaced_directory(tmp_path, monkeypatch, 
     assert all(not content.startswith(git_module.LFS_POINTER_PREFIX) for content in reads)
 
 
+def test_lfs_scan_refuses_a_directory_replaced_by_another_real_directory(tmp_path, monkeypatch):
+    # A real directory, not a link, takes the listed one's place: O_NOFOLLOW opens it, and only
+    # the opened directory's identity, compared with its listing, keeps the walk out of it.
+    root = tmp_path / "checkout"
+    source = root / "src"
+    source.mkdir(parents=True)
+    (source / "model").write_text("ordinary content " * 4)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "model").write_text(LFS_POINTER)
+    original_open = os.open
+    reads = Mock(wraps=os.read)
+    swapped = False
+
+    def racing_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if path == "src" and not swapped:
+            swapped = True
+            source.rename(tmp_path / "detached")
+            other.rename(source)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(git_module.os, "open", racing_open)
+    monkeypatch.setattr(git_module.os, "supports_dir_fd", {*os.supports_dir_fd, racing_open})
+    monkeypatch.setattr(git_module.os, "read", reads)
+    assert checkout_has_lfs_pointers(root) is None
+    assert swapped
+    reads.assert_not_called()
+
+
 @pytest.mark.parametrize("replacement", ["large", "fifo", "symlink", "regular"])
 def test_lfs_scan_checks_the_open_file_not_stale_entry_metadata(tmp_path, monkeypatch, replacement):
     root = tmp_path / "checkout"
@@ -1466,6 +1496,31 @@ def test_lfs_scan_checks_the_open_file_not_stale_entry_metadata(tmp_path, monkey
     monkeypatch.setattr(git_module.os, "read", reads)
     assert checkout_has_lfs_pointers(root) is None
     reads.assert_not_called()
+
+
+def test_lfs_scan_refuses_a_file_changed_in_place_while_it_is_read(tmp_path, monkeypatch):
+    # The opened file matches its listing, then changes under the descriptor: the pointer
+    # bytes already read describe content that is no longer there.
+    root = tmp_path / "checkout"
+    root.mkdir()
+    target = root / "model"
+    target.write_text(LFS_POINTER)
+    original_read = os.read
+    read: list[bytes] = []
+
+    def racing_read(fd, size):
+        content = original_read(fd, size)
+        if not read:
+            read.append(content)
+            with target.open("r+b") as stream:  # same inode, same size
+                stream.write(b"X")
+            # A distinct mtime keeps the change visible within one coarse clock tick.
+            os.utime(target, ns=(0, 0))
+        return content
+
+    monkeypatch.setattr(git_module.os, "read", racing_read)
+    assert checkout_has_lfs_pointers(root) is None
+    assert read and read[0].startswith(git_module.LFS_POINTER_PREFIX)
 
 
 def test_lfs_scan_closes_descriptors_on_depth_limits_and_deadlines(tmp_path, monkeypatch):

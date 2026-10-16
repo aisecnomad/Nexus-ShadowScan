@@ -5,8 +5,9 @@ it in a worker thread and abandons the worker at its budget. These tests pin
 the fail-closed contract at both call sites — the ``validate_url`` preflight
 and the connection-time re-resolution — and that a late answer is discarded,
 never connected to; that a spent budget starts no worker and the abandoned
-workers are capped; and that an ``HttpClient`` preflight waits no longer than
-the client's timeout or deadline.
+workers are capped; that an ``HttpClient`` preflight waits no longer than
+the client's timeout or deadline; and which exception an ``HttpClient`` caller
+gets when the connection-time lookup stalls.
 """
 
 from __future__ import annotations
@@ -326,3 +327,29 @@ def test_client_timeout_bounds_the_connection_time_lookup(monkeypatch):
     finally:
         release.set()
     assert budgets == [0.05]
+
+
+@pytest.mark.parametrize("bound", ["lookup", "acquisition-deadline"])
+def test_client_callers_see_a_stalled_connection_time_lookup_as_documented(monkeypatch, bound):
+    # docs/api/http.md: urllib3's NameResolutionError reaches an HttpClient caller as
+    # requests.ConnectionError, and as ValueError once the acquisition deadline has passed.
+    # A numeric host has no preflight lookup, so only the connection-time lookup stalls.
+    release = threading.Event()
+    resolver, _ = _stalled_resolver(release)
+    factory = Mock()
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolver)
+    monkeypatch.setattr("shadowscan.utils.http.socket.socket", factory)
+    if bound == "lookup":
+        # The lookup gives up long before the acquisition deadline (twice the timeout).
+        monkeypatch.setattr("shadowscan.utils.http._RESOLVE_TIMEOUT", 0.05)
+        client = HttpClient("https://8.8.8.8", timeout=5, max_retries=0)
+        expected, message = requests.ConnectionError, "connection failure"
+    else:
+        client = HttpClient("https://8.8.8.8", timeout=5, deadline=time.monotonic() + 0.05, max_retries=0)
+        expected, message = ValueError, "acquisition deadline"
+    try:
+        with pytest.raises(expected, match=message):
+            client.get("/x")
+    finally:
+        release.set()
+    factory.assert_not_called()

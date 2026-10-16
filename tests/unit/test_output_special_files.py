@@ -383,6 +383,33 @@ def test_report_through_relative_links_and_parent_steps_lands_in_the_real_direct
     assert sorted(entry.name for entry in real.iterdir()) == ["report.json"]
 
 
+def test_a_parent_step_in_a_link_target_is_taken_after_the_link_before_it(tmp_path):
+    # L -> M/../x with M -> far/deep: '..' steps out of far/deep, so the kernel puts L at
+    # far/x. Read lexically, 'M/../x' would be the unrelated x beside L.
+    (tmp_path / "far" / "deep").mkdir(parents=True)
+    (tmp_path / "far" / "x").mkdir()
+    (tmp_path / "x").mkdir()
+    _directory_link(tmp_path / "M", tmp_path / "far" / "deep")
+    _directory_link(tmp_path / "L", Path("M") / ".." / "x")
+    assert os.path.samefile(tmp_path / "L", tmp_path / "far" / "x")  # the kernel's resolution
+    write_private_text(tmp_path / "L" / "report.json", "report body")
+    assert (tmp_path / "far" / "x" / "report.json").read_text() == "report body"
+    assert list((tmp_path / "x").iterdir()) == []
+
+
+def test_a_link_through_a_regular_file_is_refused_as_the_kernel_refuses_it(tmp_path):
+    # The kernel fails 'notes.txt/../a' with ENOTDIR instead of stepping back out of the file.
+    (tmp_path / "notes.txt").write_text("notes")
+    (tmp_path / "a").mkdir()
+    _directory_link(tmp_path / "L", Path("notes.txt") / ".." / "a")
+    with pytest.raises(NotADirectoryError):  # the kernel's resolution
+        os.stat(tmp_path / "L")
+    with pytest.raises(NotADirectoryError):
+        write_private_text(tmp_path / "L" / "report.json", "report body")
+    assert list((tmp_path / "a").iterdir()) == []
+    assert (tmp_path / "notes.txt").read_text() == "notes"
+
+
 def test_parent_steps_in_the_output_path_are_resolved_before_links(tmp_path):
     # '..' in the given path is lexical: 'mine/../r.json' lands beside the link, not in
     # the parent of its target, where the kernel's own resolution would put it.
