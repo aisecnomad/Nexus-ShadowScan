@@ -823,10 +823,10 @@ lists every benchmark with its protocol and limits.
 ### Cross-tool comparison
 
 <p align="center">
-  <img src="docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool estate coverage comparison — ShadowScan leads with 0.90 estate recall across repo, endpoint, and network surfaces" width="95%">
+  <img src="docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool benchmark comparison — ShadowBench estate recall and Shadow AI Discovery value-level F1" width="95%">
 </p>
 
-<p align="center"><em>Estate recall across surfaces: ShadowScan achieves 0.90 (0.87-0.92) by covering repo, endpoint, and network surfaces. Unsupported surfaces count as misses. See the <a href="https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md">benchmark index</a> for methodology and limits.</em></p>
+<p align="center"><em>Left: estate recall on ShadowBench Cases (346 cases, 9 surfaces — unsupported surfaces count as misses). Right: value-level F1 on Shadow AI Discovery (87 repositories, code surface). Benchmarks are author-written and in-sample. See the <a href="https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md">benchmark index</a> for methodology, limits, and reproduction steps.</em></p>
 
 ---
 
