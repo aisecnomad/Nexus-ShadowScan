@@ -24,6 +24,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+import yaml
+
 from shadowscan.connectors import builtin_connector_names
 from shadowscan.models import Surface
 from shadowscan.reporters import FORMATS
@@ -91,6 +93,19 @@ def _license() -> str:
         return str(tomllib.load(handle)["project"]["license"])
 
 
+def _signature_count() -> int:
+    """Count individual signatures across all YAML data packs."""
+    count = 0
+    for path in (ROOT / "shadowscan" / "signatures" / "data").rglob("*.yaml"):
+        with path.open() as fh:
+            data = yaml.safe_load(fh)
+        if isinstance(data, list):
+            count += len(data)
+        elif isinstance(data, dict) and "signatures" in data:
+            count += len(data["signatures"])
+    return count
+
+
 def connectors_by_surface() -> dict[Surface, list[str]]:
     """Built-in connector names grouped by surface, each group sorted."""
     grouped: dict[Surface, list[str]] = {surface: [] for surface in Surface}
@@ -152,6 +167,8 @@ def render_banner() -> str:
         f"Discovers evidence of AI agents across {_surface_sentence()}, "
         "then reconciles it against the agent registry you supply."
     )
+    n_connectors = len(builtin_connector_names())
+    n_sigs = _signature_count()
     body = [
         _rect(0, 0, 1600, 560, "url(#bg)", "none", rx=0),
         '<g stroke="#223a66" stroke-width="1.5" fill="none">',
@@ -187,6 +204,10 @@ def render_banner() -> str:
         f"  {_t(170, 466, _license(), size=20, fill='#c9d4ea', text_anchor='middle')}",
         f"  {_rect(268, 436, 380, 48, '#2a2210', '#6b4e12', rx=24)}",
         f"  {_t(458, 466, f'pip install {_package_name()}', size=20, fill='#f4b942', text_anchor='middle')}",
+        f"  {_rect(666, 436, 240, 48, '#0d2818', '#1a5c32', rx=24)}",
+        f"  {_t(786, 466, f'{n_connectors} connectors', size=20, fill='#3ddc97', text_anchor='middle')}",
+        f"  {_rect(924, 436, 240, 48, '#1a1028', '#3d2268', rx=24)}",
+        f"  {_t(1044, 466, f'{n_sigs} signatures', size=20, fill='#a78bfa', text_anchor='middle')}",
         "</g>",
     ]
     defs = (

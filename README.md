@@ -833,6 +833,14 @@ drawing any conclusion. ShadowScan marked 27 of its 326 scans incomplete there.
 The same authorship caveat applies: the maintainer wrote the corpus, the
 rubrics, the scorer and every tool's adapter.
 
+### Cross-benchmark summary
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool benchmark comparison — ShadowBench estate recall and Shadow AI Discovery value-level F1" width="95%">
+</p>
+
+<p align="center"><em>Left: estate recall on ShadowBench Cases (346 cases, 9 surfaces — unsupported surfaces count as misses). Right: value-level F1 on Shadow AI Discovery (87 repositories, code surface). Benchmarks are author-written and in-sample. See the <a href="https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md">benchmark index</a> for methodology, limits, and reproduction steps.</em></p>
+
 ---
 
 ## Surfaces & connectors
