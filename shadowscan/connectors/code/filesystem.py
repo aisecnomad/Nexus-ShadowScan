@@ -862,8 +862,8 @@ class _SourceFile:
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
     cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
-    # Notebook cells in another language (a non-Python kernel or cell magic): not parsed as
-    # Python, so lexical evidence only, and not a coverage gap.
+    # Notebook cells declared another language (a non-Python kernel or cell magic): bound when
+    # they parse as Python; when they do not, lexical evidence only, and not a coverage gap.
     foreign: _CellSpans = ()
     unparsed: _CellSpans = ()  # syntax the import binder could not read; lexical evidence only
     source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
@@ -2650,7 +2650,7 @@ class FilesystemConnector(BaseConnector):
     ) -> tuple[str, str | None, _CellSpans, _CellSpans] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
 
-        A notebook's last element lists the cells that are not Python (``_notebook_source``).
+        A notebook's last element lists the cells declared another language (``_notebook_source``).
 
         The file is read relative to the open scan root ``root_fd``: by its on-disk
         name (``path`` below ``base``), while ``rel`` is the report-safe name used in
@@ -2716,11 +2716,12 @@ class FilesystemConnector(BaseConnector):
         self, rel: str, document: str
     ) -> tuple[str, str | None, _CellSpans, _CellSpans] | None:
         """Return a notebook's code cells, their spans, within max_file_size its raw document, and
-        the spans of cells that are not Python.
+        the spans of cells declared another language.
 
-        A cell is not Python when the notebook's kernel declares another language (an R or Julia
-        notebook) or when a cell magic runs, renders or writes its body as something else
-        (``%%bash``, ``%%writefile requirements.txt``; see ``foreign_cell``).
+        A cell is declared another language when the notebook's kernel is not a Python one (an R
+        or Julia notebook) or when a cell magic runs, renders or writes its body as something else
+        (``%%bash``, ``%%writefile requirements.txt``; see ``foreign_cell``). Such a cell is still
+        bound when it parses as Python; one that does not is not a coverage gap.
         """
         notebook_errors: list[str] = []
         oversized_notebook = len(document) > self.max_file_size
@@ -3474,10 +3475,11 @@ class FilesystemConnector(BaseConnector):
             source = content_text
             if file.cells:
                 # Jupyter runs the cells one at a time: one that does not parse
-                # fails alone, so the binder reads the others without it. Cells in
-                # another language are not parsed: lexical evidence only, no gap.
-                source, unparsed = _notebook_binder_source(content_text, file.cells, file.foreign)
-                file.unparsed = tuple(sorted({*file.foreign, *(file.cells[number] for number in unparsed)}))
+                # fails alone, so the binder reads the others without it. A cell
+                # declared another language is bound when it parses as Python;
+                # when it does not, it is lexical evidence only, without a gap.
+                source, unparsed, unread = _notebook_binder_source(content_text, file.cells, file.foreign)
+                file.unparsed = tuple(unread)
                 if unparsed:
                     # Report before binding the other cells: a later AST
                     # budget failure must not erase this syntax coverage gap.

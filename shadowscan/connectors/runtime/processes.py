@@ -121,6 +121,7 @@ _NOT_RUNNING = {
     "publish", "pip", "sync", "lock", "build", "audit", "outdated", "info", "view", "show",
 }  # fmt: skip
 _PYTHON = re.compile(r"^python(?:\d+(?:\.\d+)?)?w?$")
+_WHITESPACE = re.compile(r"\s")
 # Single-letter interpreter options without a value (-W and -X take one; -m names the module).
 _PYTHON_FLAGS = frozenset("bBdEiIOPqRsSuvx")
 
@@ -425,14 +426,22 @@ def classify_command(executable: str | None, argv: list[str]) -> tuple[_Match | 
 
     When the executable does not identify a tool, ``argv[0]`` is read as well: a process title
     or shebang can name the launcher there while the executable is its interpreter (osquery's
-    ``path`` is node for ``npm exec ...``). The flag is true when the arguments ran out before
-    a launcher's target was read, or when there were none: only then can arguments an argument
-    or byte limit dropped change the result.
+    ``path`` is node for ``npm exec ...``). A process title that replaced the command line is a
+    single argument with spaces in ``/proc/<pid>/cmdline`` (npm's ``npm exec pkg``), so an
+    ``argv[0]`` with whitespace is also read split into words, ahead of the other arguments. The
+    flag is true when the arguments ran out before a launcher's target was read, or when there
+    were none: only then can arguments an argument or byte limit dropped change the result.
     """
     match, exhausted = _classify(executable, argv)
     if match is None and executable and argv:
         match, title_exhausted = _classify(None, argv)
         exhausted = exhausted or title_exhausted
+    if match is None and argv and _WHITESPACE.search(argv[0]):
+        title, cut = _split_bounded(argv[0])
+        if len(title) > 1:
+            # A title cut by the bounds is not followed by the arguments after it.
+            match, title_exhausted = _classify(None, title if cut else [*title, *argv[1:]])
+            exhausted = exhausted or title_exhausted
     return match, match is None and (exhausted or not argv)
 
 
@@ -957,9 +966,10 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             run.processes += 1
             if isinstance(rec["pid"], int) and len(run.pids) < 10:
                 run.pids.append(rec["pid"])
-            exe = (
-                (rec["exe"] or (rec["argv"][0] if rec["argv"] else "")).replace("\\", "/").rsplit("/", 1)[-1]
-            )
+            exe = rec["exe"] or (rec["argv"][0] if rec["argv"] else "")
+            if not rec["exe"] and _WHITESPACE.search(exe) and classify(None, rec["argv"]) is None:
+                exe = exe.split(None, 1)[0]  # matched as a process title (`npm exec pkg`): its program
+            exe = exe.replace("\\", "/").rsplit("/", 1)[-1]
             run.executables[exe[:80]] += 1
             if package:
                 run.packages[package[:120]] += 1
@@ -987,12 +997,21 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             ):
                 self.ctx.warn("runtime.processes: malformed argument list; process omitted")
                 return None
-            argv, truncated = _bounded_argv([str(arg) for arg in row["argv"]])
+            argv, limited = _bounded_argv([str(arg) for arg in row["argv"]])
         else:
             command = _first(row, _CMD_FIELDS)
-            argv, truncated = _split_bounded(command) if isinstance(command, str) else ([], False)
+            argv, limited = _split_bounded(command) if isinstance(command, str) else ([], False)
+        listed = bool(argv)
+        exported_cut = row.get("argv_truncated") is True
+        if exported_cut and not limited and self.offline:
+            # The export cut this command line, possibly inside its final argument. That argument
+            # is dropped, as live collection drops the one its byte limit cut, so a partial name
+            # never matches a rule and a launcher target it held leaves the tool undecided. A
+            # bound applied above has already left the export's final argument out. (A live
+            # record's arguments are complete: collect() dropped the cut one.)
+            argv = argv[:-1]
         # Counted once per scan in analyze(), which knows whether the cut left the tool undecided.
-        truncated = truncated or row.get("argv_truncated") is True
+        truncated = limited or exported_cut
         exe = _first(row, _EXE_FIELDS)
         name = _first(row, _NAME_FIELDS)
         if not isinstance(exe, str) or not exe:
@@ -1005,7 +1024,7 @@ class RuntimeProcessConnector(BaseConnector, _NoDump):
             # Defender FolderPath is a directory; FileName is the executable.
             exe = f"{exe.rstrip('/').rstrip(chr(92))}/{name}"
         inspection = self._normalise_inspection(row.get("inspection"))
-        if not argv and not exe and not inspection:
+        if not listed and not exe and not inspection:
             self.ctx.warn("runtime.processes: record has no command line or executable")
             return None
         host = _first(raw, ("hostIdentifier", "host_identifier"))

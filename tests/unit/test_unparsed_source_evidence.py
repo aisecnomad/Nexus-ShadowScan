@@ -204,12 +204,69 @@ def test_a_notebook_with_another_kernel_language_is_not_parsed_as_python(tmp_pat
     assert any(finding.kind == Kind.AGENT for finding in findings)
 
 
+# An agent with code-execution tools, in one notebook cell.
+TOOL_AGENT = (
+    "from langchain.agents import AgentExecutor, create_tool_calling_agent\n"
+    "from langchain_openai import ChatOpenAI\n"
+    "from langchain_experimental.tools import PythonREPLTool\n"
+    "from langchain_community.tools import ShellTool\n"
+    "import subprocess\n"
+    "\n"
+    'llm = ChatOpenAI(model="gpt-4o")\n'
+    "tools = [PythonREPLTool(), ShellTool()]\n"
+    "agent = create_tool_calling_agent(llm, tools, prompt)\n"
+    "executor = AgentExecutor(agent=agent, tools=tools)\n"
+    'executor.invoke({"input": "clean up the disk"})\n'
+    'subprocess.run(["rm", "-rf", "/tmp/x"])\n'
+)
+PYTHON_KERNEL = {"kernelspec": {"name": "python3", "display_name": "Python 3", "language": "python"}}
+
+
+@pytest.mark.parametrize(
+    ("metadata", "magic"),
+    [
+        (PYTHON_KERNEL, ""),
+        # Jupyter starts the kernel its name selects, so this cell runs as Python.
+        ({"kernelspec": {"name": "python3", "display_name": "Python 3", "language": "R"}}, ""),
+        # The repository writes the metadata and magics: they cannot hide code that parses.
+        ({"language_info": {"name": "R"}}, ""),
+        ({"kernelspec": {"name": "ir", "language": "R"}, "language_info": {"name": "R"}}, ""),
+        (PYTHON_KERNEL, "%%script env python3\n"),
+        (PYTHON_KERNEL, "%%script ipython\n"),
+        (PYTHON_KERNEL, "%%bash\n"),
+    ],
+    ids=[
+        "python",
+        "python-kernel-labelled-r",
+        "language-info-r",
+        "r-kernel",
+        "script-env-python3",
+        "script-ipython",
+        "bash-magic",
+    ],
+)
+def test_python_in_a_cell_declared_another_language_is_bound(tmp_path, run_connector, metadata, magic):
+    """Regression: notebook metadata or a cell magic, which the scanned repository controls, that
+    declared another language kept a cell from the import binder however it parsed, so an agent
+    with code-execution tools was reported as framework usage without capabilities, on a
+    complete scan. A cell is now bound whenever it parses as Python."""
+    document = {"cells": [{"cell_type": "code", "source": [magic + TOOL_AGENT]}], "metadata": metadata}
+    (tmp_path / "ops.ipynb").write_text(json.dumps(document))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.warnings and not ctx.stats.incomplete
+    [agent] = [finding for finding in findings if finding.kind == Kind.AGENT]
+    assert {"code-exec", "tool-use"} <= set(agent.capabilities)
+
+
 @pytest.mark.parametrize(
     "metadata",
     [
         {},
         {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
         {"language_info": {"name": "python"}},
+        # The kernel's name, not its language label, says what runs the cells.
+        {"kernelspec": {"name": "python3", "language": "R"}, "language_info": {"name": "R"}},
+        {"kernelspec": {"name": "conda-env-agents-py", "language": "julia"}},
     ],
 )
 def test_a_python_notebook_cell_that_does_not_parse_stays_a_gap(tmp_path, run_connector, metadata):

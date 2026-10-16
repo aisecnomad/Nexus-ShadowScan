@@ -335,6 +335,10 @@ def _decode_result(
     findings = [Finding.from_dict(item) for item in data["findings"]]
     if any(finding.connector != spec.name for finding in findings) or stats.findings != len(findings):
         raise ValueError("invalid plugin finding attribution or count")
+    for finding in findings:
+        # The worker's engine derives each id from the plugin's name, but this payload is the
+        # plugin process's own output: an id it carries is never kept (as in _ConnectorRunner._collect).
+        finding.reattribute(spec.name, derive_id=True)
     exports = data["exports"]
     for entry in exports:
         if not isinstance(entry, dict) or set(entry) != {

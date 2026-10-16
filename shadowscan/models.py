@@ -368,15 +368,20 @@ class Finding:
             )
         return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
-    def reattribute(self, connector: str) -> None:
+    def reattribute(self, connector: str, *, derive_id: bool = False) -> None:
         """Attribute this finding to ``connector``, recomputing its id if it named another connector.
 
         The connector enters the id, so a finding built under another connector's name and only
         re-stamped would keep that connector's id, and could replace or merge with that
         connector's own finding for the same resource: baselines, diffs and fleet merges key on
         the id. An id the finding claimed under another name is not kept either.
+
+        ``derive_id`` recomputes the id even when the finding already names ``connector``. The
+        engine passes it for every plugin finding: a plugin can set any id (``id=`` or
+        ``dataclasses.replace`` of a finding built under another name), and only the id derived
+        from the plugin's own name can never be a built-in finding's.
         """
-        if self.connector != connector:
+        if self.connector != connector or derive_id:
             self.connector = connector
             self.id = self.compute_id()
 

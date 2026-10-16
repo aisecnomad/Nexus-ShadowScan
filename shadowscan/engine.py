@@ -688,13 +688,15 @@ class _ConnectorRunner:
         st.incomplete = st.incomplete or bool(st.errors) or st.skipped
         # BaseConnector.run() stamps every finding with the connector's own name; a plugin that
         # overrides run() can skip that and claim a built-in connector's name (the process worker
-        # refuses such a finding — plugin_process._decode_result). Re-stamp plugin findings with
-        # the plugin's own name, and the id the claimed name entered with it, so a thread-mode
-        # plugin can never report under a built-in name nor with a built-in finding's id.
+        # refuses such a finding — plugin_process._decode_result), and any plugin can set a
+        # finding's id itself (``id=``, or ``dataclasses.replace`` of a finding built under a
+        # built-in name). Re-stamp every plugin finding with the plugin's own name and the id
+        # that name and the finding's resource derive, so a plugin can never report under a
+        # built-in name nor with a built-in finding's id. Built-in findings keep their ids.
         plugin = spec.name not in builtin_connector_names()
         for finding in collected:
             if plugin:
-                finding.reattribute(spec.name)
+                finding.reattribute(spec.name, derive_id=True)
             try:
                 finding.sanitize()
             except SanitizationLimitError:

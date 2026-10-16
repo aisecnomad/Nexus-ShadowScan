@@ -629,15 +629,21 @@ favour of the installed package, so it does not hide that SDK's imports.
 A notebook's IPython magic (`%pip`, `%%time`) and shell (`!pip`) lines are read
 as inert expressions, as IPython rewrites them, so they do not keep the import
 binder from the notebook. Jupyter runs code cells one at a time, so each cell is
-lexed on its own. A cell in another language is not parsed as Python: one under
-a cell magic that runs, renders or writes its body as something else (`%%bash`,
-`%%sh`, `%%script bash`, `%%html`, `%%javascript`, `%%latex`, `%%markdown`,
-`%%sql`, `%%R`, `%%writefile requirements.txt`), and every cell of a notebook
-whose metadata names another kernel language (an R or Julia notebook). Such
-cells keep their lexical evidence, with no warning and no coverage gap. Other
-cell magics (`%%time`, `%%capture`, `%%script python3`, `%%writefile app.py`)
-hold Python and are parsed. A Python cell that still does not parse (an
-unfinished scratch cell) is left out of import binding on its own: the warning
+lexed on its own. A cell can be declared another language: by a cell magic that
+runs, renders or writes its body as something else (`%%bash`, `%%sh`,
+`%%script bash`, `%%html`, `%%javascript`, `%%latex`, `%%markdown`, `%%sql`,
+`%%R`, `%%writefile requirements.txt`), or, for every cell, by notebook metadata
+that names another kernel language (an R or Julia notebook). The declaration is
+the scanned repository's own text, and Jupyter starts a kernel by its name, not
+by its `language` field, so such a cell is still parsed: one that parses as
+Python is bound like any other cell, and one that does not keeps its lexical
+evidence, with no warning and no coverage gap. A notebook whose kernel name is a
+Python kernel's (`python3`, `conda-env-...-py`) is a Python notebook whatever
+its `language` field says. Other cell magics (`%%time`, `%%capture`,
+`%%writefile app.py`, and `%%script` with a Python or IPython interpreter, such
+as `%%script python3`, `%%script env python3` or `%%script ipython`) hold Python.
+A Python cell that still does not parse (an unfinished scratch cell) is left out
+of import binding on its own: the warning
 `import-bound analysis skipped for notebook cell N, which does not parse;
 lexical evidence retained` names it and makes coverage incomplete, and the other
 cells are bound as usual. A string left open in one cell no longer masks the

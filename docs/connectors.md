@@ -1326,8 +1326,10 @@ scores.
 Launcher parsing identifies the executed script, module or package rather than
 its application arguments, including package runners an interpreter runs
 (`node /usr/local/bin/npx ...`, `python3 /usr/bin/pipx run ...`) and process
-titles (`npm exec ...` on a node executable). A command line cut by a parsing
-limit marks coverage incomplete, even when no tool can be identified, when the
+titles (`npm exec ...` on a node executable, or as the single argument with
+spaces that `/proc` shows). A command line cut by a parsing limit, or by its
+export (`argv_truncated: true`, whose possibly cut final argument is dropped),
+marks coverage incomplete, even when no tool can be identified, when the
 dropped arguments could change what runs (none left, or a launcher's target
 unread); other long command lines are classified from their leading arguments
 and reported in one counted warning. Launches with options a launcher's grammar

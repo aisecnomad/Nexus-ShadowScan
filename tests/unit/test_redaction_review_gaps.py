@@ -433,6 +433,7 @@ def _registry_agent(text: str) -> dict[str, Any]:
 
 
 _AWS = "shadowscan.connectors.cloud.aws.AwsConnector"
+_AZURE = "shadowscan.connectors.cloud.azure.AzureConnector"
 _GCP = "shadowscan.connectors.cloud.gcp.GcpConnector"
 _OCI = "shadowscan.connectors.cloud.oci.OciConnector"
 _SFDC = "shadowscan.connectors.lowcode.salesforce.SalesforceConnector"
@@ -440,6 +441,7 @@ _SNOW = "shadowscan.connectors.lowcode.servicenow.ServiceNowConnector"
 _RE = "projects/123/locations/us-central1/reasoningEngines/456"
 _DF = "projects/acme/locations/global/agents/7f1c"
 _RUNTIME = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/ops-1"
+_PROJECT = "/subscriptions/s1/resourceGroups/rg/providers/Microsoft.CognitiveServices/accounts/a1/projects/p1"
 
 # Each connector summary that shortens provider text: (limit, offset, build). ``build(index, text)``
 # returns the finding that carries ``text`` shortened to ``limit`` characters, ``offset`` of them
@@ -475,6 +477,20 @@ _SHORTENED_SUMMARIES: dict[str, tuple[int, int, Callable[[Any, str], Any]]] = {
         0,
         lambda index, text: _connector(_AWS, index)._h_bedrock_agent(
             {"agentId": "A1", "agentName": "ops", "_region": "us-east-1", "instruction": text}
+        ),
+    ),
+    "azure foundry project description": (
+        200,
+        0,
+        lambda index, text: _connector(_AZURE, index)._resource_finding(
+            {
+                "type": "microsoft.cognitiveservices/accounts/projects",
+                "id": _PROJECT,
+                "name": "p1",
+                "properties": {"description": text},
+            },
+            [],
+            None,
         ),
     ),
     "gcp agent engine evidence": (
@@ -574,6 +590,20 @@ _SHORTENED_SUMMARIES: dict[str, tuple[int, int, Callable[[Any, str], Any]]] = {
             {"Id": "301", "ApiName": "f", "Label": "Einstein flow", "Description": text}
         ),
     ),
+    "servicenow agent description": (
+        200,
+        0,
+        lambda index, text: _connector(_SNOW, index)._agent_finding(
+            {"sys_id": "a1", "name": "agent", "description": text}, []
+        ),
+    ),
+    "servicenow agent instructions": (
+        300,
+        0,
+        lambda index, text: _connector(_SNOW, index)._agent_finding(
+            {"sys_id": "a1", "name": "agent", "instructions": text}, []
+        ),
+    ),
     "servicenow use case description": (
         200,
         0,
@@ -610,3 +640,78 @@ def test_shortened_connector_summaries_are_redacted_first(index: Any, site: str)
     report = json.dumps(finding.to_dict(), default=str)
     assert SECRET[:8] not in report
     assert REDACTED in report
+
+
+# The summaries whose record field reaches the excerpt as the provider sent it. The OCI matching
+# rule and policy statements and the Salesforce and ServiceNow flow text are strings the
+# connector builds itself.
+_RAW_TEXT_FIELDS = sorted(site for site, (_, offset, _) in _SHORTENED_SUMMARIES.items() if offset == 0)
+
+
+@pytest.mark.parametrize("value", [[f"chunk-{n} " + "y" * 50 for n in range(300)], 42], ids=["list", "int"])
+@pytest.mark.parametrize("site", _RAW_TEXT_FIELDS)
+def test_a_summary_field_that_is_not_text_rejects_the_record(index: Any, site: str, value: Any) -> None:
+    """Regression: sanitize_excerpt returns a value that is not text unchanged, where the truncate
+    it replaced raised TypeError, which the cloud connectors report as an invalid record (coverage
+    incomplete, exit 3). A 300-element list or a number in a description, instruction or welcome
+    message went into finding metadata whole, on a complete scan. (Salesforce and ServiceNow
+    reject such a record before these handlers; the GCP registry validator rejects it too.)"""
+    from shadowscan.connectors.cloud.common import RECORD_ERRORS
+
+    _, _, build = _SHORTENED_SUMMARIES[site]
+    with pytest.raises(RECORD_ERRORS):
+        build(index, value)
+
+
+@pytest.mark.parametrize(
+    ("connector", "record"),
+    [
+        (
+            "cloud.oci",
+            {
+                "_kind": "genai-agent",
+                "_region": "us-chicago-1",
+                "_compartment": "ocid1.compartment.oc1..cmp1",
+                "id": "ocid1.genaiagent.oc1.us-chicago-1.agent9",
+                "display_name": "x-assistant",
+                "description": [f"chunk-{n} " + "y" * 50 for n in range(300)],
+            },
+        ),
+        (
+            "cloud.oci",
+            {
+                "_kind": "genai-agent",
+                "_region": "us-chicago-1",
+                "id": "ocid1.genaiagent.oc1.us-chicago-1.agent9",
+                "display_name": "x-assistant",
+                "welcome_message": 12345,
+            },
+        ),
+        (
+            "cloud.aws",
+            {
+                "_kind": "bedrock-agent",
+                "_region": "us-east-1",
+                "agentId": "AGENT1",
+                "agentArn": "arn:aws:bedrock:us-east-1:123456789012:agent/AGENT1",
+                "agentName": "ops-provisioning-04",
+                "agentStatus": "PREPARED",
+                "foundationModel": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+                "instruction": 42,
+            },
+        ),
+    ],
+    ids=["oci-description-list", "oci-welcome-message-int", "aws-instruction-int"],
+)
+def test_a_mistyped_provider_text_field_leaves_the_scan_incomplete(
+    index: Any, tmp_path: Path, connector: str, record: dict[str, Any]
+) -> None:
+    from shadowscan.config import ConnectorSpec, ScanConfig
+    from shadowscan.engine import Engine
+
+    export = tmp_path / "export.jsonl"
+    export.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    result = Engine(ScanConfig(connectors=[ConnectorSpec(connector, {"input": str(export)})]), index).run()
+    assert not result.complete and not result.findings
+    [stats] = result.stats
+    assert any("record has invalid" in warning for warning in stats.warnings), stats.warnings

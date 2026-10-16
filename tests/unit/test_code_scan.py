@@ -18,6 +18,7 @@ from shadowscan.connectors.code.filesystem import (
 )
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.connectors.code.source_text import foreign_cell
 from shadowscan.connectors.code.walk import _nearest_root
 from shadowscan.models import Kind
 from shadowscan.signatures import SignatureIndex
@@ -591,8 +592,19 @@ def test_percent_continuation_lines_in_a_notebook_are_python(tmp_path, run_conne
         "%%capture output\nparams = dict(\n",
         "%%writefile helper.py\ndef helper(:\n",
         "%%script python3\nparams = dict(\n",
+        "%%script env python3\nparams = dict(\n",
+        "%%script --bg ipython\nparams = dict(\n",
     ],
-    ids=["unterminated-string", "unclosed-bracket", "time", "capture", "writefile-module", "script-python"],
+    ids=[
+        "unterminated-string",
+        "unclosed-bracket",
+        "time",
+        "capture",
+        "writefile-module",
+        "script-python",
+        "script-env-python",
+        "script-ipython",
+    ],
 )
 def test_one_broken_notebook_cell_does_not_hide_the_others(tmp_path, run_connector, broken):
     # Jupyter runs each cell on its own: a cell that does not parse fails alone.
@@ -625,6 +637,27 @@ def test_a_cell_in_another_language_is_not_a_python_coverage_gap(tmp_path, run_c
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.warnings and not ctx.stats.errors and not ctx.stats.incomplete
     assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize(
+    ("magic", "foreign"),
+    [
+        ("%%script python3", False),
+        ("%%script env python3", False),
+        ("%%script /usr/bin/env -S python3 -u", False),
+        ("%%script env -u PYTHONPATH LANG=C python3.12", False),
+        ("%%script ipython", False),
+        ("%%script --bg --out log ipython3", False),
+        ("%%script bash", True),
+        ("%%script env bash", True),
+        ("%%script --out log bash", True),
+        ("%%script", True),
+    ],
+)
+def test_script_cell_magics_are_read_by_the_interpreter_they_run(magic, foreign):
+    """Regression: `%%script env python3` and `%%script ipython` run their cell as Python, but the
+    first argument (env, ipython) was read as the interpreter, so the cell was declared foreign."""
+    assert foreign_cell(f"{magic}\nprint(1)\n") is foreign
 
 
 def test_a_broken_notebook_cell_keeps_its_own_construction(tmp_path, run_connector):

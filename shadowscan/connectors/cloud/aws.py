@@ -98,7 +98,7 @@ from shadowscan.connectors.mcp_risk import record_server_risks
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.registries import RECORD_KEY, RECORD_SCHEMA, registry_evidence
 from shadowscan.utils.identity import has_aws_account_scope
-from shadowscan.utils.redaction import SanitizationLimitError, sanitize_excerpt
+from shadowscan.utils.redaction import SanitizationLimitError, sanitize_text_excerpt
 from shadowscan.utils.safe_json import strict_json_loads
 from shadowscan.utils.text import truncate
 
@@ -1916,7 +1916,7 @@ class AwsConnector(BaseConnector):
                 signal="aws:knowledge-base",
                 description=(
                     f"Knowledge base '{rec.get('name')}' ({rec.get('status')}): "
-                    f"{sanitize_excerpt(rec.get('description'), 120)}"
+                    f"{sanitize_text_excerpt(rec.get('description'), 120)}"
                 ),
                 weight=0.6,
                 signature="cloud.aws-bedrock-agents",
@@ -2059,7 +2059,7 @@ class AwsConnector(BaseConnector):
                 "protocol": protocol,
                 "network": network,
                 "authorizer": bool(auth),
-                "description": sanitize_excerpt(rec.get("description")),
+                "description": sanitize_text_excerpt(rec.get("description")),
             }
         )
         return done(f, self.index, Kind.AGENT)
@@ -3262,7 +3262,7 @@ def _bedrock_agent_metadata(
         "status": rec.get("agentStatus"),
         "foundation_model": rec.get("foundationModel"),
         "role": rec.get("agentResourceRoleArn"),
-        "instruction": sanitize_excerpt(rec.get("instruction"), 300),
+        "instruction": sanitize_text_excerpt(rec.get("instruction"), 300),
         "versions_scanned": rec.get("_versions_scanned") or [],
         "version_models": {v: d.get("foundationModel") for v, d in details.items()},
         "version_guardrails": {v: d.get("guardrailConfiguration") for v, d in details.items()},

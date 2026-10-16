@@ -761,7 +761,11 @@ summarizes each release for people who install and operate ShadowScan.
   trigger conditions, dynamic-group matching rules and policy statements from the AWS, Azure,
   GCP, OCI, Entra, Make, Salesforce and ServiceNow connectors) are redacted before they are
   shortened, so a cut can no longer separate a credential from the context that identifies it.
-  Lists of names (scopes, permissions, variable names) are still cut first.
+  Lists of names (scopes, permissions, variable names) are still cut first. A provider text
+  field that is not a string (a list or a number in an AWS, Azure, GCP, OCI, Salesforce or
+  ServiceNow description, instruction, welcome message or trigger condition) still rejects its
+  record as malformed, which leaves the scan incomplete, as when the text was cut first; it
+  never reaches the report whole.
 - **LLM triage.** The redacted summary sent to the model now withholds e-mail addresses and IP
   addresses wherever they appear in a title or evidence description, and covers more
   identity-bearing metadata keys, matching the privacy the documentation describes.
@@ -785,19 +789,20 @@ summarizes each release for people who install and operate ShadowScan.
 - **Fleet and reporters.** A fleet merge drops any advisory `llm_triage` block a source carries,
   so one source cannot plant a verdict on another's finding. Out-of-range report timestamps are
   omitted from OCSF, CycloneDX and SARIF output instead of aborting the whole report.
-- **Engine, CLI and plugins.** A plugin finding built under another connector's name is
-  attributed to the plugin, in thread and process mode, with the id the plugin's own name
-  gives, so a plugin can neither report under a built-in connector's name nor take the id of
-  that connector's finding for the same resource. Plugin worker processes are started with
-  `PYTHONSAFEPATH` so a scanned checkout in the working directory cannot shadow
-  `multiprocessing`; it is set only while a worker starts, and the previous environment is
-  restored, so programs the scanner or an embedding application starts later keep their script
-  directory on `sys.path`. The changed-file git diff passes `--no-ext-diff`/`--no-textconv`.
-  Plugin names must be lowercase ASCII `namespace.provider`, so a confusable cannot read as a
-  built-in; a plugin whose name has an uppercase letter or an underscore no longer loads.
-  The `urllib3` logger is pinned to ERROR so a malformed upstream response cannot log a request
-  URL. The `inventory check` and `signatures list` commands strip terminal control sequences from
-  untrusted fields.
+- **Engine, CLI and plugins.** Every plugin finding is attributed to the plugin, in thread and
+  process mode, with the id the plugin's own name and the finding's resource give, whatever name
+  it was built under or id it was given (`id=`, `dataclasses.replace` of a finding built under
+  another name), so a plugin can neither report under a built-in connector's name nor take the
+  id of that connector's finding for the same resource, which merged the two. Plugin worker
+  processes are started with `PYTHONSAFEPATH` so a scanned checkout in the working directory
+  cannot shadow `multiprocessing`; it is set only while a worker starts, and the previous
+  environment is restored, so programs the scanner or an embedding application starts later keep
+  their script directory on `sys.path`. The changed-file git diff passes
+  `--no-ext-diff`/`--no-textconv`. Plugin names must be lowercase ASCII `namespace.provider`, so
+  a confusable cannot read as a built-in; a plugin whose name has an uppercase letter or an
+  underscore no longer loads. The `urllib3` logger is pinned to ERROR so a malformed upstream
+  response cannot log a request URL. The `inventory check` and `signatures list` commands strip
+  terminal control sequences from untrusted fields.
 
 ### Runtime identity, collection completeness and semantic fallback (October 15)
 
@@ -807,18 +812,23 @@ summarizes each release for people who install and operate ShadowScan.
   (`node /usr/local/bin/npx -y pkg`, `node.exe ...\npx-cli.js`,
   `python3 /usr/bin/pipx run ...`, `python -m pipx`) is read as that runner, and
   the command line's first argument is read when the executable is only the
-  interpreter (npm's `npm exec pkg` process title on node). Launch options are
-  read with each launcher's grammar (`--name=value`, Deno permission flags,
-  `node --inspect`, `npx --prefer-offline`, `uv run --frozen`, `uv run -m`,
-  `python -P` and combined flags such as `-Im`); launches with options the
-  grammar does not recognize are not reported. A command line cut by an
-  argument/byte bound marks coverage incomplete, even when the retained prefix
-  produces no finding, when the dropped arguments could change what runs (none
-  left, or a launcher's target unread); a long command line of another program,
-  or one whose tool was read, is classified from its leading arguments, and one
-  counted warning reports them. Host and user identities are retained in full
-  within validated input limits, so different devices or users cannot merge
-  through a shortened display prefix.
+  interpreter (npm's `npm exec pkg` process title on node), split into words
+  when it is one argument with spaces, as a live `/proc` shows a title. Launch
+  options are read with each launcher's grammar (`--name=value`, Deno permission
+  flags, `node --inspect`, `npx --prefer-offline`, `uv run --frozen`,
+  `uv run -m`, `python -P` and combined flags such as `-Im`); launches with
+  options the grammar does not recognize are not reported. A command line cut by
+  an argument/byte bound marks coverage incomplete, even when the retained
+  prefix produces no finding, when the dropped arguments could change what runs
+  (none left, or a launcher's target unread); a long command line of another
+  program, or one whose tool was read, is classified from its leading arguments,
+  and one counted warning reports them. A row an export marks
+  `argv_truncated: true` loses its final argument, which the cut may have
+  shortened, as a live command line over the byte limit does: a launcher target
+  in it is undecided (coverage incomplete) rather than classified as complete or
+  reported under a cut name (`server-gi`). Host and user identities are retained
+  in full within validated input limits, so different devices or users cannot
+  merge through a shortened display prefix.
 - GitHub App installation inventories validate declared totals against unique
   returned installation IDs, across all pages of a live listing or of an offline
   export file (one page envelope per line is accepted). Inconsistent or
@@ -830,11 +840,16 @@ summarizes each release for people who install and operate ShadowScan.
   ranges cannot acquire agent classification or execution capabilities from
   semantic claims that were not established; independently parsed neighboring
   source remains usable. In a test path the scan discounts, source that does not
-  parse only warns unless `strict_coverage` is set. Notebook cells in another
-  language (under `%%bash`, `%%sql`, `%%writefile requirements.txt` and similar
-  cell magics, or in an R or Julia notebook) are not parsed as Python: lexical
-  evidence only, without a gap. Python 2 modules and templates stay a gap until
-  listed in `exclude`.
+  parse only warns unless `strict_coverage` is set. Notebook cells declared
+  another language (under `%%bash`, `%%sql`, `%%writefile requirements.txt` and
+  similar cell magics, or in an R or Julia notebook) are still parsed, since the
+  repository writes the declaration and Jupyter starts a kernel by its name: a
+  cell that parses as Python is bound, and one that does not keeps lexical
+  evidence only, without a gap. A kernel named like a Python kernel (`python3`)
+  makes a Python notebook whatever its `language` field says, and `%%script`
+  with a Python or IPython interpreter (`%%script env python3`,
+  `%%script ipython`) holds Python. Python 2 modules and templates stay a gap
+  until listed in `exclude`.
 - Rescan affected inputs and rebuild comparison baselines after upgrading.
   Long runtime identities now produce their full resource bindings and may
   change finding IDs. Review and regenerate affected inventory cards instead

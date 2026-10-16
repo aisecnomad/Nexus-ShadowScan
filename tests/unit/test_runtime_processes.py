@@ -209,21 +209,66 @@ def test_offline_truncation_before_the_executed_tool_is_incomplete(run_connector
     [
         ["/usr/lib/jvm/java-17/bin/java", "-cp", "/opt/app/lib/*"],
         ["gcc", "-I/usr/include"],
-        ["python", "train.py"],
+        ["python", "train.py", "--epochs"],
         ["python", "-c", "import torch"],
-        ["node", "/srv/app/server.js"],
-        ["npx", "-y", "some-wrapper"],
-        ["npm", "install"],
-        ["ollama", "list"],
+        ["node", "/srv/app/server.js", "--port"],
+        ["npx", "-y", "some-wrapper", "--verbose"],
+        ["npm", "install", "left-pad"],
+        ["ollama", "list", "--verbose"],
     ],
 )
 def test_offline_truncation_after_the_launch_is_read_is_complete(run_connector, tmp_path, argv):
     # No AI tool runs whatever the cut arguments were: a program that is no launcher, or a
-    # launcher whose target was read.
+    # launcher whose target was read before the final argument, which the export may have cut.
     source = _rows(tmp_path, [{"host": "box", "argv": argv, "argv_truncated": True}])
     findings, ctx = run_connector("runtime.processes", input=str(source))
     assert not findings and not ctx.stats.incomplete
     assert len(ctx.stats.warnings) == 1 and "each was classified" in ctx.stats.warnings[0]
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"argv": ["npx", "-y", "@modelcontextprotocol/s"]},
+        {"command_line": "npx -y @modelcontextprotocol/s"},
+        {
+            "exe": "/usr/bin/node",
+            "command_line": "node /usr/lib/node_modules/npm/bin/npx-cli.js -y @modelcontextprotocol/s",
+        },
+        # Complete, these would be another MCP server, or the same one under another name.
+        {"argv": ["npx", "-y", "some-wrapper"]},
+        {"argv": ["npx", "-y", "@modelcontextprotocol/server-gi"]},
+        {"argv": ["python", "train.py"]},
+        {"argv": ["node", "/srv/app/server.js"]},
+        {"argv": ["npm", "install"]},
+        {"argv": ["ollama", "list"]},
+        {"command_line": "/home/u/.local/bin/cla"},
+    ],
+)
+def test_offline_truncation_inside_the_launch_target_is_incomplete(run_connector, tmp_path, row):
+    """Regression: a row an export marked argv_truncated had its final argument, which the cut
+    may have shortened, classified as complete: a cut MCP server package left the scan complete
+    and empty, and a cut `server-gi` was reported as an MCP server of that name."""
+    source = _rows(tmp_path, [{"host": "box", "user": "dev", **row, "argv_truncated": True}])
+    findings, ctx = run_connector("runtime.processes", input=str(source))
+    assert not findings and ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "runtime.processes: 1 command line(s) exceeded argument/byte limits (64 arguments, 65,536 bytes) "
+        "or were truncated by their source export; 1 could not be classified from their leading complete "
+        "arguments"
+    ]
+
+
+@pytest.mark.parametrize("field", ["argv", "command_line"])
+def test_offline_truncation_after_the_launch_target_keeps_the_tool(run_connector, tmp_path, field):
+    argv = ["npx", "-y", "@modelcontextprotocol/server-github", "--toolsets=repos,iss"]
+    value = argv if field == "argv" else " ".join(argv)
+    source = _rows(tmp_path, [{"host": "box", "user": "dev", field: value, "argv_truncated": True}])
+    findings, ctx = run_connector("runtime.processes", input=str(source))
+    assert not ctx.stats.incomplete and "each was classified" in ctx.stats.warnings[0]
+    [finding] = findings
+    assert finding.metadata["mcp_packages"] == {"@modelcontextprotocol/server-github": 1}
+    assert finding.metadata["command_lines_truncated"] == 1
 
 
 def test_offline_long_command_lines_of_other_programs_do_not_flood_or_fail_the_scan(run_connector, tmp_path):
@@ -279,6 +324,12 @@ def test_offline_application_arguments_do_not_create_runtime_or_lifecycle_eviden
         # npm's process title replaces the command line; the executable is still node.
         ("/usr/local/bin/node", ["npm", "exec", "@modelcontextprotocol/server-github"],
          "mcp:@modelcontextprotocol/server-github"),
+        # /proc/<pid>/cmdline shows that title as one argument with spaces (live mode reads no
+        # executable), ahead of any arguments `exec -a` kept.
+        (None, ["npm exec @modelcontextprotocol/server-github"], "mcp:@modelcontextprotocol/server-github"),
+        ("/usr/local/bin/node", ["npm exec @modelcontextprotocol/server-github"],
+         "mcp:@modelcontextprotocol/server-github"),
+        (None, ["npx -y mcp-server-fetch", "--port", "8080"], "mcp:mcp-server-fetch"),
         # A process title that names the tool itself.
         ("/usr/bin/node", ["claude"], "claude-code"),
     ],
@@ -299,6 +350,11 @@ def test_runners_run_by_an_interpreter_keep_their_target(exe, argv, tool):
         ["node", "/usr/lib/node_modules/npm/bin/npm-cli.js", "install", "@openai/codex"],
         ["python3", "-m", "pipx", "list"],
         ["node", "/usr/local/bin/npx-helper.js", "@openai/codex"],
+        # Process titles and paths with spaces that run no tool.
+        ["sshd: dev [priv]"],
+        ["npx --package @openai/codex audit"],
+        ["C:\\Program Files\\nodejs\\node.exe", "server.js"],
+        ["/opt/My Tools/npx", "audit"],
     ],
 )
 def test_runners_run_by_an_interpreter_keep_their_grammar(argv):
@@ -606,6 +662,50 @@ def test_live_mode_command_line_at_the_limit_is_complete(run_connector, monkeypa
     findings, ctx = run_connector("runtime.processes", label="box")
     assert len(findings) == 1 and not ctx.stats.incomplete and not ctx.stats.warnings
     assert "command_lines_truncated" not in findings[0].metadata
+
+
+def test_live_mode_drops_only_the_argument_the_byte_limit_cut(run_connector, monkeypatch, tmp_path):
+    # The live record is already free of the cut argument: analyze() must not drop the package
+    # before it as an export's cut row loses its final argument.
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    (proc / "11").mkdir(parents=True)
+    cmdline = b"npx\0-y\0@modelcontextprotocol/server-github\0" + b"x" * 70_000 + b"\0"
+    (proc / "11" / "cmdline").write_bytes(cmdline)
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert not ctx.stats.incomplete and "each was classified" in ctx.stats.warnings[0]
+    [finding] = findings
+    assert finding.metadata["mcp_packages"] == {"@modelcontextprotocol/server-github": 1}
+    assert finding.metadata["command_lines_truncated"] == 1
+
+
+@pytest.mark.parametrize(
+    "cmdline",
+    [
+        # npm sets its process title over the command line: one argument, padded with NULs.
+        b"npm exec @modelcontextprotocol/server-github\0" + b"\0" * 24,
+        # `exec -a "npm exec ..." sleep 300` keeps the arguments after the title.
+        b"npm exec @modelcontextprotocol/server-github\0" + b"300\0",
+    ],
+    ids=["npm-title", "exec-a"],
+)
+def test_live_mode_reads_a_process_title_with_spaces(run_connector, monkeypatch, tmp_path, cmdline):
+    """Regression: /proc shows npm's `npm exec <pkg>` process title as one argument with spaces.
+    Its last path component (`server-github`) was read as the executable, so a live scan reported
+    nothing and stayed complete."""
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    (proc / "11").mkdir(parents=True)
+    (proc / "11" / "cmdline").write_bytes(cmdline)
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert not ctx.stats.warnings and not ctx.stats.incomplete
+    [finding] = findings
+    assert finding.metadata["tool"] == "mcp:@modelcontextprotocol/server-github"
+    assert finding.metadata["executables"] == {"npm": 1}
 
 
 def test_live_mode_outside_linux_is_refused(run_connector, monkeypatch):

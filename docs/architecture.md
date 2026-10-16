@@ -446,10 +446,14 @@ operator approval; it is not a sandbox. Built-in connector names remain reserved
 The entry-point name is the plugin's identity: it is what operators approve in
 `options.plugins`, what `connectors:` entries reference, and what every finding
 (`Finding.connector`, which enters the finding id) and scan statistic is
-attributed to. Listing (`shadowscan connectors`) never imports plugin code. When
-an approved plugin is loaded, the registry verifies the class the entry point
-names and refuses the plugin if any rule fails; that connector then produces no
-findings, the scan is incomplete, and the reason is available through
+attributed to. The engine stamps every plugin finding with that name and derives
+its id from it, in thread and process mode, so an id a plugin sets (or copies
+from a finding built under another name) is never kept and a plugin finding
+cannot take a built-in finding's id. Listing (`shadowscan connectors`) never
+imports plugin code. When an approved plugin is loaded, the registry verifies
+the class the entry point names and refuses the plugin if any rule fails; that
+connector then produces no findings, the scan is incomplete, and the reason is
+available through
 `shadowscan.connectors.plugin_registry_errors()` as printable, credential-free
 `PluginDiagnostic` records (`entry`, `rule`, `message`).
 

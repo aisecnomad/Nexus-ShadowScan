@@ -267,16 +267,41 @@ _FOREIGN_CELL_MAGICS = frozenset(
     }
 )  # fmt: skip
 _CELL_MAGIC = re.compile(r"\s*+%%([A-Za-z_][\w.]*+)[ \t]*+([^\n]*+)")
-_PYTHON_PROGRAM = re.compile(r"python(?:\d+(?:\.\d+)?)?w?(?:\.exe)?", re.IGNORECASE)
+_PYTHON_PROGRAM = re.compile(r"i?python(?:\d+(?:\.\d+)?)?w?(?:\.exe)?", re.IGNORECASE)
+# %%script's own options that take a value (--bg and --no-raise-error take none), then env's.
+_SCRIPT_VALUE_OPTIONS = frozenset({"--out", "--err", "--proc"})
+_ENV_VALUE_OPTIONS = frozenset({"-u", "--unset", "-C", "--chdir"})
+
+
+def _script_program(arguments: list[str]) -> str:
+    """The base name of the program a ``%%script`` line runs, past its options and ``env``."""
+    values, env = _SCRIPT_VALUE_OPTIONS, False
+    position = 0
+    while position < len(arguments):
+        argument = arguments[position].strip("\"'")
+        position += 1
+        if argument.startswith("-"):
+            if argument in values:
+                position += 1  # the option's value
+            continue
+        if env and "=" in argument:
+            continue  # NAME=value
+        program = argument.replace("\\", "/").rsplit("/", 1)[-1]
+        if env or program.lower() != "env":
+            return program
+        values, env = _ENV_VALUE_OPTIONS, True
+    return ""
 
 
 def foreign_cell(source: str) -> bool:
-    """Whether a notebook cell's body is not Python, by the cell magic that starts it.
+    """Whether a notebook cell's body is declared not to be Python, by the cell magic that starts it.
 
     ``%%bash``, ``%%html``, ``%%sql`` and the like run or render another language, and
     ``%%writefile requirements.txt`` writes text. A Python module written with
-    ``%%writefile`` and ``%%script python3`` stay Python, as do ``%%time``, ``%%capture``
-    and every other cell magic.
+    ``%%writefile`` and ``%%script`` with a Python or IPython interpreter (``%%script python3``,
+    ``%%script env python3``, ``%%script --bg ipython``) stay Python, as do ``%%time``,
+    ``%%capture`` and every other cell magic. The magic is the repository's own text, so a
+    cell it declares foreign is still parsed (``_notebook_binder_source``).
     """
     match = _CELL_MAGIC.match(source)
     if match is None:
@@ -286,33 +311,40 @@ def foreign_cell(source: str) -> bool:
         target = next((argument for argument in arguments if not argument.startswith("-")), "")
         return not target.strip("\"'").lower().endswith(".py")
     if name == "script":
-        program = arguments[0].replace("\\", "/").rsplit("/", 1)[-1] if arguments else ""
-        return _PYTHON_PROGRAM.fullmatch(program) is None
+        return _PYTHON_PROGRAM.fullmatch(_script_program(arguments)) is None
     return name in _FOREIGN_CELL_MAGICS
 
 
-def _notebook_binder_source(text: str, cells: _CellSpans, foreign: _CellSpans = ()) -> tuple[str, list[int]]:
-    """Return a notebook's cells as the import binder reads them, and which cells do not parse.
+def _notebook_binder_source(
+    text: str, cells: _CellSpans, foreign: _CellSpans = ()
+) -> tuple[str, list[int], list[tuple[int, int]]]:
+    """Return a notebook's cells as the import binder reads them, which cells do not parse, and the
+    spans the binder does not read.
 
     Magic and shell lines become inert expressions (``_without_ipython_lines``).
     A cell that still does not parse is blanked, its line breaks kept, so the
     other cells are bound together, as Jupyter runs them, and every offset and
-    line stays that of ``text``. ``foreign`` cells (another language) are blanked
-    without being parsed, so they are not reported as unparsed.
+    line stays that of ``text``. ``foreign`` cells (declared another language by
+    the notebook's metadata or a cell magic) are parsed too: the declaration is
+    the repository's own and Python code under it still runs as Python (Jupyter
+    picks a kernel by its name, not its language label), so one that parses is
+    bound like any other cell. One that does not parse is blanked without being
+    reported as unparsed: lexical evidence only, not a coverage gap.
     """
     source = _without_ipython_lines(text)
+    declared = set(foreign)
     unparsed: list[int] = []
+    unread: list[tuple[int, int]] = []
     for number, (start, end) in enumerate(cells):
-        if (start, end) in foreign:
-            continue
         try:
             ast.parse(source[start:end])
         except (SyntaxError, ValueError):
-            unparsed.append(number)
+            if (start, end) not in declared:
+                unparsed.append(number)
+            unread.append((start, end))
         except RecursionError as exc:
             raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
-    masked = sorted({*foreign, *(cells[number] for number in unparsed)})
-    return _without_source_ranges(source, masked), unparsed
+    return _without_source_ranges(source, unread), unparsed, unread
 
 
 def _without_source_ranges(text: str, spans: Sequence[tuple[int, int]]) -> str:

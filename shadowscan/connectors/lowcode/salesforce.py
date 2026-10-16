@@ -33,7 +33,7 @@ from shadowscan.connectors.common import (
 from shadowscan.connectors.identity.common import assess_app
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError
-from shadowscan.utils.redaction import sanitize_excerpt
+from shadowscan.utils.redaction import sanitize_text_excerpt
 from shadowscan.utils.text import get_path
 
 API = "v62.0"
@@ -369,7 +369,7 @@ class SalesforceConnector(BaseConnector):
         f.metadata.update(
             {
                 "developer_name": bot.get("DeveloperName"),
-                "description": sanitize_excerpt(bot.get("Description")),
+                "description": sanitize_text_excerpt(bot.get("Description")),
                 "versions": len(versions),
                 "active_versions": len(active),
             }
@@ -425,7 +425,7 @@ class SalesforceConnector(BaseConnector):
         f.metadata.update(
             {
                 "developer_name": rec.get("DeveloperName"),
-                "description": sanitize_excerpt(rec.get("Description")),
+                "description": sanitize_text_excerpt(rec.get("Description")),
                 "topics": [p.get("MasterLabel") or p.get("DeveloperName") for p in plugins][:30],
                 "actions": [fn.get("MasterLabel") or fn.get("DeveloperName") for fn in functions][:50],
                 "invocation_targets": targets,
@@ -493,7 +493,7 @@ class SalesforceConnector(BaseConnector):
                 signal="salesforce:flow",
                 description=(
                     f"{rec.get('ProcessType')} flow (trigger {rec.get('TriggerType')}) whose "
-                    f"name/description references AI: {sanitize_excerpt(text, 160)}"
+                    f"name/description references AI: {sanitize_text_excerpt(text, 160)}"
                 ),
                 weight=0.4,
             )

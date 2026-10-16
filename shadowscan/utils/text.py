@@ -286,6 +286,10 @@ def read_text(
         return None
 
 
+# Kernel names of Python kernels: ipykernel's (python3), xeus-python's and nb_conda_kernels'.
+_PYTHON_KERNEL = re.compile(r"(?:i?python|xpython)[\d.]*|conda-(?:root|env-.+)-py", re.IGNORECASE)
+
+
 def notebook_to_source(
     text: str,
     errors: list[str] | None = None,
@@ -298,8 +302,10 @@ def notebook_to_source(
     The cells are joined by line breaks; ``cells``, when given, receives each
     code cell's source in order, so a caller can treat them one at a time.
     ``language``, when given, receives the kernel language the notebook's
-    metadata declares (``kernelspec.language``, else ``language_info.name``),
-    lower-cased, if it declares one.
+    metadata declares, lower-cased, if it declares one: ``python`` when
+    ``kernelspec.name`` names a Python kernel (Jupyter starts the kernel its
+    name selects, whatever ``kernelspec.language`` says), else
+    ``kernelspec.language``, else ``language_info.name``.
     """
     try:
         nb = strict_json_loads(text)
@@ -314,8 +320,11 @@ def notebook_to_source(
     metadata = nb.get("metadata")
     if language is not None and isinstance(metadata, dict):
         kernelspec, info = metadata.get("kernelspec"), metadata.get("language_info")
-        declared = kernelspec.get("language") if isinstance(kernelspec, dict) else None
-        if not isinstance(declared, str) or not declared.strip():
+        spec: dict[str, Any] = kernelspec if isinstance(kernelspec, dict) else {}
+        kernel, declared = spec.get("name"), spec.get("language")
+        if isinstance(kernel, str) and _PYTHON_KERNEL.fullmatch(kernel.strip()):
+            declared = "python"
+        elif not isinstance(declared, str) or not declared.strip():
             declared = info.get("name") if isinstance(info, dict) else None
         if isinstance(declared, str) and declared.strip():
             language.append(declared.strip().lower())

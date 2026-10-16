@@ -40,7 +40,7 @@ from shadowscan.connectors.cloud.credentials import allow_instance_credentials
 from shadowscan.connectors.common import apply_matches, max_pages_limit, model_matches
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
-from shadowscan.utils.redaction import sanitize_excerpt
+from shadowscan.utils.redaction import sanitize_text_excerpt
 
 # "Allow <subject> to <verb> <resource family>": IAM policy statements are
 # untrusted text. A single "allow .*? <verb> <family>" search retried its lazy
@@ -659,7 +659,7 @@ class OciConnector(BaseConnector):
         f.metadata.update(
             {
                 "state": a.get("lifecycle_state"),
-                "description": sanitize_excerpt(a.get("description")),
+                "description": sanitize_text_excerpt(a.get("description")),
                 "knowledge_bases": a.get("knowledge_base_ids"),
                 "tools": [{"name": t.get("display_name"), "type": _tool_config_type(t)} for t in tools][:30],
                 "endpoints": [
@@ -671,7 +671,7 @@ class OciConnector(BaseConnector):
                     }
                     for e in eps
                 ],
-                "welcome_message": sanitize_excerpt(a.get("welcome_message"), 120),
+                "welcome_message": sanitize_text_excerpt(a.get("welcome_message"), 120),
                 "tags": a.get("freeform_tags"),
             }
         )
@@ -963,7 +963,7 @@ class OciConnector(BaseConnector):
             Evidence(
                 signal="oci:policy",
                 description=(
-                    f"Policy '{rec.get('name')}' statements: {sanitize_excerpt(' | '.join(stmts), 400)}"
+                    f"Policy '{rec.get('name')}' statements: {sanitize_text_excerpt(' | '.join(stmts), 400)}"
                 ),
                 weight=0.45,
             )
@@ -999,7 +999,7 @@ class OciConnector(BaseConnector):
         f.add_evidence(
             Evidence(
                 signal="oci:dynamic-group",
-                description=f"Dynamic group '{name}' matching {sanitize_excerpt(rule, 200)}",
+                description=f"Dynamic group '{name}' matching {sanitize_text_excerpt(rule, 200)}",
                 weight=0.3,
             )
         )

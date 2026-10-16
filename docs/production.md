@@ -238,15 +238,20 @@ not establish that a named AI tool is running, and launches with options a
 launcher's grammar does not recognize are not reported. Package runners that an
 interpreter runs (`node /usr/local/bin/npx -y pkg`, Defender's `node.exe
 ...\npx-cli.js`, `python3 /usr/bin/pipx run ...`) and npm's `npm exec pkg`
-process title on a node executable are read as those runners: an earlier
-candidate of this revision reported none of them, with the scan complete, so
-rescan runtime inventories it produced. If command-line limits leave arguments
-unread where they could change what runs (no argument left, or a launcher's
-target not read), the scan is incomplete (exit 3), including when no finding
-could be recovered from the retained prefix. Other cut command lines (a JVM or
-compiler with hundreds of options, a long prompt after `claude -p`) are
-classified from their leading arguments and leave the scan complete; one
-counted warning reports them all.
+process title on a node executable, or as the single argument with spaces
+that a live `/proc` shows, are read as those runners: an earlier candidate of
+this revision reported none of them, with the scan complete, so rescan runtime
+inventories it produced. If command-line limits leave arguments unread where
+they could change what runs (no argument left, or a launcher's target not
+read), the scan is incomplete (exit 3), including when no finding could be
+recovered from the retained prefix. A row an export marks `argv_truncated: true`
+loses its final argument, which the export may have cut: an earlier candidate
+of this revision classified it as complete, so an exported
+`npx -y @modelcontextprotocol/s` left the scan complete and empty and a cut
+`server-gi` was reported as an MCP server of that name; rescan offline exports
+with such rows. Other cut command lines (a JVM or compiler with hundreds of
+options, a long prompt after `claude -p`) are classified from their leading
+arguments and leave the scan complete; one counted warning reports them all.
 
 Runtime host and user identities are preserved in full within validated input
 limits. Previously shortened identities can split into multiple correct
@@ -275,10 +280,16 @@ before accepting a completeness gate. Python 2 modules, templates
 (`{{cookiecutter.slug}}/main.py`) and other `.py` files that are not Python 3
 stay a gap until listed in `exclude`; review them before excluding them. In a
 test path the scan discounts (`include_tests` off), source that does not parse
-only warns unless `strict_coverage` is set. Notebook cells in another language
-(`%%bash`, `%%writefile requirements.txt`, `%%sql`, `%%html`, and every cell of
-an R or Julia notebook) are not parsed as Python and keep lexical evidence
-without a gap.
+only warns unless `strict_coverage` is set. Notebook cells declared another
+language (`%%bash`, `%%writefile requirements.txt`, `%%sql`, `%%html`, and
+every cell of an R or Julia notebook) that do not parse as Python keep lexical
+evidence without a gap; one that parses is bound as Python whatever the
+notebook's metadata or cell magic declares. An earlier candidate of this
+revision skipped such cells however they parsed, so a repository could label a
+Python notebook `"language": "R"` (its kernel still named `python3`), or use
+`%%script env python3`, and have an agent with code-execution tools reported
+as framework usage without capabilities on a complete scan; rescan
+repositories it scanned.
 
 The new tests are authored regression controls. Independent human review,
 fresh blinded holdouts and provider-specific live tenant receipts remain
@@ -397,9 +408,11 @@ where the previous revision completed:
   graph that fails unexpectedly affects only its own n8n workflow; the rest
   of the export is still reported. A JSON, YAML or TOML document whose
   `nodes` list identifies no provider is not a graph, however long.
-- A live process command line over 65,536 bytes. The process is still
-  classified from its leading complete arguments, with
-  `metadata.command_lines_truncated`.
+- A live process command line over 65,536 bytes whose dropped arguments could
+  change what runs (no argument left, or a launcher's target not read). The
+  process is still classified from its leading complete arguments, with
+  `metadata.command_lines_truncated`; other cut command lines leave the scan
+  complete.
 - `SKILL.md` and MCP description audits over 64 KiB, with malformed front
   matter (`SKILL.md` only) or an unclosed fence. An MCP description that
   starts with a `---` line is audited as text: earlier revisions read it as
@@ -1709,15 +1722,18 @@ an underscore (`saas.Acme-Hub`, `saas.acme_hub`) no longer loads: `shadowscan
 connectors` reports an `invalid-name` diagnostic, and a scan that configures it
 fails that connector as unknown and exits 3. Rename the entry point and the
 class's `name`, and update `options.plugins` and the connector entries, before
-upgrading. A plugin finding built under another connector's name is attributed
-to the plugin with the id the plugin's own name gives; it kept the id of that
-connector's finding for the same resource, so it could replace or merge with it
-in baselines, diffs and fleet merges. Such findings get new ids; built-in
-finding ids, and those of plugin findings built under the plugin's own name, do
-not change. Process-mode plugin workers get `PYTHONSAFEPATH` only while they
-start: the scanner's environment, and that of a program embedding it, is
-restored, so their later children keep their script directory on `sys.path`.
-Rescan affected sources and rebuild comparison baselines.
+upgrading. Every plugin finding, in thread and process mode, gets the id the
+plugin's own name and the finding's resource give. A finding a plugin built
+under another connector's name, gave an explicit `id`, or copied with
+`dataclasses.replace` from a finding built under another name kept that id; it
+could be the id of a built-in connector's finding for the same resource, so the
+plugin's finding could replace or merge with it in baselines, diffs and fleet
+merges. Such findings get new ids; built-in finding ids, and those of plugin
+findings that did not set their own id, do not change. Process-mode plugin
+workers get `PYTHONSAFEPATH` only while they start: the scanner's environment,
+and that of a program embedding it, is restored, so their later children keep
+their script directory on `sys.path`. Rescan affected sources and rebuild
+comparison baselines.
 
 ### October 14 detection precision, ambiguous app names and scoped correlation (unreleased)
 

@@ -38,7 +38,10 @@ Node, Deno or Python interpreter runs a script named `npx` (`npx-cli.js`),
 runner's. When the executable (osquery's `path`, Defender's `FolderPath`) does
 not identify a tool, the command line's first argument is read as well: a
 process title can name the launcher or tool there (npm sets `npm exec pkg`)
-while the executable is node.
+while the executable is node. A title that replaced the command line is one
+argument with spaces in `/proc/<pid>/cmdline`, so a first argument with
+whitespace is also read split into words, ahead of the arguments after it:
+a live `npm exec @modelcontextprotocol/server-github` is that MCP server.
 
 Arguments after a script or module, inline Python/Node code (`-c`, `--eval`,
 `npx --call`), and dependency options such as `--package`, `--from`, or
@@ -80,8 +83,9 @@ MCP package name are kept.
   `-p`, a JVM classpath) is classified from its leading complete arguments: the
   final argument the limit may have cut is dropped, so a partial name never
   matches a rule. The finding records `metadata.command_lines_truncated` with a
-  limitation, and the scan is incomplete because the unread arguments could
-  hold evidence.
+  limitation. The scan is incomplete only when the unread arguments could
+  change what runs, as described below: `claude -p` with a 70 KB prompt stays
+  complete, while `npx --registry URL` cut before its package does not.
 
 Options: `label` (host name for records that carry none; default the host
 name), `max_processes` (live mode bound, default 100,000; reaching it makes
@@ -90,13 +94,17 @@ executable nor a valid inspection record makes the scan incomplete.
 
 Both live and offline command lines are bounded to 64 arguments and 65,536
 UTF-8 bytes. Only complete leading arguments are classified; a cut text token
-is discarded. A command line cut by a limit, or marked `argv_truncated: true`
-by its export, makes coverage incomplete when what runs could depend on the
-arguments that were dropped: when no argument is left, or when a launcher's
-target was not among the leading arguments (`python -B ... -m` cut before its
-module, `npx --registry URL` cut before its package). A program that is no
-launcher (a JVM or compiler with hundreds of options), or a launcher whose
-target was read, is classified from its leading arguments and stays complete.
+is discarded. A row its export marks `argv_truncated: true` may have been cut
+inside its final argument, so that argument (or the final word of its command
+line) is dropped too, unless one of these bounds already left it out. A
+command line cut by a limit or by its export makes coverage incomplete when
+what runs could depend on the arguments that were dropped: when no argument is
+left, or when a launcher's target was not among the leading arguments
+(`python -B ... -m` cut before its module, `npx --registry URL` cut before its
+package, or an exported `npx -y @modelcontextprotocol/s` whose cut final
+argument was npx's target). A program that is no launcher (a JVM or compiler
+with hundreds of options), or a launcher whose target was read before the
+dropped argument, is classified from its leading arguments and stays complete.
 One counted warning per scan reports the cut command lines and how many could
 not be classified. Retained findings record `metadata.command_lines_truncated`.
 A malformed argument array is rejected with incomplete coverage.

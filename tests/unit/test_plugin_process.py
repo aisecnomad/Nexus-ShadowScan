@@ -101,12 +101,23 @@ class Connector(BaseConnector):
             if mode == "metadata-types":
                 import datetime
                 metadata.update(seen=datetime.datetime(2026, 1, 1), scopes={"read"}, raw=b"ab")
-            # "forge" builds the finding under a built-in connector's name.
-            yield Finding(
-                surface=self.surface, connector="code.filesystem" if mode == "forge" else self.name,
-                kind=Kind.AGENT, title="process probe", resource="probe", resource_type="test",
-                metadata=metadata,
+            # "forge" builds the finding under a built-in connector's name; "forge-id" gives a
+            # finding under its own name that finding's id, and "forge-replace" re-labels a copy.
+            shape = dict(
+                surface=self.surface, kind=Kind.AGENT, title="process probe", resource="probe",
+                resource_type="test", metadata=metadata,
             )
+            if not mode.startswith("forge"):
+                yield Finding(connector=self.name, **shape)
+                continue
+            claimed = Finding(connector="code.filesystem", **shape)
+            if mode == "forge":
+                yield claimed
+            elif mode == "forge-id":
+                yield Finding(connector=self.name, id=claimed.id, **shape)
+            else:
+                import dataclasses
+                yield dataclasses.replace(claimed, connector=self.name)
 """
 
 
@@ -700,12 +711,16 @@ def test_planted_module_in_the_working_directory_does_not_run_in_the_worker(
     assert not marker.exists()
 
 
-def test_process_plugin_finding_built_under_a_builtin_name_gets_the_plugin_id(installed_probe, monkeypatch):
-    """A finding a plugin builds under a built-in connector's name is attributed to the plugin in the
-    worker, with the id the plugin's name gives, never the built-in finding's id (as in thread mode)."""
+@pytest.mark.parametrize("mode", ["forge", "forge-id", "forge-replace"])
+def test_process_plugin_finding_built_under_a_builtin_name_gets_the_plugin_id(
+    installed_probe, monkeypatch, mode
+):
+    """A finding a plugin builds under a built-in connector's name, or gives that finding's id
+    (``id=``, ``dataclasses.replace``), is attributed to the plugin with the id the plugin's name
+    gives, never the built-in finding's id (as in thread mode)."""
     from shadowscan.models import Finding, Kind
 
-    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "forge")
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", mode)
     result = _engine().run()
     assert result.complete, result.stats
     [finding] = result.findings
@@ -717,3 +732,25 @@ def test_process_plugin_finding_built_under_a_builtin_name_gets_the_plugin_id(in
     plugin = Finding(surface=finding.surface, connector=ENTRY, provider=finding.provider, **shape)
     assert finding.connector == ENTRY
     assert finding.id == plugin.id != claimed.id
+
+
+def test_a_decoded_plugin_finding_never_keeps_the_id_it_carries():
+    """The worker's engine derives each plugin finding's id, but the parent reads what the plugin
+    process wrote: a payload carrying a built-in finding's id under the plugin's name gets the id
+    the plugin's name derives."""
+    from shadowscan.models import Finding, Kind, Surface
+
+    shape = {
+        "surface": Surface.CODE,
+        "kind": Kind.AGENT,
+        "title": "t",
+        "resource": "r",
+        "resource_type": "repo",
+    }
+    builtin = Finding(connector="code.filesystem", **shape)
+    forged = {**Finding(connector=ENTRY, **shape).to_dict(), "id": builtin.id}
+    stats = {**asdict(ScanStats(ENTRY, "now")), "findings": 1}
+    payload = json.dumps({"stats": stats, "findings": [forged], "exports": []}).encode()
+    [finding], _, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert finding.connector == ENTRY
+    assert finding.id == Finding(connector=ENTRY, **shape).id != builtin.id

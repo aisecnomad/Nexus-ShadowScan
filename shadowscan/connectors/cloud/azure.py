@@ -45,7 +45,7 @@ from shadowscan.connectors.common import (
 )
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
-from shadowscan.utils.redaction import sanitize_excerpt
+from shadowscan.utils.redaction import sanitize_excerpt, sanitize_text_excerpt
 from shadowscan.utils.text import get_path
 
 ARM = "https://management.azure.com"
@@ -776,7 +776,7 @@ class AzureConnector(BaseConnector):
         f.metadata.update(
             {
                 "endpoints": props.get("endpoints"),
-                "description": sanitize_excerpt(props.get("description")),
+                "description": sanitize_text_excerpt(props.get("description")),
                 "tags": tags,
             }
         )
