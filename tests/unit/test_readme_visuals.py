@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -16,14 +17,18 @@ from shadowscan.reporters import FORMATS
 from tools.readme_visuals import (
     ASSETS,
     BANNER,
+    BENCHMARK,
+    BENCHMARK_RUN,
     CONNECTORS,
     DATA_FLOW,
     REPORT_COMMANDS,
     ROOT,
     SURFACE_COLOURS,
     SURFACES,
+    benchmark_rows,
     main,
     render_banner,
+    render_benchmark,
     render_connectors,
     render_data_flow,
     rendered,
@@ -44,7 +49,7 @@ def test_committed_images_match_the_generator() -> None:
     assert main(["--check"]) == 0
 
 
-@pytest.mark.parametrize("render", [render_banner, render_data_flow, render_connectors])
+@pytest.mark.parametrize("render", [render_banner, render_data_flow, render_connectors, render_benchmark])
 def test_images_are_well_formed_accessible_svg(render: Callable[[], str]) -> None:
     svg = render()
     root = ET.fromstring(svg.split("\n", 1)[1])
@@ -92,7 +97,7 @@ def test_images_carry_no_version_count_or_repository_slug(render: Callable[[], s
 def test_readme_and_architecture_page_reference_the_generated_images() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     raw = "https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/"
-    for path in (BANNER, DATA_FLOW):
+    for path in (BANNER, DATA_FLOW, BENCHMARK):
         assert f"{raw}{path.name}" in readme
     assert f"assets/{CONNECTORS.name}" in (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
 
@@ -101,3 +106,20 @@ def test_docs_assets_holds_only_the_generated_images() -> None:
     """Raster images cannot be regenerated or checked, so only the generated SVGs belong here."""
     assert {path.name for path in ASSETS.iterdir()} == {path.name for path in rendered()}
     assert all(path.parent == ASSETS for path in rendered())
+
+
+def test_benchmark_chart_shows_every_tool_of_the_committed_run_with_its_caveats() -> None:
+    """The chart's figures come only from a committed results file, and it says what they are not."""
+    with (BENCHMARK_RUN / "metrics.json").open(encoding="utf-8") as handle:
+        tools = json.load(handle)["tools"]
+    rows = benchmark_rows()
+    assert {name for name, *_ in rows} == set(tools)
+    text = _text(render_benchmark())
+    for name, coverage, estate, scope in rows:
+        assert tools[name]["estate"]["recall"] == estate and tools[name]["in_scope"]["recall"] == scope
+        assert name in text and coverage in text and f"{estate:.0%}" in text and f"{scope:.0%}" in text
+    assert BENCHMARK_RUN.name in text
+    assert "Author-written synthetic corpus" in text
+    assert "compare tools on in-scope recall" in text
+    assert "not a verdict on any product" in text
+    assert "aisecnomad" not in text
