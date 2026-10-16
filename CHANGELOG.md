@@ -5,6 +5,27 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Security & architecture hardening: Git DNS/CA pinning, plugin env scrubbing, abandoned worker pruning (October 16)
+
+- `shadowscan/utils/http.py`, `shadowscan/utils/git.py`, `shadowscan/connectors/code/remote.py`:
+  `validate_clone_url()` resolves and validates all DNS `A`/`AAAA` records for
+  remote repository URLs once and passes `http.curloptResolve` (`+[host]:[port]:[ip,...]`)
+  to `clone_environment()`, closing the DNS-rebinding TOCTOU window between
+  Python pre-flight validation and libcurl's independent resolution inside `git clone`.
+  `clone_environment()` also propagates the active CA bundle (`SHADOWSCAN_CA_BUNDLE`
+  / `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`) via `http.sslCAInfo`, forces
+  `http.sslVerify=true` and `http.proxy=""`, and `safe_git_env()` strips ambient
+  proxy and `CURL_HOME` environment variables.
+- `shadowscan/plugin_process.py`: `_worker()` removes `SHADOWSCAN_IDENTITY_KEY`
+  from `os.environ` immediately after `Engine` initialization and before
+  importing or running third-party plugins, so plugins that do not declare
+  `uses_run_identity_key = True` (and their child processes) cannot read the
+  raw operator key from the process environment.
+- `shadowscan/engine.py`: `Engine._prune_abandoned_workers()` reclaims
+  timed-out worker threads whose `Future` has since completed cooperatively at
+  the start and end of each `Engine.run()`, preventing monotonic capacity
+  decay across long-lived `Engine` instances.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

@@ -95,6 +95,15 @@ def test_git_environment_discards_injected_configs_and_execution_overrides(monke
         "GIT_ASKPASS": "/tmp/evil",
         "SSH_ASKPASS": "/tmp/evil",
         "GIT_SSL_NO_VERIFY": "true",
+        "HTTP_PROXY": "http://127.0.0.1:8080",
+        "HTTPS_PROXY": "http://127.0.0.1:8080",
+        "ALL_PROXY": "socks5://127.0.0.1:1080",
+        "NO_PROXY": "*",
+        "http_proxy": "http://127.0.0.1:8080",
+        "https_proxy": "http://127.0.0.1:8080",
+        "all_proxy": "socks5://127.0.0.1:1080",
+        "no_proxy": "*",
+        "CURL_HOME": "/tmp/evil-curl",
     }
     for key, value in hostile.items():
         monkeypatch.setenv(key, value)
@@ -110,6 +119,8 @@ def test_git_environment_discards_injected_configs_and_execution_overrides(monke
     assert config["protocol.https.allow"] == "always"
     assert config["credential.helper"] == ""
     assert config["http.followRedirects"] == "false"
+    assert config["http.sslVerify"] == "true"
+    assert config["http.proxy"] == ""
     assert (
         base64.b64decode(config["http.https://github.com/.extraheader"].split()[-1])
         == b"x-access-token:synthetic-token"

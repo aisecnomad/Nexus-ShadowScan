@@ -696,22 +696,41 @@ def diff_changed_files(
     return frozenset(paths)
 
 
+_SCRUBBED_GIT_ENV_VARS = frozenset(
+    {
+        "SSH_ASKPASS",
+        "SHADOWSCAN_IDENTITY_KEY",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "CURL_HOME",
+    }
+)
+
+
 def safe_git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Environment for git child processes.
 
     Drops inherited Git variables and ignores system/global gitconfig so
     ``url.*.insteadOf``, credential helpers and smudge filters cannot rewrite
-    a clone of untrusted content. Callers may add ``GIT_CONFIG_*`` overlays
-    for origin-scoped extraheaders.
+    a clone of untrusted content. Ambient proxy variables and the report
+    identity key are removed so ``git-remote-https`` cannot route around
+    destination controls or inherit ``SHADOWSCAN_IDENTITY_KEY``. Callers may
+    add ``GIT_CONFIG_*`` overlays for origin-scoped extraheaders.
     """
     # In particular, GIT_CONFIG_COUNT/KEY_n/VALUE_n must not survive: Git gives
     # them command-scope precedence over the otherwise-disabled config files.
     # Clear the namespace rather than maintain a partial list of overrides.
-    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    env.pop("SSH_ASKPASS", None)
-    # Git never needs the report identity key (comparison.IDENTITY_KEY_ENV),
-    # so a child process of untrusted content never receives it.
-    env.pop("SHADOWSCAN_IDENTITY_KEY", None)
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_") and key not in _SCRUBBED_GIT_ENV_VARS
+    }
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["GIT_CONFIG_GLOBAL"] = os.devnull
@@ -769,13 +788,23 @@ def git_config_overlay(pairs: list[tuple[str, str]]) -> dict[str, str]:
     return env
 
 
-def clone_environment(origin: str, token: str | None, username: str) -> dict[str, str]:
-    """Scope authentication to a verified HTTPS origin and disable redirects."""
+def clone_environment(
+    origin: str,
+    token: str | None,
+    username: str,
+    *,
+    resolved_host: str | None = None,
+) -> dict[str, str]:
+    """Scope authentication to a verified HTTPS origin, pin DNS answers, and disable redirects."""
     import base64
+
+    from shadowscan.utils.http import get_ca_bundle
 
     config = [
         ("core.hooksPath", os.devnull),
         ("http.followRedirects", "false"),
+        ("http.sslVerify", "true"),
+        ("http.proxy", ""),
         ("credential.helper", ""),
         ("protocol.allow", "never"),
         ("protocol.https.allow", "always"),
@@ -784,6 +813,11 @@ def clone_environment(origin: str, token: str | None, username: str) -> dict[str
         ("transfer.fsckObjects", "true"),
         ("fetch.fsckObjects", "true"),
     ]
+    ca_bundle = get_ca_bundle()
+    if ca_bundle:
+        config.append(("http.sslCAInfo", ca_bundle))
+    if resolved_host:
+        config.append(("http.curloptResolve", resolved_host))
     extra: dict[str, str] = {}
     if token:
         basic = base64.b64encode(f"{username}:{token}".encode()).decode()

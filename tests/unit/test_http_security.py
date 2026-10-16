@@ -1121,3 +1121,58 @@ def test_incomplete_scan_message_for_a_denied_request_has_no_body():
 def test_non_text_urls_are_rejected_as_not_https(url):
     with pytest.raises(ValueError, match="HTTPS"):
         validate_url(url)
+
+
+def test_clone_pins_validated_dns_addresses_and_ca_bundle(tmp_path, index, monkeypatch):
+    from shadowscan.utils.http import reset_ca_bundle, set_ca_bundle, validate_clone_url
+
+    resolver = Mock(
+        return_value=[
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443)),
+            (
+                socket.AF_INET6,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("2001:4860:4860::8888", 443, 0, 0),
+            ),
+        ]
+    )
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolver)
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
+    run = Mock(return_value=True)
+    monkeypatch.setattr("shadowscan.connectors.code.remote.run_bounded_clone", run)
+
+    token = set_ca_bundle(str(bundle))
+    try:
+        connector = GitHubConnector(ConnectorContext(config={"token": "synthetic-token"}, index=index))
+        assert connector._clone(
+            {"full_name": "org/repo", "clone_url": "https://github.com/org/repo.git"}, str(tmp_path)
+        )
+    finally:
+        reset_ca_bundle(token)
+
+    github_calls = [c for c in resolver.call_args_list if c.args[0] == "github.com"]
+    assert len(github_calls) == 1
+    env = run.call_args.args[1]
+    settings = {
+        env[f"GIT_CONFIG_KEY_{n}"]: env[f"GIT_CONFIG_VALUE_{n}"] for n in range(int(env["GIT_CONFIG_COUNT"]))
+    }
+    assert settings["http.curloptResolve"] == "+github.com:443:93.184.216.34,2001:4860:4860::8888"
+    assert settings["http.sslVerify"] == "true"
+    assert settings["http.proxy"] == ""
+    assert settings["http.sslCAInfo"] == str(bundle.resolve())
+
+    # Mixed public + metadata DNS answers fail closed before git clone starts.
+    monkeypatch.setattr(
+        "shadowscan.utils.http.socket.getaddrinfo",
+        Mock(
+            return_value=[
+                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("169.254.169.254", 443)),
+            ]
+        ),
+    )
+    with pytest.raises(ValueError, match="Refusing"):
+        validate_clone_url("https://github.com/org/repo.git", "https://github.com")

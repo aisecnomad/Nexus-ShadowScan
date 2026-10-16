@@ -298,3 +298,44 @@ def test_cli_hard_exit_survives_broken_diagnostic_streams(monkeypatch, failure_p
     expected_code = 1 if emission_fails else 3
     assert failure.value.code == expected_code
     assert calls == ["diagnostic", "stdout", "stderr", ("exit", expected_code)]
+
+
+def test_engine_prunes_completed_abandoned_workers_across_runs(monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+    should_block = True
+
+    class CooperativeConnector:
+        def __init__(self, ctx):
+            self.ctx = ctx
+
+        def run(self):
+            if should_block:
+                entered.set()
+                release.wait(3)
+                finished.set()
+            self.ctx.stats = ScanStats(connector="gateway.logs", started_at=now_iso(), finished_at=now_iso())
+            return []
+
+    monkeypatch.setattr("shadowscan.engine.get_connector_class", lambda name: CooperativeConnector)
+    engine = Engine(
+        ScanConfig(connectors=[ConnectorSpec("gateway.logs")], connector_timeout_seconds=0.1),
+        SignatureIndex([]),
+    )
+    first = engine.run()
+    assert not first.complete
+    assert entered.is_set()
+    assert engine.abandoned_workers == ["gateway.logs"]
+    assert len(engine._abandoned_futures) == 1
+
+    release.set()
+    assert finished.wait(3)
+    # Wait briefly for Future completion bookkeeping on the worker thread.
+    engine._abandoned_futures[0].result(timeout=3)
+
+    should_block = False
+    second = engine.run()
+    assert second.complete
+    assert engine.abandoned_workers == []
+    assert engine._abandoned_futures == []

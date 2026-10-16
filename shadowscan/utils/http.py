@@ -289,6 +289,11 @@ def set_ca_bundle(path: str | None) -> contextvars.Token[str | None]:
     return _ca_bundle.set(None if path is None else _validated_ca_bundle(path))
 
 
+def get_ca_bundle() -> str | None:
+    """Return the validated PEM bundle configured for the current worker, if any."""
+    return _ca_bundle.get()
+
+
 def reset_ca_bundle(token: contextvars.Token[str | None]) -> None:
     _ca_bundle.reset(token)
 
@@ -349,15 +354,9 @@ def _blocked_host(hostname: str) -> bool:
         return False
 
 
-def validate_url(url: str, origin: str | None = None, *, allow_private: bool | None = None) -> str:
-    """Require HTTPS and, for server-supplied links, the credential origin.
-
-    Destinations that resolve to loopback, link-local, private, multicast,
-    unspecified, reserved, or cloud-metadata addresses are rejected unless
-    ``allow_private`` (or the current worker's policy) is true. DNS checks here
-    are preflight only; HttpClient also enforces the policy at socket connection.
-    External transports such as git and cloud SDKs need their own egress controls.
-    """
+def _validate_url_and_resolve(
+    url: str, origin: str | None = None, *, allow_private: bool | None = None
+) -> tuple[str, str | None]:
     # urlsplit drops tabs and line breaks and strips leading blanks before parsing, while git and
     # libcurl reject them (and HTTP stacks differ on the rest). Anything the validator does not see
     # exactly as the transport will is refused, never silently cleaned up.
@@ -385,6 +384,7 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
     host = parsed.hostname.strip("[]")
     if (_blocked_host(host) or "%" in host) and not allow:
         raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
+    resolved_addresses: list[str] = []
     try:
         ipaddress.ip_address(host)
     except ValueError:
@@ -401,7 +401,41 @@ def validate_url(url: str, origin: str | None = None, *, allow_private: bool | N
                 raise ValueError(
                     "Refusing loopback, link-local, private, or cloud-metadata destination"
                 ) from None
-    return url
+            text = str(addr)
+            if text not in resolved_addresses:
+                resolved_addresses.append(text)
+    resolve_host = host.rstrip(".")
+    resolve_entry = (
+        f"+{resolve_host}:{port}:{','.join(resolved_addresses)}"
+        if resolved_addresses and resolve_host
+        else None
+    )
+    return url, resolve_entry
+
+
+def validate_url(url: str, origin: str | None = None, *, allow_private: bool | None = None) -> str:
+    """Require HTTPS and, for server-supplied links, the credential origin.
+
+    Destinations that resolve to loopback, link-local, private, multicast,
+    unspecified, reserved, or cloud-metadata addresses are rejected unless
+    ``allow_private`` (or the current worker's policy) is true. DNS checks here
+    are preflight only; HttpClient also enforces the policy at socket connection.
+    External transports such as git and cloud SDKs need their own egress controls.
+    """
+    validated, _ = _validate_url_and_resolve(url, origin, allow_private=allow_private)
+    return validated
+
+
+def validate_clone_url(
+    url: str, origin: str | None = None, *, allow_private: bool | None = None
+) -> tuple[str, str | None]:
+    """Validate an HTTPS clone URL and return its ``http.curloptResolve`` pin when resolved.
+
+    Resolving and validating every DNS answer once before passing
+    ``+host:port:addr[,addr]`` to Git prevents a DNS rebinding race between URL
+    validation and ``git-remote-https`` connection establishment.
+    """
+    return _validate_url_and_resolve(url, origin, allow_private=allow_private)
 
 
 def _join_url(origin: str, path: str) -> str:

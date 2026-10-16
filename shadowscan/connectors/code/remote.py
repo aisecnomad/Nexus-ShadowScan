@@ -48,7 +48,7 @@ from shadowscan.utils.git import (
     unregister_checkout,
     validate_git_ref,
 )
-from shadowscan.utils.http import HttpClient, HttpError, validate_url
+from shadowscan.utils.http import HttpClient, HttpError, validate_clone_url
 
 INTERESTING_DIRS = (
     ".github/",
@@ -606,8 +606,8 @@ class RemoteRepositoryConnector(BaseConnector):
         origin, candidate = target
         # The token is scoped to the API origin: a clone URL from provider JSON
         # must stay on it, and git may not follow redirects away from it.
-        url = validate_url(candidate, origin)
-        env = clone_environment(origin, self.token, self.clone_username)
+        url, resolved_host = validate_clone_url(candidate, origin)
+        env = clone_environment(origin, self.token, self.clone_username, resolved_host=resolved_host)
         cmd = [
             *git_argv_prefix(),
             "clone",

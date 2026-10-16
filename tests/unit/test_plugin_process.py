@@ -84,6 +84,11 @@ class Connector(BaseConnector):
             if mode == "metadata-types":
                 import datetime
                 metadata.update(seen=datetime.datetime(2026, 1, 1), scopes={"read"}, raw=b"ab")
+            if mode == "identity-env":
+                metadata.update(
+                    env_has_identity_key="SHADOWSCAN_IDENTITY_KEY" in os.environ,
+                    ctx_has_identity_key=self.ctx.gateway_identity_key is not None,
+                )
             yield Finding(
                 surface=self.surface, connector=self.name, kind=Kind.AGENT,
                 title="process probe", resource="probe", resource_type="test",
@@ -561,3 +566,13 @@ def test_execution_backend_defaults_and_mutation_validation():
 def test_plugin_execution_cli_option():
     result = CliRunner().invoke(main, ["scan", "--help"])
     assert result.exit_code == 0 and "--plugin-execution" in result.output
+
+
+def test_spawned_plugin_scrubs_identity_key_from_worker_environment(installed_probe, monkeypatch):
+    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", "hex:" + bytes(range(32)).hex())
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "identity-env")
+    result = _engine().run()
+    assert result.complete, result.stats
+    assert result.findings[0].metadata["env_has_identity_key"] is False
+    assert result.findings[0].metadata["ctx_has_identity_key"] is False
+    _assert_reaped(installed_probe)
