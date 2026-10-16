@@ -172,352 +172,42 @@ for walkthroughs of each surface and the
 
 ## Command reference
 
-### Core scanning commands
-
-<details open>
-<summary><strong><code>shadowscan code [PATHS...]</code></strong> — Scan repositories for AI agent evidence</summary>
-
-Scans local directories, remote GitHub organizations, and GitLab groups for agent frameworks,
-MCP configurations, coding-agent settings, IaC provisioning, and hard-coded credentials.
-
-```bash
-shadowscan code .                                          # scan current directory
-shadowscan code ./repo1 ./repo2                            # scan multiple paths
-shadowscan code . --diff-base origin/main                  # PR-scoped diff (Git 2.45+)
-shadowscan code --github-org acme                          # scan all repos in a GitHub org
-shadowscan code --github-repo acme/api --mode clone        # scan specific remote repo
-shadowscan code . --inventory ./inventory --fail-on high   # with inventory reconciliation
-```
-
-| Option | Description |
+| Command | Purpose |
 |---|---|
-| `PATHS` | Local directories or files to scan |
-| `--diff-base REF` | Git ref to diff against (PR scope, Git 2.45+) |
-| `--github-org ORG` | Scan every repository in a GitHub organization (uses `GITHUB_TOKEN`) |
-| `--github-repo OWNER/NAME` | Scan specific remote repositories (repeatable) |
-| `--gitlab-group GROUP` | Scan every project in a GitLab group (uses `GITLAB_TOKEN`) |
-| `--mode clone\|api` | Remote fetch mode for GitHub/GitLab |
-| `--exclude PATTERN` | Extra directory names or globs to skip (repeatable) |
-| `--no-default-excludes` | Also scan default-excluded dirs (`node_modules`, `.git`, `vendor`, etc.) |
-| `--no-secrets` | Skip credential detection |
-| `--strict-coverage` | Record incomplete file/symlink coverage as errors |
-| `--include-tests` | Let test/fixture code establish agents at full weight |
-| `--triage` | Fast subset scan (manifests, MCP/agent configs, flows, IaC only) |
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan scan -c CONFIG</code></strong> — Run a multi-connector scan from config</summary>
-
-Orchestrates all connectors defined in a YAML configuration file.
-
-```bash
-shadowscan scan -c shadowscan.yaml                          # run all connectors
-shadowscan scan -c shadowscan.yaml --only identity.entra    # run one connector
-shadowscan scan -c shadowscan.yaml --format sarif -o out.sarif
-```
-
-| Option | Description |
-|---|---|
-| `-c, --config FILE` | **(required)** Path to `shadowscan.yaml` configuration file |
-| `--only NAME` | Run only these connector names or labels (repeatable) |
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan run CONNECTOR</code></strong> — Run a single connector ad-hoc</summary>
-
-Runs one connector with inline configuration, or re-analyzes an offline export.
-
-```bash
-shadowscan run identity.entra --set tenant_id=... --set client_id=...
-shadowscan run cloud.aws --set regions=us-east-1,eu-west-1 --dump-records ./exports
-shadowscan run saas.slack --input slack-export.json          # offline re-analysis
-```
-
-| Option | Description |
-|---|---|
-| `CONNECTOR` | Connector name (e.g. `identity.entra`, `cloud.aws`) |
-| `--input FILE` | Offline export file instead of live API |
-| `-S, --set KEY=VAL` | Connector configuration key-value pairs (repeatable; lists as `a,b,c`) |
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan endpoint</code></strong> — Scan workstation AI clients</summary>
-
-Scans well-known AI client configuration locations on the local workstation: Claude Desktop, Claude Code, Cursor, Windsurf, VS Code extensions, Ollama, and more.
-
-```bash
-shadowscan endpoint                                # scan current user's profile
-shadowscan endpoint --home /Users/dana             # scan a specific profile
-shadowscan endpoint --list                         # list known locations and exit
-```
-
-| Option | Description |
-|---|---|
-| `--home DIR` | Profile directory (default: current user's home) |
-| `--label TEXT` | Resource prefix (default: `endpoint:<hostname>`) |
-| `--list` | Print known client locations and exit |
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan gateway LOGS...</code></strong> — Analyze LLM gateway / provider logs</summary>
-
-Reconstructs AI callers from gateway, provider, or proxy log files.
-
-```bash
-shadowscan gateway access.log                                # auto-detect format
-shadowscan gateway litellm-spend.jsonl --log-format litellm  # explicit format
-shadowscan gateway logs/ --min-events 5                      # directory, filter noise
-```
-
-| Option | Description |
-|---|---|
-| `LOGS` | Log files or directories (variadic) |
-| `--log-format FORMAT` | `auto` (default), `litellm`, `portkey`, `kong`, `cloudflare`, `helicone`, `langfuse`, `bedrock`, `azure-openai`, `vertex`, `openai-usage`, `anthropic-usage`, `access-log`, `generic` |
-| `--min-events N` | Ignore callers with fewer than N requests (default: 1) |
-| `--all-hosts` | Keep traffic to every host (default: LLM/agent hosts only) |
-| `--internal-model-host HOST` | Exact internal model-server hostname (repeatable) |
-| `--label TEXT` | Gateway name for findings' account/provider field |
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan jwt [TOKENS...]</code></strong> — Classify JWTs</summary>
-
-Classifies JWTs as human, service, or delegated-agent identities and assesses their privileges.
-
-```bash
-shadowscan jwt --file tokens.txt                                    # from file
-echo "$TOKEN" | shadowscan jwt                                      # from stdin
-shadowscan jwt --file t.txt --jwks-url https://.../.well-known/jwks.json  # verify signatures
-```
-
-| Option | Description |
-|---|---|
-| `TOKENS` | JWT strings (positional, also reads from stdin) |
-| `-F, --file FILE` | File with one JWT per line or JSON list |
-| `--jwks-url URL` | Verify signatures against trusted JWKS endpoint |
-| `--expected-issuer ISS` | Require this exact issuer (requires `--jwks-url`) |
-| `--jwt-algorithm ALG` | Allowed algorithms: `RS256`, `ES256`, `EdDSA`, `PS256` (repeatable) |
-
-</details>
-
-### Fleet & operations commands
-
-<details>
-<summary><strong><code>shadowscan merge REPORTS...</code></strong> — Combine multiple reports</summary>
-
-Merges JSON reports from several machines or scans into one fleet report.
-
-```bash
-shadowscan merge team-a.json team-b.json -o fleet.json
-shadowscan merge reports/*.json --format html -o fleet.html
-```
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan dashboard REPORTS...</code></strong> — Generate fleet dashboard</summary>
-
-Writes a static fleet dashboard (HTML) and optionally a `shadowscan.inventory/v1` JSON document.
-
-```bash
-shadowscan dashboard fleet.json -o dashboard.html
-shadowscan dashboard fleet.json -o dash.html --inventory-json inv.json --baseline prev.json
-shadowscan dashboard fleet.json -o dash.html --history ./weekly-reports/
-```
-
-| Option | Description |
-|---|---|
-| `-o, --output FILE` | **(required)** Dashboard HTML output |
-| `--inventory-json FILE` | Also write `shadowscan.inventory/v1` JSON |
-| `--baseline FILE` | Show drift against earlier report |
-| `--history DIR` | Show trends from JSON reports in this directory |
-| `--as-of TIME` | ISO 8601 timestamp to measure staleness against |
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan diff BASELINE CURRENT</code></strong> — Compare reports for drift</summary>
-
-Compares two JSON reports: new, resolved and changed findings, adverse drift.
-
-```bash
-shadowscan diff last-week.json this-week.json --json
-shadowscan diff baseline.json current.json --fail-on-new --fail-on-drift inventory,capability
-shadowscan diff old.json new.json --baseline-sha256 abc123... --max-baseline-age-days 30
-```
-
-| Option | Description |
-|---|---|
-| `BASELINE` | Earlier JSON report |
-| `CURRENT` | Current JSON report |
-| `--json` | Output as JSON |
-| `--fail-on-new` | Exit 2 if new findings or risk level rose |
-| `--fail-on-drift CLASSES` | Comma-separated: `inventory`, `capability`, `autonomy`, `governance`, `coverage` |
-| `--baseline-sha256 HEX` | Refuse baseline unless SHA-256 matches |
-| `--max-baseline-age-days N` | Mark comparison incomplete if baseline too old |
-| `--shadow-only` | Display only unmatched shadow findings |
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan controls REPORTS...</code></strong> — Map findings to governance controls</summary>
-
-Lists findings per NIST AI RMF / ISO/IEC 42001 / EU AI Act / AIUC-1 control (evidence references, not compliance determinations).
-
-```bash
-shadowscan controls report.json --format markdown -o controls.md
-shadowscan controls report.json --framework eu-ai-act-2024
-```
-
-| Option | Description |
-|---|---|
-| `-f, --format` | `markdown` (default), `csv`, `json` |
-| `-o, --output FILE` | Output file |
-| `--framework NAME` | Filter by control catalog prefix or framework (repeatable) |
-
-</details>
-
-### Inventory & registry commands
-
-<details>
-<summary><strong><code>shadowscan inventory check PATHS...</code></strong> — Validate inventory files</summary>
-
-```bash
-shadowscan inventory check ./inventory/
-shadowscan inventory check agent-card.yaml agents.csv
-```
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan inventory stubs REPORT</code></strong> — Generate Agent Card skeletons</summary>
-
-Generates Agent Capability Card stubs from shadow findings to bootstrap your inventory.
-
-```bash
-shadowscan inventory stubs report.json -o ./inventory/
-shadowscan inventory stubs report.json -o ./cards/ --min-risk high --kinds agent,mcp-server
-```
-
-| Option | Description |
-|---|---|
-| `-o, --out DIR` | **(required)** Directory to write one card YAML per shadow agent |
-| `--kinds KINDS` | Finding kinds to register (default: `agent,mcp-server,workflow,bot-app,agent-config`) |
-| `--min-risk LEVEL` | Minimum risk level: `critical`, `high`, `medium`, `low`, `info` (default: `low`) |
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan mcp-registry snapshot</code></strong> — Snapshot an MCP registry</summary>
-
-Lists every server version of an MCP registry into a pinned snapshot for `options.mcp_registries`.
-
-```bash
-shadowscan mcp-registry snapshot -o mcp-snapshot.json
-shadowscan mcp-registry snapshot --url https://registry.example.com -o snap.json
-```
-
-| Option | Description |
-|---|---|
-| `--url URL` | Registry base URL (HTTPS only; default: Smithery) |
-| `-o, --output FILE` | **(required)** Snapshot file to write (mode 0600) |
-| `--max-pages N` | Maximum pages to fetch |
-| `--ca-bundle FILE` | PEM CA bundle for private PKI |
-| `--allow-private-origin` | Permit non-public IP addresses |
-
-</details>
-
-### Inspection commands
-
-<details>
-<summary><strong><code>shadowscan signatures</code></strong> — Inspect detection signature packs</summary>
-
-```bash
-shadowscan signatures list                              # list all loaded signatures
-shadowscan signatures list --category framework --json  # filter by category, JSON output
-shadowscan signatures show protocol.mcp                 # print one signature as YAML
-shadowscan signatures test fastmcp                      # test what a package name maps to
-shadowscan signatures test api.openai.com --kind domain # test a specific match kind
-```
-
-**`signatures list`** options: `--category` (e.g. `framework`, `protocol`, `provider`, `coding-agent`, `platform`, `identity-app`, `policy`, `cloud-service`, `heuristic`, `observability`, `memory`, `sandbox`), `--json`, `-s/--signatures DIR`
-
-**`signatures test`** options: `--kind` (`auto`, `dependency`, `domain`, `user-agent`, `model`, `name`, `env`, `scope`, `image`, `iac`, `file`, `text`, `secret`), `--ecosystem` (e.g. `pypi`, `npm`, `go`, `cargo`, `maven`, `nuget`)
-
-</details>
-
-<details>
-<summary><strong><code>shadowscan connectors</code></strong> — List available connectors</summary>
-
-```bash
-shadowscan connectors                        # human-readable table
-shadowscan connectors --surface cloud        # filter by surface
-shadowscan connectors --json                 # JSON with config keys and offline formats
-```
-
-| Option | Description |
-|---|---|
-| `--surface NAME` | Filter: `code`, `identity`, `gateway`, `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime` |
-| `--json` | Print JSON output with configuration keys and supported offline formats |
-
-</details>
-
-### Shared options
-
-These options are available on all scanning commands (`code`, `scan`, `run`, `endpoint`, `gateway`, `jwt`).
-The global `-v`/`-vv` (info/debug) and `-q` (errors only) flags go before the command, as in `shadowscan -v code .`:
-
-| Option | Description |
-|---|---|
-| `-f, --format FORMAT` | Output format (see [Output formats](#output-formats)) |
-| `-o, --output FILE` | Write report to file |
-| `-i, --inventory PATH` | Agent Capability Cards directory/file, `agents.yaml`, or CSV (repeatable) |
-| `-s, --signatures DIR` | Extra signature pack directory (repeatable) |
-| `--fail-on LEVEL` | Exit 2 if any finding reaches `critical`\|`high`\|`medium`\|`low`\|`info` |
-| `--min-confidence FLOAT` | Drop findings below this confidence (0.0-1.0, default: 0.0) |
-| `--max-rows N` | Limit table rows displayed |
-| `--dump-records DIR` | Write sanitized connector records for offline re-analysis |
-| `--incremental` / `--no-incremental` | Enable/disable content-addressed result caching |
-| `--state-dir DIR` | Private incremental state directory |
-| `--connector-timeout-seconds N` | Per-connector deadline in seconds (default: 120) |
-| `--job-deadline-seconds N` | CLI process deadline; exits 3 on expiry |
-| `--allow-private-origin` / `--deny-private-origin` | Permit non-public IP addresses |
-| `--allow-instance-credentials` / `--deny-instance-credentials` | Permit cloud instance-metadata credentials |
-| `--allow-credential-mixing` / `--deny-credential-mixing` | Permit repo + live tenant in one scan |
-| `--allow-plugin NAME` | Allow a reviewed third-party connector (repeatable) |
-| `--allow-signature-override` / `--deny-signature-override` | Permit custom signatures to replace built-in IDs |
-| `--plugin-execution thread\|process` | Third-party connector execution backend |
+| `shadowscan code [PATHS...]` | Scan repos for agent frameworks, MCP, coding agents, IaC, secrets |
+| `shadowscan scan -c CONFIG` | Run every connector in a YAML config file |
+| `shadowscan run CONNECTOR` | Run a single connector ad-hoc (`--set key=val`) |
+| `shadowscan endpoint` | Scan workstation AI clients (Claude, Cursor, Windsurf, Ollama, …) |
+| `shadowscan gateway LOGS...` | Analyze LLM gateway / provider / proxy logs |
+| `shadowscan jwt [TOKENS...]` | Classify JWTs as human, service, or agent |
+| `shadowscan merge REPORTS...` | Combine JSON reports into one fleet report |
+| `shadowscan dashboard REPORTS...` | Write a static fleet dashboard (HTML + optional inventory JSON) |
+| `shadowscan diff BASE CURRENT` | Compare reports for new, resolved, and drifted findings |
+| `shadowscan controls REPORTS...` | Map findings to NIST AI RMF / ISO 42001 / EU AI Act / AIUC-1 controls |
+| `shadowscan inventory check` | Validate Agent Card / agents.yaml / CSV inventory files |
+| `shadowscan inventory stubs` | Generate Agent Card skeletons from shadow findings |
+| `shadowscan mcp-registry snapshot` | Pin an MCP registry into a versioned snapshot |
+| `shadowscan signatures list\|show\|test` | Inspect and test detection signature packs |
+| `shadowscan connectors` | List available connectors, config keys, and offline formats |
+
+Every scan command accepts `-f/--format`, `-o/--output`, `-i/--inventory`, `-s/--signatures`, `--fail-on`, `--min-confidence`, `--dump-records`, `--incremental`, `--job-deadline-seconds`, and security boundary flags.
+Run `shadowscan <command> --help` for full option details.
 
 ### Output formats
 
-| Format | Flag | Description |
-|---|---|---|
-| **Table** | `--format table` | Rich terminal table (default); writes JSON when `-o` is used |
-| **JSON** | `--format json` | Full ShadowScan finding schema with evidence and metadata |
-| **SARIF** | `--format sarif` | Static Analysis Results Interchange Format for GitHub Code Scanning |
-| **CSV** | `--format csv` | Spreadsheet-compatible with formula injection protection |
-| **Markdown** | `--format markdown` | Markdown table for documentation or reports |
-| **HTML** | `--format html` | Standalone HTML report |
-| **CycloneDX** | `--format cyclonedx` | CycloneDX 1.6 AI-BOM (Software Bill of Materials) |
-| **OCSF** | `--format ocsf` | OCSF 1.1.0 Detection Finding for SIEM integration |
+`table` (default) · `json` · `sarif` · `csv` · `markdown` · `html` · `cyclonedx` (AI-BOM) · `ocsf` (SIEM)
 
 ### Exit codes
 
 | Exit | Meaning |
 |---|---|
 | **0** | Scan completed and passed |
-| **1** | No scan result: invalid option, value, path or configuration, or a setup or output error |
-| **2** | Scan completed but reached `--fail-on`; `diff` returns 2 with `--fail-on-new` or `--fail-on-drift` |
-| **3** | Scan incomplete (API error, timeout, denied access, limit, malformed export); `diff` returns 3 when reports are not comparable |
+| **1** | Invalid option, path, configuration, or setup/output error |
+| **2** | Reached `--fail-on` threshold; `diff` with `--fail-on-new` / `--fail-on-drift` |
+| **3** | Incomplete scan (API error, timeout, limit, malformed export); `diff` when reports are not comparable |
 
-Gate CI on any non-zero exit: exit 1 means nothing was scanned, and an
-incomplete scan never reads as clean. Exit 0 from a complete static scan does
-not prove that no agent runs; see
+Gate CI on any non-zero exit. Exit 0 from a complete static scan does not
+prove no agent runs; see
 [scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md).
 
 ---
@@ -527,8 +217,6 @@ not prove that no agent runs; see
 The CLI is built on the same Python API. The JSON report (`--format json`) is
 the stable contract; treat the Python objects as unstable between releases
 until 1.0 and pin a reviewed commit.
-
-### Programmatic scanning
 
 ```python
 from shadowscan.config import ConnectorSpec, ScanConfig
@@ -544,52 +232,12 @@ if not result.complete:
     raise SystemExit(3)  # fail closed: an incomplete scan is never a clean one
 
 for finding in result.findings:
-    print(f"[{finding.risk.level.value}] {finding.title}")
-    print(f"  Surface: {finding.surface.value}, Shadow: {finding.shadow}")
-    print(f"  Risk: {finding.risk.score}/100 — {', '.join(f.description for f in finding.risk.factors)}")
+    print(f"[{finding.risk.level.value}] {finding.title}  shadow={finding.shadow}")
 ```
 
 `ScanConfig.from_yaml("shadowscan.yaml")` reads the same YAML file as `shadowscan scan -c`.
-
-### Core data types
-
-```python
-from shadowscan.models import Evidence, Finding, Kind, Risk, RiskLevel, ScanResult, Surface
-
-# Finding fields
-finding.id                    # "ss-3f9c1e2a7b4d8c10"
-finding.surface               # Surface.CODE | .IDENTITY | .GATEWAY | ...
-finding.kind                  # Kind.AGENT | .MCP_SERVER | .OAUTH_GRANT | ...
-finding.title                 # human-readable summary
-finding.risk.score            # 0-100
-finding.risk.level            # RiskLevel.CRITICAL | .HIGH | .MEDIUM | .LOW | .INFO
-finding.shadow                # True if not in inventory
-finding.confidence            # 0.0-1.0 heuristic evidence score
-finding.evidence              # list[Evidence] with signal, description, weight
-finding.metadata["autonomy"]  # {"floor": 2, "floor_label": "L2 Supervised", "ceiling": 5, ...}
-finding.to_dict()["metadata"]["threats"]   # OWASP, MITRE ATLAS, MAESTRO references (derived on export)
-finding.to_dict()["metadata"]["controls"]  # NIST AI RMF, ISO 42001, EU AI Act, AIUC-1 references
-```
-
-### Module reference
-
-Full auto-generated API docs are in the [`docs/api/`](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/docs/api) directory:
-
-| Module | Description |
-|---|---|
-| [`engine`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/engine.md) | Scan orchestration and concurrent connector execution |
-| [`models`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/models.md) | `Finding`, `Evidence`, `ScanResult` and supporting data types |
-| [`config`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/config.md) | Scan configuration parsing and validation |
-| [`risk`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/risk.md) | Risk scoring and policy |
-| [`autonomy`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/autonomy.md) | Autonomy tier classification (L0-L5) |
-| [`correlation`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/correlation.md) | Cross-surface, runtime and lifecycle correlation |
-| [`merge`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/merge.md) | Finding deduplication and merge logic |
-| [`comparison`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/comparison.md) | Collection scope provenance and report comparison (`diff`) |
-| [`registry`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/registry.md) | Sanctioned agent inventory and reconciliation |
-| [`signatures`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/signatures.md) | Signature schema, loading and the matcher index |
-| [`base`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/base.md) | Base connector ABC |
-| [`http`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/http.md) | SSRF-safe HTTP transport |
-| [`reporters`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/api/reporters.md) | Output format renderers (table, JSON, SARIF, CSV, Markdown, HTML, CycloneDX, OCSF) |
+See the full [API reference](https://github.com/aisecnomad/Nexus-ShadowScan/tree/main/docs/api) for
+engine, models, config, risk, autonomy, correlation, comparison, registry, signatures, reporters, and the HTTP client.
 
 ---
 
@@ -671,42 +319,8 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
  CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
 ```
 
-<details>
-<summary><strong>SARIF output example</strong> (for GitHub Code Scanning)</summary>
-
-The same scan as SARIF for GitHub code scanning (`--format sarif`), first result
-abridged:
-
-```json
-{
-  "ruleId": "shadowscan/mcp-server/protocol.mcp",
-  "level": "warning",
-  "message": {
-    "text": "MCP configuration: .mcp.json — risk critical (100), confidence 1.00 — SHADOW (not in inventory). Risk factors: mcp-server finding; not present in the sanctioned agent inventory; calls tools / functions; …"
-  },
-  "partialFingerprints": {"shadowscan/finding": "ss-c6e27e38faabb2a6"},
-  "properties": {
-    "surface": "code",
-    "kind": "mcp-server",
-    "shadow": true,
-    "risk_level": "critical",
-    "risk_score": 100,
-    "confidence": 0.999,
-    "frameworks": ["protocol.mcp", "platform.zapier"],
-    "capabilities": ["tool-use", "saas-actions", "code-exec"],
-    "tags": ["inline-secrets", "mcp-unpinned-package"],
-    "threats": ["owasp-asi-2026:ASI02", "owasp-llm-2026:LLM03", "mitre-atlas-2026.09:AML.T0050"]
-  },
-  "locations": [
-    {"physicalLocation": {"artifactLocation": {"uri": ".mcp.json", "uriBaseId": "%SRCROOT%"}, "region": {"startLine": 1}}}
-  ]
-}
-```
-
-SARIF results are warnings or notes carrying the heuristic risk level, never a
-CVSS score; see [severity](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/severity.md).
-
-</details>
+SARIF output (`--format sarif`) integrates with GitHub Code Scanning; results carry heuristic risk levels, not CVSS scores.
+See [severity](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/severity.md).
 
 ---
 
@@ -746,51 +360,13 @@ The grid shows 18 of 79 framework signatures; `shadowscan signatures list --cate
 
 ### MCP servers and clients
 
-| Evidence | Recognized |
-|---|---|
-| Client configuration in a repository | `.mcp.json`, `mcp.json`, `mcp-config.json`, `mcp_config.json`, `mcp-servers.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `claude_desktop_config.json`, `.roo/mcp.json`, `.windsurf/mcp_config.json`, `cline_mcp_settings.json`, `.kiro/settings/mcp.json`, `.amazonq/mcp.json`, `.codeium/windsurf/mcp_config.json`, `smithery.yaml`, `.well-known/mcp.json` |
-| Client configuration on a workstation (`endpoint.inventory`) | Claude Desktop, Claude Code, Cursor, Windsurf, VS Code, Cline, Roo Code, Gemini CLI, Codex CLI, Kiro, Amazon Q, GitHub Copilot CLI, Zed, Continue, Goose, opencode, `~/.mcp.json`, LM Studio, Aider, OpenClaw |
-| Package dependencies | PyPI `mcp`, `fastmcp`, `mcp-server`, `langchain-mcp-adapters`, `mcp-agent`, `mcpadapt`, `fastapi-mcp`, `mcp-use`, `mcp-proxy`, `mcp-server-*`, `mcp-*`; npm `@modelcontextprotocol/sdk`, `@modelcontextprotocol/server-filesystem`, `@modelcontextprotocol/server-github`, `@modelcontextprotocol/server-postgres`, `@modelcontextprotocol/server-slack`, `@modelcontextprotocol/server-everything`, `@modelcontextprotocol/inspector`, `fastmcp`, `mcp-framework`, `@mcp-ui/server`, `@smithery/sdk`, `mcp-remote`, `@modelcontextprotocol/*`, `mcp-server-*`; Go `github.com/mark3labs/mcp-go`, `github.com/modelcontextprotocol/go-sdk`, `github.com/metoro-io/mcp-golang`, `github.com/mcp-go/mcp-go`; Cargo `rmcp`, `mcp-sdk`, `rust-mcp-sdk`, `mcp-core`; Maven `io.modelcontextprotocol.sdk:mcp`, `io.modelcontextprotocol.sdk:mcp-spring-webmvc`, `io.modelcontextprotocol.sdk:mcp-spring-webflux`, `org.springframework.ai:spring-ai-starter-mcp-server`, `org.springframework.ai:spring-ai-starter-mcp-client`, `org.springframework.ai:spring-ai-mcp`, `dev.langchain4j:langchain4j-mcp`, `io.modelcontextprotocol*`, `org.springframework.ai:spring-ai-starter-mcp*`, `org.springframework.ai:spring-ai-mcp*`; NuGet `ModelContextProtocol`, `ModelContextProtocol.AspNetCore`, `ModelContextProtocol.Core`, `ModelContextProtocol*` |
-| Reference servers (npm) | `@modelcontextprotocol/server-filesystem`, `@modelcontextprotocol/server-github`, `@modelcontextprotocol/server-postgres`, `@modelcontextprotocol/server-slack`, `@modelcontextprotocol/server-everything` |
-| Server image patterns (regular expressions) | `mcp/[a-z0-9-]+`, `ghcr\.io/github/github-mcp-server`, `modelcontextprotocol/`, `mcp-server` |
-| Remote MCP hosts | `server.smithery.ai`, `registry.smithery.ai`, `mcp.zapier.com`, `mcp.composio.dev`, `api.githubcopilot.com`, `mcp.notion.com`, `mcp.linear.app`, `mcp.atlassian.com`, `mcp.stripe.com`, `mcp.paypal.com`, `mcp.sentry.dev`, `mcp.cloudflare.com`, `remote.mcpservers.org`, and hosts that match a regular expression in the `protocol.mcp` signature |
-| Environment variables | `MCP_SERVER_URL`, `MCP_SERVER_PORT`, `MCP_TRANSPORT`, `MCP_API_KEY`, `FASTMCP_PORT`, `FASTMCP_HOST`, `SMITHERY_API_KEY` |
+Recognizes MCP client configs (16 file patterns in repos, 21 clients on workstations), server packages across 6 ecosystems, container image patterns, 14+ remote MCP hosts, and MCP environment variables.
+`shadowscan signatures show protocol.mcp` prints the full signal list.
 
-Gateway logs add MCP endpoint calls (`/mcp`, and `/sse` or `/messages` on a known MCP
-host), and `runtime.processes` adds MCP servers seen running.
+### Other connectors
 
-### Identity, gateway, low-code, SaaS and network connectors
-
-| Surface | Connector | Discovers | Offline input |
-|---|---|---|---|
-| Identity | `identity.auth0` | Auth0 applications and machine-to-machine client grants. | JSON export of clients / client-grants |
-| Identity | `identity.entra` | Entra ID service principals, OAuth consent grants, app-only permissions, app registrations, Agent ID agent identities and Microsoft Agent 365 packages via Microsoft Graph. | JSON export of Graph objects |
-| Identity | `identity.google-workspace` | OAuth apps authorised by Google Workspace users (Admin SDK tokens), aggregated per client. | JSON export of token objects |
-| Identity | `identity.jwt` | Classify JWTs as human, service or agent (delegated) identities and assess their privileges. | file with one token per line or JSON list / objects with `token` |
-| Identity | `identity.okta` | Okta applications, OAuth service apps, admin/user consent grants. | JSON export of /api/v1/apps (with optional \_grants/\_tokens) |
-| Gateway | `gateway.logs` | Reconstruct LLM callers (API keys, principals, services, user agents) from AI gateway / provider / proxy logs. | log file or directory (JSONL / JSON / CSV / nginx-envoy text) |
-| Gateway | `gateway.otel` | Aggregate OpenTelemetry GenAI span exports without retaining prompt content. | OTLP JSON / JSONL span export |
-| Low-code | `lowcode.make` | Make (Integromat) scenarios with AI modules and Make AI Agents. | scenarios JSON (with blueprint) / ai-agents JSON / blueprint files |
-| Low-code | `lowcode.n8n` | n8n workflows using AI Agent / LLM / MCP nodes. | workflow list JSON or directory of exported workflows |
-| Low-code | `lowcode.power-platform` | Copilot Studio agents, Power Automate flows and Power Apps that use AI connectors. | JSON export of environments / flows / apps / bots / botcomponents |
-| Low-code | `lowcode.salesforce` | Agentforce agents, Einstein bots, prompt templates, AI flows, connected apps and user OAuth tokens. | JSON export of SOQL / Tooling query results |
-| Low-code | `lowcode.servicenow` | Now Assist AI agents, tools, triggers, AI flows and OAuth application registries. | JSON export of table records |
-| Low-code | `lowcode.workato` | Workato recipes using GenAI / LLM connectors and agentic recipes. | /api/recipes JSON |
-| Low-code | `lowcode.zapier` | Zaps with AI steps (ChatGPT, Claude, Gemini, AI by Zapier) and Zapier Agents from account exports. | Zapier for Companies CSV/JSON export of Zaps or Agents |
-| SaaS | `saas.atlassian` | Marketplace / Forge apps installed on Jira & Confluence Cloud (AI assistants, Rovo agents, automation bots). | UPM plugins JSON |
-| SaaS | `saas.generic` | Offline app-inventory export from any SaaS admin console or CASB (column mapping via `fields`). | CSV / JSON export (required) |
-| SaaS | `saas.github-apps` | GitHub Apps installed on an organisation (AI reviewers, coding agents), Copilot seats and approved fine-grained PATs. | installations JSON |
-| SaaS | `saas.microsoft-teams` | Teams apps (custom + store) with bots, message extensions and Copilot agents, plus their installations. | JSON export of teamsApps / installedApps |
-| SaaS | `saas.notion` | Notion integrations (bot users) connected to the workspace. | /v1/users JSON |
-| SaaS | `saas.slack` | Slack apps, bot users, approved/restricted apps and install logs. | JSON export of users / apps / integration logs |
-| SaaS | `saas.zoom` | Zoom Marketplace approved and account-created apps (not a per-user installation inventory). | marketplace apps JSON |
-| Network | `network.logs` | AI services contacted per client address, from DNS, TLS SNI and flow logs (Zeek, Route 53 Resolver, VPC Flow Logs, generic exports). | log file or directory: Zeek dns/ssl/conn logs (TSV or JSON), Route 53 Resolver query logs, VPC Flow Logs or generic JSON/CSV DNS and SNI records |
-
-Identity coverage is each provider's application, consent-grant and token inventory,
-plus JWTs you supply; ShadowScan does not parse IdP sign-in or audit logs.
-`gateway.logs` auto-detects these log schemas: `access-log`, `anthropic-usage`, `azure-openai`, `bedrock`, `cloudflare`, `generic`, `helicone`, `kong`, `langfuse`, `litellm`, `openai-usage`, `portkey`, `vertex`.
-This table lists 22 of the 38 connectors; the code, cloud,
-endpoint and runtime connectors are in [Surfaces & connectors](#surfaces--connectors).
+22 connectors cover identity (Okta, Entra, Google Workspace, Auth0, JWT), gateway (logs, OpenTelemetry), low-code (Power Platform, Salesforce, ServiceNow, n8n, Make, Zapier, Workato), SaaS (Slack, Teams, GitHub Apps, Atlassian, Notion, Zoom, generic), and network (DNS/TLS/flow logs). All support offline JSON/CSV exports.
+See the [connector guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md) for credential scopes and offline formats.
 
 <!-- END detection-matrix -->
 
@@ -798,48 +374,18 @@ endpoint and runtime connectors are in [Surfaces & connectors](#surfaces--connec
 
 ## Benchmarks
 
-Offline results from this repository's own benchmarks. The maintainer wrote
-ShadowScan, both corpora, their labels and the harnesses, with AI coding
-assistants (Claude, Codex, Grok, Google Antigravity and others), so these numbers are
-regression evidence about the listed inputs. They are **not** independent review
-and **not** measured production precision or recall.
+Author-written regression benchmarks (not independent review or production precision/recall):
 
-| Track (run, version) | Inputs | ShadowScan result | Limits |
-|---|---|---|---|
-| [ShadowBench estate, nine surfaces](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (2026-10-11, 0.1.2) | 137 authored vendor-format entities for one fictional estate: 87 positive, 27 control, 23 near-miss | Entity precision / recall / F1 91.2% / 95.4% / 93.3%; 83 of 87 positives found; 8 of 50 controls and near-misses flagged | Authored artifacts; frozen after one label-completeness pass in which every runnable tool ran once (it added one secondary anchor and one tolerated pair and changed no label); later ShadowScan runs on it are in-sample (below) |
-| [Shadow AI discovery, code surface](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (2026-10-09, 0.1.2+7bdea5300551) | 87 public repositories pinned by SHA: 65 positive, 10 control, 12 near-miss; 839 expected facts | Fact precision / recall / F1 99.8% / 94.8% / 97.2%; 65 of 65 positive repositories flagged; 0 of 22 controls and near-misses flagged (4 of those 22 runs incomplete) | 43 of 87 runs were incomplete (exit 3): fact counts are a lower bound, and an incomplete clean run is not a clean result |
-
-Each report also runs other open-source tools on their declared scope, which is
-narrower than nine surfaces; compare their in-scope columns in the report, not
-these headline numbers. After the 2026-10-11 estate run, ShadowScan's
-detection rules were changed with that run's errors in view (ambiguous Gemini
-names, Notion bots, gateway `/api/chat` and `/generate` routes, Kubernetes
-serving-engine images, n8n HTTP model calls, ServiceNow flow names, and the
-Wudpecker note-taker). A ShadowScan run on the estate after those changes is
-in-sample: fewer errors on it are not evidence of better field accuracy. The
-[benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
-lists every benchmark with its protocol and limits.
+| Track | F1 | Details |
+|---|---|---|
+| [ShadowBench estate](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/estate/results/2026-10-11/REPORT.md) (9 surfaces, 137 entities) | 93.3% | 83/87 positives found, 8/50 controls flagged |
+| [Shadow AI discovery](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadow-ai-discovery/results/2026-10-09/REPORT.md) (code, 87 repos) | 97.2% | 65/65 positives flagged, 0/22 controls flagged |
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-shadowbench-cases.svg" alt="Estate and in-scope recall per tool in the 2026-10-11 ShadowBench nine-surface cases run" width="95%">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool benchmark comparison" width="95%">
 </p>
 
-The chart is generated from the committed
-[ShadowBench cases run of 2026-10-11](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md):
-738 authored entities across nine surfaces. Estate recall charges each tool for
-the surfaces it does not cover, so it mostly measures coverage; compare the
-in-scope bars, and read the report's precision and decoy specificity before
-drawing any conclusion. ShadowScan marked 27 of its 326 scans incomplete there.
-The same authorship caveat applies: the maintainer wrote the corpus, the
-rubrics, the scorer and every tool's adapter.
-
-### Cross-benchmark summary
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool benchmark comparison — ShadowBench estate recall and Shadow AI Discovery value-level F1" width="95%">
-</p>
-
-<p align="center"><em>Left: estate recall on ShadowBench Cases (346 cases, 9 surfaces — unsupported surfaces count as misses). Right: value-level F1 on Shadow AI Discovery (87 repositories, code surface). Benchmarks are author-written and in-sample. See the <a href="https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md">benchmark index</a> for methodology, limits, and reproduction steps.</em></p>
+See the [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md) for methodology, limits, cross-tool comparisons, and reproduction steps.
 
 ---
 
@@ -895,24 +441,10 @@ never parsed) and `runtime.processes` reads `/proc` on Linux.
 }
 ```
 
-<details>
-<summary><strong>Field reference</strong></summary>
-
-* **confidence** combines grouped evidence weights with noisy-OR. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
-* **risk** is additive and explainable: the listed factors always add up to `score`. **danger_score** is the same model without the governance factors (registration and ownership); `options.risk_basis: danger` bases `level` and `--fail-on` on it.
-* **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its scope restrictions; a name match only suggests an entry for review.
-* **autonomy** (`metadata.autonomy`) places the finding on the L0 Chatbot to L5 Fully Autonomous scale as an interval: the `floor` the evidence proves and the `ceiling` it has not ruled out.
-* **related** links findings across surfaces only through an exact shared identifier; name similarity goes to `related_candidates` as a review hint.
-* **threats** and **controls** are edition-qualified references to OWASP, MITRE ATLAS, MAESTRO, NIST AI RMF, ISO/IEC 42001, EU AI Act and AIUC-1 entries: author mappings, not compliance determinations.
-
-For the full finding schema, risk model, and output format details, see the
+For field definitions (confidence, risk, shadow, autonomy, threats, controls) see the
 [risk scoring](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/concepts/risk.md),
 [autonomy tiers](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/concepts/autonomy.md) and
 [mappings](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/concepts/mappings.md) documentation.
-
-CSV output inserts a literal `'` at the start of a value, and after each `,`, `;`, tab, `|` or line break inside it, when the following text begins with `=`, `+`, `-` or `@` (also after whitespace or quotes), a tab or a carriage return; values beginning with a line feed are also marked. Strip markers for programmatic use or use `json`; see [output and inventory migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#output-and-inventory-migration).
-
-</details>
 
 ## Frameworks & products recognized
 
@@ -980,36 +512,7 @@ make install          # hash-locked runtime, cloud, dev and docs toolchain
 make check            # lint, format, types, signatures, mappings, secrets, audit, coverage, connector floor, evaluation
 ```
 
-<details>
-<summary><strong>Make targets reference</strong></summary>
-
-| Target | Description |
-|---|---|
-| `make install` | Editable install with dev + cloud + docs extras from hash-locked requirements |
-| `make install-dev` | Dev extras only (no cloud SDKs) |
-| `make lint` | Run ruff linter |
-| `make format` | Run ruff formatter |
-| `make typecheck` | Run mypy type checker |
-| `make test` | Test suite with coverage (80% floor) |
-| `make test-fast` | Tests without coverage, stop at first failure |
-| `make test-parallel` | Tests in parallel with pytest-xdist |
-| `make coverage-gate` | Per-connector 75% coverage floor |
-| `make signatures` | Validate all signature schemas |
-| `make mappings` | Validate mapping catalogs |
-| `make secrets` | Hardcoded credential gate |
-| `make audit` | pip-audit on environment and all lock files |
-| `make evaluate` | Run bundled regression corpora |
-| `make check` | All quality gates combined |
-| `make demo` | Run bundled offline demo |
-| `make docs` | Build MkDocs documentation site |
-| `make connector-reference` | Regenerate connector reference page |
-| `make readme-matrix` | Regenerate README detection matrix |
-| `make readme-visuals` | Regenerate banner and architecture SVGs |
-| `make build` | Build sdist and wheel |
-| `make docker` | Build container image |
-| `make clean` | Remove build artifacts and caches |
-
-</details>
+Run `make help` or see the [Makefile](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/Makefile) for the full target list (install, lint, format, typecheck, test, coverage-gate, signatures, mappings, secrets, audit, evaluate, docs, build, docker, clean).
 
 See [CONTRIBUTING.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#getting-started)
 to get started and its [repository map](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#find-your-way-around)
