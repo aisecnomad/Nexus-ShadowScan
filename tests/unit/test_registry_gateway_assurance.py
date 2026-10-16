@@ -10,13 +10,14 @@ import pytest
 from click.testing import CliRunner
 
 from shadowscan.cli import main
-from shadowscan.config import ScanConfig
+from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.engine import Engine
 from shadowscan.fleet import merge_reports
 from shadowscan.models import Finding, Kind, Surface
 from shadowscan.registry import Inventory, InventoryEntry
 
 TAG = "registry-identity-unverified"
+CLOUD_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "cloud"
 
 
 def _gateway_finding(assurance: Any, resource: str = "principal:svc-ops") -> Finding:
@@ -85,6 +86,158 @@ def test_provider_authenticated_caller_is_not_flagged():
 
     assert _inventory().match(finding) is not None
     assert "registry_match_assurance" not in finding.metadata and TAG not in finding.tags
+
+
+def _audit_caller(label: Any) -> Finding:
+    return Finding(
+        surface=Surface.GATEWAY,
+        connector="cloud.aws",
+        kind=Kind.GATEWAY_CALLER,
+        title="LLM caller (CloudTrail): i-0abc",
+        resource="cloudtrail:arn:aws:sts::123456789012:assumed-role/ops-agent-role/i-0abc",
+        resource_type="caller/AssumedRole",
+        provider="aws",
+        account="123456789012",
+        metadata={"caller_identity_assurance": label},
+    )
+
+
+@pytest.mark.parametrize(
+    "label,expected",
+    [
+        ("provider-authenticated-field", None),
+        ("operator-asserted", "operator-asserted"),
+        ("unverified", "unverified"),
+        (None, "unverified"),
+        (7, "unverified"),
+        (["provider-authenticated-field"], "unverified"),
+        ("provider-authenticated", "unverified"),
+    ],
+)
+def test_audit_log_caller_label_decides_approval(label, expected):
+    finding = _audit_caller(label)
+
+    entry = _inventory(finding.resource).match(finding)
+
+    if expected is None:
+        assert entry is not None and entry.agent_id == "svc-ops-approved"
+        assert "registry_match_assurance" not in finding.metadata and TAG not in finding.tags
+    else:
+        assert entry is None
+        assert finding.metadata["registry_match_assurance"] == expected
+        assert finding.metadata["registry_suggestions"] == ["svc-ops-approved"]
+        assert TAG in finding.tags
+
+
+def test_unlabelled_gateway_caller_is_only_a_candidate():
+    # An OpenTelemetry service names itself in its spans: no label, no approval.
+    finding = Finding(
+        surface=Surface.GATEWAY,
+        connector="gateway.otel",
+        kind=Kind.GATEWAY_CALLER,
+        title="Observed GenAI caller svc-ops",
+        resource="principal:svc-ops",
+        resource_type="gateway-caller",
+    )
+
+    assert _inventory().match(finding) is None
+    assert finding.metadata["registry_match_assurance"] == "unverified"
+    assert TAG in finding.tags
+
+
+def test_caller_label_and_observations_report_the_weakest():
+    finding = _gateway_finding("operator-asserted")
+    finding.metadata["caller_identity_assurance"] = "provider-authenticated-field"
+
+    assert _inventory().match(finding) is None
+    assert finding.metadata["registry_match_assurance"] == "operator-asserted"
+
+
+def _inventory_file(tmp_path: Path, text: str) -> str:
+    path = tmp_path / "inventory.yaml"
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def _scan_caller(index, tmp_path: Path, spec: ConnectorSpec, inventory: str, resource: str) -> Finding:
+    result = Engine(
+        ScanConfig(connectors=[spec], inventory=[_inventory_file(tmp_path, inventory)]), index
+    ).run()
+    assert result.complete
+    return next(finding for finding in result.findings if finding.resource == resource)
+
+
+def test_cloudtrail_caller_keeps_its_account_scoped_approval(tmp_path: Path, index):
+    # The account-scoped card of docs/inventory.md. CloudTrail names the
+    # principal AWS authenticated, so the card approves the caller.
+    inventory = (
+        "schema_version: 2\nmetadata:\n  agent_id: ops-provisioning-04\n  owner_team: Platform-Engineering\n"
+        "autonomy_profile:\n  level: 3\n"
+        "discovery:\n  resources:\n    - 'cloudtrail:arn:aws:sts::123456789012:assumed-role/ops-agent-role/*'\n"
+        "  surfaces: [cloud, code, gateway]\n  accounts: ['123456789012']\n"
+    )
+    spec = ConnectorSpec("cloud.aws", {"input": str(CLOUD_FIXTURES / "aws_records.jsonl")})
+    resource = "cloudtrail:arn:aws:sts::123456789012:assumed-role/ops-agent-role/i-0abc"
+
+    finding = _scan_caller(index, tmp_path, spec, inventory, resource)
+
+    assert finding.surface == Surface.GATEWAY
+    assert finding.metadata["caller_identity_assurance"] == "provider-authenticated-field"
+    assert finding.shadow is False and finding.registry_match == "ops-provisioning-04"
+    assert finding.owner == "Platform-Engineering"
+    assert finding.metadata["autonomy"]["declared"] == 3
+    assert "registered" in {factor.id for factor in finding.risk.factors}
+    assert TAG not in finding.tags and "registry_match_assurance" not in finding.metadata
+
+
+def test_vertex_audit_caller_keeps_its_project_scoped_approval(tmp_path: Path, index):
+    inventory = (
+        "agents:\n  - id: crew-runner\n    owner: ml-platform\n"
+        "    resources: ['audit:crew-runner@acme-ml.iam.gserviceaccount.com']\n    accounts: ['acme-ml']\n"
+    )
+    spec = ConnectorSpec("cloud.gcp", {"input": str(CLOUD_FIXTURES / "gcp_records.jsonl")})
+    resource = "audit:crew-runner@acme-ml.iam.gserviceaccount.com"
+
+    finding = _scan_caller(index, tmp_path, spec, inventory, resource)
+
+    assert finding.surface == Surface.GATEWAY
+    assert finding.metadata["caller_identity_assurance"] == "provider-authenticated-field"
+    assert finding.shadow is False and finding.registry_match == "crew-runner"
+    assert finding.owner == "ml-platform"
+    assert "registered" in {factor.id for factor in finding.risk.factors}
+    assert TAG not in finding.tags and "registry_match_assurance" not in finding.metadata
+
+
+def test_audit_events_without_a_principal_are_only_a_candidate(tmp_path: Path, index):
+    trail = tmp_path / "trail.jsonl"
+    trail.write_text(
+        json.dumps({"_kind": "account", "account": "123456789012"})
+        + "\n"
+        + json.dumps(
+            {
+                "_kind": "cloudtrail-event",
+                "_region": "us-east-1",
+                "eventName": "InvokeModel",
+                "eventTime": "2025-09-10T14:00:00Z",
+                "modelId": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    inventory = (
+        "agents:\n  - id: any-caller\n    resources: ['cloudtrail:*']\n    accounts: ['123456789012']\n"
+    )
+    spec = ConnectorSpec("cloud.aws", {"input": str(trail)})
+
+    finding = _scan_caller(index, tmp_path, spec, inventory, "cloudtrail:unknown")
+
+    # The events share a bucket that names no principal: no one caller to approve.
+    assert finding.metadata["caller_identity_assurance"] == "unverified"
+    assert finding.shadow is True and finding.registry_match is None
+    assert finding.metadata["registry_suggestions"] == ["any-caller"]
+    assert finding.metadata["registry_match_assurance"] == "unverified"
+    assert TAG in finding.tags
 
 
 def test_non_gateway_findings_are_not_flagged():

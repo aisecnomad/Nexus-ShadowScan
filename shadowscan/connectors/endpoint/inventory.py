@@ -36,7 +36,6 @@ import json
 import os
 import re
 import socket
-import stat
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -74,7 +73,12 @@ from shadowscan.connectors.posture import (
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
 from shadowscan.models import Evidence, Finding, Kind, Surface
-from shadowscan.utils.files import NotRegularFileError, open_confined_directory, open_confined_file
+from shadowscan.utils.files import (
+    NotRegularFileError,
+    link_in_path,
+    open_confined_directory,
+    open_confined_file,
+)
 from shadowscan.utils.jsonc import load_json_lenient
 from shadowscan.utils.safe_yaml import strict_bounded_safe_load
 
@@ -275,31 +279,11 @@ class EndpointInventoryConnector(BaseConnector):
         except OSError as exc:
             if owned:
                 os.close(current)
-            if exc.errno == errno.ENOTDIR and not self._link_in_path(home, rel):
+            if exc.errno == errno.ENOTDIR and not link_in_path(rel, dir_fd=home.fd):
                 return None
             self._gap(home, rel, "symbolic link not followed" if exc.errno == errno.ENOTDIR else _reason(exc))
             return None
         return current if owned else os.dup(current)
-
-    @staticmethod
-    def _link_in_path(home: _Home, rel: str) -> bool:
-        """Whether a component of ``rel`` is a symbolic link (Linux reports such a component as ENOTDIR).
-
-        Each prefix is examined without following its last component, and only
-        after every shorter prefix was found to be a real directory, so no link
-        is ever traversed.
-        """
-        parts = PurePosixPath(rel).parts
-        for i in range(1, len(parts) + 1):
-            try:
-                st = os.stat(str(PurePosixPath(*parts[:i])), dir_fd=home.fd, follow_symlinks=False)
-            except OSError:
-                return False
-            if stat.S_ISLNK(st.st_mode):
-                return True
-            if not stat.S_ISDIR(st.st_mode):
-                return False
-        return False
 
     def _list(
         self, home: _Home, rel: str, ignore_links: frozenset[str] = frozenset()
@@ -362,7 +346,7 @@ class EndpointInventoryConnector(BaseConnector):
             return None
         except (OSError, ValueError) as exc:
             not_dir = isinstance(exc, OSError) and exc.errno == errno.ENOTDIR
-            if not_dir and not self._link_in_path(home, rel):
+            if not_dir and not link_in_path(rel, dir_fd=home.fd):
                 return None
             self._gap(home, rel, "symbolic link not followed" if not_dir else _reason(exc))
             return None

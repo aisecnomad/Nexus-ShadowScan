@@ -146,28 +146,34 @@ def literal_resource_pattern(resource: str) -> str:
     return resource.translate({ord("*"): "[*]", ord("?"): "[?]", ord("["): "[[]"})
 
 
+_CALLER_ASSURANCE_LEVELS = frozenset({"operator-asserted", "provider-authenticated-field"})
+
+
 def _unauthenticated_caller_assurance(finding: Finding) -> str | None:
     """Weakest identity assurance behind a gateway caller name, unless it is provider-authenticated.
 
-    Returns ``operator-asserted`` or ``unverified``; a gateway finding whose
-    observations carry no recognizable assurance counts as ``unverified``.
+    A ``gateway.logs`` caller labels each of its ``runtime_observations``. A
+    caller that a provider audit log names (CloudTrail, Cloud Audit Logs)
+    carries one label, ``caller_identity_assurance``, from the connector that
+    read the principal. Returns ``operator-asserted`` or ``unverified``; a
+    gateway finding without a label, or with any unrecognizable one, counts as
+    ``unverified``.
     """
     if finding.surface != Surface.GATEWAY:
         return None
-    observations = finding.metadata.get("runtime_observations")
-    if not isinstance(observations, list) or not observations:
+    levels: list[Any] = []
+    if "caller_identity_assurance" in finding.metadata:
+        levels.append(finding.metadata["caller_identity_assurance"])
+    observations = finding.metadata.get("runtime_observations", [])
+    if not isinstance(observations, list):
         return "unverified"
-    levels: set[str] = set()
-    for item in observations:
-        level = item.get("identity_assurance") if isinstance(item, dict) else None
-        # Every observation must carry a recognizable assurance. Silently
-        # dropping malformed items would let one valid item bless the rest.
-        if not isinstance(level, str) or level not in {
-            "operator-asserted",
-            "provider-authenticated-field",
-        }:
-            return "unverified"
-        levels.add(level)
+    levels += [item.get("identity_assurance") if isinstance(item, dict) else None for item in observations]
+    # Every label must be recognizable. Silently dropping malformed items
+    # would let one valid item bless the rest.
+    if not levels or any(
+        not isinstance(level, str) or level not in _CALLER_ASSURANCE_LEVELS for level in levels
+    ):
+        return "unverified"
     return "operator-asserted" if "operator-asserted" in levels else None
 
 

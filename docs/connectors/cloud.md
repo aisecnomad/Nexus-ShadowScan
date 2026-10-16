@@ -592,7 +592,14 @@ still analyzed. Envelope records (`account`, `tenancy`) and related records
 (Azure deployments and diagnostic settings, OCI agent endpoints, AWS registry
 containers and coverage records) are resolved before findings are emitted. CloudTrail events become one gateway-caller
 finding per principal, and Cloud Audit Log events one per principal and
-project, with event counts and the first and last event time.
+project, with event counts and the first and last event time. CloudTrail
+`userIdentity` and Cloud Audit Logs `authenticationInfo` name the principal the
+provider authenticated, so these callers record
+`metadata.caller_identity_assurance: provider-authenticated-field` and an exact
+inventory binding approves them after the normal resource and scope checks.
+Events without a principal share the caller `unknown`, which is `unverified`:
+a matching card makes it only a review candidate (see
+[inventory matching](../inventory.md#matching-and-approval)).
 
 Synthetic sample exports for all four connectors are kept in
 `tests/fixtures/cloud/` (`<provider>_records.jsonl`, plus

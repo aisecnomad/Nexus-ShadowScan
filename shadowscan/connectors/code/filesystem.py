@@ -293,7 +293,7 @@ from shadowscan.signatures.matcher import (
     _finditer,
     language_for_path,
 )
-from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
+from shadowscan.utils.files import link_in_path, open_confined_directory, open_confined_file, read_policy_text
 from shadowscan.utils.git import (
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
@@ -4150,6 +4150,14 @@ class FilesystemConnector(BaseConnector):
                     pass
             except FileNotFoundError:
                 continue
+            except NotADirectoryError:
+                # A file named like its parent (``docs``, ``.github``) leaves the
+                # candidate absent. A link there fails the same way and is not
+                # followed, so what it might name stays unread.
+                if not link_in_path(cand, dir_fd=directory):
+                    continue
+                self.ctx.error(f"code.filesystem: could not read {cand}")
+                break
             except (OSError, RuntimeError, ValueError):
                 self.ctx.error(f"code.filesystem: could not read {cand}")
                 break

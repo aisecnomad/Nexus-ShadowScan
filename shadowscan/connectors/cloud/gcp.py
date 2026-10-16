@@ -37,9 +37,11 @@ from shadowscan.connectors.base import (
 )
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
+    UNKNOWN_CALLER,
     InvalidPageTokenError,
     RecordDispatch,
     aggregate_caller_event,
+    audit_caller_assurance,
     cloud_finding,
     credential_name_matches,
     done,
@@ -1046,7 +1048,7 @@ class GcpConnector(BaseConnector):
         resource = re.sub(r"projects/[^/]+/", "", str(rec.get("resource") or ""))[:120]
         agg = aggregate_caller_event(
             callers,
-            (rec.get("_project"), rec.get("principal") or "unknown"),
+            (rec.get("_project"), rec.get("principal") or UNKNOWN_CALLER),
             time=rec.get("timestamp"),
             tally={"methods": rec.get("method"), "resources": resource},
             tally_present={"agents": rec.get("userAgent")},
@@ -1796,6 +1798,7 @@ class GcpConnector(BaseConnector):
         f.metadata.update(
             {
                 "principal": principal,
+                "caller_identity_assurance": audit_caller_assurance(principal),
                 "events": agg["events"],
                 "methods": agg["methods"],
                 "resources": dict(sorted(agg["resources"].items(), key=lambda kv: -kv[1])[:10]),

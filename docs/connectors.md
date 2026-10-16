@@ -1028,7 +1028,11 @@ timestamps; missing or ambiguous predecessors remain unknown. This metadata
 does not add confidence, and its sampling bounds report partial lineage
 without marking the scan incomplete. Live `LookupEvents` retrieves no STS
 events, so live lineage is always unlinked, and it is not invocation
-data-event coverage; see the [cloud guide](connectors/cloud.md).
+data-event coverage; see the [cloud guide](connectors/cloud.md). A CloudTrail
+caller names the principal AWS authenticated
+(`metadata.caller_identity_assurance: provider-authenticated-field`), so an
+exact inventory binding approves it; events without a principal share the
+`unverified` caller `cloudtrail:unknown`, a review candidate only.
 
 Opt-in registry records (`services` including `registry`): AWS Agent Registry
 and AgentCore registry records of every status, from the control-plane APIs,
@@ -1105,7 +1109,11 @@ Agentspace engines, Cloud Run services, Cloud Functions, project IAM bindings,
 service accounts (user-managed keys), API keys restricted to Gemini, Secret
 Manager names, optional Cloud Audit Log callers (`audit_days`). An ambiguous
 product name (Gemini) on a Cloud Run service or Cloud Function stays a hint
-until another signal corroborates it. Auth: ADC via
+until another signal corroborates it. An audit caller names the principal
+Google authenticated
+(`metadata.caller_identity_assurance: provider-authenticated-field`), so an
+exact inventory binding approves it; events without a principal share the
+`unverified` caller `audit:unknown`. Auth: ADC via
 `google-auth` or `access_token`. Owner-only and Editor-only IAM principals are
 retained as privileged access findings even without an AI-specific role. A grant
 shows potential access, not observed agent execution. Project IAM collection

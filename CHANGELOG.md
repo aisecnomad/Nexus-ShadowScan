@@ -643,12 +643,20 @@ summarizes each release for people who install and operate ShadowScan.
   an inventory. Valid empty workflows and terminal pages remain supported.
 - CODEOWNERS reads stay relative to the directory opened for source collection.
   A root replacement detected before ownership lookup leaves the scan incomplete;
-  later replacements cannot redirect the anchored ownership reads.
+  later replacements cannot redirect the anchored ownership reads. A candidate
+  below a file named like its directory (`docs`, `.github`) is absent; a link in
+  its path is not followed and leaves ownership incomplete.
 - A gateway caller whose identity is operator-asserted, unverified or missing
   authenticated assurance remains shadow when an inventory is supplied. Exact
   card bindings are retained as review candidates; they no longer confer an
   owner, declared governance or registration risk credit. Rescan gateway logs
   and establish fresh comparison baselines after upgrading.
+- CloudTrail (`cloud.aws`) and Cloud Audit Log (`cloud.gcp`) callers record
+  `metadata.caller_identity_assurance`: `provider-authenticated-field` for the
+  principal the provider authenticated, so exact bindings keep approving them
+  (without the `registry-identity-unverified` tag earlier scans added), and
+  `unverified` for the `unknown` caller of events without a principal, which is
+  a review candidate.
 
 ### Medium-severity review corrections
 

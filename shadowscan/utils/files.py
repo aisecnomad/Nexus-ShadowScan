@@ -7,7 +7,7 @@ import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from fnmatch import fnmatchcase
-from pathlib import Path, PurePath
+from pathlib import Path, PurePath, PurePosixPath
 from typing import BinaryIO
 
 MAX_POLICY_BYTES = 8 * 1024 * 1024
@@ -272,6 +272,31 @@ def open_confined_file(
             os.close(directory)
     with stream:
         yield stream, before
+
+
+def link_in_path(path: str | PurePath, *, dir_fd: int) -> bool:
+    """Whether a component of the relative ``path`` below ``dir_fd`` is a symbolic link.
+
+    Linux fails the no-follow walk of :func:`open_confined_file` with
+    ``ENOTDIR`` at a link as well as at a component that is a file, so a
+    caller uses this to tell a link that was not followed (a gap) from a file
+    in the way (the path does not exist). Each prefix is examined without
+    following its last component, and only after every shorter prefix was
+    found to be a real directory, so no link is ever traversed. A prefix that
+    cannot be examined, or that is neither a link nor a directory, ends the
+    walk without finding a link.
+    """
+    parts = PurePosixPath(path).parts
+    for i in range(1, len(parts) + 1):
+        try:
+            st = os.stat(str(PurePosixPath(*parts[:i])), dir_fd=dir_fd, follow_symlinks=False)
+        except OSError:
+            return False
+        if stat.S_ISLNK(st.st_mode):
+            return True
+        if not stat.S_ISDIR(st.st_mode):
+            return False
+    return False
 
 
 def changed_since(before: os.stat_result, fd: int) -> bool:

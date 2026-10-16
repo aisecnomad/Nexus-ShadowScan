@@ -134,6 +134,42 @@ def test_single_file_scan_keeps_ownership_scope(tmp_path: Path, index):
 
 
 @pytest.mark.parametrize(
+    "parent,next_candidate",
+    [(".github", "CODEOWNERS"), ("docs", ".gitlab/CODEOWNERS"), (".gitlab", None)],
+)
+def test_codeowners_candidate_below_a_file_is_absent(
+    tmp_path: Path, index, parent: str, next_candidate: str | None
+):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    # A file where a candidate's directory would be: that candidate cannot exist.
+    (tmp_path / parent).write_text("not a directory\n")
+    if next_candidate:
+        (tmp_path / next_candidate).parent.mkdir(exist_ok=True)
+        (tmp_path / next_candidate).write_text("* @next\n")
+
+    findings, ctx = _run(index, tmp_path)
+
+    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert findings and all(finding.owner == ("@next" if next_candidate else None) for finding in findings)
+
+
+def test_codeowners_parent_link_inside_the_tree_stays_unread(tmp_path: Path, index):
+    (tmp_path / "agent.py").write_text("from crewai import Agent\n")
+    (tmp_path / "handbook").mkdir()
+    (tmp_path / "handbook" / "CODEOWNERS").write_text("* @through-link\n")
+    (tmp_path / "docs").symlink_to("handbook", target_is_directory=True)
+    (tmp_path / ".gitlab").mkdir()
+    (tmp_path / ".gitlab" / "CODEOWNERS").write_text("* @next\n")
+
+    findings, ctx = _run(index, tmp_path)
+
+    # The link fails the walk as a file in the way does (ENOTDIR), but what it
+    # names is unknown: neither it nor a later candidate supplies owners.
+    assert "code.filesystem: could not read docs/CODEOWNERS" in ctx.stats.errors
+    assert findings and all(finding.owner is None for finding in findings)
+
+
+@pytest.mark.parametrize(
     "pattern,path,expected",
     [
         ("/docs/", "docs/guides/start.md", True),

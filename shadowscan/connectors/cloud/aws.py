@@ -70,9 +70,11 @@ from shadowscan.connectors.cloud.aws_registry import (
 )
 from shadowscan.connectors.cloud.common import (
     RECORD_ERRORS,
+    UNKNOWN_CALLER,
     InvalidPageTokenError,
     RecordDispatch,
     aggregate_caller_event,
+    audit_caller_assurance,
     cloud_finding,
     credential_name_matches,
     done,
@@ -2851,7 +2853,7 @@ class AwsConnector(BaseConnector):
     def _acc_caller(callers: dict[str, dict[str, Any]], rec: dict[str, Any]) -> None:
         agg = aggregate_caller_event(
             callers,
-            rec.get("principal") or "unknown",
+            rec.get("principal") or UNKNOWN_CALLER,
             time=rec.get("eventTime"),
             tally_present={
                 "agents": rec.get("userAgent"),
@@ -2905,6 +2907,7 @@ class AwsConnector(BaseConnector):
         f.metadata.update(
             {
                 "principal": principal,
+                "caller_identity_assurance": audit_caller_assurance(principal),
                 "identity_type": agg.get("identity_type"),
                 "events": agg["events"],
                 "models": agg["models"],

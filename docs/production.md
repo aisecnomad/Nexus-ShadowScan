@@ -107,10 +107,11 @@ passing unit suite does not establish complete coverage of a particular estate.
 
 ## October 15 collection and registry assurance migration (Unreleased)
 
-Rescan Make, Zapier, code and gateway inputs after upgrading. Scanner-source
-fingerprints change; retain previous reports as historical evidence and establish
-a fresh comparison baseline under the reviewed revision. A finding that changes
-registration or ownership is not evidence that its runtime behavior changed.
+Rescan Make, Zapier, code, gateway and cloud audit-log inputs after upgrading.
+Scanner-source fingerprints change; retain previous reports as historical
+evidence and establish a fresh comparison baseline under the reviewed revision.
+A finding that changes registration or ownership is not evidence that its
+runtime behavior changed.
 
 Make requires a valid scenario blueprint with an explicit flow array. Invalid
 or unreadable detail responses leave coverage incomplete (exit 3), including
@@ -122,6 +123,10 @@ collection or export; do not suppress exit 3 to obtain a clean gate.
 CODEOWNERS reads use the same anchored scan directory as source collection.
 A root replacement detected before ownership lookup makes the scan incomplete;
 later replacements cannot redirect ownership reads to another directory.
+A candidate below a file named like its directory (a `docs` or `.github` file)
+is absent, as before. A symbolic link in a candidate's path (a linked `docs`
+or `.github` directory) is not followed, even to a directory inside the scanned
+tree, and makes ownership incomplete (exit 3).
 Continue to scan immutable checkouts and exports: confined reads do not provide
 an atomic filesystem snapshot.
 
@@ -133,6 +138,15 @@ receive registration risk credit. Review the candidate and authenticate the
 caller binding at the log producer; renaming a caller or editing its export does
 not establish authentication. Provider-authenticated caller fields retain their
 existing matching semantics, subject to the supplied log's provenance and scope.
+They include the principals of `cloud.aws` CloudTrail callers and `cloud.gcp`
+Cloud Audit Log callers, which now record
+`metadata.caller_identity_assurance: provider-authenticated-field`: their exact
+bindings still approve them, and such approvals no longer carry the
+`registry_match_assurance: unverified` metadata and `registry-identity-unverified`
+tag that earlier scans added. The `cloudtrail:unknown` and `audit:unknown`
+callers collect events that name no principal; they are `unverified`, so a card
+that matched one (through a `cloudtrail:*` pattern, say) now yields a review
+candidate. Narrow such patterns to the principals you approve.
 See [gateway inventory matching](inventory.md#matching-and-approval).
 
 These changes can increase risk scores and cause existing `--fail-on` gates to

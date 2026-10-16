@@ -159,6 +159,23 @@ def aggregate_caller_event(
     return agg
 
 
+# The caller key shared by audit-log events that name no principal.
+UNKNOWN_CALLER = "unknown"
+
+
+def audit_caller_assurance(principal: str) -> str:
+    """Identity assurance of a caller keyed by the principal a provider audit log names.
+
+    CloudTrail ``userIdentity`` and Cloud Audit Logs ``authenticationInfo``
+    hold the principal the provider authenticated: the same fields
+    ``gateway.logs`` labels ``provider-authenticated-field`` in Bedrock and
+    Vertex logs. Events without a principal share :data:`UNKNOWN_CALLER`,
+    which names no one caller, so it is ``unverified``. Inventory
+    reconciliation reads the label as ``metadata.caller_identity_assurance``.
+    """
+    return "unverified" if principal == UNKNOWN_CALLER else "provider-authenticated-field"
+
+
 def string_list(value: Any, name: str, *, pattern: str | None = None) -> list[str] | None:
     """Normalize CLI/YAML list settings without iterating a scalar's characters."""
     if value is None:
