@@ -909,11 +909,13 @@ Graph app catalog (custom apps with bot definitions and RSC permissions) and
 installed apps per team (capped by `max_teams`).
 Catalog and installed-version definitions are retained with version, bot,
 installation and team provenance in `definition_observations`, one entry per
-distinct definition with an installation count and at most 20 sample teams. RSC
-permissions are requested permissions, not verified grants. Conflicting
-observations of one definition make coverage incomplete; scalar version/bot
-fields are populated only when unambiguous, with all observed values in
-`versions` and `bot_ids`.
+distinct definition with an installation count and at most 20 sample teams; at
+most 20 entries are listed and `definition_observations_omitted` counts the
+rest. RSC permissions are requested permissions, not verified grants.
+Conflicting observations of one definition make coverage incomplete; scalar
+version/bot fields are populated only when unambiguous, with up to 20 observed
+values in `versions` and `bot_ids` (`versions_omitted` and `bot_ids_omitted`
+count the rest).
 Malformed app IDs, conflicting expanded identities and malformed nested
 definitions or permissions make collection incomplete. An installation ID is
 not a fallback catalog app ID. Valid neighboring records remain available.
@@ -986,8 +988,11 @@ neighboring records remain available. A partial export cannot resolve an
 earlier finding merely because that row lost its name.
 Whole-record credential context removes copied secrets before field projection,
 matching and excerpt truncation. Credential contents cannot establish product
-or permission evidence. Short or placeholder values under credential names
-(`N`, `-`, `none`) are flags and withhold nothing; a name withheld entirely by a
+or permission evidence. Values under credential names are learned however
+they look, except whole-value placeholders (`none`, `****`, `changeme`), which
+withhold nothing, and values shorter than eight characters, which withhold only
+a field equal to them and nothing when they are flags (`N`, `-`, `Yes`); a short
+credential inside a longer field is still shown. A name withheld entirely by a
 credential makes coverage incomplete. A resource with a redacted credential
 gets a keyed, distinct finding ID that is scan-local
 (`metadata.identity_scope: run`) unless `SHADOWSCAN_IDENTITY_KEY` is set.

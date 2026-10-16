@@ -378,10 +378,27 @@ def test_generic_saas_credential_values_do_not_establish_app_identity(index):
 
 @pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize(
-    "value", ["N", "Y", "-", "a", "e", "Yes", "N/A", "none", "****", "changeme", "xxxxxxxxxxxx", "12345678"]
+    "value",
+    [
+        "N",
+        "Y",
+        "-",
+        "a",
+        "e",
+        "Yes",
+        "N/A",
+        "none",
+        "****",
+        "changeme",
+        "xxxxxxxx",
+        "xxxxxxxxxxxx",
+        "your_client_secret",
+        "<client-secret>",
+        "${CLIENT_SECRET}",
+    ],
 )
 def test_generic_saas_credential_flags_and_placeholders_do_not_withhold_fields(index, value, nested):
-    # Such values cannot be told from flags. Learned as credentials, they withheld every
+    # Flags and whole-value placeholders. Learned as credentials, they withheld every
     # field containing them: the name (so the app was silently not reported), dates, the
     # resource type (so the finding was omitted) and columns holding the same flag.
     connector = GenericSaaSConnector(ConnectorContext(index=index))
@@ -491,6 +508,92 @@ def test_generic_saas_unredacted_resource_keeps_its_resource_digest(tmp_path, in
     assert one.title == "saas app: Claude [REDACTED]" and one.resource == "saas:app:app-1"
     assert one.id == two.id == one.compute_id() == _unkeyed_identity_digest("saas:app:app-1")
     assert "identity_scope" not in one.metadata
+
+
+# looks_like_placeholder() calls these documentation examples: a word such as here, Test or
+# Demo, or a sequence such as Abcd1234 or 12345678. Under a credential name they are
+# credentials; only a placeholder as a whole value is not.
+PLACEHOLDER_LOOKING_CREDENTIALS = [
+    "prod-secret-here-7Hq2",
+    "MyTestPassword99",
+    "Hello-Demo-2024!",
+    "Abcd1234",
+    "12345678",
+]
+
+
+@pytest.mark.parametrize("field", ["name", "owner", "status", "id"])
+@pytest.mark.parametrize("credential", PLACEHOLDER_LOOKING_CREDENTIALS)
+def test_generic_saas_withholds_copies_of_credentials_that_look_like_placeholders(
+    tmp_path, index, monkeypatch, credential, field
+):
+    # They were left out of the credential context, so a copy in a display field was
+    # printed, the scan was complete, and an ID copy gave the public digest of the raw ID.
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    row = {"name": "ChatGPT Connector", "client_secret": credential, "installed_at": "2025-01-02"}
+    if field == "name":
+        row["name"] = f"ChatGPT Connector {credential}"
+    else:
+        row[field] = credential
+    result = _generic_scan(tmp_path, index, [row])
+    assert result.complete, result.stats[0].warnings
+    (finding,) = result.findings
+    assert credential not in result.to_json()
+    assert finding.first_seen == "2025-01-02"
+    if field == "name":
+        assert finding.title == "saas app: ChatGPT Connector [REDACTED]"
+    elif field == "owner":
+        assert finding.owner == REDACTED
+    elif field == "status":
+        assert finding.metadata["status"] == REDACTED
+    if field in ("name", "id"):
+        raw_resource = f"saas:app:{row[field]}"
+        assert finding.resource == (
+            "saas:app:ChatGPT Connector [REDACTED]" if field == "name" else "saas:app:[REDACTED]"
+        )
+        assert finding.id != finding.compute_id()
+        assert finding.id != _unkeyed_identity_digest(raw_resource)
+        assert finding.metadata["identity_scope"] == "run"
+    else:
+        assert finding.resource == "saas:app:ChatGPT Connector" and finding.id == finding.compute_id()
+
+
+@pytest.mark.parametrize("credential", [*PLACEHOLDER_LOOKING_CREDENTIALS, "hunter2", "Pa55!"])
+def test_generic_saas_name_equal_to_a_credential_is_withheld_and_incomplete(tmp_path, index, credential):
+    result = _generic_scan(
+        tmp_path, index, [{"name": credential, "client_secret": credential}, {"name": "Claude for Sheets"}]
+    )
+    assert not result.complete
+    assert [finding.title for finding in result.findings] == ["saas app: Claude for Sheets"]
+    assert any("withheld its name" in warning for warning in result.stats[0].warnings)
+    assert credential not in result.to_json()
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("field", ["owner", "status", "id"])
+@pytest.mark.parametrize("credential", ["hunter2", "Pa55!", "admin"])
+def test_generic_saas_withholds_a_field_equal_to_a_short_credential(
+    tmp_path, index, monkeypatch, credential, field, nested
+):
+    # A credential shorter than eight characters is not learned: it would withhold each
+    # field containing it. A field that equals it is withheld, and an ID equal to it gives
+    # a keyed finding ID, never the public digest of the raw resource.
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    secret = {"credentials": {"client_secret": credential}} if nested else {"client_secret": credential}
+    row = {"name": "ChatGPT Connector", "installed_at": "2025-01-02", field: f" {credential} ", **secret}
+    result = _generic_scan(tmp_path, index, [row])
+    assert result.complete, result.stats[0].warnings
+    (finding,) = result.findings
+    assert credential not in result.to_json()
+    assert finding.title == "saas app: ChatGPT Connector" and finding.first_seen == "2025-01-02"
+    if field == "id":
+        assert finding.resource == "saas:app:[REDACTED]"
+        assert finding.id != finding.compute_id()
+        assert finding.id != _unkeyed_identity_digest(f"saas:app: {credential} ")
+        assert finding.metadata["identity_scope"] == "run"
+    else:
+        assert (finding.owner if field == "owner" else finding.metadata["status"]) == REDACTED
+        assert finding.resource == "saas:app:ChatGPT Connector" and finding.id == finding.compute_id()
 
 
 @pytest.mark.parametrize("with_id", [False, True])

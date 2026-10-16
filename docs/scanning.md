@@ -1003,8 +1003,9 @@ incomplete (that is operator intent), but the JSON report lists them as
 digest.
 
 A finding with `metadata.identity_scope: run`, which `gateway.logs` findings
-carry unless `SHADOWSCAN_IDENTITY_KEY` is set, has an ID derived from a key that
-is random for each scan: the same caller has a different ID in the next report.
+and `saas.generic` findings whose resource a credential redacted carry unless
+`SHADOWSCAN_IDENTITY_KEY` is set, has an ID derived from a key that is random
+for each scan: the same caller or app has a different ID in the next report.
 Diff therefore never reports such a finding as new, resolved or unknown because
 the other report lacks its ID. It lists it under `not_comparable` (`baseline` or
 `current`; marked `<` or `>` in text output), states the reason and exits 3. A

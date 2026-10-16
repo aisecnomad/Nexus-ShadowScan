@@ -167,16 +167,30 @@ Rescan generic SaaS, Teams and affected JavaScript/TypeScript inputs after
 upgrading, and establish a fresh comparison baseline under the reviewed
 revision. Generic SaaS reports now withhold copies of known credentials from
 projected fields before transformations; credential values no longer establish
-product or permission matches. A value under a credential column name that is
-shorter than eight characters or a documentation placeholder (`N`, `-`, `Yes`,
-`none`, `****`, `changeme`) is a flag, not a credential, and withholds nothing.
-A record whose app name a credential withholds entirely is skipped with a
-warning and leaves the scan incomplete (exit 3).
+product or permission matches. Every value under a credential column name is
+learned and withheld from the other fields however it looks: a word such as
+`test`, `demo` or `here`, or a sequence such as `Abcd1234` or `12345678`, does
+not make it a placeholder. Two kinds of value are not learned. A placeholder as
+the whole value (`none`, `****`, `xxxxxxxx`, `changeme`, `your_secret`,
+`<secret>`, `${SECRET}`) withholds nothing. A value shorter than eight
+characters is not removed from other fields, because sanitization would then
+withhold every field containing it and such columns often hold flags (`N`, `-`,
+`Yes`); instead a field equal to it is withheld, unless it is a flag (a yes/no
+or not-applicable word, or at most one letter or digit), and an app ID equal to
+it is withheld from the resource. Known gap: a credential shorter than eight
+characters inside a longer field (`ChatGPT hunter2`) is still shown. A record
+whose app name a credential withholds entirely is skipped with a warning and
+leaves the scan incomplete (exit 3). An unreleased revision of this change also
+left out every value the placeholder heuristic (`looks_like_placeholder`)
+matches and printed such credentials in app names, owners, statuses and
+resources in complete scans; regenerate reports made with it and rotate any
+credential they show.
 
 **Finding identity.** When a credential is redacted from a generic SaaS
-finding's resource, its ID is now derived from the redacted resource and a keyed
-pseudonym of the raw one (`keyed_credential_digest`), not from a public digest
-of the raw resource, which let a reader confirm a guessed credential offline.
+finding's resource (an app ID equal to a short credential included), its ID is
+now derived from the redacted resource and a keyed pseudonym of the raw one
+(`keyed_credential_digest`), not from a public digest of the raw resource,
+which let a reader confirm a guessed credential offline.
 Those findings change ID and record `metadata.identity_scope`: `run` without a
 stable key, so their IDs are scan-local and `diff` lists them as not comparable
 (exit 3) instead of new or resolved; `keyed` when the scan has the operator's
@@ -193,7 +207,12 @@ fields to be `null` when no nonempty value or multiple values were observed; use
 `definition_observations` entry describes one distinct definition and source;
 installation entries carry `installation_count`, `team_count` and `teams`, a
 sorted sample of at most 20 team IDs and names, instead of one entry per
-installation, so a widely installed app keeps a bounded finding. RSC permissions
+installation, so a widely installed app keeps a bounded finding. A finding lists
+at most 20 of these entries, in sorted order, and counts the rest in
+`definition_observations_omitted`; `versions` and `bot_ids` likewise list at most
+20 values each, with `versions_omitted` and `bot_ids_omitted`, so an export with
+thousands of distinct definitions also keeps a bounded finding. Permissions,
+scalar fields and conflict detection read every observation. RSC permissions
 remain definition-requested permissions, not proof of effective grants.
 Contradictory observations of one definition mark coverage incomplete.
 

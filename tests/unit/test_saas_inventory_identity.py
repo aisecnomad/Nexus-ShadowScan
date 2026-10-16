@@ -538,6 +538,98 @@ def test_teams_installations_of_one_definition_are_counted_with_a_bounded_team_s
     assert len(json.dumps(finding.to_dict())) < 10_000
 
 
+def _distinct_teams_definitions(count, *extra):
+    """A catalog definition and ``count`` installations, each of a definition of its own."""
+    catalog = {
+        **TEAMS_APP,
+        "id": "org-bot",
+        "displayName": "Ops Copilot",
+        "appDefinitions": [
+            {
+                "id": "definition-0000",
+                "teamsAppId": "org-bot",
+                "version": "1.0.0",
+                "publishingState": "published",
+                "bot": {"id": "bot-1"},
+            }
+        ],
+    }
+    definitions = [
+        {
+            "id": f"definition-{number:04d}",
+            "teamsAppId": "org-bot",
+            "version": f"1.{number}.0",
+            "bot": {"id": "bot-1"},
+        }
+        for number in range(1, count + 1)
+    ]
+    # The last definition sorts after every listed observation; its permission must still count.
+    definitions[-1]["authorization"] = {
+        "requiredPermissionSet": {
+            "resourceSpecificPermissions": [
+                {"permissionValue": "ChannelMessage.Read.Group", "permissionType": "Application"}
+            ]
+        }
+    }
+    installations = [
+        {
+            "_kind": "installedApp",
+            "id": f"installation-{number}",
+            "_team": f"Team {number:04d}",
+            "_team_id": f"team-{number:04d}",
+            "teamsApp": {"id": "org-bot", "distributionMethod": "organization"},
+            "teamsAppDefinition": definition,
+        }
+        for number, definition in enumerate([*definitions, *extra], 1)
+    ]
+    return [catalog, *installations]
+
+
+def test_teams_distinct_definitions_are_listed_as_a_bounded_sample_with_an_omitted_count(tmp_path):
+    # One observation per distinct definition grew a finding by about 300 bytes each:
+    # 3,000 gave 953 KB, and at 8,000 the finding passed the sanitization limit, was
+    # omitted and left the scan incomplete.
+    result = scan(tmp_path, "saas.microsoft-teams", _distinct_teams_definitions(3000), tenant_id="tenant-a")
+    assert result.complete, result.stats[0].warnings
+    (finding,) = result.findings
+    metadata = finding.metadata
+    assert metadata["install_count"] == 3000 and not metadata["definition_conflicts"]
+    observations = metadata["definition_observations"]
+    assert [d["definition_id"] for d in observations] == [f"definition-{number:04d}" for number in range(20)]
+    assert metadata["definition_observations_omitted"] == 3001 - 20
+    assert metadata["versions"] == sorted(["1.0.0", *(f"1.{number}.0" for number in range(1, 3001))])[:20]
+    assert metadata["versions_omitted"] == 3001 - 20
+    assert metadata["version"] is None
+    assert (
+        metadata["bot_ids"] == ["bot-1"]
+        and metadata["bot_ids_omitted"] == 0
+        and metadata["bot_id"] == "bot-1"
+    )
+    # Derived from every observation, not only the listed ones.
+    assert metadata["rsc_permissions"] == ["ChannelMessage.Read.Group"]
+    (app_evidence,) = [evidence for evidence in finding.evidence if evidence.signal == "teams:app"]
+    assert "1.10.0, 1.100.0," in app_evidence.description and "and 2981 more" in app_evidence.description
+    assert len(json.dumps(finding.to_dict())) < 15_000
+
+
+def test_teams_conflict_among_omitted_definition_observations_is_still_detected(tmp_path):
+    conflicting = {
+        "id": "definition-2999",
+        "teamsAppId": "org-bot",
+        "version": "9.9.9",
+        "bot": {"id": "bot-1"},
+    }
+    result = scan(
+        tmp_path, "saas.microsoft-teams", _distinct_teams_definitions(3000, conflicting), tenant_id="tenant-a"
+    )
+    assert not result.complete
+    assert any("conflicting Teams definition observations" in w for w in result.stats[0].warnings)
+    (finding,) = result.findings
+    assert finding.metadata["definition_conflicts"]
+    assert all(d["definition_id"] != "definition-2999" for d in finding.metadata["definition_observations"])
+    assert finding.metadata["definition_observations_omitted"] == 3002 - 20
+
+
 def test_teams_repeated_catalog_snapshot_with_reordered_definitions_is_not_a_conflict(tmp_path, fixtures):
     records = _teams_review_records(fixtures)
     catalog = records[0]

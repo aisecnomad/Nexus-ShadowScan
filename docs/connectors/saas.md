@@ -39,12 +39,16 @@ records definition IDs, versions, bot IDs, requested RSC permissions and
 installation/team provenance, one entry per distinct definition and source: an
 installed definition carries `installation_count`, `team_count` and `teams`, a
 sorted sample of at most 20 team IDs and names, so the finding stays bounded
-however many teams install the app. Requested permissions do not establish
-granted access. Contradictory observations of the same definition ID or version
-mark coverage incomplete while retaining the attributed evidence. `versions` and
-`bot_ids` contain the observed values; scalar `version`, `bot_id` and
-`publishing_state` are populated only when one nonempty value was observed;
-otherwise they are `null`.
+however many teams install the app. At most 20 observations are listed, in
+sorted order, and `definition_observations_omitted` counts the rest; `versions`
+and `bot_ids` list at most 20 observed values each, with `versions_omitted` and
+`bot_ids_omitted`, so the finding stays bounded however many distinct
+definitions an export holds. Requested permissions do not establish granted
+access. Permissions, scalar fields and conflict detection read every
+observation: contradictory observations of the same definition ID or version
+mark coverage incomplete while retaining the attributed evidence. Scalar
+`version`, `bot_id` and `publishing_state` are populated only when one nonempty
+value was observed; otherwise they are `null`.
 
 ## `saas.github-apps`
 Org installations with permissions and repository selection (AI reviewers,
@@ -123,14 +127,19 @@ Whole-record credential context is applied before selecting, splitting or
 shortening fields for matching and reports. A known credential copied into an
 app name, scope or other display field is withheld even when its original
 credential column is omitted from findings. Credential contents do not establish
-product or permission evidence. A value under a credential column name that is
-shorter than eight characters or a documentation placeholder (`N`, `-`, `Yes`,
-`none`, `****`, `changeme`) is treated as a flag and withholds nothing. A record
-whose name a credential withholds entirely is skipped and makes the scan
-incomplete. Sanitization limits make coverage incomplete. When a credential is
-redacted from a resource, the finding ID combines the redacted resource with a
-keyed pseudonym of the raw one: distinct resources keep distinct IDs, and the
-finding records `metadata.identity_scope` (`run`, scan-local, unless
-`SHADOWSCAN_IDENTITY_KEY` makes it `keyed`).
+product or permission evidence. Every value under a credential column name is
+learned however it looks (`Abcd1234`, `12345678`, `MyTestPassword99`), except a
+placeholder as the whole value (`none`, `****`, `xxxxxxxx`, `changeme`,
+`your_secret`, `<secret>`, `${SECRET}`), which withholds nothing, and a value
+shorter than eight characters. A short value withholds only a field equal to it
+(an app ID equal to it is withheld from the resource), and nothing when it is a
+flag (`N`, `-`, `Yes`, `N/A`: a yes/no or not-applicable word, or at most one
+letter or digit); a short credential inside a longer field (`ChatGPT hunter2`)
+is still shown. A record whose name a credential withholds entirely is skipped
+and makes the scan incomplete. Sanitization limits make coverage incomplete.
+When a credential is redacted from a resource, the finding ID combines the
+redacted resource with a keyed pseudonym of the raw one: distinct resources keep
+distinct IDs, and the finding records `metadata.identity_scope` (`run`,
+scan-local, unless `SHADOWSCAN_IDENTITY_KEY` makes it `keyed`).
 
 See the [main connector reference](../connectors.md) for shared options and offline safety limits.

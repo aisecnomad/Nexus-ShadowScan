@@ -770,7 +770,8 @@ def _comparison_reasons(
         reasons.append(
             f"{len(local_b) + len(local_c)} finding(s) have scan-local identities "
             "(metadata.identity_scope) and cannot be matched across scans; "
-            f"set {IDENTITY_KEY_ENV} for both scans to compare gateway callers"
+            f"set {IDENTITY_KEY_ENV} for both scans to compare gateway callers and generic SaaS "
+            "apps whose resource a credential redacted"
         )
     reasons += baseline_lifecycle_reasons(baseline, current, max_age_days=max_baseline_age_days, now=moment)
     return reasons, local_b, local_c

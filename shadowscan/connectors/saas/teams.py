@@ -29,6 +29,9 @@ from shadowscan.utils.text import get_path
 GRAPH = "https://graph.microsoft.com/v1.0"
 # Team names (and IDs) a finding lists, in total and per observed definition.
 _TEAM_SAMPLE = 20
+# Definition observations, versions and bot IDs a finding lists; the rest are
+# counted, so an app with thousands of distinct definitions keeps a bounded finding.
+_DEFINITION_SAMPLE = 20
 
 
 class TeamsConnector(BaseConnector):
@@ -420,12 +423,15 @@ class TeamsConnector(BaseConnector):
         is_custom = app.get("distributionMethod") == "organization"
         if not f.frameworks and not bot_ids and not is_custom:
             return None
+        listed_versions = ", ".join(versions[:_DEFINITION_SAMPLE]) or "unknown"
+        if len(versions) > _DEFINITION_SAMPLE:
+            listed_versions += f" and {len(versions) - _DEFINITION_SAMPLE} more"
         f.add_evidence(
             Evidence(
                 signal="teams:app",
                 description=(
                     f"{app.get('distributionMethod') or 'unknown'} app '{name}' "
-                    f"observed versions: {', '.join(versions) or 'unknown'}; "
+                    f"observed versions: {listed_versions}; "
                     f"{len(installs)} observed installation(s); "
                     f"definition-requested RSC permissions: {', '.join(perms) or 'none observed'}; "
                     "grants are not verified"
@@ -443,11 +449,16 @@ class TeamsConnector(BaseConnector):
                 "distribution": app.get("distributionMethod"),
                 "external_id": app.get("externalId"),
                 "version": only(versions),
-                "versions": versions,
+                "versions": versions[:_DEFINITION_SAMPLE],
+                "versions_omitted": max(0, len(versions) - _DEFINITION_SAMPLE),
                 "bot_id": only(bot_ids),
-                "bot_ids": bot_ids,
+                "bot_ids": bot_ids[:_DEFINITION_SAMPLE],
+                "bot_ids_omitted": max(0, len(bot_ids) - _DEFINITION_SAMPLE),
                 "publishing_state": only(values("publishingState")),
-                "definition_observations": observations,
+                # Sorted, so the same export lists the same observations; permissions,
+                # versions and conflicts above are derived from all of them.
+                "definition_observations": observations[:_DEFINITION_SAMPLE],
+                "definition_observations_omitted": max(0, len(observations) - _DEFINITION_SAMPLE),
                 "definition_conflicts": conflicting,
                 "installed_teams": team_names[:_TEAM_SAMPLE],
                 "install_count": len(installs),

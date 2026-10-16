@@ -103,7 +103,8 @@ def test_scan_local_findings_never_resolve_even_under_a_matching_scope():
     assert [f["resource"] for f in comparison["not_comparable"]["current"]] == ["service:b"]
     assert comparison["reasons"] == [
         "2 finding(s) have scan-local identities (metadata.identity_scope) and cannot be matched across "
-        "scans; set SHADOWSCAN_IDENTITY_KEY for both scans to compare gateway callers"
+        "scans; set SHADOWSCAN_IDENTITY_KEY for both scans to compare gateway callers and generic SaaS "
+        "apps whose resource a credential redacted"
     ]
 
 

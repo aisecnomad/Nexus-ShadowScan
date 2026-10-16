@@ -663,15 +663,26 @@ summarizes each release for people who install and operate ShadowScan.
 - Generic SaaS inventory retains whole-record credential context when selecting
   report and matching fields. Known credentials are removed before splitting or
   shortening values, and cannot establish product or permission evidence;
-  credential context is never retained in findings. Values under credential
-  names that are shorter than eight characters or placeholders (`N`, `-`,
-  `none`, `****`) are flags and withhold nothing. A name withheld entirely by a
-  credential leaves the scan incomplete instead of silently omitting the app.
+  credential context is never retained in findings. Every value under a
+  credential name is learned however it looks (`Abcd1234`, `12345678`,
+  `MyTestPassword99`, `prod-secret-here-7Hq2`), except a placeholder as the
+  whole value (`none`, `****`, `xxxxxxxx`, `changeme`, `your_secret`), which
+  withholds nothing, and a value shorter than eight characters, which would
+  withhold every field containing it: it withholds only a field equal to it,
+  and nothing when it is a flag (`N`, `-`, `Yes`, `N/A`). A short credential
+  inside a longer field (`ChatGPT hunter2`) is still shown. An earlier
+  revision of this change also left out every value the placeholder heuristic
+  (`looks_like_placeholder`) matches, such as one containing `test`, `demo` or
+  `here`, so a copy of such a credential in the name, owner, status or ID was
+  printed in a complete scan; regenerate reports made with it. A name withheld
+  entirely by a credential leaves the scan incomplete instead of silently
+  omitting the app.
 - Generic SaaS findings whose resource a credential redacts take their ID from
   the redacted resource and a keyed pseudonym of the raw one, not a public
   digest that confirmed guessed credentials. Their IDs change and are scan-local
   (`metadata.identity_scope: run`) unless `SHADOWSCAN_IDENTITY_KEY` is set;
-  distinct raw resources keep distinct IDs.
+  distinct raw resources keep distinct IDs. `diff` names these apps beside
+  gateway callers when it asks for the key.
 - Zapier and Workato reject provider error envelopes and malformed collections
   even beside empty result arrays: that page is omitted. A missing or malformed
   Zapier continuation keeps the page's Zaps and marks coverage incomplete.
@@ -679,7 +690,12 @@ summarizes each release for people who install and operate ShadowScan.
 - Teams combines catalog and installed-version definitions with version, bot,
   installation and team provenance. Installations of one definition are counted
   (`installation_count`, `team_count`) with a sample of at most 20 teams, so the
-  finding stays bounded however many teams install the app. It reports requested
+  finding stays bounded however many teams install the app. At most 20 definition
+  observations, versions and bot IDs are listed, in sorted order, and the rest
+  are counted (`definition_observations_omitted`, `versions_omitted`,
+  `bot_ids_omitted`): 3,000 installations of distinct definitions made a 953 KB
+  finding, and at 8,000 it was omitted and the scan incomplete. Permissions and
+  conflict detection read every observation. It reports requested
   RSC permissions, not verified grants; contradictory observations of one
   definition mark coverage incomplete. Scalar version/bot fields are populated
   only when unambiguous; otherwise they are `null`.
