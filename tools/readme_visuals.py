@@ -153,40 +153,40 @@ def render_banner() -> str:
         "then reconciles it against the agent registry you supply."
     )
     body = [
-        _rect(0, 0, 1600, 480, "url(#bg)", "none", rx=0),
+        _rect(0, 0, 1600, 560, "url(#bg)", "none", rx=0),
         '<g stroke="#223a66" stroke-width="1.5" fill="none">',
-        *(f'  <circle cx="1330" cy="240" r="{r}"/>' for r in (60, 120, 180, 240)),
-        '  <line x1="1090" y1="240" x2="1570" y2="240"/>',
-        '  <line x1="1330" y1="0" x2="1330" y2="480"/>',
+        *(f'  <circle cx="1330" cy="280" r="{r}"/>' for r in (60, 120, 180, 240)),
+        '  <line x1="1090" y1="280" x2="1570" y2="280"/>',
+        '  <line x1="1330" y1="0" x2="1330" y2="560"/>',
         "</g>",
-        '<path d="M1330 240 L1330 0 A240 240 0 0 1 1538 120 Z" fill="url(#sweep)"/>',
+        '<path d="M1330 280 L1330 0 A240 240 0 0 1 1538 160 Z" fill="url(#sweep)"/>',
         '<g fill="#f4b942">',
         *(
             f'  <circle cx="{x}" cy="{y}" r="6"/>'
-            for x, y in ((1252, 150), (1412, 192), (1472, 300), (1198, 318))
+            for x, y in ((1252, 190), (1412, 232), (1472, 340), (1198, 358))
         ),
         "</g>",
-        '<circle cx="1368" cy="262" r="10" fill="#3ddc97"/>',
-        '<circle cx="1368" cy="262" r="18" fill="none" stroke="#3ddc97" stroke-width="2"/>',
+        '<circle cx="1368" cy="302" r="10" fill="#3ddc97"/>',
+        '<circle cx="1368" cy="302" r="18" fill="none" stroke="#3ddc97" stroke-width="2"/>',
         _t(
             90,
-            112,
+            108,
             "OPEN-SOURCE AI AGENT DISCOVERY",
-            size=20,
+            size=26,
             fill="#f4b942",
             font_family=MONO,
-            letter_spacing="4",
+            letter_spacing="5",
         ),
-        _t(84, 226, "Nexus ShadowScan", size=104, weight="bold", fill="#eef3ff", letter_spacing="-3"),
+        _t(84, 252, "Nexus ShadowScan", size=128, weight="bold", fill="#eef3ff", letter_spacing="-3"),
         *(
-            _t(90, 290 + 36 * index, line, size=27, fill="#c9d4ea")
-            for index, line in enumerate(textwrap.wrap(sentence, 70, break_on_hyphens=False))
+            _t(90, 322 + 40 * index, line, size=30, fill="#c9d4ea")
+            for index, line in enumerate(textwrap.wrap(sentence, 68, break_on_hyphens=False))
         ),
-        f'<g font-family="{MONO}" font-size="19">',
-        f"  {_rect(90, 396, 150, 44, '#162544', '#2b4270', rx=22)}",
-        f"  {_t(165, 424, _license(), size=19, fill='#c9d4ea', text_anchor='middle')}",
-        f"  {_rect(256, 396, 360, 44, '#2a2210', '#6b4e12', rx=22)}",
-        f"  {_t(436, 424, f'pip install {_package_name()}', size=19, fill='#f4b942', text_anchor='middle')}",
+        f'<g font-family="{MONO}" font-size="20">',
+        f"  {_rect(90, 436, 160, 48, '#162544', '#2b4270', rx=24)}",
+        f"  {_t(170, 466, _license(), size=20, fill='#c9d4ea', text_anchor='middle')}",
+        f"  {_rect(268, 436, 380, 48, '#2a2210', '#6b4e12', rx=24)}",
+        f"  {_t(458, 466, f'pip install {_package_name()}', size=20, fill='#f4b942', text_anchor='middle')}",
         "</g>",
     ]
     defs = (
@@ -196,7 +196,7 @@ def render_banner() -> str:
         '<stop offset="0" stop-color="#f4b942" stop-opacity="0.35"/>'
         '<stop offset="1" stop-color="#f4b942" stop-opacity="0"/></linearGradient>'
     )
-    return _svg(1600, 480, "Nexus ShadowScan", sentence, body, defs=defs)
+    return _svg(1600, 560, "Nexus ShadowScan", sentence, body, defs=defs)
 
 
 def render_data_flow() -> str:
@@ -416,77 +416,115 @@ def render_connectors() -> str:
     return _svg(1200, height, "Nexus ShadowScan built-in connectors by surface", desc, body)
 
 
-def benchmark_rows() -> list[tuple[str, str, float, float]]:
-    """(tool, surface coverage, estate recall, in-scope recall) per tool, highest estate recall first."""
+def benchmark_rows() -> list[tuple[str, str, float, float, tuple[float, float]]]:
+    """(tool, coverage, estate recall, in-scope recall, its interval), best estate recall first."""
     with (BENCHMARK_RUN / "metrics.json").open(encoding="utf-8") as handle:
         tools = json.load(handle)["tools"]
-    rows = [
-        (name, str(tool["coverage"]), float(tool["estate"]["recall"]), float(tool["in_scope"]["recall"]))
-        for name, tool in tools.items()
-    ]
+    rows = []
+    for name, tool in tools.items():
+        low, high = tool["in_scope"]["recall_ci"]
+        rows.append(
+            (
+                name,
+                str(tool["coverage"]),
+                float(tool["estate"]["recall"]),
+                float(tool["in_scope"]["recall"]),
+                (float(low), float(high)),
+            )
+        )
     return sorted(rows, key=lambda row: (-row[2], row[0]))
 
 
+# Dark theme of the benchmark chart, with one bar colour per tool in rank order.
+_BENCH_BG, _BENCH_PANEL, _BENCH_RULE = "#0f1220", "#1b2033", "#2a3150"
+_BENCH_INK, _BENCH_MUTED = "#e6e9f2", "#9aa3b8"
+_BENCH_BARS = ("#60a5fa", "#a78bfa", "#34d399", "#fbbf24", "#f87171", "#22d3ee")
+
+
 def render_benchmark() -> str:
-    """Estate and in-scope recall of every tool in the committed ShadowBench cases run."""
+    """Cross-tool comparison from the committed ShadowBench cases run: ranked bars, then a table."""
     rows = benchmark_rows()
     run = BENCHMARK_RUN.name
-    left, scale, top, step = 340, 680, 168, 40
-    height = top + step * len(rows) + 24
-    estate_fill, scope_fill = FLOW, "#9fcbd3"
+    title = f"Cross-Tool Comparison: ShadowBench nine-surface cases (run {run})"
+    label_right, track, scale = 500, 520, 1000
+    bars_top, step = 236, 42
+    table_top = bars_top + step * len(rows) + 28
+    row_h = 52
+    height = table_top + 56 + row_h * len(rows) + 32
     body: list[str] = [
-        _rect(0, 0, 1200, height, "#fbfaf7", "none", rx=0),
-        _t(24, 34, f"ShadowBench nine-surface cases: recall by tool (run {run})", size=22, weight="bold"),
+        _rect(0, 0, 1800, height, _BENCH_BG, "none", rx=0),
+        _t(80, 64, title, size=34, weight="bold", fill=_BENCH_INK),
+        f'<line x1="80" y1="88" x2="1720" y2="88" stroke="{_BENCH_RULE}" stroke-width="2"/>',
         _t(
-            24,
-            60,
-            "Author-written synthetic corpus. ShadowScan's maintainer wrote the corpus, rubrics, scorer and "
-            "every tool's adapter.",
-            size=14,
-            fill=MUTED,
-        ),
-        _t(
-            24,
             80,
-            "Estate recall charges a tool for surfaces it does not cover: compare tools on in-scope recall. "
-            "Not field accuracy;",
-            size=14,
-            fill=MUTED,
+            124,
+            "Author-written synthetic corpus: ShadowScan's maintainer wrote the corpus, rubrics, scorer and "
+            "every tool's adapter.",
+            size=19,
+            fill=_BENCH_MUTED,
         ),
         _t(
-            24,
-            100,
-            "not a verdict on any product. Source: benchmarks/shadowbench/cases.",
-            size=14,
-            fill=MUTED,
+            80,
+            152,
+            "Not field accuracy and not a verdict on any product. Source: benchmarks/shadowbench/cases.",
+            size=19,
+            fill=_BENCH_MUTED,
         ),
-        _rect(left, 122, 14, 12, estate_fill, estate_fill, rx=2),
-        _t(left + 22, 133, "estate recall (all nine surfaces)", size=13),
-        _rect(left + 300, 122, 14, 12, scope_fill, scope_fill, rx=2),
-        _t(left + 322, 133, "in-scope recall (surfaces the tool covers)", size=13),
-        _t(24, 156, "tool", size=12, weight="bold", fill=MUTED),
-        _t(250, 156, "surfaces", size=12, weight="bold", fill=MUTED),
+        _t(
+            80,
+            204,
+            "Estate Recall (unsupported surfaces count as misses)",
+            size=26,
+            weight="bold",
+            fill=_BENCH_INK,
+        ),
     ]
-    for index, (name, coverage, estate, scope) in enumerate(rows):
-        y = top + step * index
+    for index, (name, _, estate, _, _) in enumerate(rows):
+        y = bars_top + step * index
+        colour = _BENCH_BARS[index % len(_BENCH_BARS)]
         body += [
-            _t(24, y + 20, name, size=14, font_family=MONO),
-            _t(250, y + 20, coverage, size=14, font_family=MONO),
-            _rect(left, y + 4, max(scale * estate, 1), 12, estate_fill, estate_fill, rx=2),
-            _t(left + scale * estate + 8, y + 15, f"{estate:.0%}", size=12),
-            _rect(left, y + 18, max(scale * scope, 1), 12, scope_fill, scope_fill, rx=2),
-            _t(left + scale * scope + 8, y + 29, f"{scope:.0%}", size=12, fill=MUTED),
+            _t(label_right, y + 24, name, size=21, fill=_BENCH_INK, text_anchor="end"),
+            _rect(track, y + 4, scale, 30, _BENCH_PANEL, "none", rx=6),
+            _rect(track, y + 4, max(scale * estate, 6), 30, colour, "none", rx=6),
+            _t(1720, y + 26, f"{estate:.2f}", size=21, fill=_BENCH_INK, font_family=MONO, text_anchor="end"),
+        ]
+    columns = (("TOOL", 104), ("SURFACES", 640), ("IN-SCOPE RECALL (95% CI)", 900), ("ESTATE RECALL", 1700))
+    body += [
+        _rect(80, table_top, 1640, 56 + row_h * len(rows), _BENCH_PANEL, _BENCH_RULE, rx=12),
+        *(
+            _t(
+                x,
+                table_top + 36,
+                label,
+                size=17,
+                weight="bold",
+                fill=_BENCH_MUTED,
+                **({"text_anchor": "end"} if label == "ESTATE RECALL" else {}),
+            )
+            for label, x in columns
+        ),
+    ]
+    for index, (name, coverage, estate, scope, (low, high)) in enumerate(rows):
+        y = table_top + 56 + row_h * index
+        body += [
+            f'<line x1="80" y1="{y}" x2="1720" y2="{y}" stroke="{_BENCH_RULE}" stroke-width="1"/>',
+            _t(104, y + 34, name, size=21, fill=_BENCH_INK),
+            _t(640, y + 34, coverage, size=21, fill=_BENCH_INK, font_family=MONO),
+            _t(
+                900, y + 34, f"{scope:.2f} ({low:.2f}-{high:.2f})", size=21, fill=_BENCH_INK, font_family=MONO
+            ),
+            _t(1700, y + 34, f"{estate:.2f}", size=21, fill=_BENCH_INK, font_family=MONO, text_anchor="end"),
         ]
     desc = (
         f"Recall per tool in the ShadowBench nine-surface cases run of {run}, an author-written synthetic "
-        "corpus: "
+        "corpus; compare tools on in-scope recall, as estate recall counts unsupported surfaces as misses: "
         + "; ".join(
-            f"{name} ({coverage} surfaces) estate {estate:.0%}, in scope {scope:.0%}"
-            for name, coverage, estate, scope in rows
+            f"{name} ({coverage} surfaces) estate {estate:.2f}, in scope {scope:.2f}"
+            for name, coverage, estate, scope, _ in rows
         )
         + "."
     )
-    return _svg(1200, height, f"ShadowBench nine-surface cases: recall by tool (run {run})", desc, body)
+    return _svg(1800, height, title, desc, body)
 
 
 def rendered() -> dict[Path, str]:

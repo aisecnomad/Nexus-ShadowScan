@@ -115,11 +115,15 @@ def test_benchmark_chart_shows_every_tool_of_the_committed_run_with_its_caveats(
     rows = benchmark_rows()
     assert {name for name, *_ in rows} == set(tools)
     text = _text(render_benchmark())
-    for name, coverage, estate, scope in rows:
+    for name, coverage, estate, scope, (low, high) in rows:
         assert tools[name]["estate"]["recall"] == estate and tools[name]["in_scope"]["recall"] == scope
-        assert name in text and coverage in text and f"{estate:.0%}" in text and f"{scope:.0%}" in text
+        assert tools[name]["in_scope"]["recall_ci"] == [low, high]
+        assert name in text and coverage in text and f"{estate:.2f}" in text
+        assert f"{scope:.2f} ({low:.2f}-{high:.2f})" in text
     assert BENCHMARK_RUN.name in text
     assert "Author-written synthetic corpus" in text
-    assert "compare tools on in-scope recall" in text
+    assert "unsupported surfaces count as misses" in text
+    assert "IN-SCOPE RECALL" in text
     assert "not a verdict on any product" in text
+    assert "compare tools on in-scope recall" in render_benchmark()
     assert "aisecnomad" not in text
