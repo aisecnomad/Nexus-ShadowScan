@@ -21,6 +21,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from xml.sax.saxutils import escape
 
+import yaml
+
 from shadowscan.connectors import builtin_connector_names
 from shadowscan.models import Surface
 from shadowscan.reporters import FORMATS
@@ -85,6 +87,19 @@ def _license() -> str:
         return str(tomllib.load(handle)["project"]["license"])
 
 
+def _signature_count() -> int:
+    """Count individual signatures across all YAML data packs."""
+    count = 0
+    for path in (ROOT / "shadowscan" / "signatures" / "data").rglob("*.yaml"):
+        with path.open() as fh:
+            data = yaml.safe_load(fh)
+        if isinstance(data, list):
+            count += len(data)
+        elif isinstance(data, dict) and "signatures" in data:
+            count += len(data["signatures"])
+    return count
+
+
 def connectors_by_surface() -> dict[Surface, list[str]]:
     """Built-in connector names grouped by surface, each group sorted."""
     grouped: dict[Surface, list[str]] = {surface: [] for surface in Surface}
@@ -146,41 +161,47 @@ def render_banner() -> str:
         f"Discovers evidence of AI agents across {_surface_sentence()}, "
         "then reconciles it against the agent registry you supply."
     )
+    n_connectors = len(builtin_connector_names())
+    n_sigs = _signature_count()
     body = [
-        _rect(0, 0, 1600, 480, "url(#bg)", "none", rx=0),
+        _rect(0, 0, 1600, 560, "url(#bg)", "none", rx=0),
         '<g stroke="#223a66" stroke-width="1.5" fill="none">',
-        *(f'  <circle cx="1330" cy="240" r="{r}"/>' for r in (60, 120, 180, 240)),
-        '  <line x1="1090" y1="240" x2="1570" y2="240"/>',
-        '  <line x1="1330" y1="0" x2="1330" y2="480"/>',
+        *(f'  <circle cx="1330" cy="280" r="{r}"/>' for r in (60, 120, 180, 240)),
+        '  <line x1="1090" y1="280" x2="1570" y2="280"/>',
+        '  <line x1="1330" y1="0" x2="1330" y2="560"/>',
         "</g>",
-        '<path d="M1330 240 L1330 0 A240 240 0 0 1 1538 120 Z" fill="url(#sweep)"/>',
+        '<path d="M1330 280 L1330 0 A240 240 0 0 1 1538 160 Z" fill="url(#sweep)"/>',
         '<g fill="#f4b942">',
         *(
             f'  <circle cx="{x}" cy="{y}" r="6"/>'
-            for x, y in ((1252, 150), (1412, 192), (1472, 300), (1198, 318))
+            for x, y in ((1252, 190), (1412, 232), (1472, 340), (1198, 358))
         ),
         "</g>",
-        '<circle cx="1368" cy="262" r="10" fill="#3ddc97"/>',
-        '<circle cx="1368" cy="262" r="18" fill="none" stroke="#3ddc97" stroke-width="2"/>',
+        '<circle cx="1368" cy="302" r="10" fill="#3ddc97"/>',
+        '<circle cx="1368" cy="302" r="18" fill="none" stroke="#3ddc97" stroke-width="2"/>',
         _t(
             90,
-            112,
+            108,
             "OPEN-SOURCE AI AGENT DISCOVERY",
-            size=20,
+            size=26,
             fill="#f4b942",
             font_family=MONO,
-            letter_spacing="4",
+            letter_spacing="5",
         ),
-        _t(84, 226, "Nexus ShadowScan", size=104, weight="bold", fill="#eef3ff", letter_spacing="-3"),
+        _t(84, 252, "Nexus ShadowScan", size=128, weight="bold", fill="#eef3ff", letter_spacing="-3"),
         *(
-            _t(90, 290 + 36 * index, line, size=27, fill="#c9d4ea")
+            _t(90, 322 + 40 * index, line, size=30, fill="#c9d4ea")
             for index, line in enumerate(textwrap.wrap(sentence, 70, break_on_hyphens=False))
         ),
-        f'<g font-family="{MONO}" font-size="19">',
-        f"  {_rect(90, 396, 150, 44, '#162544', '#2b4270', rx=22)}",
-        f"  {_t(165, 424, _license(), size=19, fill='#c9d4ea', text_anchor='middle')}",
-        f"  {_rect(256, 396, 360, 44, '#2a2210', '#6b4e12', rx=22)}",
-        f"  {_t(436, 424, f'pip install {_package_name()}', size=19, fill='#f4b942', text_anchor='middle')}",
+        f'<g font-family="{MONO}" font-size="20">',
+        f"  {_rect(90, 436, 160, 48, '#162544', '#2b4270', rx=24)}",
+        f"  {_t(170, 466, _license(), size=20, fill='#c9d4ea', text_anchor='middle')}",
+        f"  {_rect(268, 436, 380, 48, '#2a2210', '#6b4e12', rx=24)}",
+        f"  {_t(458, 466, f'pip install {_package_name()}', size=20, fill='#f4b942', text_anchor='middle')}",
+        f"  {_rect(666, 436, 240, 48, '#0d2818', '#1a5c32', rx=24)}",
+        f"  {_t(786, 466, f'{n_connectors} connectors', size=20, fill='#3ddc97', text_anchor='middle')}",
+        f"  {_rect(924, 436, 240, 48, '#1a1028', '#3d2268', rx=24)}",
+        f"  {_t(1044, 466, f'{n_sigs} signatures', size=20, fill='#a78bfa', text_anchor='middle')}",
         "</g>",
     ]
     defs = (
@@ -190,7 +211,7 @@ def render_banner() -> str:
         '<stop offset="0" stop-color="#f4b942" stop-opacity="0.35"/>'
         '<stop offset="1" stop-color="#f4b942" stop-opacity="0"/></linearGradient>'
     )
-    return _svg(1600, 480, "Nexus ShadowScan", sentence, body, defs=defs)
+    return _svg(1600, 560, "Nexus ShadowScan", sentence, body, defs=defs)
 
 
 def render_data_flow() -> str:

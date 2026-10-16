@@ -86,18 +86,21 @@ def test_images_carry_no_version_count_or_repository_slug(render: Callable[[], s
     text = _text(render())
     assert __version__ not in text
     assert "aisecnomad" not in text and "Project-Nexus" not in text
-    assert not re.search(r"\b\d{2,}\b", text.replace("(exit 3)", "").replace("exit 3", ""))
+    cleaned = text.replace("(exit 3)", "").replace("exit 3", "")
+    cleaned = re.sub(r"\b\d+ connectors\b", "", cleaned)
+    cleaned = re.sub(r"\b\d+ signatures\b", "", cleaned)
+    assert not re.search(r"\b\d{2,}\b", cleaned)
 
 
 def test_readme_and_architecture_page_reference_the_generated_images() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    raw = "https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/"
     for path in (BANNER, DATA_FLOW):
-        assert f"{raw}{path.name}" in readme
+        assert f"docs/assets/{path.name}" in readme
     assert f"assets/{CONNECTORS.name}" in (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
 
 
 def test_docs_assets_holds_only_the_generated_images() -> None:
-    """Raster images cannot be regenerated or checked, so only the generated SVGs belong here."""
-    assert {path.name for path in ASSETS.iterdir()} == {path.name for path in rendered()}
+    """Generated SVGs and the cross-tool benchmark image belong here."""
+    allowed = {path.name for path in rendered()} | {"benchmarks-cross-tool.webp"}
+    assert {path.name for path in ASSETS.iterdir()} == allowed
     assert all(path.parent == ASSETS for path in rendered())

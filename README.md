@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/hero-banner.svg" alt="Nexus ShadowScan — open-source AI agent discovery" width="100%">
+  <img src="docs/assets/hero-banner.svg" alt="Nexus ShadowScan — open-source AI agent discovery" width="100%">
 </p>
 
 <p align="center">
@@ -74,7 +74,7 @@ registered in the agent registry supplied for this scan?*
 ## How it works
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/architecture-data-flow.svg" alt="Nexus ShadowScan architecture: connectors collect per surface, analysis and correlation score findings, reconciliation compares them with the sanctioned inventory" width="95%">
+  <img src="docs/assets/architecture-data-flow.svg" alt="Nexus ShadowScan architecture: connectors collect per surface, analysis and correlation score findings, reconciliation compares them with the sanctioned inventory" width="95%">
 </p>
 
 ```
@@ -819,6 +819,14 @@ Wudpecker note-taker). A ShadowScan run on the estate after those changes is
 in-sample: fewer errors on it are not evidence of better field accuracy. The
 [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
 lists every benchmark with its protocol and limits.
+
+### Cross-tool comparison
+
+<p align="center">
+  <img src="docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool estate coverage comparison — ShadowScan leads with 0.90 estate recall across repo, endpoint, and network surfaces" width="95%">
+</p>
+
+<p align="center"><em>Estate recall across surfaces: ShadowScan achieves 0.90 (0.87-0.92) by covering repo, endpoint, and network surfaces. Unsupported surfaces count as misses. See the <a href="https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md">benchmark index</a> for methodology and limits.</em></p>
 
 ---
 
