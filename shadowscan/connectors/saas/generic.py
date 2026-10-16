@@ -15,7 +15,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import _PLACEHOLDER, config_boolean, finalize
+from shadowscan.connectors.common import config_boolean, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -64,26 +64,60 @@ _SHORT_CREDENTIAL_CHARS = 8
 # A short value in a credential column that is a flag, not a secret: a yes/no or
 # not-applicable word, or at most one letter or digit ('N', '-', '1', '****').
 _FLAG = re.compile(r"(?i)[\W_]*[^\W_]?[\W_]*|y(?:es)?|no?|true|false|on|off|n/?a|nil")
+# A whole value that stands in for a credential: a lowercase 'your_...' name, an
+# identifier in angle brackets or '${...}', a placeholder word, or a run of x or *.
+# Stricter than connectors.common._PLACEHOLDER, which also takes 'your' followed by
+# letters in any case and any text in '<...>' or '${...}': a client secret such as
+# 'YourOrgProdSecretKey' or '<Xk9#mP2$qL7vB>' is a credential, not a placeholder.
+_WHOLE_PLACEHOLDER = re.compile(
+    r"your[_-][a-z_]+|<[A-Za-z_][A-Za-z0-9_.-]*>|\$\{[A-Za-z_][A-Za-z0-9_]*\}"
+    r"|(?i:x{3,}|\*{3,}|changeme|redacted|placeholder|todo|null|none)"
+)
+# The fields besides the name that signature matching reads (see ``assess_app``):
+# one that a credential withholds entirely can no longer show the AI app it names.
+_MATCHED_FIELDS = ("publisher", "description", "url", "scopes", "id")
+
+
+def _numeric(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _credential_text(value: Any, copies: set[str]) -> Any:
+    """A number under a credential name as the text sanitization learns; any other value as it is.
+
+    Sanitization learns text only, so a JSON number ('"password": 48213977') was
+    never removed from the fields that copy it, while the same row as CSV was.
+    Its text is learned like any other credential's, and, since sanitization
+    leaves numbers as they are, a field holding the same number is withheld as
+    a short credential's copy is (``copies``), unless it is a flag ('0', '1').
+    """
+    if not _numeric(value):
+        return value
+    text = str(value)
+    if not _FLAG.fullmatch(text):
+        copies.add(text)
+    return text
 
 
 def _left_out(value: Any, copies: set[str]) -> bool:
     """Whether a value under a credential name stays out of the credential context.
 
     A placeholder as a whole value ('none', '****', 'xxxxxxxx', 'changeme',
-    'your_secret', '<secret>', '${SECRET}') is not a secret. A value shorter
-    than eight characters is not learned either: sanitization would withhold
-    each field containing it, and exports fill such columns with flags ('N',
-    '-', 'Yes'). Unless it is a flag, it is added to ``copies``, and a field
-    equal to it is withheld. Every other value is learned whatever it looks
-    like: a word such as 'test', 'demo' or 'here', a run of x or * beside other
-    text, or a sequence such as 'Abcd1234' does not make it a placeholder
-    (``looks_like_placeholder`` suppresses detections; it cannot tell a
-    credential column's secret from an example).
+    'your_secret', '<secret>', '${SECRET}'; see ``_WHOLE_PLACEHOLDER``) is not
+    a secret. A value shorter than eight characters is not learned either:
+    sanitization would withhold each field containing it, and exports fill
+    such columns with flags ('N', '-', 'Yes'). Unless it is a flag, it is added
+    to ``copies``, and a field equal to it is withheld. Every other value is
+    learned whatever it looks like: a word such as 'test', 'demo', 'here' or
+    'Your', a run of x or * beside other text, or a sequence such as
+    'Abcd1234' does not make it a placeholder (``looks_like_placeholder``
+    suppresses detections; it cannot tell a credential column's secret from an
+    example).
     """
     if not isinstance(value, str):
         return False
     text = value.strip()
-    if _PLACEHOLDER.fullmatch(text):
+    if _WHOLE_PLACEHOLDER.fullmatch(text):
         return True
     if len(text) >= _SHORT_CREDENTIAL_CHARS:
         return False
@@ -101,28 +135,33 @@ def _credential_context(item: Any, copies: set[str], credential: bool = False) -
     placeholder, which would then erase app names, dates and identities while
     protecting nothing. Those values are left out (see ``_left_out``, which
     collects the short ones that are not flags in ``copies``); every other one
-    is learned.
+    is learned, a number as its text (``_credential_text``).
     """
     if isinstance(item, Mapping):
         kept: dict[Any, Any] = {}
         for key, value in item.items():
             named = credential or _sensitive_key(str(key))
+            if named:
+                value = _credential_text(value, copies)
             if not (named and _left_out(value, copies)):
                 kept[key] = _credential_context(value, copies, named)
         return kept
     if isinstance(item, (list, tuple)):
+        members = [_credential_text(value, copies) for value in item] if credential else list(item)
         return [
             _credential_context(value, copies, credential)
-            for value in item
+            for value in members
             if not (credential and _left_out(value, copies))
         ]
     return item
 
 
 def _without_copies(value: Any, copies: set[str]) -> Any:
-    """``value`` with each text equal to a short credential in ``copies`` withheld."""
+    """``value`` with each text or number equal to a short credential in ``copies`` withheld."""
     if isinstance(value, str):
         return REDACTED if value.strip() in copies else value
+    if _numeric(value):
+        return REDACTED if str(value) in copies else value
     if isinstance(value, Mapping):
         return {key: _without_copies(member, copies) for key, member in value.items()}
     if isinstance(value, (list, tuple)):
@@ -254,11 +293,12 @@ class GenericSaaSConnector(BaseConnector):
         raw_resource = f"{self.platform}:app:{app_id or name}"
         copies: set[str] = set()
         context = _credential_context(rec, copies)
-        selected = {key: self._get(rec, key) for key in self.fields}
+        raw = {key: self._get(rec, key) for key in self.fields}
+        selected = raw
         if copies:
             # A short credential is not learned, but a field equal to one is withheld,
             # and so is an ID equal to one in the resource.
-            selected = {key: _without_copies(value, copies) for key, value in selected.items()}
+            selected = {key: _without_copies(value, copies) for key, value in raw.items()}
         shown_resource = f"{self.platform}:app:{selected['id'] or selected['name']}"
         _, safe_values = sanitize((context, [(value,) for value in selected.values()] + [(shown_resource,)]))
         safe = {key: value for key, (value,) in zip(self.fields, safe_values[:-1], strict=True)}
@@ -269,6 +309,16 @@ class GenericSaaSConnector(BaseConnector):
                 "saas.generic: a credential in an app record withheld its name; coverage incomplete"
             )
             return None
+        hidden = [key for key in _MATCHED_FIELDS if raw[key] is not None and _withheld(raw[key], safe[key])]
+        if hidden:
+            # A publisher, description, URL, scope or ID equal to a credential no longer
+            # names the app it may identify as an AI product: the record is still read,
+            # but the scan cannot claim it found every AI app ('OpenAI' as both vendor and
+            # API key reported nothing). The warning names fields, never values.
+            self.ctx.warn(
+                "saas.generic: a credential in an app record withheld its "
+                f"{', '.join(hidden)}; coverage incomplete"
+            )
         # JSON exports may carry non-string list members; coerce rather than crash.
         scopes = _scope_values(safe["scopes"])
         urls = safe["url"]

@@ -32,6 +32,11 @@ _TEAM_SAMPLE = 20
 # Definition observations, versions and bot IDs a finding lists; the rest are
 # counted, so an app with thousands of distinct definitions keeps a bounded finding.
 _DEFINITION_SAMPLE = 20
+# Requested RSC permissions a finding lists in ``permissions``, in sorted order;
+# matching reads every one. The cap keeps an export with thousands of distinct
+# permission names from growing the finding without bound (``permissions_omitted``
+# counts the rest); the evidence and ``rsc_permissions`` list 25 (summarize_scopes).
+_PERMISSION_SAMPLE = 100
 
 
 class TeamsConnector(BaseConnector):
@@ -418,6 +423,8 @@ class TeamsConnector(BaseConnector):
             + values("createdBy.user.displayName")
             + values("createdBy.application.displayName"),
         )
+        # Every requested permission was classified above; the finding lists a sample.
+        f.permissions = f.permissions[:_PERMISSION_SAMPLE]
         for bot_id in bot_ids:
             apply_matches(f, self.index.match_client_id(bot_id))
         is_custom = app.get("distributionMethod") == "organization"
@@ -433,7 +440,8 @@ class TeamsConnector(BaseConnector):
                     f"{app.get('distributionMethod') or 'unknown'} app '{name}' "
                     f"observed versions: {listed_versions}; "
                     f"{len(installs)} observed installation(s); "
-                    f"definition-requested RSC permissions: {', '.join(perms) or 'none observed'}; "
+                    "definition-requested RSC permissions: "
+                    f"{', '.join(summarize_scopes(perms)) or 'none observed'}; "
                     "grants are not verified"
                 ),
                 weight=0.35 if bot_ids else 0.15,
@@ -464,6 +472,7 @@ class TeamsConnector(BaseConnector):
                 "install_count": len(installs),
                 "rsc_permissions": summarize_scopes(perms),
                 "rsc_permission_basis": "definition-requested",
+                "permissions_omitted": max(0, len(perms) - _PERMISSION_SAMPLE),
             }
         )
         finalize(f, self.index)

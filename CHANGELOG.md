@@ -758,18 +758,32 @@ summarizes each release for people who install and operate ShadowScan.
   shortening values, and cannot establish product or permission evidence;
   credential context is never retained in findings. Every value under a
   credential name is learned however it looks (`Abcd1234`, `12345678`,
-  `MyTestPassword99`, `prod-secret-here-7Hq2`), except a placeholder as the
-  whole value (`none`, `****`, `xxxxxxxx`, `changeme`, `your_secret`), which
-  withholds nothing, and a value shorter than eight characters, which would
-  withhold every field containing it: it withholds only a field equal to it,
-  and nothing when it is a flag (`N`, `-`, `Yes`, `N/A`). A short credential
-  inside a longer field (`ChatGPT hunter2`) is still shown. An earlier
-  revision of this change also left out every value the placeholder heuristic
-  (`looks_like_placeholder`) matches, such as one containing `test`, `demo` or
-  `here`, so a copy of such a credential in the name, owner, status or ID was
-  printed in a complete scan; regenerate reports made with it. A name withheld
-  entirely by a credential leaves the scan incomplete instead of silently
-  omitting the app.
+  `MyTestPassword99`, `prod-secret-here-7Hq2`, `YourOrgProdSecretKey`), a JSON
+  number as its text, except a placeholder as the whole value (`none`, `****`,
+  `xxxxxxxx`, `changeme`, a lowercase `your_secret`, an identifier in
+  `<secret>` or `${SECRET}`), which withholds nothing, and a value shorter than
+  eight characters, which would withhold every field containing it: it
+  withholds only a field equal to it, and nothing when it is a flag (`N`, `-`,
+  `Yes`, `N/A`). A field holding the same number as a numeric credential is
+  withheld, whatever its length. A short credential inside a longer field
+  (`ChatGPT hunter2`) is still shown. Earlier revisions of this change also
+  left out every value the placeholder heuristic (`looks_like_placeholder`)
+  matches, such as one containing `test`, `demo` or `here`, then any value
+  `connectors.common._PLACEHOLDER` matches whole, which takes `your` in any
+  case and any text in `<...>` or `${...}` (`YourOrgProdSecretKey`,
+  `<Xk9#mP2$qL7vB>`), and every JSON number (`"password": 48213977`, learned
+  only from a CSV export), so a copy of such a credential in the name, owner,
+  status or ID was printed in a complete scan, with the public digest of the
+  raw resource as the finding ID; regenerate reports made with them. A name
+  withheld entirely by a credential leaves the scan incomplete instead of
+  silently omitting the app, and so does a publisher, description, URL, scope
+  list or ID that a credential withholds entirely, though the record is still
+  read: such a field might have named the AI app (`OpenAI` as both vendor and
+  API key, or `Anthropic`, reported nothing in a complete scan). The warning
+  names the field, never its value. Regression tests cover each matched field
+  with a short and a learned credential, the reviewer's CSV, JSON numbers
+  against the same rows as CSV, numeric copies, and the four
+  placeholder-shaped credentials in the name, owner and ID.
 - Generic SaaS findings whose resource a credential redacts take their ID from
   the redacted resource and a keyed pseudonym of the raw one, not a public
   digest that confirmed guessed credentials. Their IDs change and are scan-local
@@ -787,7 +801,12 @@ summarizes each release for people who install and operate ShadowScan.
   observations, versions and bot IDs are listed, in sorted order, and the rest
   are counted (`definition_observations_omitted`, `versions_omitted`,
   `bot_ids_omitted`): 3,000 installations of distinct definitions made a 953 KB
-  finding, and at 8,000 it was omitted and the scan incomplete. Permissions and
+  finding, and at 8,000 it was omitted and the scan incomplete. The evidence
+  and `rsc_permissions` list at most 25 requested permissions with a count of
+  the rest, and `permissions` at most 100 (`permissions_omitted`): the evidence
+  and `permissions` listed every one, so 3,000 and 8,000 distinct permission
+  names made 270 KB and 700 KB findings (now about 18 KB); a test covers 3,000
+  of them with a privileged one past the sample. Permission matching and
   conflict detection read every observation. It reports requested
   RSC permissions, not verified grants; contradictory observations of one
   definition mark coverage incomplete. Scalar version/bot fields are populated

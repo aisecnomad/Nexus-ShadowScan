@@ -395,6 +395,11 @@ def test_generic_saas_credential_values_do_not_establish_app_identity(index):
         "your_client_secret",
         "<client-secret>",
         "${CLIENT_SECRET}",
+        "NULL",
+        "TODO",
+        "XXXX",
+        "<api_key>",
+        "your-api_key",
     ],
 )
 def test_generic_saas_credential_flags_and_placeholders_do_not_withhold_fields(index, value, nested):
@@ -536,7 +541,11 @@ def test_generic_saas_withholds_copies_of_credentials_that_look_like_placeholder
     else:
         row[field] = credential
     result = _generic_scan(tmp_path, index, [row])
-    assert result.complete, result.stats[0].warnings
+    # An ID withheld whole can no longer match a client-ID signature: incomplete, never silent.
+    assert result.complete == (field != "id"), result.stats[0].warnings
+    assert any("withheld its id; coverage incomplete" in w for w in result.stats[0].warnings) == (
+        field == "id"
+    )
     (finding,) = result.findings
     assert credential not in result.to_json()
     assert finding.first_seen == "2025-01-02"
@@ -582,7 +591,11 @@ def test_generic_saas_withholds_a_field_equal_to_a_short_credential(
     secret = {"credentials": {"client_secret": credential}} if nested else {"client_secret": credential}
     row = {"name": "ChatGPT Connector", "installed_at": "2025-01-02", field: f" {credential} ", **secret}
     result = _generic_scan(tmp_path, index, [row])
-    assert result.complete, result.stats[0].warnings
+    # An ID withheld whole can no longer match a client-ID signature: incomplete, never silent.
+    assert result.complete == (field != "id"), result.stats[0].warnings
+    assert any("withheld its id; coverage incomplete" in w for w in result.stats[0].warnings) == (
+        field == "id"
+    )
     (finding,) = result.findings
     assert credential not in result.to_json()
     assert finding.title == "saas app: ChatGPT Connector" and finding.first_seen == "2025-01-02"
@@ -594,6 +607,138 @@ def test_generic_saas_withholds_a_field_equal_to_a_short_credential(
     else:
         assert (finding.owner if field == "owner" else finding.metadata["status"]) == REDACTED
         assert finding.resource == "saas:app:ChatGPT Connector" and finding.id == finding.compute_id()
+
+
+# Each value alone, in its field, makes the record an AI app or a privileged grant.
+MATCHED_FIELD_VALUES = [
+    ("publisher", "OpenAI"),  # shorter than eight characters: withheld only where a field equals it
+    ("publisher", "Anthropic"),  # learned: withheld wherever it occurs
+    ("description", "ChatGPT connector"),
+    ("url", "https://chatgpt.com"),
+    ("scopes", "Mail.ReadWrite"),
+    ("scopes", ["Mail.ReadWrite"]),
+    ("id", "fb8d773d-7ef8-4ec0-a117-179f88add510"),
+]
+
+
+@pytest.mark.parametrize(("field", "value"), MATCHED_FIELD_VALUES)
+def test_generic_saas_matched_field_a_credential_withholds_leaves_the_scan_incomplete(
+    tmp_path, index, field, value
+):
+    # Only a withheld name was a coverage gap. A publisher, description, URL, scope or ID
+    # equal to a credential was withheld too, nothing was left to match, and the app
+    # vanished from a complete scan.
+    base = _generic_scan(tmp_path, index, [{"name": "Acme Helper", field: value}])
+    assert base.complete and len(base.findings) == 1
+    credential = value[0] if isinstance(value, list) else value
+    result = _generic_scan(tmp_path, index, [{"name": "Acme Helper", field: value, "api_key": credential}])
+    assert not result.complete
+    assert result.stats[0].warnings == [
+        f"saas.generic: a credential in an app record withheld its {field}; coverage incomplete"
+    ]
+    assert all(credential not in json.dumps(finding.to_dict()) for finding in result.findings)
+
+
+@pytest.mark.parametrize("vendor", ["OpenAI", "Anthropic"])
+def test_generic_saas_csv_vendor_equal_to_the_api_key_is_a_coverage_gap(tmp_path, index, vendor):
+    export = tmp_path / "apps.csv"
+    export.write_text(f"App,Vendor,API Key\nAcme Helper,{vendor},{vendor}\n", encoding="utf-8")
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("saas.generic", {"input": str(export)})]), index
+    ).run()
+    assert not result.complete and not result.findings
+    assert result.stats[0].warnings == [
+        "saas.generic: a credential in an app record withheld its publisher; coverage incomplete"
+    ]
+
+
+@pytest.mark.parametrize("password", [48213977, 4821.3977, 1234567])
+def test_generic_saas_learns_a_numeric_credential_as_the_csv_text_would_be(
+    tmp_path, index, monkeypatch, password
+):
+    # A JSON number was never learned: its copies in the owner and the ID were printed,
+    # with the public digest of the raw resource as the finding ID, while the same row
+    # as CSV was withheld with a keyed ID.
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    text = str(password)
+    result = _generic_scan(
+        tmp_path, index, [{"name": "ChatGPT Enterprise", "id": text, "owner": text, "password": password}]
+    )
+    export = tmp_path / "apps.csv"
+    export.write_text(f"name,id,owner,password\nChatGPT Enterprise,{text},{text},{text}\n", encoding="utf-8")
+    as_csv = Engine(
+        ScanConfig(connectors=[ConnectorSpec("saas.generic", {"input": str(export)})]), index
+    ).run()
+    for scanned in (result, as_csv):
+        assert text not in scanned.to_json()
+        (finding,) = scanned.findings
+        assert finding.owner == REDACTED and finding.resource == "saas:app:[REDACTED]"
+        assert finding.id != finding.compute_id()
+        assert finding.id != _unkeyed_identity_digest(f"saas:app:{text}")
+        assert finding.metadata["identity_scope"] == "run"
+        assert not scanned.complete
+        assert any("withheld its id; coverage incomplete" in w for w in scanned.stats[0].warnings)
+
+
+def test_generic_saas_numeric_fields_equal_to_a_numeric_credential_are_withheld(tmp_path, index):
+    # Sanitization leaves numbers as they are: a number equal to a credential is withheld
+    # as a short credential's copy is, whatever its length.
+    row = {
+        "name": "ChatGPT Enterprise",
+        "status": 1234567,
+        "users": 48213977,
+        "secret": 1234567,
+        "password": 48213977,
+    }
+    result = _generic_scan(tmp_path, index, [row])
+    assert result.complete, result.stats[0].warnings
+    (finding,) = result.findings
+    assert finding.metadata["status"] == finding.metadata["users"] == REDACTED
+    assert "1234567" not in result.to_json() and "48213977" not in result.to_json()
+
+
+def test_generic_saas_boolean_credential_values_are_flags(tmp_path, index):
+    result = _generic_scan(
+        tmp_path, index, [{"name": "ChatGPT Enterprise", "owner": "True", "status": "True", "password": True}]
+    )
+    assert result.complete, result.stats[0].warnings
+    (finding,) = result.findings
+    assert finding.owner == "True" and finding.metadata["status"] == "True"
+
+
+# The whole-value placeholder test of connectors.common took 'your' in any case with any
+# letters after it, and any text in '<...>' or '${...}': these client secrets were left
+# out of the credential context, and their copies printed with the public-digest ID.
+PLACEHOLDER_SHAPED_CREDENTIALS = [
+    "YourOrgProdSecretKey",
+    "<Xk9#mP2$qL7vB>",
+    "${Xk9#mP2qL7vB}",
+    "Your_api_key",
+]
+
+
+@pytest.mark.parametrize("field", ["name", "owner", "id"])
+@pytest.mark.parametrize("credential", PLACEHOLDER_SHAPED_CREDENTIALS)
+def test_generic_saas_learns_credentials_shaped_like_loose_placeholders(
+    tmp_path, index, monkeypatch, credential, field
+):
+    monkeypatch.delenv(IDENTITY_KEY_ENV, raising=False)
+    row = {"name": "ChatGPT Enterprise", "client_secret": credential}
+    if field == "name":
+        row["name"] = f"ChatGPT Enterprise {credential}"
+    else:
+        row[field] = credential
+    result = _generic_scan(tmp_path, index, [row])
+    assert credential not in result.to_json()
+    (finding,) = result.findings
+    if field == "owner":
+        assert finding.owner == REDACTED and finding.id == finding.compute_id()
+        assert result.complete, result.stats[0].warnings
+    else:
+        assert finding.id != finding.compute_id()
+        assert finding.id != _unkeyed_identity_digest(f"saas:app:{row[field]}")
+        assert finding.metadata["identity_scope"] == "run"
+        assert result.complete == (field == "name"), result.stats[0].warnings
 
 
 @pytest.mark.parametrize("with_id", [False, True])

@@ -612,6 +612,37 @@ def test_teams_distinct_definitions_are_listed_as_a_bounded_sample_with_an_omitt
     assert len(json.dumps(finding.to_dict())) < 15_000
 
 
+def test_teams_thousands_of_distinct_permissions_keep_a_bounded_finding(tmp_path):
+    # Each definition requested a permission of its own, and the evidence and the
+    # permissions listed every one: 3,000 and 8,000 distinct names made 270 KB and
+    # 700 KB findings.
+    records = _distinct_teams_definitions(3000)
+    for number, installation in enumerate(records[1:], 1):
+        installation["teamsAppDefinition"]["authorization"] = {
+            "requiredPermissionSet": {
+                "resourceSpecificPermissions": [
+                    {"permissionValue": f"Aaa{number:05d}.Read.Group", "permissionType": "Application"}
+                ]
+            }
+        }
+    # A privileged permission that sorts after every listed one must still be classified.
+    records[-1]["teamsAppDefinition"]["authorization"]["requiredPermissionSet"][
+        "resourceSpecificPermissions"
+    ].append({"permissionValue": "ChannelMessage.Send", "permissionType": "Application"})
+    result = scan(tmp_path, "saas.microsoft-teams", records, tenant_id="tenant-a")
+    assert result.complete, result.stats[0].warnings
+    (finding,) = result.findings
+    names = sorted([f"Aaa{number:05d}.Read.Group" for number in range(1, 3001)] + ["ChannelMessage.Send"])
+    assert finding.permissions == names[:100]
+    assert finding.metadata["permissions_omitted"] == len(names) - 100
+    assert finding.metadata["rsc_permissions"] == [*names[:25], f"... +{len(names) - 25} more"]
+    (app_evidence,) = [evidence for evidence in finding.evidence if evidence.signal == "teams:app"]
+    assert f"Aaa00025.Read.Group, ... +{len(names) - 25} more; grants" in app_evidence.description
+    assert "Aaa00026" not in app_evidence.description
+    assert "policy.privileged-scopes" in finding.tags
+    assert len(json.dumps(finding.to_dict())) < 25_000
+
+
 def test_teams_conflict_among_omitted_definition_observations_is_still_detected(tmp_path):
     conflicting = {
         "id": "definition-2999",

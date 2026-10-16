@@ -42,10 +42,12 @@ sorted sample of at most 20 team IDs and names, so the finding stays bounded
 however many teams install the app. At most 20 observations are listed, in
 sorted order, and `definition_observations_omitted` counts the rest; `versions`
 and `bot_ids` list at most 20 observed values each, with `versions_omitted` and
-`bot_ids_omitted`, so the finding stays bounded however many distinct
-definitions an export holds. Requested permissions do not establish granted
-access. Permissions, scalar fields and conflict detection read every
-observation: contradictory observations of the same definition ID or version
+`bot_ids_omitted`; the evidence and `rsc_permissions` list at most 25 requested
+permissions and count the rest, and `permissions` lists at most 100, with
+`permissions_omitted`, so the finding stays bounded however many distinct
+definitions and permission names an export holds. Requested permissions do not
+establish granted access. Permission matching, scalar fields and conflict
+detection read every observation: contradictory observations of the same definition ID or version
 mark coverage incomplete while retaining the attributed evidence. Scalar
 `version`, `bot_id` and `publishing_state` are populated only when one nonempty
 value was observed; otherwise they are `null`.
@@ -128,15 +130,22 @@ shortening fields for matching and reports. A known credential copied into an
 app name, scope or other display field is withheld even when its original
 credential column is omitted from findings. Credential contents do not establish
 product or permission evidence. Every value under a credential column name is
-learned however it looks (`Abcd1234`, `12345678`, `MyTestPassword99`), except a
-placeholder as the whole value (`none`, `****`, `xxxxxxxx`, `changeme`,
-`your_secret`, `<secret>`, `${SECRET}`), which withholds nothing, and a value
-shorter than eight characters. A short value withholds only a field equal to it
-(an app ID equal to it is withheld from the resource), and nothing when it is a
-flag (`N`, `-`, `Yes`, `N/A`: a yes/no or not-applicable word, or at most one
-letter or digit); a short credential inside a longer field (`ChatGPT hunter2`)
-is still shown. A record whose name a credential withholds entirely is skipped
-and makes the scan incomplete. Sanitization limits make coverage incomplete.
+learned however it looks (`Abcd1234`, `12345678`, `MyTestPassword99`,
+`YourOrgProdSecretKey`), a JSON number as its text, except a placeholder as the
+whole value (`none`, `****`, `xxxxxxxx`, `changeme`, a lowercase `your_secret`,
+an identifier in `<secret>` or `${SECRET}`), which withholds nothing, and a
+value shorter than eight characters. A short value withholds only a field equal
+to it (an app ID equal to it is withheld from the resource), and nothing when it
+is a flag (`N`, `-`, `Yes`, `N/A`: a yes/no or not-applicable word, or at most
+one letter or digit); a field holding the same number as a numeric credential is
+withheld whatever its length; a short credential inside a longer field
+(`ChatGPT hunter2`) is still shown. A record whose name a credential withholds
+entirely is skipped and makes the scan incomplete; one whose publisher,
+description, URL, scopes or ID a credential withholds entirely is still read,
+but the scan is incomplete, since that field might have named an AI app (the
+warning names the field, never its value). A credential that withholds only part
+of such a field leaves the rest to match. Sanitization limits make coverage
+incomplete.
 When a credential is redacted from a resource, the finding ID combines the
 redacted resource with a keyed pseudonym of the raw one: distinct resources keep
 distinct IDs, and the finding records `metadata.identity_scope` (`run`,

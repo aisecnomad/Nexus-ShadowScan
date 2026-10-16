@@ -169,22 +169,30 @@ revision. Generic SaaS reports now withhold copies of known credentials from
 projected fields before transformations; credential values no longer establish
 product or permission matches. Every value under a credential column name is
 learned and withheld from the other fields however it looks: a word such as
-`test`, `demo` or `here`, or a sequence such as `Abcd1234` or `12345678`, does
-not make it a placeholder. Two kinds of value are not learned. A placeholder as
-the whole value (`none`, `****`, `xxxxxxxx`, `changeme`, `your_secret`,
-`<secret>`, `${SECRET}`) withholds nothing. A value shorter than eight
-characters is not removed from other fields, because sanitization would then
-withhold every field containing it and such columns often hold flags (`N`, `-`,
-`Yes`); instead a field equal to it is withheld, unless it is a flag (a yes/no
-or not-applicable word, or at most one letter or digit), and an app ID equal to
-it is withheld from the resource. Known gap: a credential shorter than eight
-characters inside a longer field (`ChatGPT hunter2`) is still shown. A record
-whose app name a credential withholds entirely is skipped with a warning and
-leaves the scan incomplete (exit 3). An unreleased revision of this change also
-left out every value the placeholder heuristic (`looks_like_placeholder`)
-matches and printed such credentials in app names, owners, statuses and
-resources in complete scans; regenerate reports made with it and rotate any
-credential they show.
+`test`, `demo`, `here` or `Your`, or a sequence such as `Abcd1234` or
+`12345678`, does not make it a placeholder, and a JSON number is learned as its
+text, as the same row exported as CSV is. Two kinds of value are not learned. A
+placeholder as the whole value (`none`, `****`, `xxxxxxxx`, `changeme`, a
+lowercase `your_secret`, an identifier in `<secret>` or `${SECRET}`) withholds
+nothing. A value shorter than eight characters is not removed from other
+fields, because sanitization would then withhold every field containing it and
+such columns often hold flags (`N`, `-`, `Yes`); instead a field equal to it is
+withheld, unless it is a flag (a yes/no or not-applicable word, or at most one
+letter or digit), and an app ID equal to it is withheld from the resource. A
+field holding the same number as a numeric credential is withheld whatever its
+length. Known gaps: a credential shorter than eight characters inside a longer
+field (`ChatGPT hunter2`) is still shown, and one that withholds only part of a
+matched field leaves the rest to match. A record whose app name a credential
+withholds entirely is skipped with a warning and leaves the scan incomplete
+(exit 3); one whose publisher, description, URL, scopes or ID a credential
+withholds entirely is still read, with a warning that names the field (never
+its value), and leaves the scan incomplete too: that field might have named the
+AI app (`OpenAI` as both vendor and API key reported nothing in a complete
+scan). Unreleased revisions of this change also left out every value the
+placeholder heuristic (`looks_like_placeholder`) matches, then any `Your...`,
+`<...>` or `${...}` value and every JSON number, and printed such credentials in
+app names, owners, statuses and resources in complete scans; regenerate reports
+made with them and rotate any credential they show.
 
 **Finding identity.** When a credential is redacted from a generic SaaS
 finding's resource (an app ID equal to a short credential included), its ID is
@@ -210,9 +218,13 @@ sorted sample of at most 20 team IDs and names, instead of one entry per
 installation, so a widely installed app keeps a bounded finding. A finding lists
 at most 20 of these entries, in sorted order, and counts the rest in
 `definition_observations_omitted`; `versions` and `bot_ids` likewise list at most
-20 values each, with `versions_omitted` and `bot_ids_omitted`, so an export with
-thousands of distinct definitions also keeps a bounded finding. Permissions,
-scalar fields and conflict detection read every observation. RSC permissions
+20 values each, with `versions_omitted` and `bot_ids_omitted`; the evidence and
+`rsc_permissions` list at most 25 requested permissions and `permissions` at
+most 100 (`permissions_omitted` counts the rest), so an export with thousands
+of distinct definitions or permission names also keeps a bounded finding (the
+evidence listed every permission: 3,000 and 8,000 distinct names made 270 KB
+and 700 KB findings). Permission matching, scalar fields and conflict
+detection read every observation. RSC permissions
 remain definition-requested permissions, not proof of effective grants.
 Contradictory observations of one definition mark coverage incomplete.
 
