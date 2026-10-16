@@ -294,6 +294,78 @@ def test_a_lookup_whose_budget_ends_after_it_takes_a_slot_returns_it(monkeypatch
     assert _resolve_bounded("fast.example", 443, 1.0, proto=socket.IPPROTO_TCP) == PUBLIC_ANSWER
 
 
+def _threading_with(**replaced: object) -> SimpleNamespace:
+    """The ``threading`` names ``_resolve_bounded`` uses, some replaced, for the http module alone."""
+    names = ("Thread", "Event", "Lock", "BoundedSemaphore")
+    return SimpleNamespace(**{name: replaced.get(name, getattr(threading, name)) for name in names})
+
+
+def _assert_every_slot_free(slots: threading.BoundedSemaphore, size: int) -> None:
+    for worker in [thread for thread in threading.enumerate() if thread.name == "shadowscan-http-resolve"]:
+        worker.join(10)
+    assert all(slots.acquire(blocking=False) for _ in range(size))
+    assert not slots.acquire(blocking=False)
+    for _ in range(size):
+        slots.release()
+
+
+@pytest.mark.parametrize("primitive", ["Event", "Lock"])
+def test_a_lookup_that_cannot_build_its_primitives_keeps_no_slot(monkeypatch, primitive):
+    # The Event and the one-shot Lock were built after the slot was taken: a MemoryError
+    # from either left it taken, and after 32 such failures every lookup refused.
+    def unavailable(*args: object, **kwargs: object) -> object:
+        raise MemoryError
+
+    slots = threading.BoundedSemaphore(2)
+    monkeypatch.setattr("shadowscan.utils.http._resolver_slots", slots)
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(return_value=PUBLIC_ANSWER))
+    with monkeypatch.context() as patched:
+        patched.setattr("shadowscan.utils.http.threading", _threading_with(**{primitive: unavailable}))
+        for _ in range(3):
+            with pytest.raises(MemoryError):
+                _resolve_bounded("fast.example", 443, 0.5, proto=socket.IPPROTO_TCP)
+    _assert_every_slot_free(slots, 2)
+    assert _resolve_bounded("fast.example", 443, 5.0, proto=socket.IPPROTO_TCP) == PUBLIC_ANSWER
+
+
+def test_a_worker_that_cannot_wake_its_caller_still_returns_its_slot(monkeypatch):
+    # A MemoryError from done.set() in the worker skipped the release after it: the
+    # caller refused at its budget, as it should, and the slot was gone for good.
+    class Unwakeable(threading.Event):
+        def set(self) -> None:
+            raise MemoryError
+
+    slots = threading.BoundedSemaphore(2)
+    monkeypatch.setattr("shadowscan.utils.http._resolver_slots", slots)
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(return_value=PUBLIC_ANSWER))
+    with monkeypatch.context() as patched:
+        patched.setattr("shadowscan.utils.http.threading", _threading_with(Event=Unwakeable))
+        # The worker's own MemoryError reaches the thread hook, not the caller.
+        patched.setattr(threading, "excepthook", lambda args: None)
+        for _ in range(3):
+            with pytest.raises(TimeoutError):
+                _resolve_bounded("fast.example", 443, 0.2, proto=socket.IPPROTO_TCP)
+        _assert_every_slot_free(slots, 2)
+    assert _resolve_bounded("fast.example", 443, 5.0, proto=socket.IPPROTO_TCP) == PUBLIC_ANSWER
+
+
+def test_an_interrupt_while_a_lookup_waits_for_a_slot_takes_none(monkeypatch):
+    # The slot is taken inside the handler that returns it: an interrupt that ends the
+    # wait before the slot is taken must not return one it never took.
+    class InterruptedSlots(threading.BoundedSemaphore):
+        def acquire(self, blocking: bool = True, timeout: float | None = None) -> bool:
+            raise _Interrupted
+
+    slots = InterruptedSlots(1)
+    monkeypatch.setattr("shadowscan.utils.http._resolver_slots", slots)
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(return_value=PUBLIC_ANSWER))
+    with pytest.raises(_Interrupted):
+        _resolve_bounded("fast.example", 443, 5.0, proto=socket.IPPROTO_TCP)
+    # A bounded semaphore refuses a release it did not give out (ValueError above).
+    assert threading.BoundedSemaphore.acquire(slots, blocking=False)
+    assert not threading.BoundedSemaphore.acquire(slots, blocking=False)
+
+
 def _response(data: object, *, status: int = 200, headers: dict[str, str] | None = None) -> requests.Response:
     result = requests.Response()
     result.status_code = status

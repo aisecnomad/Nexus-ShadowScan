@@ -241,12 +241,8 @@ def _resolve_bounded(host: str, port: int, budget: float, **kwargs: Any) -> list
     end = time.monotonic() + budget
     # Bound to a local so the worker releases the semaphore it acquired.
     slots = _resolver_slots
-    if not slots.acquire(timeout=budget):
-        raise TimeoutError(_RESOLVE_EXPIRED)
-    remaining = end - time.monotonic()
-    if remaining <= 0:
-        slots.release()
-        raise TimeoutError(_RESOLVE_EXPIRED)
+    # Everything the lookup needs is built before it takes a slot, so that a
+    # MemoryError from building it cannot strand one.
     answers: list[list[Any]] = []
     failures: list[BaseException] = []
     done = threading.Event()
@@ -265,17 +261,32 @@ def _resolve_bounded(host: str, port: int, budget: float, **kwargs: Any) -> list
         except Exception as exc:  # noqa: BLE001 - delivered to the waiting caller below
             failures.append(exc)
         finally:
-            done.set()
-            free_slot()
+            try:
+                # Waking the caller can fail too (MemoryError); the slot goes back
+                # regardless, and the caller then refuses at its budget.
+                done.set()
+            finally:
+                free_slot()
 
+    acquired = False
     try:
+        # Taken inside the try: nothing runs between taking the slot and the
+        # handler that returns it.
+        acquired = slots.acquire(timeout=budget)
+        if not acquired:
+            raise TimeoutError(_RESOLVE_EXPIRED)
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(_RESOLVE_EXPIRED)
         worker = threading.Thread(target=resolve, name="shadowscan-http-resolve", daemon=True)
         worker.start()
     except BaseException:
-        # RuntimeError ("can't start new thread"), MemoryError from building the
-        # thread or its state, or an interrupt: a slot no worker returns would
-        # be lost for good, and after every slot every lookup would refuse.
-        free_slot()
+        # A budget spent once the slot is taken, RuntimeError ("can't start new
+        # thread"), MemoryError from building the thread or its state, or an
+        # interrupt: a slot no worker returns would be lost for good, and after
+        # every slot every lookup would refuse.
+        if acquired:
+            free_slot()
         raise
     if not done.wait(remaining):
         raise TimeoutError(_RESOLVE_EXPIRED)

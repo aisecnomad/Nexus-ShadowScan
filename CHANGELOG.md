@@ -465,7 +465,13 @@ summarizes each release for people who install and operate ShadowScan.
   covered only `RuntimeError`, so 32 thread starts failing with `MemoryError`
   under memory pressure left no slot, and every later lookup in the process
   refused; a one-shot guard keeps an interrupt that arrives after the thread
-  started from returning the slot twice. The clone pin lookup
+  started from returning the slot twice. The same happened when the lookup's
+  `Event` or one-shot lock could not be built (they were built after the slot
+  was taken) or when the worker's `done.set()` failed and skipped the release
+  after it: both are now built before the slot is taken, the slot is taken
+  inside the handler that returns it, and the worker returns its slot even
+  when it cannot wake the caller, which then refuses at its budget. The clone
+  pin lookup
   (`resolve_destination`) shares the resolver and gains both bounds. Every
   new refusal is the `TimeoutError` callers already turn into a
   refusal (`ValueError` in the preflight, `NameResolutionError` at connection,
@@ -477,8 +483,11 @@ summarizes each release for people who install and operate ShadowScan.
   `resolve_destination`), 20 lookups against a stalled resolver with three
   slots, a lookup that waits for a slot, slots freed once the resolver
   returns, a worker thread that cannot be built or started (`RuntimeError`
-  and `MemoryError`), one interrupted after it started, and lookups whose
-  budget ends right after they take the only slot.
+  and `MemoryError`), one interrupted after it started, lookups whose budget
+  ends right after they take the only slot, an `Event` or lock that cannot be
+  built, a worker that cannot wake its caller and an interrupt while a lookup
+  waits for a slot; every one leaves the slot pool full and the next lookup
+  answered.
 - **The late-DNS test was flaky and left the post-resolution check
   untested (#236).** The test gave the acquisition deadline 50 ms and the
   resolver a 100 ms sleep, so a scheduler stall raised the guard's
