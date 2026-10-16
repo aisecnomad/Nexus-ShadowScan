@@ -223,7 +223,10 @@ coverage, even when a response includes an empty collection field.
   option exists.
 ### What is redacted
 
-- **By token shape:** Report evidence is redacted before it is shortened. Redaction withholds
+- **By token shape:** Source excerpts and the provider text connectors shorten for a report
+  (descriptions, instructions and prompts, welcome messages, trigger conditions, matching rules
+  and policy statements) are redacted before they are shortened; lists of names (scopes,
+  permissions, variable names) are cut first. Redaction withholds
   recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
   `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-`, `dop_v1_`,
   `ABSK` and `bedrock-api-key-`),

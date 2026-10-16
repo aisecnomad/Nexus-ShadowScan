@@ -18,7 +18,8 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, replace
 from multiprocessing.process import BaseProcess
 from pathlib import Path
@@ -45,6 +46,31 @@ _WORKER_GRACE_SECONDS = 2.0
 # Without a descriptor listing, descriptors up to the open-file limit are
 # visited, but never more than this many.
 _MAX_DESCRIPTOR_LIMIT = 1 << 20
+# Serializes the brief PYTHONSAFEPATH window around a spawn (see _safe_path_spawn).
+_SPAWN_ENVIRONMENT = threading.Lock()
+
+
+@contextmanager
+def _safe_path_spawn() -> Iterator[None]:
+    """Give an interpreter spawned in this block PYTHONSAFEPATH=1, then restore os.environ.
+
+    The spawned child runs ``python -c``, which would put the working directory (possibly an
+    untrusted checkout) first on sys.path before its first ``import multiprocessing``.
+    multiprocessing has no per-child environment, so the variable is set only for the
+    duration of the spawn, under a lock so concurrent spawns cannot restore it early, and
+    the previous value (or its absence) is put back: the scanner's and an embedder's own
+    later children must not inherit it.
+    """
+    with _SPAWN_ENVIRONMENT:
+        previous = os.environ.get("PYTHONSAFEPATH")
+        os.environ["PYTHONSAFEPATH"] = "1"
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop("PYTHONSAFEPATH", None)
+            else:
+                os.environ["PYTHONSAFEPATH"] = previous
 
 
 def _remaining(deadline: float) -> float:
@@ -383,14 +409,10 @@ def _run_plugin_process(
         _remaining(deadline)
         if state.cancelled.is_set():
             raise TimeoutError
-        # A spawned child runs ``python -c``, so its working directory is on ``sys.path`` for
-        # the first ``import multiprocessing``. When the scan's working directory is an
-        # untrusted checkout, a planted ``multiprocessing/`` there would run in the worker.
-        # Ask the child interpreter to drop the working directory from its path. The value is
-        # constant, so setting it is safe under concurrent spawns; the scanner never imports
-        # from the working directory itself.
-        os.environ["PYTHONSAFEPATH"] = "1"
-        process.start()
+        # A planted ``multiprocessing/`` in an untrusted working directory must not run in the
+        # worker (or the resource tracker the first start launches): see _safe_path_spawn.
+        with _safe_path_spawn():
+            process.start()
         if state.cancelled.is_set():
             raise TimeoutError
         child.close()

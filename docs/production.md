@@ -1633,8 +1633,32 @@ A fleet merge drops any advisory `llm_triage` block a source carries. The MCP
 and CloudFormation/ARM detectors read the parsed structure rather than a byte
 prefix, and the Kubernetes connector inspects init and ephemeral containers, so
 a scan can surface findings an earlier build missed behind leading padding or a
-sidecar. Finding ids do not change. Rescan affected sources and rebuild
-comparison baselines.
+sidecar. A privileged init or ephemeral container now adds the `privileged-pod`
+tag to an AI workload, as a privileged regular container does, which can raise
+its risk; a null `initContainers` or `ephemeralContainers` field (an empty one
+as Helm renders it) is absent, not malformed. Source excerpts and the provider
+text connectors shorten for a report (descriptions, instructions, prompts,
+welcome messages, trigger conditions, matching rules and policy statements) are
+redacted before they are shortened: a report from an earlier build could show
+the start of a URL password that a cut separated from its `@`, so treat it as
+sensitive. An endpoint record value past the sanitizer's safety limits is
+withheld with a warning that marks the scan incomplete (exit 3).
+
+Third-party plugin names must be lowercase ASCII `namespace.provider` names,
+like every built-in. A plugin whose entry-point name has an uppercase letter or
+an underscore (`saas.Acme-Hub`, `saas.acme_hub`) no longer loads: `shadowscan
+connectors` reports an `invalid-name` diagnostic, and a scan that configures it
+fails that connector as unknown and exits 3. Rename the entry point and the
+class's `name`, and update `options.plugins` and the connector entries, before
+upgrading. A plugin finding built under another connector's name is attributed
+to the plugin with the id the plugin's own name gives; it kept the id of that
+connector's finding for the same resource, so it could replace or merge with it
+in baselines, diffs and fleet merges. Such findings get new ids; built-in
+finding ids, and those of plugin findings built under the plugin's own name, do
+not change. Process-mode plugin workers get `PYTHONSAFEPATH` only while they
+start: the scanner's environment, and that of a program embedding it, is
+restored, so their later children keep their script directory on `sys.path`.
+Rescan affected sources and rebuild comparison baselines.
 
 ### October 14 detection precision, ambiguous app names and scoped correlation (unreleased)
 

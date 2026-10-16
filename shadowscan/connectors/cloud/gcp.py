@@ -94,6 +94,7 @@ from shadowscan.connectors.common import (
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.registries import EVIDENCE_GROUP, registry_evidence
 from shadowscan.utils.http import HttpClient, HttpError, validate_url
+from shadowscan.utils.redaction import sanitize_excerpt
 from shadowscan.utils.text import get_path, truncate
 
 DEFAULT_LOCATIONS = [
@@ -1123,7 +1124,7 @@ class GcpConnector(BaseConnector):
                 description=(
                     f"Agent Engine '{rec.get('displayName')}' framework={agent_framework or 'unknown'}, "
                     f"{len(class_methods)} exposed method(s), python {pkg.get('pythonVersion')}: "
-                    f"{truncate(rec.get('description'), 120)}"
+                    f"{sanitize_excerpt(rec.get('description'), 120)}"
                 ),
                 location=name,
                 weight=0.97,
@@ -1137,7 +1138,7 @@ class GcpConnector(BaseConnector):
                 "class_methods": [m.get("name") for m in class_methods if isinstance(m, dict)][:20],
                 "requirements": deps,
                 "python": pkg.get("pythonVersion"),
-                "description": truncate(rec.get("description"), 300),
+                "description": sanitize_excerpt(rec.get("description"), 300),
             }
         )
         identity = spec.get("effectiveIdentity")
@@ -1209,7 +1210,7 @@ class GcpConnector(BaseConnector):
             f.add_capability("tool-use")
         f.metadata.update(
             {
-                "description": truncate(rec.get("description")),
+                "description": sanitize_excerpt(rec.get("description")),
                 "generative": bool(gen),
                 "start_playbook": rec.get("startPlaybook"),
                 "enable_stackdriver_logging": rec.get("enableStackdriverLogging"),
@@ -1302,7 +1303,7 @@ class GcpConnector(BaseConnector):
         card = clean_card(rec.get("agent_card"))
         metadata: dict[str, Any] = {
             "evidence_class": EVIDENCE_GROUP,
-            "description": truncate(rec.get("description"), 300),
+            "description": sanitize_excerpt(rec.get("description"), 300),
         }
         if entry.registry == GE_REGISTRY:
             detail = self._gemini_enterprise_metadata(f, rec, metadata)

@@ -69,3 +69,50 @@ def withhold_random_literals(text: str) -> str:
         lambda m: f"{m['q']}{REDACTED}" if looks_random(m["body"]) else m.group(0),
         text,
     )
+
+
+# How far past the shown part of a cut line ``withhold_random_literals_cut`` reads.
+_CUT_LOOKAHEAD = 256
+
+
+def withhold_random_literals_cut(text: str, width: int) -> str:
+    """``withhold_random_literals(text)`` cut to ``width`` characters, an ellipsis marking a cut.
+
+    A literal is judged before the cut, since one the cut shortened below the minimum length
+    would show its start to a later pass. Only a literal that starts in the shown part can
+    appear there, so a long line is read only up to the shown part and a lookahead past it,
+    keeping the cost proportional to the excerpt rather than to the line (a minified bundle
+    line can be a megabyte, cut once per match). A shown literal is judged on its whole body
+    or, when it runs past the lookahead, on the part read; a withheld literal that runs past
+    the part read ends the excerpt, since where it ends is not read. Withheld literals shorten
+    the text, so the part read moves on with each literal rather than being one fixed window,
+    which could end inside a literal the shortened excerpt then shows unjudged.
+    """
+    if len(text) <= width + _CUT_LOOKAHEAD:
+        text = withhold_random_literals(text)
+        return text if len(text) <= width else text[: width - 1] + "\u2026"
+    shown: list[str] = []
+    size = 0
+    pos = 0
+    # Build up to ``width + 1`` characters: more than ``width`` means the line is cut.
+    while size <= width and pos < len(text):
+        room = width + 1 - size
+        end = pos + room + _CUT_LOOKAHEAD
+        match = _QUOTED.search(text, pos, end)
+        if match is None or match.start() >= pos + room:
+            shown.append(text[pos : pos + room])
+            size += min(room, len(text) - pos)
+            pos += room
+            continue
+        shown.append(text[pos : match.start()])
+        size += match.start() - pos
+        literal = match.group(0)
+        if looks_random(match["body"]):
+            literal = f"{match['q']}{REDACTED}"
+            if match.end() == end < len(text):
+                return ("".join(shown) + literal)[: width - 1] + "\u2026"
+        shown.append(literal)
+        size += len(literal)
+        pos = match.end()
+    result = "".join(shown)
+    return result if size <= width and pos >= len(text) else result[: width - 1] + "\u2026"

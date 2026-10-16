@@ -1204,7 +1204,8 @@ converted is skipped with a warning and makes the scan incomplete.
 ### `cloud.kubernetes` and `cloud.openshift`
 Analyze offline Kubernetes and OpenShift workload exports (images, exposure,
 GPU, privilege and egress-policy indicators), including nested CronJob pod
-templates. Resource identities preserve full valid object names and
+templates and init and ephemeral containers (a null one is absent). Resource
+identities preserve full valid object names and
 namespaces; object-limit truncation, a chunked `List` page with
 `metadata.continue` or `remainingItemCount`, a malformed namespace and an
 object without a `kind` leave coverage incomplete; items of a raw API list

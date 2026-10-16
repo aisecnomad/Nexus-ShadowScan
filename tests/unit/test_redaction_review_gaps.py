@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
 import pytest
 
 from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
@@ -406,3 +411,202 @@ def test_connector_summaries_redact_before_shortening() -> None:
 
     assert SECRET[:8] not in repr(bounded_metadata({"note": _url_password_across(_CLIP_CHARS)}))
     assert SECRET[:8] not in repr(_card_summary({"description": _url_password_across(300)}))
+
+
+def _connector(cls_path: str, index: Any) -> Any:
+    """A connector built for calling its record handlers directly."""
+    from importlib import import_module
+
+    from shadowscan.connectors import ConnectorContext
+    from shadowscan.models import ScanStats
+
+    module, name = cls_path.rsplit(".", 1)
+    ctx = ConnectorContext(config={}, index=index)
+    ctx.stats = ScanStats(connector="test", started_at="2026-10-16")
+    return getattr(import_module(module), name)(ctx)
+
+
+def _registry_agent(text: str) -> dict[str, Any]:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "cloud" / "gcp_registry_records.jsonl"
+    records = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines() if line]
+    return {**next(r for r in records if r.get("_kind") == "agent-registry-agent"), "description": text}
+
+
+_AWS = "shadowscan.connectors.cloud.aws.AwsConnector"
+_GCP = "shadowscan.connectors.cloud.gcp.GcpConnector"
+_OCI = "shadowscan.connectors.cloud.oci.OciConnector"
+_SFDC = "shadowscan.connectors.lowcode.salesforce.SalesforceConnector"
+_SNOW = "shadowscan.connectors.lowcode.servicenow.ServiceNowConnector"
+_RE = "projects/123/locations/us-central1/reasoningEngines/456"
+_DF = "projects/acme/locations/global/agents/7f1c"
+_RUNTIME = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/ops-1"
+
+# Each connector summary that shortens provider text: (limit, offset, build). ``build(index, text)``
+# returns the finding that carries ``text`` shortened to ``limit`` characters, ``offset`` of them
+# being the record text the summary puts ahead of ``text``.
+_SHORTENED_SUMMARIES: dict[str, tuple[int, int, Callable[[Any, str], Any]]] = {
+    "aws knowledge base evidence": (
+        120,
+        0,
+        lambda index, text: _connector(_AWS, index)._h_bedrock_knowledge_base(
+            {
+                "knowledgeBaseId": "KB1",
+                "name": "kb",
+                "status": "ACTIVE",
+                "_region": "us-east-1",
+                "description": text,
+            }
+        ),
+    ),
+    "aws agentcore runtime description": (
+        200,
+        0,
+        lambda index, text: _connector(_AWS, index)._h_agentcore_runtime(
+            {
+                "agentRuntimeArn": _RUNTIME,
+                "agentRuntimeName": "ops",
+                "_region": "us-east-1",
+                "description": text,
+            }
+        ),
+    ),
+    "aws bedrock agent instruction": (
+        300,
+        0,
+        lambda index, text: _connector(_AWS, index)._h_bedrock_agent(
+            {"agentId": "A1", "agentName": "ops", "_region": "us-east-1", "instruction": text}
+        ),
+    ),
+    "gcp agent engine evidence": (
+        120,
+        0,
+        lambda index, text: _connector(_GCP, index)._h_reasoning_engine(
+            {
+                "name": _RE,
+                "displayName": "eng",
+                "description": text,
+                "_project": "acme",
+                "_location": "us-central1",
+            }
+        ),
+    ),
+    "gcp agent engine description": (
+        300,
+        0,
+        lambda index, text: _connector(_GCP, index)._h_reasoning_engine(
+            {
+                "name": _RE,
+                "displayName": "eng",
+                "description": text,
+                "_project": "acme",
+                "_location": "us-central1",
+            }
+        ),
+    ),
+    "gcp dialogflow description": (
+        200,
+        0,
+        lambda index, text: _connector(_GCP, index)._h_dialogflow_agent(
+            {
+                "name": _DF,
+                "displayName": "bot",
+                "description": text,
+                "_project": "acme",
+                "_location": "global",
+            }
+        ),
+    ),
+    "gcp registry record description": (
+        300,
+        0,
+        lambda index, text: _connector(_GCP, index)._h_agent_registry_agent(_registry_agent(text)),
+    ),
+    "oci agent description": (
+        200,
+        0,
+        lambda index, text: _connector(_OCI, index)._agent_finding(
+            {"id": "ocid1.genaiagent.oc1..a1", "display_name": "ops", "description": text}, []
+        ),
+    ),
+    "oci agent welcome message": (
+        120,
+        0,
+        lambda index, text: _connector(_OCI, index)._agent_finding(
+            {"id": "ocid1.genaiagent.oc1..a1", "display_name": "ops", "welcome_message": text}, []
+        ),
+    ),
+    "oci dynamic group rule": (
+        200,
+        len("genai "),
+        lambda index, text: _connector(_OCI, index)._h_dynamic_group(
+            {"id": "ocid1.dynamicgroup.oc1..d1", "name": "agents", "matching_rule": "genai " + text}
+        ),
+    ),
+    "oci policy statements": (
+        400,
+        len("Allow group GenAIUsers to use generative-ai-family in tenancy | "),
+        lambda index, text: _connector(_OCI, index)._h_policy(
+            {
+                "id": "ocid1.policy.oc1..p1",
+                "name": "genai",
+                "statements": ["Allow group GenAIUsers to use generative-ai-family in tenancy", text],
+            }
+        ),
+    ),
+    "salesforce bot description": (
+        200,
+        0,
+        lambda index, text: _connector(_SFDC, index)._bot_finding(
+            {"Id": "0Xx1", "DeveloperName": "helper", "Description": text}, []
+        ),
+    ),
+    "salesforce agentforce description": (
+        200,
+        0,
+        lambda index, text: _connector(_SFDC, index)._agentforce_finding(
+            "planner", {"Id": "0Pl1", "DeveloperName": "planner", "Description": text}, [], []
+        ),
+    ),
+    "salesforce flow evidence": (
+        160,
+        len("f Einstein flow "),
+        lambda index, text: _connector(_SFDC, index)._flow_finding(
+            {"Id": "301", "ApiName": "f", "Label": "Einstein flow", "Description": text}
+        ),
+    ),
+    "servicenow use case description": (
+        200,
+        0,
+        lambda index, text: _connector(_SNOW, index)._usecase_finding(
+            {"sys_id": "u1", "name": "case", "description": text}, []
+        ),
+    ),
+    "servicenow trigger condition": (
+        120,
+        0,
+        lambda index, text: _connector(_SNOW, index)._usecase_finding(
+            {"sys_id": "u1", "name": "case"},
+            [{"trigger_type": "record", "table": "incident", "condition": text}],
+        ),
+    ),
+    "servicenow flow evidence": (
+        160,
+        len("genai flow "),
+        lambda index, text: _connector(_SNOW, index)._flow_finding(
+            {"sys_id": "f1", "name": "genai flow", "description": text}
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize("site", sorted(_SHORTENED_SUMMARIES))
+def test_shortened_connector_summaries_are_redacted_first(index: Any, site: str) -> None:
+    """Regression: these summaries were shortened before the report sanitizer read them, so a
+    cut between a URL password and its '@' left the start of the password in the report."""
+    limit, offset, build = _SHORTENED_SUMMARIES[site]
+    text = _url_password_across(limit - offset)
+    finding = build(index, text)
+    finding.sanitize()
+    report = json.dumps(finding.to_dict(), default=str)
+    assert SECRET[:8] not in report
+    assert REDACTED in report

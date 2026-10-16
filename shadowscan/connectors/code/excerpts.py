@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from shadowscan.utils.redaction import sanitize_text
-from shadowscan.utils.redaction_entropy import withhold_random_literals
+from shadowscan.utils.redaction_entropy import withhold_random_literals_cut
 from shadowscan.utils.text import redact
 
 
@@ -32,9 +32,10 @@ def _excerpt(lines: list[str], line: int, secret: str | None = None, width: int 
     if secret:
         text = text.replace(secret, redact(secret))
     # The snippet sanitizer reads only the excerpt: a random-looking literal that the cut
-    # shortens below its minimum length would show its start there, so read the whole line.
-    text = withhold_random_literals(text)
-    return text if len(text) <= width else text[: width - 1] + "…"
+    # shortens below its minimum length would show its start there, so literals are judged
+    # before the cut. Only the shown part of the line and a bounded lookahead are read, so the
+    # cost follows the excerpt, not a minified line cut once per match.
+    return withhold_random_literals_cut(text, width)
 
 
 @dataclass

@@ -220,10 +220,27 @@ def _positive_quantity(value: Any) -> bool | None:
 # restartPolicy: Always) and debug ephemeral containers; all three share the container
 # shape and can carry a model image, a GPU request or provider configuration.
 _CONTAINER_FIELDS = ("containers", "initContainers", "ephemeralContainers")
+# The optional container fields: a null one (common in Helm-rendered YAML, `initContainers:`
+# with no entries) is absent, not malformed. Every pod has `containers`.
+_OPTIONAL_CONTAINER_FIELDS = frozenset({"initContainers", "ephemeralContainers"})
+
+
+def _malformed_container_fields(pod_spec: dict[str, Any]) -> bool:
+    """Whether a container field of a pod spec is present but not a list (a null optional one is absent)."""
+    return any(
+        field in pod_spec
+        and not isinstance(pod_spec[field], list)
+        and not (pod_spec[field] is None and field in _OPTIONAL_CONTAINER_FIELDS)
+        for field in _CONTAINER_FIELDS
+    )
 
 
 def _pod_containers(pod_spec: dict[str, Any]) -> list[Any]:
-    """Every container entry of a pod spec across the three container fields, bounded."""
+    """Every container entry of a pod spec across the three container fields, bounded.
+
+    A field that is not a list (a null optional field, or one ``_malformed_container_fields``
+    reports) contributes nothing.
+    """
     entries: list[Any] = []
     for field in _CONTAINER_FIELDS:
         value = pod_spec.get(field)
@@ -396,9 +413,7 @@ class KubernetesConnector(BaseConnector):
                 else {}
             )
             pod_spec = pod_spec_value if isinstance(pod_spec_value, dict) else {}
-            if any(
-                field in pod_spec and not isinstance(pod_spec[field], list) for field in _CONTAINER_FIELDS
-            ):
+            if _malformed_container_fields(pod_spec):
                 self.ctx.warn(f"{self.name}: workload has malformed containers")
                 continue
             if "imagePullSecrets" in pod_spec and not isinstance(pod_spec["imagePullSecrets"], list):

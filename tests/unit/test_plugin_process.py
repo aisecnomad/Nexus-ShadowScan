@@ -101,9 +101,10 @@ class Connector(BaseConnector):
             if mode == "metadata-types":
                 import datetime
                 metadata.update(seen=datetime.datetime(2026, 1, 1), scopes={"read"}, raw=b"ab")
+            # "forge" builds the finding under a built-in connector's name.
             yield Finding(
-                surface=self.surface, connector=self.name, kind=Kind.AGENT,
-                title="process probe", resource="probe", resource_type="test",
+                surface=self.surface, connector="code.filesystem" if mode == "forge" else self.name,
+                kind=Kind.AGENT, title="process probe", resource="probe", resource_type="test",
                 metadata=metadata,
             )
 """
@@ -663,3 +664,56 @@ def test_execution_backend_defaults_and_mutation_validation():
 def test_plugin_execution_cli_option():
     result = CliRunner().invoke(main, ["scan", "--help"])
     assert result.exit_code == 0 and "--plugin-execution" in result.output
+
+
+@pytest.mark.parametrize("previous", [None, "keep"])
+def test_process_plugin_spawn_leaves_the_scanner_environment_unchanged(
+    installed_probe, monkeypatch, previous
+):
+    """Regression: PYTHONSAFEPATH was set in os.environ for the spawn and never restored, so every
+    later child of the scanner (or of an embedding program) lost its script directory on sys.path."""
+    # setenv then delenv: monkeypatch restores the original state even if the code leaks a value.
+    monkeypatch.setenv("PYTHONSAFEPATH", "sentinel")
+    if previous is None:
+        monkeypatch.delenv("PYTHONSAFEPATH")
+    else:
+        monkeypatch.setenv("PYTHONSAFEPATH", previous)
+    before = dict(os.environ)
+    result = _engine().run()
+    assert result.complete, result.stats
+    assert dict(os.environ) == before
+    assert os.environ.get("PYTHONSAFEPATH") == previous
+
+
+def test_planted_module_in_the_working_directory_does_not_run_in_the_worker(
+    installed_probe, monkeypatch, tmp_path
+):
+    """The spawned worker runs ``python -c``; the scan's working directory (possibly the scanned
+    checkout) must not be on its sys.path when it first imports multiprocessing."""
+    work = tmp_path / "checkout"
+    (work / "multiprocessing").mkdir(parents=True)
+    marker = tmp_path / "planted-ran"
+    (work / "multiprocessing" / "__init__.py").write_text(f"open({str(marker)!r}, 'w').close()\n")
+    monkeypatch.chdir(work)
+    result = _engine().run()
+    assert result.complete, result.stats
+    assert not marker.exists()
+
+
+def test_process_plugin_finding_built_under_a_builtin_name_gets_the_plugin_id(installed_probe, monkeypatch):
+    """A finding a plugin builds under a built-in connector's name is attributed to the plugin in the
+    worker, with the id the plugin's name gives, never the built-in finding's id (as in thread mode)."""
+    from shadowscan.models import Finding, Kind
+
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "forge")
+    result = _engine().run()
+    assert result.complete, result.stats
+    [finding] = result.findings
+    shape = {"kind": Kind.AGENT, "title": "t", "resource": "probe", "resource_type": "test"}
+    # The id the claimed name gives, which the finding kept before it was recomputed.
+    claimed = Finding(
+        surface=finding.surface, connector="code.filesystem", provider=finding.provider, **shape
+    )
+    plugin = Finding(surface=finding.surface, connector=ENTRY, provider=finding.provider, **shape)
+    assert finding.connector == ENTRY
+    assert finding.id == plugin.id != claimed.id

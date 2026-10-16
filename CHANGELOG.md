@@ -706,9 +706,13 @@ summarizes each release for people who install and operate ShadowScan.
   `oracle+cx_oracle://`) are now withheld. A handful of credential environment-variable names
   whose last word is not a credential word (`AWS_BEARER_TOKEN_BEDROCK`, `LOBE_ACCESS_CODE`,
   `FLOWISE_SECRETKEY_OVERWRITE`, `MODAL_TOKEN_ID`, `ZAPIER_MCP_URL`) are covered, and a test
-  derives the required coverage from the signature packs. Connector summaries and source
-  excerpts are redacted before they are shortened, so a cut can no longer separate a credential
-  from the context that identifies it.
+  derives the required coverage from the signature packs. Source excerpts, semantic
+  configuration metadata and the provider text connectors shorten for a report (agent,
+  knowledge-base and flow descriptions, instructions and system prompts, welcome messages,
+  trigger conditions, dynamic-group matching rules and policy statements from the AWS, Azure,
+  GCP, OCI, Entra, Make, Salesforce and ServiceNow connectors) are redacted before they are
+  shortened, so a cut can no longer separate a credential from the context that identifies it.
+  Lists of names (scopes, permissions, variable names) are still cut first.
 - **LLM triage.** The redacted summary sent to the model now withholds e-mail addresses and IP
   addresses wherever they appear in a title or evidence description, and covers more
   identity-bearing metadata keys, matching the privacy the documentation describes.
@@ -716,20 +720,32 @@ summarizes each release for people who install and operate ShadowScan.
   on an over-long argument (an unprivileged local process or one offline row could otherwise
   stall every connector while the GIL is held), and the Python source tokenizer charges the
   per-input matching budget between tokens, so a single very long line fails closed on CPython
-  3.12.0–3.12.3 instead of burning a core.
+  3.12.0–3.12.3 instead of burning a core. A source excerpt judges random-looking literals before
+  its cut by reading only the part it shows and a 256-character lookahead, not the whole line:
+  a minified bundle line with a few dozen credential-shaped tokens no longer exhausts the
+  matching budget and leaves the scan incomplete. A literal that runs past the part read and is
+  withheld ends the excerpt.
 - **Detection coverage.** MCP client configurations and CloudFormation/ARM JSON templates are
   recognised from their parsed structure rather than a byte-prefix window, so leading padding
   can no longer hide a server table or an AI resource on a complete scan. The MCP tool-poisoning
   rules read the same window the instruction audit inspects. The Kubernetes connector inspects
-  `initContainers` (native sidecars) and `ephemeralContainers`.
+  `initContainers` (native sidecars) and `ephemeralContainers`; a privileged one adds the
+  `privileged-pod` tag, and a null one (an empty field as Helm renders it) is absent, not
+  malformed. An endpoint record value past the sanitizer's safety limits is withheld with one
+  fixed-text warning that marks the scan incomplete, instead of aborting the connector.
 - **Fleet and reporters.** A fleet merge drops any advisory `llm_triage` block a source carries,
   so one source cannot plant a verdict on another's finding. Out-of-range report timestamps are
   omitted from OCSF, CycloneDX and SARIF output instead of aborting the whole report.
-- **Engine, CLI and plugins.** Thread-mode plugin findings are attribution-checked like the
-  process worker's, so a plugin cannot report under a built-in connector's name. Plugin worker
-  processes are spawned with `PYTHONSAFEPATH` so a scanned checkout on the path cannot shadow
-  `multiprocessing`. The changed-file git diff passes `--no-ext-diff`/`--no-textconv`. Plugin
-  names must be lowercase ASCII `namespace.provider`, so a confusable cannot read as a built-in.
+- **Engine, CLI and plugins.** A plugin finding built under another connector's name is
+  attributed to the plugin, in thread and process mode, with the id the plugin's own name
+  gives, so a plugin can neither report under a built-in connector's name nor take the id of
+  that connector's finding for the same resource. Plugin worker processes are started with
+  `PYTHONSAFEPATH` so a scanned checkout in the working directory cannot shadow
+  `multiprocessing`; it is set only while a worker starts, and the previous environment is
+  restored, so programs the scanner or an embedding application starts later keep their script
+  directory on `sys.path`. The changed-file git diff passes `--no-ext-diff`/`--no-textconv`.
+  Plugin names must be lowercase ASCII `namespace.provider`, so a confusable cannot read as a
+  built-in; a plugin whose name has an uppercase letter or an underscore no longer loads.
   The `urllib3` logger is pinned to ERROR so a malformed upstream response cannot log a request
   URL. The `inventory check` and `signatures list` commands strip terminal control sequences from
   untrusted fields.

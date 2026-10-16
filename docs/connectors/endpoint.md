@@ -176,7 +176,8 @@ data, secrets, credentials or prompts, an invisible or bidirectional control
 character (zero-width and directional marks, embeddings, overrides and isolates,
 the word joiner and invisible operators U+2060-U+2064, a byte-order mark or Unicode
 tag characters), a URL, a "use/call/invoke the ..." tool reference, or a model
-provider host name, anywhere in the first 4,096 characters. Descriptions are
+provider host name, anywhere in the first 64 KiB, the window the instruction
+audit reads. Descriptions are
 also screened with the code surface's bounded instruction-content rules —
 content concealed in raw HTML comments, fetch-and-execute or decode-and-execute
 phrasing — and for terminal control sequences that can conceal or overwrite

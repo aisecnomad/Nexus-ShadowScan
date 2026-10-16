@@ -239,3 +239,64 @@ def test_ephemeral_container_model_image_is_inspected(tmp_path, run_connector):
 def test_malformed_init_containers_are_reported(tmp_path, run_connector):
     findings, ctx = _pod(tmp_path, run_connector, {"containers": [], "initContainers": "nope"})
     assert ctx.stats.incomplete
+
+
+_VLLM_GPU = {
+    "name": "vllm",
+    "image": "vllm/vllm-openai:v0.6.0",
+    "resources": {"limits": {"nvidia.com/gpu": "1"}},
+}
+
+
+@pytest.mark.parametrize("field", ["initContainers", "ephemeralContainers"])
+def test_a_null_optional_container_field_is_absent(tmp_path, run_connector, field):
+    """Regression: a null initContainers/ephemeralContainers (an empty field as Helm renders it)
+    was read as malformed, so the whole workload, here a vLLM GPU deployment, was skipped and
+    the scan marked incomplete."""
+    findings, ctx = _pod(tmp_path, run_connector, {field: None, "containers": [_VLLM_GPU]})
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert any("gpu-workload" in f.tags and "vllm" in json.dumps(f.to_dict()) for f in findings)
+
+
+def test_a_helm_rendered_empty_init_containers_field_keeps_the_workload(tmp_path, run_connector):
+    source = tmp_path / "rendered.yaml"
+    source.write_text(
+        "apiVersion: v1\n"
+        "kind: List\n"
+        "items:\n"
+        "  - apiVersion: apps/v1\n"
+        "    kind: Deployment\n"
+        "    metadata: {name: chat, namespace: ml}\n"
+        "    spec:\n"
+        "      template:\n"
+        "        spec:\n"
+        "          initContainers:\n"
+        "          containers:\n"
+        "            - name: vllm\n"
+        "              image: vllm/vllm-openai:v0.6.0\n"
+        '              resources: {limits: {nvidia.com/gpu: "1"}}\n'
+    )
+    findings, ctx = run_connector("cloud.kubernetes", input=str(source), cluster="test")
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert any("gpu-workload" in f.tags for f in findings)
+
+
+def test_a_null_containers_field_is_still_malformed(tmp_path, run_connector):
+    # Every pod has containers: null there is not an absent optional field.
+    findings, ctx = _pod(tmp_path, run_connector, {"containers": None, "initContainers": [_VLLM_GPU]})
+    assert findings == [] and ctx.stats.incomplete
+    assert ctx.stats.warnings == ["cloud.kubernetes: workload has malformed containers"]
+
+
+def test_a_privileged_init_container_marks_the_ai_workload_privileged(tmp_path, run_connector):
+    # Init containers are read like regular ones, so a privileged one (a GPU driver installer,
+    # say) tags the workload as a privileged regular container does.
+    pod = {
+        "initContainers": [
+            {"name": "setup", "image": "busybox:1.36", "securityContext": {"privileged": True}}
+        ],
+        "containers": [_VLLM_GPU],
+    }
+    findings, ctx = _pod(tmp_path, run_connector, pod)
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert any("privileged-pod" in f.tags and "gpu-workload" in f.tags for f in findings)

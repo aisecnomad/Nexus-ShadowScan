@@ -368,6 +368,18 @@ class Finding:
             )
         return "ss-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
+    def reattribute(self, connector: str) -> None:
+        """Attribute this finding to ``connector``, recomputing its id if it named another connector.
+
+        The connector enters the id, so a finding built under another connector's name and only
+        re-stamped would keep that connector's id, and could replace or merge with that
+        connector's own finding for the same resource: baselines, diffs and fleet merges key on
+        the id. An id the finding claimed under another name is not kept either.
+        """
+        if self.connector != connector:
+            self.connector = connector
+            self.id = self.compute_id()
+
     def sanitize(self, *, credential_context: Any = None) -> None:
         """Remove credentials from every persisted/reportable field in place.
 

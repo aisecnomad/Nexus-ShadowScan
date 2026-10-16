@@ -57,15 +57,15 @@ _HOST = re.compile(
 )
 
 
-def _text(value: object, limit: int = _MAX_LABEL) -> str:
+def _bounded_text(value: object, limit: int = _MAX_LABEL) -> str:
+    """A record value as sanitized text cut to ``limit`` ("" for anything but text).
+
+    Raises SanitizationLimitError for a value past the sanitizer's safety limits; connectors
+    read record values through ``_EndpointConnector._text``, which withholds such a value.
+    """
     if not isinstance(value, str):
         return ""
-    # One hostile record (a value past the sanitizer's safety limits) must not abort the
-    # whole connector and drop its other findings: withhold that value and carry on.
-    try:
-        return sanitize_text(value)[:limit]
-    except SanitizationLimitError:
-        return REDACTED
+    return sanitize_text(value)[:limit]
 
 
 def _sensitive_attribute(key: str) -> bool:
@@ -169,9 +169,27 @@ def _records(
 class _EndpointConnector(BaseConnector):
     surface: ClassVar[Surface] = Surface.ENDPOINT
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML export"
+    # Whether a value past the sanitizer's limits was withheld (see ``_text``).
+    _withheld_values = False
 
     def collect(self) -> Iterable[dict[str, Any]]:
         raise NotImplementedError("endpoint inventory requires offline input")
+
+    def _text(self, value: object, limit: int = _MAX_LABEL) -> str:
+        """A record value as sanitized text cut to ``limit`` ("" for anything but text).
+
+        One hostile record (a value past the sanitizer's safety limits) must not abort the
+        whole connector and drop its other findings: that value is withheld and the rest is
+        read. What was withheld was not analyzed, so the scan is incomplete, with one
+        fixed-text warning however many values are withheld.
+        """
+        try:
+            return _bounded_text(value, limit)
+        except SanitizationLimitError:
+            if not self._withheld_values:
+                self._withheld_values = True
+                self.ctx.warn(f"{self.name}: record value withheld: sanitization safety limit exceeded")
+            return REDACTED
 
     def _finding(
         self,
@@ -190,8 +208,8 @@ class _EndpointConnector(BaseConnector):
             surface=self.surface,
             connector=self.name,
             kind=kind,
-            title=_text(title) or resource_type,
-            resource=_text(resource) or "unknown",
+            title=self._text(title) or resource_type,
+            resource=self._text(resource) or "unknown",
             resource_type=resource_type,
             provider=provider,
             confidence=weight,
@@ -202,7 +220,7 @@ class _EndpointConnector(BaseConnector):
         finding.add_evidence(
             Evidence(
                 signal=f"{resource_type}:inventory",
-                description=_text(title) or resource_type,
+                description=self._text(title) or resource_type,
                 weight=weight,
             )
         )
@@ -218,8 +236,8 @@ class HostConnector(_EndpointConnector):
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:
-            name = _text(record.get("name") or record.get("path") or record.get("process"))
-            category = _text(record.get("type") or record.get("category") or "host-runtime")
+            name = self._text(record.get("name") or record.get("path") or record.get("process"))
+            category = self._text(record.get("type") or record.get("category") or "host-runtime")
             if not name:
                 self.ctx.warn("endpoint.host: record has no runtime or configuration name")
                 continue
@@ -227,9 +245,9 @@ class HostConnector(_EndpointConnector):
                 name,
                 category,
                 f"Host AI runtime or client: {name}",
-                provider=_text(record.get("provider")) or None,
+                provider=self._text(record.get("provider")) or None,
                 tags=("host-runtime",),
-                metadata={"source": _text(record.get("source"))} if record.get("source") else {},
+                metadata={"source": self._text(record.get("source"))} if record.get("source") else {},
             )
 
 
@@ -323,13 +341,13 @@ class MCPInventoryConnector(_EndpointConnector):
                 else:
                     self.ctx.warn("endpoint.mcp: unsupported record_type")
                 continue
-            server = _text(record.get("server") or record.get("name") or record.get("url"))
+            server = self._text(record.get("server") or record.get("name") or record.get("url"))
             if not server:
                 self.ctx.warn("endpoint.mcp: record has no server identifier")
                 continue
             auth = record.get("auth") or record.get("auth_mode")
-            server_auth[server] = _text(auth).casefold() if isinstance(auth, str) else ""
-            endpoint = _text(record.get("url") or server).lower()
+            server_auth[server] = self._text(auth).casefold() if isinstance(auth, str) else ""
+            endpoint = self._text(record.get("url") or server).lower()
             server_tls[server] = endpoint.startswith("https://")
             tools = record.get("tools", [])
             if not isinstance(tools, list):
@@ -347,7 +365,7 @@ class MCPInventoryConnector(_EndpointConnector):
                     limit_hit = True
                     break
                 count += 1
-                name = _text(tool.get("name"))
+                name = self._text(tool.get("name"))
                 if not name:
                     self.ctx.warn("endpoint.mcp: tool has no valid name")
                     continue
@@ -358,7 +376,7 @@ class MCPInventoryConnector(_EndpointConnector):
                 break
 
         for server, tool in staged:
-            name = _text(tool.get("name")) or "unnamed-tool"
+            name = self._text(tool.get("name")) or "unnamed-tool"
             description = tool.get("description", "")
             malformed_description = not isinstance(description, str)
             if malformed_description:
@@ -381,7 +399,7 @@ class MCPInventoryConnector(_EndpointConnector):
             # padding ahead of an <IMPORTANT> block, a URL or a tool reference must not hide
             # it. These patterns are linear, so a bounded window keeps the scan bounded; a
             # description past the window already makes ``audit`` incomplete above.
-            desc = _text(description, MAX_TEXT_BYTES)
+            desc = self._text(description, MAX_TEXT_BYTES)
             tags: list[str] = []
             if (
                 _POISONING.search(desc)
@@ -398,7 +416,8 @@ class MCPInventoryConnector(_EndpointConnector):
                     tags.append(content_tag)
             if any(name.casefold() in tools for other, tools in names_by_server.items() if other != server):
                 tags.append("tool-name-shadowing")
-            auth = _text(tool.get("auth") or tool.get("auth_mode")).casefold() or server_auth.get(server, "")
+            auth = self._text(tool.get("auth") or tool.get("auth_mode")).casefold()
+            auth = auth or server_auth.get(server, "")
             if auth in {"", "none", "unauthenticated"}:
                 tags.append("unauthenticated-mcp")
             words = set(re.findall(r"[a-z]+", name.casefold()))
@@ -414,7 +433,7 @@ class MCPInventoryConnector(_EndpointConnector):
             finding = self._finding(
                 f"{server}/{name}",
                 "mcp-tool",
-                f"MCP tool {name} on {_text(server)}",
+                f"MCP tool {name} on {self._text(server)}",
                 kind=Kind.MCP_SERVER,
                 tags=tags,
                 capabilities=capabilities,
@@ -425,7 +444,7 @@ class MCPInventoryConnector(_EndpointConnector):
                         json.dumps(tool, sort_keys=True, separators=(",", ":"), default=str).encode()
                     ).hexdigest(),
                     "tls": server_tls.get(
-                        server, _text(tool.get("url") or server).lower().startswith("https://")
+                        server, self._text(tool.get("url") or server).lower().startswith("https://")
                     ),
                     "static_instruction_audit": audit.to_metadata(),
                 },
@@ -503,13 +522,13 @@ class MCPInventoryConnector(_EndpointConnector):
                 "0.x or 1.x; its fields were read as A2A 0.3 and 1.0 fields"
             )
         agent_card = a2a_card_metadata(read, shown, signature)
-        name = _text(agent_card["name"]) or resource
+        name = self._text(agent_card["name"]) or resource
         prefix = "Incomplete A2A Agent Card" if validation.incomplete else "A2A Agent Card"
         finding = Finding(
             surface=self.surface,
             connector=self.name,
             kind=Kind.AGENT,
-            title=_text(f"{prefix}: {name}", 300),
+            title=self._text(f"{prefix}: {name}", 300),
             resource=resource,
             resource_type="a2a-agent-card",
             provider="a2a",
@@ -607,17 +626,17 @@ class OtelConnector(_EndpointConnector):
             resource = record.get("resource")
             if isinstance(resource, dict):
                 attrs = {**_attrs(resource.get("attributes"), self.ctx.warn), **attrs}
-            service = _text(attrs.get("service.name") or record.get("serviceName") or "unknown-service")
-            agent = _text(attrs.get("gen_ai.agent.name") or attrs.get("agent.name") or service)
-            model = _text(attrs.get("gen_ai.request.model") or attrs.get("llm.request.model"))
-            system = _text(attrs.get("gen_ai.system") or attrs.get("llm.provider"))
+            service = self._text(attrs.get("service.name") or record.get("serviceName") or "unknown-service")
+            agent = self._text(attrs.get("gen_ai.agent.name") or attrs.get("agent.name") or service)
+            model = self._text(attrs.get("gen_ai.request.model") or attrs.get("llm.request.model"))
+            system = self._text(attrs.get("gen_ai.system") or attrs.get("llm.provider"))
             if not (model or system or "gen_ai.operation.name" in attrs or "llm.operation.name" in attrs):
                 continue
             key = (service, agent, system or "unknown")
             aggregate = groups.setdefault(key, {"models": set(), "operations": set(), "count": 0})
             if model:
                 aggregate["models"].add(model)
-            op = _text(attrs.get("gen_ai.operation.name") or attrs.get("llm.operation.name"))
+            op = self._text(attrs.get("gen_ai.operation.name") or attrs.get("llm.operation.name"))
             if op:
                 aggregate["operations"].add(op)
             aggregate["count"] += 1
@@ -655,16 +674,16 @@ class OllamaConnector(_EndpointConnector):
                     continue
             if len(models) > 500:
                 self.ctx.warn("endpoint.ollama: model limit reached")
-            endpoint = _text(record.get("endpoint") or record.get("url") or "local Ollama")
+            endpoint = self._text(record.get("endpoint") or record.get("url") or "local Ollama")
             tags = ["local-llm-runtime"]
-            host = _text(record.get("host") or record.get("endpoint") or record.get("url")).lower()
+            host = self._text(record.get("host") or record.get("endpoint") or record.get("url")).lower()
             if host and not any(x in host for x in ("localhost", "127.0.0.1", "::1")):
                 tags.append("exposed-llm-server")
             for model in models[:500]:
                 if not isinstance(model, dict):
                     self.ctx.warn("endpoint.ollama: malformed model entry")
                     continue
-                model_name = _text(model.get("name") or model.get("model"))
+                model_name = self._text(model.get("name") or model.get("model"))
                 if not model_name:
                     continue
                 yield self._finding(
@@ -703,7 +722,7 @@ class ModelArtifactConnector(_EndpointConnector):
             if isinstance(meta, dict):
                 metadata.update(
                     {
-                        key: _text(meta[key])
+                        key: self._text(meta[key])
                         for key in ("general.architecture", "general.name", "general.license")
                         if isinstance(meta.get(key), str)
                     }
@@ -739,16 +758,16 @@ class EbpfConnector(_EndpointConnector):
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:
             serialized = " ".join(
-                _text(record.get(key), 512)
+                self._text(record.get(key), 512)
                 for key in ("destination", "remote_addr", "hostname", "server.address", "url")
             )
             process = record.get("process")
             if isinstance(process, dict):
-                serialized += " " + _text(process.get("binary") or process.get("name"))
+                serialized += " " + self._text(process.get("binary") or process.get("name"))
             else:
                 if process is not None:
                     self.ctx.warn("endpoint.ebpf: malformed process")
-                serialized += " " + _text(record.get("binary") or record.get("process_name"))
+                serialized += " " + self._text(record.get("binary") or record.get("process_name"))
             lower = serialized.lower()
             port = str(record.get("port") or record.get("destination_port") or "")
             tags = []
@@ -759,12 +778,12 @@ class EbpfConnector(_EndpointConnector):
             if not tags:
                 self.ctx.examined()
                 continue
-            pod = _text(record.get("pod") or record.get("pod_name"))
-            ns = _text(record.get("namespace"))
+            pod = self._text(record.get("pod") or record.get("pod_name"))
+            ns = self._text(record.get("namespace"))
             process_binary = (
                 process.get("binary") or process.get("name") if isinstance(process, dict) else None
             )
-            binary = _text(process_binary or record.get("binary") or record.get("process_name"))
+            binary = self._text(process_binary or record.get("binary") or record.get("process_name"))
             binary = binary or "runtime-process"
             yield self._finding(
                 f"{ns}/{pod}/{binary}".strip("/"),

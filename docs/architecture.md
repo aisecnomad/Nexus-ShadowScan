@@ -466,7 +466,10 @@ findings, the scan is incomplete, and the reason is available through
   connector name, a variant of one that differs only by case or surrounding
   whitespace, or a bare built-in namespace (`code`, `identity`, `gateway`,
   `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime`). Names must be
-  single printable tokens.
+  lowercase ASCII `namespace.provider` names, like every built-in: two or more
+  dot-separated parts of letters and digits, joined within a part by single
+  hyphens. Uppercase letters, underscores and non-ASCII characters (which could
+  make a confusable such as a Cyrillic `cloud.аws` read as a built-in) are refused.
 * A name registered by more than one entry point with different targets is
   ambiguous; none of those entries is listed or loaded, whatever the
   installation order.

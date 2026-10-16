@@ -1394,16 +1394,32 @@ def test_mcp_tool_description_past_the_byte_limit_is_incomplete() -> None:
     assert ctx.stats.incomplete
 
 
-def test_mcp_tool_description_past_sanitizer_limits_fails_only_that_record() -> None:
-    """A hostile description that trips the sanitizer limit must not drop a sibling tool's finding."""
+def test_mcp_tool_description_past_sanitizer_limits_fails_only_that_record(monkeypatch) -> None:
+    """A hostile value that trips the sanitizer's safety limits must not drop a sibling tool's
+    finding; it is withheld, and since it was not analyzed the scan is incomplete, with one
+    fixed-text warning however many values were withheld."""
+    from shadowscan.utils.redaction import SanitizationLimitError
 
-    huge = "password=hunter2xyz " * 60000
+    hostile = "a description past the sanitizer's limits"
+    original = endpoint_runtime.sanitize_text
+
+    def limited(value: str) -> str:
+        # Which input trips a limit depends on the sanitizer's budgets: make this one trip it.
+        if hostile in value:
+            raise SanitizationLimitError("sanitization work limit exceeded")
+        return original(value)
+
+    monkeypatch.setattr(endpoint_runtime, "sanitize_text", limited)
     ctx = ConnectorContext()
     ctx.stats = ScanStats(connector="endpoint.mcp", started_at="2026-10-14T00:00:00Z")
     findings = list(
         MCPInventoryConnector(ctx).analyze(
             [
-                {"server": "a", "auth": "none", "tools": [{"name": "t1", "description": huge}]},
+                {
+                    "server": "a",
+                    "auth": "none",
+                    "tools": [{"name": "t1", "description": hostile}, {"name": "t3", "description": hostile}],
+                },
                 {
                     "server": "b",
                     "auth": "none",
@@ -1416,3 +1432,6 @@ def test_mcp_tool_description_past_sanitizer_limits_fails_only_that_record() -> 
     assert any(f.metadata.get("server") == "b" or "b" in f.resource for f in poisoned), [
         f.resource for f in findings
     ]
+    assert hostile not in json.dumps([f.to_dict() for f in findings])
+    assert ctx.stats.incomplete
+    assert ctx.stats.warnings == ["endpoint.mcp: record value withheld: sanitization safety limit exceeded"]

@@ -37,7 +37,6 @@ from shadowscan.signatures import Match
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
 from shadowscan.utils.redaction import sanitize_excerpt
-from shadowscan.utils.text import truncate
 
 TABLES = {
     "sn_aia_agent": (
@@ -545,13 +544,13 @@ class ServiceNowConnector(BaseConnector):
         f.metadata.update(
             {
                 "active": _val(u.get("active")),
-                "description": truncate(_val(u.get("description"))),
+                "description": sanitize_excerpt(_val(u.get("description"))),
                 "agents": _val(u.get("agents")),
                 "triggers": [
                     {
                         "type": _val(t.get("trigger_type")),
                         "table": _val(t.get("table")),
-                        "condition": truncate(_val(t.get("condition")), 120),
+                        "condition": sanitize_excerpt(_val(t.get("condition")), 120),
                     }
                     for t in triggers
                 ][:20],
@@ -608,7 +607,7 @@ class ServiceNowConnector(BaseConnector):
                 signal="servicenow:flow",
                 description=(
                     f"Flow '{name}' ({_val(rec.get('type'))}, active={_val(rec.get('active'))}) references "
-                    f"AI: {truncate(text, 160)}"
+                    f"AI: {sanitize_excerpt(text, 160)}"
                 ),
                 weight=0.4,
             )

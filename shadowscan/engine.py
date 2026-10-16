@@ -689,11 +689,12 @@ class _ConnectorRunner:
         # BaseConnector.run() stamps every finding with the connector's own name; a plugin that
         # overrides run() can skip that and claim a built-in connector's name (the process worker
         # refuses such a finding — plugin_process._decode_result). Re-stamp plugin findings with
-        # the plugin's own name so a thread-mode plugin can never report under a built-in name.
+        # the plugin's own name, and the id the claimed name entered with it, so a thread-mode
+        # plugin can never report under a built-in name nor with a built-in finding's id.
         plugin = spec.name not in builtin_connector_names()
         for finding in collected:
-            if plugin and finding.connector != spec.name:
-                finding.connector = spec.name
+            if plugin:
+                finding.reattribute(spec.name)
             try:
                 finding.sanitize()
             except SanitizationLimitError:

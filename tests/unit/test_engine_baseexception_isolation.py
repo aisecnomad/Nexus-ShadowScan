@@ -411,3 +411,40 @@ def test_thread_mode_plugin_cannot_report_under_a_builtin_connector_name(monkeyp
     # claimed, so no finding reports under code.filesystem on behalf of the plugin.
     forged = [f for f in report["findings"] if f["title"] == "forged built-in finding"]
     assert forged and all(f["connector"] == PLUGIN for f in forged), [f["connector"] for f in forged]
+
+
+# The same forgery through analyze(): BaseConnector.run() stamps the plugin's name on it.
+_ANALYZE_FORGING_PLUGIN = _FORGING_PLUGIN.replace(
+    "    def analyze(self, records):\n        return []\n\n    def run(self):\n"
+    "        # Bypass BaseConnector.run()'s attribution stamp and claim a built-in name.\n"
+    "        self.ctx.examined(1)\n",
+    "    def collect(self):\n        return [{}]\n\n    def analyze(self, records):\n",
+).replace("        return [forged]\n", "        yield forged\n")
+
+
+@pytest.mark.parametrize("source", [_FORGING_PLUGIN, _ANALYZE_FORGING_PLUGIN], ids=["run", "analyze"])
+def test_a_reattributed_plugin_finding_does_not_keep_the_builtin_id(monkeypatch, tmp_path, source):
+    """Regression: the re-stamp changed the connector of a finding a plugin built under a built-in
+    name but kept the id that name entered, so it had the id of the built-in connector's own
+    finding for the same resource (baselines, diffs and fleet merges key on the id)."""
+    assert "def run(self)" not in _ANALYZE_FORGING_PLUGIN and "yield forged" in _ANALYZE_FORGING_PLUGIN
+    monkeypatch.setattr(registry, "_cache", {})
+    monkeypatch.setattr(registry, "_load_errors", {})
+    monkeypatch.setattr(registry, "_listing_errors", [])
+    _install_plugin(monkeypatch, tmp_path, "acme_forging_plugin", source)
+
+    result, out = _scan(tmp_path)
+
+    report = json.loads(out.read_text(encoding="utf-8"))
+    [forged] = [f for f in report["findings"] if f["title"] == "forged built-in finding"]
+    shape = {
+        "kind": Kind.AGENT,
+        "surface": Surface.CODE,
+        "title": "t",
+        "resource": "forged",
+        "resource_type": "repo",
+    }
+    builtin_id = Finding(connector="code.filesystem", **shape).id
+    plugin_id = Finding(connector=PLUGIN, provider=forged["provider"], **shape).id
+    assert forged["connector"] == PLUGIN
+    assert forged["id"] == plugin_id != builtin_id

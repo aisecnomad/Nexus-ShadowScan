@@ -5,7 +5,9 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import random
 import re
+import string
 import threading
 from bisect import bisect_left, bisect_right
 from pathlib import Path
@@ -35,6 +37,7 @@ from shadowscan.signatures.matcher import (
     required_literal,
     required_literals,
 )
+from shadowscan.utils import redaction_entropy
 from shadowscan.utils.redaction import SanitizationLimitError, sanitize_text
 
 REPO = Path(__file__).resolve().parents[2]
@@ -896,6 +899,40 @@ def test_settled_files_keep_only_their_excerpt_lines(tmp_path, index, monkeypatc
     snippets = {e.snippet for e in project.evidence if e.location and e.location.startswith("agent.py")}
     assert "agent = agents.AgentExecutor()" in snippets
     assert not ctx.stats.errors
+
+
+def test_excerpts_of_a_minified_line_judge_a_bounded_window(tmp_path, index, monkeypatch):
+    """Regression: every match's excerpt judged every literal of its whole line, so a minified
+    bundle line with a few dozen credential-shaped tokens ran out of its matching budget and
+    the scan became incomplete. Each excerpt now judges the part it shows and a lookahead."""
+    rng = random.Random(7)
+    alphabet = string.ascii_letters + string.digits
+
+    def token(length: int) -> str:
+        return "".join(rng.choice(alphabet) for _ in range(length))
+
+    # Credential-shaped values built at run time; each one is a separate secret match.
+    secrets = [prefix + token(length) for prefix, length in [("sk-proj-", 48), ("ghp_", 36), ("hf_", 34)] * 4]
+    literals = [f'var t{n}="{value}";' for n, value in enumerate(secrets)]
+    literals += [f'var x{n}="{token(24)}";' for n in range(8000)]
+    line = "import openai;" + "".join(literals)
+    (tmp_path / "bundle.js").write_text(line + "\n", encoding="utf-8")
+    judged: list[int] = []
+    original = redaction_entropy.looks_random
+
+    def counting(value: str) -> bool:
+        judged.append(len(value))
+        return original(value)
+
+    monkeypatch.setattr(redaction_entropy, "looks_random", counting)
+    ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
+    findings = FilesystemConnector(ctx).run()
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    report = json.dumps([f.to_dict() for f in findings])
+    assert findings and not any(value in report for value in secrets)
+    # All excerpts together judge less than one pass over the line would (each one used to
+    # judge the whole line: about 8000 literals per excerpt).
+    assert sum(judged) < len(line) // 4, (len(judged), sum(judged))
 
 
 def test_deferred_reexport_consumer_evidence_keeps_its_excerpts(tmp_path, index):
