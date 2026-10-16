@@ -101,6 +101,11 @@ class Connector(BaseConnector):
             if mode == "metadata-types":
                 import datetime
                 metadata.update(seen=datetime.datetime(2026, 1, 1), scopes={"read"}, raw=b"ab")
+            if mode == "identity-env":
+                metadata.update(
+                    env_has_identity_key="SHADOWSCAN_IDENTITY_KEY" in os.environ,
+                    ctx_has_identity_key=self.ctx.gateway_identity_key is not None,
+                )
             # "forge" builds the finding under a built-in connector's name; "forge-id" gives a
             # finding under its own name that finding's id, and "forge-replace" re-labels a copy.
             shape = dict(
@@ -754,3 +759,15 @@ def test_a_decoded_plugin_finding_never_keeps_the_id_it_carries():
     [finding], _, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
     assert finding.connector == ENTRY
     assert finding.id == Finding(connector=ENTRY, **shape).id != builtin.id
+
+
+def test_spawned_plugin_scrubs_identity_key_from_worker_environment(installed_probe, monkeypatch):
+    """Regression: the spawned worker inherited SHADOWSCAN_IDENTITY_KEY in os.environ, so a plugin
+    that does not declare uses_run_identity_key (or any child it starts) could read the raw key."""
+    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", "hex:" + bytes(range(32)).hex())
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "identity-env")
+    result = _engine().run()
+    assert result.complete, result.stats
+    assert result.findings[0].metadata["env_has_identity_key"] is False
+    assert result.findings[0].metadata["ctx_has_identity_key"] is False
+    _assert_reaped(installed_probe)

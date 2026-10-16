@@ -117,6 +117,8 @@ def test_git_environment_discards_injected_configs_and_execution_overrides(monke
     assert config["protocol.https.allow"] == "always"
     assert config["credential.helper"] == ""
     assert config["http.followRedirects"] == "false"
+    assert config["http.sslVerify"] == "true"
+    assert config["http.proxy"] == ""
     assert (
         base64.b64decode(config["http.https://github.com/.extraheader"].split()[-1])
         == b"x-access-token:synthetic-token"

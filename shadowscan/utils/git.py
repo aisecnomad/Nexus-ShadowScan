@@ -845,6 +845,8 @@ def clone_environment(
     config = [
         ("core.hooksPath", os.devnull),
         ("http.followRedirects", "false"),
+        # Git verifies by default; say so, so no later config layer can turn it off for a clone.
+        ("http.sslVerify", "true"),
         # Connect directly, as HttpClient does: a proxy from HTTPS_PROXY or ALL_PROXY would resolve
         # the host itself and route around the pinned addresses.
         ("http.proxy", ""),

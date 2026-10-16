@@ -1580,7 +1580,10 @@ Use the same key for the scans being compared. The key also governs gateway
 pseudonyms, so rotating it changes gateway identities too. Keep the key out of
 configuration files, logs, command-line arguments and shared reports. No key is
 generated into persistent storage automatically, and scan reports/export/cache
-files never contain it.
+files never contain it. A process-mode plugin worker removes the
+key from its environment before the plugin is imported, so a third-party
+connector reads it only as the decoded run key, and only when it declares
+`uses_run_identity_key`; a thread-mode plugin shares the scanner's environment.
 
 The report's `collection_scope.credential_identity_schema` is
 `shadowscan.credential-identity/v1`; `credential_identity_scope` is `run` or

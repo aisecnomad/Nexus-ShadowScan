@@ -5,6 +5,24 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Plugin workers no longer see the raw identity key (October 16)
+
+- From #247: a process-mode plugin worker inherited `SHADOWSCAN_IDENTITY_KEY`
+  in its environment, so a third-party connector that does not declare
+  `uses_run_identity_key` (and any program it started) could read the raw
+  operator key. The worker now removes it from `os.environ` after the engine
+  has read it and before the plugin is imported; connectors that declare
+  `uses_run_identity_key` still receive the decoded run key. Thread-mode
+  plugins share the scanner's process and environment, so this does not
+  apply to `--plugin-execution thread`.
+- `clone_environment()` sets `http.sslVerify=true` explicitly. Git already
+  verifies by default and system and global configuration are disabled, so
+  this changes no current behaviour.
+- Not carried from #246/#247: DNS pinning (`main` already pins clones through
+  `clone_pins`, without the expiring `+` entry), CA-bundle propagation to Git
+  (no code path sets a worker CA bundle, so it had no effect), and abandoned
+  worker pruning (`_prepare_run` already clears finished workers).
+
 ### Integration review fixes (October 15)
 
 - **Redaction time under a conditional name (#235).**
