@@ -128,8 +128,13 @@ _YAML_CONTINUATION_LINE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n|\Z)")
 _YAML_TRAILING_NOTE = re.compile(r"[ \t]#")
 _YAML_ENTRY_MARKERS = re.compile(r"(?:-[ \t]+)+")
 # What follows 'name:' when the entry's value is on the lines below: nothing,
-# a block scalar header ('|', '>-', '|2+') or only a comment.
-_YAML_VALUE_BELOW = re.compile(r"(?:[|>][0-9+-]*)?(?:[ \t]*#[^\r\n]*)?[ \t]*")
+# a block scalar header ('|', '>-', '|2+') or only a comment, after any node
+# properties: tags ('!!binary', '!secret', '!<tag:yaml.org,2002:str>') and an
+# anchor ('&cert'). Each property and the blanks after it are read once
+# (possessively), so a long run of blanks is not read again from each blank.
+_YAML_VALUE_BELOW = re.compile(
+    r"(?:(?:![^ \t\r\n]*+|&[^ \t\r\n]++)(?:[ \t]++|$))*+(?:[|>][0-9+-]*)?(?:[ \t]*#[^\r\n]*)?[ \t]*"
+)
 
 
 def _line_readings(line: str) -> list[str]:
@@ -162,12 +167,78 @@ def _value_part(text: str) -> bool:
     )
 
 
+# A character outside the base64 and URL-safe alphabet of the value the
+# single-line pass reads after 'key: ' (``_OPAQUE_VALUE``), and a digest
+# written after its algorithm ('sha256:<hex>'), which keeps its text there.
+_UNREAD_CHARACTER = re.compile(r"[^A-Za-z0-9+/_.~=\s-]")
+_LABELLED_DIGEST = re.compile(r"[A-Za-z][A-Za-z0-9_.+-]*:[0-9A-Fa-f]+")
+
+
+def _entry_depth(line: str) -> int | None:
+    """Where the block of a block line that is a mapping entry ends, or None for any other line.
+
+    An entry is a line with its value below or after a blank ('name:',
+    'name: |', 'name: v'), or under a name this pass reads ('key:v'). A colon
+    followed by text otherwise makes a plain scalar ('sha256:<hex>'). Its block
+    ends at the first line indented no deeper than its key, sequence markers
+    included ('- name: |'), as ``_redact_yaml_multiline_values`` measures it.
+    """
+    entry = _YAML_MAPPING_LINE.match(line)
+    if entry is None:
+        return None
+    name = entry.group("quoted") or entry.group("plain")
+    if (
+        entry.group("value")
+        and line[entry.start("value") - 1] not in " \t"
+        and not (_credential_name(name) or _sensitive_assignment_key(name))
+    ):
+        return None
+    return len(entry.group("prefix").expandtabs(8))
+
+
 def _joined_values(groups: list[list[str]]) -> list[str]:
-    """Each group of value lines joined, then all of them joined when there are several."""
-    values = ["".join(group) for group in groups if group]
-    if len(values) > 1:
-        values.append("".join(values))
+    """Each group of value lines joined, then all of them joined when there are several.
+
+    A group of one line is left out: that line is tested on its own.
+    """
+    values = ["".join(group) for group in groups if len(group) > 1]
+    if sum(1 for group in groups if group) > 1:
+        values.append("".join("".join(group) for group in groups))
     return values
+
+
+def _single_line_credential(text: str) -> bool:
+    """Whether one block line, read on its own, is a credential.
+
+    A line of base64 and URL-safe characters, or one with blanks, is read as
+    the single-line pass reads the value of a conditional name ('key: <line>',
+    see ``_redact_opaque_assignments``): its first token, quoted or a bare
+    token that is not made of words (``_wordy``, unless digits split it into
+    short fragments), is a credential when ``_credential_literal`` accepts it.
+    An identifier ('ipv4Addr6To4') therefore keeps its text, as on one line.
+
+    That pass reads no value from any other line without blanks, which is
+    tested as it is, as a joined value is: one starting with '#', which in a
+    '|' or '>' block is content, and one holding another character
+    ('Kx7!mQ2&Lp9aB3cD4e', 'sha256:<opaque>'). A digest after its algorithm
+    ('sha256:<hex>') keeps its text, as it does after 'key: '.
+    """
+    if not any(char.isspace() for char in text) and (
+        text.startswith("#") or _UNREAD_CHARACTER.search(text) is not None
+    ):
+        return _LABELLED_DIGEST.fullmatch(text) is None and _credential_literal(text, positional=False)
+    match = _OPAQUE_VALUE.match(": " + text)
+    if match is None:
+        return False
+    if match.group("quoted") is not None:
+        value = match.group("quoted")
+        if _interpolated(match.group("prefix") or "", match.group("quote"), value):
+            return False
+    else:
+        value = match.group("bare")
+        if _wordy(value) and not _opaque_identifier(value):
+            return False
+    return _credential_literal(value, positional=False)
 
 
 def _opaque_block_credential(lines: list[str]) -> bool:
@@ -175,45 +246,75 @@ def _opaque_block_credential(lines: list[str]) -> bool:
 
     Read for a name that carries a credential only when its value is opaque
     ('key'), the way the single-line assignment pass reads one. ``lines`` are
-    the block's non-blank lines with their indentation. Consecutive lines at
-    one indentation that can be part of a value are joined without a
-    separator so a wrapped base64 blob is tested as the one value it encodes;
-    prose, paths and placeholders keep their text, since
-    ``_credential_literal`` rejects whitespace, a path and a placeholder.
+    the block's non-blank lines with their indentation, the blanks and tabs
+    before the text, as the block boundary measures it.
+
+    Each line is tested on its own as the single-line pass reads a value
+    (``_single_line_credential``): as it is, without a trailing ' # note' and
+    without leading '- ' markers ('key:' over '- <opaque>').
+
+    Lines are also joined without a separator, so that a wrapped base64 blob
+    is tested as the one value it encodes, and a value joined from two lines
+    or more is a credential when ``_credential_literal`` accepts it.
+    Consecutive lines at one indentation that can be part of a value
+    (``_value_part``: not a note, a sentence, a URL or a path, which hid the
+    credential beside them) are joined, the groups on either side of such a
+    line apart and together. Each maximal run of lines without whitespace is
+    also joined across indentation ('b39f' over a tab-indented '9fc2'),
+    '#'-led lines included ('#aXV5bY' over 'g4Sy'). A run ends at a line that
+    cannot be joined, at a mapping entry (``_entry_depth``) and where the
+    block of the innermost entry above its first line ends. A nested block
+    therefore yields the lines, groups and runs it yields when read alone,
+    and a kept outer block never shows a value that a nested 'key:' inside
+    it would withhold.
 
     Joining can also read a few short lines as one opaque value ('Alpha1' over
     'Beta2'). That withholds a little more than a line-by-line test would under
     a name like 'key', which is the safer direction here: testing each line on
     its own would keep every wrapped credential, the case this pass exists for.
-
-    Each line is also tested on its own: as it is (in a '|' block a leading
-    '#' is content), without a trailing ' # note' and without leading '- '
-    markers ('key:' over '- <opaque>'). A note, a sentence, a URL or a path is
-    never joined (``_value_part``): the value lines before and after one are
-    joined apart and together. A change of indentation ends the joining, so
-    a nested block's lines are joined as that block joins them when read
-    alone, and a kept outer block never shows a value that a nested 'key:'
-    inside it would withhold.
     """
-    candidates: list[str] = []
+    joined: list[str] = []
     # The value lines at the current indentation, in groups split by lines
     # that cannot be part of a value.
     groups: list[list[str]] = [[]]
     depth = -1
+    # Where the blocks of the mapping entries above the current line end,
+    # innermost last; the current run across indentation; and where the
+    # block of the innermost entry above its first line ends, which ends it.
+    entries: list[int] = []
+    run: list[str] = []
+    run_limit = -1
     for line in lines:
-        text = line.lstrip()
-        candidates.extend(_line_readings(text))
+        text = line.lstrip(" \t")
+        if any(_single_line_credential(reading) for reading in _line_readings(text)):
+            return True
         indent = len(line[: len(line) - len(text)].expandtabs(8))
+        while entries and entries[-1] >= indent:
+            entries.pop()
         if indent != depth:
-            candidates.extend(_joined_values(groups))
+            joined.extend(_joined_values(groups))
             groups = [[]]
             depth = indent
         if _value_part(text):
             groups[-1].append(text)
         elif groups[-1]:
             groups.append([])
-    candidates.extend(_joined_values(groups))
-    return any(_credential_literal(value, positional=False) for value in candidates)
+        entry = _entry_depth(line)
+        continues = entry is None and _value_part(text.lstrip("#"))
+        if not continues or indent <= run_limit:
+            if len(run) > 1:
+                joined.append("".join(run))
+            run = []
+        if continues:
+            if not run:
+                run_limit = entries[-1] if entries else -1
+            run.append(text)
+        if entry is not None:
+            entries.append(entry)
+    joined.extend(_joined_values(groups))
+    if len(run) > 1:
+        joined.append("".join(run))
+    return any(_credential_literal(value, positional=False) for value in joined)
 
 
 def _entry_read_on_its_own(text: str, line_start: int, content: str) -> bool:

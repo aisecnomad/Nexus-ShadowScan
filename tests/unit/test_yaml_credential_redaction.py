@@ -307,3 +307,105 @@ def test_yaml_alternating_conditional_staircase_is_read_in_linear_time(size, bla
     started = time.perf_counter()
     assert _redact_yaml_multiline_values(source) == source
     assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.parametrize(
+    ("source", "secrets"),
+    [
+        # Short wrapped lines at another indentation, and a password with symbols
+        # neither of whose lines has an opaque run of its own.
+        ("pwd: |\n  b39f\n\t9fc2\nmodel: langchain\n", ("b39f", "9fc2")),
+        ("stringData:\n  sshKey: |\n    q7Rk2Xw\n      9pLm4Tz\nmodel: langchain\n", ("q7Rk2Xw", "9pLm4Tz")),
+        (
+            "pwd: |\n  Kx7!mQ2#Lp9&aB3c\n    D4eF&Rt!9w\nmodel: langchain\n",
+            ("Kx7!mQ2#Lp9&aB3c", "D4eF&Rt!9w"),
+        ),
+        # A '#'-led content line of a '|' or '>' block, joined with the next.
+        ("pwd: |\n  #aXV5bY\n  g4Sy\nmodel: langchain\n", ("aXV5bY", "g4Sy")),
+        ("tlsKey: >\n  #Kx7!mQ2&Lp9\n  aB3cD4e\nmodel: langchain\n", ("Kx7!mQ2&Lp9", "aB3cD4e")),
+        # A line that ends the inner block, whose indentation holds a form feed: it
+        # was joined into the inner block's lines in the outer read, made them a
+        # placeholder there, and the kept outer block hid the inner one.
+        (
+            "key:\n  foo:\n    bar\n  key: |\n    Ab1cDe\n    2FgH3i\n  \x0c xxxx\nmodel: langchain\n",
+            ("Ab1cDe", "2FgH3i"),
+        ),
+        # A line indented less than the first piece, inside the block.
+        ("key: |+\n    FVM7J\n  9xsGX\n  EQ\nmodel: langchain\n", ("FVM7J", "9xsGX")),
+        # The nested 'pwd' block's pieces are joined up to its end, never with the
+        # outer placeholder line after it, which hid them when the outer block was kept.
+        (
+            "key: # material\n  pwd: |\n      Ab1Cd\n    2Ef3Gh\n  xxxxxxxx\nmodel: langchain\n",
+            ("Ab1Cd", "2Ef3Gh"),
+        ),
+        # The same under a sequence entry, whose block ends past its '- ' marker.
+        (
+            "key: # material\n  - pwd: |\n        Ab1Cd\n      2Ef3Gh\n    xxxxxxxx\nmodel: langchain\n",
+            ("Ab1Cd", "2Ef3Gh"),
+        ),
+    ],
+    ids=[
+        "tab-indent",
+        "deeper-line",
+        "symbols",
+        "hash-pipe",
+        "hash-folded",
+        "form-feed",
+        "dedent",
+        "nested-dedent",
+        "nested-entry-dedent",
+    ],
+)
+def test_yaml_wrapped_value_across_indentation_is_withheld(source, secrets):
+    clean = _withheld_everywhere(source, *secrets)
+    assert REDACTED in clean and "model: langchain" in clean
+    assert clean.count("\n") == source.count("\n")
+    assert sanitize_text(clean) == clean
+
+
+@pytest.mark.parametrize(
+    "properties", ["!!binary |", "&cert |", "!!str", "!secret &a >-", "!<tag:yaml.org,2002:binary> |"]
+)
+def test_yaml_conditional_name_over_an_entry_with_node_properties_withholds_its_value(properties):
+    """A tag or an anchor before the block indicator leaves the value below, which nothing else reads."""
+    value = "Zx9Yw8Vu7Ts6Rq5Po4Nm3Lk2"
+    source = f"jwtSecret:\n  value: {properties}\n    {value}\nmodel: langchain\n"
+    clean = _withheld_everywhere(source, value)
+    assert REDACTED in clean and "model: langchain" in clean
+    assert clean.count("\n") == source.count("\n")
+
+
+DIGEST = "28dbd25e63b229f1c4069545de11cc9dea959c212e9c82b1478c281d687c966c"
+
+
+@pytest.mark.parametrize(
+    ("name", "lines"),
+    [
+        ("cacheKey:", ["  - ipv4Addr6To4"]),
+        ("cacheKey: |", ["  ipv4Addr6To4"]),
+        ("sortKey:", ["  - createdAt  # newest first", "  - orderId2"]),
+        ("sortKey: |", ["  used for sorting results", f"  sha256:{DIGEST}"]),
+        ("key:", [f"  - sha256:{DIGEST}"]),
+    ],
+)
+def test_yaml_conditional_name_keeps_a_line_its_single_line_form_keeps(name, lines):
+    """One line under a conditional name is read as 'name: <line>': an identifier or a digest stays."""
+    source = "\n".join([name, *lines, "model: langchain"]) + "\n"
+    assert sanitize_text(source) == source
+    assert sanitize({"evidence": source})["evidence"] == source
+    key = name.split(":")[0]
+    for line in lines:
+        value = line.strip().removeprefix("- ").split("  #")[0]
+        assert sanitize_text(f"{key}: {value}") == f"{key}: {value}"
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["#Kx7!mQ2&Lp9aB3cD4e", "Kx7!mQ2#Lp9&aB3cD4eF&Rt!9w", f"sha256:{OPAQUE}", f"- {LINE_OPAQUE}  # primary"],
+)
+def test_yaml_conditional_name_block_withholds_an_opaque_line_the_single_line_pass_never_reads(line):
+    """A '#'-led line and one with symbols are block content no 'name: value' reading covers."""
+    source = f"pwd: |\n  {line}\nmodel: langchain\n"
+    secret = line.lstrip("#- ").split("  #")[0].removeprefix("sha256:")
+    clean = _withheld_everywhere(source, secret)
+    assert REDACTED in clean and "model: langchain" in clean

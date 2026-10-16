@@ -525,20 +525,38 @@ carries a credential only when its value is opaque — bare `key`, unlike
 withheld when the block holds an opaque value. Previously only the single-line
 `key: <opaque>` form was withheld, so a Kubernetes secret or Helm value written
 as `key: |` over a base64 blob kept its text unless the value itself had a
-recognizable format such as an `sk-` prefix or a PEM header. A comment such as
-`# rotate quarterly`, a sentence, a URL or a path beside the value does not hide
-it, nor does a trailing ` # note` on its line, a `- ` sequence marker or a
-leading `#` in a `|` or `>` block. A bare `key:` over a nested mapping leaves
-its entries to be read under their own names when the first one is read that
-way (`algorithm: RS256`, or a nested `key:` block); over an entry that nothing
-reads again (`stringData:` over an opaque line) the whole block is read as one
-value. A path, a sentence, a placeholder and a block under a name that does
-not name a credential (`data: |`) still keep their text. Regenerate retained
-reports, exports and cached evidence under the reviewed revision: changing the
-scanner cannot erase copies already written. Redaction remains best-effort — it
-recognizes credential formats and credential-bearing names, so an arbitrary
-secret with neither can still survive, and reports hold sensitive inventory
-regardless. See the [threat model](security/threat-model.md).
+recognizable format such as an `sk-` prefix or a PEM header. Each line of the
+block is read as the single-line form `key: <line>` reads its value, after a
+trailing ` # note` or a `- ` sequence marker is set aside: an identifier made of
+words (`ipv4Addr6To4`) and a digest after its algorithm (`sha256:<hex>`) keep
+their text there, as on one line. A line that form never reads as a value is
+tested as it is: a `#`-led line, which in a `|` or `>` block is content, and a
+line with other symbols (`Kx7!mQ2&Lp9aB3cD4e`). A value wrapped over several
+lines is joined at one indentation, and each run of lines without blanks is
+joined across indentation (`#`-led lines included), so a comment, a sentence, a
+URL or a path beside the value does not hide it. A bare `key:` over a nested
+mapping leaves its entries to be read under their own names when the first one
+is read that way (`algorithm: RS256`, or a nested `key:` block); over an entry
+that nothing reads again (`stringData:` over an opaque line, or
+`value: !!binary |` with a tag or an anchor before the indicator) the whole
+block is read. A path, a sentence, a placeholder and a block under a name that
+does not name a credential (`data: |`) still keep their text.
+
+Known gaps, measured only on the regression tests and synthetic fuzzing: a
+random value of about 8 to 16 characters that happens to read as words
+(`RuEnIhCvXo`) on a line of its own keeps its text, exactly as
+`key: RuEnIhCvXo` does on one line; a value wrapped into short pieces with a
+note, URL or path between them is shown when no group of adjacent pieces is
+opaque by itself; a credential holding `:` or other symbols is withheld only
+when it contains an opaque run of letters and digits; and joining neighbouring
+short lines can withhold text that is not a secret (`createdAt` over
+`orderId2`). Names that always carry a credential withhold their block whatever
+it holds.
+Regenerate retained reports, exports and cached evidence under the reviewed
+revision: changing the scanner cannot erase copies already written. Redaction
+remains best-effort: it recognizes credential formats and credential-bearing
+names, so an arbitrary secret with neither can still survive, and reports hold
+sensitive inventory regardless. See the [threat model](security/threat-model.md).
 
 **Private-origin grants.** Every connector now accepts `allow_private_origin`,
 which lifts the loopback, link-local, private and cloud-metadata refusal for

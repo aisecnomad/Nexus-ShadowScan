@@ -27,27 +27,52 @@ summarizes each release for people who install and operate ShadowScan.
   value, and the note's whitespace failed the opaque test. The lines that can
   be part of a wrapped value (no whitespace, no leading `#`, not a URL or a
   path) are now joined at each indentation, those on either side of a note,
-  sentence, URL or path apart and together, and each line is also tested on
-  its own: as written, since a block scalar's leading `#` is content
-  (`pwd: |` over `#<opaque>`), without a trailing ` # note` (`tlsKey:` over
-  `<opaque>  # rotated 2026-01`, or the same line in `key: |`) and without a
-  `- ` sequence marker (`key:` over `- <opaque>`). A change of indentation ends
-  the joining, so a nested `key:` or `pwd:` block inside a kept outer block is
-  read as it is on its own, and an outer URL, path or placeholder line no
-  longer hides its wrapped value. A bare `key:` is left to its nested mapping
+  sentence, URL or path apart and together. Each run of lines without
+  whitespace is also joined across indentation, `#`-led lines included, and
+  ends at a line that cannot be joined, at a mapping entry and where the block
+  of the innermost entry above it ends: `pwd: |` over `b39f` and a
+  tab-indented `9fc2`, `sshKey: |` over `q7Rk2Xw` and a deeper `9pLm4Tz`, and
+  `pwd: |` over `#aXV5bY` and `g4Sy` are withheld (an earlier revision of this
+  fix split them at the change of indentation or at the `#` and showed them).
+  A nested `key:` or `pwd:` block inside a kept outer block therefore yields
+  the same joined values as when read alone, also under a sequence entry
+  (`- pwd: |`), and an outer URL, path or placeholder line never hides its
+  wrapped value. Indentation is the blanks and tabs before a line, as the
+  block boundary measures it: a form feed after them no longer moved a line
+  into a nested block's group, where its placeholder text kept the outer block
+  and hid the nested one. Each line is also tested on its own, after a
+  trailing ` # note` (`tlsKey:` over `<opaque>  # rotated 2026-01`) or a `- `
+  sequence marker (`key:` over `- <opaque>`) is set aside, as the single-line
+  form `key: <line>` reads its value: an identifier made of words
+  (`ipv4Addr6To4`) and a digest after its algorithm (`sha256:<hex>`) keep
+  their text, as on one line, where the earlier revision withheld
+  `cacheKey:` over `- ipv4Addr6To4` and about four times as many synthetic
+  non-secret blocks as #235. A line that form never reads as a value is tested
+  as written: a block scalar's leading `#` is content (`pwd: |` over
+  `#<opaque>`), and a line with other symbols or `sha256:<opaque>` is withheld
+  when it holds an opaque run. A random value of about 8 to 16 characters that
+  happens to read as words now keeps its text on a line of its own, as it
+  does after `key: ` on one line. A bare `key:` is left to its nested mapping
   only when the first entry is read again under its own name: one with its
   value on its line (`algorithm: RS256`), or one over its own block whose name
   this pass reads (`key:`, `password:`). Over an entry that nothing reads
-  again (`private:`, `stringData:` or `value: |` over an opaque line, or any
-  entry after a lone carriage return) the whole block is read, as #235 did.
-  Regression tests cover a note before, between and after the wrapped lines,
-  a trailing note, a sequence entry, a `#`-prefixed value in `|`, `|-` and
-  `>-` blocks, a path or URL beside the value, nested blocks inside a kept
-  block, a bare conditional name over `private:`, `stringData:` and `value:`
-  with LF and CRLF line ends and over a nested `key:` after a lone carriage
-  return, through `sanitize_text` and `sanitize`. Operators with Kubernetes secrets or Helm values written this
-  way should regenerate retained reports and cached evidence and rotate any
-  key they show.
+  again (`private:`, `stringData:` or `value: |` over an opaque line, the same
+  with a tag or an anchor before the indicator such as `value: !!binary |`,
+  or any entry after a lone carriage return) the whole block is read, as #235
+  did. On 63,000 generated documents no output shows a credential that
+  `main` withholds; against #235 the remaining shown values are such
+  word-like random values and values #235 withheld only by joining them with
+  a following `next:` key or a path line. Regression tests cover a note
+  before, between and after the wrapped lines, a trailing note, a sequence
+  entry, a `#`-prefixed value in `|`, `|-` and `>-` blocks, a path or URL
+  beside the value, nested blocks inside a kept block, wrapped values across
+  indentation (tab, deeper and shallower lines, a nested block's end, a
+  sequence entry, a form feed), node properties, the identifier and digest
+  lines that stay, a bare conditional name over `private:`, `stringData:`
+  and `value:` with LF and CRLF line ends and over a nested `key:` after a
+  lone carriage return, through `sanitize_text` and `sanitize`. Operators
+  with Kubernetes secrets or Helm values written this way should regenerate
+  retained reports and cached evidence and rotate any key they show.
 - **`--deny-private-origin` lost to a connector grant (#235).** The flag only
   set `allow_private_origin` to false, which is also the default, and the
   engine preferred a connector's own `allow_private_origin: true`, so a
