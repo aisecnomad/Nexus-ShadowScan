@@ -820,6 +820,19 @@ in-sample: fewer errors on it are not evidence of better field accuracy. The
 [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
 lists every benchmark with its protocol and limits.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-shadowbench-cases.svg" alt="Estate and in-scope recall per tool in the 2026-10-11 ShadowBench nine-surface cases run" width="95%">
+</p>
+
+The chart is generated from the committed
+[ShadowBench cases run of 2026-10-11](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md):
+738 authored entities across nine surfaces. Estate recall charges each tool for
+the surfaces it does not cover, so it mostly measures coverage; compare the
+in-scope bars, and read the report's precision and decoy specificity before
+drawing any conclusion. ShadowScan marked 27 of its 326 scans incomplete there.
+The same authorship caveat applies: the maintainer wrote the corpus, the
+rubrics, the scorer and every tool's adapter.
+
 ---
 
 ## Surfaces & connectors
