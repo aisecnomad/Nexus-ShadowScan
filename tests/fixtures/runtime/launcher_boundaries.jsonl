@@ -1,0 +1,6 @@
+{"host":"launcher-review.example.invalid","user":"operator","pid":1,"argv":["python","audit.py","mcp-server-fetch"]}
+{"host":"launcher-review.example.invalid","user":"operator","pid":2,"argv":["node","audit.js","@openai/codex"]}
+{"host":"launcher-review.example.invalid","user":"operator","pid":3,"argv":["npx","--package","@openai/codex","audit"]}
+{"host":"launcher-review.example.invalid","user":"operator","pid":4,"argv":["uvx","ollama","list"]}
+{"host":"launcher-review.example.invalid","user":"operator","pid":5,"argv":["uv","run","python","-m","aider"]}
+{"host":"launcher-review.example.invalid","user":"operator","pid":6,"argv":["npm","exec","--","node","/opt/node_modules/@openai/codex/cli.js"]}

@@ -267,19 +267,25 @@ def _notebook_binder_source(text: str, cells: _CellSpans) -> tuple[str, list[int
     """
     source = _without_ipython_lines(text)
     unparsed: list[int] = []
-    pieces: list[str] = []
-    previous = 0
     for number, (start, end) in enumerate(cells):
         try:
             ast.parse(source[start:end])
         except (SyntaxError, ValueError):
             unparsed.append(number)
-            pieces.extend((source[previous:start], re.sub(r"[^\n]", " ", source[start:end])))
-            previous = end
         except RecursionError as exc:
             raise SourceBudgetExceeded("source binding recursion limit exceeded") from exc
-    pieces.append(source[previous:])
-    return "".join(pieces), unparsed
+    return _without_source_ranges(source, [cells[number] for number in unparsed]), unparsed
+
+
+def _without_source_ranges(text: str, spans: Sequence[tuple[int, int]]) -> str:
+    """Mask sorted, disjoint source ranges while preserving every offset and line break."""
+    pieces: list[str] = []
+    previous = 0
+    for start, end in spans:
+        pieces.extend((text[previous:start], re.sub(r"[^\n]", " ", text[start:end])))
+        previous = end
+    pieces.append(text[previous:])
+    return "".join(pieces)
 
 
 def _without_xml_comments(text: str) -> str:

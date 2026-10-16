@@ -210,6 +210,39 @@ metrics if the gate reports missing run status or completeness information.
 Validation uses offline exports, mocked API responses and authored source
 fixtures. Follow the tenant canary procedure below for live acceptance.
 
+## Unreleased runtime identity and completeness migration
+
+Rescan runtime inventories, GitHub App installations and Python source after
+upgrading to this revision. Runtime evidence now follows the executed target
+of a supported launcher. Application arguments and package-source options do
+not establish that a named AI tool is running. If command-line limits leave
+arguments unread, the scan is incomplete (exit 3), including when no finding
+could be recovered from the retained prefix.
+
+Runtime host and user identities are preserved in full within validated input
+limits. Previously shortened identities can split into multiple correct
+findings, with different IDs and resource bindings. Reconcile affected hosts
+and users, regenerate inventory stubs, and review exact approval bindings.
+Keep prior reports as historical evidence and establish a fresh baseline under
+the reviewed revision. The scanner-source fingerprint changes on upgrade, so
+cross-revision differences cannot establish that an agent stopped running.
+
+GitHub App installation counts must agree with unique collected installations.
+Contradictory or malformed count information leaves available observations in
+the report and marks coverage incomplete. Correct the export or retry the
+authorized collection; an empty page alone is not evidence of an empty estate.
+
+Python syntax must be supported by the interpreter running ShadowScan. A file
+or notebook cell that cannot be parsed keeps lexical observations, reports
+incomplete semantic analysis, and cannot gain unsupported semantic agent or
+execution-capability claims. Valid neighboring files and parsed notebook cells
+remain analyzable. Use a supported interpreter that understands the source
+syntax and rescan before accepting a completeness gate.
+
+The new tests are authored regression controls. Independent human review,
+fresh blinded holdouts and provider-specific live tenant receipts remain
+separate rollout requirements; no release or production acceptance is implied.
+
 ## Unreleased Kubernetes and Atlassian migration
 
 Rescan Kubernetes and OpenShift exports after upgrading. Earlier observations

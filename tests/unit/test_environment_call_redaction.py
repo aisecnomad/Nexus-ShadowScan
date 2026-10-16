@@ -43,6 +43,17 @@ PEP701_CALLS = [
     'os.getenv(default=f"{str(")")}' + SECRET + '", key="AZURE_OPENAI_API_KEY")',
 ]
 
+# These lexical forms intentionally include JavaScript syntax and malformed
+# calls. They still need full redaction even though Python cannot bind them.
+NON_PYTHON_CALLS = [
+    'os.getenv("AZURE_OPENAI_API_KEY", `prefix-${lookup(`)`)}}' + SECRET + "`)",
+    f'os.getenv("AZURE_OPENAI_API_KEY", /* default */ "{SECRET}")',
+    f'os.getenv("AZURE_OPENAI_API_KEY", `{SECRET}\n{TAIL}`)',
+    f'os.getenv("AZURE_OPENAI_API_KEY", "{SECRET};{TAIL}',
+    f'os.getenv("AZURE_OPENAI_API_KEY", ["{SECRET}"] +\n ["{TAIL}"]',
+    f'os.getenv("AZURE_OPENAI_API_KEY", ["{SECRET}"]}}\n "{TAIL}"',
+]
+
 CALLS = [
     f'os.environ.setdefault("AZURE_OPENAI_API_KEY", "{SECRET}")',
     f'os.putenv("AZURE_OPENAI_API_KEY", "{SECRET}")',
@@ -62,16 +73,11 @@ CALLS = [
     f'os.getenv("AZURE_OPENAI_API_KEY", ("{SECRET}" +\n "{TAIL}"))',
     f'os.getenv("AZURE_OPENAI_API_KEY", """{SECRET}\n{TAIL}""")',
     *PEP701_CALLS,
-    'os.getenv("AZURE_OPENAI_API_KEY", `prefix-${lookup(`)`)}}' + SECRET + "`)",
     f'os.getenv("AZURE_OPENAI_API_KEY", decode("{SECRET}", suffix="{TAIL}"))',
     f'os.getenv(# credential name\n "AZURE_OPENAI_API_KEY", "{SECRET}")',
     f'os.getenv(# credential name\n key="AZURE_OPENAI_API_KEY", default="{SECRET}")',
     f'os.getenv("AZURE_OPENAI_API_KEY", # default credential\n "{SECRET}")',
-    f'os.getenv("AZURE_OPENAI_API_KEY", /* default */ "{SECRET}")',
-    f'os.getenv("AZURE_OPENAI_API_KEY", `{SECRET}\n{TAIL}`)',
-    f'os.getenv("AZURE_OPENAI_API_KEY", "{SECRET};{TAIL}',
-    f'os.getenv("AZURE_OPENAI_API_KEY", ["{SECRET}"] +\n ["{TAIL}"]',
-    f'os.getenv("AZURE_OPENAI_API_KEY", ["{SECRET}"]}}\n "{TAIL}"',
+    *NON_PYTHON_CALLS,
 ]
 
 
@@ -156,10 +162,16 @@ assert 'opaque-value' not in safe and REDACTED in safe
 
 @pytest.mark.parametrize("scan_secrets", [False, True])
 @pytest.mark.parametrize(
-    ("sources", "requires_pep701"),
+    ("sources", "requires_pep701", "unparsed"),
     [
-        pytest.param([source for source in CALLS if source not in PEP701_CALLS], False, id="portable"),
-        pytest.param(PEP701_CALLS, True, id="pep701"),
+        pytest.param(
+            [source for source in CALLS if source not in PEP701_CALLS and source not in NON_PYTHON_CALLS],
+            False,
+            False,
+            id="portable",
+        ),
+        pytest.param(PEP701_CALLS, True, False, id="pep701"),
+        pytest.param(NON_PYTHON_CALLS, False, True, id="non-python-and-malformed"),
     ],
 )
 def test_environment_credentials_never_reach_any_evidence_reporter(
@@ -168,6 +180,7 @@ def test_environment_credentials_never_reach_any_evidence_reporter(
     scan_secrets,
     sources,
     requires_pep701,
+    unparsed,
 ):
     for number, source in enumerate(sources):
         (tmp_path / f"agent_{number}.py").write_text("import langchain; " + source + "\n", encoding="utf-8")
@@ -196,8 +209,21 @@ def test_environment_credentials_never_reach_any_evidence_reporter(
             f"code.filesystem: agent_{number}.py: incomplete source lexical analysis"
             for number in range(len(sources))
         ]
+        unparsed = True
+    elif unparsed:
+        assert not result.complete and result.stats[0].incomplete
+        assert not result.stats[0].errors
     else:
         assert result.complete and not result.stats[0].errors
+    assert sorted(result.stats[0].warnings) == (
+        sorted(
+            f"code.filesystem: agent_{number}.py: import-bound analysis skipped (source did not parse); "
+            "lexical evidence retained"
+            for number in range(len(sources))
+        )
+        if unparsed
+        else []
+    )
     for render in (
         render_json,
         render_html,

@@ -20,6 +20,16 @@ One `runtime-process` finding is reported per host, user and tool, with the
 process count, up to ten process ids, the executable names and, for an MCP
 server, its package name.
 
+Launcher classification follows the executed target: Python `-m`, a Node
+script, `npx`/`uvx`/`bunx`, `npm exec`, `pnpm`/`yarn exec` or `dlx`,
+`pipx run`, `uv run`/`uv tool run`, `bun x`, and `deno run`. Recognized nested
+wrappers such as `uv run python -m aider` retain that target. Arguments after
+a script or module, inline Python/Node code, and dependency options such as
+`--package`, `--from`, or `--require` do not identify a running tool. Unknown
+launcher options are not guessed; custom wrappers and unsupported launch syntax
+can therefore remain undetected. Package scripts such as `npm run` require
+additional source evidence and are not resolved from the process name.
+
 **Command lines never enter a finding.** They can carry credentials
 (`--api-key …`), so only the matched tool, the executable's base name and an
 MCP package name are kept.
@@ -56,6 +66,20 @@ Options: `label` (host name for records that carry none; default the host
 name), `max_processes` (live mode bound, default 100,000; reaching it makes
 the scan incomplete) and `input`. A record with neither a command line nor an
 executable nor a valid inspection record makes the scan incomplete.
+
+Both live and offline command lines are bounded to 64 arguments and 65,536
+UTF-8 bytes. Only complete leading arguments are classified; a cut text token
+is discarded. Every exceeded limit, and an export's explicit
+`argv_truncated: true`, marks coverage incomplete even when no finding remains.
+Retained findings record `metadata.command_lines_truncated`. A malformed
+argument array is rejected with incomplete coverage.
+
+Host and user strings retain their complete identities in aggregation, finding
+IDs and lifecycle links. They are never shortened to fit a display limit.
+Control characters, non-string identities and identities longer than 4,096
+characters cause the record to be omitted and the scan to be incomplete.
+After upgrading from a version that clipped identities to 120 characters,
+regenerate baselines and review inventory bindings for affected records.
 
 ### Optional Linux inspection
 

@@ -1167,12 +1167,16 @@ class HttpClient:
         item_key: str | None = None,
         max_pages: int = 1000,
         on_page: Callable[[requests.Response], None] | None = None,
+        *,
+        on_data: Callable[[Any], None] | None = None,
     ) -> Iterator[Any]:
         """RFC 5988 Link-header pagination for GitHub and GitLab.
 
         *on_page* receives each page's response (headers only; the body is
         consumed) once its items are validated, before they are yielded, so a
         caller can check header totals such as GitLab's ``X-Total``.
+        *on_data* receives the validated decoded page before items are yielded,
+        for provider envelope checks such as GitHub's ``total_count``.
         """
         origin = self._url(path)
         url: str | None = origin
@@ -1189,6 +1193,8 @@ class HttpClient:
             next_url = self._continuation(resp.links.get("next", {}).get("url"))
             if on_page is not None:
                 on_page(resp)
+            if on_data is not None:
+                on_data(data)
             yield from items
             url = next_url
             pages += 1

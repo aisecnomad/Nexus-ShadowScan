@@ -791,6 +791,39 @@ def test_link_pagination_callback_never_sees_an_invalid_page():
     assert seen == []
 
 
+def test_link_pagination_reports_validated_envelopes_without_forwarding_callback():
+    link = '<https://api.example.com/v1/items?page=2>; rel="next"'
+    first = {"total_count": 2, "items": [{"id": 1}]}
+    last = {"total_count": 2, "items": [{"id": 2}]}
+    http, session = client(response(first, headers={"Link": link}), response(last))
+    pages = []
+    assert list(http.paginate_link("/items", item_key="items", on_data=pages.append)) == [
+        {"id": 1},
+        {"id": 2},
+    ]
+    assert pages == [first, last]
+    assert all("on_data" not in call.kwargs for call in session.request.call_args_list)
+
+
+@pytest.mark.parametrize("page", [{"error": "denied"}, {"items": ["invalid"]}])
+def test_link_pagination_data_callback_never_sees_an_invalid_page(page):
+    http, _ = client(response(page))
+    seen = []
+    with pytest.raises(RuntimeError):
+        list(http.paginate_link("/items", item_key="items", on_data=seen.append))
+    assert seen == []
+
+
+def test_link_pagination_data_callback_failure_propagates():
+    http, _ = client(response({"items": [{"id": 1}]}))
+
+    def reject(page):
+        raise RuntimeError("provider envelope rejected")
+
+    with pytest.raises(RuntimeError, match="provider envelope rejected"):
+        list(http.paginate_link("/items", item_key="items", on_data=reject))
+
+
 def test_get_json_reports_the_response_headers_once_the_body_is_decoded():
     http, session = client(response({"result": []}, headers={"X-Total-Count": "7"}))
     totals = []

@@ -75,6 +75,184 @@ def test_overlong_package_arguments_are_not_matched(argument):
     assert time.perf_counter() - started < 1.0
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["python", "audit.py", "mcp-server-fetch"],
+        ["python", "-c", "print(1)", "mcp-server-fetch"],
+        ["python", "-m", "http.server", "mcp-server-fetch"],
+        ["node", "audit.js", "@openai/codex"],
+        ["node", "--eval", "@openai/codex"],
+        ["node", "-p", "@openai/codex"],
+        ["node", "--require", "@openai/codex", "audit.js"],
+        ["npx", "--package", "@openai/codex", "audit"],
+        ["npm", "exec", "--package=@openai/codex", "--", "node", "audit.js"],
+        ["uvx", "--from", "mcp-server-fetch", "audit"],
+        ["uv", "run", "python", "audit.py", "mcp-server-fetch"],
+        ["uvx", "ollama", "list"],
+        ["uvx", "ollama", "pull", "run"],
+        ["ollama", "list", "serve"],
+        ["npm", "run", "mcp-server-fetch"],
+        ["pipx", "install", "mcp-server-fetch"],
+        ["npx", "--unrecognized-option", "mcp-server-fetch"],
+    ],
+)
+def test_launchers_do_not_promote_program_arguments_or_dependency_options(argv):
+    assert classify(None, argv) is None
+
+
+@pytest.mark.parametrize(
+    "argv,tool",
+    [
+        (["python3.13", "-B", "-W", "ignore", "-X", "dev", "-m", "aider"], "aider"),
+        (["python", "-maider"], "aider"),
+        (["uv", "run", "python", "-m", "aider"], "aider"),
+        (["uv", "run", "python", "-m", "vllm.entrypoints.openai.api_server"], "vllm"),
+        (["uv", "tool", "run", "mcp-server-fetch"], "mcp:mcp-server-fetch"),
+        (["uvx", "--from=mcp-server-fetch", "mcp-server-fetch"], "mcp:mcp-server-fetch"),
+        (["uvx", "ollama", "serve"], "ollama"),
+        (["uvx", "ollama", "run", "model-name"], "ollama"),
+        (["pipx", "run", "--spec", "mcp-server-fetch", "mcp-server-fetch"], "mcp:mcp-server-fetch"),
+        (["npx", "-y", "--", "@openai/codex"], "codex"),
+        (["npm", "exec", "--package=@openai/codex", "--", "codex"], "codex"),
+        (["npm", "exec", "--", "node", "/lib/node_modules/@openai/codex/cli.js"], "codex"),
+        (["node", "--no-warnings", "--", "/lib/node_modules/@openai/codex/cli.js"], "codex"),
+        (["pnpm", "dlx", "mcp-server-fetch"], "mcp:mcp-server-fetch"),
+        (["yarn", "dlx", "mcp-server-fetch"], "mcp:mcp-server-fetch"),
+        (["bunx", "mcp-server-fetch"], "mcp:mcp-server-fetch"),
+        (["bun", "x", "mcp-server-fetch"], "mcp:mcp-server-fetch"),
+        (
+            ["deno", "run", "npm:@modelcontextprotocol/server-github"],
+            "mcp:@modelcontextprotocol/server-github",
+        ),
+    ],
+)
+def test_launchers_preserve_execution_targets_and_nested_wrappers(argv, tool):
+    result = classify(None, argv)
+    assert result is not None and result[0].tool == tool
+
+
+@pytest.mark.parametrize("field", ["argv", "command_line"])
+def test_offline_argument_limit_marks_empty_scan_incomplete(index, tmp_path, field):
+    argv = ["python"] + ["-B"] * 63 + ["-m", "vllm.entrypoints.openai.api_server"]
+    source = _rows(tmp_path, [{"host": "box", field: argv if field == "argv" else " ".join(argv)}])
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("runtime.processes", {"input": str(source)})]), index
+    ).run()
+    assert not result.complete and not result.findings
+    assert any("truncated" in warning for stat in result.stats for warning in stat.warnings)
+
+
+@pytest.mark.parametrize("field", ["argv", "command_line"])
+def test_offline_argument_limit_boundary_remains_complete(run_connector, tmp_path, field):
+    argv = ["python"] + ["-B"] * 61 + ["-m", "vllm.entrypoints.openai.api_server"]
+    source = _rows(tmp_path, [{"host": "box", field: argv if field == "argv" else " ".join(argv)}])
+    findings, ctx = run_connector("runtime.processes", input=str(source))
+    assert len(argv) == 64 and len(findings) == 1
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+
+
+@pytest.mark.parametrize("field", ["argv", "command_line"])
+def test_offline_byte_limit_and_source_truncation_are_incomplete(run_connector, tmp_path, field):
+    argv = ["claude", "-p", "x" * 70_000]
+    source = _rows(tmp_path, [{"host": "box", field: argv if field == "argv" else " ".join(argv)}])
+    findings, ctx = run_connector("runtime.processes", input=str(source))
+    assert ctx.stats.incomplete and len(findings) == 1
+    assert findings[0].metadata["command_lines_truncated"] == 1
+    source = _rows(tmp_path, [{"host": "box", "argv": ["python"], "argv_truncated": True}])
+    findings, ctx = run_connector("runtime.processes", input=str(source))
+    assert not findings and ctx.stats.incomplete
+
+
+def test_offline_application_arguments_do_not_create_runtime_or_lifecycle_evidence(index, tmp_path):
+    source = _rows(
+        tmp_path,
+        [
+            {"host": "box", "argv": ["node", "audit.js", "@openai/codex"]},
+            {"host": "box", "argv": ["python", "audit.py", "mcp-server-fetch"]},
+        ],
+    )
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("runtime.processes", {"input": str(source)})]), index
+    ).run()
+    assert result.complete and not result.findings
+
+
+def test_offline_launcher_boundary_fixture(run_connector):
+    findings, ctx = run_connector(
+        "runtime.processes", input=str(FIXTURES / "runtime" / "launcher_boundaries.jsonl")
+    )
+    assert not ctx.stats.incomplete
+    assert {finding.metadata["tool"] for finding in findings} == {"aider", "codex"}
+    assert sorted(pid for finding in findings for pid in finding.metadata["pids"]) == [5, 6]
+
+
+def test_live_argument_limit_marks_empty_scan_incomplete(run_connector, monkeypatch, tmp_path):
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    (proc / "11").mkdir(parents=True)
+    argv = [b"python"] + [b"-B"] * 63 + [b"-m", b"vllm.entrypoints.openai.api_server"]
+    (proc / "11" / "cmdline").write_bytes(b"\0".join(argv) + b"\0")
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert not findings and ctx.stats.incomplete
+    assert any("argument/byte limits" in warning for warning in ctx.stats.warnings)
+
+
+def test_text_byte_limit_never_classifies_a_partial_package_name(run_connector, tmp_path):
+    command = "npx " + " " * (64 * 1024 - 28) + "@anthropic-ai/claude-codex"
+    source = _rows(tmp_path, [{"host": "box", "command_line": command}])
+    findings, ctx = run_connector("runtime.processes", input=str(source))
+    assert not findings and ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("field", ["host", "user"])
+def test_runtime_identity_is_not_clipped_before_grouping(run_connector, tmp_path, field):
+    prefix = "a" * 60 + "." + "b" * 59
+    identities = [prefix + ".prod.example", prefix + ".dev.example"]
+    rows = [
+        {"host": "box", "user": "operator", field: value, "pid": number, "argv": ["claude"]}
+        for number, value in enumerate(identities, 1)
+    ]
+    findings, ctx = run_connector("runtime.processes", input=str(_rows(tmp_path, rows)))
+    assert not ctx.stats.incomplete and len(findings) == 2
+    assert len({finding.id for finding in findings}) == 2
+    assert {getattr(finding, "account" if field == "host" else "owner") for finding in findings} == set(
+        identities
+    )
+    assert all(finding.metadata["processes"] == 1 for finding in findings)
+    if field == "host":
+        endpoint = Finding(
+            surface=Surface.ENDPOINT,
+            connector="endpoint.inventory",
+            kind=Kind.AGENT_CONFIG,
+            title="Claude configuration",
+            resource="endpoint:configured",
+            resource_type="agent-config",
+            account=identities[0],
+            owner="operator",
+            frameworks=["coding-agent.claude-code"],
+        )
+        correlate_lifecycle([endpoint, *findings])
+        assert "observed-running" in endpoint.tags
+        assert endpoint.metadata["lifecycle"]["related"] == [
+            next(f.id for f in findings if f.account == identities[0])
+        ]
+        endpoint.account = prefix
+        correlate_lifecycle([endpoint, *findings])
+        assert "observed-running" not in endpoint.tags
+
+
+@pytest.mark.parametrize("field", ["host", "hostIdentifier", "user"])
+@pytest.mark.parametrize("value", ["a" * 4097, "host\nother-host", {"name": "box"}, 0, False, [], {}])
+def test_invalid_runtime_identity_is_incomplete_not_truncated(run_connector, tmp_path, field, value):
+    rows = [{"host": "box", "user": "operator", field: value, "argv": ["claude"]}]
+    findings, ctx = run_connector("runtime.processes", input=str(_rows(tmp_path, rows)))
+    assert not findings and ctx.stats.incomplete
+    assert any("host/user identity" in warning for warning in ctx.stats.warnings)
+
+
 def test_command_lines_are_never_exported():
     from shadowscan.connectors.base import _NoDump
 

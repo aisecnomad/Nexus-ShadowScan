@@ -246,6 +246,7 @@ from shadowscan.connectors.code.source_text import (  # noqa: F401 - re-exported
     _structured_context,
     _within,
     _without_ipython_lines,
+    _without_source_ranges,
     _without_xml_comments,
 )
 from shadowscan.connectors.code.tool_attribution import ToolRegions
@@ -860,6 +861,7 @@ class _SourceFile:
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
     cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
+    unparsed: _CellSpans = ()  # syntax the import binder could not read; lexical evidence only
     source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
     reexport_pending: bool = False  # queued for re-export analysis after the walk
     # Tool regions a project-level construction, registration or dispatch path may also reach.
@@ -3445,6 +3447,7 @@ class FilesystemConnector(BaseConnector):
         if lang not in {"python", "javascript"}:
             return [], []
         whole = [(0, len(content_text))]
+        file.unparsed = ()
         truncated: list[int] = []
         unparsed: list[int] = []
         try:
@@ -3453,6 +3456,17 @@ class FilesystemConnector(BaseConnector):
                 # Jupyter runs the cells one at a time: one that does not parse
                 # fails alone, so the binder reads the others without it.
                 source, unparsed = _notebook_binder_source(content_text, file.cells)
+                file.unparsed = tuple(file.cells[number] for number in unparsed)
+                if unparsed:
+                    # Report before binding the other cells: a later AST
+                    # budget failure must not erase this syntax coverage gap.
+                    numbers = ", ".join(str(number + 1) for number in unparsed[:10])
+                    cells = "cell" if len(unparsed) == 1 else "cells"
+                    verb = "does" if len(unparsed) == 1 else "do"
+                    self.ctx.warn(
+                        f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook "
+                        f"{cells} {numbers}, which {verb} not parse; lexical evidence retained"
+                    )
             bound = bound_source_matches(
                 self.index,
                 source,
@@ -3479,25 +3493,14 @@ class FilesystemConnector(BaseConnector):
             return [], whole
         except SourceNotParsed as exc:
             # Newer syntax than the interpreter knows, or invalid source: no
-            # import binding, but the lexical evidence, framework patterns
-            # included, stays. A warning, not a gap in what the file was asked
-            # to show.
+            # import binding. Lexical observations stay visible, but cannot
+            # replace the missing proof of agent behavior or capabilities.
+            file.unparsed = tuple(whole)
             self.ctx.warn(
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
-                incomplete=False,
             )
             return [], whole
-        if unparsed:
-            # As for a source that does not parse, but for these cells alone.
-            numbers = ", ".join(str(number + 1) for number in unparsed[:10])
-            cells = "cell" if len(unparsed) == 1 else "cells"
-            verb = "does" if len(unparsed) == 1 else "do"
-            self.ctx.warn(
-                f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook {cells} {numbers}, "
-                f"which {verb} not parse; lexical evidence retained",
-                incomplete=False,
-            )
         if truncated:
             # An option past the limit (tools, a stop condition) was not read: the
             # call-analysis budget is a coverage gap like the one above, but the
@@ -3541,6 +3544,21 @@ class FilesystemConnector(BaseConnector):
         ]
         for m in code_matches:
             if m.signature_id in _COLOCATED_SIGNATURES and not file_uses_llm:
+                continue
+            if _within(m.extra.get("start", -1), file.unparsed):
+                # An import/dependency corroborates a library name, not the
+                # semantics of code this interpreter could not parse. Keep
+                # every lexical observation without promoting an agent,
+                # claiming workload capabilities or constructing an MCP server.
+                m.extra.update(
+                    lexical_source=file.lang,
+                    verified_agent=False,
+                    source_capabilities=[],
+                    source_unparsed=True,
+                )
+                if m.signature_id == "protocol.mcp":
+                    m.extra["mcp_construction_unbound"] = True
+                self._record_content(file, m, self._lazy_excerpt(file, m.line))
                 continue
             if file.lang not in {"python", "javascript"}:
                 # Lexical candidates in these languages need
@@ -3656,10 +3674,15 @@ class FilesystemConnector(BaseConnector):
 
     def _register_mcp_tools(self, file: _SourceFile, ignored: list[tuple[int, int]]) -> None:
         """Remember the MCP tool names a source file registers, bounded per project."""
+        if file.unparsed == ((0, len(file.text)),):
+            return  # No independent tool-name pass may restore rejected source semantics.
+        text = _without_ipython_lines(file.text) if file.cells else file.text
+        if file.unparsed:
+            text = _without_source_ranges(text, file.unparsed)
         tools = file.proj.mcp_tools
         try:
             names = mcp_tool_names(
-                file.text,
+                text,
                 file.lang,
                 ignored=ignored,
                 max_ast_nodes=self.max_ast_nodes,
@@ -4701,6 +4724,9 @@ class FilesystemConnector(BaseConnector):
             if contextual:
                 for item in f.evidence[before:]:
                     item.attributes["capability_basis"] = "contextual-unlinked-source"
+            if m.extra.get("source_unparsed"):
+                for item in f.evidence[before:]:
+                    item.attributes["source_analysis"] = "unparsed"
             neg_ctx = evidence.negative_contexts.get(rel)
             if neg_ctx is not None:
                 for item in f.evidence[before:]:

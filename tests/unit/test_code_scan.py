@@ -534,17 +534,18 @@ def test_python_that_does_not_parse_warns_that_the_import_binder_was_skipped(
         pytest.skip("the running Python can parse this snippet")
     (tmp_path / name).write_text(content)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    # Not a gap in what was asked of the scan (the lexical evidence stays), but never silent.
+    # Lexical evidence cannot replace the semantic analysis the interpreter could not perform.
     assert ctx.stats.warnings == [
         f"code.filesystem: {name}: import-bound analysis skipped (source did not parse); "
         "lexical evidence retained"
     ]
-    assert not ctx.stats.errors and not ctx.stats.incomplete
-    # The construction is kept as lexical evidence, corroborated by the import, as in a
-    # language without a binder; it used to be dropped, leaving only "LLM usage".
+    assert not ctx.stats.errors and ctx.stats.incomplete
+    # Keep the library and lexical construction without asserting agent behavior or capabilities.
     assert any(
-        finding.kind == Kind.AGENT and "framework.langchain" in finding.frameworks for finding in findings
+        finding.kind == Kind.FRAMEWORK_USAGE and "framework.langchain" in finding.frameworks
+        for finding in findings
     )
+    assert all(not finding.capabilities for finding in findings)
 
 
 def _notebook(*cells: str) -> str:
@@ -593,7 +594,7 @@ def test_one_broken_notebook_cell_does_not_hide_the_others(tmp_path, run_connect
     # Jupyter runs each cell on its own: a cell that does not parse fails alone.
     (tmp_path / "agent.ipynb").write_text(_notebook(broken, _LANGCHAIN_AGENT))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert not ctx.stats.errors and ctx.stats.incomplete
     assert ctx.stats.warnings == [
         "code.filesystem: agent.ipynb: import-bound analysis skipped for notebook cell 1, which does not "
         "parse; lexical evidence retained"
@@ -606,10 +607,11 @@ def test_a_broken_notebook_cell_keeps_its_own_construction(tmp_path, run_connect
     broken = "executor = AgentExecutor(agent=a, tools=[])\nresult = (\n"
     (tmp_path / "agent.ipynb").write_text(_notebook(setup, broken))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
-    assert not ctx.stats.errors and not ctx.stats.incomplete
+    assert not ctx.stats.errors and ctx.stats.incomplete
     assert any("notebook cell 2" in warning for warning in ctx.stats.warnings)
-    # The construction in the cell the binder could not read counts as lexical evidence.
-    assert any(finding.kind == Kind.AGENT for finding in findings)
+    # The construction in the unread cell stays lexical evidence, with no semantic promotion.
+    assert findings and all(finding.kind == Kind.FRAMEWORK_USAGE for finding in findings)
+    assert all(not finding.capabilities for finding in findings)
 
 
 @pytest.mark.parametrize("stop", ["sys.exit(0)", "exit()", "quit()", "raise SystemExit('stop Run All here')"])

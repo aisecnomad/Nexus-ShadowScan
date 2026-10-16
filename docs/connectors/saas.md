@@ -56,6 +56,18 @@ tagged `unrecognized-app` and capped at possible confidence. `workflows` or
 `actions` write access implies `code-exec`; contents and pull-request writes
 are SaaS write actions.
 
+Live installation pages must report a nonnegative integer `total_count` that
+stays unchanged throughout pagination. The connector compares it with unique
+installation IDs; missing or malformed counts, duplicate or invalid IDs,
+changed totals, and a listing that ends before its declared total all make
+coverage incomplete. Already collected observations remain available.
+Offline `{"total_count": ..., "installations": [...]}` envelopes receive
+the same count checks against the complete export; concatenate all pages into
+one envelope before scanning. Legacy offline `{"installations": [...]}`
+envelopes and bare record lists remain supported without asserting a provider
+total. These checks detect inconsistent inventories but
+cannot guarantee snapshot consistency when apps change during collection.
+
 ## `saas.atlassian`
 UPM user-installed apps for Jira and Confluence. Set `site` to the concrete
 HTTPS site origin for offline exports as well as live collection. App keys

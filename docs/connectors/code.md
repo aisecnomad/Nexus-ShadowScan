@@ -86,6 +86,17 @@ starting only while its matching budget and the walk's safety margin fit. A
 consumer left unbound is named, keeps that lexical evidence and makes the scan
 incomplete.
 
+Python syntax support follows the interpreter running the scanner. Invalid
+source, or newer syntax that interpreter cannot parse, makes coverage incomplete
+(exit 3), including when no finding is produced. Imports and lexical observations
+remain visible as library usage or potential evidence, but code in an unparsed
+range cannot establish agent behavior, workload capabilities or an MCP server.
+Notebook cells are parsed separately: an unparsed cell does not remove the bound
+evidence or registered tools of other cells. Use an interpreter that supports the
+repository's Python syntax for full semantic coverage. Existing AST/work-budget
+exhaustion handling is separate: it retains corroborated lexical candidates and
+its existing coverage diagnostics; this syntax rule does not change those budgets.
+
 Packages, nested source layouts, dynamic imports, other re-exports and uncertain
 bindings remain usage evidence when ordinary signatures identify them.
 Supported Go LangChain agent constructors require the imported agent-package
