@@ -106,8 +106,8 @@ def test_readme_and_architecture_page_reference_the_generated_images() -> None:
 
 
 def test_docs_assets_holds_only_the_generated_images() -> None:
-    """Generated SVGs belong here; nothing else."""
-    allowed = {path.name for path in rendered()}
+    """Generated SVGs and the cross-tool benchmark image belong here."""
+    allowed = {path.name for path in rendered()} | {"benchmarks-cross-tool.webp"}
     assert {path.name for path in ASSETS.iterdir()} == allowed
     assert all(path.parent == ASSETS for path in rendered())
 
