@@ -181,6 +181,21 @@ class _AutomationBase(BaseConnector):
     surface: ClassVar[Surface] = Surface.LOWCODE
     platform_signature: ClassVar[str] = ""
 
+    def _live_collection_items(
+        self, data: Any, key: str, *, allow_array: bool = False
+    ) -> list[dict[str, Any]]:
+        """Validate the whole live page before its collection can establish coverage."""
+        if isinstance(data, dict):
+            if self._is_error_record(data):
+                # Error documents can reflect credentials; never echo their fields.
+                raise ConnectorError(f"{self.name}: API collection failed; coverage incomplete")
+            items = data.get(key)
+        else:
+            items = data if allow_array else None
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise ConnectorError(f"{self.name}: invalid collection response; coverage incomplete")
+        return items
+
     def _trigger_initiation(self, trigger: str) -> str | None:
         """``schedule``, ``event`` or ``human`` for one trigger, or None when it names no initiation."""
         if _SCHEDULE_NAMES.search(trigger):
@@ -810,18 +825,19 @@ class ZapierConnector(_AutomationBase):
         for _ in range(max_pages_limit(self.ctx.get("max_pages", 1000))):
             if not url:
                 return
-            if not isinstance(url, str) or url in seen:
+            if url in seen:
                 self.ctx.warn("lowcode.zapier: invalid or repeated pagination link")
                 return
             seen.add(url)
             data = http.get_json(url, params={"limit": 100})
-            if (
-                not isinstance(data, dict)
-                or self._is_error_record(data)
-                or not isinstance(data.get("data"), list)
-            ):
-                raise ConnectorError("lowcode.zapier: invalid collection response")
-            yield from data["data"]
+            # The page's own envelope and items are checked first (#242); its
+            # continuation then decides completeness (#241). A page whose links or
+            # next marker is missing or malformed keeps its records but cannot show
+            # that every page was collected: False, zero, a container or a blank
+            # string does not prove the end of the collection, while null or ""
+            # ends it normally.
+            items = self._live_collection_items(data, "data")
+            yield from items
             links = data.get("links")
             if not isinstance(links, dict) or "next" not in links:
                 self.ctx.warn("lowcode.zapier: invalid pagination links; collection incomplete")
@@ -832,7 +848,7 @@ class ZapierConnector(_AutomationBase):
             ):
                 self.ctx.warn("lowcode.zapier: invalid pagination continuation; collection incomplete")
                 return
-            url = next_url
+            url = next_url or None
         if url:
             self.ctx.warn("lowcode.zapier: pagination limit reached")
 
@@ -951,9 +967,7 @@ class WorkatoConnector(_AutomationBase):
         seen: set[str] = set()
         for page in range(1, max_pages_limit(self.ctx.get("max_pages", 1000)) + 1):
             data = http.get_json("/recipes", params={"per_page": 100, "page": page})
-            items = data.get("items") if isinstance(data, dict) else data
-            if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
-                raise ConnectorError("lowcode.workato: invalid recipe page")
+            items = self._live_collection_items(data, "items", allow_array=True)
             fingerprint = hashlib.sha256(json.dumps(items, sort_keys=True, default=str).encode()).hexdigest()
             if fingerprint in seen:
                 self.ctx.warn("lowcode.workato: repeated pagination page")

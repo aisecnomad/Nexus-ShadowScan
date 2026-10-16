@@ -147,6 +147,36 @@ Independent review, fresh held-out evaluation and scoped live tenant acceptance
 remain required by the existing rollout procedure; this change does not supply
 those approvals or credentials.
 
+## Unreleased medium-severity review corrections
+
+Rescan generic SaaS, Teams and affected JavaScript/TypeScript inputs after
+upgrading, and establish a fresh comparison baseline under the reviewed
+revision. Generic SaaS reports now withhold copies of known credentials from
+projected fields before transformations; credential values no longer establish
+product or permission matches. Finding identity digests still distinguish raw
+resource identities even if both displayed resources are redacted. Previously
+saved reports are not rewritten: handle affected reports under your existing
+credential exposure and retention procedures.
+
+Teams findings retain catalog and installed-version observations together.
+Consumers of scalar `version`, `bot_id` or `publishing_state` must allow those
+fields to be `null` when no nonempty value or multiple values were observed; use `versions`,
+`bot_ids` and `definition_observations` for attributed evidence. RSC permissions
+remain definition-requested permissions, not proof of effective grants.
+Contradictory observations of one definition mark coverage incomplete.
+
+Zapier/Workato error envelopes and malformed collections, and malformed Zapier
+pagination, now produce incomplete coverage even beside empty result arrays.
+Retained earlier pages do not establish complete inventory. JavaScript
+destructuring shadowing can reduce SDK agent attribution; that correction is
+not proof an agent stopped running. Benchmark comparison also rejects newly
+unavailable scans independently of detection scores, and requires every
+selected repository in both baseline and current metrics. Re-score older
+metrics if the gate reports missing run status or completeness information.
+
+Validation uses offline exports, mocked API responses and authored source
+fixtures. Follow the tenant canary procedure below for live acceptance.
+
 ## Unreleased Kubernetes and Atlassian migration
 
 Rescan Kubernetes and OpenShift exports after upgrading. Earlier observations

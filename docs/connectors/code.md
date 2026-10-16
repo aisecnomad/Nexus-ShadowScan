@@ -58,6 +58,12 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 Python and common JavaScript/TypeScript constructors are resolved against imports,
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
+JavaScript/TypeScript object and array destructuring declarations, including
+aliases, nested patterns, rest bindings and defaults, invalidate shadowed SDK
+bindings under the existing conservative whole-file policy. Property keys and
+initializer references do not declare names. Unsupported binding syntax retains
+usage evidence without proving an imported constructor; analysis limits make
+coverage incomplete. Scanned source is never executed.
 Confidence groups cap repeated observations of the same technology. Python also
 resolves absolute `from local_shim import Alias` imports through already-read
 `.py` files at the same manifest project root (or scan root without a manifest).

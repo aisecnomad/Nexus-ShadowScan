@@ -42,8 +42,15 @@ committed results into a weekly regression gate for ShadowScan: a drop in
 in-scope F1 of more than one point, any drop in repository-level recall, a
 newly flagged control or near-miss repository, or a repository whose scan was
 complete in the baseline and is now incomplete (exit 3) fails the run.
-Incomplete runs are scored on the facts they found and marked `(incomplete)`
-in REPORT.md, never as clean negatives.
+Newly failed, timed-out, errored, skipped or missing runs also fail independently
+of detection scores. Both metric sets must contain every selected repository,
+including for subset comparisons. Known baseline failures remain visible;
+absent or unknown baseline statuses cannot grandfather failures, and unknown
+current statuses fail. Adapter-approved nonzero exit codes remain successful
+normalized runs. Partial facts remain available for diagnostic scoring, while
+unavailable, incomplete or unknown-coverage negatives are never labeled clean
+in REPORT.md. Re-score metrics when the gate reports missing status or
+completeness information.
 
 ## ShadowBench: nine surfaces against other tools
 

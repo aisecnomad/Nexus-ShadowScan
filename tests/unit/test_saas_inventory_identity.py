@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from unittest.mock import Mock
 
@@ -402,3 +403,208 @@ def test_teams_malformed_live_team_does_not_abort_other_inventory(index):
     findings = connector.run()
     assert len(findings) == 1 and findings[0].metadata["install_count"] == 1
     assert connector.ctx.stats.incomplete and not connector.ctx.stats.errors
+
+
+def _teams_review_records(fixtures):
+    return json.loads((fixtures / "saas" / "teams_review_versions.json").read_text(encoding="utf-8"))
+
+
+def test_teams_catalog_version_cannot_hide_installed_bot_or_requested_permissions(tmp_path, fixtures):
+    records = _teams_review_records(fixtures)[:2]
+    result = scan(tmp_path, "saas.microsoft-teams", records, tenant_id="tenant-a")
+    assert result.complete
+    (finding,) = result.findings
+    assert finding.metadata["bot_id"] == "review-bot-one"
+    assert finding.metadata["version"] is None
+    assert finding.metadata["versions"] == ["1.0.0", "2.0.0"]
+    assert finding.metadata["rsc_permissions"] == ["ChannelMessage.Read.Group"]
+    assert finding.metadata["rsc_permission_basis"] == "definition-requested"
+    observations = finding.metadata["definition_observations"]
+    installed = next(item for item in observations if item["source"] == "installation")
+    assert installed["definition_id"] == "definition-v1"
+    assert installed["version"] == "1.0.0"
+    assert installed["installation_id"] == "installation-engineering"
+    assert installed["team_id"] == "team-engineering"
+    assert installed["team_name"] == "Engineering"
+    assert installed["requested_rsc_permissions"] == [
+        {"permission": "ChannelMessage.Read.Group", "type": "Application"}
+    ]
+    assert any("grants are not verified" in evidence.description for evidence in finding.evidence)
+
+
+def test_teams_retains_multiple_installed_versions_without_inventing_one_bot_identity(tmp_path, fixtures):
+    result = scan(tmp_path, "saas.microsoft-teams", _teams_review_records(fixtures), tenant_id="tenant-a")
+    assert result.complete
+    (finding,) = result.findings
+    assert finding.metadata["bot_id"] is None
+    assert finding.metadata["bot_ids"] == ["review-bot-one", "review-bot-two"]
+    assert finding.metadata["versions"] == ["1.0.0", "2.0.0", "3.0.0"]
+    assert finding.metadata["rsc_permissions"] == ["ChannelMessage.Read.Group", "TeamSettings.Read.Group"]
+    assert finding.metadata["install_count"] == 2
+    installed = [d for d in finding.metadata["definition_observations"] if d["source"] == "installation"]
+    assert {(d["version"], d["team_id"], d["bot_id"]) for d in installed} == {
+        ("1.0.0", "team-engineering", "review-bot-one"),
+        ("3.0.0", "team-security", "review-bot-two"),
+    }
+
+
+def test_teams_catalog_definition_and_record_order_do_not_change_assessment(tmp_path, fixtures):
+    records = _teams_review_records(fixtures)
+    records[0]["appDefinitions"].append(copy.deepcopy(records[1]["teamsAppDefinition"]))
+    first = scan(tmp_path, "saas.microsoft-teams", records, tenant_id="tenant-a")
+    records[0]["appDefinitions"].reverse()
+    second = scan(tmp_path, "saas.microsoft-teams", records[::-1], tenant_id="tenant-a")
+    assert first.complete and second.complete
+    one, two = first.findings[0], second.findings[0]
+    assert one.id == two.id
+    assert one.metadata == two.metadata
+    assert one.capabilities == two.capabilities and one.confidence == two.confidence
+
+
+def test_teams_definition_text_is_matched_separately_without_synthesizing_product_names(
+    tmp_path, index, monkeypatch
+):
+    inputs = []
+    real_match = index.match_name
+
+    def match_name(text):
+        inputs.append(text)
+        return real_match(text)
+
+    monkeypatch.setattr(index, "match_name", match_name)
+    result = scan(
+        tmp_path,
+        "saas.microsoft-teams",
+        [
+            {
+                **TEAMS_APP,
+                "appDefinitions": [
+                    {"id": "first", "description": "Claude"},
+                    {"id": "second", "description": "Code"},
+                ],
+            }
+        ],
+        tenant_id="tenant-a",
+    )
+    assert result.complete
+    assert "Claude" in inputs and "Code" in inputs and "Claude Code" not in inputs
+
+
+def test_teams_repeated_catalog_snapshot_with_reordered_definitions_is_not_a_conflict(tmp_path, fixtures):
+    records = _teams_review_records(fixtures)
+    catalog = records[0]
+    catalog["appDefinitions"].append(copy.deepcopy(records[1]["teamsAppDefinition"]))
+    reordered = copy.deepcopy(catalog)
+    reordered["appDefinitions"].reverse()
+    result = scan(tmp_path, "saas.microsoft-teams", [catalog, reordered], tenant_id="tenant-a")
+    assert result.complete and len(result.findings) == 1
+    assert not result.findings[0].metadata["definition_conflicts"]
+    assert result.findings[0].metadata["rsc_permissions"] == ["ChannelMessage.Read.Group"]
+
+
+def test_teams_catalog_cannot_claim_internal_installation_marker_to_hide_definitions(tmp_path, fixtures):
+    catalog, installation, _ = _teams_review_records(fixtures)
+    catalog["_from_install"] = True
+    catalog["appDefinitions"] = [installation["teamsAppDefinition"]]
+    result = scan(tmp_path, "saas.microsoft-teams", [catalog], tenant_id="tenant-a")
+    assert result.complete
+    assert result.findings[0].metadata["bot_id"] == "review-bot-one"
+    assert result.findings[0].metadata["definition_observations"][0]["source"] == "catalog"
+
+
+def test_teams_installation_only_versions_do_not_choose_first_definition_name(tmp_path, fixtures):
+    _, first, second = _teams_review_records(fixtures)
+    first["teamsAppDefinition"]["displayName"] = "Previous app name"
+    second["teamsAppDefinition"]["displayName"] = "Changed app name"
+    one = scan(tmp_path, "saas.microsoft-teams", [first, second], tenant_id="tenant-a")
+    two = scan(tmp_path, "saas.microsoft-teams", [second, first], tenant_id="tenant-a")
+    assert one.complete and two.complete
+    assert one.findings[0].title == two.findings[0].title == "Teams app with bot: review-app"
+    assert one.findings[0].metadata == two.findings[0].metadata
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("identity", ["id", "version"])
+def test_teams_conflicting_definition_facts_are_incomplete_and_both_observations_survive(
+    tmp_path, fixtures, reverse, identity
+):
+    records = _teams_review_records(fixtures)[:2]
+    original = copy.deepcopy(records[1]["teamsAppDefinition"])
+    if identity == "version":
+        original.pop("id")
+        records[1]["teamsAppDefinition"].pop("id")
+    records[0]["appDefinitions"] = [original]
+    records[1]["teamsAppDefinition"]["bot"] = {"id": "conflicting-bot"}
+    records[1]["teamsAppDefinition"]["authorization"]["requiredPermissionSet"][
+        "resourceSpecificPermissions"
+    ] = []
+    result = scan(
+        tmp_path, "saas.microsoft-teams", records[::-1] if reverse else records, tenant_id="tenant-a"
+    )
+    assert not result.complete and len(result.findings) == 1
+    assert any("conflicting Teams definition observations" in warning for warning in result.stats[0].warnings)
+    metadata = result.findings[0].metadata
+    assert metadata["definition_conflicts"] is True
+    assert metadata["bot_id"] is None
+    assert metadata["bot_ids"] == ["conflicting-bot", "review-bot-one"]
+    assert metadata["rsc_permissions"] == ["ChannelMessage.Read.Group"]
+    assert {d["source"] for d in metadata["definition_observations"]} == {"catalog", "installation"}
+
+
+def test_teams_partial_definition_does_not_erase_observed_facts_or_invent_empty_permissions(
+    tmp_path, fixtures
+):
+    records = _teams_review_records(fixtures)[:2]
+    records[0]["appDefinitions"] = [copy.deepcopy(records[1]["teamsAppDefinition"])]
+    records[1]["teamsAppDefinition"].pop("bot")
+    records[1]["teamsAppDefinition"].pop("authorization")
+    result = scan(tmp_path, "saas.microsoft-teams", records, tenant_id="tenant-a")
+    assert result.complete
+    metadata = result.findings[0].metadata
+    assert metadata["bot_id"] == "review-bot-one" and metadata["version"] == "1.0.0"
+    assert metadata["rsc_permissions"] == ["ChannelMessage.Read.Group"]
+    assert not metadata["definition_conflicts"]
+    installed = next(d for d in metadata["definition_observations"] if d["source"] == "installation")
+    assert installed["bot_observed"] is False
+    assert installed["requested_rsc_permissions"] is None
+
+
+@pytest.mark.parametrize(
+    "malformed", [{"bot": []}, {"version": []}, {"authorization": {"requiredPermissionSet": []}}]
+)
+def test_teams_malformed_installation_definition_keeps_valid_installed_versions(
+    tmp_path, fixtures, malformed
+):
+    records = _teams_review_records(fixtures)
+    records[1]["teamsAppDefinition"].update(malformed)
+    result = scan(tmp_path, "saas.microsoft-teams", records, tenant_id="tenant-a")
+    assert not result.complete and len(result.findings) == 1
+    assert result.findings[0].metadata["bot_id"] == "review-bot-two"
+    assert result.findings[0].metadata["rsc_permissions"] == ["TeamSettings.Read.Group"]
+    assert not result.stats[0].errors
+
+
+def test_teams_live_installed_definition_keeps_team_id_and_version_provenance(index, fixtures, monkeypatch):
+    catalog, installation, _ = _teams_review_records(fixtures)
+    http = Mock()
+
+    def pages(path, **kwargs):
+        if path == "/appCatalogs/teamsApps":
+            yield catalog
+        elif path == "/teams":
+            yield {"id": "live-team-id", "displayName": "Live team"}
+        else:
+            assert path == "/teams/live-team-id/installedApps"
+            yield installation
+
+    http.paginate_odata.side_effect = pages
+    monkeypatch.setattr(TeamsConnector, "_client", lambda self: http)
+    result = Engine(
+        ScanConfig(connectors=[ConnectorSpec("saas.microsoft-teams", {"tenant_id": "tenant-a"})]), index=index
+    ).run()
+    assert result.complete
+    observation = next(
+        d for d in result.findings[0].metadata["definition_observations"] if d["source"] == "installation"
+    )
+    assert observation["team_id"] == "live-team-id" and observation["team_name"] == "Live team"
+    assert observation["version"] == "1.0.0"

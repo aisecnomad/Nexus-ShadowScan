@@ -4,7 +4,9 @@ A regression is a drop in a tool's in-scope value-level F1 beyond the allowed
 tolerance, a drop in repository-level recall, a control or near-miss
 repository that the baseline left clean and the new run flags, or a repository
 whose run was complete in the baseline and is incomplete now (an incomplete
-scan's facts are a lower bound, so its clean result proves nothing).
+scan's facts are a lower bound, so its clean result proves nothing). A newly
+unavailable run fails independently of detection scores, including for controls
+and near-misses. Every selected repository must have a result in both metrics.
 Improvements are reported but never fail the gate. With ``repos`` (a partial
 run), both sides are recomputed over those repositories only.
 """
@@ -15,7 +17,7 @@ from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from typing import Any
 
-from tools.discovery_benchmark.score import Counts
+from tools.discovery_benchmark.score import UNAVAILABLE_STATUSES, Counts
 from tools.discovery_benchmark.taxonomy import category
 
 
@@ -31,6 +33,7 @@ class Comparison:
     baseline_incomplete: int | None = None  # None: the baseline predates incompleteness tracking
     current_incomplete: int | None = None
     newly_incomplete: list[str] = field(default_factory=list)
+    newly_unavailable: list[str] = field(default_factory=list)
     regressions: list[str] = field(default_factory=list)
 
     @property
@@ -49,6 +52,7 @@ class Comparison:
             "baseline_incomplete": self.baseline_incomplete,
             "current_incomplete": self.current_incomplete,
             "newly_incomplete": self.newly_incomplete,
+            "newly_unavailable": self.newly_unavailable,
             "regressions": self.regressions,
             "ok": self.ok,
         }
@@ -97,7 +101,11 @@ def subset(tool: dict[str, Any], repos: AbstractSet[str], corpus_classes: dict[s
     per_repo = {repo_id: per for repo_id, per in (tool.get("per_repo") or {}).items() if repo_id in repos}
     value = Counts()
     detection = Counts()
-    for repo_id, per in per_repo.items():
+    for repo_id in sorted(repos):
+        # A selected positive omitted from the metrics remains a miss. The
+        # coverage check below also rejects missing entries of either class;
+        # an omitted control must not disappear from a subset comparison.
+        per = per_repo.get(repo_id) or {}
         tp, fp, fn = ([f for f in per.get(key) or [] if category(f) in scope] for key in ("tp", "fp", "fn"))
         value.add(Counts(len(tp), len(fp), len(fn)))
         flagged = bool(tp or fp)
@@ -136,6 +144,43 @@ def compare_tool(
     if not cur:
         result.regressions.append("tool missing from the current metrics")
         return result
+    expected = set(corpus_classes) if repos is None else set(repos)
+    base_runs = base.get("per_repo") or {}
+    cur_runs = cur.get("per_repo") or {}
+    for label, runs in (("baseline", base_runs), ("current", cur_runs)):
+        missing = sorted(expected - runs.keys())
+        if missing:
+            result.regressions.append(f"{label} metrics missing repository results: " + ", ".join(missing))
+    # Derive availability from per-repository statuses, which older metrics also
+    # record. Do not infer success from facts or from a false/missing incomplete
+    # flag. Only a known unavailable baseline status can grandfather a failure;
+    # an absent/unknown status is not evidence of an earlier failed collection.
+    unavailable_before = {
+        rid
+        for rid, per in base_runs.items()
+        if rid in expected and isinstance(per.get("status"), str) and per["status"] in UNAVAILABLE_STATUSES
+    }
+    invalid_statuses = sorted(
+        rid
+        for rid in expected & cur_runs.keys()
+        if cur_runs[rid].get("status") != "ok"
+        and (
+            not isinstance(cur_runs[rid].get("status"), str)
+            or cur_runs[rid]["status"] not in UNAVAILABLE_STATUSES
+        )
+    )
+    if invalid_statuses:
+        result.regressions.append(
+            "current metrics lack a recognized run status: " + ", ".join(invalid_statuses)
+        )
+    unavailable_now = {rid for rid in expected if (cur_runs.get(rid) or {}).get("status") != "ok"}
+    result.newly_unavailable = sorted(unavailable_now - unavailable_before)
+    if result.newly_unavailable:
+        detail = ", ".join(
+            f"{rid} ({(cur_runs.get(rid) or {}).get('status') or 'missing'})"
+            for rid in result.newly_unavailable
+        )
+        result.regressions.append("newly unavailable runs: " + detail)
     # A null F1 means the tool found nothing, which scores as zero rather than "unknown".
     if b_f1 is not None and (c_f1 or 0.0) < b_f1 - f1_tolerance:
         result.regressions.append(f"in-scope F1 fell from {b_f1:.4f} to {c_f1 or 0.0:.4f}")
@@ -144,7 +189,12 @@ def compare_tool(
     before = _flagged_negatives(base, corpus_classes)
     after = _flagged_negatives(cur, corpus_classes)
     result.newly_flagged = sorted(after - before)
-    result.newly_clean = sorted(before - after)
+    result.newly_clean = sorted(
+        rid
+        for rid in before - after
+        if (cur_runs.get(rid) or {}).get("status") == "ok"
+        and (cur_runs.get(rid) or {}).get("incomplete") is False
+    )
     if result.newly_flagged:
         result.regressions.append("newly flagged negatives: " + ", ".join(result.newly_flagged))
     was_incomplete = _incomplete(base)

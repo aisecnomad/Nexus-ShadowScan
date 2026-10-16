@@ -1,0 +1,58 @@
+[
+  {
+    "_kind": "teamsApp",
+    "id": "review-app",
+    "displayName": "Internal helper",
+    "distributionMethod": "organization",
+    "appDefinitions": [
+      {
+        "id": "definition-v2",
+        "teamsAppId": "review-app",
+        "version": "2.0.0",
+        "publishingState": "published",
+        "bot": null,
+        "authorization": {"requiredPermissionSet": {"resourceSpecificPermissions": []}}
+      }
+    ]
+  },
+  {
+    "_kind": "installedApp",
+    "id": "installation-engineering",
+    "_team_id": "team-engineering",
+    "_team": "Engineering",
+    "teamsApp": {"id": "review-app", "distributionMethod": "organization"},
+    "teamsAppDefinition": {
+      "id": "definition-v1",
+      "teamsAppId": "review-app",
+      "version": "1.0.0",
+      "bot": {"id": "review-bot-one"},
+      "authorization": {
+        "requiredPermissionSet": {
+          "resourceSpecificPermissions": [
+            {"permissionValue": "ChannelMessage.Read.Group", "permissionType": "Application"}
+          ]
+        }
+      }
+    }
+  },
+  {
+    "_kind": "installedApp",
+    "id": "installation-security",
+    "_team_id": "team-security",
+    "_team": "Security",
+    "teamsApp": {"id": "review-app", "distributionMethod": "organization"},
+    "teamsAppDefinition": {
+      "id": "definition-v3",
+      "teamsAppId": "review-app",
+      "version": "3.0.0",
+      "bot": {"id": "review-bot-two"},
+      "authorization": {
+        "requiredPermissionSet": {
+          "resourceSpecificPermissions": [
+            {"permissionValue": "TeamSettings.Read.Group", "permissionType": "Delegated"}
+          ]
+        }
+      }
+    }
+  }
+]

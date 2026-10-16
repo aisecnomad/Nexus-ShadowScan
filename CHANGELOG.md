@@ -650,6 +650,31 @@ summarizes each release for people who install and operate ShadowScan.
   owner, declared governance or registration risk credit. Rescan gateway logs
   and establish fresh comparison baselines after upgrading.
 
+### Medium-severity review corrections
+
+- Generic SaaS inventory retains whole-record credential context when selecting
+  report and matching fields. Known credentials are removed before splitting or
+  shortening values, and cannot establish product or permission evidence. Raw
+  resource identity digests still distinguish resources whose display values
+  redact to the same text; credential context is never retained in findings.
+- Zapier and Workato reject provider error envelopes even beside empty result
+  arrays. Zapier also rejects malformed continuation metadata before publishing
+  a page. Earlier valid pages survive with incomplete coverage.
+- Teams combines catalog and installed-version definitions with version, bot,
+  installation and team provenance. It reports requested RSC permissions, not
+  verified grants; contradictory observations of one definition mark coverage
+  incomplete. Scalar version/bot fields are populated only when unambiguous;
+  otherwise they are `null`.
+- JavaScript/TypeScript destructuring declarations invalidate shadowed SDK
+  constructor bindings, including aliases, nested patterns, defaults and rest
+  bindings. Property keys and initializer references do not declare bindings.
+- Discovery benchmark comparisons reject newly unavailable runs independently
+  of F1, require every selected repository in both metric sets, and never label
+  failed or incomplete negative scans clean. Adapter-approved nonzero exits
+  remain successful runs; partial facts remain diagnostic evidence.
+- Added offline fixtures and regression tests for all five corrections. These
+  automated checks do not establish live tenant acceptance or field accuracy.
+
 ### README: why and how first, AI-assisted benchmark authorship (October 15)
 
 - From #229: "The Why" and "How it works" now follow the name table, ahead

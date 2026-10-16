@@ -11,6 +11,7 @@ Offline export: teamsApp objects (with ``appDefinitions``) and/or installedApps 
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Iterator
 from typing import Any, ClassVar
 from urllib.parse import quote
@@ -18,7 +19,7 @@ from urllib.parse import quote
 from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
-from shadowscan.connectors.common import config_boolean, failure_summary, finalize
+from shadowscan.connectors.common import apply_matches, config_boolean, failure_summary, finalize
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -107,6 +108,7 @@ class TeamsConnector(BaseConnector):
             ):
                 inst["_kind"] = "installedApp"
                 inst["_team"] = team.get("displayName")
+                inst["_team_id"] = team["id"]
                 yield inst
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
@@ -121,11 +123,13 @@ class TeamsConnector(BaseConnector):
                 )
                 continue
             if kind == "teamsApp":
+                # This marker is local bookkeeping, never provider/export authority.
+                rec = {key: value for key, value in rec.items() if key != "_from_install"}
                 app_id = rec["id"]
                 existing = apps.get(app_id)
                 if existing is None or existing.get("_from_install"):
                     apps[app_id] = rec
-                elif existing != rec and app_id not in conflicting_apps:
+                elif not self._same_app_snapshot(existing, rec) and app_id not in conflicting_apps:
                     conflicting_apps.add(app_id)
                     self.ctx.warn(
                         "saas.microsoft-teams: conflicting Teams app records; "
@@ -139,9 +143,7 @@ class TeamsConnector(BaseConnector):
                 if app_id not in apps:
                     apps[app_id] = {
                         "id": app_id,
-                        "displayName": definition.get("displayName"),
                         **app,
-                        "appDefinitions": [definition] if definition else [],
                         "_from_install": True,
                     }
         for app_id, app in apps.items():
@@ -168,7 +170,7 @@ class TeamsConnector(BaseConnector):
 
     def _record_kind(self, rec: dict[str, Any]) -> str | None:
         if not self._record_fields_valid(
-            rec, strings=("_kind", "id", "_team"), mappings=("teamsApp", "teamsAppDefinition")
+            rec, strings=("_kind", "id", "_team", "_team_id"), mappings=("teamsApp", "teamsAppDefinition")
         ):
             return None
         kind = rec.get("_kind") or (
@@ -193,6 +195,19 @@ class TeamsConnector(BaseConnector):
         ):
             return None
         return kind
+
+    @staticmethod
+    def _same_app_snapshot(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        # Graph does not promise a version order for expanded definitions.
+        def normalized(app: dict[str, Any]) -> dict[str, Any]:
+            return {
+                **app,
+                "appDefinitions": sorted(
+                    json.dumps(definition, sort_keys=True) for definition in app.get("appDefinitions", [])
+                ),
+            }
+
+        return normalized(left) == normalized(right)
 
     def _valid_app(self, app: Any) -> bool:
         if not self._record_fields_valid(
@@ -252,55 +267,150 @@ class TeamsConnector(BaseConnector):
             for permission in permissions
         )
 
+    def _definitions(
+        self, app: dict[str, Any], installs: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+        """Every observed definition, with its source; no catalog version is assumed installed.
+
+        Expansions can omit fields, so only contradictory *present* facts for
+        the same definition ID or version poison coverage. Preserve both
+        observations rather than choosing an apparently safer snapshot.
+        """
+        definitions: list[dict[str, Any]] = []
+        observations: dict[str, dict[str, Any]] = {}
+        known: dict[tuple[str, str], dict[str, Any]] = {}
+        conflicting = False
+
+        def add(definition: dict[str, Any], source: str, installation: dict[str, Any] | None = None) -> None:
+            nonlocal conflicting
+            definitions.append(definition)
+            permissions = get_path(definition, "authorization.requiredPermissionSet") or {}
+            rsc = permissions.get("resourceSpecificPermissions")
+            requested = (
+                sorted({(p["permissionValue"], p.get("permissionType") or "") for p in rsc})
+                if rsc is not None
+                else None
+            )
+            facts: dict[str, Any] = {
+                key: definition[key] for key in ("id", "version", "publishingState") if key in definition
+            }
+            if "bot" in definition:
+                facts["bot_id"] = get_path(definition, "bot.id")
+            if requested is not None:
+                facts["requested_rsc_permissions"] = requested
+            for field in ("id", "version"):
+                if not definition.get(field):
+                    continue
+                previous = known.setdefault((field, definition[field]), {})
+                if any(previous[key] != value for key, value in facts.items() if key in previous):
+                    conflicting = True
+                previous.update(facts)
+            record = {
+                "source": source,
+                "definition_id": definition.get("id"),
+                "version": definition.get("version"),
+                "publishing_state": definition.get("publishingState"),
+                "bot_id": get_path(definition, "bot.id"),
+                "bot_observed": "bot" in definition,
+                # None is an omitted expansion, distinct from an observed empty set.
+                "requested_rsc_permissions": (
+                    [{"permission": permission, "type": kind or None} for permission, kind in requested]
+                    if requested is not None
+                    else None
+                ),
+            }
+            if installation is not None:
+                record.update(
+                    installation_id=installation.get("id"),
+                    team_id=installation.get("_team_id"),
+                    team_name=installation.get("_team"),
+                )
+            observations[json.dumps(record, sort_keys=True)] = record
+
+        if not app.get("_from_install"):
+            for definition in app.get("appDefinitions") or []:
+                add(definition, "catalog")
+        for installation in installs:
+            for definition in (installation.get("teamsApp") or {}).get("appDefinitions") or []:
+                add(definition, "installation-catalog", installation)
+            definition = installation.get("teamsAppDefinition")
+            if definition is not None:
+                add(definition, "installation", installation)
+        if conflicting:
+            self.ctx.warn(
+                "saas.microsoft-teams: conflicting Teams definition observations; "
+                "version and permission coverage incomplete"
+            )
+        return definitions, [observations[key] for key in sorted(observations)], conflicting
+
     def _app_finding(
         self, app_id: str, app: dict[str, Any], installs: list[dict[str, Any]]
     ) -> Finding | None:
-        defs = [d for d in app.get("appDefinitions") or [] if isinstance(d, dict)]
-        latest = defs[-1] if defs else {}
-        name = app.get("displayName") or latest.get("displayName") or app_id
-        publisher = latest.get("publishingState") and latest.get("createdBy") or None
-        bot = latest.get("bot") or {}
-        perms: list[str] = []
-        rsc = get_path(latest, "authorization.requiredPermissionSet.resourceSpecificPermissions") or []
-        for p in rsc:
-            if isinstance(p, dict) and p.get("permissionValue"):
-                perms.append(p["permissionValue"])
+        defs, observations, conflicting = self._definitions(app, installs)
+
+        def values(path: str) -> list[str]:
+            return sorted({value for definition in defs if (value := get_path(definition, path))})
+
+        def only(values: list[str]) -> str | None:
+            return values[0] if len(values) == 1 else None
+
+        names = values("displayName")
+        name = app.get("displayName") or only(names) or app_id
+        bot_ids = values("bot.id")
+        versions = values("version")
+        perms = sorted(
+            {
+                permission["permission"]
+                for observation in observations
+                for permission in observation["requested_rsc_permissions"] or []
+            }
+        )
         f = Finding(
             surface=Surface.SAAS,
             connector=self.name,
             kind=Kind.BOT_APP,
-            title=f"Teams app{' with bot' if bot else ''}: {name}",
+            title=f"Teams app{' with bot' if bot_ids else ''}: {name}",
             resource=f"teams:app:{app_id}",
             resource_type="teams-app",
             provider="microsoft-teams",
             account=self.tenant,
-            owner=get_path(latest, "createdBy.user.displayName", "createdBy.application.displayName"),
-            first_seen=latest.get("lastModifiedDateTime"),
+            owner=only(
+                sorted(
+                    set(values("createdBy.user.displayName") + values("createdBy.application.displayName"))
+                )
+            ),
+            first_seen=only(values("lastModifiedDateTime")),
         )
         assess_app(
             self.index,
             f,
             name=name,
-            publisher=str(publisher) if publisher else None,
-            description=" ".join(x for x in [latest.get("description"), latest.get("shortDescription")] if x),
             scopes=perms,
-            client_id=bot.get("id") if isinstance(bot, dict) else None,
+            aliases=names
+            + values("description")
+            + values("shortDescription")
+            + values("createdBy.user.displayName")
+            + values("createdBy.application.displayName"),
         )
+        for bot_id in bot_ids:
+            apply_matches(f, self.index.match_client_id(bot_id))
         is_custom = app.get("distributionMethod") == "organization"
-        if not f.frameworks and not bot and not is_custom:
+        if not f.frameworks and not bot_ids and not is_custom:
             return None
         f.add_evidence(
             Evidence(
                 signal="teams:app",
                 description=(
                     f"{app.get('distributionMethod') or 'unknown'} app '{name}' "
-                    f"v{latest.get('version') or '?'}{' with bot ' + str(bot.get('id')) if bot else ''}; "
-                    f"installed in {len(installs)} team(s); RSC permissions: {', '.join(perms) or 'none'}"
+                    f"observed versions: {', '.join(versions) or 'unknown'}; "
+                    f"{len(installs)} observed installation(s); "
+                    f"definition-requested RSC permissions: {', '.join(perms) or 'none observed'}; "
+                    "grants are not verified"
                 ),
-                weight=0.35 if bot else 0.15,
+                weight=0.35 if bot_ids else 0.15,
             )
         )
-        if bot:
+        if bot_ids:
             f.add_tag("bot")
             f.add_framework("framework.bot-framework")
         if is_custom:
@@ -309,12 +419,17 @@ class TeamsConnector(BaseConnector):
             {
                 "distribution": app.get("distributionMethod"),
                 "external_id": app.get("externalId"),
-                "version": latest.get("version"),
-                "bot_id": bot.get("id") if isinstance(bot, dict) else None,
-                "publishing_state": latest.get("publishingState"),
+                "version": only(versions),
+                "versions": versions,
+                "bot_id": only(bot_ids),
+                "bot_ids": bot_ids,
+                "publishing_state": only(values("publishingState")),
+                "definition_observations": observations,
+                "definition_conflicts": conflicting,
                 "installed_teams": sorted({str(i.get("_team")) for i in installs if i.get("_team")})[:20],
                 "install_count": len(installs),
                 "rsc_permissions": summarize_scopes(perms),
+                "rsc_permission_basis": "definition-requested",
             }
         )
         finalize(f, self.index)

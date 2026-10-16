@@ -247,6 +247,10 @@ A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
+JavaScript/TypeScript SDK attribution excludes bindings shadowed by object or
+array destructuring, including aliases, nesting, defaults and rest patterns.
+Property keys and initializer references do not themselves shadow an import.
+
 Supported `uv.lock`, `poetry.lock`, `pnpm-lock.yaml` and `Cargo.lock` inputs
 also provide bounded AI dependency inventory, with direct/transitive relationships
 only when their roots and edges establish them. Locked packages do not establish
@@ -859,8 +863,10 @@ models. Live pagination is bounded by
 `max_pages` (default and maximum 1000). Wholly blank text rows are skipped only
 with a recognized identity column (`title`, `name`, `Title`, `Zap`, `id`, or
 `Id`); unknown schemas are incomplete.
-Malformed pagination metadata also makes live collection incomplete instead of
-ending the inventory successfully.
+Live error envelopes and malformed collections make coverage incomplete, even
+beside an empty collection; that page is omitted and earlier valid pages remain.
+Missing or malformed pagination metadata also makes live collection incomplete
+instead of ending the inventory successfully; that page's records are kept.
 
 ### `lowcode.workato`
 Workato recipes with GenAI/agentic providers; triggers (Scheduler →
@@ -868,6 +874,8 @@ Workato recipes with GenAI/agentic providers; triggers (Scheduler →
 `autonomous`; a Workbot command adds neither), code steps (→ code-exec), and
 models. Live pagination is bounded by
 `max_pages` (default and maximum 1000).
+Live error envelopes and malformed collections make coverage incomplete even
+beside an empty `items` array. Bare recipe arrays remain supported.
 
 ## SaaS
 
@@ -893,6 +901,11 @@ and collect a fresh comparison baseline when upgrading from name-based IDs.
 ### `saas.microsoft-teams`
 Graph app catalog (custom apps with bot definitions and RSC permissions) and
 installed apps per team (capped by `max_teams`).
+Catalog and installed-version definitions are retained with version, bot,
+installation and team provenance in `definition_observations`. RSC permissions
+are requested permissions, not verified grants. Conflicting observations of one
+definition make coverage incomplete; scalar version/bot fields are populated
+only when unambiguous, with all observed values in `versions` and `bot_ids`.
 Malformed app IDs, conflicting expanded identities and malformed nested
 definitions or permissions make collection incomplete. An installation ID is
 not a fallback catalog app ID. Valid neighboring records remain available.
@@ -957,6 +970,10 @@ and privileged/data scopes (`keep_all: true` to emit everything). Records
 without a usable string app name make coverage incomplete while valid
 neighboring records remain available. A partial export cannot resolve an
 earlier finding merely because that row lost its name.
+Whole-record credential context removes copied secrets before field projection,
+matching and excerpt truncation. Credential contents cannot establish product
+or permission evidence; raw resource digests preserve distinct finding IDs
+when displayed resources redact to the same value.
 `platform` (default `saas`) names the export's source, for example
 `google-marketplace`, `hubspot` or `defender-mcas`. It prefixes finding titles
 and resource IDs and sets the provider, so keep it stable between scans.
