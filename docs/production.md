@@ -215,9 +215,19 @@ fixtures. Follow the tenant canary procedure below for live acceptance.
 Rescan runtime inventories, GitHub App installations and Python source after
 upgrading to this revision. Runtime evidence now follows the executed target
 of a supported launcher. Application arguments and package-source options do
-not establish that a named AI tool is running. If command-line limits leave
-arguments unread, the scan is incomplete (exit 3), including when no finding
-could be recovered from the retained prefix.
+not establish that a named AI tool is running, and launches with options a
+launcher's grammar does not recognize are not reported. Package runners that an
+interpreter runs (`node /usr/local/bin/npx -y pkg`, Defender's `node.exe
+...\npx-cli.js`, `python3 /usr/bin/pipx run ...`) and npm's `npm exec pkg`
+process title on a node executable are read as those runners: an earlier
+candidate of this revision reported none of them, with the scan complete, so
+rescan runtime inventories it produced. If command-line limits leave arguments
+unread where they could change what runs (no argument left, or a launcher's
+target not read), the scan is incomplete (exit 3), including when no finding
+could be recovered from the retained prefix. Other cut command lines (a JVM or
+compiler with hundreds of options, a long prompt after `claude -p`) are
+classified from their leading arguments and leave the scan complete; one
+counted warning reports them all.
 
 Runtime host and user identities are preserved in full within validated input
 limits. Previously shortened identities can split into multiple correct
@@ -231,13 +241,25 @@ GitHub App installation counts must agree with unique collected installations.
 Contradictory or malformed count information leaves available observations in
 the report and marks coverage incomplete. Correct the export or retry the
 authorized collection; an empty page alone is not evidence of an empty estate.
+Offline totals are checked across each export file, so a paginated export with
+one page envelope per line (`gh api --paginate ... | jq -c .`) is accepted as
+one listing; keep each organisation's pages in a file of their own.
 
 Python syntax must be supported by the interpreter running ShadowScan. A file
 or notebook cell that cannot be parsed keeps lexical observations, reports
 incomplete semantic analysis, and cannot gain unsupported semantic agent or
 execution-capability claims. Valid neighboring files and parsed notebook cells
-remain analyzable. Use a supported interpreter that understands the source
-syntax and rescan before accepting a completeness gate.
+remain analyzable. Syntax newer than the interpreter is a gap: Python 3.14's
+unparenthesized `except A, B:` on 3.13, or a PEP 695 `type` statement on 3.11.
+Use a supported interpreter that understands the source syntax and rescan
+before accepting a completeness gate. Python 2 modules, templates
+(`{{cookiecutter.slug}}/main.py`) and other `.py` files that are not Python 3
+stay a gap until listed in `exclude`; review them before excluding them. In a
+test path the scan discounts (`include_tests` off), source that does not parse
+only warns unless `strict_coverage` is set. Notebook cells in another language
+(`%%bash`, `%%writefile requirements.txt`, `%%sql`, `%%html`, and every cell of
+an R or Julia notebook) are not parsed as Python and keep lexical evidence
+without a gap.
 
 The new tests are authored regression controls. Independent human review,
 fresh blinded holdouts and provider-specific live tenant receipts remain

@@ -248,6 +248,7 @@ from shadowscan.connectors.code.source_text import (  # noqa: F401 - re-exported
     _without_ipython_lines,
     _without_source_ranges,
     _without_xml_comments,
+    foreign_cell,
 )
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
@@ -861,6 +862,9 @@ class _SourceFile:
     mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     mcp_active: bool = False  # at least one MCP server is configured, enabled or declared disabled
     cells: _CellSpans = ()  # a notebook's code cells, which Jupyter runs one at a time
+    # Notebook cells in another language (a non-Python kernel or cell magic): not parsed as
+    # Python, so lexical evidence only, and not a coverage gap.
+    foreign: _CellSpans = ()
     unparsed: _CellSpans = ()  # syntax the import binder could not read; lexical evidence only
     source_agent_regions: list[tuple[int, int, str]] = field(default_factory=list)
     reexport_pending: bool = False  # queued for re-export analysis after the walk
@@ -2542,7 +2546,7 @@ class FilesystemConnector(BaseConnector):
         if loaded is None:
             _note_unread_settings(proj, rel)
             return
-        text, raw_notebook, cells = loaded
+        text, raw_notebook, cells, foreign = loaded
         if path.name.lower() in LOCKFILE_NAMES:
             manifest = parse_manifest(rel, text)
             if manifest is not None:
@@ -2585,6 +2589,7 @@ class FilesystemConnector(BaseConnector):
             file_matches=file_matches,
             raw_notebook=raw_notebook,
             cells=cells,
+            foreign=foreign,
         )
         file.structure, file.structure_strict = self._structure_for(rel, text)
         file.excerpts = _ExcerptSource(rel, path, text, file.structure)
@@ -2642,8 +2647,10 @@ class FilesystemConnector(BaseConnector):
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
-    ) -> tuple[str, str | None, _CellSpans] | None:
+    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | None:
         """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
+
+        A notebook's last element lists the cells that are not Python (``_notebook_source``).
 
         The file is read relative to the open scan root ``root_fd``: by its on-disk
         name (``path`` below ``base``), while ``rel`` is the report-safe name used in
@@ -2689,7 +2696,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
             return None
         if path.suffix.lower() != ".ipynb":
-            return text, None, ()
+            return text, None, (), ()
         return self._notebook_source(rel, text)
 
     def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
@@ -2705,19 +2712,32 @@ class FilesystemConnector(BaseConnector):
         directory_wide = {(m.signature.id, id(m.signal)) for m in self.index.match_file(probe)}
         return any((m.signature.id, id(m.signal)) not in directory_wide for m in file_matches)
 
-    def _notebook_source(self, rel: str, document: str) -> tuple[str, str | None, _CellSpans] | None:
-        """Return a notebook's code cells, their spans and, within max_file_size, its raw document."""
+    def _notebook_source(
+        self, rel: str, document: str
+    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | None:
+        """Return a notebook's code cells, their spans, within max_file_size its raw document, and
+        the spans of cells that are not Python.
+
+        A cell is not Python when the notebook's kernel declares another language (an R or Julia
+        notebook) or when a cell magic runs, renders or writes its body as something else
+        (``%%bash``, ``%%writefile requirements.txt``; see ``foreign_cell``).
+        """
         notebook_errors: list[str] = []
         oversized_notebook = len(document) > self.max_file_size
         raw_notebook = None if oversized_notebook else document
         sources: list[str] = []
-        text = notebook_to_source(document, notebook_errors, cells=sources)
+        language: list[str] = []
+        text = notebook_to_source(document, notebook_errors, cells=sources, language=language)
         self._file_errors(rel, dict.fromkeys(notebook_errors), defect=True)
+        python_kernel = not language or language[0] in {"python", "python3", "ipython", "ipython3"}
         # The cells are joined by one line break each.
         spans: list[tuple[int, int]] = []
+        foreign: list[tuple[int, int]] = []
         offset = 0
         for source in sources:
             spans.append((offset, offset + len(source)))
+            if not python_kernel or foreign_cell(source):
+                foreign.append(spans[-1])
             offset += len(source) + 1
         # Unread analyzable content leaves coverage incomplete, as
         # for any oversize file; strict_coverage only raises the
@@ -2739,7 +2759,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
         if len(text) > self.max_file_size:
             return None
-        return text, raw_notebook, tuple(spans)
+        return text, raw_notebook, tuple(spans), tuple(foreign)
 
     def _structure_for(self, rel: str, text: str) -> tuple[Any, bool]:
         """Parse the credential context of a structured file; None withholds its excerpts.
@@ -3454,9 +3474,10 @@ class FilesystemConnector(BaseConnector):
             source = content_text
             if file.cells:
                 # Jupyter runs the cells one at a time: one that does not parse
-                # fails alone, so the binder reads the others without it.
-                source, unparsed = _notebook_binder_source(content_text, file.cells)
-                file.unparsed = tuple(file.cells[number] for number in unparsed)
+                # fails alone, so the binder reads the others without it. Cells in
+                # another language are not parsed: lexical evidence only, no gap.
+                source, unparsed = _notebook_binder_source(content_text, file.cells, file.foreign)
+                file.unparsed = tuple(sorted({*file.foreign, *(file.cells[number] for number in unparsed)}))
                 if unparsed:
                     # Report before binding the other cells: a later AST
                     # budget failure must not erase this syntax coverage gap.
@@ -3465,7 +3486,8 @@ class FilesystemConnector(BaseConnector):
                     verb = "does" if len(unparsed) == 1 else "do"
                     self.ctx.warn(
                         f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook "
-                        f"{cells} {numbers}, which {verb} not parse; lexical evidence retained"
+                        f"{cells} {numbers}, which {verb} not parse; lexical evidence retained",
+                        incomplete=self._syntax_gap(file),
                     )
             bound = bound_source_matches(
                 self.index,
@@ -3499,6 +3521,7 @@ class FilesystemConnector(BaseConnector):
             self.ctx.warn(
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
+                incomplete=self._syntax_gap(file),
             )
             return [], whole
         if truncated:
@@ -3514,7 +3537,16 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.warn(message, incomplete=self.strict_coverage)
             else:
                 self.ctx.error(message)
-        return bound, [file.cells[number] for number in unparsed]
+        return bound, list(file.unparsed)
+
+    def _syntax_gap(self, file: _SourceFile) -> bool:
+        """Whether source that does not parse leaves coverage incomplete.
+
+        It does, except in a test path the scan discounts (include_tests off), where a
+        deliberately invalid fixture is common: there it only warns, unless strict_coverage
+        is set, as for a source over the binder's budget.
+        """
+        return self.strict_coverage or self.include_tests or not _is_test_path(file.rel)
 
     def _record_code_matches(
         self,

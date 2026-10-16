@@ -118,20 +118,106 @@ def test_notebook_retains_only_tools_from_parsed_cells(tmp_path, run_connector):
     assert server.metadata["mcp_server"]["constructions"]
 
 
-def test_notebook_parse_gap_survives_a_later_discounted_test_budget(tmp_path, run_connector, monkeypatch):
+@pytest.mark.parametrize(
+    ("directory", "options", "incomplete"),
+    [
+        ("tests", {}, False),
+        ("tests", {"strict_coverage": True}, True),
+        ("tests", {"include_tests": True}, True),
+        ("src", {}, True),
+    ],
+    ids=["discounted-test", "strict-test", "included-test", "source"],
+)
+def test_notebook_parse_gap_survives_a_later_budget_failure(
+    tmp_path, run_connector, monkeypatch, directory, options, incomplete
+):
     def exhausted(*args, **kwargs):
         raise SourceBudgetExceeded("source binding AST limit exceeded")
 
     monkeypatch.setattr(filesystem, "bound_source_matches", exhausted)
-    tests = tmp_path / "tests"
-    tests.mkdir()
-    (tests / "test_agent.ipynb").write_text(_notebook('print "legacy"\n', AGENT))
-    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, include_tests=False)
-    # The historical test-only AST limit is a non-incomplete warning; the
-    # independently observed syntax failure must still remain incomplete.
+    (tmp_path / directory).mkdir()
+    (tmp_path / directory / "test_agent.ipynb").write_text(_notebook('print "legacy"\n', AGENT))
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, **options)
+    # The syntax failure is reported before binding, so the budget failure that then stops
+    # the binder cannot erase it. Discounted test code warns of both without a gap (unless
+    # strict_coverage); elsewhere both leave coverage incomplete.
+    diagnostics = ctx.stats.warnings + ctx.stats.errors
+    assert any("notebook cell 1" in message for message in diagnostics)
+    assert any("AST limit exceeded" in message for message in diagnostics)
+    assert ctx.stats.incomplete is incomplete
+
+
+@pytest.mark.parametrize(
+    ("rel", "options", "incomplete"),
+    [
+        ("tests/fixtures/bad_syntax.py", {}, False),
+        ("tests/fixtures/bad_syntax.py", {"strict_coverage": True}, True),
+        ("tests/fixtures/bad_syntax.py", {"include_tests": True}, True),
+        ("test_parser_errors.py", {}, False),
+        ("app/bad_syntax.py", {}, True),
+        ("templates/{{cookiecutter.slug}}/main.py", {}, True),
+    ],
+)
+def test_unparsed_source_in_a_discounted_test_path_only_warns(
+    tmp_path, run_connector, rel, options, incomplete
+):
+    """Regression: a deliberately invalid fixture under a test path the scan discounts made the
+    scan incomplete; it now warns, as a test file over the binder's budget does, while invalid
+    source elsewhere (a Python 2 module, a template) stays a coverage gap until excluded."""
+    (tmp_path / "agent.py").write_text(AGENT)
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{% if cookiecutter.flag %}import os{% endif %}\ndef f(:\n    pass\n")
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, **options)
+    assert ctx.stats.warnings == [
+        f"code.filesystem: {rel}: import-bound analysis skipped (source did not parse); lexical evidence retained"
+    ]
+    assert ctx.stats.incomplete is incomplete
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+def test_excluded_invalid_source_is_not_read(tmp_path, run_connector):
+    (tmp_path / "agent.py").write_text(AGENT)
+    (tmp_path / "legacy").mkdir()
+    (tmp_path / "legacy" / "py2.py").write_text('print "hello"\n')
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, exclude=["legacy/**"])
+    assert not ctx.stats.warnings and not ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"kernelspec": {"display_name": "R", "language": "R", "name": "ir"}, "language_info": {"name": "R"}},
+        {"language_info": {"name": "julia"}},
+        {"kernelspec": {"name": "ir", "language": "R"}},
+    ],
+)
+def test_a_notebook_with_another_kernel_language_is_not_parsed_as_python(tmp_path, run_connector, metadata):
+    """Regression: every notebook was parsed as Python, so an R or Julia notebook made the scan
+    incomplete. Its cells are lexical evidence only."""
+    (tmp_path / "agent.py").write_text(AGENT)
+    cells = ["library(dplyr)\ndf %>% filter(x > 1)\n", 'println("it\'s done")\n']
+    document = {"cells": [{"cell_type": "code", "source": [cell]} for cell in cells], "metadata": metadata}
+    (tmp_path / "analysis.ipynb").write_text(json.dumps(document))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.warnings and not ctx.stats.incomplete
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
+        {"language_info": {"name": "python"}},
+    ],
+)
+def test_a_python_notebook_cell_that_does_not_parse_stays_a_gap(tmp_path, run_connector, metadata):
+    document = {"cells": [{"cell_type": "code", "source": ['print "legacy"\n']}], "metadata": metadata}
+    (tmp_path / "analysis.ipynb").write_text(json.dumps(document))
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert ctx.stats.incomplete
     assert any("notebook cell 1" in warning for warning in ctx.stats.warnings)
-    assert any("AST limit exceeded" in warning for warning in ctx.stats.warnings)
 
 
 def test_unparsed_source_without_a_finding_still_exits_incomplete(tmp_path):

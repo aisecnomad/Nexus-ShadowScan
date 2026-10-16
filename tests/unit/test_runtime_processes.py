@@ -10,7 +10,12 @@ import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.runtime import processes as runtime_processes
-from shadowscan.connectors.runtime.processes import RuntimeProcessConnector, _split, classify
+from shadowscan.connectors.runtime.processes import (
+    RuntimeProcessConnector,
+    _split,
+    classify,
+    classify_command,
+)
 from shadowscan.correlation import correlate_lifecycle
 from shadowscan.engine import Engine
 from shadowscan.models import Finding, Kind, Surface
@@ -71,7 +76,12 @@ def test_overlong_package_arguments_are_not_matched(argument):
     # match, so an argument no package name could be is never matched against them.
     started = time.perf_counter()
     assert classify(None, ["node", argument]) is None
-    assert classify(None, ["npx", "-y", argument, "@modelcontextprotocol/server-github"]) is not None
+    # A runner's first positional argument is the command it runs: an overlong one runs no
+    # known tool, and a package after it is only that command's argument.
+    assert classify(None, ["npx", "-y", argument, "@modelcontextprotocol/server-github"]) is None
+    assert classify_command(None, ["npx", "-y", argument]) == (None, False)
+    # An overlong argument of the server a runner runs does not hide that server.
+    assert classify(None, ["npx", "-y", "@modelcontextprotocol/server-github", argument]) is not None
     assert time.perf_counter() - started < 1.0
 
 
@@ -153,15 +163,84 @@ def test_offline_argument_limit_boundary_remains_complete(run_connector, tmp_pat
 
 
 @pytest.mark.parametrize("field", ["argv", "command_line"])
-def test_offline_byte_limit_and_source_truncation_are_incomplete(run_connector, tmp_path, field):
+def test_offline_byte_limit_after_the_tool_is_recorded_but_complete(run_connector, tmp_path, field):
+    # claude is read from argv[0]: the prompt the byte limit dropped cannot change what runs.
     argv = ["claude", "-p", "x" * 70_000]
     source = _rows(tmp_path, [{"host": "box", field: argv if field == "argv" else " ".join(argv)}])
     findings, ctx = run_connector("runtime.processes", input=str(source))
-    assert ctx.stats.incomplete and len(findings) == 1
+    assert not ctx.stats.incomplete and len(findings) == 1
     assert findings[0].metadata["command_lines_truncated"] == 1
-    source = _rows(tmp_path, [{"host": "box", "argv": ["python"], "argv_truncated": True}])
+    assert ctx.stats.warnings == [
+        "runtime.processes: 1 command line(s) exceeded argument/byte limits (64 arguments, 65,536 bytes) "
+        "or were truncated by their source export; each was classified from its leading complete arguments"
+    ]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["python"],
+        ["python", "-W"],
+        ["python", "-B", "-m"],
+        ["node", "--require", "dotenv/config"],
+        ["npx", "-y"],
+        ["npx", "--registry", "https://registry.example"],
+        ["npm", "exec"],
+        ["uv", "run", "--with", "x"],
+        ["uv", "tool"],
+        ["/usr/bin/node", "/usr/bin/npx", "--yes"],
+        ["ollama"],
+    ],
+)
+def test_offline_truncation_before_the_executed_tool_is_incomplete(run_connector, tmp_path, argv):
+    # The arguments the export cut could name the tool these launchers run.
+    source = _rows(tmp_path, [{"host": "box", "argv": argv, "argv_truncated": True}])
     findings, ctx = run_connector("runtime.processes", input=str(source))
     assert not findings and ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "runtime.processes: 1 command line(s) exceeded argument/byte limits (64 arguments, 65,536 bytes) "
+        "or were truncated by their source export; 1 could not be classified from their leading complete "
+        "arguments"
+    ]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["/usr/lib/jvm/java-17/bin/java", "-cp", "/opt/app/lib/*"],
+        ["gcc", "-I/usr/include"],
+        ["python", "train.py"],
+        ["python", "-c", "import torch"],
+        ["node", "/srv/app/server.js"],
+        ["npx", "-y", "some-wrapper"],
+        ["npm", "install"],
+        ["ollama", "list"],
+    ],
+)
+def test_offline_truncation_after_the_launch_is_read_is_complete(run_connector, tmp_path, argv):
+    # No AI tool runs whatever the cut arguments were: a program that is no launcher, or a
+    # launcher whose target was read.
+    source = _rows(tmp_path, [{"host": "box", "argv": argv, "argv_truncated": True}])
+    findings, ctx = run_connector("runtime.processes", input=str(source))
+    assert not findings and not ctx.stats.incomplete
+    assert len(ctx.stats.warnings) == 1 and "each was classified" in ctx.stats.warnings[0]
+
+
+def test_offline_long_command_lines_of_other_programs_do_not_flood_or_fail_the_scan(run_connector, tmp_path):
+    """Regression: a process with more than 64 arguments (a JVM, a compiler, an Electron app) made
+    the scan incomplete although it was no AI tool, and each such row added its own warning
+    until the connector's diagnostic limit was reached."""
+    java = ["/usr/lib/jvm/java-17/bin/java"] + [f"-Dprop{n}=v" for n in range(80)] + ["-cp", "lib/*", "Main"]
+    gcc = ["gcc"] + [f"-I/usr/include/p{n}" for n in range(80)] + ["-c", "x.c"]
+    rows = [{"host": "box", "user": "dev", "pid": n, "argv": java if n % 2 else gcc} for n in range(1500)]
+    rows.append({"host": "box", "user": "dev", "pid": 9999, "argv": ["claude"]})
+    findings, ctx = run_connector("runtime.processes", input=str(_rows(tmp_path, rows)))
+    assert [f.metadata["tool"] for f in findings] == ["claude-code"]
+    assert not ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "runtime.processes: 1500 command line(s) exceeded argument/byte limits (64 arguments, 65,536 bytes) "
+        "or were truncated by their source export; each was classified from its leading complete arguments"
+    ]
 
 
 def test_offline_application_arguments_do_not_create_runtime_or_lifecycle_evidence(index, tmp_path):
@@ -176,6 +255,118 @@ def test_offline_application_arguments_do_not_create_runtime_or_lifecycle_eviden
         ScanConfig(connectors=[ConnectorSpec("runtime.processes", {"input": str(source)})]), index
     ).run()
     assert result.complete and not result.findings
+
+
+@pytest.mark.parametrize(
+    ("exe", "argv", "tool"),
+    [
+        (None, ["node", "/usr/local/bin/npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+         "mcp:@modelcontextprotocol/server-filesystem"),
+        ("C:\\Program Files\\nodejs\\node.exe",
+         ["C:\\Program Files\\nodejs\\node.exe",
+          "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js", "-y", "@playwright/mcp@latest"],
+         "mcp:@playwright/mcp"),
+        (None, ["node", "/usr/lib/node_modules/npm/bin/npm-cli.js", "exec", "@modelcontextprotocol/server-github"],
+         "mcp:@modelcontextprotocol/server-github"),
+        (None, ["node", "/usr/local/bin/pnpm", "dlx", "@openai/codex"], "codex"),
+        (None, ["node", "/usr/local/lib/node_modules/pnpm/bin/pnpm.cjs", "dlx", "@openai/codex"], "codex"),
+        (None, ["node", "/usr/lib/node_modules/yarn/bin/yarn.js", "dlx", "@openai/codex"], "codex"),
+        ("/usr/bin/python3.12", ["/usr/bin/python3", "/usr/bin/pipx", "run", "--spec", "aider-chat", "aider"],
+         "aider"),
+        (None, ["python3", "/home/dev/.local/bin/uvx", "mcp-server-git"], "mcp:mcp-server-git"),
+        (None, ["python3", "-m", "pipx", "run", "aider"], "aider"),
+        (None, ["python3", "-m", "uv", "run", "aider"], "aider"),
+        # npm's process title replaces the command line; the executable is still node.
+        ("/usr/local/bin/node", ["npm", "exec", "@modelcontextprotocol/server-github"],
+         "mcp:@modelcontextprotocol/server-github"),
+        # A process title that names the tool itself.
+        ("/usr/bin/node", ["claude"], "claude-code"),
+    ],
+)  # fmt: skip
+def test_runners_run_by_an_interpreter_keep_their_target(exe, argv, tool):
+    """Regression: a package runner is an interpreter script, so the kernel shows `node /usr/bin/npx
+    ...`, `node.exe ...\\npx-cli.js ...` or `python3 /usr/bin/pipx run ...`; the interpreter's script
+    was read as the target, and runtime scans missed the tools they ran while reporting complete."""
+    match, undecided = classify_command(exe, argv)
+    assert match is not None and match[0].tool == tool and not undecided
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["node", "/usr/local/bin/npx", "--package", "@openai/codex", "audit"],
+        ["python3", "/usr/bin/pipx", "install", "aider-chat"],
+        ["node", "/usr/lib/node_modules/npm/bin/npm-cli.js", "install", "@openai/codex"],
+        ["python3", "-m", "pipx", "list"],
+        ["node", "/usr/local/bin/npx-helper.js", "@openai/codex"],
+    ],
+)
+def test_runners_run_by_an_interpreter_keep_their_grammar(argv):
+    assert classify(None, argv) is None
+
+
+def test_offline_interpreter_launcher_fixture(run_connector):
+    """osquery, Defender and generic rows in which an interpreter runs a package runner."""
+    findings, ctx = run_connector(
+        "runtime.processes", input=str(FIXTURES / "runtime" / "interpreter_launchers.jsonl")
+    )
+    assert not ctx.stats.incomplete and not ctx.stats.warnings
+    assert sorted(finding.metadata["tool"] for finding in findings) == [
+        "aider",
+        "mcp:@modelcontextprotocol/server-filesystem",
+        "mcp:@modelcontextprotocol/server-github",
+        "mcp:@playwright/mcp",
+    ]
+    assert sorted(pid for finding in findings for pid in finding.metadata["pids"]) == [101, 102, 201, 301]
+
+
+@pytest.mark.parametrize(
+    ("argv", "tool"),
+    [
+        (["deno", "run", "-A", "npm:@anthropic-ai/claude-code"], "claude-code"),
+        (["deno", "run", "--allow-all", "npm:@anthropic-ai/claude-code"], "claude-code"),
+        (["deno", "run", "--allow-net=api.anthropic.com", "-R", "npm:@anthropic-ai/claude-code"], "claude-code"),
+        (["node", "--max-old-space-size=4096", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"],
+         "claude-code"),
+        (["node", "--inspect", "/usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"], "claude-code"),
+        (["node", "--inspect=127.0.0.1:9229", "/usr/lib/node_modules/@openai/codex/bin/codex.js"], "codex"),
+        (["npx", "--prefer-offline", "@anthropic-ai/claude-code"], "claude-code"),
+        (["npx", "--loglevel=silent", "-y", "@modelcontextprotocol/server-github"],
+         "mcp:@modelcontextprotocol/server-github"),
+        (["uv", "run", "--frozen", "aider"], "aider"),
+        (["uv", "run", "-m", "aider"], "aider"),
+        (["uv", "run", "--module=aider"], "aider"),
+        (["uv", "run", "--locked", "--with", "aider-chat", "-m", "aider"], "aider"),
+        (["python", "-P", "-m", "aider"], "aider"),
+        (["python3", "-Im", "aider"], "aider"),
+        (["python3", "-BIm", "vllm.entrypoints.openai.api_server"], "vllm"),
+        (["python3", "-Wignore", "-Xutf8", "-m", "litellm"], "litellm"),
+    ],
+)  # fmt: skip
+def test_common_launcher_options_do_not_hide_the_target(argv, tool):
+    """Regression: options the launch grammar did not know (deno permissions, node V8 and inspector
+    options, npx --prefer-offline, uv run --frozen and -m, python -P and combined -Im) stopped the
+    target from being read."""
+    result = classify(None, argv)
+    assert result is not None and result[0].tool == tool
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        # Inline code runs, whatever follows.
+        ["node", "--eval=require('x')", "@openai/codex"],
+        ["node", "--print=1", "/usr/lib/node_modules/@openai/codex/bin/codex.js"],
+        ["npx", "--call=claude", "@modelcontextprotocol/server-github"],
+        ["python3", "-Ic", "import aider", "-m", "aider"],
+        # An option that is not known is not guessed.
+        ["uv", "run", "--unknown-flag", "aider"],
+        ["deno", "run", "--unknown", "npm:@anthropic-ai/claude-code"],
+        ["python3", "-K", "-m", "aider"],
+    ],
+)
+def test_launcher_options_that_run_no_target_or_are_unknown(argv):
+    assert classify(None, argv) is None
 
 
 def test_offline_launcher_boundary_fixture(run_connector):
@@ -198,6 +389,23 @@ def test_live_argument_limit_marks_empty_scan_incomplete(run_connector, monkeypa
     findings, ctx = run_connector("runtime.processes", label="box")
     assert not findings and ctx.stats.incomplete
     assert any("argument/byte limits" in warning for warning in ctx.stats.warnings)
+
+
+def test_live_long_command_line_of_another_program_is_complete(run_connector, monkeypatch, tmp_path):
+    """Regression: a JVM with more than 64 arguments made a live scan incomplete with no AI process."""
+    proc = tmp_path / "proc"
+    _proc_self(proc, monkeypatch)
+    (proc / "21").mkdir(parents=True)
+    argv = [b"/usr/lib/jvm/bin/java"] + [b"-Dk%d=v" % n for n in range(80)] + [b"-cp", b"/opt/lib/*", b"Main"]
+    (proc / "21" / "cmdline").write_bytes(b"\0".join(argv) + b"\0")
+    monkeypatch.setattr(runtime_processes, "_PROC", proc)
+    monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
+    findings, ctx = run_connector("runtime.processes", label="box")
+    assert not findings and not ctx.stats.incomplete
+    assert ctx.stats.warnings == [
+        "runtime.processes: 1 command line(s) exceeded argument/byte limits (64 arguments, 65,536 bytes); "
+        "each was classified from its leading complete arguments"
+    ]
 
 
 def test_text_byte_limit_never_classifies_a_partial_package_name(run_connector, tmp_path):
@@ -347,17 +555,23 @@ def test_live_mode_reads_proc(run_connector, monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("cmdline", "found"),
+    ("cmdline", "found", "incomplete"),
     [
-        # A long prompt passed with -p: the leading arguments are intact.
-        (b"claude\0-p\0" + b"x" * 70_000 + b"\0", True),
+        # A long prompt passed with -p: the leading arguments are intact, and what runs
+        # (claude, from argv[0]) cannot change with the prompt the limit dropped.
+        (b"claude\0-p\0" + b"x" * 70_000 + b"\0", True, False),
         # The partial final argument is dropped: cut at the limit, the package
-        # @anthropic-ai/claude-codex would read as @anthropic-ai/claude-code.
-        (b"npx\0" + b"y" * (64 * 1024 - 30) + b"\0@anthropic-ai/claude-codex\0", False),
+        # @anthropic-ai/claude-codex would read as @anthropic-ai/claude-code. It is npx's
+        # target here, so what runs is unknown and coverage incomplete.
+        (b"npx\0--registry\0" + b"y" * (64 * 1024 - 41) + b"\0@anthropic-ai/claude-codex\0", False, True),
+        # The same cut package is only an argument of the command npx runs (the y run).
+        (b"npx\0" + b"y" * (64 * 1024 - 30) + b"\0@anthropic-ai/claude-codex\0", False, False),
     ],
-    ids=["long-prompt", "partial-final-argument"],
+    ids=["long-prompt", "partial-final-argument", "argument-of-another-command"],
 )
-def test_live_mode_classifies_a_truncated_command_line(run_connector, monkeypatch, tmp_path, cmdline, found):
+def test_live_mode_classifies_a_truncated_command_line(
+    run_connector, monkeypatch, tmp_path, cmdline, found, incomplete
+):
     """Regression (#220 review F3): a command line over the byte limit is truncated, not dropped."""
     proc = tmp_path / "proc"
     _proc_self(proc, monkeypatch)
@@ -366,8 +580,11 @@ def test_live_mode_classifies_a_truncated_command_line(run_connector, monkeypatc
     monkeypatch.setattr(runtime_processes, "_PROC", proc)
     monkeypatch.setattr(runtime_processes.platform, "system", lambda: "Linux")
     findings, ctx = run_connector("runtime.processes", label="box")
-    assert ctx.stats.incomplete
-    assert any("1 command line(s) exceeded 65,536 bytes" in w for w in ctx.stats.warnings)
+    assert ctx.stats.incomplete is incomplete
+    [warning] = ctx.stats.warnings
+    assert warning.startswith(
+        "runtime.processes: 1 command line(s) exceeded argument/byte limits (64 arguments, 65,536 bytes); "
+    )
     if not found:
         assert findings == []
         return

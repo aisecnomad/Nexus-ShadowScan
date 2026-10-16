@@ -22,13 +22,34 @@ server, its package name.
 
 Launcher classification follows the executed target: Python `-m`, a Node
 script, `npx`/`uvx`/`bunx`, `npm exec`, `pnpm`/`yarn exec` or `dlx`,
-`pipx run`, `uv run`/`uv tool run`, `bun x`, and `deno run`. Recognized nested
-wrappers such as `uv run python -m aider` retain that target. Arguments after
-a script or module, inline Python/Node code, and dependency options such as
-`--package`, `--from`, or `--require` do not identify a running tool. Unknown
-launcher options are not guessed; custom wrappers and unsupported launch syntax
-can therefore remain undetected. Package scripts such as `npm run` require
-additional source evidence and are not resolved from the process name.
+`pipx run`, `uv run` (with `-m`/`--module`)/`uv tool run`, `bun x`, and
+`deno run`. Recognized nested wrappers such as `uv run python -m aider` retain
+that target. A runner's first positional argument is the command it runs; a
+later package is an argument of that command. Without `--package` or `--from`,
+`npx` and `uvx` install a package of that name to run it, and the classifier
+reads the name as the command: `npx claude`, `npx codex` and `uvx ollama serve`
+are reported as Claude Code, Codex and Ollama, although the npm or PyPI package
+of that name need not be that tool. Package runners are interpreter scripts,
+so the kernel shows `node /usr/local/bin/npx -y pkg`, `node.exe
+...\npm\bin\npx-cli.js -y pkg` or `python3 /usr/bin/pipx run ...`: when a
+Node, Deno or Python interpreter runs a script named `npx` (`npx-cli.js`),
+`npm` (`npm-cli.js`), `pnpm` (`pnpm.cjs`), `yarn` (`yarn.js`), `pipx`, `uv` or
+`uvx`, or Python runs `-m pipx` or `-m uv`, the command line is read as that
+runner's. When the executable (osquery's `path`, Defender's `FolderPath`) does
+not identify a tool, the command line's first argument is read as well: a
+process title can name the launcher or tool there (npm sets `npm exec pkg`)
+while the executable is node.
+
+Arguments after a script or module, inline Python/Node code (`-c`, `--eval`,
+`npx --call`), and dependency options such as `--package`, `--from`, or
+`--require` do not identify a running tool. Launch options are read with each
+launcher's grammar: `--name=value` carries its own value, Deno permission flags
+(`-A`, `--allow-*`, `--deny-*`) and common options (`node --inspect`,
+`npx --prefer-offline`, `uv run --frozen`, combined Python flags such as
+`-Im`) are skipped. Other options are not guessed, so launches with options the
+grammar does not recognize are not reported; custom wrappers and unsupported
+launch syntax can remain undetected too. Package scripts such as `npm run`
+require additional source evidence and are not resolved from the process name.
 
 **Command lines never enter a finding.** They can carry credentials
 (`--api-key …`), so only the matched tool, the executable's base name and an
@@ -69,10 +90,16 @@ executable nor a valid inspection record makes the scan incomplete.
 
 Both live and offline command lines are bounded to 64 arguments and 65,536
 UTF-8 bytes. Only complete leading arguments are classified; a cut text token
-is discarded. Every exceeded limit, and an export's explicit
-`argv_truncated: true`, marks coverage incomplete even when no finding remains.
-Retained findings record `metadata.command_lines_truncated`. A malformed
-argument array is rejected with incomplete coverage.
+is discarded. A command line cut by a limit, or marked `argv_truncated: true`
+by its export, makes coverage incomplete when what runs could depend on the
+arguments that were dropped: when no argument is left, or when a launcher's
+target was not among the leading arguments (`python -B ... -m` cut before its
+module, `npx --registry URL` cut before its package). A program that is no
+launcher (a JVM or compiler with hundreds of options), or a launcher whose
+target was read, is classified from its leading arguments and stays complete.
+One counted warning per scan reports the cut command lines and how many could
+not be classified. Retained findings record `metadata.command_lines_truncated`.
+A malformed argument array is rejected with incomplete coverage.
 
 Host and user strings retain their complete identities in aggregation, finding
 IDs and lifecycle links. They are never shortened to fit a display limit.

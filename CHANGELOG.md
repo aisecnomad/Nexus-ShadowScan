@@ -754,19 +754,38 @@ summarizes each release for people who install and operate ShadowScan.
 
 - Runtime process classification now reads the executed target of supported
   launchers, rather than treating later application arguments or package-source
-  options as executed AI tools. Exhausted command-line bounds mark coverage
-  incomplete even when the retained prefix produces no finding. Host and user
-  identities are retained in full within validated input limits, so different
-  devices or users cannot merge through a shortened display prefix.
+  options as executed AI tools. A package runner an interpreter runs
+  (`node /usr/local/bin/npx -y pkg`, `node.exe ...\npx-cli.js`,
+  `python3 /usr/bin/pipx run ...`, `python -m pipx`) is read as that runner, and
+  the command line's first argument is read when the executable is only the
+  interpreter (npm's `npm exec pkg` process title on node). Launch options are
+  read with each launcher's grammar (`--name=value`, Deno permission flags,
+  `node --inspect`, `npx --prefer-offline`, `uv run --frozen`, `uv run -m`,
+  `python -P` and combined flags such as `-Im`); launches with options the
+  grammar does not recognize are not reported. A command line cut by an
+  argument/byte bound marks coverage incomplete, even when the retained prefix
+  produces no finding, when the dropped arguments could change what runs (none
+  left, or a launcher's target unread); a long command line of another program,
+  or one whose tool was read, is classified from its leading arguments, and one
+  counted warning reports them. Host and user identities are retained in full
+  within validated input limits, so different devices or users cannot merge
+  through a shortened display prefix.
 - GitHub App installation inventories validate declared totals against unique
-  returned installation IDs. Inconsistent or malformed count information marks
-  coverage incomplete while retaining valid observations; the existing HTTP
-  origin, pagination and response-size protections remain in effect.
+  returned installation IDs, across all pages of a live listing or of an offline
+  export file (one page envelope per line is accepted). Inconsistent or
+  malformed count information marks coverage incomplete while retaining valid
+  observations; the existing HTTP origin, pagination and response-size
+  protections remain in effect.
 - Python source and notebook cells that the scanner's interpreter cannot parse
   retain lexical observations but mark semantic analysis incomplete. Unparsed
   ranges cannot acquire agent classification or execution capabilities from
   semantic claims that were not established; independently parsed neighboring
-  source remains usable.
+  source remains usable. In a test path the scan discounts, source that does not
+  parse only warns unless `strict_coverage` is set. Notebook cells in another
+  language (under `%%bash`, `%%sql`, `%%writefile requirements.txt` and similar
+  cell magics, or in an R or Julia notebook) are not parsed as Python: lexical
+  evidence only, without a gap. Python 2 modules and templates stay a gap until
+  listed in `exclude`.
 - Rescan affected inputs and rebuild comparison baselines after upgrading.
   Long runtime identities now produce their full resource bindings and may
   change finding IDs. Review and regenerate affected inventory cards instead

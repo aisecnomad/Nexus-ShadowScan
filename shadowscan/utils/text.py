@@ -286,11 +286,20 @@ def read_text(
         return None
 
 
-def notebook_to_source(text: str, errors: list[str] | None = None, *, cells: list[str] | None = None) -> str:
+def notebook_to_source(
+    text: str,
+    errors: list[str] | None = None,
+    *,
+    cells: list[str] | None = None,
+    language: list[str] | None = None,
+) -> str:
     """Extract code cells from a Jupyter notebook as a python source blob.
 
     The cells are joined by line breaks; ``cells``, when given, receives each
     code cell's source in order, so a caller can treat them one at a time.
+    ``language``, when given, receives the kernel language the notebook's
+    metadata declares (``kernelspec.language``, else ``language_info.name``),
+    lower-cased, if it declares one.
     """
     try:
         nb = strict_json_loads(text)
@@ -302,6 +311,14 @@ def notebook_to_source(text: str, errors: list[str] | None = None, *, cells: lis
         if errors is not None:
             errors.append("notebook cells must be an array")
         return ""
+    metadata = nb.get("metadata")
+    if language is not None and isinstance(metadata, dict):
+        kernelspec, info = metadata.get("kernelspec"), metadata.get("language_info")
+        declared = kernelspec.get("language") if isinstance(kernelspec, dict) else None
+        if not isinstance(declared, str) or not declared.strip():
+            declared = info.get("name") if isinstance(info, dict) else None
+        if isinstance(declared, str) and declared.strip():
+            language.append(declared.strip().lower())
     out: list[str] = []
     for cell in nb.get("cells", []):
         if not isinstance(cell, dict):

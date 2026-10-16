@@ -934,10 +934,11 @@ on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
 untrusted repositories; the rule that code scans and live connectors run
 separately does not narrow a shared token's scope.
 
-Installation envelopes validate declared totals against unique collected IDs.
-Malformed or contradictory count information marks coverage incomplete while
-retaining valid observations. See the [SaaS guide](connectors/saas.md) for
-offline export forms and collection limits.
+Installation envelopes validate declared totals against unique collected IDs,
+across all pages of a live listing or of an offline export file (one page
+envelope per line is accepted). Malformed or contradictory count information
+marks coverage incomplete while retaining valid observations. See the
+[SaaS guide](connectors/saas.md) for offline export forms and collection limits.
 
 ### `saas.atlassian`
 UPM user-installed apps for Jira and Confluence. Provider error envelopes make
@@ -1318,8 +1319,14 @@ device (`metadata.lifecycle`, tag `observed-running`) without changing
 scores.
 
 Launcher parsing identifies the executed script, module or package rather than
-its application arguments. Reaching a command-line parsing limit marks coverage
-incomplete even when no tool can be identified. Full validated host and user
+its application arguments, including package runners an interpreter runs
+(`node /usr/local/bin/npx ...`, `python3 /usr/bin/pipx run ...`) and process
+titles (`npm exec ...` on a node executable). A command line cut by a parsing
+limit marks coverage incomplete, even when no tool can be identified, when the
+dropped arguments could change what runs (none left, or a launcher's target
+unread); other long command lines are classified from their leading arguments
+and reported in one counted warning. Launches with options a launcher's grammar
+does not recognize are not reported. Full validated host and user
 identities are used for aggregation; display shortening never merges devices
 or users. See the [migration notes](production.md#unreleased-runtime-identity-and-completeness-migration)
 before rebuilding inventory bindings and comparison baselines.

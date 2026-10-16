@@ -547,6 +547,71 @@ def test_github_inventory_invalid_installation_id_cannot_satisfy_total(
     assert any("invalid installation id" in message for message in diagnostics)
 
 
+def _pages(*pages: tuple[int | None, list[int]]) -> list[dict]:
+    """Page envelopes as ``gh api --paginate`` writes them: each with the listing's total."""
+    return [
+        {
+            **({} if total is None else {"total_count": total}),
+            "installations": [_claude_installation(id=i) for i in ids],
+        }
+        for total, ids in pages
+    ]
+
+
+@pytest.mark.parametrize("suffix", [".jsonl", ".json"])
+@pytest.mark.parametrize(
+    ("pages", "issue"),
+    [
+        ([(3, [101, 102]), (3, [103])], None),
+        ([(3, [101]), (3, [102]), (3, [103]), (3, [])], None),
+        ([(3, [101, 102]), (2, [103])], "total_count changed during collection"),
+        ([(3, [101, 102]), (3, [102])], "contains repeated installation ids"),
+        ([(3, [101, 102])], "unique installation count does not match total_count"),
+        ([(3, [101, 102]), (None, [103])], "has missing or invalid total_count"),
+        ([(None, [101]), (3, [102, 103]), (3, [])], "has missing or invalid total_count"),
+        # Envelopes without totals keep the legacy, unchecked form, repeats included.
+        ([(None, [101, 102]), (None, [102])], None),
+    ],
+)
+def test_github_offline_page_per_line_export_is_checked_across_the_file(
+    run_connector, tmp_path, suffix, pages, issue
+):
+    """Regression: totals were checked per envelope, so a paginated export with one page envelope
+    per line (gh api --paginate | jq -c) was incomplete on every line although it was consistent."""
+    source = tmp_path / f"installations{suffix}"
+    source.write_text("".join(json.dumps(page) + "\n" for page in _pages(*pages)))
+    findings, ctx = run_connector("saas.github-apps", org="acme", input=str(source))
+    expected = {f"github:installation:{identity}" for _, ids in pages for identity in ids}
+    assert {f.resource for f in findings} == expected
+    diagnostics = ctx.stats.warnings + ctx.stats.errors
+    if issue is None:
+        assert not ctx.stats.incomplete and not diagnostics
+    else:
+        assert ctx.stats.incomplete
+        # One diagnostic for the file, not one per page.
+        assert [message for message in diagnostics if issue in message] == [
+            f"saas.github-apps: installation inventory {issue}; coverage incomplete"
+        ]
+
+
+def test_github_offline_totals_are_checked_per_export_file(run_connector, tmp_path):
+    exports = tmp_path / "exports"
+    exports.mkdir()
+    (exports / "a.jsonl").write_text("".join(json.dumps(p) + "\n" for p in _pages((2, [101]), (2, [102]))))
+    (exports / "b.jsonl").write_text("".join(json.dumps(p) + "\n" for p in _pages((1, [201]))))
+    findings, ctx = run_connector("saas.github-apps", org="acme", input=str(exports))
+    assert {f.resource for f in findings} == {
+        "github:installation:101",
+        "github:installation:102",
+        "github:installation:201",
+    }
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+    (exports / "b.jsonl").write_text("".join(json.dumps(p) + "\n" for p in _pages((2, [201]))))
+    _, ctx = run_connector("saas.github-apps", org="acme", input=str(exports))
+    assert ctx.stats.incomplete
+    assert any("does not match total_count" in warning for warning in ctx.stats.warnings)
+
+
 @pytest.mark.parametrize("records", [[], [_claude_installation()]])
 @pytest.mark.parametrize("envelope", [False, True])
 def test_github_legacy_offline_exports_do_not_require_provider_totals(

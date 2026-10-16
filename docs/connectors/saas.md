@@ -62,11 +62,16 @@ installation IDs; missing or malformed counts, duplicate or invalid IDs,
 changed totals, and a listing that ends before its declared total all make
 coverage incomplete. Already collected observations remain available.
 Offline `{"total_count": ..., "installations": [...]}` envelopes receive
-the same count checks against the complete export; concatenate all pages into
-one envelope before scanning. Legacy offline `{"installations": [...]}`
-envelopes and bare record lists remain supported without asserting a provider
-total. These checks detect inconsistent inventories but
-cannot guarantee snapshot consistency when apps change during collection.
+the same count checks across each export file: one envelope holding every
+installation, or one page envelope per line as `gh api --paginate
+/orgs/ORG/installations | jq -c .` writes them. Every page in a file must
+declare the same total, and the unique installations across the file must
+match it; each problem is reported once per file. A file is one listing, so
+keep each organisation's pages in a file of their own. Legacy offline
+`{"installations": [...]}` envelopes and bare record lists remain supported
+without asserting a provider total, as long as no page of the same file declares
+one. These checks detect inconsistent inventories but cannot guarantee snapshot
+consistency when apps change during collection.
 
 ## `saas.atlassian`
 UPM user-installed apps for Jira and Confluence. Set `site` to the concrete

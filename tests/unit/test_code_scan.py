@@ -586,9 +586,13 @@ def test_percent_continuation_lines_in_a_notebook_are_python(tmp_path, run_conne
     [
         'notes = """scratch cell, left unfinished\n',  # used to mask every later cell: no finding at all
         "params = dict(\n",
-        '%%bash\necho "it\'s done"\n',
+        # Cell magics whose body IPython runs as Python.
+        "%%time\nparams = dict(\n",
+        "%%capture output\nparams = dict(\n",
+        "%%writefile helper.py\ndef helper(:\n",
+        "%%script python3\nparams = dict(\n",
     ],
-    ids=["unterminated-string", "unclosed-bracket", "shell-cell"],
+    ids=["unterminated-string", "unclosed-bracket", "time", "capture", "writefile-module", "script-python"],
 )
 def test_one_broken_notebook_cell_does_not_hide_the_others(tmp_path, run_connector, broken):
     # Jupyter runs each cell on its own: a cell that does not parse fails alone.
@@ -599,6 +603,27 @@ def test_one_broken_notebook_cell_does_not_hide_the_others(tmp_path, run_connect
         "code.filesystem: agent.ipynb: import-bound analysis skipped for notebook cell 1, which does not "
         "parse; lexical evidence retained"
     ]
+    assert any(finding.kind == Kind.AGENT for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        '%%bash\necho "it\'s done"\npip install -q openai langchain\n',
+        "%%writefile requirements.txt\nopenai==1.30.0\nlangchain>=0.2\n",
+        "%%writefile -a notes.md\nNotes: it's done\n",
+        "%%html\n<div class='x'>it's done</div>\n",
+        "%%sql\nSELECT name FROM agents WHERE status = 'on';\n",
+        "\n%%script bash\nset -e; echo it's done\n",
+    ],
+    ids=["bash", "writefile-text", "writefile-append", "html", "sql", "script-bash"],
+)
+def test_a_cell_in_another_language_is_not_a_python_coverage_gap(tmp_path, run_connector, cell):
+    """Regression: a cell under a cell magic that runs or writes another language never parses as
+    Python, so the scan became incomplete for ordinary notebooks."""
+    (tmp_path / "agent.ipynb").write_text(_notebook(cell, _LANGCHAIN_AGENT))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.warnings and not ctx.stats.errors and not ctx.stats.incomplete
     assert any(finding.kind == Kind.AGENT for finding in findings)
 
 

@@ -88,14 +88,24 @@ incomplete.
 
 Python syntax support follows the interpreter running the scanner. Invalid
 source, or newer syntax that interpreter cannot parse, makes coverage incomplete
-(exit 3), including when no finding is produced. Imports and lexical observations
-remain visible as library usage or potential evidence, but code in an unparsed
-range cannot establish agent behavior, workload capabilities or an MCP server.
-Notebook cells are parsed separately: an unparsed cell does not remove the bound
-evidence or registered tools of other cells. Use an interpreter that supports the
-repository's Python syntax for full semantic coverage. Existing AST/work-budget
-exhaustion handling is separate: it retains corroborated lexical candidates and
-its existing coverage diagnostics; this syntax rule does not change those budgets.
+(exit 3), including when no finding is produced: every Python file is parsed,
+whatever it imports. Syntax newer than the interpreter is such a gap too: a
+PEP 695 `type` statement on Python 3.11, or Python 3.14's unparenthesized
+`except A, B:` on 3.13. Imports and lexical observations remain visible as
+library usage or potential evidence, but code in an unparsed range cannot
+establish agent behavior, workload capabilities or an MCP server. Notebook cells
+are parsed separately: an unparsed cell does not remove the bound evidence or
+registered tools of other cells. In a test path the scan discounts
+(`include_tests` off), source that does not parse, often a deliberately invalid
+fixture, is a warning that leaves coverage complete unless `strict_coverage` is
+set, as for a test file over the binder's budget. Python 2 modules, templates
+(`{{cookiecutter.slug}}/main.py`, Jinja-rendered `.py` files) and other files
+that are not Python 3 but carry a `.py` name stay a gap elsewhere: list them in
+`exclude` to leave them out of the scan, and use an interpreter that supports
+the repository's Python syntax for full semantic coverage. Existing
+AST/work-budget exhaustion handling is separate: it retains corroborated lexical
+candidates and its existing coverage diagnostics; this syntax rule does not
+change those budgets.
 
 Packages, nested source layouts, dynamic imports, other re-exports and uncertain
 bindings remain usage evidence when ordinary signatures identify them.
@@ -619,26 +629,31 @@ favour of the installed package, so it does not hide that SDK's imports.
 A notebook's IPython magic (`%pip`, `%%time`) and shell (`!pip`) lines are read
 as inert expressions, as IPython rewrites them, so they do not keep the import
 binder from the notebook. Jupyter runs code cells one at a time, so each cell is
-lexed on its own, and a cell that still does not parse (a `%%bash` cell, an
+lexed on its own. A cell in another language is not parsed as Python: one under
+a cell magic that runs, renders or writes its body as something else (`%%bash`,
+`%%sh`, `%%script bash`, `%%html`, `%%javascript`, `%%latex`, `%%markdown`,
+`%%sql`, `%%R`, `%%writefile requirements.txt`), and every cell of a notebook
+whose metadata names another kernel language (an R or Julia notebook). Such
+cells keep their lexical evidence, with no warning and no coverage gap. Other
+cell magics (`%%time`, `%%capture`, `%%script python3`, `%%writefile app.py`)
+hold Python and are parsed. A Python cell that still does not parse (an
 unfinished scratch cell) is left out of import binding on its own: the warning
 `import-bound analysis skipped for notebook cell N, which does not parse;
-lexical evidence retained` names it, and the other cells are bound as usual. A
-string left open in one cell no longer masks the cells after it, and a cell that
-stops (`raise SystemExit`, `sys.exit()`, `exit()` or `quit()` to halt Run All)
-ends only its own statements: the later cells stay reachable.
+lexical evidence retained` names it and makes coverage incomplete, and the other
+cells are bound as usual. A string left open in one cell no longer masks the
+cells after it, and a cell that stops (`raise SystemExit`, `sys.exit()`,
+`exit()` or `quit()` to halt Run All) ends only its own statements: the later
+cells stay reachable.
 
-A Python source the running interpreter cannot parse (syntax newer than it,
-such as a PEP 695 `type` statement on Python 3.11) has no import binding: its
-framework patterns are kept as lexical evidence, which counts toward an agent
-only when the same library is imported or declared as a dependency, as in a
-language without a binder, and the scan records the warning `import-bound
-analysis skipped (source did not parse); lexical evidence retained` without
-becoming incomplete. The warning is recorded for a module that imports
-something a signature can bind; a module whose imports cannot bind any
-signature is not parsed (the binder could find nothing in it), so its syntax
-is not checked. The same lexical evidence stands in for a notebook cell
-that does not parse, and when a binder budget is exhausted; that scan is
-incomplete.
+A Python source the running interpreter cannot parse (syntax newer than it, a
+Python 2 module, a template) has no import binding. Its framework patterns are
+kept as lexical evidence of library usage, but code in it cannot establish an
+agent, workload capabilities or an MCP server, and the scan records the warning `import-bound
+analysis skipped (source did not parse); lexical evidence retained` and is
+incomplete (exit 3), apart from discounted test paths as described above. Every
+Python source is parsed, whatever it imports, so a module with no AI import is
+checked too. The same lexical evidence stands in for a notebook cell that does
+not parse, and when a binder budget is exhausted; that scan is incomplete.
 
 Malformed YAML front matter in an agent
 definition, including a YAML value PyYAML cannot construct (an impossible date,

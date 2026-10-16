@@ -1,0 +1,6 @@
+{"hostIdentifier":"mac-review.example.invalid","columns":{"pid":"101","username":"operator","path":"/usr/local/bin/node","cmdline":"node /usr/local/bin/npx -y @modelcontextprotocol/server-filesystem /tmp"}}
+{"hostIdentifier":"mac-review.example.invalid","columns":{"pid":"102","username":"operator","path":"/usr/local/bin/node","cmdline":"npm exec @modelcontextprotocol/server-github"}}
+{"DeviceName":"win-review.example.invalid","AccountName":"operator","ProcessId":201,"FolderPath":"C:\\Program Files\\nodejs\\node.exe","FileName":"node.exe","ProcessCommandLine":"\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js\" -y @playwright/mcp@latest"}
+{"host":"linux-review.example.invalid","user":"operator","pid":301,"exe":"/usr/bin/python3.12","command_line":"/usr/bin/python3 /usr/bin/pipx run --spec aider-chat aider"}
+{"host":"linux-review.example.invalid","user":"operator","pid":302,"exe":"/usr/bin/python3.12","command_line":"/usr/bin/python3 /usr/bin/pipx install aider-chat"}
+{"hostIdentifier":"mac-review.example.invalid","columns":{"pid":"103","username":"operator","path":"/usr/local/bin/node","cmdline":"node /usr/local/bin/npx --package @openai/codex audit"}}
