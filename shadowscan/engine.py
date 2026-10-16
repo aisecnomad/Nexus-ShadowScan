@@ -1077,13 +1077,27 @@ class Engine:
         paths = list(self.config.inventory)
         self.inventory = Inventory.load(paths) if paths else None
 
+    def _prune_abandoned_workers(self) -> None:
+        """Remove timed-out workers whose threads have since finished."""
+        if not self._abandoned_futures:
+            self.abandoned_workers.clear()
+            return
+        remaining_workers: list[str] = []
+        remaining_futures: list[Future[Any]] = []
+        for idx, future in enumerate(self._abandoned_futures):
+            if not future.done():
+                if idx < len(self.abandoned_workers):
+                    remaining_workers.append(self.abandoned_workers[idx])
+                remaining_futures.append(future)
+        self.abandoned_workers[:] = remaining_workers
+        self._abandoned_futures[:] = remaining_futures
+
     def _prepare_run(self) -> None:
-        if any(not future.done() for future in self._abandoned_futures):
+        self._prune_abandoned_workers()
+        if self._abandoned_futures:
             raise RuntimeError(
                 "a previous timed-out connector is still running; use a fresh process for the next scan"
             )
-        self._abandoned_futures.clear()
-        self.abandoned_workers.clear()
         self.config.min_confidence = validate_min_confidence(self.config.min_confidence)
         # ScanConfig is intentionally mutable for embedding callers and CLI
         # overrides. Revalidate every security-relevant field, including
@@ -1514,6 +1528,7 @@ class Engine:
             stats.append(self._triage(findings, result.started_at, job_deadline))
         if dump_directory:
             self._write_manifest(dump_directory, export_entries, result.started_at, stats)
+        self._prune_abandoned_workers()
         result.findings = findings
         result.stats = sorted(stats, key=lambda s: s.connector)
         result.finished_at = now_iso()
@@ -1611,3 +1626,4 @@ def _prune_runtime_links(findings: list[Finding]) -> None:
             ids = ev.attributes.get("gateway_finding_ids")
             if isinstance(ids, list):
                 ev.attributes["gateway_finding_ids"] = [i for i in ids if i in retained]
+

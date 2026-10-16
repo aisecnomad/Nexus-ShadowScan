@@ -5,6 +5,21 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Security hardening: CA bundle for git clones, plugin identity-key scrub, abandoned-worker prune (October 16)
+
+- `shadowscan/utils/http.py`, `shadowscan/utils/git.py`:
+  `get_ca_bundle()` exposes the current worker's validated CA bundle.
+  `clone_environment()` propagates it via `http.sslCAInfo` when set,
+  and forces `http.sslVerify=true`.
+- `shadowscan/plugin_process.py`: `_worker()` removes `SHADOWSCAN_IDENTITY_KEY`
+  from `os.environ` immediately after `Engine` initialization and before
+  importing or running third-party plugins, so plugins (and their child
+  processes) cannot read the raw operator key from the environment.
+- `shadowscan/engine.py`: `Engine._prune_abandoned_workers()` reclaims
+  timed-out worker threads whose `Future` has since completed cooperatively
+  at the start and end of each `Engine.run()`, preventing monotonic capacity
+  decay across long-lived `Engine` instances.
+
 ### Integration review fixes (October 15)
 
 - **Redaction time under a conditional name (#235).**
@@ -7015,3 +7030,4 @@ The following summarizes the reconciled pre-release implementation.
 - Connector deadlines are cooperative; blocked SDK/plugin calls still need host process timeouts.
 - SDK timeouts and retry limits do not establish a universal deadline for authentication chains or whole scans; workers still require a host deadline.
 - Incremental cache writes are atomic and protected by per-slot advisory locks on POSIX. Unsupported platforms and contention use full scans.
+

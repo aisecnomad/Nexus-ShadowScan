@@ -839,12 +839,16 @@ def clone_environment(
     """Scope authentication to a verified HTTPS origin and disable redirects.
 
     *pins* (``clone_pins``) hold Git to the addresses the scanner resolved and checked.
+    Propagates the worker's CA bundle when set and forces TLS verification.
     """
     import base64
+
+    from shadowscan.utils.http import get_ca_bundle
 
     config = [
         ("core.hooksPath", os.devnull),
         ("http.followRedirects", "false"),
+        ("http.sslVerify", "true"),
         # Connect directly, as HttpClient does: a proxy from HTTPS_PROXY or ALL_PROXY would resolve
         # the host itself and route around the pinned addresses.
         ("http.proxy", ""),
@@ -856,6 +860,9 @@ def clone_environment(
         ("transfer.fsckObjects", "true"),
         ("fetch.fsckObjects", "true"),
     ]
+    ca_bundle = get_ca_bundle()
+    if ca_bundle:
+        config.append(("http.sslCAInfo", ca_bundle))
     extra: dict[str, str] = {}
     if token:
         basic = base64.b64encode(f"{username}:{token}".encode()).decode()
@@ -1301,3 +1308,4 @@ def _opens_with_lfs_pointer(path: str, *, dir_fd: int, expected: os.stat_result)
         return pointer
     finally:
         os.close(fd)
+

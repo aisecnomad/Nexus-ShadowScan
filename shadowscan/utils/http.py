@@ -446,3 +446,854 @@ def _blocked_ip(addr: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         or (isinstance(addr, ipaddress.IPv6Address) and addr.is_site_local)
         or any(addr in net for net in METADATA_NETS)
     )
+
+
+def _blocked_host(hostname: str) -> bool:
+    host = hostname.strip("[]").rstrip(".").lower()
+    if host in METADATA_HOSTS or host == "localhost" or host.endswith(".localhost"):
+        return True
+    if host.endswith(".internal") or host.endswith(".local"):
+        return True
+    try:
+        return _blocked_ip(ipaddress.ip_address(host))
+    except ValueError:
+        return False
+
+
+def validate_url(
+    url: str,
+    origin: str | None = None,
+    *,
+    allow_private: bool | None = None,
+    dns_budget: float | None = None,
+) -> str:
+    """Require HTTPS and, for server-supplied links, the credential origin.
+
+    Destinations that resolve to loopback, link-local, private, multicast,
+    unspecified, reserved, or cloud-metadata addresses are rejected unless
+    ``allow_private`` (or the current worker's policy) is true. DNS checks here
+    are preflight only; HttpClient also enforces the policy at socket connection.
+    External transports such as git and cloud SDKs need their own egress controls.
+    The DNS wait is at most ``_RESOLVE_TIMEOUT``, tightened by ``dns_budget``
+    (seconds) and by the current worker's connector deadline.
+    """
+    # urlsplit drops tabs and line breaks and strips leading blanks before parsing, while git and
+    # libcurl reject them (and HTTP stacks differ on the rest). Anything the validator does not see
+    # exactly as the transport will is refused, never silently cleaned up.
+    if isinstance(url, str) and any(char.isspace() or not char.isprintable() for char in url):
+        raise ValueError("API URL must not contain whitespace or control characters")
+    # A backslash is never valid in a URL (RFC 3986). urlsplit keeps it inside the host, while
+    # requests and urllib3, like browsers, read it as a path separator: a host check here would
+    # then describe a different destination than the one the transport connects to.
+    if isinstance(url, str) and "\\" in url:
+        raise ValueError("API URL must not contain a backslash")
+    try:
+        parsed = urlsplit(url)
+        port = 443 if parsed.port is None else parsed.port
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("Invalid API URL") from None
+    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("API URL must use HTTPS without embedded credentials")
+    # Port 0 names no service. Read as the default port it matched the origin and keyed the checks
+    # to 443, while libcurl looks up the port written (a clone pin for :443 went unused).
+    if port == 0:
+        raise ValueError("Invalid API URL")
+    if origin:
+        try:
+            expected = urlsplit(origin)
+            expected_origin = (
+                expected.scheme,
+                expected.hostname,
+                443 if expected.port is None else expected.port,
+            )
+        except (TypeError, ValueError, UnicodeError):
+            raise ValueError("Invalid API origin") from None
+        actual_origin = (parsed.scheme, parsed.hostname, port)
+        if actual_origin != expected_origin:
+            raise ValueError("Refusing API URL outside the configured credential origin")
+    allow = _allow_private_origin.get() if allow_private is None else allow_private
+    if not isinstance(allow, bool):
+        raise TypeError("allow_private must be a boolean")
+    host = parsed.hostname.strip("[]")
+    if (_blocked_host(host) or "%" in host) and not allow:
+        raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        deadline, _ = _request_limits.get()
+        budget = _RESOLVE_TIMEOUT if dns_budget is None else min(dns_budget, _RESOLVE_TIMEOUT)
+        if deadline is not None:
+            budget = min(deadline - time.monotonic(), budget)
+        try:
+            infos = _resolve_bounded(host, port, budget, proto=socket.IPPROTO_TCP)
+        except socket.gaierror:
+            infos = []
+        except TimeoutError:
+            # A name that fails to resolve can be left to the connection-time
+            # check, but external transports (git, SDKs) rely on this preflight,
+            # and a resolver stalled past the budget gives no answer to check:
+            # fail closed instead of holding the worker indefinitely.
+            raise ValueError("DNS resolution for the API URL did not complete in time") from None
+        for info in infos:
+            try:
+                addr = ipaddress.ip_address(info[4][0])
+            except (ValueError, TypeError, IndexError):
+                continue
+            if _blocked_ip(addr) and not allow:
+                raise ValueError(
+                    "Refusing loopback, link-local, private, or cloud-metadata destination"
+                ) from None
+    return url
+
+
+class DestinationUnresolved(ValueError):
+    """A destination name gave no address to check: a resolver error, a stalled resolver or no answer."""
+
+
+def resolve_destination(host: str, port: int, *, allow_private: bool | None = None) -> list[str]:
+    """Resolve *host* once and return the numeric addresses an external transport may be pinned to.
+
+    Git resolves names itself; pinning it to these addresses (``utils.git.clone_pins``) makes it
+    connect only where this check looked. Every answer is checked as in ``_PublicHTTPSConnection``:
+    one loopback, link-local, private, reserved or cloud-metadata answer refuses the destination
+    unless ``allow_private`` (or the current worker's policy) is true. The lookup is bounded like the
+    ``validate_url`` preflight, but unlike it a resolver error, a resolver stalled past the budget or
+    an empty answer raises ``DestinationUnresolved``: an empty list would leave the transport to
+    resolve the name again, unchecked.
+    """
+    allow = _allow_private_origin.get() if allow_private is None else allow_private
+    if not isinstance(allow, bool):
+        raise TypeError("allow_private must be a boolean")
+    if (_blocked_host(host) or "%" in host) and not allow:
+        raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
+    deadline, _ = _request_limits.get()
+    budget = _RESOLVE_TIMEOUT if deadline is None else min(_RESOLVE_TIMEOUT, deadline - time.monotonic())
+    try:
+        infos = _resolve_bounded(host, port, budget, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):  # socket.gaierror and TimeoutError are OSErrors
+        raise DestinationUnresolved("DNS resolution for the destination gave no address") from None
+    addresses: list[str] = []
+    for info in infos:
+        try:
+            addr = ipaddress.ip_address(info[4][0])
+        except (ValueError, TypeError, IndexError):
+            continue  # nothing to pin; the transport connects only to the addresses returned
+        if _blocked_ip(addr) and not allow:
+            raise ValueError("Refusing loopback, link-local, private, or cloud-metadata destination")
+        if str(addr) not in addresses:
+            addresses.append(str(addr))
+    if not addresses:
+        raise DestinationUnresolved("DNS resolution for the destination gave no address")
+    return addresses
+
+
+def _join_url(origin: str, path: str) -> str:
+    """Resolve a continuation without exposing malformed URL text in parser errors."""
+    try:
+        return urljoin(origin, path)
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError("Invalid API URL") from None
+
+
+class _PublicHTTPSConnection(HTTPSConnection):
+    """Resolve once, validate every answer, then connect a numeric sockaddr.
+
+    TLS retains the original hostname for SNI and certificate verification.
+    Checking the addresses inside _new_conn avoids the DNS check/use race of
+    validating a URL before handing its hostname to requests for resolution.
+    """
+
+    allow_private_origin = False
+    acquisition_guard: _SocketDeadline | None = None
+
+    def _new_conn(self) -> socket.socket:
+        guard = self.acquisition_guard
+        if guard is not None:
+            guard.remaining()
+        host = self.host.rstrip(".")
+        if not self.allow_private_origin and (_blocked_host(host) or "%" in host):
+            raise ValueError("Refusing private or cloud-metadata destination")
+        budget = _RESOLVE_TIMEOUT
+        if isinstance(self.timeout, (int, float)) and not isinstance(self.timeout, bool):
+            budget = min(budget, float(self.timeout))
+        if guard is not None:
+            budget = min(budget, guard.remaining())
+        try:
+            addresses = _resolve_bounded(host, self.port or 443, budget, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise NameResolutionError(host, self, exc) from exc
+        except TimeoutError as exc:
+            raise NameResolutionError(host, self, socket.gaierror(str(exc))) from exc
+        if guard is not None:
+            guard.remaining()
+        if not addresses:
+            raise NewConnectionError(self, "DNS returned no usable addresses")
+        # Reject mixed public/private results, not just the first DNS answer.
+        for _, _, _, _, address in addresses:
+            if not self.allow_private_origin and _blocked_ip(ipaddress.ip_address(address[0])):
+                raise ValueError("Refusing private or cloud-metadata destination")
+        last_error: OSError | None = None
+        for family, socktype, proto, _, address in addresses:
+            connection: socket.socket | None = None
+            try:
+                connection = socket.socket(family, socktype, proto)
+                if guard is not None:
+                    guard.watch_socket(connection)
+                connection.settimeout(guard.socket_timeout(self.timeout) if guard else self.timeout)
+                for option in self.socket_options or ():
+                    connection.setsockopt(*option)
+                if self.source_address:
+                    connection.bind(self.source_address)
+                connection.connect(address)
+                if guard is not None:
+                    # TLS follows this connect; give its handshake only the
+                    # remaining acquisition time, not another full timeout.
+                    connection.settimeout(guard.socket_timeout(self.timeout))
+                return connection
+            except ValueError:
+                if connection is not None:
+                    connection.close()
+                raise
+            except OSError as exc:
+                last_error = exc
+                if connection is not None:
+                    connection.close()
+        if isinstance(last_error, TimeoutError):
+            raise ConnectTimeoutError(self, "HTTPS connection timed out") from last_error
+        raise NewConnectionError(self, "HTTPS connection failed") from last_error
+
+
+class _PrivateHTTPSConnection(_PublicHTTPSConnection):
+    allow_private_origin = True
+
+
+class _AcquisitionHTTPSConnectionPool(HTTPSConnectionPool):
+    def _make_request(self, conn: Any, *args: Any, **kwargs: Any) -> Any:
+        deadline = _acquisition_deadline.get()
+        if deadline is None:
+            return super()._make_request(conn, *args, **kwargs)
+        guard = _SocketDeadline(conn, deadline)
+        conn.acquisition_guard = guard
+        try:
+            try:
+                response = super()._make_request(conn, *args, **kwargs)
+            except Exception:
+                guard.finish()
+                if guard.expired.is_set() or time.monotonic() >= deadline:
+                    raise ValueError("HTTP request exceeds the acquisition deadline") from None
+                raise
+            guard.finish()
+            if guard.expired.is_set() or time.monotonic() >= deadline:
+                response.close()
+                raise ValueError("HTTP request exceeds the acquisition deadline")
+            return response
+        finally:
+            guard.finish()
+            conn.acquisition_guard = None
+
+
+class _PublicHTTPSConnectionPool(_AcquisitionHTTPSConnectionPool):
+    ConnectionCls = _PublicHTTPSConnection
+
+
+class _PrivateHTTPSConnectionPool(_AcquisitionHTTPSConnectionPool):
+    ConnectionCls = _PrivateHTTPSConnection
+
+
+class _DestinationPolicyAdapter(HTTPAdapter):
+    def __init__(self, *, allow_private: bool):
+        self.allow_private = allow_private
+        super().__init__()
+
+    def init_poolmanager(self, connections: int, maxsize: int, block: bool = False, **kwargs: Any) -> None:
+        super().init_poolmanager(connections, maxsize, block=block, **kwargs)
+        # urllib3's default mapping is shared; do not mutate another client's policy.
+        self.poolmanager.pool_classes_by_scheme = dict(self.poolmanager.pool_classes_by_scheme)
+        self.poolmanager.pool_classes_by_scheme["https"] = (
+            _PrivateHTTPSConnectionPool if self.allow_private else _PublicHTTPSConnectionPool
+        )
+
+    def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:
+        raise ValueError("Proxies are unsupported by the destination-enforcing HTTP client")
+
+
+def _rate_limited(resp: requests.Response) -> bool:
+    """GitHub reports primary and secondary rate limits with 403 as well as 429."""
+    return resp.status_code == 403 and (
+        resp.headers.get("X-RateLimit-Remaining") == "0" or bool(resp.headers.get("Retry-After"))
+    )
+
+
+def _retry_delay(resp: requests.Response, attempt: int) -> float:
+    """Honor server hints; otherwise back off exponentially with jitter.
+
+    Jitter keeps parallel connectors (and scanner fleets) from retrying in
+    lockstep against the same API. Every delay is capped at MAX_RETRY_DELAY.
+    """
+    retry_after = resp.headers.get("Retry-After")
+    if retry_after and retry_after.isascii() and retry_after.isdigit():
+        delay = float(retry_after) + random.uniform(0, 1)
+    else:
+        step = min(2**attempt, 30)
+        delay = step / 2 + random.uniform(0, step / 2)
+    reset = resp.headers.get("X-RateLimit-Reset")
+    if resp.headers.get("X-RateLimit-Remaining") == "0" and reset and reset.isascii() and reset.isdigit():
+        delay = max(delay, float(reset) - time.time() + 1)
+    # Okta spells these X-Rate-Limit-* and sends no Retry-After with its 429.
+    reset = resp.headers.get("X-Rate-Limit-Reset")
+    if (
+        (resp.status_code == 429 or resp.headers.get("X-Rate-Limit-Remaining") == "0")
+        and reset
+        and reset.isascii()
+        and reset.isdigit()
+    ):
+        delay = max(delay, float(reset) - time.time() + 1)
+    return max(0.0, min(delay, MAX_RETRY_DELAY))
+
+
+def diagnostic_url(url: str) -> str:
+    """Keep only an HTTPS origin in diagnostics, never request-controlled URL fields.
+
+    Paths can contain opaque credentials just as queries and userinfo can.
+    Lexical redaction cannot identify an arbitrary value without its credential
+    context, so none of those components belongs in errors or retry logs.
+    Malformed input gets a fixed label; URL parser errors can echo its values.
+    """
+    invalid = "<invalid HTTPS origin>"
+    try:
+        parsed = urlsplit(url)
+        host, port = parsed.hostname, parsed.port
+        if parsed.scheme != "https" or not host or "%" in host:
+            return invalid
+        if ":" in host:
+            # Reconstruct the authority rather than copying malformed netloc text.
+            authority = f"[{ipaddress.IPv6Address(host)}]"
+        else:
+            host = host.encode("idna").decode("ascii")
+            if len(host) > 253 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.?", host):
+                return invalid
+            authority = host
+        if port is not None:
+            authority += f":{port}"
+    except (AttributeError, TypeError, ValueError, UnicodeError):
+        return invalid
+    return sanitize_text(urlunsplit(("https", authority, "", "", "")))
+
+
+def _transport_error(exc: RequestException, url: str, phase: str) -> RequestException:
+    """Keep useful transport categories without retaining untrusted error payloads.
+
+    requests/urllib3 exceptions can retain full URLs, echoed response text and
+    credential-bearing request objects. Construct only known exception types
+    with a fixed category and origin, preserving connectors' existing catches.
+    """
+    categories = (
+        (SSLError, "TLS failure"),
+        (ConnectTimeout, "connect timeout"),
+        (ReadTimeout, "read timeout"),
+        (Timeout, "timeout"),
+        (ConnectionError, "connection failure"),
+        (ChunkedEncodingError, "invalid response framing"),
+        (ContentDecodingError, "response decoding failure"),
+    )
+    for error_type, category in categories:
+        if isinstance(exc, error_type):
+            return error_type(f"HTTP {phase} {category} for {diagnostic_url(url)}")
+    return RequestException(f"HTTP {phase} transport failure for {diagnostic_url(url)}")
+
+
+class HttpError(RuntimeError):
+    def __init__(self, status: int, url: str, body: str = ""):
+        self.status = status
+        self.url = diagnostic_url(url)
+        # Error documents can reflect opaque request credentials. Keep the old
+        # attribute for connector compatibility, but never retain response text.
+        self.body = ""
+        super().__init__(f"HTTP {status} for {self.url}")
+
+
+class HttpClient:
+    """requests.Session wrapper with retries and JSON helpers."""
+
+    def __init__(
+        self,
+        base_url: str = "",
+        headers: dict[str, str] | None = None,
+        timeout: float = DEFAULT_TIMEOUT,
+        max_retries: int = 4,
+        session: requests.Session | None = None,
+        auth: Any = None,
+        on_warning: Callable[[str], None] | None = None,
+        allow_private_origin: bool | None = None,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        ca_bundle: str | None = None,
+        deadline: float | None = None,
+        cancelled: threading.Event | None = None,
+    ):
+        # Validate before an injected session is modified.
+        read_deadline = _read_deadline(timeout)
+        self.base_url = base_url.rstrip("/")
+        self.allow_private_origin = (
+            _allow_private_origin.get() if allow_private_origin is None else allow_private_origin
+        )
+        if not isinstance(self.allow_private_origin, bool):
+            raise TypeError("allow_private_origin must be a boolean")
+        # The declared type does not bind untyped callers: re-check at runtime.
+        # Tests stand sessions in with unittest.mock doubles, which carry no
+        # real transport. Any other duck-typed session would send requests
+        # without the destination-policy adapter and without the proxy and
+        # adapter-identity checks below, so it is refused, not silently trusted.
+        injected: object = session
+        if (
+            injected is not None
+            and not isinstance(injected, requests.Session)
+            and type(injected).__module__.split(".", 1)[0] != "unittest"
+        ):
+            raise TypeError("session must be a requests.Session or a unittest.mock stand-in")
+        self.session = session or requests.Session()
+        _validate_headers(self.session.headers)
+        _validate_headers(headers)
+        # Environment proxies can resolve destinations outside our socket policy.
+        # Explicit proxies are refused by the adapter as well.
+        self.session.trust_env = False
+        # An explicit bundle replaces the default CA store (verification stays
+        # on); ambient REQUESTS_CA_BUNDLE / SSL_CERT_FILE values stay ignored.
+        bundle = _ca_bundle.get() if ca_bundle is None else _validated_ca_bundle(ca_bundle)
+        if bundle is not None:
+            self.session.verify = bundle
+        if isinstance(self.session, requests.Session):
+            # requests picks the longest matching adapter prefix. An injected
+            # session may already have an origin-specific adapter that would
+            # bypass connection-time DNS checks even after mounting https://.
+            old_adapters = set(self.session.adapters.values())
+            self.session.adapters.clear()
+            for adapter in old_adapters:
+                adapter.close()
+        self._policy_adapter = _DestinationPolicyAdapter(allow_private=self.allow_private_origin)
+        self.session.mount("https://", self._policy_adapter)
+        self.session.headers.update({"User-Agent": f"shadowscan/{__version__}", "Accept": "application/json"})
+        if headers:
+            try:
+                for header in headers.items():
+                    check_header_validity(header)
+            except InvalidHeader:
+                raise ValueError("HTTP header name or value contains invalid characters") from None
+            self.session.headers.update(headers)
+        if auth is not None:
+            self.session.auth = auth
+        self.timeout = timeout
+        self.read_deadline = read_deadline
+        self.max_retries = max_retries
+        self.max_response_bytes = _positive_byte_limit(max_response_bytes, DEFAULT_MAX_RESPONSE_BYTES)
+        inherited_deadline, inherited_cancelled = _request_limits.get()
+        self.deadline = inherited_deadline if deadline is None else deadline
+        self.cancelled = inherited_cancelled if cancelled is None else cancelled
+        self.on_warning = on_warning
+
+    def _url(self, path: str) -> str:
+        try:
+            absolute = bool(urlsplit(path).scheme) or path.startswith("//")
+        except (TypeError, ValueError, UnicodeError):
+            raise ValueError("Invalid API URL") from None
+        if absolute:
+            url = _join_url(self.base_url, path)
+        else:
+            url = f"{self.base_url}/{path.lstrip('/')}"
+        return self._validate(url, self.base_url or None)
+
+    def _validate(self, url: str, origin: str | None) -> str:
+        """Preflight ``url``; its DNS wait ends with the client timeout and never passes the deadline."""
+        budget = float(self.timeout)
+        if self.deadline is not None:
+            budget = min(self.deadline - time.monotonic(), budget)
+        return validate_url(url, origin, allow_private=self.allow_private_origin, dns_budget=budget)
+
+    def request(
+        self, method: str, path: str, *, raise_for_status: bool = True, **kwargs: Any
+    ) -> requests.Response:
+        if not isinstance(raise_for_status, bool):
+            raise TypeError("raise_for_status must be a boolean")
+        _validate_headers(self.session.headers)
+        _validate_headers(kwargs.get("headers"), allow_removal=True)
+        url = self._url(path)
+        # requests treats any falsy effective setting as CERT_NONE, including
+        # 0, an empty CA path and a session-level None. Per-request None inherits
+        # the session setting; inspect that effective value before sending.
+        verify = kwargs.get("verify")
+        if verify is None:
+            verify = getattr(self.session, "verify", True)
+        if not verify:
+            raise ValueError("TLS certificate verification cannot be disabled")
+        if kwargs.get("proxies") or (isinstance(self.session, requests.Session) and self.session.proxies):
+            raise ValueError("Proxies are unsupported by the destination-enforcing HTTP client")
+        stream = kwargs.pop("stream", False)
+        if not isinstance(stream, bool):
+            raise ValueError("stream must be a boolean")
+        kwargs["stream"] = True
+        kwargs.setdefault("timeout", self.timeout)
+        # requests strips Authorization for some redirects, but not custom API-key
+        # headers, cookies or credential-bearing POST bodies. Validate before sending.
+        kwargs.pop("allow_redirects", None)
+        kwargs["allow_redirects"] = False
+        attempt = 0
+        redirects = 0
+        origin = url
+        while True:
+            replaced = isinstance(self.session, requests.Session) and (
+                self.session.get_adapter(url) is not self._policy_adapter
+            )
+            if replaced:
+                raise ValueError("HTTP destination policy adapter was replaced")
+            attempt += 1
+            # Acquisition (connect, TLS, request, status and headers) gets the read
+            # budget, and never more than the connector's remaining time.
+            budget = self.read_deadline
+            if self.deadline is not None:
+                budget = min(budget, self.deadline - time.monotonic())
+            deadline_token = _acquisition_deadline.set(time.monotonic() + budget)
+            request_failure: RequestException | ValueError | None = None
+            try:
+                try:
+                    resp = self.session.request(method, url, **kwargs)
+                except InvalidHeader:
+                    # Auth handlers can add headers after our preflight validation.
+                    request_failure = ValueError("HTTP header contains invalid characters or types")
+                except RequestException as exc:
+                    request_failure = _transport_error(exc, url, "request")
+            finally:
+                _acquisition_deadline.reset(deadline_token)
+            # Raise outside the handler so even __context__ cannot retain the
+            # original request, response or diagnostic payload.
+            if request_failure is not None:
+                raise request_failure from None
+            if resp.status_code in {301, 302, 303, 307, 308}:
+                location = resp.headers.get("Location")
+                resp.close()
+                if not location or redirects >= 5:
+                    raise HttpError(resp.status_code, url, "Invalid or excessive redirect")
+                url = self._validate(_join_url(url, location), origin)
+                redirects += 1
+                # Do not carry original query parameters onto a redirect target.
+                kwargs.pop("params", None)
+                if resp.status_code == 303 or (resp.status_code in {301, 302} and method.upper() == "POST"):
+                    method = "GET"
+                    kwargs.pop("json", None)
+                    kwargs.pop("data", None)
+                continue
+            if (resp.status_code in RETRY_STATUSES or _rate_limited(resp)) and attempt <= self.max_retries:
+                resp.close()
+                delay = _retry_delay(resp, attempt)
+                log.warning(
+                    "HTTP %s from %s; retrying in %.0fs (attempt %d)",
+                    resp.status_code,
+                    diagnostic_url(url),
+                    delay,
+                    attempt,
+                )
+                self._wait_before_retry(delay)
+                continue
+            if resp.status_code >= 400 and raise_for_status:
+                resp.close()
+                raise HttpError(resp.status_code, url)
+            if not stream:
+                # A caller of get()/post() may access resp.content directly.
+                # Buffer only within the decoded-byte limit and keep the
+                # familiar Response API after the transport is closed.
+                resp._content = self.read_response_bytes(resp)
+                resp._content_consumed = True  # type: ignore[attr-defined]
+            return resp
+
+    def _scan_over(self, pending: float = 0.0) -> bool:
+        """Whether the connector was cancelled or ``pending`` seconds would pass its deadline."""
+        return (self.cancelled is not None and self.cancelled.is_set()) or (
+            self.deadline is not None and time.monotonic() + pending >= self.deadline
+        )
+
+    def _wait_before_retry(self, delay: float) -> None:
+        """Sleep between attempts, but never past a cancelled scan or its deadline."""
+        if self._scan_over(delay):
+            raise TimeoutError("HTTP retry abandoned: connector deadline exceeded")
+        if self.cancelled is None:
+            time.sleep(delay)
+        elif self.cancelled.wait(delay):
+            raise TimeoutError("HTTP retry abandoned: connector deadline exceeded")
+
+    def get(self, path: str, **kwargs: Any) -> requests.Response:
+        return self.request("GET", path, **kwargs)
+
+    def post(self, path: str, **kwargs: Any) -> requests.Response:
+        return self.request("POST", path, **kwargs)
+
+    def read_response_bytes(self, resp: requests.Response, *, max_bytes: int | None = None) -> bytes:
+        """Read a streamed response within the configured decoded-byte and time limits.
+
+        Iteration counts bytes after HTTP content decoding, so compressed
+        responses cannot expand past the limit unnoticed. The whole body must
+        arrive within ``read_deadline`` seconds; a body cut short by that
+        deadline is an error, never a truncated result. The response is closed
+        on success and on every parse, transport, size, or deadline error.
+        """
+        watchdog: threading.Timer | None = None
+        expired = threading.Event()
+        try:
+            limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
+            length = resp.headers.get("Content-Length")
+            if length is not None:
+                if not isinstance(length, str) or not length.isascii() or not length.isdecimal():
+                    raise ValueError("Invalid Content-Length on HTTP response")
+                # Compare decimal strings before conversion so arbitrarily
+                # padded headers never reach Python's big-integer parser.
+                digits = length.lstrip("0") or "0"
+                maximum = str(limit)
+                if len(digits) > len(maximum) or (len(digits) == len(maximum) and digits > maximum):
+                    raise ValueError("HTTP response exceeds the byte limit")
+            # The whole body must finish within the read deadline, and never past
+            # the connector's own deadline or after its cancellation.
+            budget = self.read_deadline
+            if self.deadline is not None:
+                budget = min(budget, self.deadline - time.monotonic())
+            if budget <= 0 or self._scan_over():
+                raise TimeoutError("HTTP response not read: connector deadline exceeded")
+            deadline = time.monotonic() + budget
+            watchdog = _read_watchdog(resp, budget, expired)
+            body = bytearray()
+            transport_failure: RequestException | None = None
+            try:
+                for chunk in resp.iter_content(chunk_size=min(65536, limit + 1)):
+                    if time.monotonic() >= deadline:
+                        expired.set()
+                        break
+                    if not isinstance(chunk, bytes):
+                        raise ValueError("Invalid HTTP response chunk")
+                    if len(body) + len(chunk) > limit:
+                        raise ValueError("HTTP response exceeds the byte limit")
+                    body.extend(chunk)
+            except Exception as exc:  # re-raised unless the deadline shut the read down
+                # The watchdog's shutdown surfaces as a transport or framing
+                # error; report the deadline instead, without transport text.
+                if not expired.is_set():
+                    if isinstance(exc, RequestException):
+                        transport_failure = _transport_error(exc, resp.url, "response")
+                    else:
+                        raise
+            if expired.is_set():
+                # A close-delimited body also ends cleanly after the shutdown.
+                raise ValueError("HTTP response exceeds the read deadline")
+            if transport_failure is not None:
+                raise transport_failure from None
+            return bytes(body)
+        finally:
+            if watchdog is not None:
+                watchdog.cancel()
+                watchdog.join()
+            resp.close()
+
+    def read_json_response(self, resp: requests.Response, *, max_bytes: int | None = None) -> Any:
+        """Decode bounded, unambiguous JSON before trusting provider fields.
+
+        Repeated keys can otherwise replace populated collections with empty
+        ones, hide pagination continuations, or change JWK selection fields.
+        Reject nonfinite values, including numeric overflow, before analysis.
+        """
+        body = self.read_response_bytes(resp, max_bytes=max_bytes)
+        if not body:
+            return None
+        try:
+            return json.loads(
+                body,
+                object_pairs_hook=_unique_json_object,
+                parse_float=_finite_json_float,
+                parse_constant=_finite_json_float,
+            )
+        except (ValueError, RecursionError):
+            raise ValueError("Invalid JSON response") from None
+
+    def get_json(
+        self,
+        path: str,
+        *,
+        max_bytes: int | None = None,
+        on_response: Callable[[requests.Response], None] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """GET and decode JSON. *on_response* receives the response (headers only; the
+        body is consumed) once the body is decoded, so a caller can read headers such
+        as a total count; it never sees a rejected response."""
+        limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
+        kwargs["stream"] = True
+        resp = self.get(path, **kwargs)
+        data = self.read_json_response(resp, max_bytes=limit)
+        if on_response is not None:
+            on_response(resp)
+        return data
+
+    def post_json(self, path: str, *, max_bytes: int | None = None, **kwargs: Any) -> Any:
+        limit = _positive_byte_limit(max_bytes, self.max_response_bytes)
+        kwargs["stream"] = True
+        resp = self.post(path, **kwargs)
+        return self.read_json_response(resp, max_bytes=limit)
+
+    def try_get_json(
+        self, path: str, default: Any = None, ok_statuses: set[int] | None = None, **kwargs: Any
+    ) -> Any:
+        """Optional GET; denied or unknown coverage is never silently discarded.
+
+        Callers may explicitly allow a missing optional feature (e.g. 404).
+        Otherwise a warning callback must record incomplete coverage, or the
+        exception propagates to the connector's failure handling.
+        """
+        try:
+            return self.get_json(path, **kwargs)
+        except HttpError as exc:
+            if exc.status in (ok_statuses or set()) and exc.status not in {401, 403}:
+                return default
+            if self.on_warning and exc.status in {401, 403, 404, 405, 422}:
+                self.on_warning(f"Collection incomplete: HTTP {exc.status} for {exc.url}")
+                return default
+            raise
+
+    # ------------------------------------------------------------ paginators
+    @staticmethod
+    def _require_page_items(data: Any, key: str | None, paginator: str) -> list[dict[str, Any]]:
+        if isinstance(data, dict) and ("error" in data or data.get("ok") is False):
+            # Error documents can reflect credentials, so never echo fields.
+            raise RuntimeError(f"{paginator} API collection failed; collection incomplete")
+        if key is None:
+            items = data
+        elif not isinstance(data, dict) or key not in data:
+            raise RuntimeError(f"{paginator} response is missing collection '{key}'; collection incomplete")
+        else:
+            items = data[key]
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise RuntimeError(f"{paginator} response has an invalid collection; collection incomplete")
+        return items
+
+    @staticmethod
+    def _continuation(value: Any) -> str | None:
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError("Invalid pagination continuation; collection incomplete")
+        return value
+
+    def paginate_link(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        item_key: str | None = None,
+        max_pages: int = 1000,
+        on_page: Callable[[requests.Response], None] | None = None,
+        *,
+        on_data: Callable[[Any], None] | None = None,
+    ) -> Iterator[Any]:
+        """RFC 5988 Link-header pagination for GitHub and GitLab.
+
+        *on_page* receives each page's response (headers only; the body is
+        consumed) once its items are validated, before they are yielded, so a
+        caller can check header totals such as GitLab's ``X-Total``.
+        *on_data* receives the validated decoded page before items are yielded,
+        for provider envelope checks such as GitHub's ``total_count``.
+        """
+        origin = self._url(path)
+        url: str | None = origin
+        pages = 0
+        seen: set[str] = set()
+        while url and pages < max_pages:
+            url = self._validate(_join_url(origin, url), origin)
+            if url in seen:
+                raise RuntimeError("Repeated pagination link; collection incomplete")
+            seen.add(url)
+            resp = self.get(url, params=params if pages == 0 else None, stream=True)
+            data = self.read_json_response(resp)
+            items = self._require_page_items(data, item_key, "Link pagination")
+            next_url = self._continuation(resp.links.get("next", {}).get("url"))
+            if on_page is not None:
+                on_page(resp)
+            if on_data is not None:
+                on_data(data)
+            yield from items
+            url = next_url
+            pages += 1
+        if url:
+            raise RuntimeError("Pagination limit reached; collection incomplete")
+
+    def paginate_odata(
+        self, path: str, params: dict[str, Any] | None = None, max_pages: int = 1000
+    ) -> Iterator[dict[str, Any]]:
+        """Microsoft Graph and OData next-link pagination."""
+        origin = self._url(path)
+        url: str | None = origin
+        pages = 0
+        seen: set[str] = set()
+        while url and pages < max_pages:
+            url = self._validate(_join_url(origin, url), origin)
+            if url in seen:
+                raise RuntimeError("Repeated pagination link; collection incomplete")
+            seen.add(url)
+            data = self.get_json(url, params=params if pages == 0 else None)
+            if not isinstance(data, dict):
+                raise RuntimeError("Invalid paginated API response; collection incomplete")
+            items = self._require_page_items(data, "value", "OData pagination")
+            # Validate both fields before selecting; falsy malformed values
+            # must not silently terminate collection or hide behind a fallback.
+            odata_link = self._continuation(data.get("@odata.nextLink"))
+            legacy_link = self._continuation(data.get("nextLink"))
+            next_url = odata_link or legacy_link
+            yield from items
+            url = next_url or None
+            pages += 1
+        if url:
+            raise RuntimeError("Pagination limit reached; collection incomplete")
+
+    def paginate_token(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        items_key: str = "items",
+        token_key: str = "nextPageToken",
+        token_param: str = "pageToken",
+        max_pages: int = 1000,
+        method: str = "GET",
+        body: dict[str, Any] | None = None,
+        expected_empty_kind: str | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Google / AWS style page-token pagination.
+
+        An omitted empty collection is accepted only when an operator-supplied
+        documented response kind matches and the envelope has no continuation
+        or error. Ordinary missing collection fields remain incomplete scans.
+        """
+        params = dict(params or {})
+        pages = 0
+        seen: set[str] = set()
+        while pages < max_pages:
+            if method == "POST":
+                payload = dict(body or {})
+                if params.get(token_param):
+                    payload[token_param] = params[token_param]
+                data = self.post_json(path, json=payload)
+            else:
+                data = self.get_json(path, params=params)
+            if not isinstance(data, dict):
+                raise RuntimeError("Invalid paginated API response; collection incomplete")
+            if (
+                expected_empty_kind
+                and data.get("kind") == expected_empty_kind
+                and items_key not in data
+                and "error" not in data
+                and data.get("ok") is not False
+                and self._continuation(data.get(token_key)) is None
+            ):
+                return
+            items = self._require_page_items(data, items_key, "Token pagination")
+            token = self._continuation(data.get(token_key))
+            yield from items
+            if not token:
+                return
+            if token in seen:
+                raise RuntimeError("Repeated pagination token; collection incomplete")
+            seen.add(token)
+            params[token_param] = token
+            pages += 1
+        raise RuntimeError("Pagination limit reached; collection incomplete")
+
