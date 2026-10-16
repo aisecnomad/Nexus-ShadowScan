@@ -144,8 +144,13 @@ def _source_findings(report: dict[str, Any], name: str) -> tuple[list[Finding], 
     findings = [Finding.from_dict(entry) for entry in report["findings"]]
     _inventory_size(report)
     present = _inventory_presence(report, name)
-    if not present:
-        for finding in findings:
+    for finding in findings:
+        # LLM triage is advisory, per-scan and never authoritative (triage.py). A source report
+        # is untrusted, so a carried verdict (merge() keeps the first source's metadata) would let
+        # one source plant a "benign" verdict on a finding another source owns. Drop it; triage, if
+        # wanted, runs on the merged result.
+        finding.metadata.pop("llm_triage", None)
+        if not present:
             finding.shadow = None
             finding.registry_match = None
     return findings, present

@@ -1588,6 +1588,21 @@ Read them when you have baselines, reports or inventories produced
 by an earlier candidate build; a deployment that starts from a reviewed
 revision and a fresh baseline does not need them.
 
+### October 15 review-driven hardening (unreleased)
+
+Redaction now withholds Amazon Bedrock API keys, Zapier MCP server URLs and
+URL credentials whose scheme contains an underscore, and a few credential
+environment-variable names whose last word is not a credential word; reports
+and `--dump-records` exports from an earlier build may therefore have retained
+these values, so treat older artifacts as sensitive and rescan before sharing.
+LLM triage now withholds e-mail and IP addresses from the summary it sends.
+A fleet merge drops any advisory `llm_triage` block a source carries. The MCP
+and CloudFormation/ARM detectors read the parsed structure rather than a byte
+prefix, and the Kubernetes connector inspects init and ephemeral containers, so
+a scan can surface findings an earlier build missed behind leading padding or a
+sidecar. Finding ids do not change. Rescan affected sources and rebuild
+comparison baselines.
+
 ### October 14 detection precision, ambiguous app names and scoped correlation (unreleased)
 
 These changes can remove findings, lower confidence and risk, and add new

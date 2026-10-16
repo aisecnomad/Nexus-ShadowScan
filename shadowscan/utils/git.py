@@ -661,6 +661,11 @@ def diff_changed_files(
                 "-C",
                 root_str,
                 "diff",
+                # Belt and suspenders with --name-only: suppress any repo-local diff.external,
+                # textconv or signature command, as the other metadata commands do, so a change
+                # that ever emits patch/stat output cannot run a checked-out repository's config.
+                "--no-ext-diff",
+                "--no-textconv",
                 "--name-only",
                 "--diff-filter=ACDMRT",
                 "-z",

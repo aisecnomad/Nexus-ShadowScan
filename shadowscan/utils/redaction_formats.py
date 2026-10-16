@@ -81,6 +81,8 @@ _GENERIC_TOKEN = (
     r"|sntry[su]_[A-Za-z0-9+/=_-]{30,}|hv[sbr]\.[A-Za-z0-9_-]{24,}"
     r"|fw_(?=[A-Za-z]*\d)[A-Za-z0-9]{24,}"
     r"|[A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9_-]{60,}"
+    # Amazon Bedrock API keys: long-term 'ABSK...' and short-term 'bedrock-api-key-...'.
+    r"|ABSK[A-Za-z0-9+/]{60,}={0,2}|bedrock-api-key-[A-Za-z0-9+/_-]{40,}={0,2}"
 )
 # Keep this backstop aligned with detectable credential formats regardless of
 # which signature packs the operator enables for discovery.
@@ -103,6 +105,9 @@ _PATH_SECRET_RULES: tuple[tuple[re.Pattern[str], re.Pattern[str]], ...] = (
     (re.compile(r"(?:[a-z0-9-]+\.)*webhook\.office\.com"), re.compile(r"/webhook(?:b2)?/")),
     (re.compile(r"outlook\.office(?:365)?\.com"), re.compile(r"/webhook(?:b2)?/")),
     (re.compile(r"hooks\.zapier\.com"), re.compile(r"/hooks/")),
+    # Zapier MCP server URLs carry their credential in the path.
+    (re.compile(r"mcp\.zapier\.com"), re.compile(r"/api/mcp/s/")),
+    (re.compile(r"actions\.zapier\.com"), re.compile(r"/mcp/")),
     (re.compile(r"hook\.(?:[a-z0-9-]+\.)?(?:make|integromat)\.com"), re.compile(r"/")),
     (re.compile(r"maker\.ifttt\.com"), re.compile(r"/trigger/[^/]+/(?:json/)?with/key/")),
     (re.compile(r"api\.telegram\.org"), re.compile(r"/(?:file/)?bot")),
@@ -207,7 +212,9 @@ _AUTH_GLUED = r"(?P<glued>" + _GLUED + r")?"
 _AUTH_ESTABLISHED = re.compile(_AUTH.pattern + _AUTH_GLUED)
 _ESCAPED_AUTH_ESTABLISHED = re.compile(_ESCAPED_AUTH.pattern + _AUTH_GLUED)
 _ASSIGNED = re.compile(r"[ \t]*[:=]")
-_URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]{0,20}://[^\s<>\"']+")
+# A scheme may hold '_' and run past 21 characters: SQLAlchemy dialect URLs such as
+# 'oracle+cx_oracle://' and 'postgresql+py_postgresql://' carry user:password like any other.
+_URL = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+._-]{0,40}://[^\s<>\"']+")
 _QUERY_SEPARATOR = re.compile(r"[&#]")
 _QUERY_TEXT = re.compile(r"\?[^\s<>\"']+")
 
@@ -649,7 +656,7 @@ def _sanitize_url(match: re.Match[str]) -> str:
 
 
 # The scheme of a URL inside the text of another (see ``_redact_nested_urls``).
-_NESTED_SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]{0,20}://")
+_NESTED_SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+._-]{0,40}://")
 
 
 def _redact_nested_urls(text: str) -> str:

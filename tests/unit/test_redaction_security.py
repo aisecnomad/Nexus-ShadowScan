@@ -853,6 +853,8 @@ def _token_samples() -> list[tuple[str, str]]:
         ("hv[sbr]\\.", "h" + "vs." + _run(_WORD, 30)),
         ("fw_", "fw_" + "aB3xY7" * 4),
         ("[A-Za-z0-9]{14}\\.atlasv1\\.", _run(_ALNUM, 14) + "." + "atl" + "asv1." + _run(_WORD, 70)),
+        ("ABSK", "AB" + "SK" + _run(_ALNUM + "+/", 80)),
+        ("bedrock-api-key-", "bedrock-" + "api-key-" + _run(_WORD, 60)),
     ]
 
 

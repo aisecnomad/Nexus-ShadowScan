@@ -280,6 +280,29 @@ def test_inventory_check_renders_card_fields_literally(tmp_path: Path):
     assert "Traceback" not in result.output
 
 
+def test_inventory_check_strips_terminal_escape_sequences(tmp_path: Path):
+    """Regression (October 15 review F4): card fields went to the terminal without terminal_text,
+    so CSI/OSC sequences from a scanned tree reached the TTY."""
+    cards = tmp_path / "agents.yaml"
+    # YAML \x escapes decode to the control bytes the loader would otherwise reject in the scalar.
+    cards.write_text('agents:\n  - id: "bot\\x1b[2Jcleared"\n    name: "n\\x07bell"\n')
+    result = CliRunner().invoke(main, ["inventory", "check", str(cards)])
+    assert result.exit_code == 0, result.output
+    assert "\x1b" not in result.output and "\x07" not in result.output
+    assert "cleared" in result.output  # the visible text is kept, only the control bytes removed
+
+
+def test_signatures_list_strips_terminal_escape_sequences(tmp_path: Path):
+    pack = tmp_path / "pack.yaml"
+    pack.write_text(
+        'signatures:\n  - id: framework.evil\n    name: "n\\x1b[2Jx"\n    category: framework\n'
+        "    signals:\n      - type: dependency\n        ecosystem: pypi\n        names: [langchain]\n"
+    )
+    result = CliRunner().invoke(main, ["signatures", "list", "-s", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert "\x1b" not in result.output
+
+
 # ------------------------------------------------------- usage errors (audit round 2)
 def test_code_mode_without_a_remote_target_is_a_usage_error(tmp_path: Path):
     result = CliRunner().invoke(main, ["code", str(tmp_path), "--mode", "api"])

@@ -434,3 +434,27 @@ def test_shared_document_equals_a_fresh_parse_and_yaml_is_parsed_again() -> None
         _parse_mcp_servers("mcp.yaml", yaml_text, errors, {"mcpServers": {"files": {"command": "npx"}}}) == []
     )
     assert errors == ["invalid MCP configuration syntax"]
+
+
+def test_leading_padding_does_not_hide_mcp_servers(tmp_path: Path, run_connector):
+    """Regression (October 15 review M6): recognition read only text[:200_000], so padding
+    before the keys hid the server table while the scan reported complete."""
+    config = {
+        "_comment": " " * 200_010,
+        "mcpServers": {"gh": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}},
+    }
+    (tmp_path / "settings.json").write_text(json.dumps(config))
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete
+    servers = [f.metadata["servers"][0]["name"] for f in findings if f.kind == Kind.MCP_SERVER]
+    assert servers == ["gh"]
+
+
+def test_nested_mcp_block_is_detected_structurally(tmp_path: Path, run_connector):
+    # VS Code keeps the table under a client section; a structural check still finds it.
+    (tmp_path / "settings.json").write_text(
+        json.dumps({"editor": {"fontSize": 12}, "mcp": {"servers": {"fs": {"command": "mcp-server-fs"}}}})
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors
+    assert [f.metadata["servers"][0]["name"] for f in findings if f.kind == Kind.MCP_SERVER] == ["fs"]

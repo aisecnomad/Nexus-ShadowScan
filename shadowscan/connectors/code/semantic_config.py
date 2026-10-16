@@ -31,7 +31,7 @@ from shadowscan.connectors.lowcode.graph import (
 from shadowscan.connectors.mcp_risk import _plaintext_remote
 from shadowscan.signatures.matcher import Match, SignatureIndex
 from shadowscan.utils.jsonc import load_json_lenient
-from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.redaction import sanitize_excerpt, sanitize_text
 from shadowscan.utils.safe_json import JSONIntegrityError, strict_json_loads
 from shadowscan.utils.safe_yaml import (
     YAMLIntegrityError,
@@ -269,7 +269,8 @@ A2A_SIGNATURE_STATES = ("absent", "present-unverified", "verified", "invalid")
 def bounded_metadata(value: Any, depth: int = 0) -> Any:
     """Bound a projected metadata value so aggregates stay within the sanitizer budget."""
     if isinstance(value, str):
-        return truncate(value, _CLIP_CHARS)
+        # Redacted before it is shortened: a cut can separate a credential from its context.
+        return sanitize_excerpt(value, _CLIP_CHARS)
     if depth >= 4:
         return None if isinstance(value, (dict, list, tuple)) else value
     if isinstance(value, dict):

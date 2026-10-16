@@ -711,6 +711,31 @@ _DEDICATED_MCP_CONFIG_NAMES = frozenset(
     }
 )
 
+
+def _document_declares_mcp(document: dict[str, Any], depth: int = 0) -> bool:
+    """Whether a parsed JSON/TOML object configures MCP servers, wherever the table sits.
+
+    Decided from the structure, not a text prefix: a key named ``mcpServers`` or
+    ``mcp_servers`` holding a mapping, or an ``mcp`` mapping with a ``servers`` mapping,
+    at the top level or nested within a client's section. Bounded in depth and breadth so
+    a hostile document cannot make the walk expensive.
+    """
+    if depth > 6:
+        return False
+    # The key's presence is the signal, whatever its value: a malformed value (``mcpServers:
+    # "x"``) must still route to the server parser, which records the input defect, exactly as
+    # the former substring check did — only now it cannot be hidden behind leading padding.
+    if "mcpServers" in document or "mcp_servers" in document:
+        return True
+    mcp = document.get("mcp")
+    if isinstance(mcp, dict) and "servers" in mcp:
+        return True
+    for value in list(document.values())[:256]:
+        if isinstance(value, dict) and _document_declares_mcp(value, depth + 1):
+            return True
+    return False
+
+
 # Documentation placeholders are informational: enough to be listed, never
 # enough to establish a technology or raise risk.
 EXAMPLE_CREDENTIAL_WEIGHT = 0.1
@@ -3995,17 +4020,24 @@ class FilesystemConnector(BaseConnector):
         if lower in _DEDICATED_MCP_CONFIG_NAMES:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
-            head = text[:200_000]
+            # Decide from the parsed structure when it is held (JSON/TOML): leading
+            # padding before the keys then cannot hide a server table. A JSON object
+            # must be decided structurally; the text fallback below never sees past
+            # its truncation, so a string search of a prefix could miss the keys.
+            if isinstance(document, dict):
+                return _document_declares_mcp(document)
+            # No parse is held for YAML here. Substring and anchored searches are linear,
+            # so read the whole (size-bounded) text rather than a prefix a server can be pushed past.
             return (
-                '"mcpServers"' in head
-                or '"mcp_servers"' in head
-                or "mcpServers:" in head
-                or "mcp_servers:" in head
-                or "[mcp_servers." in head
-                or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", head) is not None
-                or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", head) is not None
-                or ('"mcp"' in head and '"servers"' in head)
-                or ("mcp:" in head and "servers:" in head)
+                '"mcpServers"' in text
+                or '"mcp_servers"' in text
+                or "mcpServers:" in text
+                or "mcp_servers:" in text
+                or "[mcp_servers." in text
+                or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", text) is not None
+                or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", text) is not None
+                or ('"mcp"' in text and '"servers"' in text)
+                or ("mcp:" in text and "servers:" in text)
             )
         return False
 

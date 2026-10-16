@@ -72,7 +72,10 @@ coverage, even when a response includes an empty collection field.
   ordinary binary assets are not text evidence. IAM wildcard and
   agent-definition front-matter matching shares the bounded matcher budget;
   keep an external worker/job deadline for hard isolation.
-* Shared `HttpClient` requests require HTTPS without embedded credentials.
+* Shared `HttpClient` requests require HTTPS without embedded credentials, and
+  a URL containing a backslash is refused (it reads as one host to the URL
+  parser and another to the transport). A credentialed endpoint taken from a
+  remote response is also matched against an exact host, not a hostname suffix.
   Redirects and pagination stay on the configured origin. By default, private,
   loopback, link-local, metadata and other non-global addresses are rejected.
   The HTTPS adapter checks the addresses at connection time and connects directly
@@ -222,10 +225,13 @@ coverage, even when a response includes an empty collection field.
 
 - **By token shape:** Report evidence is redacted before it is shortened. Redaction withholds
   recognized token formats (provider prefixes such as `sk-`, `ghp_`, `glpat-`,
-  `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-` and `dop_v1_`),
+  `glrt-`, `xoxb-`, `xapp-`, `AIza`, `ya29.`, `npm_`, `pypi-`, `dop_v1_`,
+  `ABSK` and `bedrock-api-key-`),
   JWTs, private key blocks (PEM, PGP, SSH2 and PuTTY, an unterminated one to the
-  end of the text), URL userinfo, credential query keys (including `auth`,
-  `pwd` and `pat`) and webhook path segments, every cookie in a `Cookie`
+  end of the text), URL userinfo (including schemes whose name contains an
+  underscore, such as SQLAlchemy dialect URLs), credential query keys (including
+  `auth`, `pwd` and `pat`) and webhook or MCP-server path segments (Slack,
+  Discord, Teams, Zapier hooks and Zapier MCP server URLs), every cookie in a `Cookie`
   header, and compact `name:value` headers and passwords (`x-api-key:value`).
   A token or JWT is withheld behind a JSON-escaped line break or tab
   (`\n`, `\t`), a percent escape (`%3D`) or an underscore, and the prefixes no

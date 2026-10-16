@@ -224,6 +224,17 @@ def test_unparseable_timestamps_are_omitted_not_invented():
     assert _nulls(document) == []
 
 
+@pytest.mark.parametrize("value", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59.999999-05:00"])
+def test_out_of_range_timestamps_are_omitted_not_fatal(value):
+    """Regression (October 15 review F5): astimezone() overflowed at the datetime edge, aborting
+    the whole OCSF document instead of omitting the one field."""
+    finding = _finding(first_seen=value, last_seen=value)
+    document = _render(finding)  # must not raise OverflowError
+    (event,) = document["events"]
+    assert "first_seen_time" not in event and "last_seen_time" not in event
+    assert _nulls(document) == []
+
+
 # ---------------------------------------------------------- non-finite data
 
 

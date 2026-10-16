@@ -9,9 +9,12 @@ from shadowscan.models import Kind
 from shadowscan.risk import assess
 
 
-def _scan(tmp_path, run_connector, source, suffix=".py"):
+def _scan(tmp_path, run_connector, source, suffix=".py", scan_timeout=None):
     (tmp_path / f"app{suffix}").write_text(source)
-    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False)
+    extra = {"scan_timeout": scan_timeout} if scan_timeout is not None else {}
+    findings, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, scan_secrets=False, **extra
+    )
     assert not ctx.stats.incomplete, ctx.stats.errors
     return next(finding for finding in findings if finding.resource_type == "project")
 
@@ -464,5 +467,7 @@ def test_repeated_large_empty_schema_stays_within_analysis_budget(
         return timeout()
 
     monkeypatch.setattr(provider_tools, "pattern_timeout", bounded_analysis)
-    finding = _scan(tmp_path, run_connector, source)
+    # The claim here is about the structural (per-input analysis) budget, not wall time; give the
+    # per-file matching budget headroom so coverage tracing cannot trip it instead.
+    finding = _scan(tmp_path, run_connector, source, scan_timeout=30.0)
     assert finding.kind == Kind.FRAMEWORK_USAGE and "tool-use" not in finding.capabilities

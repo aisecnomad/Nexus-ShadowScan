@@ -185,3 +185,57 @@ def test_serving_engine_image_names_are_agents(tmp_path, run_connector, image):
 def test_engine_tokens_elsewhere_in_an_image_are_not_serving(tmp_path, run_connector, image):
     findings, ctx = _single_container(tmp_path, run_connector, {"image": image})
     assert findings == [] and not ctx.stats.incomplete
+
+
+def _pod(tmp_path, run_connector, pod_spec):
+    source = tmp_path / "workloads.json"
+    source.write_text(
+        json.dumps(
+            {
+                "kind": "List",
+                "items": [
+                    {
+                        "kind": "Deployment",
+                        "metadata": {"name": "chat", "namespace": "ml"},
+                        "spec": {"template": {"spec": pod_spec}},
+                    }
+                ],
+            }
+        )
+    )
+    return run_connector("cloud.kubernetes", input=str(source), cluster="test")
+
+
+def test_native_sidecar_init_container_is_inspected(tmp_path, run_connector):
+    """Regression (October 15 review): initContainers were ignored, so a native sidecar model
+    server (restartPolicy: Always) produced no finding on a complete scan."""
+    pod = {
+        "containers": [{"image": "nginx:1.25"}],
+        "initContainers": [
+            {
+                "name": "ollama",
+                "image": "ollama/ollama:0.4",
+                "restartPolicy": "Always",
+                "resources": {"limits": {"nvidia.com/gpu": "1"}},
+            }
+        ],
+    }
+    findings, ctx = _pod(tmp_path, run_connector, pod)
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert any("gpu-workload" in f.tags for f in findings)
+    assert any("ollama" in json.dumps(f.to_dict()) for f in findings)
+
+
+def test_ephemeral_container_model_image_is_inspected(tmp_path, run_connector):
+    pod = {
+        "containers": [{"image": "nginx:1.25"}],
+        "ephemeralContainers": [{"name": "debug", "image": "registry.example/ml/vllm-serving:1.4"}],
+    }
+    findings, ctx = _pod(tmp_path, run_connector, pod)
+    assert not ctx.stats.incomplete, ctx.stats.warnings
+    assert any("vllm-serving" in json.dumps(f.to_dict()) for f in findings)
+
+
+def test_malformed_init_containers_are_reported(tmp_path, run_connector):
+    findings, ctx = _pod(tmp_path, run_connector, {"containers": [], "initContainers": "nope"})
+    assert ctx.stats.incomplete

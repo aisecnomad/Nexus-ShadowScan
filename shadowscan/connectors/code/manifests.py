@@ -1037,6 +1037,32 @@ def parse_terraform(text: str) -> ManifestResult:
     return res
 
 
+def _is_cloudformation_template(document: dict[str, Any]) -> bool:
+    """Whether a parsed JSON object is a CloudFormation template, structurally.
+
+    ``AWSTemplateFormatVersion`` is optional, so the signal is a ``Resources`` mapping whose
+    entries declare a provider ``Type`` (``AWS::``, ``Custom::`` or ``Alexa::``). Bounded breadth.
+    """
+    resources = document.get("Resources")
+    if not isinstance(resources, dict) or not resources:
+        return False
+    return any(
+        isinstance(res, dict)
+        and isinstance(res.get("Type"), str)
+        and res["Type"].startswith(("AWS::", "Custom::", "Alexa::"))
+        for res in list(resources.values())[:4096]
+    )
+
+
+def _is_arm_template(document: dict[str, Any], lower_name: str) -> bool:
+    """Whether a parsed JSON object is an Azure Resource Manager template, structurally."""
+    schema = document.get("$schema")
+    if isinstance(schema, str) and "deploymenttemplate" in schema.lower():
+        return True
+    # azuredeploy.json without a readable $schema: a resources list is the remaining signal.
+    return "azuredeploy" in lower_name and isinstance(document.get("resources"), list)
+
+
 def parse_cloudformation(text: str) -> ManifestResult:
     res = ManifestResult()
     lines = _LineIndex(text)
@@ -1198,17 +1224,26 @@ def _parse_manifest(relpath: str, text: str, document: Any = None) -> ManifestRe
         ):
             return parse_cloudformation(text)
         return parse_compose_or_k8s(text)
-    if lower.endswith(".json") and (
-        "azuredeploy" in lower or '"$schema"' in text[:2000] and "deploymenttemplate" in text[:2000].lower()
-    ):
-        return parse_arm_or_bicep(text)
-    if lower.endswith(".json") and re.search(
-        r'"AWSTemplateFormatVersion"|"Transform"\s*:\s*"AWS::Serverless',
-        text[:4000],
-        timeout=_pattern_timeout(),
-        concurrent=False,
-    ):
-        return parse_cloudformation(text)
+    if lower.endswith(".json"):
+        # Decide from the parsed object when the caller holds one: a leading Metadata or
+        # Parameters block can push AWSTemplateFormatVersion (optional in CloudFormation)
+        # past any byte-prefix window, which once left Bedrock agent resources uninventoried
+        # on a complete scan. Fall back to a full-text search (linear) when no parse is held.
+        if isinstance(document, dict):
+            if _is_arm_template(document, lower):
+                return parse_arm_or_bicep(text)
+            if _is_cloudformation_template(document):
+                return parse_cloudformation(text)
+        else:
+            if "azuredeploy" in lower or ('"$schema"' in text and "deploymenttemplate" in text.lower()):
+                return parse_arm_or_bicep(text)
+            if re.search(
+                r'"AWSTemplateFormatVersion"|"Transform"\s*:\s*"AWS::Serverless',
+                text,
+                timeout=_pattern_timeout(),
+                concurrent=False,
+            ):
+                return parse_cloudformation(text)
     if ".github" in parts and "workflows" in parts:
         return parse_compose_or_k8s(text)
     return None
