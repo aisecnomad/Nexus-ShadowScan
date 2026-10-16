@@ -7,20 +7,70 @@ summarizes each release for people who install and operate ShadowScan.
 
 ### Integration review fixes (October 15)
 
-- **Redaction time under a conditional name (#235).**
-  `_redact_yaml_multiline_values` read a kept block under a name that carries
-  a credential only when its value is opaque (`key`) again from every such
-  name nested in it, and blank lines below the deepest one once per name
-  above them. A 500 KB staircase of nested `key:` lines took five to seven
-  seconds and 200 KB of them over blank lines about twenty, so one file in an
-  untrusted repository could exhaust its matching budget and leave the scan
-  incomplete (exit 3). A conditional name inside a block already kept is no
-  longer read again, and a bare `key:` whose first nested entry is read again
-  under its own name is left to the mapping's own entries, so the pass is
-  linear again (milliseconds for the same inputs and for a 1 MB staircase of
-  alternating `key:` and `x:` lines). Names that always carry a credential
-  (`password`, `api_key`) are read as before. Timing regressions pin the
-  staircase shapes.
+- **A conditional block hid the rest of a value that started in it (#235).**
+  #235 read a name that carries a credential only when its value is opaque
+  (`key`, `pwd`, `tlsKey`) inside `_redact_yaml_multiline_values`, one of the
+  established passes, which run before the mapping and assignment passes. A
+  block it withheld cut off any value that started inside the block and ran
+  past its end, and those passes then saw only the tail and showed it:
+  `key: |` over an opaque line and `password: "<head>` closed on the next,
+  unindented line showed `<tail>"`, where `main` withholds the whole value; so
+  did `api_key: [` or `api_key: {` continued below the block and `token:`
+  over an unindented value (3,901 of the reviewer's 4,000 enumerated shapes).
+  The design rule that an added rule runs after the established passes and
+  only adds markers is restored: `_redact_yaml_multiline_values` reads only
+  names that always carry a credential again, with `main`'s code (its output
+  is byte for byte `main`'s on 141,126 generated, decoy and YAML documents),
+  and the conditional block rule, with every refinement in the bullets
+  below, is an extended pass (`_redact_yaml_conditional_blocks`) that runs
+  last, on the text all other passes leave. It therefore reads the markers
+  they leave: a block line withheld whole (only a marker, quoted or not)
+  counts as a credential, so its block is withheld with the pieces beside it,
+  as when the line was read as written; a marker inside other text
+  (`password: [REDACTED]`) does not, and such a block keeps the rest of its
+  text, as the established passes left it. Reading what the other passes leave
+  has one cost against the earlier order: where an established rule reads the
+  conditional name itself, or the `- ` before it, as the value of a quoted
+  key with an empty value on the line above (`"password":` over
+  `jwtSecret: >`), no conditional name is left to read, as on `main`. On
+  129,000 generated documents (the reviewer's 4,000 shapes, the earlier
+  63,000 and 8,000, 33,000 from the reviewer's new seeds and 21,000 from
+  further seeds) no output shows a credential that `main` withholds. Against
+  the previous revision 13 show one: 10 of that kind, 2 whose short pieces sit
+  below the end of an always-sensitive block inside the conditional one, and
+  1 whose joined value the single-line test does not find opaque (the earlier
+  revision withheld it by joining around a form-feed line). Against #235, 88
+  (63 random values that read as words on a line of their own, 20 that the
+  previous revision showed as well, 5 of the consumed-name kind). The 12,000
+  decoy blocks, the 126 repository and installed YAML files and the
+  evaluation corpora give the same output as before. Most hostile shapes take
+  about as long through `sanitize_text`; a large block that is withheld is now
+  read by every other pass first, which makes a few shapes up to about twice
+  as slow, still linear (the slowest, 6.1 s at 1.6 MB, is unchanged). Regression tests
+  cover the reviewer's five constructs under four indicators and both line
+  ends, the full 4,000-shape enumeration (withheld and stable on a second
+  sanitization), the established pass reading only names that always carry
+  a credential, and blocks holding a withheld token or private key.
+- **Redaction time under a conditional name (#235).** The block pass read a
+  kept block under a name that carries a credential only when its value is
+  opaque (`key`) again from every such name nested in it, and blank lines
+  below the deepest one once per name above them. A 500 KB staircase of
+  nested `key:` lines took five to seven seconds and 200 KB of them over blank
+  lines about twenty, so one file in an untrusted repository could exhaust its
+  matching budget and leave the scan incomplete (exit 3). A conditional name
+  inside a block already kept is no longer read again, and a bare `key:` whose
+  first nested entry is read again under its own name is left to the
+  mapping's own entries, so the pass is linear again (milliseconds for the
+  same inputs and for a 1 MB staircase of alternating `key:` and `x:` lines).
+  Names that always carry a credential (`password`, `api_key`) are read as
+  before. Timing regressions pin the staircase shapes, through both YAML
+  passes. The mapping-line pattern both passes (and `main`) use also kept a
+  backtracking point for every `- ` of a line of sequence markers without a
+  name: about 80 bytes of stack per character, half a gigabyte for one
+  6.4 MB line and over a second on first use. The markers are now read
+  possessively, which matches the same lines with the same groups (checked
+  against the former pattern on 724,000 random and generated texts), and a
+  test bounds that memory.
 - **A note inside a block scalar kept its credential (#235).** `key: |` over an
   opaque value kept it when a `# rotate quarterly` comment or a sentence sat
   in the block, before or after the value: every line was joined into one
@@ -40,7 +90,10 @@ summarizes each release for people who install and operate ShadowScan.
   wrapped value. Indentation is the blanks and tabs before a line, as the
   block boundary measures it: a form feed after them no longer moved a line
   into a nested block's group, where its placeholder text kept the outer block
-  and hid the nested one. Each line is also tested on its own, after a
+  and hid the nested one. A form feed or vertical tab after the indentation is
+  not part of the line's text either: a line led by one was never tested
+  (`key: |` over a form feed and an opaque value showed it). Each line is also
+  tested on its own, after a
   trailing ` # note` (`tlsKey:` over `<opaque>  # rotated 2026-01`) or a `- `
   sequence marker (`key:` over `- <opaque>`) is set aside, as the single-line
   form `key: <line>` reads its value: an identifier made of words
@@ -49,8 +102,9 @@ summarizes each release for people who install and operate ShadowScan.
   `cacheKey:` over `- ipv4Addr6To4` and about four times as many synthetic
   non-secret blocks as #235. A line that form never reads as a value is tested
   as written: a block scalar's leading `#` is content (`pwd: |` over
-  `#<opaque>`), and a line with other symbols or `sha256:<opaque>` is withheld
-  when it holds an opaque run. A random value of about 8 to 16 characters that
+  `#<opaque>`), and a line with other symbols or `sha256:<opaque>`, or with an
+  `=` that does not pad its end (`3V/jntY=3dr7...`, which the previous
+  revision showed), is withheld when it holds an opaque run. A random value of about 8 to 16 characters that
   happens to read as words now keeps its text on a line of its own, as it
   does after `key: ` on one line. A bare `key:` is left to its nested mapping
   only when the first entry is read again under its own name: one with its
@@ -59,16 +113,19 @@ summarizes each release for people who install and operate ShadowScan.
   again (`private:`, `stringData:` or `value: |` over an opaque line, the same
   with a tag or an anchor before the indicator such as `value: !!binary |`,
   or any entry after a lone carriage return) the whole block is read, as #235
-  did. On 63,000 generated documents no output shows a credential that
-  `main` withholds; against #235 the remaining shown values are such
-  word-like random values and values #235 withheld only by joining them with
-  a following `next:` key or a path line. Regression tests cover a note
+  did. No generated document shows a credential that `main` withholds (see
+  the first bullet above: the 63,000 documents this claim first rested on
+  held none of the shapes that showed one); against #235 the remaining shown
+  values are such word-like random values, values #235 withheld only by
+  joining them with a following `next:` key or a path line, and those of the
+  consumed-name kind. Regression tests cover a note
   before, between and after the wrapped lines, a trailing note, a sequence
   entry, a `#`-prefixed value in `|`, `|-` and `>-` blocks, a path or URL
   beside the value, nested blocks inside a kept block, wrapped values across
   indentation (tab, deeper and shallower lines, a nested block's end, a
-  sequence entry, a form feed), node properties, the identifier and digest
-  lines that stay, a bare conditional name over `private:`, `stringData:`
+  sequence entry, a form feed), a line led by a form feed or a vertical tab,
+  lines with an `=` before their end, node properties, the identifier and
+  digest lines that stay, a bare conditional name over `private:`, `stringData:`
   and `value:` with LF and CRLF line ends and over a nested `key:` after a
   lone carriage return, through `sanitize_text` and `sanitize`. Operators
   with Kubernetes secrets or Helm values written this way should regenerate
@@ -515,8 +572,11 @@ summarizes each release for people who install and operate ShadowScan.
   same `_credential_literal` test the single-line pass uses, so a wrapped base64
   blob is tested as the one value it encodes, while a path, a sentence, a
   placeholder and a name that does not name a credential (`data: |`) keep their
-  text. Regression tests cover every block marker, the quoted spellings of the
-  key, the wrapped form and each value that must survive.
+  text. The rule runs after every other pass, as an added rule, so it only
+  adds markers; #235 ran it inside the established YAML pass (see
+  Integration review fixes above). Regression tests cover every block marker,
+  the quoted spellings of the key, the wrapped form and each value that must
+  survive.
 - **Egress policy.** Every connector now accepts `allow_private_origin`,
   lifting the loopback, link-local, private and cloud-metadata refusal for that
   connector alone. Reaching one internal gateway previously required

@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import time
+import tracemalloc
 
 import pytest
 
-from shadowscan.utils.redaction import REDACTED, _redact_yaml_multiline_values, sanitize, sanitize_text
+from shadowscan.utils import redaction
+from shadowscan.utils.redaction import (
+    REDACTED,
+    _redact_yaml_conditional_blocks,
+    _redact_yaml_multiline_values,
+    sanitize,
+    sanitize_text,
+)
 
 SECRET = "opaque-synthetic-credential"
 TAIL = "opaque-private-tail"
@@ -289,9 +298,10 @@ def test_yaml_nested_conditional_names_are_read_in_linear_time(header, depth, bl
     # blank lines below the deepest key were read once per key above them:
     # these inputs of 100 to 500 KB took five to twenty seconds.
     source = "".join(" " * level + header + "\n" for level in range(depth)) + "\n" * blank_lines
-    started = time.perf_counter()
-    assert _redact_yaml_multiline_values(source) == source
-    assert time.perf_counter() - started < 1.0
+    for yaml_pass in (_redact_yaml_conditional_blocks, _redact_yaml_multiline_values):
+        started = time.perf_counter()
+        assert yaml_pass(source) == source
+        assert time.perf_counter() - started < 1.0
 
 
 @pytest.mark.parametrize(("size", "blank_lines"), [(1_000_000, 0), (200_000, 50_000)])
@@ -304,9 +314,10 @@ def test_yaml_alternating_conditional_staircase_is_read_in_linear_time(size, bla
         lines.append(" " * len(lines) + ("key:" if len(lines) % 2 == 0 else "x:") + "\n")
         written += len(lines[-1])
     source = "".join(lines) + "\n" * blank_lines
-    started = time.perf_counter()
-    assert _redact_yaml_multiline_values(source) == source
-    assert time.perf_counter() - started < 1.0
+    for yaml_pass in (_redact_yaml_conditional_blocks, _redact_yaml_multiline_values):
+        started = time.perf_counter()
+        assert yaml_pass(source) == source
+        assert time.perf_counter() - started < 1.0
 
 
 @pytest.mark.parametrize(
@@ -409,3 +420,190 @@ def test_yaml_conditional_name_block_withholds_an_opaque_line_the_single_line_pa
     secret = line.lstrip("#- ").split("  #")[0].removeprefix("sha256:")
     clean = _withheld_everywhere(source, secret)
     assert REDACTED in clean and "model: langchain" in clean
+
+
+# A value that starts inside a conditional block and runs past its end. The
+# block was withheld before the mapping and assignment passes read the text,
+# which then saw only the value's tail (the line after the block) and showed
+# it, where main and #235 withhold the whole value.
+RUN_HEAD = "Kq7Lm2Np9Rs4"
+RUN_TAIL = "Tv6Wx8Yz1Ab3Cd5Ef"
+RUNNING_VALUES = {
+    "double-quoted": ("password", [f'"{RUN_HEAD}', f'{RUN_TAIL}"']),
+    "single-quoted": ("client_secret", [f"'{RUN_HEAD}", f"{RUN_TAIL}'"]),
+    "flow-sequence": ("api_key", ["[", f'"{RUN_TAIL}"]']),
+    "flow-mapping": ("api_key", ["{", f'v: "{RUN_TAIL}"}}']),
+    "next-line": ("token", ["", RUN_TAIL]),
+}
+
+
+def _running_value_source(
+    name: str, indicator: str, always: str, value: list[str], eol: str, base: int
+) -> str:
+    """A conditional block over an opaque line and an always-sensitive value that ends below the block.
+
+    The value's last line is indented as the conditional name, or not at all
+    after 'token:' (the established passes read a lone value on the next line
+    only when it is not indented).
+    """
+    indent = " " * base
+    first, rest = value
+    lines = [
+        *(["spec:"] if base else []),
+        f"{indent}{name}:" + (f" {indicator}" if indicator else ""),
+        f"{indent}  AbCdEf0123456789XyZ",
+        f"{indent}  {always}:" + (f" {first}" if first else ""),
+        (indent if first else "") + rest,
+        "next: 1",
+    ]
+    return eol.join(lines) + eol
+
+
+@pytest.mark.parametrize("eol", ["\n", "\r\n"])
+@pytest.mark.parametrize("indicator", ["|", "", ">-", "!!binary |"])
+@pytest.mark.parametrize("construct", list(RUNNING_VALUES))
+def test_yaml_value_running_past_a_conditional_block_is_withheld_whole(construct, indicator, eol):
+    always, value = RUNNING_VALUES[construct]
+    source = _running_value_source("key", indicator, always, value, eol, 0)
+    # The established passes withhold the whole value, as on main.
+    assert RUN_TAIL not in redaction._sanitize_established(source)
+    clean = _withheld_everywhere(source, RUN_HEAD, RUN_TAIL, "AbCdEf0123456789XyZ")
+    assert REDACTED in clean and clean.endswith("next: 1" + eol)
+    assert clean.count("\n") == source.count("\n")
+    assert sanitize_text(clean) == clean
+
+
+def test_yaml_values_the_established_passes_withhold_stay_withheld_under_any_conditional_block():
+    """The reviewer's enumeration: names, constructs, indentation, indicators, line ends and bodies."""
+    shown = []
+    for name, always, construct, base, indicator, eol, body in itertools.product(
+        ["key", "pwd", "sshKey", "tls.key", "primaryKey"],
+        ["password", "token", "api_key", "client_secret", "secret"],
+        list(RUNNING_VALUES),
+        [0, 2],
+        ["|", "", ">-", "!!binary |"],
+        ["\n", "\r\n"],
+        ["AbCdEf0123456789XyZ", "Kd8Wq2Zp+/Lm4Tx9Rb"],
+    ):
+        value = RUNNING_VALUES[construct][1]
+        source = _running_value_source(name, indicator, always, value, eol, base).replace(
+            "AbCdEf0123456789XyZ", body
+        )
+        clean = sanitize_text(source)
+        if RUN_TAIL in clean or RUN_HEAD in clean or sanitize_text(clean) != clean:
+            shown.append(source)
+    assert not shown, shown[:3]
+
+
+def test_the_established_yaml_pass_reads_only_names_that_always_carry_a_credential():
+    """A conditional name's block is read after every other pass, never among the established ones."""
+    source = f"key: |\n  {OPAQUE}\nmodel: langchain\n"
+    assert _redact_yaml_multiline_values(source) == source
+    assert OPAQUE in redaction._sanitize_established(source)
+    assert _redact_yaml_conditional_blocks(source) == 'key: "[REDACTED]"\n\nmodel: langchain\n'
+    assert sanitize_text(source) == 'key: "[REDACTED]"\n\nmodel: langchain\n'
+    always = f"password: |\n  {OPAQUE}\nmodel: langchain\n"
+    assert _redact_yaml_multiline_values(always) == 'password: "[REDACTED]"\n\nmodel: langchain\n'
+    assert _redact_yaml_conditional_blocks(always) == always
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # base64 pads with '=' only at its end: the single-line pass reads no token here.
+        "3V/jntY=3dr7TUiWysHLhH6FMhB+LdyxH",
+        "Ab3Cd4Ef5Gh6Ij7Kl8===",
+        "=Ab3Cd4Ef5Gh6Ij7Kl8Mn",
+    ],
+)
+def test_yaml_conditional_block_line_no_token_reading_covers_is_tested_as_written(line):
+    source = f"pwd: |\n  {line}\nmodel: langchain\n"
+    clean = _withheld_everywhere(source, line, line.strip("="))
+    assert REDACTED in clean and "model: langchain" in clean
+    assert sanitize_text(clean) == clean
+
+
+@pytest.mark.parametrize(
+    ("lines", "secrets"),
+    [
+        (["\fAbCdEf0123456789XyZqR"], ("AbCdEf0123456789XyZqR",)),
+        (["\vAbCdEf0123456789XyZqR"], ("AbCdEf0123456789XyZqR",)),
+        (["\fAb1Cd2", "Ef3Gh4"], ("Ab1Cd2", "Ef3Gh4")),
+    ],
+    ids=["form-feed", "vertical-tab", "form-feed-wrapped"],
+)
+def test_yaml_conditional_block_line_after_a_form_feed_is_tested(lines, secrets):
+    """Whitespace after the indentation starts no text: the line was never tested."""
+    source = "key: |\n" + "".join(f"  {line}\n" for line in lines) + "model: langchain\n"
+    clean = _withheld_everywhere(source, *secrets)
+    assert REDACTED in clean and "model: langchain" in clean
+    assert clean.count("\n") == source.count("\n")
+
+
+GITHUB_TOKEN = "ghp_" + "Ab1Cd2Ef3Gh4Ij5Kl6Mn7Op8Qr9St0Uv1Wx2Y"
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [
+        # Withheld whole by the token pass; the pieces beside it went with the block.
+        [GITHUB_TOKEN, "AbC1", "dEf2"],
+        ["AbC1", f"- {GITHUB_TOKEN}  # rotated", "dEf2"],
+        # A private key, withheld whole before every name pass.
+        ["-----BEGIN " + "PRIVATE KEY-----", "MIIEvQIBADANBgkqhkiG9w0BAQ", "-----END " + "PRIVATE KEY-----"],
+    ],
+    ids=["token-line", "token-entry", "private-key"],
+)
+def test_yaml_conditional_block_holding_what_another_pass_withheld_shows_none_of_it(lines):
+    """The block pass reads the markers the other passes left; a line withheld whole withholds its block."""
+    source = "pwd: |\n" + "".join(f"  {line}\n" for line in lines) + "model: langchain\n"
+    clean = _withheld_everywhere(source, GITHUB_TOKEN[4:], "AbC1", "dEf2", "MIIEvQIBADANBgkqhkiG9w0BAQ")
+    assert clean == 'pwd: "[REDACTED]"' + "\n" * (len(lines) + 1) + "model: langchain\n"
+    assert sanitize_text(clean) == clean
+
+
+LINE_PASSWORD = "Zx9Yw8Vu7Ts6" + "Rq5Po4Nm3Lk2"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "password: hunter2-staging",
+        f"Authorization: Bearer {LINE_PASSWORD}",
+        "https://admin:" + LINE_PASSWORD + "@db.internal/app",
+    ],
+)
+def test_yaml_conditional_block_keeps_a_line_whose_value_another_pass_withheld(body):
+    """A marker inside a line of other text names no opaque value of the block's own: the rest stays."""
+    source = f"key: |\n  {body}\nmodel: langchain\n"
+    clean = _withheld_everywhere(source, "hunter2-staging", LINE_PASSWORD)
+    assert clean.startswith("key: |\n  ") and REDACTED in clean
+    assert clean == redaction._sanitize_established(source)
+    assert sanitize_text(clean) == clean
+
+
+def test_a_long_line_of_sequence_markers_is_read_in_linear_time_and_constant_memory():
+    """'(?:-[ \\t]+)*' kept a backtracking point for every '- ' on a line without a name.
+
+    That was about 80 bytes of regular-expression stack per character of the
+    line (half a gigabyte for one 6.4 MB line, over a second on first use),
+    in the established pass as well as the conditional one.
+    """
+    line = "  " + "- " * 200_000 + "x"
+    tracing = tracemalloc.is_tracing()
+    if not tracing:
+        tracemalloc.start()
+    try:
+        tracemalloc.reset_peak()
+        before = tracemalloc.get_traced_memory()[0]
+        assert redaction._YAML_MAPPING_LINE.match(line) is None
+        stack = tracemalloc.get_traced_memory()[1] - before
+    finally:
+        if not tracing:
+            tracemalloc.stop()
+    assert stack < 100_000, stack
+    source = "key:\n" + "  " + "- " * 3_200_000 + "x\n"
+    for yaml_pass in (_redact_yaml_multiline_values, _redact_yaml_conditional_blocks):
+        started = time.perf_counter()
+        yaml_pass(source)
+        assert time.perf_counter() - started < 5.0

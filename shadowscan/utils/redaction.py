@@ -47,6 +47,7 @@ from shadowscan.utils.redaction_assignments import (
     _redact_mapping_values,
     _redact_opaque_assignments,
     _redact_plain_assignments,
+    _redact_yaml_conditional_blocks,
     _redact_yaml_multiline_values,
 )
 from shadowscan.utils.redaction_calls import _redact_auth_pairs, _redact_credential_calls
@@ -535,7 +536,11 @@ def _redact_extended(text: str, *, reread: bool = False) -> str:
     glued to a following name ('--key v#openaiKey = ...') would hide that
     name from the others. URLs inside another URL's text are read after all
     of them, and a text they change is then read once more, as the next
-    sanitization would read it (``reread``).
+    sanitization would read it (``reread``). A YAML block under a
+    credential-like name that holds an opaque value goes after everything
+    else (see ``_redact_yaml_conditional_blocks``): withheld whole any
+    earlier, it would hide from the other passes a value that starts inside
+    the block and runs past its end.
     """
     text = _redact_markup_settings(text)
     text = _redact_record_settings(text)
@@ -569,7 +574,7 @@ def _redact_extended(text: str, *, reread: bool = False) -> str:
     # URL the established passes read; they read the text once more.
     nested = _redact_nested_urls(result)
     if nested == result or reread:
-        return nested
+        return _redact_yaml_conditional_blocks(nested)
     return _redact_extended(_established_passes(nested), reread=True)
 
 

@@ -113,8 +113,13 @@ _MAPPING_VALUE = re.compile(
     r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*(?::|=>)[ \t]*"
     r"(?P<value>[\"'`\[\{(])"
 )
+# A mapping line: blanks and sequence markers ('- ', '- - '), then a name and
+# its colon. The markers are read possessively: a name never starts with '-'
+# or a blank, so giving a marker back never lets a line match, and on a long
+# line of markers without a name each one kept a backtracking point, about 80
+# bytes of stack per character (half a gigabyte for one 6.4 MB line).
 _YAML_MAPPING_LINE = re.compile(
-    r"^(?P<prefix>[ \t]*(?:-[ \t]+)*)(?:(?P<quote>[\"'])"
+    r"^(?P<prefix>[ \t]*(?:-[ \t]+)*+)(?:(?P<quote>[\"'])"
     r"(?P<quoted>[A-Za-z_][A-Za-z0-9_.-]*)(?P=quote)"
     r"|(?P<plain>[A-Za-z_][A-Za-z0-9_.-]*))[ \t]*:[ \t]*"
     r"(?P<value>[^\r\n]*)",
@@ -168,9 +173,11 @@ def _value_part(text: str) -> bool:
 
 
 # A character outside the base64 and URL-safe alphabet of the value the
-# single-line pass reads after 'key: ' (``_OPAQUE_VALUE``), and a digest
-# written after its algorithm ('sha256:<hex>'), which keeps its text there.
-_UNREAD_CHARACTER = re.compile(r"[^A-Za-z0-9+/_.~=\s-]")
+# single-line pass reads after 'key: ' (``_OPAQUE_VALUE``), or an '=' that is
+# not the padding that ends such a value ('3V/jntY=3dr7...', 'Ab3Cd...==='),
+# which that pass cannot read as one token; and a digest written after its
+# algorithm ('sha256:<hex>'), which keeps its text there.
+_UNREAD_CHARACTER = re.compile(r"[^A-Za-z0-9+/_.~=\s-]|=(?!=?\Z)")
 _LABELLED_DIGEST = re.compile(r"[A-Za-z][A-Za-z0-9_.+-]*:[0-9A-Fa-f]+")
 
 
@@ -178,10 +185,10 @@ def _entry_depth(line: str) -> int | None:
     """Where the block of a block line that is a mapping entry ends, or None for any other line.
 
     An entry is a line with its value below or after a blank ('name:',
-    'name: |', 'name: v'), or under a name this pass reads ('key:v'). A colon
-    followed by text otherwise makes a plain scalar ('sha256:<hex>'). Its block
-    ends at the first line indented no deeper than its key, sequence markers
-    included ('- name: |'), as ``_redact_yaml_multiline_values`` measures it.
+    'name: |', 'name: v'), or under a name the YAML block passes read
+    ('key:v'). A colon followed by text otherwise makes a plain scalar
+    ('sha256:<hex>'). Its block ends at the first line indented no deeper than
+    its key, sequence markers included ('- name: |'), as those passes measure it.
     """
     entry = _YAML_MAPPING_LINE.match(line)
     if entry is None:
@@ -220,8 +227,10 @@ def _single_line_credential(text: str) -> bool:
     That pass reads no value from any other line without blanks, which is
     tested as it is, as a joined value is: one starting with '#', which in a
     '|' or '>' block is content, and one holding another character
-    ('Kx7!mQ2&Lp9aB3cD4e', 'sha256:<opaque>'). A digest after its algorithm
-    ('sha256:<hex>') keeps its text, as it does after 'key: '.
+    ('Kx7!mQ2&Lp9aB3cD4e', 'sha256:<opaque>') or an '=' that does not pad its
+    end ('3V/jntY=3dr7...'), which that pass cannot read as one token. A
+    digest after its algorithm ('sha256:<hex>') keeps its text, as it does
+    after 'key: '.
     """
     if not any(char.isspace() for char in text) and (
         text.startswith("#") or _UNREAD_CHARACTER.search(text) is not None
@@ -241,17 +250,33 @@ def _single_line_credential(text: str) -> bool:
     return _credential_literal(value, positional=False)
 
 
+def _withheld_line(text: str) -> bool:
+    """Whether a block line holds only what another pass withheld: markers, and quotes or punctuation.
+
+    The conditional block pass reads the text every other pass leaves (see
+    ``_redact_yaml_conditional_blocks``). A line withheld whole held a
+    credential, perhaps one piece of a value wrapped over the block's lines,
+    and the block holding it is withheld, as when the line was read as written.
+    """
+    if REDACTED not in text:
+        return False
+    return not any(char.isalnum() or char.isspace() for char in text.replace(REDACTED, ""))
+
+
 def _opaque_block_credential(lines: list[str]) -> bool:
     """Whether a block scalar's own content is an opaque credential.
 
     Read for a name that carries a credential only when its value is opaque
     ('key'), the way the single-line assignment pass reads one. ``lines`` are
     the block's non-blank lines with their indentation, the blanks and tabs
-    before the text, as the block boundary measures it.
+    before the text, as the block boundary measures it. Any other whitespace
+    after the indentation (a form feed, a vertical tab) is not part of the
+    text the tests below read.
 
     Each line is tested on its own as the single-line pass reads a value
     (``_single_line_credential``): as it is, without a trailing ' # note' and
-    without leading '- ' markers ('key:' over '- <opaque>').
+    without leading '- ' markers ('key:' over '- <opaque>'). A line that
+    another pass withheld whole (``_withheld_line``) counts as a credential.
 
     Lines are also joined without a separator, so that a wrapped base64 blob
     is tested as the one value it encodes, and a value joined from two lines
@@ -286,9 +311,12 @@ def _opaque_block_credential(lines: list[str]) -> bool:
     run_limit = -1
     for line in lines:
         text = line.lstrip(" \t")
-        if any(_single_line_credential(reading) for reading in _line_readings(text)):
-            return True
         indent = len(line[: len(line) - len(text)].expandtabs(8))
+        # A form feed or a vertical tab after the indentation starts no text.
+        text = text.lstrip()
+        readings = _line_readings(text)
+        if any(_withheld_line(reading) or _single_line_credential(reading) for reading in readings):
+            return True
         while entries and entries[-1] >= indent:
             entries.pop()
         if indent != depth:
@@ -323,8 +351,8 @@ def _entry_read_on_its_own(text: str, line_start: int, content: str) -> bool:
     A bare 'key:' over a nested mapping holds a collection, not an opaque
     scalar, and is left to its entries when each is read again: an entry with
     its value on its line by the line pass, one whose value is on the lines
-    below ('id:', 'id: |') only when this pass reads its name. Otherwise the
-    whole block is read here, as an entry like 'stringData:' over an opaque
+    below ('id:', 'id: |') only when a YAML block pass reads its name. Otherwise
+    the whole block is read here, as an entry like 'stringData:' over an opaque
     line is never read again. A colon followed by text ('sha256:<opaque>')
     makes a plain scalar, not an entry. The mapping pattern starts no line
     after a lone carriage return, so an entry there is never read again either.
@@ -349,25 +377,16 @@ def _redact_yaml_multiline_values(text: str) -> str:
     boundary once, without loading or executing the untrusted source. Preserve
     newline counts for evidence locations and the following peer mapping.
 
-    A name that always carries a credential ('password') withholds its block
-    whatever it holds. A name that carries one only when the value is opaque
-    ('key') withholds its block only then, so that a Kubernetes secret's
-    'key: |' is read like the single-line 'key: <opaque>' the assignment pass
-    already withholds, while 'key: |' over a path or a sentence keeps its text.
+    An established pass: only a name that always carries a credential
+    ('password', 'api_key') is read here, and its block is withheld whatever
+    it holds. A name that carries one only when the value is opaque ('key') is
+    read after every other pass (see ``_redact_yaml_conditional_blocks``).
     """
     pieces: list[str] = []
     cursor = 0
-    # The end of the last conditionally named block that was kept. A mapping
-    # line inside it is that block's text, already read; reading it again from
-    # every 'key' line nested in it took seconds on a few hundred kilobytes.
-    kept_until = 0
     for match in _YAML_MAPPING_LINE.finditer(text):
         key = match.group("quoted") or match.group("plain")
-        if match.start() < cursor:
-            continue
-        always_sensitive = _sensitive_assignment_key(key)
-        # A conditionally sensitive name is decided by the block's content below.
-        if not always_sensitive and (not _credential_name(key) or match.start() < kept_until):
+        if match.start() < cursor or not _sensitive_assignment_key(key):
             continue
         value = match.group("value").strip()
         # Quoted and flow-style values are consumed by the mapping lexer.
@@ -384,7 +403,6 @@ def _redact_yaml_multiline_values(text: str) -> str:
             continue
         indent = len(match.group("prefix").expandtabs(8))
         has_continuation = False
-        content_lines: list[str] = []
         while position < len(text):
             line = _YAML_CONTINUATION_LINE.match(text, position)
             assert line is not None
@@ -393,22 +411,90 @@ def _redact_yaml_multiline_values(text: str) -> str:
             whitespace = len(content) - len(content.lstrip(" \t"))
             if content.strip() and len(content[:whitespace].expandtabs(8)) <= indent:
                 break
-            if (
-                not always_sensitive
-                and not value
-                and not has_continuation
-                and content.strip()
-                and _entry_read_on_its_own(text, position, content)
-            ):
-                break
             has_continuation = has_continuation or bool(content.strip())
-            if content.strip():
-                content_lines.append(content.rstrip())
             end = line.end()
             position = end
         if not has_continuation:
             continue
-        if not always_sensitive and not _opaque_block_credential(content_lines):
+        pieces.append(text[cursor:start])
+        pieces.append('"' + REDACTED + '"' + "\n" * text[start:end].count("\n"))
+        cursor = end
+    if not pieces:
+        return text
+    pieces.append(text[cursor:])
+    return "".join(pieces)
+
+
+def _redact_yaml_conditional_blocks(text: str) -> str:
+    """Withhold a YAML block under a name that carries a credential only when its value is opaque.
+
+    A Kubernetes secret's 'key: |' is read like the single-line 'key: <opaque>'
+    that the assignment pass withholds, while 'key: |' over a path or a
+    sentence keeps its text (see ``_opaque_block_credential``). A name that
+    always carries a credential ('password') is the established pass's
+    (``_redact_yaml_multiline_values``), which withheld its block already.
+
+    This is an extended pass, and it runs after every other pass, on the text
+    they leave (see ``sanitize_text``): it only adds markers. Withheld in the
+    established passes, before the mapping and assignment passes read the
+    text, a block cut off a value that starts inside it and runs past its end
+    ('password: "...' closed on a later, unindented line, an unclosed '[' or
+    '{', or 'token:' over an unindented value), and those passes then showed
+    the rest of the value. A block may therefore hold the markers of what the
+    other passes withheld. A line withheld whole counts as a credential
+    (``_withheld_line``), so the pieces of a value beside it go with it; a
+    marker inside a line of other text ('password: [REDACTED]') names no
+    opaque value of the block's own (see ``_credential_literal``), and that
+    block is withheld only when the rest of its content is opaque.
+    """
+    pieces: list[str] = []
+    cursor = 0
+    # The end of the last conditionally named block that was kept. A mapping
+    # line inside it is that block's text, already read; reading it again from
+    # every 'key' line nested in it took seconds on a few hundred kilobytes.
+    kept_until = 0
+    for match in _YAML_MAPPING_LINE.finditer(text):
+        if match.start() < max(cursor, kept_until):
+            continue
+        key = match.group("quoted") or match.group("plain")
+        if _sensitive_assignment_key(key) or not _credential_name(key):
+            continue
+        value = match.group("value").strip()
+        # Quoted and flow-style values are consumed by the mapping lexer.
+        if value.startswith(('"', "'", "`", "[", "{", "(")):
+            continue
+        start = match.start("value")
+        end = match.end()
+        position = end
+        if text.startswith("\r\n", position):
+            position += 2
+        elif text.startswith(("\n", "\r"), position):
+            position += 1
+        else:
+            continue
+        indent = len(match.group("prefix").expandtabs(8))
+        content_lines: list[str] = []
+        while position < len(text):
+            line = _YAML_CONTINUATION_LINE.match(text, position)
+            assert line is not None
+            content = line.group(0).rstrip("\r\n")
+            whitespace = len(content) - len(content.lstrip(" \t"))
+            if content.strip() and len(content[:whitespace].expandtabs(8)) <= indent:
+                break
+            if (
+                not value
+                and not content_lines
+                and content.strip()
+                and _entry_read_on_its_own(text, position, content)
+            ):
+                break
+            if content.strip():
+                content_lines.append(content.rstrip())
+            end = line.end()
+            position = end
+        if not content_lines:
+            continue
+        if not _opaque_block_credential(content_lines):
             kept_until = end
             continue
         pieces.append(text[cursor:start])
