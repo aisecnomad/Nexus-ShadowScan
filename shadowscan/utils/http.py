@@ -250,6 +250,14 @@ def _resolve_bounded(host: str, port: int, budget: float, **kwargs: Any) -> list
     answers: list[list[Any]] = []
     failures: list[BaseException] = []
     done = threading.Event()
+    # The slot is returned exactly once: by the worker when it ends, or below
+    # when no worker started. An interrupt can leave start() after the thread
+    # is already running, and then both sides reach the release.
+    freed = threading.Lock()
+
+    def free_slot() -> None:
+        if freed.acquire(blocking=False):
+            slots.release()
 
     def resolve() -> None:
         try:
@@ -258,13 +266,16 @@ def _resolve_bounded(host: str, port: int, budget: float, **kwargs: Any) -> list
             failures.append(exc)
         finally:
             done.set()
-            slots.release()
+            free_slot()
 
-    worker = threading.Thread(target=resolve, name="shadowscan-http-resolve", daemon=True)
     try:
+        worker = threading.Thread(target=resolve, name="shadowscan-http-resolve", daemon=True)
         worker.start()
-    except RuntimeError:  # "can't start new thread": no worker will release the slot
-        slots.release()
+    except BaseException:
+        # RuntimeError ("can't start new thread"), MemoryError from building the
+        # thread or its state, or an interrupt: a slot no worker returns would
+        # be lost for good, and after every slot every lookup would refuse.
+        free_slot()
         raise
     if not done.wait(remaining):
         raise TimeoutError(_RESOLVE_EXPIRED)

@@ -17,6 +17,7 @@ import math
 import socket
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -223,19 +224,74 @@ def test_lookup_waits_within_its_budget_for_a_slot_to_free(monkeypatch):
     assert calls == [("held.example", 443), ("next.example", 443)]
 
 
-def test_a_worker_that_cannot_start_returns_its_slot(monkeypatch):
+@pytest.mark.parametrize("stage", ["construct", "start"])
+@pytest.mark.parametrize("failure", [RuntimeError, MemoryError])
+def test_a_worker_that_cannot_start_returns_its_slot(monkeypatch, failure, stage):
+    # The OS refusing a thread raises RuntimeError; CPython raises MemoryError when it
+    # cannot allocate the thread or its state. Only RuntimeError returned the slot, so
+    # after 32 such failures every later lookup refused for the life of the process.
     class Unstartable(threading.Thread):
+        def __init__(self, *args, **kwargs) -> None:
+            if stage == "construct":
+                raise failure("can't start new thread")
+            super().__init__(*args, **kwargs)
+
         def start(self) -> None:
-            raise RuntimeError("can't start new thread")
+            raise failure("can't start new thread")
 
     slots = threading.BoundedSemaphore(1)
     monkeypatch.setattr("shadowscan.utils.http._resolver_slots", slots)
     monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(return_value=PUBLIC_ANSWER))
     with monkeypatch.context() as patched:
         patched.setattr("shadowscan.utils.http.threading.Thread", Unstartable)
-        with pytest.raises(RuntimeError):
-            _resolve_bounded("fast.example", 443, 5.0, proto=socket.IPPROTO_TCP)
+        for _ in range(3):
+            with pytest.raises(failure):
+                _resolve_bounded("fast.example", 443, 5.0, proto=socket.IPPROTO_TCP)
     assert _resolve_bounded("fast.example", 443, 5.0, proto=socket.IPPROTO_TCP) == PUBLIC_ANSWER
+
+
+class _Interrupted(BaseException):
+    """An interrupt delivered while ``Thread.start`` waits for the new thread."""
+
+
+def test_a_worker_interrupted_after_it_started_returns_its_slot_once(monkeypatch):
+    # The worker ran and returned its slot; the failed start must not return it again
+    # (a bounded semaphore refuses that, replacing the interrupt with ValueError).
+    class StartedThenInterrupted(threading.Thread):
+        def start(self) -> None:
+            super().start()
+            self.join(10)
+            raise _Interrupted
+
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr("shadowscan.utils.http._resolver_slots", slots)
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", Mock(return_value=PUBLIC_ANSWER))
+    with monkeypatch.context() as patched:
+        patched.setattr("shadowscan.utils.http.threading.Thread", StartedThenInterrupted)
+        with pytest.raises(_Interrupted):
+            _resolve_bounded("fast.example", 443, 5.0, proto=socket.IPPROTO_TCP)
+    assert slots.acquire(blocking=False) and not slots.acquire(blocking=False)
+    slots.release()
+    assert _resolve_bounded("fast.example", 443, 5.0, proto=socket.IPPROTO_TCP) == PUBLIC_ANSWER
+
+
+def test_a_lookup_whose_budget_ends_after_it_takes_a_slot_returns_it(monkeypatch):
+    # The slot is free, but the budget is spent once it is taken (a lookup right at
+    # its deadline edge): the lookup refuses without a worker and must give the slot
+    # back, or such lookups would drain the cap and every later one would refuse.
+    slots = threading.BoundedSemaphore(1)
+    monkeypatch.setattr("shadowscan.utils.http._resolver_slots", slots)
+    resolver = Mock(return_value=PUBLIC_ANSWER)
+    monkeypatch.setattr("shadowscan.utils.http.socket.getaddrinfo", resolver)
+    ticks = iter(float(tick) for tick in range(1000))
+    with monkeypatch.context() as patched:
+        # Each reading of the clock is a second later: the budget ends between them.
+        patched.setattr("shadowscan.utils.http.time", SimpleNamespace(monotonic=lambda: next(ticks)))
+        for _ in range(3):
+            with pytest.raises(TimeoutError):
+                _resolve_bounded("edge.example", 443, 0.5, proto=socket.IPPROTO_TCP)
+    resolver.assert_not_called()
+    assert _resolve_bounded("fast.example", 443, 1.0, proto=socket.IPPROTO_TCP) == PUBLIC_ANSWER
 
 
 def _response(data: object, *, status: int = 200, headers: dict[str, str] | None = None) -> requests.Response:

@@ -402,9 +402,15 @@ summarizes each release for people who install and operate ShadowScan.
   stalled resolver left 500 live threads. A spent (or NaN) budget now refuses
   before any thread starts, and at most 32 workers (`_MAX_RESOLVER_THREADS`)
   run at once; a lookup waits within its budget for a free slot and otherwise
-  fails closed, and a worker frees its slot when the resolver returns. The
-  clone pin lookup (`resolve_destination`) shares the resolver and gains both
-  bounds. Every new refusal is the `TimeoutError` callers already turn into a
+  fails closed. A slot is returned exactly once: by the worker when the
+  resolver returns, or by the lookup when its budget is spent once the slot
+  is taken or when its worker cannot be built or started. That release
+  covered only `RuntimeError`, so 32 thread starts failing with `MemoryError`
+  under memory pressure left no slot, and every later lookup in the process
+  refused; a one-shot guard keeps an interrupt that arrives after the thread
+  started from returning the slot twice. The clone pin lookup
+  (`resolve_destination`) shares the resolver and gains both bounds. Every
+  new refusal is the `TimeoutError` callers already turn into a
   refusal (`ValueError` in the preflight, `NameResolutionError` at connection,
   `DestinationUnresolved` for a clone), so no lookup goes ahead without an
   answer to check. Affects scans whose resolver stalls or whose connector
@@ -413,7 +419,9 @@ summarizes each release for people who install and operate ShadowScan.
   and a refusal every time, directly, through `validate_url` and through
   `resolve_destination`), 20 lookups against a stalled resolver with three
   slots, a lookup that waits for a slot, slots freed once the resolver
-  returns, and a worker thread that cannot start.
+  returns, a worker thread that cannot be built or started (`RuntimeError`
+  and `MemoryError`), one interrupted after it started, and lookups whose
+  budget ends right after they take the only slot.
 - **The late-DNS test was flaky and left the post-resolution check
   untested (#236).** The test gave the acquisition deadline 50 ms and the
   resolver a 100 ms sleep, so a scheduler stall raised the guard's
