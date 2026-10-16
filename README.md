@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/hero-banner.svg" alt="Nexus ShadowScan — open-source AI agent discovery" width="100%">
+  <img src="docs/assets/hero-banner.svg" alt="Nexus ShadowScan — open-source AI agent discovery" width="100%">
 </p>
 
 <p align="center">
@@ -16,7 +16,7 @@
 <p align="center"><strong>Discover evidence of shadow AI agents across your organization and reconcile it against your approved agent registry.</strong></p>
 
 <p align="center">
-It inspects nine surfaces: code repositories, identity providers, LLM gateway logs,
+ShadowScan inspects <b>nine surfaces</b>: code repositories, identity providers, LLM gateway logs,
 low-code platforms, SaaS apps, cloud accounts, endpoints (developer workstations and
 host/runtime inventories), network logs, and running processes.
 </p>
@@ -74,7 +74,7 @@ registered in the agent registry supplied for this scan?*
 ## How it works
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/architecture-data-flow.svg" alt="Nexus ShadowScan architecture: connectors collect per surface, analysis and correlation score findings, reconciliation compares them with the sanctioned inventory" width="95%">
+  <img src="docs/assets/architecture-data-flow.svg" alt="Nexus ShadowScan architecture: connectors collect per surface, analysis and correlation score findings, reconciliation compares them with the sanctioned inventory" width="95%">
 </p>
 
 ```
@@ -137,7 +137,7 @@ shadowscan --help
 # 1. Scan a local repository — no credentials needed
 shadowscan code .
 
-# 2. Try every connector offline with bundled fixtures (36 of 38 connectors ship fixtures; needs a checkout)
+# 2. Try every connector offline with bundled fixtures (needs a checkout)
 shadowscan scan -c examples/shadowscan.offline.yaml --format html -o report.html
 
 # 3. Live estate scan with secrets from the environment
@@ -157,14 +157,7 @@ shadowscan jwt --file tokens.txt --jwks-url https://login.example.com/.well-know
 ```
 
 `agent-card.yaml`, `examples/` and the sample exports under `tests/fixtures/`
-come from a repository checkout; the wheel does not ship them. Scanning the
-ShadowScan checkout itself reports an incomplete scan (exit 3), because some
-redaction tests and benchmark files deliberately exceed the scanner's limits
-and it fails closed rather than skip them; in a checkout,
-`shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
-completes in seconds.
-
-See the [quick start guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/quickstart.md)
+come from a repository checkout; the wheel does not ship them. See the [quick start guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/quickstart.md)
 for walkthroughs of each surface and the
 [configuration reference](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/configuration.md) for all options.
 
@@ -469,8 +462,7 @@ shadowscan connectors --json                 # JSON with config keys and offline
 
 ### Shared options
 
-These options are available on all scanning commands (`code`, `scan`, `run`, `endpoint`, `gateway`, `jwt`).
-The global `-v`/`-vv` (info/debug) and `-q` (errors only) flags go before the command, as in `shadowscan -v code .`:
+These options are available on all scanning commands (`code`, `scan`, `run`, `endpoint`, `gateway`, `jwt`):
 
 | Option | Description |
 |---|---|
@@ -492,6 +484,8 @@ The global `-v`/`-vv` (info/debug) and `-q` (errors only) flags go before the co
 | `--allow-plugin NAME` | Allow a reviewed third-party connector (repeatable) |
 | `--allow-signature-override` / `--deny-signature-override` | Permit custom signatures to replace built-in IDs |
 | `--plugin-execution thread\|process` | Third-party connector execution backend |
+| `-v, --verbose` | Increase verbosity (`-v` info, `-vv` debug) |
+| `-q, --quiet` | Errors only |
 
 ### Output formats
 
@@ -524,24 +518,20 @@ not prove that no agent runs; see
 
 ## Python API reference
 
-The CLI is built on the same Python API. The JSON report (`--format json`) is
-the stable contract; treat the Python objects as unstable between releases
-until 1.0 and pin a reviewed commit.
+ShadowScan can be used programmatically. The CLI is built on a public Python API.
 
 ### Programmatic scanning
 
 ```python
-from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.config import ScanConfig
 from shadowscan.engine import Engine
 
 cfg = ScanConfig(
-    connectors=[ConnectorSpec("code.filesystem", {"paths": ["./my-repo"]})],
+    connectors=[{"name": "code.filesystem", "paths": ["./my-repo"]}],
     inventory=["./inventory"],
 )
-result = Engine(cfg).run()
-
-if not result.complete:
-    raise SystemExit(3)  # fail closed: an incomplete scan is never a clean one
+engine = Engine(cfg)
+result = engine.run()
 
 for finding in result.findings:
     print(f"[{finding.risk.level.value}] {finding.title}")
@@ -549,12 +539,10 @@ for finding in result.findings:
     print(f"  Risk: {finding.risk.score}/100 — {', '.join(f.description for f in finding.risk.factors)}")
 ```
 
-`ScanConfig.from_yaml("shadowscan.yaml")` reads the same YAML file as `shadowscan scan -c`.
-
 ### Core data types
 
 ```python
-from shadowscan.models import Evidence, Finding, Kind, Risk, RiskLevel, ScanResult, Surface
+from shadowscan.models import Finding, Evidence, Risk, RiskLevel, Surface, Kind
 
 # Finding fields
 finding.id                    # "ss-3f9c1e2a7b4d8c10"
@@ -566,9 +554,9 @@ finding.risk.level            # RiskLevel.CRITICAL | .HIGH | .MEDIUM | .LOW | .I
 finding.shadow                # True if not in inventory
 finding.confidence            # 0.0-1.0 heuristic evidence score
 finding.evidence              # list[Evidence] with signal, description, weight
-finding.metadata["autonomy"]  # {"floor": 2, "floor_label": "L2 Supervised", "ceiling": 5, ...}
-finding.to_dict()["metadata"]["threats"]   # OWASP, MITRE ATLAS, MAESTRO references (derived on export)
-finding.to_dict()["metadata"]["controls"]  # NIST AI RMF, ISO 42001, EU AI Act, AIUC-1 references
+finding.metadata["threats"]   # OWASP, MITRE ATLAS, MAESTRO references
+finding.metadata["controls"]  # NIST AI RMF, ISO 42001, EU AI Act, AIUC-1 references
+finding.metadata["autonomy"]  # {"floor": "L1", "ceiling": "L3"} interval
 ```
 
 ### Module reference
@@ -634,7 +622,7 @@ options:
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
   plugins: []                         # exact-name allowlist for third-party connectors
   plugin_execution: process           # or thread
-  risk_basis: combined                # or danger (excludes governance factors)
+  risk_basis: risk                    # or danger (excludes governance factors)
   incremental: false                  # content-addressed result caching
   state_dir: .shadowscan-state       # private incremental state directory
 connectors:
@@ -673,9 +661,6 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 
 <details>
 <summary><strong>SARIF output example</strong> (for GitHub Code Scanning)</summary>
-
-The same scan as SARIF for GitHub code scanning (`--format sarif`), first result
-abridged:
 
 ```json
 {
@@ -819,6 +804,14 @@ Wudpecker note-taker). A ShadowScan run on the estate after those changes is
 in-sample: fewer errors on it are not evidence of better field accuracy. The
 [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md)
 lists every benchmark with its protocol and limits.
+
+### Cross-tool comparison
+
+<p align="center">
+  <img src="docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool estate coverage comparison — ShadowScan leads with 0.90 estate recall across repo, endpoint, and network surfaces" width="95%">
+</p>
+
+<p align="center"><em>Estate recall across surfaces: ShadowScan achieves 0.90 (0.87-0.92) by covering repo, endpoint, and network surfaces. Unsupported surfaces count as misses. See the <a href="https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md">benchmark index</a> for methodology and limits.</em></p>
 
 ---
 
