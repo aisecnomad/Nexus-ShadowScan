@@ -201,6 +201,20 @@ CONTINUE_PLAY = """\
             ["e"],
             id="json-list-of-records",
         ),
+        # A mapping that holds its tables below its top level: profiles in a list,
+        # a client's per-project section.
+        pytest.param(
+            "deploy/agent.yaml",
+            "profiles:\n  - mcpServers:\n      evil:\n        command: npx\n",
+            ["evil"],
+            id="profiles-in-a-mapping",
+        ),
+        pytest.param(
+            "deploy/claude.json",
+            '{"projects": {"/repo": {"mcpServers": {"evil": {"command": "npx"}}}}}',
+            ["evil"],
+            id="per-project-section",
+        ),
         # A registry catalog: one table per entry, a repeated name numbered.
         pytest.param(
             "tests/fixtures/registry.json",

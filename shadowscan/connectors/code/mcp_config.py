@@ -161,7 +161,7 @@ MCP_WALK_BREADTH = 256
 # Fields a server record in a server list carries (Continue's ``mcpServers:
 # [{name, command}]``) and a session transcript's status record does not.
 _SERVER_RECORD_KEYS = frozenset({"command", "url", "args", "type", "transport"})
-LISTED_TABLES_LIMIT = "MCP server tables in a list past the walk limit; not all read"
+HELD_TABLES_LIMIT = "MCP server tables past the walk limit; not all read"
 
 
 def _server_table(value: Any, listed: bool) -> bool:
@@ -227,18 +227,8 @@ def mcp_server_holders(document: Any, *, first: bool = False) -> tuple[list[dict
     return holders, truncated
 
 
-def _listed_server_tables(data: list[Any], errors: list[str]) -> dict[str, Any] | None:
-    """One ``mcpServers`` table of the servers a list-rooted document's entries declare.
-
-    A registry catalog (``[{id, install: {mcpServers: ...}}]``), a list of
-    client profiles or an Ansible play holds its tables in entries; each is
-    read as a client configuration, and a name repeated across them keeps a
-    numbered suffix. A walk the bounds cut is recorded as a limit, since a
-    table past them is not read. None when no table was found at all.
-    """
-    holders, truncated = mcp_server_holders(data)
-    if truncated:
-        errors.append(LISTED_TABLES_LIMIT)
+def _merged_server_tables(holders: list[dict[Any, Any]], errors: list[str]) -> dict[str, Any]:
+    """The servers of each holder's table as one table; a repeated name keeps a numbered suffix."""
     servers: dict[str, Any] = {}
     for holder in holders:
         for name, cfg in (_mcp_server_entries(holder, errors) or {}).items():
@@ -246,10 +236,38 @@ def _listed_server_tables(data: list[Any], errors: list[str]) -> dict[str, Any] 
             while key in servers:
                 key, suffix = f"{name}#{suffix}", suffix + 1
             servers[key] = cfg
+    return servers
+
+
+def _listed_server_tables(data: list[Any], errors: list[str]) -> dict[str, Any] | None:
+    """One ``mcpServers`` table of the servers a list-rooted document's entries declare.
+
+    A registry catalog (``[{id, install: {mcpServers: ...}}]``), a list of
+    client profiles or an Ansible play holds its tables in entries; each is
+    read as a client configuration. A walk the bounds cut is recorded as a
+    limit, since a table past them is not read. None when no table was found
+    at all.
+    """
+    holders, truncated = mcp_server_holders(data)
+    if truncated:
+        errors.append(HELD_TABLES_LIMIT)
     if not holders and not truncated:
         errors.append("MCP configuration must be an object")
         return None
-    return {"mcpServers": servers}
+    return {"mcpServers": _merged_server_tables(holders, errors)}
+
+
+def _nested_server_entries(data: dict[str, Any], errors: list[str]) -> dict[str, Any]:
+    """The servers a mapping's tables below its top level declare, for one that holds none at the top.
+
+    A client's per-project section (``projects: {path: {mcpServers: ...}}``) or a
+    list of profiles holds them there; the structural check routes such a file
+    here, so its servers are read rather than the file taken to declare none.
+    """
+    holders, truncated = mcp_server_holders(data)
+    if truncated:
+        errors.append(HELD_TABLES_LIMIT)
+    return _merged_server_tables([holder for holder in holders if holder is not data], errors)
 
 
 def _parse_mcp_servers(
@@ -267,6 +285,8 @@ def _parse_mcp_servers(
     servers = _mcp_server_entries(data, errors)
     if servers is None:
         return []
+    if not servers:
+        servers = _nested_server_entries(data, errors)
     # A registry manifest (server.json) is the document itself, not an entry of a server table.
     manifest = len(servers) == 1 and next(iter(servers.values())) is data
     out: list[dict[str, Any]] = []
