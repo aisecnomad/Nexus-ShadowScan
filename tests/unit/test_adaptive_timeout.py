@@ -66,7 +66,38 @@ class TestEstimate:
         vendored.mkdir(parents=True)
         for i in range(500):
             (vendored / f"f{i}.js").write_text("x\n", encoding="utf-8")
-        assert FilesystemConnector._probe_entry_count([tmp_path]) == 5
+        # The root, src/ and its five files.
+        assert FilesystemConnector._probe_entry_count([tmp_path]) == 7
+
+    def test_the_connector_exclude_settings_shape_the_probe(self, tmp_path, monkeypatch) -> None:
+        _tree(tmp_path, 5)
+        vendored = tmp_path / "node_modules" / "pkg"
+        vendored.mkdir(parents=True)
+        for i in range(100):
+            (vendored / f"f{i}.js").write_text("x\n", encoding="utf-8")
+        monkeypatch.setattr(FilesystemConnector, "_ENTRIES_PER_DEFAULT_BUDGET", 25)
+        paths = [str(tmp_path)]
+        assert FilesystemConnector.estimate_timeout_seconds({"paths": paths}, 120.0) is None
+        # The walk reads node_modules without the default excludes, so the estimate counts it.
+        unexcluded = FilesystemConnector.estimate_timeout_seconds(
+            {"paths": paths, "default_excludes": False}, 120.0
+        )
+        assert unexcluded is not None and unexcluded > 120.0
+        excluded = {"paths": paths, "default_excludes": False, "exclude": ["node_modules"]}
+        assert FilesystemConnector.estimate_timeout_seconds(excluded, 120.0) is None
+
+    def test_directories_count_so_an_empty_tree_cannot_hold_the_probe(self, tmp_path, monkeypatch) -> None:
+        for i in range(50):
+            (tmp_path / f"d{i}").mkdir()
+        (tmp_path / "agent.py").write_text("x = 1\n", encoding="utf-8")
+        monkeypatch.setattr(FilesystemConnector, "_PROBE_LIMIT", 10)
+        assert FilesystemConnector._probe_entry_count([tmp_path]) == 10
+
+    def test_a_probe_out_of_time_reports_its_limit(self, tmp_path, monkeypatch) -> None:
+        # A tree it cannot count within its time is at least as large as it can measure.
+        _tree(tmp_path, 5)
+        monkeypatch.setattr(FilesystemConnector, "_PROBE_SECONDS", 0.0)
+        assert FilesystemConnector._probe_entry_count([tmp_path]) == FilesystemConnector._PROBE_LIMIT
 
     def test_the_probe_stops_at_its_limit(self, tmp_path) -> None:
         _tree(tmp_path, 60)

@@ -1267,9 +1267,11 @@ def _scan_timeout(value: Any) -> float:
 
 
 class FilesystemConnector(BaseConnector):
-    #: Entries a probe counts before it stops and extrapolates. Bounded so the
-    #: estimate costs a fraction of a second even on a huge tree.
+    #: Entries (directories and files) a probe counts before it stops, and the
+    #: seconds it may spend counting them. Bounded so the estimate costs a
+    #: fraction of a second even on a huge tree or a slow filesystem.
     _PROBE_LIMIT = 20_000
+    _PROBE_SECONDS = 1.0
     #: Entries the default deadline comfortably covers. Above this the budget
     #: grows in proportion, because the walk's cost is roughly linear in
     #: entries once signature matching dominates.
@@ -1296,31 +1298,44 @@ class FilesystemConnector(BaseConnector):
         """
         try:
             roots = [Path(p) for p in cls.scanned_local_paths(config)]
-        except Exception:  # noqa: BLE001 - an unusable path is the scan's problem, not the estimate's
+            extra = _validated_names(config.get("exclude"), "exclude")
+            default_excludes = config_boolean(config.get("default_excludes", True), "default_excludes")
+        except Exception:  # noqa: BLE001 - an unusable path or option is the scan's problem, not the estimate's
             return None
         if not roots:
             return None
-        entries = cls._probe_entry_count(roots)
+        # The directory names the walk prunes. An exclude glob only narrows the
+        # walk further, so leaving it out can lengthen the estimate, never cut it.
+        pruned = set(DEFAULT_EXCLUDES) if default_excludes else set(VCS_METADATA_EXCLUDES)
+        pruned |= {e for e in extra if "*" not in e and "/" not in e}
+        entries = cls._probe_entry_count(roots, frozenset(pruned))
         if entries < cls._ENTRIES_PER_DEFAULT_BUDGET:
             return None
         return default * (entries / cls._ENTRIES_PER_DEFAULT_BUDGET)
 
     @classmethod
-    def _probe_entry_count(cls, roots: list[Path]) -> int:
-        """Count entries under *roots*, stopping at ``_PROBE_LIMIT``.
+    def _probe_entry_count(
+        cls, roots: list[Path], pruned: AbstractSet[str] = frozenset(DEFAULT_EXCLUDES)
+    ) -> int:
+        """Count directories and files under *roots*, stopping at ``_PROBE_LIMIT`` or ``_PROBE_SECONDS``.
 
-        Directory names the walk always prunes are pruned here too, so the
-        estimate reflects the tree that will actually be read.
+        Directory names the walk prunes (``pruned``) are pruned here too, so
+        the estimate reflects the tree that will actually be read. Every
+        directory counts, so a tree of empty directories reaches the limit
+        instead of being walked in full. A probe that runs out of time reports
+        the limit too: a tree or filesystem that slow to list needs the
+        largest deadline the estimate can propose.
         """
         seen = 0
+        stop = time.monotonic() + cls._PROBE_SECONDS
         for root in roots:
             if not root.is_dir():
                 seen += 1
                 continue
             for _dirpath, dirnames, filenames in os.walk(root, onerror=lambda _exc: None):
-                dirnames[:] = [d for d in dirnames if d not in DEFAULT_EXCLUDES]
-                seen += len(filenames)
-                if seen >= cls._PROBE_LIMIT:
+                dirnames[:] = [d for d in dirnames if d not in pruned]
+                seen += 1 + len(filenames)
+                if seen >= cls._PROBE_LIMIT or time.monotonic() >= stop:
                     return cls._PROBE_LIMIT
         return seen
 
