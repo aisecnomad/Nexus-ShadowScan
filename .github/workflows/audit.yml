@@ -91,7 +91,7 @@ jobs:
       - name: Audit every hash-locked dependency set
         run: |
           # Same commands as the CI lock audit: fail if a locked package cannot be checked.
-          for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do
+          for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock requirements-fuzz.lock; do
             pip-audit --require-hashes --strict --progress-spinner off \
               --disable-pip -r "$lock"
           done

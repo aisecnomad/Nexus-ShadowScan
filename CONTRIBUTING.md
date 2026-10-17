@@ -89,6 +89,7 @@ Dependabot and the tests read them from there:
 | `requirements-ci.lock` | Hash-locked development and test toolchain (CPython 3.11 to 3.14) |
 | `requirements-ci-constraints.txt` | Reviewed inputs that `requirements-ci.lock` is generated from; never installed directly |
 | `requirements-docs.lock` | Hash-locked MkDocs toolchain for `make docs` and the Docs workflow |
+| `requirements-fuzz.lock` | Hash-locked Atheris fuzzing engine for `make fuzz` and the Fuzz workflow (Linux x86_64) |
 | `mkdocs.yml` | Documentation site configuration and navigation |
 | `Dockerfile`, `.dockerignore` | The worker image and its build-context allow-list |
 | `agent-card.yaml` | Sample Agent Capability Card used by the offline demo, the quick start and the image |

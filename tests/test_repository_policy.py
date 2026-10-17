@@ -25,6 +25,7 @@ import yaml
 
 from tools.container.verify import verify_bundle, verify_database
 from tools.coverage_gate import MIN_CONNECTOR_COVERAGE
+from tools.fuzz.harness import TARGET_NAMES as FUZZ_TARGETS
 
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = ROOT / ".github"
@@ -2794,3 +2795,276 @@ def test_black_duck_pin_check_executes_fail_closed(pin: str, passes: bool) -> No
     )
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
     assert ("::error::" in result.stdout) is not passes, result.stdout
+
+
+# --- Fuzzing -----------------------------------------------------------------------------------------
+# tools/fuzz, requirements-fuzz.lock, .github/workflows/fuzz.yml and docs/operations/fuzzing.md.
+
+FUZZ_WORKFLOW = GITHUB / "workflows" / "fuzz.yml"
+FUZZ_LOCK = ROOT / "requirements-fuzz.lock"
+FUZZ_GUIDE = ROOT / "docs" / "operations" / "fuzzing.md"
+FUZZ_LOCK_REFERENCE = "requirements-fuzz.lock"
+FUZZ_MAXIMUM_SECONDS = 3000
+
+
+def _fuzz_job() -> dict[str, Any]:
+    ((_, job),) = _load(FUZZ_WORKFLOW)["jobs"].items()
+    return job
+
+
+def _fuzz_script() -> str:
+    return _step_running(_fuzz_job(), "python -m tools.fuzz")["run"]
+
+
+def test_fuzz_workflow_runs_every_target_weekly_with_a_read_only_token() -> None:
+    workflow = _load(FUZZ_WORKFLOW)
+    text = FUZZ_WORKFLOW.read_text(encoding="utf-8")
+    job = _fuzz_job()
+    assert _trigger_names(workflow) == {"schedule", "workflow_dispatch", "pull_request"}
+    (schedule,) = _triggers(workflow)["schedule"]
+    assert re.fullmatch(r"\d+ \d+ \* \* \d", schedule["cron"]), "the scheduled run is weekly"
+    # A change to the harness, its lock or this workflow gets a short run, so a broken harness is found
+    # before the weekly one; anything else in a pull request does not start a fuzzing job.
+    assert _triggers(workflow)["pull_request"] == {
+        "paths": ["tools/fuzz/**", FUZZ_LOCK_REFERENCE, ".github/workflows/fuzz.yml"]
+    }
+    # A fork's pull request runs this file, so it must have no more than the read-only token.
+    assert workflow["permissions"] == {"contents": "read"} and "permissions" not in job
+    assert not re.search(r"\$\{\{[^}]*\bsecrets\.", text)
+    # One runner per target, and a crash in one does not hide the others.
+    assert job["strategy"]["matrix"]["target"] == list(FUZZ_TARGETS)
+    assert job["strategy"]["fail-fast"] is False
+    # The run is capped at 3000 seconds; the rest of the timeout is for the install and the seeds.
+    assert job["timeout-minutes"] * 60 >= FUZZ_MAXIMUM_SECONDS + 600
+    assert f"-gt {FUZZ_MAXIMUM_SECONDS}" in _fuzz_script()
+    assert workflow["concurrency"]["cancel-in-progress"] == PULL_REQUEST_ONLY_CANCELLATION
+
+
+def test_fuzz_workflow_installs_only_from_hash_locks_and_keeps_no_corpus() -> None:
+    job = _fuzz_job()
+    install = _joined(_step_running(job, "pip install")["run"])
+    assert (
+        "python -m pip install --require-hashes --only-binary=:all: -r requirements.lock "
+        f"-r {FUZZ_LOCK_REFERENCE}"
+    ) in install
+    (checkout,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
+    assert checkout["with"]["persist-credentials"] is False
+    (setup,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-python@")]
+    # Atheris publishes wheels for these interpreters only.
+    assert setup["with"]["python-version"] in {"3.12", "3.13", "3.14"}
+    assert "cache" not in setup["with"], "no dependency cache: the install is from the hash locks"
+    assert not [step for step in job["steps"] if step.get("uses", "").startswith("actions/cache")]
+    # Nothing is pushed or published: the corpus is rebuilt from code and the checkout on every run.
+    assert not _publication_violations(FUZZ_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def test_fuzz_workflow_never_prints_or_uploads_the_input_that_beat_the_redactor() -> None:
+    """The input is a way past the redactor, and a public repository's logs and artifacts are public."""
+    job = _fuzz_job()
+    script = _fuzz_script()
+    # The engine's output goes to a file, and only what comes before the line that starts the input is shown.
+    assert '> "$log" 2>&1' in script
+    assert "sed '/^MS: /,$d' \"$log\" | tail -n 120" in script
+    reads = [line.strip() for line in script.splitlines() if '"$log"' in line and '> "$log"' not in line]
+    assert reads == ['tail -n 25 "$log"', "sed '/^MS: /,$d' \"$log\" | tail -n 120"], (
+        "the log is read only for the tail of a passing run and through the filter that stops before the input"
+    )
+    (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact@")]
+    assert upload["if"] == "failure() && matrix.target == 'lexing'"
+    assert upload["with"]["retention-days"] == 14
+    assert upload["with"]["if-no-files-found"] == "ignore"
+    # A target added later is a redaction target, whose input stays on the runner, or it is deliberately
+    # added here with a reason.
+    assert {target for target in FUZZ_TARGETS if target != "lexing"} == {
+        target for target in FUZZ_TARGETS if target.startswith("redaction")
+    }, "classify the new fuzz target: may its failing input be uploaded?"
+
+
+_FUZZ_ENGINE_STUB = """#!/bin/sh
+# Stands in for `python`: "-m tools.fuzz.seeds TARGET DIR ..." and "-m tools.fuzz TARGET FLAGS ...".
+case "$2" in
+  tools.fuzz.seeds) mkdir -p "$4"; exit 0 ;;
+  tools.fuzz) ;;
+  *) echo "unexpected: $*" >&2; exit 99 ;;
+esac
+echo "engine started: $*"
+if [ "$STUB_STATUS" != 0 ]; then
+  echo "Traceback (most recent call last):"
+  echo "AssertionError: a planted credential survived (input sha256 0123abcd)"
+  echo "MS: 1 ChangeBit-; base unit: 00000000"
+  echo "0x73,0x65,0x63,"
+  echo "ESCAPED-INPUT-LINE"
+  echo "Base64: QkFTRTY0LUlOUFVU"
+fi
+exit "$STUB_STATUS"
+"""
+_FUZZ_INPUT_MARKERS = ("ESCAPED-INPUT-LINE", "0x73,0x65", "Base64:")
+_FUZZ_FILTER = "sed '/^MS: /,$d' \"$log\" | tail -n 120"
+
+
+def _run_fuzz_step(tmp_path: Path, script: str, *, seconds: str, status: int = 0) -> tuple[int, str, str]:
+    """Run the workflow's fuzz step as the runner's bash does, with a stub for the engine."""
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    engine = stubs / "python"
+    engine.write_text(_FUZZ_ENGINE_STUB, encoding="utf-8")
+    engine.chmod(0o755)
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
+            "RUNNER_TEMP": str(runner_temp),
+            "FUZZ_SECONDS": seconds,
+            "TARGET": "redaction-text",
+            "STUB_STATUS": str(status),
+        },
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+def test_fuzz_step_passes_when_the_engine_does_and_bounds_the_run(tmp_path: Path) -> None:
+    code, out, err = _run_fuzz_step(tmp_path, _fuzz_script(), seconds="900")
+    assert (code, err) == (0, "")
+    assert "engine started: -m tools.fuzz redaction-text -max_total_time=900" in out
+    assert f"-artifact_prefix={tmp_path}/runner-temp/fuzz-crashes/redaction-text/" in out
+    assert f"{tmp_path}/runner-temp/corpus/redaction-text" in out
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+@pytest.mark.parametrize("status", [1, 77, 99])
+def test_fuzz_step_fails_with_the_engines_status_and_stops_the_log_before_the_input(
+    tmp_path: Path, status: int
+) -> None:
+    code, out, err = _run_fuzz_step(tmp_path, _fuzz_script(), seconds="60", status=status)
+    assert code == status, "the job fails with the engine's own status"
+    assert "AssertionError: a planted credential survived (input sha256 0123abcd)" in out
+    assert f"The redaction-text target failed with exit status {status}." in err
+    assert not [marker for marker in _FUZZ_INPUT_MARKERS if marker in out + err], out + err
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+def test_fuzz_step_check_can_fail_when_the_log_is_not_filtered(tmp_path: Path) -> None:
+    assert _FUZZ_FILTER in _fuzz_script()
+    unfiltered = _fuzz_script().replace(_FUZZ_FILTER, 'tail -n 120 "$log"', 1)
+    _, out, err = _run_fuzz_step(tmp_path, unfiltered, seconds="60", status=77)
+    assert [marker for marker in _FUZZ_INPUT_MARKERS if marker in out + err] == list(_FUZZ_INPUT_MARKERS)
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+@pytest.mark.parametrize(
+    "seconds",
+    [
+        "",
+        " ",
+        "0",
+        "00",
+        "01",
+        "-1",
+        "1.5",
+        "1e3",
+        "3001",
+        "99999",
+        "99999999999999999999",
+        "60 ",
+        "6\n0",
+        "$(id)",
+    ],
+)
+def test_fuzz_step_refuses_seconds_that_are_not_a_whole_number_in_range(tmp_path: Path, seconds: str) -> None:
+    code, out, err = _run_fuzz_step(tmp_path, _fuzz_script(), seconds=seconds)
+    assert code == 2 and "FUZZ_SECONDS must be a whole number of seconds from 1 to 3000" in err
+    assert "engine started" not in out, "the engine must not start on a value the step refused"
+
+
+@pytest.mark.skipif(not shutil.which("bash"), reason="needs bash")
+@pytest.mark.parametrize("seconds", ["1", "60", "900", str(FUZZ_MAXIMUM_SECONDS)])
+def test_fuzz_step_accepts_seconds_from_one_to_the_maximum(tmp_path: Path, seconds: str) -> None:
+    code, out, _ = _run_fuzz_step(tmp_path, _fuzz_script(), seconds=seconds)
+    assert code == 0 and f"-max_total_time={seconds} " in out
+
+
+def _make_recipe(name: str) -> str:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    recipe = re.search(rf"^{re.escape(name)}:.*\n((?:\t.*\n)+)", makefile, re.M)
+    assert recipe, f"the Makefile has no {name} recipe"
+    return recipe.group(1)
+
+
+def test_make_fuzz_runs_the_workflows_targets_the_same_way_and_is_not_part_of_check() -> None:
+    recipe = _make_recipe("fuzz")
+    loop = re.search(r"for target in ([\w -]+); do", recipe)
+    assert loop and loop.group(1).split() == list(FUZZ_TARGETS)
+    workflow = _fuzz_script()
+    for command in (
+        "python -m tools.fuzz.seeds",
+        "--fixtures tests/fixtures",
+        "-max_total_time=",
+        "-artifact_prefix=",
+    ):
+        assert command in recipe and command in workflow, command
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert re.search(r"^\.PHONY: fuzz$", makefile, re.M)
+    # Fuzzing has no end, and its engine installs on Linux x86_64 only: it cannot be a gate of `make check`.
+    for aggregate in ("check", "check-fast"):
+        prerequisites = re.search(rf"^{aggregate}:([^#\n]*)", makefile, re.M)
+        assert prerequisites and "fuzz" not in prerequisites.group(1).split()
+    assert "fuzz" not in _make_recipe("test")
+
+
+def test_make_fuzz_refuses_seconds_it_cannot_bound_the_run_with() -> None:
+    recipe = _make_recipe("fuzz")
+    guard = re.search(r"case \"\$\(FUZZ_SECONDS\)\" in ([^)]*)\)", recipe)
+    assert guard, "make fuzz must check FUZZ_SECONDS before it starts an engine"
+    # Empty, anything that is not a digit, and anything starting with 0, which libFuzzer reads as no limit.
+    assert guard.group(1).split("|") == ["''", "0*", "*[!0-9]*"]
+
+
+def test_fuzz_lock_pins_one_package_by_hash_and_nothing_that_ships_depends_on_it() -> None:
+    text = FUZZ_LOCK.read_text(encoding="utf-8")
+    requirements = re.findall(r"^([A-Za-z0-9][\w.-]*)==([^\s\\]+)", text, re.M)
+    assert [name for name, _ in requirements] == ["atheris"]
+    hashes = re.findall(r"--hash=sha256:([0-9a-f]+)", text)
+    assert hashes and all(len(digest) == 64 for digest in hashes) and len(set(hashes)) == len(hashes)
+    assert text.count("--hash=") == len(hashes), "every hash is a lowercase SHA-256"
+    # Pip refuses a hash lock that also pins by anything else; the engine has no dependencies to list.
+    assert not re.search(r"^\s*(?:-e|--index-url|--extra-index-url|git\+|https?://)", text, re.M)
+    assert "atheris" not in (ROOT / "requirements.lock").read_text(encoding="utf-8").lower()
+    # The shipped wheel, the container and the sdist neither list nor install the fuzzing engine.
+    for shipped in ("pyproject.toml", "MANIFEST.in", "Dockerfile", ".dockerignore"):
+        assert FUZZ_LOCK_REFERENCE not in (ROOT / shipped).read_text(encoding="utf-8"), shipped
+    assert "atheris" not in (ROOT / "pyproject.toml").read_text(encoding="utf-8").lower()
+    # Only the Fuzz workflow installs it; the others audit it with the rest of the locks.
+    installers = {
+        path.name
+        for path in WORKFLOWS
+        if re.search(
+            rf"pip install[^\n]*-r {re.escape(FUZZ_LOCK_REFERENCE)}", path.read_text(encoding="utf-8")
+        )
+    }
+    assert installers == {FUZZ_WORKFLOW.name}
+
+
+def test_the_fuzzing_guide_covers_every_target_the_make_target_and_the_private_report_route() -> None:
+    guide = FUZZ_GUIDE.read_text(encoding="utf-8")
+    for target in FUZZ_TARGETS:
+        assert f"`{target}`" in guide, f"the fuzzing guide does not describe the {target} target"
+    for required in (
+        "make fuzz",
+        "python -m tools.fuzz",
+        FUZZ_LOCK_REFERENCE,
+        "SECURITY.md",
+        ".github/workflows/fuzz.yml",
+    ):
+        assert required in guide, required
+    # The guide must not promise what a Python fuzzer does not earn: Scorecard's Fuzzing check does not
+    # recognize Atheris or Hypothesis, and a fuzzing run is no proof of absence.
+    assert "Scorecard" in guide
+    assert not re.search(r"\b(?:proves?|guarantees?) that\b", guide, re.I)

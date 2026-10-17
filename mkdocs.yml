@@ -133,6 +133,7 @@ nav:
       - Evaluation: evaluation.md
       - Assurance results (2026-09-24): assurance-results.md
       - Tenant canaries: canaries.md
+      - Fuzzing: operations/fuzzing.md
       - External reviewer packet: operations/reviewer-packet.md
   - Community: community.md
   - Development:

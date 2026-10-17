@@ -1,0 +1,22 @@
+# Fuzzing engine lock for the harnesses in tools/fuzz and the Fuzz workflow
+# (.github/workflows/fuzz.yml). It holds the one package they need that no other
+# lock carries, Atheris, at an exact version with the SHA-256 hash of every
+# artifact PyPI publishes for that release (three wheels and no source
+# distribution), captured from https://pypi.org/pypi/atheris/3.1.0/json on
+# 2026-10-17. Atheris has no dependencies of its own.
+#
+# Supported target: Linux x86_64. PyPI publishes Atheris 3.1.0 wheels for CPython
+# 3.12, 3.13 and 3.14 there and for nothing else; the Fuzz workflow runs 3.12 and
+# the harness has also been run under 3.13. The scanner's own runtime comes from
+# requirements.lock. Install both with --require-hashes --only-binary=:all:, so
+# pip never builds Atheris (it compiles libFuzzer) or resolves it from the live
+# index on a version pin alone. See docs/operations/fuzzing.md.
+#
+# Nothing in the shipped wheel depends on this file. To refresh: pick a release
+# newer than two weeks, copy the sha256 of every file the PyPI JSON API lists
+# for it, update the date above, run `make fuzz FUZZ_SECONDS=60` against the new
+# engine and review the change. Dependabot does not read this file.
+atheris==3.1.0 \
+    --hash=sha256:315a0b5c819852b1ffe1ca72efc389c7724881f2c33e4aacb8c6bcec49bd5011 \
+    --hash=sha256:ec5e11f21a4c197fe91f7aea2b2de88e623c73a21fc07b105ac6329a1588457b \
+    --hash=sha256:f8a9f51ce8369026e8eb7b7174835e8c4c85a1a6db5d9add36c15100779d2a39
