@@ -305,8 +305,56 @@ _IDENTIFIER_CHAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_
 # is ANTHROPIC, API, KEY.
 _NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 # Three or more letter words joined by '-' or '_': a label or a test value
-# ('request-scoped-credential', 'fc-shared-env-must-not-be-used'), not a key.
+# ('request-scoped-credential', 'fc-shared-env-must-not-be-used'), or a
+# generated passphrase ('snout-fiber-thump-bloom-gravel'); see _label_slug.
 _WORD_SLUG = re.compile(r"[A-Za-z]{2,}(?:[-_][A-Za-z]{2,}){2,}")
+_SLUG_SEPARATOR = re.compile(r"[-_]")
+# Words that make a word slug a label rather than a passphrase.
+_LABEL_WORDS = frozenset(
+    {
+        # What the value stands for.
+        "api",
+        "auth",
+        "credential",
+        "credentials",
+        "env",
+        "key",
+        "keys",
+        "pass",
+        "passwd",
+        "password",
+        "passwords",
+        "pwd",
+        "secret",
+        "secrets",
+        "token",
+        "tokens",
+        "value",
+        # Test values and placeholders.
+        "demo",
+        "dummy",
+        "example",
+        "fake",
+        "fixture",
+        "invalid",
+        "mock",
+        "placeholder",
+        "sample",
+        "stub",
+        "test",
+        "testing",
+        "tests",
+        # Instructions and scope.
+        "change",
+        "must",
+        "never",
+        "not",
+        "replace",
+        "scoped",
+        "shared",
+        "your",
+    }
+)
 _VALUE_QUOTES = "\"'"
 
 
@@ -433,16 +481,41 @@ def _single_case_identifier(candidate: str) -> bool:
     return digits / len(candidate) < _IDENTIFIER_MAX_DIGIT_SHARE
 
 
+def _assigned_name(value: str) -> str:
+    """The name of a ``NAME = value`` or ``NAME: value`` match, or '' when it is no assignment."""
+    positions = [i for i in (value.find("="), value.find(":")) if i >= 0]
+    return value[: min(positions)] if positions else ""
+
+
+def _label_slug(value: str, candidate: str) -> bool:
+    """Whether a word slug assigned in ``value`` is a label rather than a generated passphrase.
+
+    Password managers generate passphrases as random words joined by '-' or
+    '_' ('snout-fiber-thump-bloom-gravel', 'Ostrich-Lantern-Volcano-Tangerine'),
+    which is also the shape of a label. A label says what it stands for: one
+    of its words is credential, test or instruction vocabulary (``_LABEL_WORDS``:
+    'request-scoped-credential', 'fc-shared-env-must-not-be-used') or a word of
+    the name it is assigned to ('OPENAI_API_KEY=sua_chave_openai'). A
+    CONSTANT_CASE slug names an environment variable.
+    """
+    if candidate.isupper():
+        return True
+    words = {word.lower() for word in _SLUG_SEPARATOR.split(candidate)}
+    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value))}
+    return not words.isdisjoint(_LABEL_WORDS) or not words.isdisjoint(name)
+
+
 def _high_entropy_credential(value: str) -> bool:
     """Require a generic assigned credential to be long, diverse and shaped like a token, not a name.
 
     Shannon entropy alone does not separate the two: ordinary identifiers
-    clear 3 bits per character. A value with no digit must mix cases evenly;
-    a value with digits must not be a single-case identifier
-    (``_single_case_identifier``).
+    clear 3 bits per character. A value with no digit must mix cases evenly,
+    unless it is a passphrase of words (``_label_slug``); a value with digits
+    must not be a single-case identifier (``_single_case_identifier``).
     """
     candidate = _assigned_value(value)
-    if len(candidate) < 16 or _WORD_SLUG.fullmatch(candidate):
+    passphrase = _WORD_SLUG.fullmatch(candidate) is not None
+    if len(candidate) < 16 or (passphrase and _label_slug(value, candidate)):
         return False
     body = re.sub(r"[^A-Za-z0-9]", "", candidate)
     if len(body) < 2 or len(set(body)) <= 2:
@@ -456,7 +529,7 @@ def _high_entropy_credential(value: str) -> bool:
             return False
         upper_share = sum(char.isupper() for char in letters) / len(letters)
         low, high = _RANDOM_UPPER_SHARE
-        if upper_share < low or upper_share > high:
+        if not passphrase and (upper_share < low or upper_share > high):
             return False
     elif _single_case_identifier(candidate):
         return False

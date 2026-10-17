@@ -754,7 +754,11 @@ public repositories with the tool and read the committed benchmark metrics.
   `process.env.PREFIX + '<key>'`) is still reported when one of its literals
   looks like a key; an empty or word-like fallback (`|| ''`) is not. Labels
   of three or more letter words (`'request-scoped-credential'`,
-  `'fc-shared-env-must-not-be-used'`) are not high-entropy keys, and a value
+  `'fc-shared-env-must-not-be-used'`) are not high-entropy keys when a word is
+  credential, test or instruction vocabulary or repeats the assigned name;
+  other word slugs are generated passphrases
+  (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`) and are still reported, even
+  without digits or mixed case. A value
   with an ellipsis (`sk-ant-api03-...`) is a documentation placeholder
   (`example-credential` evidence). Secret matches are filtered before the
   five-per-signal cap, so rejected references no longer use up the places of a

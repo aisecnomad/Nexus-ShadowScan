@@ -108,8 +108,10 @@ across this change reports findings as resolved or new that are neither.
   ellipsis (now `example-credential` evidence). A comparison with an earlier
   baseline shows those `secret` findings as resolved; review any `--fail-on`
   threshold that only these findings reached. Literal keys, provider key
-  formats, unquoted values in env files and a hard-coded fallback after an
-  environment read (`process.env.OPENAI_API_KEY || "<key>"`) are reported as
+  formats, unquoted values in env files, a hard-coded fallback after an
+  environment read (`process.env.OPENAI_API_KEY || "<key>"`) and generated
+  passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`; a label of words
+  carries credential or test vocabulary or the assigned name) are reported as
   before. A file with more than five rejected references before a real key
   now reports that key, which the per-signal cap used to drop.
 - **Evidence text.** An environment read by name after a credential name
