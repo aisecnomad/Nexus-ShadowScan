@@ -119,8 +119,10 @@ establish agent behavior, workload capabilities or an MCP server. Notebook cells
 are parsed separately: an unparsed cell does not remove the bound evidence or
 registered tools of other cells. In a test path the scan discounts
 (`include_tests` off), source that does not parse, often a deliberately invalid
-fixture, is a warning that leaves coverage complete unless `strict_coverage` is
-set, as for a test file over the binder's budget. Python 2 modules, templates
+fixture, is a warning that leaves coverage complete unless the accounting is
+strict (`strict_coverage`, or a gap budget of 0; see
+[strict accounting](../scanning.md#coverage-budget-and-strict-accounting)), as
+for a test file over the binder's budget. Python 2 modules, templates
 (`{{cookiecutter.slug}}/main.py`, Jinja-rendered `.py` files) and other files
 that are not Python 3 but carry a `.py` name stay a gap elsewhere: list them in
 `exclude` to leave them out of the scan, and use an interpreter that supports
@@ -640,7 +642,8 @@ coding-agent instruction document such as `CLAUDE.md` or `AGENTS.md`, an
 agent definition under `.claude/agents/` and the like, or a file a file-name
 signature selects), whose body the technology passes never read (warning
 `documentation is matched by file name only and credential detection is
-off`), and, when `include_tests` is false and `strict_coverage` is not set, a
+off`), and, when `include_tests` is false and the accounting is not strict
+(neither `strict_coverage` nor a gap budget of 0), a
 file under a test or fixture path (a recorded cassette under
 `tests/cassettes/`, a `pkg/fixtures/*.json`), whose evidence is discounted and
 cannot establish a deployment (warning `skipped oversize test fixture`; the

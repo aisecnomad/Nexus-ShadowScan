@@ -67,6 +67,18 @@ strict accounting, credentials, declaration, discount, budget.
   `include_tests` is off, and `high` otherwise. A caller that passes none
   keeps the segment rule, so other connectors are unchanged, and the
   published gap shape is the same.
+- **Discounted test code is charged to the budget.** #255's discount wrote a
+  plain warning that nothing counted, so 61 product files beside 200
+  `tests/fixtures/agents*.yaml` with duplicate keys, or 200 binary
+  `tests/fixtures/*.txt`, three quarters of the tree, scanned as complete
+  with no `stats.coverage`, against #254's rule that a low-relevance gap is
+  "weighted down, not ignored". `_discounted_gap` now charges the gap to the
+  ledger as a partial gap at a quarter weight, its detail naming the
+  discount, and a binary or undecodable fixture at a whole entry after the
+  credential-only read. A few fixtures leave the scan complete and are
+  listed; a seeded tree exhausts the budget. Unparsed test source and a
+  test file over the binder's budget stay warnings, as before #255, and an
+  oversize fixture with `scan_secrets` off stays a counted warning.
 
 ### Review fixes: what diff holds back under the ci profile (October 17)
 

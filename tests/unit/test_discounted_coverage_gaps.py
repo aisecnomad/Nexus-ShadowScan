@@ -62,6 +62,11 @@ ANSIBLE_MCP_TASK = """\
 """
 
 
+# Product files around a discounted fixture: its gap is charged to the coverage
+# budget, which a one-file tree (the fixture is the whole tree) cannot absorb.
+FILLER = {f"src/module{i}.py": f"VALUE = {i}\n" for i in range(60)}
+
+
 def _scan(tmp_path: Path, run_connector, files: dict[str, str | bytes], **options):
     for name, content in files.items():
         path = tmp_path / name
@@ -207,9 +212,12 @@ YAML_FIXTURE = "agents: {first: {}}\nagents: {}\n"
 )
 def test_a_malformed_fixture_in_test_code_is_a_warning(tmp_path, run_connector, name):
     text = NUGET_FIXTURE if name.endswith(".csproj") else YAML_FIXTURE
-    _, ctx = _scan(tmp_path, run_connector, {name: text})
+    _, ctx = _scan(tmp_path, run_connector, {**FILLER, name: text})
     assert not ctx.stats.incomplete and not ctx.stats.errors
     assert any(name in warning and "discounted" in warning for warning in ctx.stats.warnings)
+    # Discounted, not dropped: a quarter-weight gap in the coverage budget.
+    assert ctx.stats.coverage is not None
+    assert {(gap["path"], gap["relevance"]) for gap in ctx.stats.coverage["details"]} == {(name, "low")}
 
     _, strict = _scan(tmp_path, run_connector, {}, strict_coverage=True)
     assert strict.stats.incomplete
@@ -227,7 +235,7 @@ def test_a_malformed_file_in_product_code_stays_a_gap(tmp_path, run_connector, n
 
 def test_ambiguous_source_in_test_code_is_a_warning(tmp_path, run_connector):
     source = "const A = () => <p>src/*.js files</p>;\nconst s = `open\n"
-    _, ctx = _scan(tmp_path, run_connector, {"tests/highlighted/Component.js": source})
+    _, ctx = _scan(tmp_path, run_connector, {**FILLER, "tests/highlighted/Component.js": source})
     assert not ctx.stats.incomplete and not ctx.stats.errors
     assert any("incomplete source lexical analysis" in warning for warning in ctx.stats.warnings)
     _, product = _scan(tmp_path / "product", run_connector, {"src/Component.js": source})
@@ -241,9 +249,11 @@ def _binary(payload: str) -> bytes:
 
 def test_a_binary_test_fixture_is_read_for_credentials_and_leaves_the_scan_complete(tmp_path, run_connector):
     fixture = _binary(f'\nCUSTOM_API_KEY = "{RANDOM}"\n')
-    findings, ctx = _scan(tmp_path, run_connector, {"tests/mail/attachments/file_png.txt": fixture})
+    findings, ctx = _scan(tmp_path, run_connector, {**FILLER, "tests/mail/attachments/file_png.txt": fixture})
     assert not ctx.stats.incomplete and not ctx.stats.errors
     assert any(BINARY_CONTENT_ERROR in warning for warning in ctx.stats.warnings)
+    # Undecodable bytes cost a whole entry of the budget, wherever they lie.
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["weighted_gap_entries"] == 1.0
     # Credentials are never discounted: the key in the fixture is still found.
     secrets = [f for f in findings if f.kind.value == "secret"]
     assert [f.metadata.get("path") for f in secrets] == ["tests/mail/attachments/file_png.txt"]
@@ -330,6 +340,6 @@ def test_a_full_weight_file_under_a_test_path_that_cannot_be_read_stays_a_gap(
 def test_a_structured_fixture_without_mcp_keys_stays_discounted(
     tmp_path, run_connector, name, content, scan_secrets
 ):
-    _, ctx = _scan(tmp_path, run_connector, {name: content}, scan_secrets=scan_secrets)
+    _, ctx = _scan(tmp_path, run_connector, {**FILLER, name: content}, scan_secrets=scan_secrets)
     assert not ctx.stats.incomplete and not ctx.stats.errors
     assert any(name in warning and "discounted" in warning for warning in ctx.stats.warnings)

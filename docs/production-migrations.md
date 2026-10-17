@@ -29,6 +29,12 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   quarter, so fewer such gaps are tolerated. Without it, gaps under
   `testing/`, `e2e/`, `cassettes/`, `__mocks__/` and in test files such as
   `src/agent.test.ts` now weigh a quarter, as `tests/` already did.
+- **Discounted test-code gaps are budgeted.** A malformed or binary fixture
+  under a test path (with `include_tests` off) is charged to the coverage
+  budget and listed in `stats[].coverage.details`, instead of a warning
+  nothing counted. A handful still leave the scan complete; a tree where they
+  are a large share of the entries exits 3, and a tiny tree (a lone fixture)
+  exits 3 on one, as it does for any other gap.
 
 ## October 17 engine review migration (Unreleased)
 
@@ -143,7 +149,9 @@ across this change reports findings as resolved or new that are neither.
   MCP configuration that is not one, an import-bound call between 8,192 and
   65,536 characters, or a malformed or binary fixture in discounted test code
   (`include_tests` false) now complete. Each discounted gap is still listed as
-  a warning, and a binary test fixture is still scanned for credentials. Set
+  a warning and charged to the coverage budget at a quarter weight (a binary
+  fixture at a whole entry), so a tree seeded with them still exits 3, and a
+  binary test fixture is still scanned for credentials. Set
   `strict_coverage: true` or `max_coverage_gap: 0` (both are
   [strict accounting](scanning.md#coverage-budget-and-strict-accounting)) to
   keep treating every such gap as incomplete (exit 3), as before; product code, calls over 65,536 characters and, under

@@ -3250,17 +3250,30 @@ class FilesystemConnector(BaseConnector):
         suffix: bool = True,
         full_weight: bool = False,
         reason: str | None = None,
+        charged_in_full: bool = False,
     ) -> None:
-        """Record ``message`` about ``rel`` as a gap (``_gap``), or as a warning in discounted test code.
+        """Record ``message`` about ``rel`` as a gap (``_gap``), or charge it to the budget in test code.
 
         A ``ci`` profile declaration takes precedence over the discount, so the
         omission is counted in ``declared_omissions`` like every other one the
         profile accepts; ``error``, ``suffix`` and ``reason`` are passed on to ``_gap``.
         ``full_weight`` keeps the discount off (see ``_discounted_test_gap``).
+
+        Discounted is not dropped: the gap is a partial one in the coverage
+        budget, at the quarter weight of a test path (``_gap_relevance``), and
+        is listed in ``stats.coverage.details`` with the discount named in its
+        detail. A few deliberately malformed fixtures leave the scan complete;
+        a tree seeded with hundreds of them exhausts the budget.
+        ``charged_in_full`` keeps the path weighting off, for a fixture that
+        could not be decoded at all: undecodable bytes hide a definition in a
+        fixture as easily as anywhere, so they cost a whole entry.
         """
         if self._discounted_test_gap(rel, full_weight=full_weight) and not self._declared_omission(rel):
-            self.ctx.warn(
-                f"{message}; test code is discounted evidence (include_tests is false)", incomplete=False
+            self._ledger_gap(
+                rel,
+                f"{message}; test code is discounted evidence (include_tests is false); coverage gap",
+                full_weight=charged_in_full,
+                reason=reason,
             )
         else:
             self._gap(rel, message, error=error, suffix=suffix, reason=reason, full_weight=full_weight)
@@ -3288,7 +3301,9 @@ class FilesystemConnector(BaseConnector):
         message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
         analyzed = self.scan_secrets and not self.triage
         if not analyzed and not rel.endswith(_MCP_STRUCTURE_SUFFIXES):
-            self._discounted_gap(rel, f"{message}; not analyzed", reason="unparsed-input")
+            self._discounted_gap(
+                rel, f"{message}; not analyzed", reason="unparsed-input", charged_in_full=True
+            )
             return
         errors: list[str] = []
         text = read_credential_text(fixture.on_disk, self._size_limit(path.name), errors, dir_fd=scan.root_fd)
@@ -3316,6 +3331,7 @@ class FilesystemConnector(BaseConnector):
             rel,
             f"{message}; {'read for credentials only' if analyzed else 'not analyzed'}",
             reason="unparsed-input",
+            charged_in_full=True,
         )
 
     def _unreadable_gap(self, rel: str, issue: str) -> None:

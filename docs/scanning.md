@@ -44,7 +44,7 @@ that are never silent:
   scanner looks for is ASCII, which such an encoding writes the same way, so the
   file is analyzed in full and the scan stays complete; the warning `is not
   valid UTF-8, the bytes that are not were replaced` records it (one warning
-  per kind, listing the first files; `strict_coverage` makes each file a gap
+  per kind, listing the first files; [strict accounting](#coverage-budget-and-strict-accounting) makes each file a gap
   instead). Content in which any 8 KiB window has more than four characters,
   and more than a tenth of the window, that are not valid UTF-8, or that holds a
   control character other than tab, line break or form feed anywhere, is not
@@ -94,11 +94,13 @@ that are never silent:
   notebooks) that is not text in a supported encoding makes the scan incomplete
   with `binary or undecodable content in analyzable file`; the rules above say
   which invalid UTF-8 and NUL-bearing files are read instead. Under a test or
-  fixture path, with `include_tests` false and `strict_coverage` unset, such a
+  fixture path, with `include_tests` false and the accounting not strict, such a
   file (a syntax-highlighting sample, a PNG attachment saved as `.txt`) is read
   for credentials only, its bytes as Latin-1 without NUL bytes and without
-  excerpts, and is then a warning that leaves the scan complete: its other
-  evidence would be discounted, and credentials never are. That exception
+  excerpts, and is then charged to the
+  [coverage budget](#coverage-budget-and-strict-accounting) as one whole entry:
+  its other evidence would be discounted, and credentials never are. A few
+  such fixtures leave the scan complete; a tree seeded with them does not. That exception
   does not cover a file whose findings keep their full weight under a test
   path: an MCP configuration (by a dedicated name such as `.mcp.json`, or a
   JSON, TOML or YAML file, `settings.json` included, whose text declares
@@ -283,9 +285,13 @@ applied in this order:
    configuration, a coding-agent instruction, rule or settings file, an agent
    manifest or card) is never declared.
 4. **Discounted test code.** With `include_tests` off, a gap in a test or
-   fixture file whose evidence the scan discounts (a malformed or binary
-   fixture, test source the lexer cannot settle) is a warning that leaves the
-   scan complete (see [test and fixture code](#test-and-fixture-code)).
+   fixture file whose evidence the scan discounts (a malformed fixture, a
+   structured parse that withheld excerpts, test source the lexer cannot
+   settle) is charged to the budget as a partial gap at a quarter weight, and
+   a binary or undecodable fixture, read for credentials first, at a whole
+   entry. Its warning and its `stats[].coverage.details` entry say `test code
+   is discounted evidence`. A few leave the scan complete; a tree seeded with
+   hundreds exhausts the budget (see [test and fixture code](#test-and-fixture-code)).
 5. **Budget.** Every other partial gap is charged to the budget; a blinding
    one marks the scan incomplete.
 
@@ -422,8 +428,8 @@ a variable name, a display name, a model identifier, a CI job image) anchors
 no project finding at all without `include_tests`; imports, dependencies and
 code patterns there still do. An oversize file under a test path is skipped
 with the warning `skipped oversize test fixture` and leaves the scan complete
-only when `scan_secrets` is off and neither `include_tests` nor
-`strict_coverage` is set; otherwise it is read for credentials below the
+only when `scan_secrets` is off, `include_tests` is not set and the
+accounting is not strict ([strict accounting](#coverage-budget-and-strict-accounting)); otherwise it is read for credentials below the
 limit and a coverage gap above it (see
 [large and generated files](#large-and-generated-files)).
 
@@ -582,14 +588,17 @@ incomplete depends on what the file could hide:
   settings file under such a path is still recorded as unread for its
   project's approval gate, which then covers only some actions. With credential
   detection on, or `include_tests: true`, the file is analyzable like any
-  other and the gap returns; `strict_coverage` records it as an error.
-* With `include_tests` unset and `strict_coverage` unset, a file under a test
-  or fixture path that is read but cannot be fully analyzed (manifest XML that
-  does not parse, YAML that fails the integrity checks, source the lexer cannot
-  settle, a parser input defect) is a warning ending `test code is discounted
-  evidence (include_tests is false)`, and the scan stays complete. Its
-  credentials were scanned on the text as read. The same file outside a test
-  path is a gap, and `include_tests: true` or `strict_coverage` keeps it one.
+  other and the gap returns; strict accounting keeps it a gap too, and
+  `strict_coverage` records it as an error.
+* With `include_tests` unset and the accounting not strict, a file under a
+  test or fixture path that is read but cannot be fully analyzed (manifest XML
+  that does not parse, YAML that fails the integrity checks, source the lexer
+  cannot settle, a parser input defect) is a warning ending `test code is
+  discounted evidence (include_tests is false)`, charged to the coverage
+  budget at a quarter weight: a few leave the scan complete, a tree seeded
+  with them does not. Its credentials were scanned on the text as read. The
+  same file outside a test path is a gap, and `include_tests: true` or
+  [strict accounting](#coverage-budget-and-strict-accounting) keeps it one.
   An MCP configuration (by a dedicated name or by the structure that
   declares its servers), a coding-agent instruction, rule or settings file
   and an agent manifest or card are reported at full weight under a test

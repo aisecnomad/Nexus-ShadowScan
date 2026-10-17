@@ -262,3 +262,53 @@ def test_a_gap_recorded_without_a_relevance_keeps_the_segment_rule():
     }
     with pytest.raises(ValueError, match="relevance"):
         CoverageGap(detail="d", assessed_relevance="medium")
+
+
+# ------------------------------------------------------- discounted test code
+# A gap in test code whose evidence is discounted is charged to the budget at a
+# quarter weight (undecodable bytes at a whole entry): a few leave the scan
+# complete, a tree seeded with them does not, and every one is listed.
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        pytest.param("tests/fixtures/agents{}.yaml", MALFORMED_YAML, id="malformed"),
+        pytest.param("tests/fixtures/attachment{}.txt", BINARY, id="binary"),
+    ],
+)
+def test_a_tree_seeded_with_discounted_fixtures_exhausts_the_budget(tmp_path, run_connector, name, content):
+    _tree(tmp_path, {name.format(i): content for i in range(200)})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete, "200 unreadable fixtures, three quarters of the tree, left the scan complete"
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["within_budget"] is False
+    assert ctx.stats.coverage["gaps"] >= 200
+
+
+def test_a_few_discounted_fixtures_are_listed_and_tolerated(tmp_path, run_connector):
+    # 160 entries allow 3.2 weighted entries; these gaps weigh 1.75.
+    _tree(
+        tmp_path,
+        {
+            **{f"lib/part{i}.py": f"y = {i}\n" for i in range(96)},
+            "tests/fixtures/agents.yaml": MALFORMED_YAML,
+            "tests/legacy/component.js": "const A = () => <p>src/*.js files</p>;\nconst s = `open\n",
+            "tests/fixtures/attachment.txt": BINARY,
+        },
+    )
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete
+    coverage = ctx.stats.coverage
+    assert coverage is not None and coverage["within_budget"] is True
+    by_path: dict[str, list[dict]] = {}
+    for gap in coverage["details"]:
+        by_path.setdefault(gap["path"], []).append(gap)
+    assert set(by_path) == {
+        "tests/fixtures/agents.yaml",
+        "tests/legacy/component.js",
+        "tests/fixtures/attachment.txt",
+    }
+    assert all("discounted evidence" in gap["detail"] for gaps in by_path.values() for gap in gaps)
+    assert all(gap["relevance"] == "low" for gaps in by_path.values() for gap in gaps)
+    # The binary fixture costs a whole entry; the others a quarter each.
+    [binary] = by_path["tests/fixtures/attachment.txt"]
+    assert binary["full_weight"] is True
+    assert not any(gap["full_weight"] for gap in by_path["tests/fixtures/agents.yaml"])
