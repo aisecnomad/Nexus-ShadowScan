@@ -35,7 +35,7 @@ from shadowscan.connectors.code.filesystem import (
     _holds_file,
     _WalkBudget,
 )
-from shadowscan.coverage import validate_coverage_summary
+from shadowscan.coverage import MAX_DECLARED_PATHS, validate_coverage_summary
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.digest import scanner_source_digest
@@ -58,7 +58,7 @@ except ImportError:  # pragma: no cover - absent only where the confined reader 
 
 
 log = logging.getLogger("shadowscan.incremental")
-_FORMAT = 5  # the coverage ledger and declared omissions: older entries require a full rescan
+_FORMAT = 6  # the coverage ledger, declared omissions and their paths: older entries require a full rescan
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
 _MAX_CACHE_TOTAL_BYTES = 512 * 1024 * 1024
 _MAX_CACHE_ENTRIES = 256
@@ -84,6 +84,15 @@ _OWNERSHIP_DIRECTORIES = {".github", ".gitlab", "docs"}
 
 class _CacheMaintenanceDeadlineExceeded(RuntimeError):
     """Raised when startup cache housekeeping exceeds its fixed budget."""
+
+
+def _declared_paths(value: Any, declared: int) -> list[str] | None:
+    """A cache entry's declared-omission paths, or None when the scanner could not have stored them."""
+    if not isinstance(value, list) or len(value) > min(declared, MAX_DECLARED_PATHS):
+        return None
+    if not all(isinstance(path, str) and path for path in value):
+        return None
+    return list(value)
 
 
 def _json(value: Any) -> bytes:
@@ -909,6 +918,7 @@ class IncrementalCache:
                 or not all(isinstance(warning, str) for warning in payload["warnings"])
                 or type(declared) is not int
                 or declared < 0
+                or (declared_paths := _declared_paths(payload["declared_paths"], declared)) is None
             ):
                 return None
             coverage = validate_coverage_summary(payload["coverage"])
@@ -933,6 +943,7 @@ class IncrementalCache:
                 # replay as on the run that found it, never dropped.
                 coverage=sanitize(coverage),
                 declared_omissions=declared,
+                declared_paths=sanitize(declared_paths),
             )
             try:
                 os.utime(path, follow_symlinks=False)
@@ -1004,6 +1015,7 @@ class IncrementalCache:
                 "warnings": sanitize(stats.warnings),
                 "coverage": sanitize(stats.coverage),
                 "declared_omissions": stats.declared_omissions,
+                "declared_paths": sanitize(stats.declared_paths),
             }
             # Scan-local pseudonyms cannot be rekeyed from a sanitized cache.
             # Leave clean scans cacheable, but rescan credential-bearing ones

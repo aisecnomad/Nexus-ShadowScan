@@ -143,10 +143,13 @@ def test_fleet_preserves_highest_source_risk_in_either_order(tmp_path: Path):
         assert result.findings[0].shadow is True
 
 
-def test_fleet_rejects_malformed_statistics(tmp_path: Path):
+@pytest.mark.parametrize(
+    ("key", "value"), [("errors", ""), ("declared_paths", "tests"), ("declared_paths", [3])]
+)
+def test_fleet_rejects_malformed_statistics(tmp_path: Path, key, value):
     path = _report(tmp_path, "laptop", {".mcp.json": MCP})
     report = json.loads(path.read_text())
-    report["stats"][0]["errors"] = ""
+    report["stats"][0][key] = value
     with pytest.raises(ValueError, match="diagnostics"):
         merge_reports([("broken", report)])
 

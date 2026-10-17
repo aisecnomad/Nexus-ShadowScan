@@ -51,8 +51,9 @@ exits 3.
 
 Findings are stored before reconciliation, scoring and correlation, and those stages
 always run again. Only a result without errors that was neither skipped nor incomplete
-is stored. Its warnings, coverage ledger (`coverage`) and `declared_omissions` are stored
-with it and replayed on every hit, and the connector's statistics report `cached: true` with zero objects examined. A result that
+is stored. Its warnings, coverage ledger (`coverage`), `declared_omissions` and
+`declared_paths` are stored with it (an entry written before the paths were is not read, and
+the input is rescanned) and replayed on every hit, and the connector's statistics report `cached: true` with zero objects examined. A result that
 carries credential pseudonyms is stored only when `SHADOWSCAN_IDENTITY_KEY` supplies a
 stable key.
 

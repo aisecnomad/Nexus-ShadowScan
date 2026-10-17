@@ -25,9 +25,10 @@ completed and the fingerprints are equal. Unmatched findings with scan-local IDs
 (`metadata.identity_scope` other than `keyed`) are listed under `not_comparable`, and they too make
 the comparison incomplete. So does a missing finding the current, complete report may not have
 read: one whose file is, or lies below, a tolerated gap path in `stats[].coverage.details`, one
-under a test, documentation, example or generated path while the report counts declared omissions
-(the `ci` profile counts them but does not list them), and a project finding with a gap in its
-directory or any declared omission. When a connector's unread content cannot be located (a gap
+under a test, documentation, example or generated path while the report counts declared omissions,
+and a project finding with a gap or a declared omission (`stats[].declared_paths`) inside or
+above its directory, or with any declared omission its connector does not list (more than 200, or
+a report from before the list). When a connector's unread content cannot be located (a gap
 list cut at 50 entries, a malformed ledger or count, declared omissions no connector record holds,
 or declared omissions from a connector without the `ci` profile), every missing finding of that
 connector is held back. A connector's unread content is joined to its findings by `stats[].name`,

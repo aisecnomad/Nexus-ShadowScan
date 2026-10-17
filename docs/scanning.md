@@ -243,8 +243,9 @@ gaps in advance: an oversize file, an unread symbolic link, a non-regular
 entry, content that did not parse or an analysis limit under a test, fixture,
 documentation, example or generated path is recorded as a warning that names
 it and ends in `declared omission (profile ci)`, counted in
-`stats[].declared_omissions` and `summary.declared_omissions`, and the scan
-stays complete. Test paths are declared only while `include_tests` is false,
+`stats[].declared_omissions` and `summary.declared_omissions` and listed by
+path in `stats[].declared_paths` (the first 200 of each connector), and the
+scan stays complete. Test paths are declared only while `include_tests` is false,
 when their evidence is discounted; with it set they are source like any other.
 Documentation and example directories count only below the file's project
 root, as they do for evidence: a directory that holds its own manifest
@@ -257,7 +258,8 @@ and `strict_coverage` conflict and are rejected together. The report of a
 profile scan is not the report of a scan that read everything: read
 `declared_omissions` before treating its exit 0 as full coverage. `diff` reads
 them too: while the current report counts declared omissions, a missing
-finding under a test, documentation, example or generated path is not resolved
+finding under a test, documentation, example or generated path is not resolved,
+nor is a missing project with a declared omission inside or above its directory
 (see [comparing reports](#comparing-reports)).
 
 Analysis limits are reported with their reason, for example
@@ -1142,11 +1144,14 @@ unread, so it is not resolved. When a missing finding's file (its
 `metadata.path` or the file an evidence location names) is, or lies below, a
 gap path that `stats[].coverage.details` lists, or lies under a test,
 documentation, example or generated path while the current report counts
-declared omissions (a report counts those but does not list them), the
-comparison is incomplete with the reason `absence there is not resolution`:
-every missing finding is `unknown` and diff exits 3. A project finding is held
-back by a gap anywhere in its directory and by any declared omission, since its
-evidence can come from any file in it. A finding missing from content the scan
+declared omissions, the comparison is incomplete with the reason `absence
+there is not resolution`: every missing finding is `unknown` and diff exits 3.
+A project finding is held back by a gap or a declared omission
+(`stats[].declared_paths`) inside its directory or above it, since its
+evidence can come from any file in it; removing an agent project in `src/`
+still resolves while a cassette under `tests/` is declared. When a connector
+declared more omissions than it lists (over 200, or a report from before the
+list), every missing project finding of that connector is held back. A finding missing from content the scan
 did read still resolves, so a `--profile ci` gate keeps reporting resolutions.
 When the report cannot say where a connector stopped reading (a gap list cut at
 50 entries, a malformed ledger or count, a summary counting declared omissions

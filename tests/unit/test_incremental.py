@@ -215,6 +215,7 @@ def test_a_multi_root_scan_publishes_every_roots_coverage_account(tmp_path, inde
     first = Engine(cfg, index).run()
     [stats] = first.stats
     assert not first.complete and stats.declared_omissions == 1
+    assert stats.declared_paths == ["tests/large.py"]
     assert stats.incomplete_reasons == {"oversize-file": 1}
     coverage = stats.coverage
     assert coverage["gaps"] == 2 and coverage["examined"] > 60 and not coverage["within_budget"]
@@ -223,6 +224,7 @@ def test_a_multi_root_scan_publishes_every_roots_coverage_account(tmp_path, inde
     second = Engine(cfg, index).run()
     assert any("reused 1/2" in warning for warning in second.stats[0].warnings)
     assert second.stats[0].coverage == coverage and second.stats[0].declared_omissions == 1
+    assert second.stats[0].declared_paths == ["tests/large.py"]
 
 
 def test_configuration_and_signature_changes_invalidate(tmp_path, index, monkeypatch):
@@ -280,6 +282,8 @@ def test_a_cached_profile_scan_still_counts_its_declared_omissions(tmp_path, ind
     assert first.complete and first.stats[0].declared_omissions == 1
     replayed = Engine(cfg, index).run()
     assert replayed.stats[0].cached and replayed.stats[0].declared_omissions == 1
+    # So is where it lies, which diff reads to tell which projects it could hide.
+    assert replayed.stats[0].declared_paths == first.stats[0].declared_paths == ["tests/large.py"]
 
 
 def test_inventory_and_confidence_are_reapplied_even_with_same_engine(tmp_path, index):
@@ -405,7 +409,9 @@ def test_cache_entry_with_non_text_warnings_is_a_miss(tmp_path, index, monkeypat
 @pytest.mark.parametrize(
     "field, value",
     [("coverage", {"within_budget": True}), ("coverage", []), ("declared_omissions", -1)]
-    + [("declared_omissions", value) for value in (True, 1.0, None)],
+    + [("declared_omissions", value) for value in (True, 1.0, None)]
+    # More paths than omissions, or a path that is not a non-empty string.
+    + [("declared_paths", value) for value in (["tests/large.py"], "tests", None, [""])],
 )
 def test_cache_entry_with_a_malformed_coverage_account_is_a_miss(tmp_path, index, monkeypatch, field, value):
     # As for warnings, the digest is recomputed: a stored ledger or omission count

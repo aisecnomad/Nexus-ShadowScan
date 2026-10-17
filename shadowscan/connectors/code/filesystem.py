@@ -1890,7 +1890,9 @@ class FilesystemConnector(BaseConnector):
         """
         reason = reason or incomplete_reason(message, path=rel)
         if self._declared_omission(rel):
-            self.ctx.warn(f"{message}; declared omission (profile ci)", incomplete=False, declared=True)
+            self.ctx.warn(
+                f"{message}; declared omission (profile ci)", incomplete=False, declared=True, path=rel
+            )
         elif error:
             self.ctx.error(message, reason=reason)
         else:
@@ -1969,6 +1971,7 @@ class FilesystemConnector(BaseConnector):
             f"{reason}",
             incomplete=False,
             declared=declared,
+            path=rel,
         )
 
     def _content_bearing(self, rel: str, name: str) -> bool:

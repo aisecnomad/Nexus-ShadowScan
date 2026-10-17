@@ -411,7 +411,9 @@ def _connector_coverage(report: dict[str, Any]) -> list[str]:
 class _Unread:
     """What one connector of a complete report left unread, and whether it says where."""
 
-    declared: int = 0  # omissions a profile declared (counted, not listed)
+    declared: int = 0  # omissions a profile declared (``stats.declared_omissions``)
+    declared_paths: set[str] = dataclasses.field(default_factory=set)  # where (``stats.declared_paths``)
+    declared_parents: set[str] = dataclasses.field(default_factory=set)  # every directory holding one
     gaps: int = 0  # coverage gaps the budget tolerated (``stats.coverage``)
     gap_paths: set[str] = dataclasses.field(default_factory=set)
     gap_parents: set[str] = dataclasses.field(default_factory=set)  # every directory holding a gap path
@@ -419,6 +421,9 @@ class _Unread:
     # whose gap list is truncated, or declared omissions of a connector without the
     # ci profile's path rule. Every missing finding of the connector may lie there.
     located: bool = True
+    # False when a declared omission is not listed (a list cut at MAX_DECLARED_PATHS,
+    # a malformed list, a report from before the list): it may lie in any project.
+    declared_listed: bool = True
 
     def __bool__(self) -> bool:
         """Whether the connector left anything unread, or cannot say."""
@@ -446,6 +451,26 @@ def _parents(path: str) -> list[str]:
         path = path.rpartition("/")[0]
         parents.append(path)
     return parents
+
+
+def _list_declared(entry: _Unread, paths: Any, declared: int) -> None:
+    """Add a record's ``declared_paths`` to ``entry``, unless they leave one of its ``declared`` unlisted."""
+    if not isinstance(paths, list) or len(paths) != declared or not all(isinstance(p, str) for p in paths):
+        entry.declared_listed = False
+        return
+    listed = {path.replace("\\", "/") for path in paths}
+    if listed & {"", "."}:
+        entry.declared_listed = False
+        return
+    entry.declared_paths |= listed
+    entry.declared_parents.update(parent for path in listed for parent in _parents(path))
+
+
+def _near(directory: str, paths: set[str], parents: set[str]) -> bool:
+    """Whether one of ``paths`` lies inside ``directory``, is it, or lies above it (a directory entry)."""
+    if directory == ".":
+        return bool(paths)
+    return directory in parents or directory in paths or not paths.isdisjoint(_parents(directory))
 
 
 class _UnreadContent(NamedTuple):
@@ -479,6 +504,7 @@ def _unread_content(report: dict[str, Any]) -> _UnreadContent:
         elif declared:
             entry.declared += declared
             entry.located = entry.located and _declares_by_path(name)
+            _list_declared(entry, stats.get("declared_paths"), declared)
         try:
             coverage = validate_coverage_summary(stats.get("coverage"))
         except ValueError:
@@ -524,8 +550,9 @@ def _observed(record: dict[str, Any]) -> _Observed:
 def _may_be_unread(observed: _Observed, unread: _Unread) -> bool:
     """Whether a missing finding was observed where ``unread`` says its connector did not read.
 
-    A project's evidence can come from any file in it, so a gap inside its
-    directory, or any declared omission, may have hidden it.
+    A project's evidence can come from any file in it, so a gap or a declared
+    omission inside its directory, or above it, may have hidden it; one the
+    report does not list may lie in any project.
     """
     files, gaps = observed.files, unread.gap_paths
     if not unread.located or not files:
@@ -533,11 +560,16 @@ def _may_be_unread(observed: _Observed, unread: _Unread) -> bool:
     if observed.written & gaps or any(path in gaps or gaps.intersection(_parents(path)) for path in files):
         return True
     project = observed.project
-    if project is not None and (
-        unread.declared or (project == "." and gaps) or project in unread.gap_parents
-    ):
+    if project is None:
+        return bool(unread.declared) and any(may_be_declared(path) for path in files)
+    if _near(project, gaps, unread.gap_parents):
         return True
-    return bool(unread.declared) and any(may_be_declared(path) for path in files)
+    declared = unread.declared_paths
+    return bool(unread.declared) and (
+        not unread.declared_listed
+        or _near(project, declared, unread.declared_parents)
+        or any(path in declared or not declared.isdisjoint(_parents(path)) for path in files)
+    )
 
 
 def _unread_reasons(current: dict[str, Any], missing: list[dict[str, Any]]) -> list[str]:

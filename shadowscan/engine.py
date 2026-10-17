@@ -34,7 +34,7 @@ from shadowscan.config import (
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.correlation import correlate, correlate_lifecycle, correlate_runtime
-from shadowscan.coverage import combine_coverage_summaries
+from shadowscan.coverage import MAX_DECLARED_PATHS, combine_coverage_summaries
 from shadowscan.errors import SetupError
 from shadowscan.governance import apply_declared_governance
 from shadowscan.incremental import IncrementalCache
@@ -663,6 +663,7 @@ class _ConnectorRunner:
             coverage=combine_coverage_summaries(s.coverage for s in parts),
             incomplete_reasons=dict(reasons),
             declared_omissions=sum(s.declared_omissions for s in parts),
+            declared_paths=[path for s in parts for path in s.declared_paths][:MAX_DECLARED_PATHS],
         )
         if cached_count:
             stats.warnings.append(

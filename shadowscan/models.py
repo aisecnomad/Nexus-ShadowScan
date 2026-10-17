@@ -844,6 +844,11 @@ class ScanStats:
     # scan complete), so a complete scan under a profile is never read as a
     # scan that read everything.
     declared_omissions: int = 0
+    #: Where those omissions lie, one path per omission in the order declared,
+    #: at most ``shadowscan.coverage.MAX_DECLARED_PATHS``: a count above the
+    #: list's length leaves the rest unlocated, so ``shadowscan diff`` holds
+    #: back every missing project finding of the connector.
+    declared_paths: list[str] = field(default_factory=list)
     #: The connector this record accounts for, as its findings name it
     #: (``Finding.connector``). ``connector`` is the configured id, which is
     #: the label when one is set, so only this joins findings to their

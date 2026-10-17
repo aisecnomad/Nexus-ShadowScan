@@ -46,6 +46,7 @@ from shadowscan.connectors.offline import OfflineInputBudget
 from shadowscan.coverage import (
     BLINDING,
     INCOMPLETE_REASONS,
+    MAX_DECLARED_PATHS,
     PARTIAL,
     CoverageGap,
     CoverageLedger,
@@ -336,17 +337,27 @@ class ConnectorContext:
             return f"diagnostic omitted: sanitization safety limit exceeded {REDACTED}"
 
     def warn(
-        self, msg: str, incomplete: bool = True, *, reason: str | None = None, declared: bool = False
+        self,
+        msg: str,
+        incomplete: bool = True,
+        *,
+        reason: str | None = None,
+        declared: bool = False,
+        path: str | None = None,
     ) -> None:
         """Record a warning; an incomplete one is counted under ``reason``, classified from ``msg`` when None.
 
         ``declared`` marks a coverage omission a profile declared in advance: the
         warning leaves the scan complete and is counted in ``declared_omissions``.
+        ``path`` is where it lies, listed in ``declared_paths`` while there is room;
+        an omission without one is counted but not located.
         """
         if self.stats is not None:
             self.stats.incomplete = self.stats.incomplete or incomplete
             if declared:
                 self.stats.declared_omissions += 1
+                if path and len(self.stats.declared_paths) < MAX_DECLARED_PATHS:
+                    self.stats.declared_paths.append(path)
         self._diagnostic(msg, warning=True, incomplete=incomplete, reason=reason)
 
     def error(self, msg: str, *, reason: str | None = None) -> None:

@@ -552,7 +552,7 @@ def _check_statistics(raw: Any) -> None:
     for key in ("incomplete", "skipped", "cached"):
         if type(raw[key]) is not bool:
             raise ValueError("invalid plugin statistics flag")
-    for key in ("errors", "warnings"):
+    for key in ("errors", "warnings", "declared_paths"):
         if not isinstance(raw[key], list) or any(not isinstance(item, str) for item in raw[key]):
             raise ValueError("invalid plugin diagnostics")
     reasons = raw["incomplete_reasons"]

@@ -145,6 +145,44 @@ def test_a_result_reused_by_incremental_keeps_unread_content_from_resolving(tmp_
     assert any(_UNREAD in reason for reason in comparison["reasons"])
 
 
+_AGENT = "from openai import OpenAI\n\nclient = OpenAI()\nclient.chat.completions.create(model='gpt-4o', messages=[])\n"
+
+
+@pytest.mark.parametrize("cassettes", ["tests/cassettes", "src/bot/tests/cassettes"])
+def test_a_removed_project_resolves_unless_a_declared_omission_lies_in_it(tmp_path, index, cassettes):
+    # The review's case: any declared omission anywhere held back every
+    # missing project finding, so removing an agent under --profile ci always
+    # exited 3. A cassette elsewhere cannot hold the project's evidence.
+    root = _repo(tmp_path / "repo")
+    project = root / "src" / "bot"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "bot"\nversion = "0.1"\ndependencies = ["openai"]\n'
+    )
+    (project / "agent.py").write_text(_AGENT)
+    (root / cassettes).mkdir(parents=True)
+    (root / cassettes / "run.json").write_text(json.dumps({"body": "y" * 5000}))
+    baseline = _scan(index, root, profile="ci", max_file_size=4096)
+    assert baseline["summary"]["complete"] and baseline["summary"]["declared_omissions"] == 1
+    assert "src/bot" in {f["metadata"].get("path") for f in baseline["findings"]}
+    for name in ("pyproject.toml", "agent.py"):
+        (project / name).unlink()
+    current = _scan(index, root, profile="ci", max_file_size=4096)
+    assert current["summary"]["complete"] and current["stats"][0]["declared_paths"] == [
+        f"{cassettes}/run.json"
+    ]
+    assert current["findings"] == []
+    result = _diff(tmp_path, baseline, current)
+    comparison = json.loads(result.output)
+    if cassettes == "tests/cassettes":
+        assert result.exit_code == 0, result.output
+        assert comparison["comparable"] is True and comparison["unknown"] == []
+        assert len(comparison["resolved"]) == len(baseline["findings"])
+    else:
+        assert result.exit_code == 3, result.output
+        assert comparison["resolved"] == [] and any(_UNREAD in reason for reason in comparison["reasons"])
+
+
 def test_a_credential_removed_from_read_content_still_resolves_under_the_profile(tmp_path, index):
     # A declared omission in docs/ does not hold back a credential deleted from src/.
     root = _repo(tmp_path / "repo")
@@ -299,17 +337,39 @@ def test_gap_paths_hold_back_only_the_findings_observed_there():
     assert _resolved(baseline, current) == []
 
 
-def test_a_project_is_held_back_by_a_gap_inside_it_or_any_declared_omission():
+def test_a_project_is_held_back_by_unread_content_inside_or_above_it():
     baseline = _report(_finding("services/bot", resource_type="project"))
     current = _report()
-    current["stats"][0]["coverage"] = _coverage("services/other/main.py")
+    stats = current["stats"][0]
+    stats["coverage"] = _coverage("services/other/main.py")
     assert _resolved(baseline, current) == ["services/bot"]
     # Its evidence could have moved to any file in it, read or not.
-    current["stats"][0]["coverage"] = _coverage("services/bot/tools.py")
+    stats["coverage"] = _coverage("services/bot/tools.py")
     assert _resolved(baseline, current) == []
-    current["stats"][0]["coverage"] = None
-    current["stats"][0]["declared_omissions"] = current["summary"]["declared_omissions"] = 1
+    stats["coverage"] = None
+    stats["declared_omissions"] = current["summary"]["declared_omissions"] = 1
+    for listed, resolved in [
+        # A declared omission in another project, or beside this one, cannot hide it.
+        (["services/other/tests/big.json"], ["services/bot"]),
+        (["services/bot-two/docs/a.md"], ["services/bot"]),
+        (["tests/cassettes/run.yaml"], ["services/bot"]),
+        # One inside it, at it or above it (a directory entry) can.
+        (["services/bot/tests/big.json"], []),
+        (["services/bot"], []),
+        (["services"], []),
+    ]:
+        stats["declared_paths"] = listed
+        assert _resolved(baseline, current) == resolved, listed
+    # A report that cannot say where every declared omission lies holds every project back:
+    # one from before the list, a list cut short, or a malformed or root entry.
+    for listed in [None, [], ["tests/a.json", "tests/b.json"], [3], ["."]]:
+        stats["declared_paths"] = listed
+        assert _resolved(baseline, current) == [], listed
+    del stats["declared_paths"]
     assert _resolved(baseline, current) == []
+    # The root project holds every listed omission.
+    stats["declared_paths"] = ["tests/cassettes/run.yaml"]
+    assert _resolved(_report(_finding(".", resource_type="project")), current) == []
 
 
 @pytest.mark.parametrize("path", ["tests/fixtures/key.json", "docs/setup.md", "examples/x/app.py"])

@@ -35,6 +35,20 @@ tolerated gap.
   no declared omission behind a label, so it fails closed. The fleet reader
   keeps the name and rejects a malformed one; a plugin worker's record is
   checked for it.
+- **A declared omission holds back only the projects it could hide.** A
+  report counted declared omissions without saying where, so any declared
+  omission anywhere held back every missing project finding: under the ci
+  profile, which exists to make cassettes and oversize fixtures routine,
+  removing an agent from `svc-a/` exited 3 because `svc-b/tests/big.json`
+  was declared. Each declared omission's path is now listed in
+  `stats[].declared_paths` (the first 200 of a connector; the count still
+  covers every one), stored in incremental cache entries (format 6; older
+  entries rescan) and carried through a multi-root job, and diff holds a
+  missing project back only for a gap or declared omission inside its
+  directory or above it, or for a declared omission its connector does not
+  list (more than 200, a malformed list, an older report). Other missing
+  findings keep the path-name rule. The fleet reader and the plugin worker
+  check the list.
 
 ### Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
 

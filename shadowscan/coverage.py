@@ -79,6 +79,9 @@ DEFAULT_MAX_GAP_ENTRIES = 100
 LOW_RELEVANCE_WEIGHT = 0.25
 #: Gaps listed individually in the report. Every gap is still counted.
 MAX_PUBLISHED_GAPS = 50
+#: Declared omissions whose path a connector record lists (``ScanStats.declared_paths``).
+#: Every one is still counted; one past the list leaves the rest unlocated.
+MAX_DECLARED_PATHS = 200
 
 #: Path segments whose contents are not deployed: dependency trees and tool caches.
 #: A gap here is weighted down because the bytes belong to a third party or to a

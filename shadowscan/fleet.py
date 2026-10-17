@@ -172,7 +172,7 @@ def _stats(report: dict[str, Any]) -> list[ScanStats]:
         name = entry.get("name")
         if name is not None and (not isinstance(name, str) or not name.strip()):
             raise ValueError("report stats connector name is malformed")
-        for key in ("errors", "warnings"):
+        for key in ("errors", "warnings", "declared_paths"):
             value = entry.get(key, [])
             if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
                 raise ValueError("report stats diagnostics must be arrays of strings")
