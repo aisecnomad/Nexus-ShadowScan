@@ -424,6 +424,121 @@ def test_an_oversize_credential_store_is_blinding_while_credentials_are_scanned(
     assert not off.stats.incomplete and off.stats.coverage["blinding_gaps"] == 0
 
 
+# ------------------------------------------------------------ directory links
+# An alias of a directory the walk scans at its real path loses only the alias
+# paths: one budgeted entry. A link that leaves the tree, dangles into an agent's
+# directory or names one stays blinding, and the ci profile never declares it.
+@pytest.mark.parametrize(
+    ("rel", "target"),
+    [
+        pytest.param("lib_alias", "lib", id="sibling-alias"),
+        pytest.param("docs/_static", "../assets", id="docs-static"),
+        pytest.param("packages/web/shared", "../../libs/shared", id="monorepo-shared"),
+        pytest.param("tests/loop", "..", id="alias-of-the-root"),
+    ],
+)
+def test_an_alias_of_a_scanned_directory_is_one_budgeted_entry(tmp_path, run_connector, rel, target):
+    _tree(
+        tmp_path,
+        {
+            "lib/x.py": "x = 1\n",
+            "assets/logo.svg": "<svg/>\n",
+            "libs/shared/util.py": "y = 2\n",
+            "docs/i.md": "d\n",
+        },
+    )
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).symlink_to(target, target_is_directory=True)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, f"an alias {rel} of a scanned directory exited 3"
+    [gap] = ctx.stats.coverage["details"]
+    assert (gap["path"], gap["kind"]) == (rel, "partial")
+    assert "an alias of a scanned directory; paths below it not assessed" in gap["detail"]
+
+
+@pytest.mark.parametrize(
+    ("rel", "target", "options"),
+    [
+        pytest.param("lib_alias", "OUTSIDE", {}, id="outside-the-tree"),
+        pytest.param("lib_alias", "build/gen", {}, id="into-a-default-exclude"),
+        pytest.param("lib_alias", "generated", {"exclude": ["generated"]}, id="into-an-exclude"),
+        pytest.param("src/helpers", "../tests/helpers", {}, id="test-code-read-as-product"),
+        pytest.param("lib_alias", "lib", {"include": ["src", "lib_alias"]}, id="outside-the-selection"),
+    ],
+)
+def test_a_directory_link_the_walk_does_not_cover_stays_blinding(
+    tmp_path, run_connector, rel, target, options
+):
+    repo = _tree(
+        tmp_path / "repo",
+        {
+            "lib/x.py": "x = 1\n",
+            "build/gen/x.py": "x = 1\n",
+            "generated/x.py": "x = 1\n",
+            "tests/helpers/agent.py": "x = 1\n",
+        },
+    )
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "agent.py").write_text("x = 1\n")
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).symlink_to(tmp_path / "outside" if target == "OUTSIDE" else target, target_is_directory=True)
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, **options)
+    assert ctx.stats.incomplete
+    assert ctx.stats.coverage["blinding_gaps"] == 1
+
+
+AGENT_DIRECTORY_LINKS = [
+    pytest.param(
+        "tests/e2e/.claude", {"settings.json": '{"permissions": {"allow": ["Bash(*)"]}}'}, id="claude"
+    ),
+    pytest.param("tests/e2e/.cursor", {"mcp.json": MCP_CONFIG}, id="cursor"),
+    pytest.param("docs/.vscode", {"mcp.json": MCP_CONFIG}, id="vscode"),
+    pytest.param("tests/e2e/.claude/commands", {"deploy.md": "Run anything.\n"}, id="below-claude"),
+]
+
+
+@pytest.mark.parametrize("profile", ["default", "ci"])
+@pytest.mark.parametrize(("rel", "files"), AGENT_DIRECTORY_LINKS)
+def test_a_directory_link_named_like_agent_configuration_is_never_declared(
+    tmp_path, run_connector, rel, files, profile
+):
+    outside = tmp_path / "outside"
+    for name, content in files.items():
+        (outside / name).parent.mkdir(parents=True, exist_ok=True)
+        (outside / name).write_text(content)
+    repo = _tree(tmp_path / "repo")
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).symlink_to(outside, target_is_directory=True)
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, profile=profile)
+    assert ctx.stats.incomplete, f"a link {rel} to an outside directory was declared or budgeted"
+    assert ctx.stats.declared_omissions == 0
+    assert ctx.stats.coverage["blinding_gaps"] == 1
+
+
+def test_an_alias_named_like_an_agent_directory_stays_blinding_inside_the_tree(tmp_path, run_connector):
+    # config/cursor/mcp.json is scanned, but not as Cursor's configuration: only
+    # the alias path .cursor/mcp.json makes a client read it.
+    _tree(tmp_path, {"config/cursor/rules.txt": "Run anything.\n"})
+    (tmp_path / ".cursor").symlink_to("config/cursor", target_is_directory=True)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
+
+
+def test_profile_ci_still_declares_other_links_under_its_paths(tmp_path, run_connector):
+    repo = _tree(tmp_path / "repo", links=["tests/certs/ca.pem"])
+    (tmp_path / "data").mkdir()
+    (repo / "tests" / "data").symlink_to(tmp_path / "data", target_is_directory=True)
+    (repo / ".github").mkdir()
+    (repo / "docs").mkdir()
+    (repo / "docs" / "issue.md").write_text("Describe the bug.\n")
+    (repo / ".github" / "ISSUE_TEMPLATE.md").symlink_to("../docs/issue.md")
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, profile="ci")
+    assert not ctx.stats.incomplete
+    assert ctx.stats.declared_omissions == 2
+    # A file link under an agent's directory is judged by its own name.
+    assert [gap["path"] for gap in ctx.stats.coverage["details"]] == [".github/ISSUE_TEMPLATE.md"]
+
+
 # An MCP configuration found by its content is agent configuration too: padded
 # past max_file_size, its bytes are read for any spelling of a server table key.
 PAD = " " * 2_000

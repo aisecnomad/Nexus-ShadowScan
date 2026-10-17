@@ -367,7 +367,7 @@ def test_source_alias_to_test_directory_marks_incomplete(tmp_path, run_connector
 
 
 @pytest.mark.parametrize("strict", [False, True])
-def test_in_root_directory_alias_keeps_findings_but_marks_incomplete(tmp_path, run_connector, strict):
+def test_in_root_directory_alias_keeps_findings_and_costs_one_entry(tmp_path, run_connector, strict):
     repo = tmp_path / "repo"
     source = repo / "source"
     source.mkdir(parents=True)
@@ -376,9 +376,14 @@ def test_in_root_directory_alias_keeps_findings_but_marks_incomplete(tmp_path, r
 
     findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
     assert any("framework.crewai" in finding.frameworks for finding in findings)
-    # Every path below the alias is unassessed: an error, never a budgeted gap.
+    # The target is scanned at its real path; the paths below the alias are not
+    # assessed. One budgeted entry, which this two-entry tree cannot absorb, or an
+    # error under strict accounting.
     assert ctx.stats.incomplete
-    assert any("symbolic link agents" in issue for issue in ctx.stats.errors)
+    channel = ctx.stats.errors if strict else ctx.stats.warnings
+    assert any("symbolic link agents" in issue for issue in channel)
+    if not strict:
+        assert ctx.stats.coverage["blinding_gaps"] == 0 and ctx.stats.coverage["gap_entries"] == 1
 
 
 @pytest.mark.parametrize("kind", ["root", "ancestor", "dotdot"])

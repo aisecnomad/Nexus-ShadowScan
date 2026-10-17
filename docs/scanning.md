@@ -26,9 +26,19 @@ that are never silent:
   and document aliases, whose parsing can depend on their path; aliases into
   another project or test directory; links into excluded or unread content;
   links outside the root; and unresolved links. A dangling link, or one to a
-  single regular file, costs one entry of the coverage budget; a link to a
-  directory, whose alias paths are not inspected and which can stand for any
-  number of files, makes the scan incomplete (exit code 3) at once. So does a
+  single regular file, costs one entry of the coverage budget, and so does an
+  alias of a directory the walk scans whole at its real path inside the root
+  (`lib_alias` linking to `lib`, `docs/_static` to `../assets`): its files are
+  read and counted there, and only the paths below the alias are not
+  assessed. Any other link to a directory (outside the root, into an excluded
+  or unselected directory, or reading test code as product code), which can
+  stand for any number of files, makes the scan incomplete (exit code 3) at
+  once, and so does a link to a directory, or a dangling one, whose path names
+  a directory a coding agent or MCP client reads its configuration from
+  (`.claude`, `.cursor`, `.vscode`, `.roo`, `.continue`, `.github` and the
+  others the coding-agent and MCP file signatures name), even an alias of a
+  scanned directory: under that path its files are configuration, at their
+  real path they are not. The `ci` profile never declares such a link. So does a
   dangling link or one to a single file whose own name makes it agent
   configuration, as an oversize copy of that file does, under a test path
   too: an MCP configuration by a dedicated name in any letter case
@@ -223,7 +233,8 @@ entry; the summary's `status` still says `incomplete`.
 ### The coverage budget
 
 A gap the scanner cannot bound is *blinding*: the walk stopped early, a page
-was refused, a deadline expired, a link names a directory, a sanitizer limit
+was refused, a deadline expired, a link names a directory the walk does not
+scan whole or an agent's configuration directory, a sanitizer limit
 was reached. It marks the scan incomplete at once. A *partial* gap costs a
 known number of entries (a dangling link is one) and is charged against a
 budget: `max_coverage_gap` (`--max-coverage-gap`), by default 2% of the entries
@@ -276,7 +287,8 @@ JSON report of the same scan as well (`--format json`).
 
 A coverage gap is *blinding* when the scanner cannot bound what it lost: the
 walk stopped early (`max_files`, `max_entries`, a deadline), a page was
-refused, a symbolic link names a directory, undecodable bytes, padding past
+refused, a symbolic link names a directory the walk does not scan whole
+inside the root or an agent's configuration directory, undecodable bytes, padding past
 `max_file_size`, a link or a FIFO, socket or device hide agent configuration
 (padding also hides a dotenv or tool credential file), or a sanitizer limit
 was hit. A blinding gap marks the scan

@@ -552,8 +552,9 @@ leaving the root, oversized files the scanner would
 inspect and files it analyzes by name but cannot read as text (binary content
 with dense NUL bytes, mostly invalid UTF-8, or UTF-16 or UTF-32 without a byte-order mark; a few stray NUL
 bytes or invalid bytes in otherwise valid text do not count) are coverage gaps,
-each named in a diagnostic. A directory link, undecodable content outside
-discounted test code and an oversize configuration file make the scan
+each named in a diagnostic. A directory link (other than an alias of a
+directory the walk scans whole inside the root), undecodable content outside
+discounted test code and unread agent configuration make the scan
 incomplete (exit 3) at once; the others are charged to each scan root's
 coverage budget (2% of its entries, `max_coverage_gap`), within which the
 scan stays complete and counts them in `summary.tolerated_gaps` (see

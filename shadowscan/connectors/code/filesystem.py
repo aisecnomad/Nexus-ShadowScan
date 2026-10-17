@@ -1159,20 +1159,28 @@ def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     return target if target == resolved_root or resolved_root in target.parents else None
 
 
+def _link_target_kind(link: Path) -> str:
+    """``file``, ``missing`` or ``other``: what a link the walk does not follow names.
+
+    Its target is looked up, never opened. A loop resolves to nothing at all,
+    like a dangling link. A directory, any other kind of entry, or a lookup
+    that fails for a reason other than absence is ``other``.
+    """
+    try:
+        return "file" if stat.S_ISREG(os.stat(link).st_mode) else "other"
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing"
+    except OSError as exc:
+        return "missing" if exc.errno == errno.ELOOP else "other"
+
+
 def _link_names_one_file(link: Path) -> bool:
     """Whether a link the walk does not follow stands for one file at most: dangling, or to a regular file.
 
-    Its target is looked up, never opened. A directory, any other kind of
-    entry, or a lookup that fails for a reason other than absence can stand
-    for any number of files, inside the scan root or outside it.
+    Anything else (``_link_target_kind`` ``other``) can stand for any number
+    of files, inside the scan root or outside it.
     """
-    try:
-        return stat.S_ISREG(os.stat(link).st_mode)
-    except (FileNotFoundError, NotADirectoryError):
-        return True
-    except OSError as exc:
-        # A loop resolves to nothing at all, like a dangling link.
-        return exc.errno == errno.ELOOP
+    return _link_target_kind(link) != "other"
 
 
 def _on_disk_project(root: Path, path: Path, proj_root: str) -> Path:
@@ -1760,6 +1768,8 @@ class FilesystemConnector(BaseConnector):
         self._declared_link_notes: set[Path] = set()
         self._blinding_link_notes: set[Path] = set()
         self._configuration_link_notes: set[Path] = set()
+        self._alias_link_notes: set[Path] = set()
+        self._agent_directories: frozenset[str] | None = None
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
         self._lockfile_governed: dict[str, bool] = {}
@@ -2667,7 +2677,8 @@ class FilesystemConnector(BaseConnector):
             self._lockfile_gap(rel, "symbolic link is not followed")
             return True
         message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
-        if self._walk_declared(root, rel, walk):
+        agent = self._agent_configuration_link(rel, link)
+        if not agent and self._walk_declared(root, rel, walk):
             # One representative note per root, like the gap below, and it
             # leaves that gap's own representative slot for an undeclared link.
             # Every declared link is counted, as the budget counts every other.
@@ -2689,40 +2700,122 @@ class FilesystemConnector(BaseConnector):
                 self._symlink_warnings.add(root)
                 self.ctx.error(f"{message}; coverage incomplete", reason="unresolved-link")
             return True
-        self._budgeted_link_gap(root, rel, link, message)
+        alias = target is not None and self._alias_of_scanned_directory(rel, target, resolved_root)
+        self._budgeted_link_gap(root, rel, link, message, agent=agent, alias=alias)
         return True
 
-    def _budgeted_link_gap(self, root: Path, rel: str, link: Path, message: str) -> None:
+    def _budgeted_link_gap(
+        self, root: Path, rel: str, link: Path, message: str, *, agent: bool, alias: bool
+    ) -> None:
         """Charge an unscanned symbolic link at ``rel`` to the budget, or fail closed if it cannot be bounded.
 
-        A dangling link, or one to a regular file, costs one entry. A link to
-        a directory (or to a target the lookup cannot classify) can stand for
-        any number of files, a whole service outside the tree among them: the
-        scanner cannot bound what it hides, so no budget applies. Nor does one
-        to a single file named like agent configuration (``.mcp.json``,
+        A dangling link, or one to a regular file, costs one entry. So does an
+        alias of a directory the walk scans at its real path inside the root
+        (``lib_alias -> lib``, ``docs/_static -> ../assets``): its files are
+        read and counted there, and only the paths below the alias go
+        unassessed (``_alias_of_scanned_directory``). Any other link to a
+        directory (or to a target the lookup cannot classify) can stand for any
+        number of files, a whole service outside the tree among them: the
+        scanner cannot bound what it hides, so no budget applies. Nor does a
+        link that stands for agent configuration (``agent``, see
+        ``_agent_configuration_link``): a file named like it (``.mcp.json``,
         ``.claude/settings.json``, ``CLAUDE.md`` pointing outside the tree),
-        which is judged as an oversize copy of that file is
-        (``_agent_configuration``); a link named like a manifest or a build
-        file (``Dockerfile``, ``package.json``, ``.env``) costs one entry, as
-        any other does. One representative diagnostic per root and kind; the
-        budget still counts every link.
+        judged as an oversize copy of that file is, or a directory an agent
+        reads its configuration from (``.claude``, ``.cursor``, ``.vscode``),
+        even an alias of a scanned one, whose files are read there without the
+        path that makes them configuration. A link named like a manifest or a
+        build file (``Dockerfile``, ``package.json``, ``.env``) costs one
+        entry, as any other does. One representative diagnostic per root and
+        kind; the budget still counts every link.
         """
-        if not _link_names_one_file(link):
-            noted = self._blinding_link_notes
+        if agent:
+            noted, blinding = self._configuration_link_notes, True
+            message = f"{message}; it is named like agent configuration; coverage incomplete"
+        elif _link_names_one_file(link):
+            noted, blinding = self._symlink_warnings, False
+            message = f"{message}; coverage gap"
+        elif alias:
+            noted, blinding = self._alias_link_notes, False
+            message = (
+                f"code.filesystem: skipped symbolic link {rel}, an alias of a scanned directory; "
+                "paths below it not assessed; coverage gap"
+            )
+        else:
+            noted, blinding = self._blinding_link_notes, True
             message = (
                 f"code.filesystem: skipped symbolic link {rel} whose target may hold any number of "
                 "files and is unscanned; coverage incomplete"
             )
-        elif self._agent_configuration(rel, link.name):
-            noted = self._configuration_link_notes
-            message = f"{message}; it is named like agent configuration; coverage incomplete"
-        else:
-            noted = self._symlink_warnings
-            message = f"{message}; coverage gap"
         first = root not in noted
         noted.add(root)
-        blinding = noted is not self._symlink_warnings
         self._ledger_gap(rel, message, blinding=blinding, quiet=not first, reason="unresolved-link")
+
+    def _alias_of_scanned_directory(self, rel: str, target: Path, resolved_root: Path) -> bool:
+        """Whether directory link ``rel`` names ``target``, a directory inside the root the walk scans whole.
+
+        ``target`` is the link's resolved target below ``resolved_root`` (see
+        ``_resolved_link_target``). Every directory on its path must be one the
+        walk enters (not excluded, by default or by ``exclude``) and the
+        target must lie within the selected paths, so its files are read and
+        counted at their real paths. Nor may the alias read as product code
+        what the walk discounts as test code there (``src/lib -> ../tests``),
+        which would weaken the evidence the alias path would carry.
+        """
+        if not target.is_dir():
+            return False
+        parts = target.relative_to(resolved_root).parts
+        for depth, name in enumerate(parts, start=1):
+            if self._excluded(PurePosixPath(*parts[:depth]).as_posix(), name):
+                return False
+        target_rel = PurePosixPath(*parts).as_posix() if parts else "."
+        if not self._included(target_rel if parts else ""):
+            return False
+        return not (
+            _is_test_path(f"{target_rel}/{_ANY_FILE_NAME}") and not _is_test_path(f"{rel}/{_ANY_FILE_NAME}")
+        )
+
+    def _agent_configuration_link(self, rel: str, link: Path) -> bool:
+        """Whether a symbolic link at ``rel`` stands for agent configuration, which no budget may absorb.
+
+        A link named like an agent configuration file (``_agent_configuration``),
+        or one to a directory, or dangling, whose path names a directory a
+        coding agent or MCP client reads its configuration from
+        (``_agent_directory_names``: ``tests/e2e/.claude``, ``docs/.vscode``,
+        ``.cursor/rules``). A link to a single file is judged by its own name:
+        ``.github/CODEOWNERS`` is not configuration because ``.github`` is.
+        """
+        if self._agent_configuration(rel, link.name):
+            return True
+        kind = _link_target_kind(link)
+        if kind == "file":
+            return False
+        parts = rel.lower().split("/")
+        names = self._agent_directory_names()
+        # A dangling link may stand for a directory of that name; one to a
+        # directory stands for every path below it.
+        return any(part in names for part in (parts[-1:] if kind == "missing" else parts))
+
+    def _agent_directory_names(self) -> frozenset[str]:
+        """Lower-cased names of the directories agent configuration is read from, by the file signatures.
+
+        Every literal dot-directory a coding-agent or MCP file-name signature
+        names (``.claude``, ``.cursor``, ``.roo``, ``.continue``, ``.vscode``,
+        ``.kiro``, ``.github``, …), custom packs included, plus the settings
+        directories the posture reader knows. Computed once per connector.
+        """
+        if self._agent_directories is None:
+            names = {".claude", ".codex", ".gemini", ".openclaw", ".clawdbot"}
+            for signature, signal in self.index.signals_of_type("file"):
+                if signature.category != "coding-agent" and signature.id != "protocol.mcp":
+                    continue
+                for glob in signal.globs:
+                    names.update(
+                        part.lower()
+                        for part in glob.split("/")[:-1]
+                        if part.startswith(".") and not any(char in part for char in "*?[")
+                    )
+            self._agent_directories = frozenset(names)
+        return self._agent_directories
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
         """Return the share of ``budget`` a file must have left before the walk may start it.
