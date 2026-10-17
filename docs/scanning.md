@@ -29,11 +29,17 @@ that are never silent:
   single regular file, costs one entry of the coverage budget; a link to a
   directory, whose alias paths are not inspected and which can stand for any
   number of files, makes the scan incomplete (exit code 3) at once. So does a
-  dangling link or one to a single file whose own name is configuration the
-  scanner reads (`.mcp.json` or `.claude/settings.json` pointing outside the
-  tree, `CLAUDE.md`, a manifest), as an oversize copy of that file does,
-  except in discounted test code; an MCP configuration or coding-agent file
-  under a test path (`tests/.mcp.json`) is not discounted.
+  dangling link or one to a single file whose own name makes it agent
+  configuration, as an oversize copy of that file does, under a test path
+  too: an MCP configuration by a dedicated name in any letter case
+  (`.mcp.json`, `.MCP.JSON`), a coding-agent instruction, rule or settings
+  file (`CLAUDE.md`, `.claude/settings.json`), a file a coding-agent or MCP
+  file signature selects, directory-wide globs included
+  (`.roo/rules/deploy.md`, `.continue/mcpServers/x.yaml`), or an agent
+  manifest or card. A link named like a manifest or build file (`Dockerfile`,
+  `package.json`, `requirements.txt`, `.env`, `*.tf`) or like a shared client
+  file (`config.json`, `settings.json`), which is MCP configuration only by its
+  content, costs one entry like any other.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the
@@ -42,7 +48,9 @@ that are never silent:
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect are a coverage gap when skipped: one entry of the
   [budget](#coverage-budget-and-strict-accounting), or an immediate exit 3 for
-  a configuration file its name selects. Known generated, binary and
+  agent configuration (as the links above) and, while `scan_secrets` is on,
+  for a dotenv or tool credential file (`.env`, `.npmrc`, `.netrc`), which
+  exists to hold a credential. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
@@ -136,10 +144,11 @@ that are never silent:
 * **Entries that are not regular files** (a directory, FIFO, socket or device)
   named like a file the scanner analyzes are a coverage gap of one entry
   each, as a symbolic link of the same name to a single file is. A FIFO,
-  socket or device in place of configuration the scanner reads (`.mcp.json`,
-  `.claude/settings.json`, `requirements.txt`) makes the scan incomplete at
-  once, outside discounted test code, as a link or an oversize copy of it
-  does. A directory is only reported when its name is an MCP configuration
+  socket or device in place of agent configuration (`.mcp.json`,
+  `.claude/settings.json`, `.roo/rules/deploy.md`) makes the scan incomplete
+  at once, under a test path too, as a link or an oversize copy of it does;
+  one named like a manifest or build file (`requirements.txt`, `.env`,
+  `Dockerfile`) costs one entry. A directory is only reported when its name is an MCP configuration
   file name such as `.mcp.json`, and costs one entry: its contents are still
   scanned. Directories that agent tools read as directories (`.roo/rules/`,
   `.clinerules/`, `.cursor/rules/`) are not reported.
@@ -263,8 +272,9 @@ JSON report of the same scan as well (`--format json`).
 A coverage gap is *blinding* when the scanner cannot bound what it lost: the
 walk stopped early (`max_files`, `max_entries`, a deadline), a page was
 refused, a symbolic link names a directory, undecodable bytes, padding past
-`max_file_size`, a link or a FIFO, socket or device hide a file read as
-configuration, or a sanitizer limit was hit. A blinding gap marks the scan
+`max_file_size`, a link or a FIFO, socket or device hide agent configuration
+(padding also hides a dotenv or tool credential file), or a sanitizer limit
+was hit. A blinding gap marks the scan
 incomplete at once. A *partial* gap costs a known number of entries: any other
 dangling link or link to a single file, any other non-regular entry, an
 incidental file over `max_file_size`. Partial gaps
