@@ -308,28 +308,30 @@ _NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 # Three or more letter words joined by '-' or '_': a label or a test value
 # ('request-scoped-credential', 'fc-shared-env-must-not-be-used'), or a
 # generated passphrase ('snout-fiber-thump-bloom-gravel'); see _label_slug.
-_WORD_SLUG = re.compile(r"[A-Za-z]{2,}(?:[-_][A-Za-z]{2,}){2,}")
-_SLUG_SEPARATOR = re.compile(r"[-_]")
-# Words that make a word slug a label rather than a passphrase.
+# Password managers also join words with '.', which joins names too
+# ('config.openai.apiKey'), so a dotted slug's words must each be lower case,
+# Capitalized or upper case ('snout.fiber.thump', 'Snout.Fiber.Thump').
+_SLUG_WORD = r"(?:[a-z]{2,}|[A-Z][a-z]+|[A-Z]{2,})"
+_WORD_SLUG = re.compile(
+    r"[A-Za-z]{2,}(?:[-_][A-Za-z]{2,}){2,}|" + _SLUG_WORD + r"(?:\." + _SLUG_WORD + r"){2,}"
+)
+_SLUG_SEPARATOR = re.compile(r"[-_.]")
+# Words that make a word slug a label rather than a passphrase, read with a
+# plural '-s' or a past '-ed' taken off (``_label_word``).
 _LABEL_WORDS = frozenset(
     {
         # What the value stands for.
         "api",
         "auth",
         "credential",
-        "credentials",
         "env",
         "key",
-        "keys",
         "pass",
         "passwd",
         "password",
-        "passwords",
         "pwd",
         "secret",
-        "secrets",
         "token",
-        "tokens",
         "value",
         # Test values and placeholders.
         "demo",
@@ -344,7 +346,6 @@ _LABEL_WORDS = frozenset(
         "stub",
         "test",
         "testing",
-        "tests",
         # Instructions and scope.
         "change",
         "must",
@@ -354,8 +355,36 @@ _LABEL_WORDS = frozenset(
         "scoped",
         "shared",
         "your",
+        # Development defaults ('local-development-only', 'insecure-default-for-dev').
+        "default",
+        "dev",
+        "development",
+        "insecure",
+        "local",
+        "localhost",
+        "prod",
+        "production",
+        "unsafe",
+        # Filler text ('foo-bar-baz-qux-quux', 'lorem-ipsum-dolor-sit-amet').
+        "baz",
+        "foo",
+        "foobar",
+        "ipsum",
+        "lorem",
+        "quux",
+        "qux",
     }
 )
+
+
+def _label_word(word: str) -> bool:
+    """Whether a lower-case slug word is label vocabulary, read with a plural or past ending taken off."""
+    stems = {word, word[:-1] if word.endswith("s") else word}
+    if word.endswith("ed"):
+        stems.update((word[:-1], word[:-2]))  # 'changed' is change, 'tested' is test
+    return not stems.isdisjoint(_LABEL_WORDS)
+
+
 _VALUE_QUOTES = "\"'"
 
 
@@ -605,19 +634,24 @@ def _assigned_name(value: str) -> str:
 def _label_slug(value: str, candidate: str) -> bool:
     """Whether a word slug assigned in ``value`` is a label rather than a generated passphrase.
 
-    Password managers generate passphrases as random words joined by '-' or
-    '_' ('snout-fiber-thump-bloom-gravel', 'Ostrich-Lantern-Volcano-Tangerine'),
-    which is also the shape of a label. A label says what it stands for: one
-    of its words is credential, test or instruction vocabulary (``_LABEL_WORDS``:
-    'request-scoped-credential', 'fc-shared-env-must-not-be-used') or a word of
-    the name it is assigned to ('OPENAI_API_KEY=sua_chave_openai'). A
-    CONSTANT_CASE slug names an environment variable.
+    Password managers generate passphrases as random words joined by '-', '_'
+    or '.' ('snout-fiber-thump-bloom-gravel', 'Ostrich-Lantern-Volcano-Tangerine',
+    'snout.fiber.thump.bloom.gravel', 'SNOUT-FIBER-THUMP-BLOOM-GRAVEL'), which
+    is also the shape of a label. A label says what it stands for: one of its
+    words is credential, test, instruction, development-default or filler
+    vocabulary (``_label_word``: 'request-scoped-credential',
+    'fc-shared-env-must-not-be-used', 'this-should-be-changed',
+    'local-development-only', 'lorem-ipsum-dolor-sit-amet') or a word of three
+    letters or more of the name it is assigned to
+    ('OPENAI_API_KEY=sua_chave_openai'; 'db' in 'DB_PASSWORD' is too short to
+    tell). An upper-case slug joined by '_' only is CONSTANT_CASE, an
+    environment variable's name.
     """
-    if candidate.isupper():
+    if candidate.isupper() and "-" not in candidate and "." not in candidate:
         return True
     words = {word.lower() for word in _SLUG_SEPARATOR.split(candidate)}
-    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value))}
-    return not words.isdisjoint(_LABEL_WORDS) or not words.isdisjoint(name)
+    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if len(word) >= 3}
+    return any(_label_word(word) for word in words) or not words.isdisjoint(name)
 
 
 def _name_shaped(candidate: str) -> bool:

@@ -201,8 +201,10 @@ across this change reports findings as resolved or new that are neither.
   environment read (`process.env.OPENAI_API_KEY || "<key>"`; a literal passed
   to a call there, such as `?? fail("X is not set")`, is no fallback, and a
   placeholder fallback is `example-credential` evidence) and generated
-  passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`; a label of words
-  carries credential or test vocabulary or the assigned name) are reported as
+  passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`, also joined by
+  `.` or in upper case; a label of words carries credential, test,
+  development-default or filler vocabulary or the assigned name, such as
+  `local-development-only`) are reported as
   before. References, and a second pattern matching a credential already
   counted, take no place in the five-per-format quota, so a real key after
   any number of them is reported (the quota used to drop it). A digit-free
