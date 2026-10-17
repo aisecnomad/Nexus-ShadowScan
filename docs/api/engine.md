@@ -1,54 +1,84 @@
 # Engine
 
-The engine is the scan orchestrator. It receives a [`ScanConfig`](config.md), resolves and
-instantiates the requested connectors, runs them concurrently in a thread pool, then drives
-the post-collection pipeline: merging duplicate findings, lifecycle and runtime correlation,
-registry reconciliation, autonomy classification, declared governance, risk scoring and LLM
-triage. The final [`ScanResult`](models.md) holds all findings and the `ScanStats` that
-describe coverage and completeness.
+The engine is the scan orchestrator. `Engine` takes a [`ScanConfig`](config.md), runs the
+selected connectors concurrently, then post-processes their findings. `Engine.run` returns a
+[`ScanResult`](models.md) holding the findings, a `ScanStats` entry for each connector and
+each engine stage that reports a diagnostic, and the collection scope that `diff` compares.
+
+```python
+from shadowscan.config import ScanConfig
+from shadowscan.engine import Engine
+
+config = ScanConfig.from_yaml("shadowscan.yaml")
+result = Engine(config).run()
+print(len(result.findings), "findings; complete:", result.complete)
+```
 
 ## Execution model
 
-Each connector runs in its own thread. The engine tracks a per-job deadline and a scan-wide
-wall-clock deadline (`options.timeout`); a connector that exceeds either is cancelled
-cooperatively and its partial results are discarded, leaving the scan marked `incomplete` with
-exit code 3.
+Connectors run on a pool of `options.parallel` worker threads (default 4). An approved
+third-party plugin runs in its own worker process unless `options.plugin_execution` is
+`thread`. Each job looks up its connector class once, on its worker; a failed lookup, such as
+an unknown connector name, is recorded as an error on that connector while the others still
+run. `run(only=[...])` narrows the scan to connector names or labels; a selector that matches
+no enabled connector stops the run before collection with an incomplete result.
 
-Connector classes are resolved once before any thread is started. A class-lookup failure
-(unknown connector name, missing plugin) is recorded as an error and excluded from execution;
-all other connectors still run.
+Each connector has a completion deadline, `options.connector_timeout_seconds` (default 120 s),
+that starts when its worker begins. While the default is in effect, a connector with a large
+input may raise its own deadline, to at most 1800 s. On expiry the connector is cancelled
+cooperatively: the findings it had already produced are kept, its late result is discarded and
+its entry is marked incomplete. The id of a connector whose worker is still running, for
+example blocked in an SDK call, is listed in `Engine.abandoned_workers`.
+`options.job_deadline_seconds` is the CLI's process deadline, not an engine one: the expiry
+the CLI passes as `run(job_deadline=...)` only ends LLM triage early enough to write the
+report, and does not bound collection.
+
+A connector error, timeout or limit makes `result.complete` false, which the CLI reports as
+exit 3.
 
 ## Post-collection pipeline
 
-After all connector threads finish, the engine applies the following stages in order:
+After collection, the engine applies these stages in order:
 
-1. **Deduplication** — findings with the same identity seen by the same connector in the same
-   run are merged (evidence and technologies union; earliest `first_seen` / latest `last_seen`
-   survive).
-2. **Lifecycle correlation** — endpoint and process findings get a `metadata.lifecycle_observation`
-   assessment based on process timestamps and the scan's observation window.
-3. **Runtime correlation** — runtime findings are linked to endpoint findings for the same tool on
-   the same device.
-4. **Registry reconciliation** — every finding is compared against the sanctioned inventory;
-   unregistered findings are marked shadow.
-5. **MCP enrichment** — MCP server findings are enriched with provenance from approved registry
-   snapshots.
-6. **Autonomy classification** — each finding receives a `metadata.autonomy` interval on the
-   L0–L5 scale.
-7. **Declared governance** — findings matched to a Capability Card carry the card's governance
-   block.
-8. **Risk scoring** — each finding gets an explainable risk score and a level (critical / high /
-   medium / low).
-9. **LLM triage** — when `options.llm_triage.enabled` is true, the engine sends a compact
-   redacted summary of the highest-risk findings to the configured model and stores the reply
-   as advisory metadata.
+1. **Merge**: findings with the same id (one object observed twice by a connector) are merged.
+   Lists such as evidence, frameworks, capabilities and tags are unioned, the first
+   observation takes precedence for owner and metadata, and the earliest `first_seen` and
+   latest `last_seen` survive.
+2. **Correlation**: findings from different connectors or surfaces whose identifiers are equal
+   in a verified shared scope are linked (`metadata.related`); similar names, and equal
+   identifiers whose shared scope cannot be verified, only become review candidates
+   (`metadata.related_candidates`).
+3. **Runtime correlation**: code findings with frameworks get `metadata.runtime_activity` from
+   gateway telemetry, through operator-configured caller and scope bindings only.
+4. **Lifecycle correlation**: endpoint findings are linked to running-process findings for the
+   same tool on the same device (`metadata.lifecycle`); `metadata.lifecycle_observation`
+   describes the recency of that observation within the scan window.
+5. **MCP registry matching**: MCP server findings are matched against the snapshots pinned in
+   `options.mcp_registries` (`metadata.mcp_registry`).
+6. **Registry reconciliation**: vendor registry records are compared with the observed findings
+   (`metadata.registry_reconciliation`).
+7. **Inventory, autonomy, governance and risk**: each finding is matched against the sanctioned
+   inventory (inventory files and the approved records of `options.trusted_registries`):
+   `shadow` is true when no entry approves it and null when there is no inventory. It then gets
+   its `metadata.autonomy` interval when its kind has one, the `metadata.declared_governance`
+   block of the Capability Card that approved it, and its risk score.
+8. **Filter and order**: findings below `options.min_confidence` are dropped (vendor registry
+   records are kept) and the rest are sorted by risk score.
+9. **LLM triage**: only when `options.llm_triage.enabled` is true; see [LLM triage](triage.md).
+
+A finding that exceeds the sanitization safety limit is omitted and recorded as an error, on
+its connector during collection or on the `engine.postprocess` entry after merging or
+scoring; either way the scan is incomplete.
 
 ## Identity key
 
-By default, finding IDs and gateway pseudonyms use a random key per scan, so IDs are not
-comparable across runs. Set `SHADOWSCAN_IDENTITY_KEY` to a stable secret (at least 32 bytes,
-encoded as `hex:<value>` or `base64:<value>`) to make IDs stable and linkable across scans.
-The key never appears in any report, cache entry or diagnostic output.
+Gateway caller, scope and source pseudonyms and credential pseudonyms are keyed with a random
+key for each scan, so findings whose IDs derive from them (`metadata.identity_scope: run`)
+cannot be matched across reports. Set `SHADOWSCAN_IDENTITY_KEY` to at least 32 secret bytes,
+encoded as `hex:<value>` or `base64:<value>`, to use one stable key instead
+(`identity_scope: keyed`). The key is read only from the environment, never from the
+configuration, and never reaches a log, report, cache or record export. A set value that is
+ambiguous or decodes to fewer than 32 bytes stops the scan with a `SetupError` (CLI exit 1).
 
 ::: shadowscan.engine
     options:

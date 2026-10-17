@@ -1,23 +1,28 @@
 # Risk
 
-The risk module produces an explainable risk score for every finding. Scores are additive: the
-final number is the sum of named factors, each recorded as a `RiskFactor` so the report can
-explain exactly why something is rated critical.
+The risk module gives every finding an explainable score from 0 to 100. The score is
+additive: each contribution is a `RiskFactor` with a signed weight, and the listed factors
+always add up to the reported score, including the `confidence-scaling` and `bounds`
+adjustments. The weights are author-chosen heuristics, not fitted to incident outcomes; see
+[Severity is not an enforcement signal](../severity.md).
 
 ## Score model
 
-The score is computed from four dimensions, then scaled by confidence and clamped to 0–100:
+`assess` sums the factors below, multiplies the sum by `0.6 + 0.4 × confidence` and bounds the
+result to 0–100. [Risk scoring](../concepts/risk.md#risk) lists the default weights.
 
-| Dimension | What it measures |
-|-----------|-----------------|
-| **Capability** | What the agent is and what it can do: kind, frameworks, capabilities (tool-use, code-execution, …) |
-| **Reach** | What it can access: OAuth scopes, cloud permissions, network access, data-access policies |
-| **Governance** | Whether it is registered, owned and approved in the sanctioned inventory |
-| **Shadow penalty** | Additional weight when a finding is unregistered (shadow) |
+| Factors | `risk_weights` group |
+|---------|----------------------|
+| `kind`: base weight of the finding kind | `kinds` |
+| `capability:<name>`, such as `code-exec` or `tool-use` | `capabilities` |
+| `combination:<id>`: capability sets that weigh more together, such as `injection-to-execution` | `combinations` |
+| `tag:<tag>`, such as `policy.privileged-scopes` or `public-ingress` | `tags` |
+| `provider:<id>`: model provider signatures | `providers` |
+| Governance: `shadow` and `registered` (only when an inventory is present), `no-owner`, `mcp-not-in-approved-registry` | `governance` |
+| `autonomy:L<n>`: the observed autonomy floor, weight 0 by default | `autonomy` |
+| `vendor-notes` and kind-specific metadata factors such as `mcp-plain-http` or `blast-radius` | not configurable |
 
 ## Risk levels
-
-Scores map to levels as follows:
 
 | Level | Score |
 |-------|-------|
@@ -25,18 +30,35 @@ Scores map to levels as follows:
 | **high** | ≥ 50 |
 | **medium** | ≥ 25 |
 | **low** | > 0 |
+| **info** | 0 |
 
 ## Danger score
 
-`danger_score` excludes governance factors. This lets triage rank what an agent *can do*
-independently of whether anyone approved it, useful for comparing registered and unregistered
-agents with equivalent capabilities.
+`danger_score` applies the same scaling and bounds to every factor except the governance
+factors, so triage can rank what a finding can do separately from whether anyone approved it.
 
 ## Risk policies
 
-A `RiskPolicy` (configured under `options.risk`) overrides individual factor weights and can
-base the level on `danger_score` alone. This is useful when governance factors should not
-elevate the level of an otherwise low-capability agent.
+A `RiskPolicy` is built from `options.risk_weights` and `options.risk_basis`. Under
+`risk_basis: danger` the governance factors weigh nothing and are omitted, so `score`, `level`
+and `--fail-on` follow the danger score; the default is `combined`. Weights are integers from
+-100 to 100. Unknown groups and unknown kind, capability, combination, governance and autonomy
+keys are rejected; provider ids are checked against the provider signatures the engine
+loads; an unfamiliar tag is accepted and logged once.
+
+```yaml
+options:
+  risk_basis: combined         # or danger
+  risk_weights:
+    capabilities:
+      code-exec: 20
+    combinations:
+      injection-to-execution: 15
+    tags:
+      scheduled: 0
+    governance:
+      no-owner: 15
+```
 
 ::: shadowscan.risk
     options:

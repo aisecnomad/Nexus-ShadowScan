@@ -1,40 +1,46 @@
 # Dashboard
 
-The dashboard module builds the `shadowscan.inventory/v1` document that powers
-`shadowscan dashboard` and the `--inventory-json` export. It turns a scan or fleet
-`ScanResult` into a structured JSON summary suitable for BI tools, SIEMs and executive
-dashboards.
+The dashboard module builds the `shadowscan.inventory/v1` document behind `shadowscan dashboard`.
+The HTML page renders exactly this document, and `--inventory-json` writes it for BI and SIEM
+tools. `build_inventory()` takes a scan or fleet `ScanResult`, which the command reads with the
+[fleet](fleet.md) module; [Fleet dashboard](../operations/dashboard.md) describes the page.
 
 ## Document structure
 
-`build_inventory()` produces a single JSON document with the following top-level sections:
+| Key | Contents |
+|-----|----------|
+| `coverage`, `sources` | Per source: completion, staleness, whether it supplied an inventory, and a status for each connector it ran (`complete`, `cached`, `incomplete` or `skipped`) |
+| `diagnostics` | Connector runs that did not complete cleanly (errors, warnings, skipped or incomplete); beyond 500, the rest are counted in `diagnostics_omitted` |
+| `counts` | AI systems by inventory status (`shadow`, `sanctioned`, `no-inventory`), surface, kind, provider, account, owner and risk level, with the unowned, ambiguous and excluded credential counts |
+| `autonomy` | AI systems by autonomy floor (L0 to L5, `not-classified`, `not-applicable`) against inventory status, and the priority count: shadow AI systems with a floor of L4 or above |
+| `registries` | Per registry type and registry id: records by reconciliation status, approved, not approved and auto-approved records, and whether every listing was complete |
+| `references` | How many AI systems each [threat and control reference](../concepts/mappings.md) applies to |
+| `drift` | With a baseline: the `compare_reports()` counts, drift classes, adverse classes and finding ids |
+| `history` | With `load_history()`: per-report totals and drift counts for comparable consecutive reports |
+| `agents` | One record per AI system: every finding that is not a credential |
 
-| Section | Contents |
-|---------|----------|
-| **Coverage** | Per-source, per-connector collection status (`collected`, `not-collected`, `unknown`) |
-| **Counts** | Total findings, by surface, by risk level, by shadow status |
-| **Autonomy vs shadow** | Cross-tabulation of autonomy tier against shadow / registered status |
-| **Vendor registries** | Reconciliation results against AWS, Microsoft, Google and other vendor registries |
-| **Threat and control references** | Counts of findings per NIST AI RMF / ISO 42001 / EU AI Act reference |
-| **Drift** | Findings that appeared, disappeared or changed since a baseline scan |
-| **History** | Previous scan timestamps and finding counts |
-| **AI system records** | One record per finding (title, surface, risk, autonomy, shadow status, frameworks) |
+Threat and control references are evidence references, not compliance determinations.
 
 ## Privacy and sanitization
 
 Records carry no evidence snippets, evidence attributes, permissions or raw metadata. Every
-finding passes its own sanitizer before appearing in the inventory document. Sources, diagnostics
-and history come from report files and are sanitized here.
-
-Credential findings (`secret` and `token` kind) are **counted** but not included as records.
+finding passes its own sanitizer before it becomes a record. Sources, diagnostics and history come
+from report files and are sanitized here. Credential findings (`secret` and `token` kind) are
+**counted** but not included as records.
 
 ## Missing data visibility
 
-The document makes missing data explicit. A connector that did not run appears as
-`not-collected`. A source from an older fleet report has `unknown` coverage. A finding whose
-kind the autonomy scale describes but which has no interval is `not-classified` (never zero).
+The document makes missing data explicit. A connector a source did not run reads `not-collected`;
+a source from a fleet report written before sources recorded their connector runs has `unknown`
+coverage; a finding that no inventory assessed (`shadow: null`) is `no-inventory`; and a finding
+whose kind the autonomy scale describes but which has no valid interval is `not-classified`, never
+zero.
 Coverage cells are stored only for the connectors a source actually ran, so the document grows
 with its input, not with sources × connectors.
+
+`build_inventory()` raises `ValueError` on malformed input, including a sanitizer limit. The
+document's `complete` is false when the result or any source is incomplete; `shadowscan dashboard`
+then exits 3, as it does when the baseline comparison is incomplete, and still writes its files.
 
 ::: shadowscan.dashboard
     options:

@@ -1,37 +1,30 @@
 # Merge
 
-The merge module deduplicates findings that the same connector observes more than once in the
-same run, or across runs when findings are combined with `shadowscan merge`.
+The merge module folds repeated observations of one finding into one. The engine calls `merge()`
+on every scan's findings, and [`shadowscan.fleet`](fleet.md) calls it when `shadowscan merge` or
+`shadowscan dashboard` combines several reports.
 
 ## When findings merge
 
-Two findings merge when they share the same `id` (their content-addressed identity). This
-happens in two scenarios:
-
-1. **Within a scan** — a connector yields the same logical finding twice (e.g. a GitHub
-   connector that paginates across forks and sees the same repository twice).
-2. **Across scans** — `shadowscan merge` unions two or more JSON reports; findings with the
-   same identity from different reports are merged into one.
+Two findings merge when they share the same `id`. `Finding.compute_id()` derives it from the
+identity schema, surface, connector, provider, account, region, resource and identity
+discriminator, so only observations of one object by the same connector share an id. The kind is
+not part of it.
 
 ## What survives a merge
 
 | Field | Rule |
 |-------|------|
-| `evidence` | Union of all evidence items |
-| `frameworks` / `model_providers` | Union |
-| `tags` / `capabilities` | Union |
-| `first_seen` | Earliest across all observations |
-| `last_seen` | Latest across all observations |
-| `metadata` | First observation's value wins per key (except keys listed in `MERGE_METADATA_KEYS`) |
-| `kind` | Highest-precedence classification: `agent` > `service-identity` > `oauth-grant` |
-| `resource_type` | Paired with `kind`; tie-broken lexically for stability |
-| `metadata.autonomy` | Re-classified from the merged finding, then widened to admit all sources |
+| `evidence` | Union, one item per signal, location and description |
+| `frameworks`, `model_providers`, `capabilities`, `tags`, `permissions`, `models` | Union |
+| `owner` | The first observation's, or a later one's when the first has none |
+| `first_seen` / `last_seen` | The earliest / latest value that is set |
+| `metadata` | The first observation's value of each key, except the keys `merge_duplicate_metadata()` combines: `variable_names`, `runtime_observations` and, for gateway findings, `runtime_sources`, whose request, token and cost metrics are summed |
+| `kind` / `resource_type` | Chosen as one pair: `agent` over `service-identity` over `oauth-grant` over any other kind, then the lexically greater kind and resource type. When observations disagree, `metadata.observed_kinds` and `metadata.observed_resource_types` list every value |
+| `confidence` | Recomputed from the merged evidence |
 
-## Fleet merge
-
-`shadowscan merge` is a thin wrapper that calls [`fleet`](fleet.md) logic to combine entire
-reports, including findings from different machines. Findings from different machines never
-merge with each other: the endpoint-label prefix in their `resource` keeps them distinct.
+`merge()` does not reclassify autonomy, risk or registration. A fleet merge sets those from all
+sources after calling it; see [Fleet merge](fleet.md).
 
 ::: shadowscan.merge
     options:

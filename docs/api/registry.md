@@ -1,43 +1,50 @@
 # Inventory registry
 
-The inventory registry is the set of AI agents an organisation has approved and declared. It
-defines the boundary between **shadow** agents (discovered but not registered) and **registered**
-agents (known and sanctioned). Reconciliation against the inventory is what makes ShadowScan a
-governance tool, not just a discovery scanner.
+The registry module loads the sanctioned agent inventory and matches findings against it. A
+finding that exactly one inventory entry approves is registered (`shadow: false`, with
+`registry_match` set to the entry's agent id); one that no entry approves is **shadow**
+(`shadow: true`). Approved records of the vendor registries listed in
+`options.trusted_registries` also count as inventory (see [vendor registries](registries.md)).
+Without inventory files or trusted registries nothing is assessed: `shadow` and
+`registry_match` stay null.
 
 ## Inventory formats
 
-The registry accepts three input formats under the `inventory:` config key:
+Inventory paths come from `inventory:` in the configuration or the repeatable `--inventory`
+option. Directories are searched recursively for `.yaml`, `.yml`, `.json` and `.csv` files, and
+symbolic links are never followed. Each file holds one of:
 
-- **Agent Capability Cards** — YAML files with `metadata.agent_id` and `metadata.owner_team`,
-  optionally extended with a `discovery:` block listing the exact resources and name aliases
-  the agent is deployed as.
-- **`agents.yaml`** — a list-format inventory, one entry per agent, used for bulk import.
-- **CSV** — a flat spreadsheet with one column per agent field, for teams that manage inventory
-  in a spreadsheet.
+- **Agent Capability Cards**: a document with a `metadata` mapping that names the agent
+  (`agent_id`, `id` or `name`) and optionally its owner (`owner_team`, `owner` or
+  `owner_email`), and a `discovery:` block with the resource patterns the agent is deployed
+  as, name aliases and optional scope constraints.
+- **Simple list**: `agents: [{id, name, owner, resources, names, autonomy_level, ...}]` in YAML
+  or JSON, or a bare list of the same entries.
+- **CSV**: a header with `agent_id`, `id` or `name` and optional columns such as `owner`,
+  `resources` and `autonomy_level`; list cells separate their items with `|`.
 
-## Capability Cards and `schema_version`
+A missing path, a glob that matches no file, a malformed entry, an unknown field or a duplicate
+key fails loading, and no scan runs; the message names the path and the location in the file,
+never a value. An empty inventory is written as `agents: []`.
 
-A card with `schema_version: 2` may declare:
+## Card schema version
 
-- `autonomy_profile.level` — the operator's declared autonomy tier (L0–L5).
-- `governance:` — EU AI Act risk class, intended purpose, oversight measures, AIUC-1 certificate
-  reference and ISO/IEC 42001 scope.
+`schema_version` is 1 when omitted, and only 1 and 2 are valid. A version 2 card may declare
+`autonomy_profile.level` (0 to 5 on the L0-L5 scale) and a
+[`governance:` block](governance.md). A version 1 card's `autonomy_profile.level` is ignored
+and reported as an advisory `engine.inventory` warning.
 
-An earlier card's autonomy level is ignored and flagged in the report.
+## Matching
 
-## Reconciliation
-
-`reconcile()` compares every finding against every inventory entry and assigns one of:
-
-| Status | Meaning |
-|--------|---------|
-| `registered` | Matched to exactly one inventory entry |
-| `shadow` | No matching entry found |
-| `ambiguous` | Matched multiple entries (conflict) |
-
-A finding is shadow when the scan ran with an inventory and found no match. A scan without an
-inventory marks all findings `unassessed` (not shadow).
+`Inventory.match` approves a finding only through an explicit, case-sensitive `resources` glob
+that matches `finding.resource`, and only when every scope constraint the entry sets
+(`surfaces`, `providers`, `accounts`, `regions`, `discriminators`) matches too. Names and
+aliases never approve: they only add `metadata.registry_suggestions` for review. A finding that
+several entries approve is ambiguous and stays shadow, with
+`registry_match_reason: ambiguous-resource-approval`. A missing or redacted resource or scope
+cannot be approved by any pattern, and a gateway caller whose identity is only operator-asserted
+or unverified becomes a review candidate tagged `registry-identity-unverified`. The
+[inventory guide](../inventory.md#matching-and-approval) describes each rule.
 
 ::: shadowscan.registry
     options:
