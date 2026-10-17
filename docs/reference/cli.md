@@ -34,9 +34,9 @@ shadowscan code . --inventory ./inventory --fail-on high   # with inventory reco
 | `--exclude PATTERN` | Extra directory names or globs to skip (repeatable) |
 | `--no-default-excludes` | Also scan default-excluded dirs (`node_modules`, `.git`, `vendor`, etc.) |
 | `--no-secrets` | Skip credential detection |
-| `--strict-coverage` | Record incomplete file/symlink coverage as errors |
+| `--strict-coverage` | Strict accounting: every coverage gap is an error and marks the scan incomplete, none is discounted as test code or declared (see [strict accounting](../scanning.md#coverage-budget-and-strict-accounting)) |
 | `--include-tests` | Let test/fixture code establish agents at full weight |
-| `--profile ci` | Declare oversize files, unread links and analysis limits under test, fixture, documentation, example and generated paths (below the file's project root) as counted omissions instead of gaps, so a complete source scan exits 0 (conflicts with `--strict-coverage`) |
+| `--profile ci` | Declare oversize files, unread links and analysis limits under test, fixture, documentation, example and generated paths (below the file's project root) as counted omissions instead of gaps, so a complete source scan exits 0 (conflicts with `--strict-coverage` and `--max-coverage-gap 0`) |
 | `--triage` | Fast subset scan (manifests, MCP/agent configs, flows, IaC only) |
 
 ### `shadowscan scan -c CONFIG`
@@ -305,7 +305,7 @@ The global `-v`/`-vv` (info/debug) and `-q` (errors only) flags go before the co
 | `--state-dir DIR` | Private incremental state directory |
 | `--connector-timeout-seconds N` | Per-connector deadline in seconds (default: 120) |
 | `--job-deadline-seconds N` | CLI process deadline; exits 3 on expiry |
-| `--max-coverage-gap RATIO` | Share of examined entries that may be left unread before the scan is incomplete (default: 0.02); `0` fails on any gap, and a gap the scanner cannot bound (an early stop, a refused page) always fails closed |
+| `--max-coverage-gap RATIO` | Share of examined entries that may be left unread before the scan is incomplete (default: 0.02); `0` is strict accounting, which fails on any gap (see [strict accounting](../scanning.md#coverage-budget-and-strict-accounting)), and a gap the scanner cannot bound (an early stop, a refused page) always fails closed |
 | `--allow-private-origin` / `--deny-private-origin` | Permit non-public IP addresses |
 | `--allow-instance-credentials` / `--deny-instance-credentials` | Permit cloud instance-metadata credentials |
 | `--allow-credential-mixing` / `--deny-credential-mixing` | Permit repo + live tenant in one scan |

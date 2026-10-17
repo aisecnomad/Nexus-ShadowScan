@@ -150,10 +150,10 @@ inventory reads committed `HEAD`, not staged-only index entries; an undeclared,
 staged-only gitlink is likewise outside that check. Use a reviewed committed
 checkout and declared submodule paths when completeness matters.
 
-By default, incomplete coverage is recorded as a warning and exits 3.
-`strict_coverage: true` (`--strict-coverage`) elevates the diagnostic to an
-error; it does not change the exit code. Raise `max_file_size`, explicitly
-exclude known data, or review `oversize_skip_globs` for the intended scope.
+Which of these gaps exits 3 on its own, and which only once enough of them
+accumulate, is decided by the [coverage budget](#coverage-budget-and-strict-accounting).
+Raise `max_file_size`, explicitly exclude known data, or review
+`oversize_skip_globs` for the intended scope.
 
 Every diagnostic that leaves a scan incomplete is also counted by reason in
 `stats[].incomplete_reasons` and, summed over the connectors, in
@@ -234,6 +234,51 @@ diagnostic stands for (a tree's further unread links). The verdict line names
 the JSON report for that reason. To read the ledger from a SARIF run, write a
 JSON report of the same scan as well (`--format json`).
 
+### Coverage budget and strict accounting
+
+A coverage gap is *blinding* when the scanner cannot bound what it lost: the
+walk stopped early (`max_files`, `max_entries`, a deadline), a page was
+refused, a symbolic link names a directory, undecodable bytes or padding past
+`max_file_size` hide a file read as configuration, or a sanitizer limit was
+hit. A blinding gap marks the scan incomplete at once. A *partial* gap costs a
+known number of entries: a dangling link or one to a single file, a
+non-regular entry, an incidental file over `max_file_size`. Partial gaps
+accumulate against the gap budget, `options.max_coverage_gap`
+(`--max-coverage-gap`; `code.filesystem` also takes its own
+`max_coverage_gap`): 2% of examined entries by default, at most 100 weighted
+entries. Within the budget the scan stays complete; every gap is still listed
+in `stats[].coverage.details`, with its path, reason and weight.
+
+Every gap a `code.filesystem` scan records (and every gap in a `code.github`
+or `code.gitlab` checkout, which that connector scans) is decided by one rule,
+applied in this order:
+
+1. **Strict accounting.** `strict_coverage: true` (`--strict-coverage`) and a
+   gap budget of 0 (`max_coverage_gap: 0`, `options.max_coverage_gap: 0` or
+   `--max-coverage-gap 0`) are both strict accounting, the accounting from
+   before the budget: every gap marks the scan incomplete and is counted under
+   its reason, no gap is discounted as test code, and none is declared by the
+   `ci` profile. The profile is therefore refused with either setting: a
+   configuration error before anything is read, and a usage error for
+   `--profile ci --strict-coverage` or `--profile ci --max-coverage-gap 0`.
+   The two settings differ only in where a gap is reported: `strict_coverage`
+   records each as an error where it happens, while a budget of 0 charges
+   each to the budget, so the gaps stay listed in `stats[].coverage` and the
+   verdict that leaves the scan incomplete is one error line.
+2. **Credentials.** A credential limit is never declared, discounted or
+   budgeted: a file holding more matches of one credential format than the
+   matcher reports (`more than 5 credentials matched`) marks the scan
+   incomplete under every profile, in test code too.
+3. **Declared omissions.** Under `profile: ci`, a gap in a path the
+   [profile](#the-ci-profile) names is declared: counted in
+   `declared_omissions`, never charged to the budget.
+4. **Discounted test code.** With `include_tests` off, a gap in a test or
+   fixture file whose evidence the scan discounts (a malformed or binary
+   fixture, test source the lexer cannot settle) is a warning that leaves the
+   scan complete (see [test and fixture code](#test-and-fixture-code)).
+5. **Budget.** Every other partial gap is charged to the budget; a blinding
+   one marks the scan incomplete.
+
 ### The `ci` profile
 
 A gate on a repository's source does not read its recorded cassettes, its
@@ -264,7 +309,8 @@ templated `package.json`), is judged by the project around it, so the
 template's own unparsed manifest and sources are declared. Every other gap, in `src/`, at the repository root or in a path the profile
 does not name, still marks the scan incomplete, and so does a connector
 deadline, a `max_files` or `max_entries` limit and a triage scan. The profile
-and `strict_coverage` conflict and are rejected together. The report of a
+is refused under [strict accounting](#coverage-budget-and-strict-accounting)
+(`strict_coverage`, or a gap budget of 0). The report of a
 profile scan is not the report of a scan that read everything: read
 `declared_omissions` before treating its exit 0 as full coverage. `diff` reads
 them too: while the current report counts declared omissions, a missing

@@ -103,8 +103,13 @@ def _code_options(
     include_tests: bool,
     triage: bool,
     profile: str | None,
+    max_coverage_gap: float | None = None,
 ) -> dict[str, Any]:
-    """The configuration every code connector of one `shadowscan code` run shares."""
+    """The configuration every code connector of one `shadowscan code` run shares.
+
+    ``--strict-coverage`` and ``--max-coverage-gap 0`` are both strict accounting, which counts
+    every gap the ci profile exists to declare, so either one conflicts with ``--profile ci``.
+    """
     common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
     if no_default_excludes:
         common["default_excludes"] = False
@@ -117,6 +122,11 @@ def _code_options(
     if profile:
         if strict_coverage and profile == "ci":
             raise click.UsageError("--profile ci and --strict-coverage conflict; pass one of them")
+        if max_coverage_gap == 0 and profile == "ci":
+            raise click.UsageError(
+                "--profile ci and --max-coverage-gap 0 conflict: a budget of 0 is strict accounting, "
+                "which counts every gap the profile declares; pass one of them"
+            )
         common["profile"] = profile
     return common
 
@@ -142,7 +152,7 @@ def _code_options(
 @click.option(
     "--strict-coverage",
     is_flag=True,
-    help="record incomplete file and symlink coverage as errors (exit 3 in either mode)",
+    help="strict accounting: every coverage gap is an error (exit 3), none budgeted, discounted or declared",
 )
 @click.option(
     "--include-tests",
@@ -161,7 +171,8 @@ def _code_options(
     help=(
         "ci: declare oversize files, unread links and analysis limits under test, fixture, documentation, "
         "example and generated paths as omissions (warnings the report counts) instead of gaps, so a "
-        "complete source scan exits 0; every other gap still exits 3"
+        "complete source scan exits 0; every other gap still exits 3; conflicts with --strict-coverage "
+        "and --max-coverage-gap 0"
     ),
 )
 @click.option(
@@ -193,7 +204,14 @@ def code(
     secrets."""
     specs: list[ConnectorSpec] = []
     common = _code_options(
-        exclude, no_default_excludes, no_secrets, strict_coverage, include_tests, triage, profile
+        exclude,
+        no_default_excludes,
+        no_secrets,
+        strict_coverage,
+        include_tests,
+        triage,
+        profile,
+        opts.max_coverage_gap,
     )
     if diff_base and not paths:
         raise click.UsageError("--diff-base applies only to local PATHS")

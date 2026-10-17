@@ -33,8 +33,12 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   agent, MCP or dependency configuration file over `max_file_size`,
   undecodable bytes anywhere but in test code while `include_tests` is off,
   and any sanitizer limit.
-  `strict_coverage` and `--max-coverage-gap 0` restore the previous
-  behaviour exactly. Expect scans that previously exited 3 on a dangling
+  `strict_coverage` and `--max-coverage-gap 0` (or `max_coverage_gap: 0`)
+  are both strict accounting and restore the previous accounting: every gap
+  marks the scan incomplete, and none is discounted as test code or declared
+  by `profile: ci`, which both settings refuse (see
+  [strict accounting](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md#coverage-budget-and-strict-accounting)).
+  Expect scans that previously exited 3 on a dangling
   symbolic link in a test fixture to exit 0 now, with the gap listed.
 - Risk scores gain capability interactions. Seven capability sets -- the
   lethal trifecta (data access, untrusted content, outbound actions),

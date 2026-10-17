@@ -1334,6 +1334,38 @@ def _scan_timeout(value: Any) -> float:
     return seconds
 
 
+def coverage_profile(
+    config: dict[str, Any], *, strict_coverage: bool, connector: str = "code.filesystem"
+) -> bool:
+    """Check the coverage ``profile`` of ``config`` and return whether its gap budget is 0.
+
+    ``config`` holds the filesystem options: ``profile``, the connector's own
+    ``max_coverage_gap`` and the scan-wide ``_max_coverage_gap`` the engine
+    injects. A budget of 0, like ``strict_coverage``, is strict accounting
+    (docs/scanning.md#coverage-budget-and-strict-accounting): every gap counts, none is
+    discounted or declared. The ``ci`` profile exists to declare gaps, so it is
+    refused with either spelling of strict accounting, as a ConnectorError
+    before anything is read.
+    """
+    profile = config.get("profile", "default")
+    if ("profile" in config and profile is None) or profile not in PROFILES:
+        raise ConnectorError(f"{connector}: profile must be default or ci")
+    raw = config.get("max_coverage_gap")
+    if raw is None:
+        raw = config.get("_max_coverage_gap")
+    try:
+        zero_budget = raw is not None and validate_max_coverage_gap(raw) == 0.0
+    except ValueError as exc:
+        raise ConnectorError(f"{connector}: {exc}") from exc
+    if profile == "ci" and (strict_coverage or zero_budget):
+        setting = "strict_coverage" if strict_coverage else "a max_coverage_gap of 0"
+        raise ConnectorError(
+            f"{connector}: profile ci declares omissions that strict accounting ({setting}) reports as "
+            "gaps; set one of them (strict_coverage and max_coverage_gap 0 are both strict accounting)"
+        )
+    return zero_budget
+
+
 class FilesystemConnector(BaseConnector):
     #: Entries (directories and files) a probe counts before it stops, and the
     #: seconds it may spend counting them. Bounded so the estimate costs a
@@ -1353,6 +1385,22 @@ class FilesystemConnector(BaseConnector):
         """This connector's documented ``max_coverage_gap``, if the scan set one."""
         raw = self.ctx.get("max_coverage_gap")
         return None if raw is None else validate_max_coverage_gap(raw)
+
+    def _strict_accounting(self) -> bool:
+        """Whether every coverage gap counts: ``strict_coverage``, or a gap budget of 0.
+
+        The one rule (docs/scanning.md#coverage-budget-and-strict-accounting): no gap is
+        tolerated by the budget, discounted as test code (``include_tests``
+        off) or declared by the ``ci`` profile, which refuses both settings.
+        The budget is this connector's own ``max_coverage_gap``, else the
+        scan-wide one, or the policy the context holds: a nested connector
+        (``code.github``, ``code.gitlab``) is judged by its parent's. Either
+        source of a 0 makes the accounting strict. ``strict_coverage`` also
+        reports each gap as an error where it happens; a budget of 0 charges
+        the ledger instead, whose verdict is then an error naming each gap's
+        reason, so ``stats.coverage`` still lists them.
+        """
+        return self.strict_coverage or self._zero_budget or self.ctx.coverage_policy.max_gap_ratio <= 0.0
 
     @classmethod
     def estimate_timeout_seconds(cls, config: dict[str, Any], default: float) -> float | None:
@@ -1496,13 +1544,15 @@ class FilesystemConnector(BaseConnector):
         ),
         "max_coverage_gap": (
             "share of examined entries that may be left unread before this scan reports itself "
-            "incomplete (default: the scan-wide options.max_coverage_gap, 0.02); 0 fails on any "
-            "gap. A gap the scanner cannot bound always fails closed, whatever this allows"
+            "incomplete (default: the scan-wide options.max_coverage_gap, 0.02); 0 is strict "
+            "accounting, as strict_coverage is: any gap fails and none is discounted or declared. A gap "
+            "the scanner cannot bound always fails closed, whatever this allows"
         ),
         "strict_coverage": (
-            "report coverage gaps (unread analyzable oversize files, non-regular entries named like "
-            "configuration files, symbolic links whose alias path is not covered) as errors instead of "
-            "warnings; either way the scan is incomplete (default false)"
+            "strict accounting: report every coverage gap (unread analyzable oversize files, non-regular "
+            "entries named like configuration files, symbolic links whose alias path is not covered, "
+            "unreadable test fixtures) as an error that marks the scan incomplete, with no gap budget, "
+            "test-code discount or ci declaration (default false)"
         ),
         "include_tests": (
             "let test and fixture code establish agents and credential findings at full weight "
@@ -1514,7 +1564,8 @@ class FilesystemConnector(BaseConnector):
             "non-regular entries, unparsed content and analysis limits under test, fixture, documentation, "
             "example and generated paths (documentation and example directories below the file's project "
             "root, test paths only while include_tests is false); every other gap still marks the scan "
-            "incomplete, and the report counts the omissions (default: default)"
+            "incomplete, and the report counts the omissions; refused with strict_coverage or a "
+            "max_coverage_gap of 0 (default: default)"
         ),
         "triage": (
             "fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC "
@@ -1583,13 +1634,8 @@ class FilesystemConnector(BaseConnector):
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
         self.profile = ctx.get("profile", "default")
-        if ("profile" in ctx.config and ctx.config["profile"] is None) or self.profile not in PROFILES:
-            raise ConnectorError("code.filesystem: profile must be default or ci")
-        if self.profile == "ci" and self.strict_coverage:
-            raise ConnectorError(
-                "code.filesystem: profile ci declares omissions that strict_coverage reports as errors; "
-                "set one of them"
-            )
+        # A gap budget of 0 is strict accounting, as strict_coverage is (see _strict_accounting).
+        self._zero_budget = coverage_profile(ctx.config, strict_coverage=self.strict_coverage)
         self.triage = config_boolean(ctx.get("triage", False), "triage")
         self.agent_granularity = ctx.get("agent_granularity", "project")
         if ("agent_granularity" in ctx.config and ctx.config["agent_granularity"] is None) or (
@@ -1805,10 +1851,14 @@ class FilesystemConnector(BaseConnector):
 
         These are reported once per kind, after the walk (``_report_file_notes``): hundreds of legacy-encoded
         files must not fill the capped diagnostic channel and bury the reason a scan is incomplete.
-        ``strict_coverage`` treats each as a coverage gap, as the reader did before it read such files.
+        Strict accounting (``_strict_accounting``) treats each as a coverage gap, as the reader did before
+        it read such files.
         """
-        if self.strict_coverage:
-            self.ctx.error(f"code.filesystem: {rel}: {note}; strict_coverage treats this as a gap")
+        if self._strict_accounting():
+            self.ctx.error(
+                f"code.filesystem: {rel}: {note}; strict accounting treats this as a gap",
+                reason="unparsed-input",
+            )
         else:
             self._file_notes.setdefault(note, []).append(rel)
 
@@ -1871,7 +1921,7 @@ class FilesystemConnector(BaseConnector):
         assigned none, a project root itself among them, is not declared for
         its directory names.
         """
-        if self.profile != "ci":
+        if self.profile != "ci" or self._strict_accounting():
             return False
         if _is_test_path(rel):
             return not self.include_tests
@@ -2029,7 +2079,7 @@ class FilesystemConnector(BaseConnector):
         in ``skipped_oversize_test_fixtures``. With credential detection on
         (the default) every read file, prose and fixtures included, is scanned
         for credentials, so an unread copy may hide a real key and stays a gap
-        (fail closed). ``strict_coverage`` keeps the test-path case a gap too.
+        (fail closed). Strict accounting keeps the test-path case a gap too.
         A file the scanner never reads at any size is yielded and ignored, as
         before. A coding-agent settings file skipped here is still recorded as
         unread for its project's approval gate (``_iter_entries``).
@@ -2065,7 +2115,7 @@ class FilesystemConnector(BaseConnector):
             )
             return True
         if not self.include_tests and _is_test_path(rel):
-            if self.strict_coverage:
+            if self._strict_accounting():
                 return False
             self.skipped_oversize_test_fixtures += 1
             self.ctx.warn(
@@ -3090,7 +3140,7 @@ class FilesystemConnector(BaseConnector):
         in such a file is a warning that leaves the scan complete, as an oversize
         test fixture or test code that does not parse already is. Credentials are
         never discounted: a fixture that cannot be decoded is still read for them
-        (``_scan_binary_test_fixture``). ``strict_coverage`` keeps every gap, and
+        (``_scan_binary_test_fixture``). Strict accounting keeps every gap, and
         so does a file whose evidence is not discounted in test code either
         (``_full_weight_in_tests``, or ``full_weight`` from a caller that found an
         MCP configuration by its structure).
@@ -3098,7 +3148,7 @@ class FilesystemConnector(BaseConnector):
         return (
             not full_weight
             and not self.include_tests
-            and not self.strict_coverage
+            and not self._strict_accounting()
             and _is_test_path(rel)
             and not self._full_weight_in_tests(rel)
         )
@@ -4195,7 +4245,7 @@ class FilesystemConnector(BaseConnector):
                 "lexical evidence retained"
             )
             if not self.include_tests and _is_test_path(file.rel):
-                self.ctx.warn(message, incomplete=self.strict_coverage, reason="analysis-limit")
+                self.ctx.warn(message, incomplete=self._strict_accounting(), reason="analysis-limit")
             else:
                 self.ctx.error(message, reason="analysis-limit")
             return [], whole
@@ -4220,7 +4270,7 @@ class FilesystemConnector(BaseConnector):
                 f"{MAX_CALL_TEXT} characters; options after them were not read, so coverage is incomplete"
             )
             if not self.include_tests and _is_test_path(file.rel):
-                self.ctx.warn(message, incomplete=self.strict_coverage, reason="analysis-limit")
+                self.ctx.warn(message, incomplete=self._strict_accounting(), reason="analysis-limit")
             else:
                 self.ctx.error(message, reason="analysis-limit")
         return bound, list(file.unparsed)
@@ -4240,10 +4290,10 @@ class FilesystemConnector(BaseConnector):
         """Whether source that does not parse leaves coverage incomplete.
 
         It does, except in a test path the scan discounts (include_tests off), where a
-        deliberately invalid fixture is common: there it only warns, unless strict_coverage
-        is set, as for a source over the binder's budget.
+        deliberately invalid fixture is common: there it only warns, unless the accounting is
+        strict (``_strict_accounting``), as for a source over the binder's budget.
         """
-        return self.strict_coverage or self.include_tests or not _is_test_path(file.rel)
+        return self._strict_accounting() or self.include_tests or not _is_test_path(file.rel)
 
     def _record_code_matches(
         self,
@@ -4513,7 +4563,8 @@ class FilesystemConnector(BaseConnector):
                 # lexical env and domain passes still read this text.
                 self.ctx.warn(
                     f"code.filesystem: {rel}: {issue}; structured checks skipped",
-                    incomplete=self.strict_coverage,
+                    incomplete=self._strict_accounting(),
+                    reason="unparsed-input",
                 )
         for m in structured:
             # A recognised configuration shape declares the product by name.

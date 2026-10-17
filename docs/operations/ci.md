@@ -52,7 +52,9 @@ own `docs/package.json`, whose blog posts and static assets are then its
 source. The documentation and example directories below a project are still
 declared (`docs/docs/` in that layout); its own content is not. The example workflow passes the flag. Leave it out when
 the gate should also establish that every fixture was read for credentials, and
-never combine it with `--strict-coverage`.
+never combine it with `--strict-coverage` or `--max-coverage-gap 0`: both are
+[strict accounting](../scanning.md#coverage-budget-and-strict-accounting), which
+counts every gap the profile declares, so the CLI refuses either pairing.
 
 To gate on drift between two reports, `shadowscan diff baseline.json current.json
 --fail-on-new` exits 2 when the current report has new findings or findings

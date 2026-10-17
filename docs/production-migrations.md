@@ -7,6 +7,18 @@ revision; at release time they fold into the release notes. The
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
+## October 17 coverage semantics migration (Unreleased)
+
+Which unread content leaves a scan incomplete is decided by one rule
+([strict accounting](scanning.md#coverage-budget-and-strict-accounting)).
+Expect these exit-code changes against the earlier October 17 behaviour:
+
+- **`--max-coverage-gap 0` is strict accounting.** A budget of 0 now counts
+  binary and malformed test fixtures and unparsed test source as
+  `strict_coverage` does, so such a scan exits 3 where it exited 0. A
+  configuration that combines `profile: ci` with a budget of 0 (per connector,
+  in `options.max_coverage_gap` or on the command line) is refused: pick one.
+
 ## October 17 engine review migration (Unreleased)
 
 - **Every incremental cache entry misses once.** The entry format moves to 5:
@@ -121,8 +133,9 @@ across this change reports findings as resolved or new that are neither.
   65,536 characters, or a malformed or binary fixture in discounted test code
   (`include_tests` false) now complete. Each discounted gap is still listed as
   a warning, and a binary test fixture is still scanned for credentials. Set
-  `strict_coverage: true` to keep treating every such gap as incomplete
-  (exit 3), as before; product code, calls over 65,536 characters and, under
+  `strict_coverage: true` or `max_coverage_gap: 0` (both are
+  [strict accounting](scanning.md#coverage-budget-and-strict-accounting)) to
+  keep treating every such gap as incomplete (exit 3), as before; product code, calls over 65,536 characters and, under
   a test path too, MCP configurations (by a dedicated name such as
   `.mcp.json`, or by a structure or text that declares servers),
   coding-agent instruction, rule and settings files (`CLAUDE.md`,

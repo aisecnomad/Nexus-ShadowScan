@@ -13,6 +13,34 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Coverage gaps take one decision, judged per root and repository (October 17)
+
+Three mechanisms decided when unread content leaves a scan incomplete, each
+without knowing the others: #254's coverage budget, #255's discount of test
+code while `include_tests` is off, and #258's `ci` profile declarations. Every
+`code.filesystem` gap (and every gap in a `code.github` or `code.gitlab`
+checkout) now takes one decision, in the order
+[scan semantics](scanning.md#coverage-budget-and-strict-accounting) states:
+strict accounting, credentials, declaration, discount, budget.
+
+- **A budget of 0 is strict accounting.** #254 documented
+  `--max-coverage-gap 0` as restoring the previous accounting ("0 fails on any
+  gap"), but #255's discount checked only `strict_coverage`, so a binary or
+  malformed test fixture still left a zero-budget scan complete, and the `ci`
+  profile, which refused `strict_coverage`, accepted the zero budget and
+  declared the gap: `--profile ci --max-coverage-gap 0` on a dangling
+  `tests/` link exited 0. `strict_coverage` and a budget of 0 (the
+  connector's `max_coverage_gap`, `options.max_coverage_gap` or
+  `--max-coverage-gap`) are now one rule: no gap is discounted as test code,
+  declared or tolerated, and the source of the 0 may be the nested
+  connector's parent (`code.github`, `code.gitlab`), whose policy the nested
+  connector now reads. The `ci` profile is refused with either setting, by
+  `code.filesystem` and by the provider connectors at construction, before
+  anything is fetched, and by `shadowscan code` as a usage error. The two
+  settings differ only in where a gap is reported: `strict_coverage` as an
+  error where it happens, a budget of 0 through the ledger, whose verdict is
+  an error and counts each gap by its reason.
+
 ### Review fixes: what diff holds back under the ci profile (October 17)
 
 Fixes from a review of the `profile: ci` diff hold-back and project-root rule
