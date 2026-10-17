@@ -288,7 +288,17 @@ tolerated gap.
   only with its own layout below it (Ollama `manifests` or `blobs`, a
   Hugging Face `models--` directory, a model file), so a service account's
   or shared volume's store is still reported. Regression-tested both ways,
-  with every catalog store below each kind of home directory.
+  with every catalog store below each kind of home directory. The review
+  also measured a hostile row at about 20 times its former cost: values
+  were read up to 1,024 characters instead of 160 and keyed whole, through
+  a trailing-version pattern whose `\s+` restarted at every space of a run
+  (quadratic in the run's length), and every path component was keyed. A
+  component longer than 160 characters is now keyed as no product, the
+  version pattern starts only where a whitespace run starts (linear, with
+  the same results), and each value is split once with each directory
+  keyed at most once. A step-count test bounds the text the version
+  pattern reads per hostile row, and another checks that it cannot start
+  inside a run.
 - These three connector changes alter which findings a scan reports, and
   `gateway.otel` findings from nested exports get new ids; the
   [connector correctness migration note](production-migrations.md#october-17-connector-correctness-migration-unreleased)

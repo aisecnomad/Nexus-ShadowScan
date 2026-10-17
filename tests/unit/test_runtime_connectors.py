@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 
@@ -697,6 +698,66 @@ def test_endpoint_host_ambiguous_product_names_are_left_out_by_name() -> None:
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(endpoint_runtime, "AMBIGUOUS_PRODUCT_NAMES", ())
             assert key in endpoint_runtime._host_product_keys(index), name
+
+
+class _CountingPattern:
+    """A compiled pattern that records the length of every text it substitutes in."""
+
+    def __init__(self, pattern: re.Pattern[str]) -> None:
+        self.pattern = pattern
+        self.lengths: list[int] = []
+
+    def sub(self, repl: str, string: str, count: int = 0) -> str:
+        self.lengths.append(len(string))
+        return self.pattern.sub(repl, string, count=count)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        " " * 1023 + "x",
+        " " * 65536 + "x",
+        "Ollama" + " " * 4000 + "0.5.7",
+        "/.x" * 400,
+        ("/" + " " * 150 + "1.0") * 7,
+        "C:\\" + "a b " * 300,
+    ],
+    ids=["spaces", "spaces-64k", "version-after-spaces", "dot-directories", "spaced-versions", "words"],
+)
+def test_endpoint_host_keys_a_bounded_label_per_path_component(value, monkeypatch) -> None:
+    """Regression: host values were read up to 1024 characters and keyed whole, through a
+    version pattern quadratic in a whitespace run, so a hostile row cost about 20 times
+    what it did with 160-character labels. A component is keyed only up to _MAX_LABEL
+    characters and each component of a value at most once, so the text the version
+    pattern reads per row is bounded, however long the row's values are."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    connector._product_keys = endpoint_runtime._host_product_keys(connector.index)
+    counter = _CountingPattern(endpoint_runtime._TRAILING_VERSION)
+    monkeypatch.setattr(endpoint_runtime, "_TRAILING_VERSION", counter)
+    list(connector.analyze([{"name": value, "path": value, "process": value}]))
+    assert max(counter.lengths, default=0) <= endpoint_runtime._MAX_LABEL
+    assert sum(counter.lengths) <= 3 * endpoint_runtime._MAX_HOST_PATH
+
+
+def test_endpoint_host_trailing_version_starts_only_where_a_whitespace_run_starts() -> None:
+    """Regression: the version pattern's ``\\s+`` could start at any space of a run, so
+    stripping a version rescanned the rest of the run from each of its spaces, quadratic
+    in the run's length. A match now starts only at the start of a run, so each run is
+    scanned from one place; the stripped names are unchanged."""
+    pattern = endpoint_runtime._TRAILING_VERSION
+    text = "Ollama" + " " * 8 + "0.5.7"
+    assert pattern.search(text).start() == len("Ollama")
+    assert all(pattern.match(text, start) is None for start in range(len("Ollama") + 1, len("Ollama") + 8))
+    for name, key in (
+        ("Ollama version 0.5.7", "ollama"),
+        ("LM Studio 0.3.14", "lmstudio"),
+        ("Jan v0.5.17", "jan"),
+        ("Codex 3", "codex3"),
+        ("Jan  2024", "jan2024"),
+        ("Ollama \t 0.5.7", "ollama"),
+    ):
+        assert endpoint_runtime._product_key(name) == key, name
 
 
 def test_ebpf_known_local_model_port_is_tagged() -> None:

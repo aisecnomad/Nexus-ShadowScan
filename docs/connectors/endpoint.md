@@ -178,7 +178,10 @@ the file name of `path` and the `process` are each compared without an
 `version 2`; a bare number, such as the `3` of `Codex 3` or the `2024` of
 `Jan 2024`, is part of the name), ignoring case, spaces and punctuation:
 `LM Studio.app`, `/usr/local/bin/ollama`, `Jan.exe` and `Ollama version 0.5.7`
-qualify. The known products are the product names of the
+qualify. Each value is read up to 1,024 characters, so a long path keeps its
+file name, but a name or path component longer than 160 characters is longer
+than any product name and is compared with none, which keeps the work per row
+bounded. The known products are the product names of the
 bundled provider, coding-agent and platform signatures (Ollama, LM Studio,
 vLLM, llama.cpp, LocalAI, SGLang, Aider, LiteLLM, Dify, Flowise, and the
 self-hosted chat UIs Open WebUI, LibreChat and AnythingLLM, ...) and the local

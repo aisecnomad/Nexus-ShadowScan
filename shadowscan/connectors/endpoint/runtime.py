@@ -275,11 +275,15 @@ _HOST_PRODUCT_CATEGORIES = frozenset({"provider", "coding-agent", "platform"})
 _LISTED_PRODUCTS = re.compile(r"\(([^()/]*,[^()/]*)\)")
 _APP_SUFFIX = re.compile(r"\.(?:app|exe)$", re.IGNORECASE)
 # "Ollama version 0.5.7", "LM Studio 0.3.14", "Jan v0.5.17": Windows program names
-# carry the version. A bare number is part of the name ("Codex 3", "Jan 2024").
-_TRAILING_VERSION = re.compile(r"\s+(?:version\s+v?\d|v\d|\d+\.\d)[\w.+-]*$", re.IGNORECASE)
+# carry the version. A bare number is part of the name ("Codex 3", "Jan 2024"). A
+# match starts only where a whitespace run starts: tried from inside a run as well,
+# ``\s+`` rescanned the rest of the run from each of its spaces, quadratic in its length.
+_TRAILING_VERSION = re.compile(r"(?<!\s)\s+(?:version\s+v?\d|v\d|\d+\.\d)[\w.+-]*$", re.IGNORECASE)
 _NON_ALNUM = re.compile(r"[^0-9a-z]+")
 _PATH_SEPARATOR = re.compile(r"[\\/]")
-# Host inventory paths are read this far, so a long path keeps its file name.
+# Host inventory paths are read this far, so a long path keeps its file name. Each
+# name or path component is compared with product names only up to _MAX_LABEL
+# characters: no product name is longer, so a longer one names none.
 _MAX_HOST_PATH = 1024
 # The catalog's model stores as case-folded path components below a home directory
 # (``.ollama/models``), each with its layout.
@@ -300,6 +304,7 @@ _AMBIGUOUS_CONTEXTS = frozenset(
     for context in contexts
 )
 _AMBIGUOUS_CONTEXT_LENGTHS = frozenset(map(len, _AMBIGUOUS_CONTEXTS))
+_AMBIGUOUS_CONTEXT_HEADS = frozenset(run[0] for run in _AMBIGUOUS_CONTEXTS)
 
 
 def _product_key(text: str) -> str:
@@ -307,8 +312,11 @@ def _product_key(text: str) -> str:
     suffix or a trailing version, letters and digits only, case-folded.
 
     ``/Applications/LM Studio.app``, ``lm-studio`` and ``LM Studio 0.3.14`` share one key.
+    A component longer than _MAX_LABEL is no product name and has the empty key.
     """
     base = _PATH_SEPARATOR.split(text.rstrip("\\/"))[-1]
+    if len(base) > _MAX_LABEL:
+        return ""
     base = _TRAILING_VERSION.sub("", _APP_SUFFIX.sub("", base))
     return _NON_ALNUM.sub("", base.casefold())
 
@@ -357,20 +365,27 @@ def _names_bundle(part: str, keys: frozenset[str]) -> bool:
     return bool(_APP_SUFFIX.search(part) or part.startswith(".")) and _product_key(part) in keys
 
 
-def _in_ambiguous_context(parts: list[str]) -> bool:
-    """Whether the path components ``parts`` hold, as a run and ignoring case, one of the
+def _path_parts(text: str) -> tuple[list[str], list[str]]:
+    """The non-empty path components of ``text``, as written and case-folded."""
+    parts = [part for part in _PATH_SEPARATOR.split(text) if part]
+    return parts, [part.casefold() for part in parts]
+
+
+def _in_ambiguous_context(folded: list[str]) -> bool:
+    """Whether the case-folded path components ``folded`` hold, as a run, one of the
     contexts the catalog lists for an ambiguous product name (``Jan.exe``, ``Goose.app``,
     ``.continue``)."""
-    folded = [part.casefold() for part in parts]
     return any(
         tuple(folded[start : start + length]) in _AMBIGUOUS_CONTEXTS
+        for start, part in enumerate(folded)
+        if part in _AMBIGUOUS_CONTEXT_HEADS
         for length in _AMBIGUOUS_CONTEXT_LENGTHS
-        for start in range(len(folded) - length + 1)
     )
 
 
-def _names_product(text: str, keys: frozenset[str]) -> bool:
-    """Whether the name or path ``text`` names a known AI product as a whole.
+def _names_product(parts: list[str], folded: list[str], keys: frozenset[str]) -> bool:
+    """Whether the name or path whose components are ``parts`` (``folded`` case-folded)
+    names a known AI product as a whole.
 
     Its last component qualifies when it is a product name in ``keys`` (``ollama``,
     ``LM Studio.app``, ``Ollama version 0.5.7``), and a directory on the path when it is an
@@ -382,14 +397,13 @@ def _names_product(text: str, keys: frozenset[str]) -> bool:
     (``make.exe``, ``Cohere.exe``, ``~/.make``), and a plain directory such as a home
     directory's user name or ``Cellar/goose`` names nothing.
     """
-    parts = [part for part in _PATH_SEPARATOR.split(text) if part]
     if not parts:
         return False
     *parents, base = parts
     return (
         _product_key(base) in keys
-        or any(_names_bundle(part, keys) for part in parents)
-        or _in_ambiguous_context(parts)
+        or any(_names_bundle(part, keys) for part in dict.fromkeys(parents))
+        or _in_ambiguous_context(folded)
     )
 
 
@@ -413,7 +427,9 @@ def _holds_store_layout(parts: list[str], root: tuple[str, ...], layout: str) ->
     Hugging Face hub ``models--<org>--<name>`` directory, or for any other store a model
     file (MODEL_FILE_SUFFIXES)."""
     length, run = len(root), list(root)
-    starts = [start for start in range(len(parts) - length + 1) if parts[start : start + length] == run]
+    starts = [
+        start for start, part in enumerate(parts) if part == run[0] and parts[start : start + length] == run
+    ]
     if not starts:
         return False
     if layout == "files":
@@ -425,9 +441,9 @@ def _holds_store_layout(parts: list[str], root: tuple[str, ...], layout: str) ->
     return any(name.startswith("models--") for name in following)
 
 
-def _in_model_store(text: str) -> bool:
-    """Whether the path ``text`` is, or lies in, one of the catalog's model stores,
-    ignoring case.
+def _in_model_store(parts: list[str]) -> bool:
+    """Whether the path whose case-folded components are ``parts`` is, or lies in, one
+    of the catalog's model stores.
 
     A store counts at the place the catalog lists it, below a home directory
     (``~/.ollama/models``, ``/Users/u/.cache/lm-studio/models/...``,
@@ -437,7 +453,6 @@ def _in_model_store(text: str) -> bool:
     directory): an application's ``jan/models`` directory, or a user named jan with a
     ``models`` directory, is not a model store.
     """
-    parts = [part for part in _PATH_SEPARATOR.split(text.casefold()) if part]
     below_home = _below_home(parts) or []
     return any(
         tuple(below_home[: len(root)]) == root or _holds_store_layout(parts, root, layout)
@@ -471,13 +486,17 @@ class HostConnector(_EndpointConnector):
 
         osquery ``apps``/``programs`` and MDM rows carry an application or executable
         name (``LM Studio.app``, ``/usr/local/bin/ollama``, ``Ollama version 0.5.7``) and
-        no category, and local runtime signatures have no display-name signal.
+        no category, and local runtime signatures have no display-name signal. Each value
+        is read up to _MAX_HOST_PATH characters and split once, and only its components of
+        up to _MAX_LABEL characters are keyed, so a row costs time linear in that bound.
         """
         if self._product_keys is None:
             self._product_keys = _host_product_keys(self.index)
-        keys = self._product_keys
-        values = [self._text(record.get(key), _MAX_HOST_PATH) for key in ("name", "path", "process")]
-        return any(_names_product(value, keys) or _in_model_store(value) for value in values)
+        for key in ("name", "path", "process"):
+            parts, folded = _path_parts(self._text(record.get(key), _MAX_HOST_PATH))
+            if _names_product(parts, folded, self._product_keys) or _in_model_store(folded):
+                return True
+        return False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:
