@@ -103,6 +103,48 @@ def test_tolerated_coverage_gap_does_not_resolve_a_credential(tmp_path, index):
     assert any(_UNREAD in reason and "1 tolerated coverage gap" in reason for reason in comparison["reasons"])
 
 
+@pytest.mark.parametrize("unread", ["declared", "tolerated"])
+def test_a_result_reused_by_incremental_keeps_unread_content_from_resolving(tmp_path, index, unread):
+    # The review's --incremental case: the third run reuses the second's
+    # result, which once dropped declared_omissions and stats.coverage, so
+    # diff of the first and third runs read the credential as resolved.
+    root = _repo(tmp_path / "repo")
+    if unread == "declared":
+        path, options, budget = root / "docs" / "setup.md", {"profile": "ci"}, 0.02
+        path.parent.mkdir()
+        path.write_text("# Setup\n\n" + _credential("docs"))
+    else:
+        path, options, budget = root / "src" / "app" / "settings.py", {}, 0.5
+        path.write_text(_credential("settings"))
+    spec = ConnectorSpec(
+        "code.filesystem", {"path": str(root), "use_git": False, "max_file_size": 4096, **options}
+    )
+    config = ScanConfig(
+        connectors=[spec], incremental=True, state_dir=str(tmp_path / "state"), max_coverage_gap=budget
+    )
+
+    def scan() -> dict:
+        return Engine(config, index=index).run().to_dict()
+
+    baseline = scan()
+    assert baseline["summary"]["complete"] and len(_secrets(baseline)) == 1
+    with path.open("a") as handle:
+        handle.write("# padding\n" * 600)
+    scan()
+    current = scan()
+    stats = current["stats"][0]
+    assert current["summary"]["complete"] and stats["cached"] and _secrets(current) == []
+    if unread == "declared":
+        assert stats["declared_omissions"] == 1
+    else:
+        assert [gap["path"] for gap in stats["coverage"]["details"]] == ["src/app/settings.py"]
+    result = _diff(tmp_path, baseline, current)
+    assert result.exit_code == 3, result.output
+    comparison = json.loads(result.output)
+    assert comparison["resolved"] == [] and len(comparison["unknown"]) == 1
+    assert any(_UNREAD in reason for reason in comparison["reasons"])
+
+
 def test_a_credential_removed_from_read_content_still_resolves_under_the_profile(tmp_path, index):
     # A declared omission in docs/ does not hold back a credential deleted from src/.
     root = _repo(tmp_path / "repo")
