@@ -172,7 +172,21 @@ package.
    predates the sdist: it was a wheel built with `pip wheel` from a
    `git archive`, and was attested as `aisecnomad/Project-Nexus` before the rename.
 7. **Optionally, create the GitHub release by hand** from the tag, using the
-   version's `RELEASE_NOTES.md` section. The workflow never creates one.
+   version's `RELEASE_NOTES.md` section. The workflow never creates one. Attach
+   the signed evidence to it, so that the release carries its own signatures
+   rather than only a pointer to the attestation store: the wheel, the sdist,
+   `SHA256SUMS` from `release-candidate-<SHA>`, and `provenance.sigstore.json`
+   and `sbom.sigstore.json` from `release-attestations-<SHA>`. The provenance
+   bundle covers every file in the candidate, `SHA256SUMS` included. The
+   `.sigstore.json` suffix is what release-signature checks, such as OpenSSF
+   Scorecard's Signed-Releases, look for among a release's assets. Anyone can
+   then check a downloaded file without the attestation store, against the
+   bundle from the same release:
+
+   ```bash
+   gh attestation verify "nexusshadowscan-$version-py3-none-any.whl" \
+     --repo aisecnomad/Nexus-ShadowScan --bundle provenance.sigstore.json
+   ```
 8. **Open the next candidate.** Bump the version (for example to `0.1.3`) and
    add a new unreleased section to the changelog and release notes.
 

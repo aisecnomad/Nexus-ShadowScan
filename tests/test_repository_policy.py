@@ -2078,7 +2078,7 @@ def test_release_steps_require_exactly_one_wheel_and_one_sdist(
     script = next(entry["run"] for entry in steps if entry.get("name", "").startswith(step))
     candidate = tmp_path / "publication-input"
     (candidate / "attestations").mkdir(parents=True)
-    for name in ("provenance.json", "sbom.json"):
+    for name in ("provenance.sigstore.json", "sbom.sigstore.json"):
         (candidate / "attestations" / name).write_text("{}", encoding="utf-8")
     for version in ("0.1.1", "0.1.0")[:wheels]:
         (candidate / f"nexusshadowscan-{version}-py3-none-any.whl").write_bytes(version.encode())
@@ -2115,7 +2115,7 @@ def test_publication_input_rejects_an_sdist_of_another_version(tmp_path: Path) -
     )
     candidate = tmp_path / "publication-input"
     (candidate / "attestations").mkdir(parents=True)
-    for name in ("provenance.json", "sbom.json"):
+    for name in ("provenance.sigstore.json", "sbom.sigstore.json"):
         (candidate / "attestations" / name).write_text("{}", encoding="utf-8")
     (candidate / "nexusshadowscan-0.1.1-py3-none-any.whl").write_bytes(b"wheel")
     (candidate / "nexusshadowscan-0.1.0.tar.gz").write_bytes(b"sdist")
