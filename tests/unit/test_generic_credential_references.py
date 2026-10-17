@@ -26,11 +26,15 @@ RANDOM = "R4nd0m9Qx2Vb7Lp6"  # the same synthetic value the rule's own tests use
 
 
 def _generic(index: SignatureIndex, text: str, *, code: bool) -> list[str]:
-    """The generic matches the scanner reports as credentials (not placeholders)."""
+    """The generic matches the scanner reports as credentials (not placeholders).
+
+    A placeholder test judges the literal a match stands for, which for a
+    reference is the fallback after it (``extra["credential"]``).
+    """
     return [
         m.value
         for m in index.match_secrets(text, code=code)
-        if m.signature_id == GENERIC and placeholder_reason(m.value) is None
+        if m.signature_id == GENERIC and placeholder_reason(m.extra.get("credential", m.value)) is None
     ]
 
 
@@ -150,6 +154,73 @@ def test_a_hard_coded_fallback_after_a_reference_is_reported(index: SignatureInd
 )
 def test_a_reference_without_a_literal_key_after_it_is_not_reported(index: SignatureIndex, line: str):
     assert _generic(index, line, code=True) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A literal passed to a call, a constructor or a throw after the
+        # fallback operator is a path, a setting's name or a message, not a key.
+        'openaiApiKey: process.env.OPENAI_API_KEY ?? getSecret("projects/my-proj-123/secrets/openaiApiKey/versions/latest"),',
+        'openaiApiKey: process.env.OPENAI_API_KEY || config.get("openai.apiKey.v2"),',
+        'openaiApiKey: process.env.OPENAI_API_KEY ?? readFileSync("/run/secrets/OpenAI_Api_Key_2"),',
+        'githubAccessToken: process.env.GITHUB_ACCESS_TOKEN || core.getInput("github-access-token-v2"),',
+        'val openaiApiKey = BuildConfig.OPENAI_API_KEY ?: error("OPENAI_API_KEY missing from local.properties")',
+        'openai_api_key = settings.OPENAI_API_KEY or _raise("OPENAI_API_KEY is required for production")',
+        'export const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? fail("OPENAI_API_KEY is not set");',
+        'openaiApiKey: process.env.OPENAI_API_KEY || throw("OPENAI_API_KEY_missing_value_2"),',
+        # A direct fallback that is a sentence is a message, not one token.
+        'openaiApiKey: process.env.OPENAI_API_KEY ?? "OPENAI API KEY is not set 123",',
+    ],
+)
+def test_a_literal_that_is_no_direct_fallback_operand_is_not_reported(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=True) == []
+    if "process.env." in line:
+        # An environment read is a reference in documentation too.
+        assert _generic(index, line, code=False) == []
+
+
+@pytest.mark.parametrize(
+    "fallback",
+    [
+        "sk-ant-api03-...",
+        "your-api-key-here-Abc123XyZ",
+        "PLACEHOLDER-a1B2c3D4e5F6g7H8",
+        "changeme-Abc123Def456Ghi789",
+        "fake_A1b2C3d4E5f6G7h8I9j0",
+    ],
+)
+def test_a_placeholder_fallback_is_judged_as_the_literal_itself(index: SignatureIndex, fallback: str):
+    # The same literals assigned directly are documentation placeholders.
+    assert placeholder_reason(fallback) is not None
+    line = f'anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "{fallback}",'
+    assert _generic(index, line, code=True) == []
+
+
+def test_messages_after_fallback_operators_leave_a_scan_complete(tmp_path: Path, run_connector):
+    # Seven providers, one quota's worth and more: a message is no credential,
+    # so neither a finding nor the quota disclosure (exit 3) follows.
+    providers = ["OPENAI", "ANTHROPIC", "GEMINI", "MISTRAL", "COHERE", "GROQ", "TOGETHER"]
+    source = "".join(
+        f'export const {name}_API_KEY = process.env.{name}_API_KEY ?? fail("{name}_API_KEY is not set");\n'
+        for name in providers
+    )
+    kotlin = "".join(
+        f'val {name.lower()}ApiKey = BuildConfig.{name}_API_KEY ?: error("{name}_API_KEY missing")\n'
+        for name in providers
+    )
+    findings = _scan(
+        tmp_path,
+        run_connector,
+        {"src/config.ts": source, "tests/fixtures/config.ts": source, "app/Keys.kt": kotlin},
+    )
+    assert [f.title for f in findings if f.kind.value == "secret"] == []
+
+
+def test_a_scan_reports_no_credential_for_a_placeholder_fallback(tmp_path: Path, run_connector):
+    source = 'const anthropicApiKey = process.env.ANTHROPIC_API_KEY ?? "your-api-key-here-Abc123XyZ";\n'
+    findings = _scan(tmp_path, run_connector, {"src/a.ts": source})
+    assert [f.title for f in findings if f.kind.value == "secret"] == []
 
 
 def test_rejected_references_do_not_use_up_the_places_of_a_later_key(index: SignatureIndex):
