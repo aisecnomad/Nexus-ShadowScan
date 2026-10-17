@@ -565,6 +565,45 @@ def test_a_literal_beside_an_environment_read_is_still_withheld(line: str):
 @pytest.mark.parametrize(
     "line",
     [
+        # The value lexer stops at the quote of a subscript or call argument;
+        # the fallback after the read is the credential (main showed it too).
+        f"azure_api_key: os.environ['K'] if PROD else '{AZURE_KEY}'",
+        f'azure_api_key: os.environ["K"] if PROD else "{AZURE_KEY}"',
+        f"azure_api_key: os.environ['K'] or '{AZURE_KEY}'",
+        f"azureApiKey: process.env['K'] ?? '{AZURE_KEY}'",
+        f"azureApiKey: process.env['K'] || '{AZURE_KEY}'",
+        f"azure_api_key: os.getenv('K') or '{AZURE_KEY}'",
+        f"azureApiKey: getKey('K') ?? '{AZURE_KEY}'",
+        f"  azure_api_key: os.environ['K'] if PROD else '{AZURE_KEY}',",
+        f"config = {{'azure_api_key': os.environ['K'] if PROD else '{AZURE_KEY}'}}",
+        # A name whose last word names a key withholds an opaque fallback.
+        f"azureKey: process.env['K'] ?? '{AZURE_KEY}'",
+        f"key: os.environ['K'] or '{AZURE_KEY}'",
+    ],
+)
+def test_a_fallback_after_a_subscript_or_call_read_is_withheld(line: str):
+    safe = sanitize_text(line)
+    assert AZURE_KEY not in safe and REDACTED in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A plain read, a word-like fallback under a conditional name, a comparison.
+        "{ apiKey: os.environ['K'] }",
+        "{ apiKey: os.environ['K'], model: 'gpt-4o' }",
+        "cacheKey: cache['users'] ?? 'users-by-id'",
+        "if token == os.environ['K'] or debug: pass",
+    ],
+)
+def test_reads_without_a_credential_fallback_keep_their_text(line: str):
+    assert sanitize_text(line) == line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
         # Not a read by name: a computed name, a method on the value, a variable,
         # a call, or an unquoted literal in an env file.
         "api_key = os.environ[name]",
