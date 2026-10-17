@@ -32,6 +32,8 @@ from shadowscan.plugin_process import (
     _receive,
     _worker,
     _WorkerHandle,
+    is_credential_name,
+    scrub_credential_environment,
 )
 from shadowscan.signatures import SignatureIndex
 
@@ -105,6 +107,13 @@ class Connector(BaseConnector):
                 metadata.update(
                     env_has_identity_key="SHADOWSCAN_IDENTITY_KEY" in os.environ,
                     ctx_has_identity_key=self.ctx.gateway_identity_key is not None,
+                )
+            if mode == "credential-env":
+                metadata.update(
+                    seen=sorted(
+                        name for name in os.environ
+                        if name.startswith("SHADOWSCAN_PROBE_") or name in ("PATH", "HOME")
+                    ),
                 )
             # "forge" builds the finding under a built-in connector's name; "forge-id" gives a
             # finding under its own name that finding's id, and "forge-replace" re-labels a copy.
@@ -759,6 +768,70 @@ def test_a_decoded_plugin_finding_never_keeps_the_id_it_carries():
     [finding], _, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
     assert finding.connector == ENTRY
     assert finding.id == Finding(connector=ENTRY, **shape).id != builtin.id
+
+
+def test_spawned_plugin_does_not_inherit_credential_environment(installed_probe, monkeypatch):
+    """A process-mode worker inherited the whole environment, so an approved plugin could read the
+    GITHUB_TOKEN, cloud credentials and every other secret exported for the built-in connectors."""
+    monkeypatch.setenv("SHADOWSCAN_PROBE_GITHUB_TOKEN", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_AWS_SECRET_ACCESS_KEY", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_OPENAI_API_KEY", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_DB_PASSWORD", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_VENDOR_TOKEN", "synthetic")  # the plugin's own, allowlisted
+    monkeypatch.setenv("SHADOWSCAN_PROBE_REGION", "eu-west-1")  # not credential-shaped: stays
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "credential-env")
+    result = _engine(plugin_env=["SHADOWSCAN_PROBE_VENDOR_TOKEN"]).run()
+    assert result.complete, result.stats
+    assert result.findings[0].metadata["seen"] == [
+        "HOME",
+        "PATH",
+        "SHADOWSCAN_PROBE_REGION",
+        "SHADOWSCAN_PROBE_VENDOR_TOKEN",
+    ]
+    # The scanner's own environment is untouched.
+    assert os.environ["SHADOWSCAN_PROBE_GITHUB_TOKEN"] == "synthetic"
+    _assert_reaped(installed_probe)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["GITHUB_TOKEN", ["GITHUB_TOKEN", "GITHUB_TOKEN"], ["not a name"], ["X=1"], [1], ["A" * 129]],
+)
+def test_plugin_env_option_is_validated(value):
+    with pytest.raises(ConfigValidationError, match="plugin_env"):
+        ScanConfig(connectors=[ConnectorSpec(ENTRY)], plugins=[ENTRY], plugin_env=value)
+
+
+@pytest.mark.parametrize(
+    ("name", "withheld"),
+    [
+        ("GITHUB_TOKEN", True),
+        ("token", True),
+        ("AWS_SECRET_ACCESS_KEY", True),
+        ("AWS_ACCESS_KEY_ID", True),
+        ("GOOGLE_APPLICATION_CREDENTIALS", True),
+        ("AZURE_CLIENT_SECRET", True),
+        ("OCI_CLI_PASSPHRASE", True),
+        ("DOCKER_PASSWD", True),
+        ("DATABASE_URL", True),
+        ("SHADOWSCAN_IDENTITY_KEY", True),
+        ("PATH", False),
+        ("HOME", False),
+        ("HTTPS_PROXY", False),
+        ("SSL_CERT_FILE", False),
+        ("KUBECONFIG", False),
+        ("AWS_PROFILE", False),
+        ("AWS_REGION", False),
+        ("TURKEY", False),
+        ("PYTHONHASHSEED", False),
+    ],
+)
+def test_credential_environment_names(name, withheld):
+    assert is_credential_name(name) is withheld
+    environ = {name: "x", "PATH": "/usr/bin"}
+    removed = scrub_credential_environment(environ)
+    assert (name in removed) is withheld and "PATH" in environ
+    assert scrub_credential_environment({name: "x"}, keep=[name]) == []
 
 
 def test_spawned_plugin_scrubs_identity_key_from_worker_environment(installed_probe, monkeypatch):

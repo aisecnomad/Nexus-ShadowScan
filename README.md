@@ -639,6 +639,7 @@ options:
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
   plugins: []                         # exact-name allowlist for third-party connectors
   plugin_execution: process           # or thread
+  plugin_env: []                      # credential-shaped variables a plugin worker keeps
   risk_basis: combined                # or danger (excludes governance factors)
   incremental: false                  # content-addressed result caching
   state_dir: .shadowscan-state       # private incremental state directory

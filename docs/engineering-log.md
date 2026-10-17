@@ -82,16 +82,36 @@ public repositories with the tool and read the committed benchmark metrics.
   worker inherited the scanner's whole environment, so an approved
   third-party connector could read `GITHUB_TOKEN`, cloud credentials and
   every other secret the operator had exported for the built-in connectors.
-  The worker now receives the parent's environment with credential-shaped
-  variables removed (names ending in `TOKEN`, `SECRET`, `KEY`, `PASSWORD`,
-  `PASSWD`, `CREDENTIALS` or `CREDENTIAL`, and the cloud SDK credential
-  variables), except those the plugin's `env` allowlist names; the `PATH`,
-  locale, temporary-directory and proxy variables a program needs stay.
-  Thread-mode plugins share the scanner's process and are unaffected, as
-  before. The credential redaction patterns that run over untrusted text
-  now carry a match timeout through the `regex` module, like the code
-  connectors' patterns, so a pattern regression cannot stall a scan past
-  the connector deadline.
+  Before the plugin is imported, the worker now removes from its own
+  environment every variable whose name ends in `TOKEN`, `SECRET`, `KEY`,
+  `PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIALS` or `CREDENTIAL` (after
+  an underscore, or as the whole name) and the cloud SDK variables that
+  carry a credential or the file holding one (`AWS_ACCESS_KEY_ID`,
+  `AWS_WEB_IDENTITY_TOKEN_FILE`, `AZURE_CLIENT_CERTIFICATE_PATH`,
+  `AZURE_FEDERATED_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, the OCI
+  key and security-token files, `DATABASE_URL`, `DATABASE_DSN`), except the
+  names the new `options.plugin_env` lists for a plugin that reads its own
+  credential from the environment (exact names, at most 64, validated);
+  configuration selectors such as `AWS_PROFILE` and `KUBECONFIG`, `PATH`,
+  `HOME`, locale, temporary-directory, proxy and CA settings stay, and a
+  value the configuration interpolates with `${VAR}` is expanded by the
+  scanner before the worker starts. The scanner's own environment is not
+  changed, and thread-mode plugins, which share it, are unaffected, as
+  before. The worker's result validation also checks the two statistics
+  fields the ci profile added.
+- **Not carried: redaction patterns on the `regex` module.** The review
+  suggested giving the credential redaction patterns a match timeout
+  through the `regex` module, as the code connectors' patterns have, so a
+  pattern regression could not hold a worker past the connector deadline.
+  Measured on the redaction performance suite's hostile shapes, `regex`
+  (2026.9.10, `re`-compatible mode) runs these patterns 2 to 15 times
+  slower than stdlib `re` (`Bearer a--` followed by 100,000 `a_` pairs: 0.6
+  s against 9.0 s; the whole set 6.8 s against 25.3 s), slow enough to fail
+  the suite's own linear-time bounds and to be paid by every excerpt,
+  diagnostic and export of every scan. The patterns' possessive quantifiers
+  and atomic groups, the work and nesting budgets and
+  `tests/unit/test_redaction_performance.py` remain the defence against a
+  regression; an abandoned worker is already bounded by the job deadline.
 
 ### README: benchmark chart generated from the committed ShadowBench cases run (October 16)
 
