@@ -167,6 +167,20 @@ class TestBudget:
         assert summary["details_truncated"] == 25
         assert summary["gaps"] == MAX_PUBLISHED_GAPS + 25
 
+    def test_a_blinding_gap_leads_its_parts_details_past_the_published_limit(self) -> None:
+        # A blinding gap recorded after 60 tolerated ones was cut from the 50
+        # published details, which then listed only gaps that condemned nothing.
+        ledger = CoverageLedger()
+        ledger.add_examined(10_000)
+        for i in range(60):
+            ledger.record(CoverageGap(detail="link", path=f"tests/certs/c{i}.pem"))
+        ledger.record(CoverageGap(detail="configuration link", path="zz/.mcp.json", kind=BLINDING))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        assert incomplete and validate_coverage_summary(summary) is summary
+        paths = [gap["path"] for gap in summary["details"]]
+        assert paths[:3] == ["zz/.mcp.json", "tests/certs/c0.pem", "tests/certs/c1.pem"]
+        assert len(paths) == MAX_PUBLISHED_GAPS and summary["details_truncated"] == 11
+
     def test_examined_sums_across_roots_and_never_shrinks(self) -> None:
         ledger = CoverageLedger()
         ledger.add_examined(40)
@@ -216,7 +230,7 @@ class TestBudget:
         # A blinded part within its budget left the scan incomplete too.
         blinded = self._part(3_000, 1, "blinded", blinding=True)
         combined = combine_coverage_summaries([big, blinded])
-        assert [gap["path"] for gap in combined["details"]][:2] == ["blinded/l0.py", "blinded/stop"]
+        assert [gap["path"] for gap in combined["details"]][:2] == ["blinded/stop", "blinded/l0.py"]
 
     def test_a_combined_summary_says_how_its_verdict_divides(self) -> None:
         # 58 weighted of 61.36 allowed beside within_budget false reads as a

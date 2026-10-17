@@ -267,7 +267,7 @@ the scan is incomplete.
 | `allowance` | Weighted entries the scan could lose: `max_gap_ratio` times `examined`, at most 100, and 0 under strict accounting |
 | `within_budget` | Whether `weighted_gap_entries` stayed within `allowance` |
 | `max_gap_ratio` | The ratio in force |
-| `details` | The first 50 gaps (`MAX_PUBLISHED_GAPS`) in the order they were recorded |
+| `details` | The first 50 gaps (`MAX_PUBLISHED_GAPS`): a root's blinding gaps first, then its partial ones, each in the order they were recorded |
 | `details_truncated` | Present only when more than 50 gaps were recorded: how many `details` leaves out. Every gap is still counted in `gaps` and `gap_entries`. |
 | `parts` | Present only when the connector was judged in parts (several roots or repositories): how many parts recorded a gap |
 | `parts_over_budget` | Present with `parts`: how many of them went over their own allowance, so `within_budget` is false exactly when it is above 0 |
