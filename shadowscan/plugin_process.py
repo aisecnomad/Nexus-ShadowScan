@@ -52,28 +52,46 @@ _MAX_DESCRIPTOR_LIMIT = 1 << 20
 _SPAWN_ENVIRONMENT = threading.Lock()
 # A process-mode worker does not inherit the credentials the operator exported
 # for the built-in connectors: a variable whose name ends in one of these words
-# (after ``_``, or the whole name), or is one of the cloud SDK variables that
-# carry a credential or the file holding one without such a word in their
-# names. Configuration selectors (``AWS_PROFILE``, ``KUBECONFIG``,
-# ``CLOUDSDK_CONFIG``) stay, as does everything else a program needs: PATH,
-# HOME, locale, temporary directory, proxy and CA settings.
+# (after ``_``, or the whole name; a version after the word, as in
+# ``CI_JOB_JWT_V2``, is ignored, a bare number is not: Git's
+# ``GIT_CONFIG_KEY_0`` names a setting), starts with one of the prefixes, or is
+# one of the CI and cloud SDK variables that carry a credential, the file
+# holding one or a session without such a word at the end of their names. A
+# ``*_URL``, ``*_URI`` or ``*_DSN`` variable is withheld when its value carries
+# a user or password (``redis://:password@host``, ``https://token@host``).
+# Configuration selectors (``AWS_PROFILE``, ``KUBECONFIG``, ``CLOUDSDK_CONFIG``)
+# and endpoints (``IDENTITY_ENDPOINT``) stay, as does everything else a program
+# needs: PATH, HOME, locale, temporary directory, proxy and CA settings.
+# ``SESSION`` is not a suffix: it would also take the desktop's DESKTOP_SESSION.
 CREDENTIAL_NAME_SUFFIXES: tuple[str, ...] = (
     "TOKEN",
+    "ACCESSTOKEN",
     "SECRET",
     "KEY",
+    "APIKEY",
     "PASSWORD",
     "PASSWD",
     "PASSPHRASE",
     "CREDENTIALS",
     "CREDENTIAL",
+    "PAT",
+    "JWT",
+    "CONNECTION_STRING",
 )
+CREDENTIAL_NAME_PREFIXES: tuple[str, ...] = ("OP_SESSION_",)
 CREDENTIAL_NAMES: frozenset[str] = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
         "AWS_WEB_IDENTITY_TOKEN_FILE",
         "AZURE_CLIENT_CERTIFICATE_PATH",
         "AZURE_FEDERATED_TOKEN_FILE",
+        "BW_SESSION",
+        "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE",
+        "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
         "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_GHA_CREDS_PATH",
+        "IDENTITY_HEADER",
         "OCI_CLI_KEY_FILE",
         "OCI_CLI_KEY_CONTENT",
         "OCI_CLI_SECURITY_TOKEN_FILE",
@@ -81,20 +99,42 @@ CREDENTIAL_NAMES: frozenset[str] = frozenset(
         "DATABASE_DSN",
     }
 )
+CREDENTIAL_URL_SUFFIXES: tuple[str, ...] = ("URL", "URI", "DSN")
+_NAME_VERSION = re.compile(r"_V[0-9]+$")
+
+
+def _ends_in(upper: str, suffixes: tuple[str, ...]) -> bool:
+    return any(upper == suffix or upper.endswith("_" + suffix) for suffix in suffixes)
 
 
 def is_credential_name(name: str) -> bool:
-    """Whether an environment variable named ``name`` is withheld from a plugin worker."""
+    """Whether an environment variable named ``name`` is withheld from a plugin worker, whatever its value."""
     upper = name.upper()
-    if upper in CREDENTIAL_NAMES:
+    if upper in CREDENTIAL_NAMES or upper.startswith(CREDENTIAL_NAME_PREFIXES):
         return True
-    return any(upper == suffix or upper.endswith("_" + suffix) for suffix in CREDENTIAL_NAME_SUFFIXES)
+    return _ends_in(_NAME_VERSION.sub("", upper), CREDENTIAL_NAME_SUFFIXES)
+
+
+def is_credential_variable(name: str, value: str) -> bool:
+    """Whether the environment variable ``name=value`` is withheld from a plugin worker.
+
+    The names :func:`is_credential_name` withholds, and a ``*_URL``, ``*_URI`` or ``*_DSN``
+    whose value has an ``@`` after ``://``: a user and password, or a token, as the URL's
+    user information. Any ``@`` after the scheme counts, so a password that leaves ``/``,
+    ``?`` or ``#`` unescaped is withheld too.
+    """
+    if is_credential_name(name):
+        return True
+    _, separator, rest = value.partition("://")
+    return bool(separator) and "@" in rest and _ends_in(name.upper(), CREDENTIAL_URL_SUFFIXES)
 
 
 def _withheld_names(environ: Mapping[str, str], keep: Iterable[str]) -> list[str]:
     """The names of the credential-shaped variables in ``environ``, except ``keep``."""
     kept = set(keep)
-    return sorted(name for name in environ if name not in kept and is_credential_name(name))
+    return sorted(
+        name for name in environ if name not in kept and is_credential_variable(name, environ.get(name) or "")
+    )
 
 
 def scrub_credential_environment(environ: MutableMapping[str, str], keep: Iterable[str] = ()) -> list[str]:

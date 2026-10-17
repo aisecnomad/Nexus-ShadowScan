@@ -34,6 +34,7 @@ from shadowscan.plugin_process import (
     _worker,
     _WorkerHandle,
     is_credential_name,
+    is_credential_variable,
     scrub_credential_environment,
 )
 from shadowscan.signatures import SignatureIndex
@@ -820,6 +821,9 @@ def test_spawned_plugin_does_not_inherit_credential_environment(installed_probe,
     monkeypatch.setenv("SHADOWSCAN_PROBE_AWS_SECRET_ACCESS_KEY", "synthetic")
     monkeypatch.setenv("SHADOWSCAN_PROBE_OPENAI_API_KEY", "synthetic")
     monkeypatch.setenv("SHADOWSCAN_PROBE_DB_PASSWORD", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_AZURE_DEVOPS_EXT_PAT", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_REDIS_URL", "redis://:synthetic@cache:6379/0")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_SERVER_URL", "https://api.example")  # no password: stays
     monkeypatch.setenv("SHADOWSCAN_PROBE_VENDOR_TOKEN", "synthetic")  # the plugin's own, allowlisted
     monkeypatch.setenv("SHADOWSCAN_PROBE_REGION", "eu-west-1")  # not credential-shaped: stays
     monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "credential-env")
@@ -829,6 +833,7 @@ def test_spawned_plugin_does_not_inherit_credential_environment(installed_probe,
         "HOME",
         "PATH",
         "SHADOWSCAN_PROBE_REGION",
+        "SHADOWSCAN_PROBE_SERVER_URL",
         "SHADOWSCAN_PROBE_VENDOR_TOKEN",
     ]
     # The scanner's own environment is untouched.
@@ -897,13 +902,40 @@ def test_plugin_env_option_is_validated(value):
         ("DOCKER_PASSWD", True),
         ("DATABASE_URL", True),
         ("SHADOWSCAN_IDENTITY_KEY", True),
+        # CI and cloud credentials the first list missed (#258 review).
+        ("SYSTEM_ACCESSTOKEN", True),  # Azure Pipelines job token
+        ("AZURE_DEVOPS_EXT_PAT", True),
+        ("GITHUB_PAT", True),
+        ("SENDGRID_APIKEY", True),
+        ("AZURE_STORAGE_CONNECTION_STRING", True),
+        ("APPLICATIONINSIGHTS_CONNECTION_STRING", True),
+        ("CI_JOB_JWT", True),
+        ("CI_JOB_JWT_V2", True),
+        ("IDENTITY_HEADER", True),  # Azure managed-identity endpoint secret
+        ("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", True),
+        ("CLOUDSDK_AUTH_ACCESS_TOKEN_FILE", True),
+        ("GOOGLE_GHA_CREDS_PATH", True),
+        ("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", True),
+        ("BW_SESSION", True),
+        ("OP_SESSION_my", True),
         ("PATH", False),
         ("HOME", False),
+        ("LANG", False),
+        ("LC_ALL", False),
         ("HTTPS_PROXY", False),
         ("SSL_CERT_FILE", False),
         ("KUBECONFIG", False),
         ("AWS_PROFILE", False),
         ("AWS_REGION", False),
+        ("AWS_ROLE_SESSION_NAME", False),
+        ("IDENTITY_ENDPOINT", False),
+        ("DESKTOP_SESSION", False),
+        ("XDG_SESSION_TYPE", False),
+        ("GIT_CONFIG_KEY_0", False),  # names a Git setting; GIT_CONFIG_COUNT needs it
+        ("CLASSPATH", False),
+        ("LD_LIBRARY_PATH", False),
+        ("GITHUB_SERVER_URL", False),
+        ("MAX_TOKENS", False),
         ("TURKEY", False),
         ("PYTHONHASHSEED", False),
     ],
@@ -914,6 +946,35 @@ def test_credential_environment_names(name, withheld):
     removed = scrub_credential_environment(environ)
     assert (name in removed) is withheld and "PATH" in environ
     assert scrub_credential_environment({name: "x"}, keep=[name]) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "withheld"),
+    [
+        # The values carry no user and password pair, which tools/check_secrets.py reports;
+        # any user information is withheld.
+        ("REDIS_URL", "redis://:synthetic@cache:6379/0", True),
+        ("MONGODB_URI", "mongodb+srv://synthetic@cluster.example/db", True),
+        ("SQLALCHEMY_DATABASE_URI", "postgresql://user:syn/thetic@db.example/app", True),  # unescaped /
+        ("SENTRY_DSN", "https://synthetic@o0.ingest.example/1", True),
+        ("CI_REPOSITORY_URL", "https://synthetic@gitlab.example/group/project.git", True),
+        ("PIP_INDEX_URL", "https://synthetic@pypi.example/simple", True),
+        ("url", "amqp://:synthetic@queue.example", True),
+        ("REDIS_URL", "redis://cache:6379/0", False),
+        ("GITHUB_SERVER_URL", "https://github.com", False),
+        ("CI_API_V4_URL", "https://gitlab.example/api/v4", False),
+        ("SSH_REMOTE_URL", "git@github.com:org/repo.git", False),  # not scheme://, a user name only
+        ("HTTPS_PROXY", "http://synthetic@proxy.example:3128", False),  # proxy settings stay
+        ("CONTACT", "https://synthetic@host.example", False),  # not a URL name
+    ],
+)
+def test_credential_environment_url_values(name, value, withheld):
+    """A connection URL carries its password or token as user information, under a name
+    (``REDIS_URL``, ``MONGODB_URI``) that says nothing about a credential."""
+    assert is_credential_variable(name, value) is withheld
+    environ = {name: value, "PATH": "/usr/bin"}
+    assert (name in scrub_credential_environment(environ)) is withheld and "PATH" in environ
+    assert scrub_credential_environment({name: value}, keep=[name]) == []
 
 
 def test_spawned_plugin_scrubs_identity_key_from_worker_environment(installed_probe, monkeypatch):

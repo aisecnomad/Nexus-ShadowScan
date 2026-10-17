@@ -192,13 +192,20 @@ public repositories with the tool and read the committed benchmark metrics.
   every other secret the operator had exported for the built-in connectors.
   The worker is now started without, and removes again from its own
   environment before the plugin is imported, every variable whose name ends
-  in `TOKEN`, `SECRET`, `KEY`, `PASSWORD`, `PASSWD`, `PASSPHRASE`,
-  `CREDENTIALS` or `CREDENTIAL` (after an underscore, or as the whole name)
-  and the cloud SDK variables that
-  carry a credential or the file holding one (`AWS_ACCESS_KEY_ID`,
-  `AWS_WEB_IDENTITY_TOKEN_FILE`, `AZURE_CLIENT_CERTIFICATE_PATH`,
-  `AZURE_FEDERATED_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, the OCI
-  key and security-token files, `DATABASE_URL`, `DATABASE_DSN`), except the
+  in `TOKEN`, `ACCESSTOKEN`, `SECRET`, `KEY`, `APIKEY`, `PASSWORD`,
+  `PASSWD`, `PASSPHRASE`, `CREDENTIALS`, `CREDENTIAL`, `PAT`, `JWT` or
+  `CONNECTION_STRING` (after an underscore, or as the whole name, ignoring
+  a version such as `_V2` after it), the CI and cloud SDK variables that
+  carry a credential, the file holding one or a session
+  (`AWS_ACCESS_KEY_ID`, `AWS_WEB_IDENTITY_TOKEN_FILE`,
+  `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, `AZURE_CLIENT_CERTIFICATE_PATH`,
+  `AZURE_FEDERATED_TOKEN_FILE`, `IDENTITY_HEADER`,
+  `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_GHA_CREDS_PATH`,
+  `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`,
+  `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE`, the OCI key and security-token files,
+  `BW_SESSION`, `OP_SESSION_*`, `DATABASE_URL`, `DATABASE_DSN`) and every
+  `*_URL`, `*_URI` or `*_DSN` whose value carries a user or password (an
+  `@` after `://`), except the
   names the new `options.plugin_env` lists for a plugin that reads its own
   credential from the environment (exact names, at most 64, validated);
   configuration selectors such as `AWS_PROFILE` and `KUBECONFIG`, `PATH`,
@@ -220,7 +227,17 @@ public repositories with the tool and read the committed benchmark metrics.
   `/proc/<scanner pid>/environ`: withholding keeps credentials from a plugin
   that does not look for them, not from one that does, and SECURITY.md, the
   production guide and the plugin contract now say so instead of saying a
-  worker "does not inherit" them.
+  worker "does not inherit" them. The same review found the first list
+  missed common CI and cloud credentials: `SYSTEM_ACCESSTOKEN` (the Azure
+  Pipelines job token), `AZURE_DEVOPS_EXT_PAT`, `SENDGRID_APIKEY`, Azure
+  connection strings, GitLab's `CI_JOB_JWT_V2`, the Azure managed-identity
+  `IDENTITY_HEADER`, the credential-file variables google-github-actions/auth
+  exports beside `GOOGLE_APPLICATION_CREDENTIALS`, the ECS
+  container-credentials token file and connection URLs such as `REDIS_URL`
+  or `MONGODB_URI` that carry a password; the list above now includes them.
+  `SESSION` is not a suffix (it would withhold the desktop's
+  `DESKTOP_SESSION`), and a bare number after a word does not count, since
+  `GIT_CONFIG_KEY_0` names the Git setting `GIT_CONFIG_COUNT` requires.
 - **Not carried: redaction patterns on the `regex` module.** The review
   suggested giving the credential redaction patterns a match timeout
   through the `regex` module, as the code connectors' patterns have, so a

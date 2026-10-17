@@ -135,16 +135,23 @@ This is **lifecycle isolation, not a security sandbox**. A child retains the
 scanner's operating-system privileges and can read what the scanner can. It
 is started without the credentials the operator exported for the built-in
 connectors, and removes them from its own environment again before the plugin
-is imported: every variable whose name ends in `TOKEN`, `SECRET`, `KEY`,
-`PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIALS` or `CREDENTIAL` (after an
-underscore, or as the whole name) and the cloud SDK variables that carry a
-credential or the file holding one (`AWS_ACCESS_KEY_ID`,
-`AWS_WEB_IDENTITY_TOKEN_FILE`, `AZURE_CLIENT_CERTIFICATE_PATH`,
-`AZURE_FEDERATED_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`,
+is imported: every variable whose name ends in `TOKEN`, `ACCESSTOKEN`,
+`SECRET`, `KEY`, `APIKEY`, `PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIALS`,
+`CREDENTIAL`, `PAT`, `JWT` or `CONNECTION_STRING` (after an underscore, or as
+the whole name, and ignoring a version after it, as in `CI_JOB_JWT_V2`),
+every `OP_SESSION_*` variable, the CI and cloud SDK variables that carry a
+credential, the file holding one or a session (`AWS_ACCESS_KEY_ID`,
+`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`,
+`AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_FEDERATED_TOKEN_FILE`, `BW_SESSION`,
+`CLOUDSDK_AUTH_ACCESS_TOKEN_FILE`, `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`,
+`GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_GHA_CREDS_PATH`, `IDENTITY_HEADER`,
 `OCI_CLI_KEY_FILE`, `OCI_CLI_KEY_CONTENT`, `OCI_CLI_SECURITY_TOKEN_FILE`,
-`DATABASE_URL`, `DATABASE_DSN`); configuration selectors such as
-`AWS_PROFILE` and `KUBECONFIG`, `PATH`, `HOME`, locale, temporary-directory,
-proxy and CA settings stay. A plugin that reads its own credential from the
+`DATABASE_URL`, `DATABASE_DSN`), and every `*_URL`, `*_URI` or `*_DSN`
+variable whose value carries a user or password (an `@` after `://`, as in
+`redis://:password@host` or `https://token@host`); configuration selectors such
+as `AWS_PROFILE` and `KUBECONFIG`, endpoints such as `IDENTITY_ENDPOINT`,
+`PATH`, `HOME`, locale, temporary-directory, proxy and CA settings stay. A
+plugin that reads its own credential from the
 environment names it in `options.plugin_env` (exact names, at most 64), and the
 worker keeps those; a value the configuration interpolates with `${VAR}` is
 expanded by the scanner before the worker starts and needs no entry. The

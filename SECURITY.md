@@ -18,8 +18,11 @@ allowlist in `options.plugins` or repeatable `--allow-plugin`. Listing connector
 does not import plugin code. The allowlist is not a sandbox: an approved plugin
 runs with scanner privileges. A spawned plugin worker is started without the
 credential-shaped environment variables exported for the built-in connectors
-(`*_TOKEN`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, the cloud SDK credential
-variables) unless `options.plugin_env` names them, so they are neither in its
+(`*_TOKEN`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, `*_PAT`, connection strings and
+URLs that carry a password, the CI and cloud SDK credential variables; the
+[plugin contract](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md#third-party-plugin-execution)
+lists them)
+unless `options.plugin_env` names them, so they are neither in its
 environment (`os.environ`, on Linux `/proc/self/environ`) nor in that of the
 programs it starts; a thread-mode plugin shares the scanner's environment. This
 keeps credentials from a plugin that does not look for them, not from one that
