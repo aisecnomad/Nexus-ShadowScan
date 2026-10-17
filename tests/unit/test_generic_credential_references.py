@@ -288,6 +288,60 @@ def test_a_scan_reports_a_hard_coded_fallback_and_withholds_it(tmp_path: Path, r
     assert RANDOM not in json.dumps(secret.to_dict(), default=str)
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A call, subscript, optional or non-null chain between the read and the operator.
+        f'var openaiApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "{RANDOM}";',
+        f'string azureOpenAiApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY") ?? "{RANDOM}";',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY?.trim() || "{RANDOM}";',
+        f'openaiApiKey = process.env.OPENAI_API_KEY!.trim() || "{RANDOM}";',
+        f'const openaiApiKey = configService.getOpenAiApiKey() ?? "{RANDOM}";',
+        f'const openaiApiKey = appConfig.secrets["openai"]?.key ?? "{RANDOM}";',
+        # The operator ends the line or starts the next one, or Python continues the line.
+        f'const openaiApiKey = process.env.OPENAI_API_KEY ||\n  "{RANDOM}";',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY\n  || "{RANDOM}";',
+        f'openai_api_key = settings.OPENAI_API_KEY or \\\n    "{RANDOM}"',
+        f'client = OpenAI(\n    openai_api_key=settings.OPENAI_API_KEY\n    or "{RANDOM}"\n)',
+        # A comment with an apostrophe in it is skipped whole.
+        f'const openaiApiKey = process.env.OPENAI_API_KEY || // don\'t commit\n  "{RANDOM}";',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY // don\'t commit\n  || "{RANDOM}";',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY || /* don\'t */ "{RANDOM}";',
+        f"openai_api_key = settings.OPENAI_API_KEY or \\\n    '{RANDOM}'  # don't commit",
+    ],
+)
+def test_a_fallback_after_a_call_chain_or_a_line_break_is_reported(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=True) != []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A blank line, a statement, a value end or a call argument comes first.
+        f'const openaiApiKey = process.env.OPENAI_API_KEY\n\n  || "{RANDOM}";',
+        f'api_key = settings.OPENAI_API_KEY\nif DEBUG:\n    api_key = "{RANDOM}"',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY // don\'t commit\nconst model = "{RANDOM}";',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY,\n  model = "{RANDOM}";',
+        f'const openaiApiKey = configService.getOpenAiApiKey(\n  "{RANDOM}"\n);',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY?.trim() ?? getSecret(\n  "{RANDOM}"\n);',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY (\n  "{RANDOM}");',
+    ],
+)
+def test_a_literal_past_the_end_of_the_value_is_not_a_fallback(index: SignatureIndex, text: str):
+    assert _generic(index, text, code=True) == []
+
+
+def test_a_scan_reports_a_fallback_on_the_next_line_and_withholds_it(tmp_path: Path, run_connector):
+    files = {
+        "src/a.cs": f'var openaiApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "{RANDOM}";\n',
+        "src/a.js": f'const openaiApiKey = process.env.OPENAI_API_KEY ||\n  "{RANDOM}";\n',
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    secrets = [f for f in findings if f.kind.value == "secret"]
+    assert sorted(f.metadata["path"] for f in secrets) == ["src/a.cs", "src/a.js"]
+    assert RANDOM not in json.dumps([f.to_dict() for f in secrets], default=str)
+
+
 # ------------------------------------------------------------------ evidence
 @pytest.mark.parametrize(
     "line",
