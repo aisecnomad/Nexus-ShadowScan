@@ -2,8 +2,11 @@
 
 A finding disappearing from a report is only evidence of resolution when both
 scans completed under the same collection and detection settings, its ID is
-stable across scans and the current scan read the content it was observed in
-(not a declared omission or a tolerated coverage gap). Scope hashes identify
+stable across scans and the current scan did not record the content it was
+observed in as unread: a declared omission (``stats[].declared_omissions``) or a
+tolerated coverage gap (``stats[].coverage``). A gap the default profile
+discounts in test code is a warning recorded in neither, so it holds nothing
+back. Scope hashes identify
 inputs, not their contents: a file changing is what comparisons measure.
 
 Each substantive change is labelled with a drift class (:data:`DRIFT_CLASSES`)

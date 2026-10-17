@@ -1172,7 +1172,12 @@ connector record names the connector its findings carry in `stats[].name`
 is matched to its record's unread content; a record without a name, in an older
 report, applies to every connector's findings. Only
 the current report's unread content counts: the baseline's could only make a
-finding look new, which diff reports anyway.
+finding look new, which diff reports anyway. Unread content means what the
+report records as such, declared omissions and `stats[].coverage`: a gap the
+default profile discounts in test code (a warning ending "test code is
+discounted evidence (include_tests is false)") is in neither, so a finding
+missing from such a file, such as a test notebook that stopped parsing, still
+resolves.
 
 The fingerprint is an opaque digest that covers
 selected source paths, connector settings, filters, confidence threshold,

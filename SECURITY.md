@@ -479,8 +479,11 @@ coverage, even when a response includes an empty collection field.
 * Incomplete scans exit 3 and set SARIF executionSuccessful=false. Only complete
   results qualify for incremental reuse. Comparisons infer resolution only for
   complete scans with matching collection, detection and finding-identity schemas,
-  and never for a finding in content the current scan declared (`--profile ci`)
-  or tolerated (coverage budget) as unread.
+  and never for a finding in content the current scan declared (`--profile ci`,
+  `declared_omissions`) or tolerated (coverage budget, `stats[].coverage`) as
+  unread. A gap the default profile discounts in test code (a warning ending
+  "test code is discounted evidence") is counted in neither and does not hold a
+  missing finding back.
   Explicit unmatched connector selections and unsupported/error exports fail
   visibly. Incremental input roots and ancestor symlinks are ineligible for reuse;
   pre/post hashing is not an atomic filesystem snapshot. Keep inputs immutable

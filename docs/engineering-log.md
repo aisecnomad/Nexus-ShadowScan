@@ -70,6 +70,19 @@ tolerated gap.
   posts, static assets and search index are its source, so their gaps exit
   3, while the `docs/` and `examples/` directories below it stay declared.
   The behaviour is intended and unchanged; the guides now say so.
+- **What diff holds back is stated as narrowly as it is.** The comparison
+  module, SECURITY.md and the production, CI and drift guides said a
+  comparison never resolves a finding in content the current scan declared
+  or tolerated as unread. A gap the default profile discounts in test code
+  (`_discounted_gap`: a test notebook or fixture that does not parse while
+  `include_tests` is false) is a warning that leaves the scan complete and
+  is counted neither in `declared_omissions` nor in `stats.coverage`, so a
+  project finding that came only from `tests/fixtures/agent.ipynb` still
+  resolved once that notebook stopped parsing. The wording now names the
+  two records diff reads, and says that a discounted test gap is in
+  neither and does not hold a finding back. The code is unchanged here:
+  separate work moves discounted gaps into the coverage ledger, which diff
+  already reads, and the hold-back then follows without a change to diff.
 
 ### Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
 

@@ -563,7 +563,9 @@ source although the `docs/` and `examples/` directories below it are still
 declared (see [the `ci` profile](scanning.md#the-ci-profile)). `diff` never resolves a finding
 missing from content a complete current scan declared or tolerated as unread;
 it reports it `unknown` and exits 3 (see
-[comparing reports](scanning.md#comparing-reports)). Every diagnostic that leaves a
+[comparing reports](scanning.md#comparing-reports)). A gap the default profile
+discounts in test code (a warning ending "test code is discounted evidence") is
+recorded as neither, so a finding missing there can still resolve. Every diagnostic that leaves a
 scan incomplete is counted by reason category in `summary.incomplete_reasons`
 and named on stderr with the exit 3.
 A non-empty `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,

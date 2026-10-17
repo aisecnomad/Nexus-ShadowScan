@@ -59,7 +59,8 @@ To gate on drift between two reports, `shadowscan diff baseline.json current.jso
 whose risk level rose, and 3 when the comparison is incomplete (differing scope,
 an incomplete scan, or a missing finding in content the current scan declared or
 tolerated as unread, so a `--profile ci` report never resolves a credential in a
-file it stopped reading). Without the flag, `diff` exits 0 unless the comparison
+file it declared or a budget tolerated; a gap the default profile discounts in
+test code is recorded as neither). Without the flag, `diff` exits 0 unless the comparison
 is incomplete. Local `code.filesystem` scans, offline exports from built-in
 connectors and live `cloud.aws`, `cloud.azure`, `cloud.gcp` and
 `identity.entra` collections attest a comparable scope, `gateway.logs` only
