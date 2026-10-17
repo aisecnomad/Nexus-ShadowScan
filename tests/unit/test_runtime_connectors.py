@@ -532,6 +532,169 @@ def test_ebpf_unrecognized_records_warn_once_and_mark_incomplete() -> None:
     assert sum("unrecognized" in warning for warning in connector.ctx.stats.warnings) == 1
 
 
+_TETRAGON_PROCESS = {"binary": "/usr/bin/python3", "pod": {"namespace": "ai", "name": "agent-0"}}
+_TETRAGON_SOCK = {"sock_arg": {"family": "AF_INET", "daddr": "10.8.0.21", "dport": 11434}}
+_TRACEE_SOCKADDR = {"name": "remote_addr", "value": {"sin_addr": "10.8.0.21", "sin_port": "11434"}}
+_HUBBLE_FLOW = {
+    "IP": {"source": "10.8.0.14", "destination": "10.8.0.21"},
+    "l4": {"TCP": {"destination_port": 11434}},
+    "source": {"namespace": "ai", "pod_name": "agent-0"},
+}
+
+
+def _ebpf_connector() -> EbpfConnector:
+    connector = EbpfConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.ebpf", started_at="2026-01-01T00:00:00Z")
+    return connector
+
+
+@pytest.mark.parametrize(
+    ("producer", "records"),
+    [
+        pytest.param(
+            "Tetragon",
+            [
+                {"process_kprobe": {"process": "/usr/bin/ollama", "args": [_TETRAGON_SOCK]}},
+                {"process_kprobe": {"process": {**_TETRAGON_PROCESS, "pod": "ai/agent-0"}}},
+                {"process_kprobe": {"process": _TETRAGON_PROCESS, "args": _TETRAGON_SOCK}},
+                {"process_kprobe": {"process": _TETRAGON_PROCESS, "args": ["sock", _TETRAGON_SOCK]}},
+                {
+                    "process_kprobe": {
+                        "process": _TETRAGON_PROCESS,
+                        "args": [{"sock_arg": ["10.8.0.21", 11434]}],
+                    }
+                },
+                {
+                    "processKprobe": {
+                        "process": _TETRAGON_PROCESS,
+                        "args": [{"sockaddrArg": {"addr": 167772181}}],
+                    }
+                },
+            ],
+            id="tetragon",
+        ),
+        pytest.param(
+            "Falco",
+            [
+                {"rule": "r", "output_fields": {"proc.name": ["python3"], "fd.sip": "10.8.0.21"}},
+                {
+                    "rule": "r",
+                    "output_fields": {"proc.name": "python3", "fd.sip.name": {"name": "api.openai.com"}},
+                },
+                {"rule": "r", "output_fields": {"proc.name": "python3", "fd.sport": [443]}},
+                {
+                    "priority": "Notice",
+                    "output_fields": {"proc.name": "python3", "k8s.pod.name": ["agent-0"]},
+                },
+            ],
+            id="falco",
+        ),
+        pytest.param(
+            "Tracee",
+            [
+                {"eventName": "security_socket_connect", "processName": "uvicorn", "args": "remote_addr"},
+                {
+                    "eventName": "security_socket_connect",
+                    "processName": "uvicorn",
+                    "args": [7, _TRACEE_SOCKADDR],
+                },
+                {"eventName": "security_socket_connect", "processName": {"comm": "uvicorn"}, "args": []},
+                {"eventName": "security_socket_connect", "processName": "uvicorn", "kubernetes": ["ai"]},
+                {
+                    "eventName": "security_socket_connect",
+                    "processName": "uvicorn",
+                    "args": [
+                        {"name": "remote_addr", "value": {"sin_addr": ["10.8.0.21"], "sin_port": "11434"}}
+                    ],
+                },
+            ],
+            id="tracee",
+        ),
+        pytest.param(
+            "Hubble",
+            [
+                {"flow": {**_HUBBLE_FLOW, "IP": ["10.8.0.14", "10.8.0.21"]}},
+                {"flow": {**_HUBBLE_FLOW, "l4": [{"TCP": {"destination_port": 11434}}]}},
+                {"flow": {**_HUBBLE_FLOW, "l4": {"TCP": [11434]}}},
+                {"flow": {**_HUBBLE_FLOW, "destination_names": "api.openai.com"}},
+                {"flow": {**_HUBBLE_FLOW, "destination_names": [{"name": "api.openai.com"}]}},
+                {"flow": {**_HUBBLE_FLOW, "source": "ai/agent-0"}},
+            ],
+            id="hubble",
+        ),
+    ],
+)
+def test_ebpf_native_readers_report_malformed_fields_once_per_producer(producer, records) -> None:
+    """Regression: the native readers read a wrong-typed field (process, args,
+    an argument, a socket map, IP, l4, destination_names, a name or port) as
+    empty without a word, so a malformed export could hide a connection on a
+    scan that stayed complete, while the flat shape's malformed process marks
+    the scan incomplete."""
+    expected = [f"endpoint.ebpf: malformed {producer} event fields were not analyzed"]
+    for record in records:
+        connector = _ebpf_connector()
+        list(connector.analyze([record]))
+        assert connector.ctx.stats.incomplete, record
+        assert connector.ctx.stats.warnings == expected, record
+
+    connector = _ebpf_connector()
+    list(connector.analyze(records))
+    # One fixed-text warning however many events are malformed; no value is echoed.
+    assert connector.ctx.stats.warnings == expected
+
+
+@pytest.mark.parametrize(
+    ("producer", "event"),
+    [
+        pytest.param(
+            "Tetragon",
+            lambda filler: {
+                "process_kprobe": {
+                    "process": _TETRAGON_PROCESS,
+                    "args": [{"int_arg": 7}] * filler + [_TETRAGON_SOCK],
+                }
+            },
+            id="tetragon-args",
+        ),
+        pytest.param(
+            "Tracee",
+            lambda filler: {
+                "eventName": "security_socket_connect",
+                "processName": "uvicorn",
+                "args": [{"name": "sockfd", "value": 7}] * filler + [_TRACEE_SOCKADDR],
+            },
+            id="tracee-args",
+        ),
+        pytest.param(
+            "Hubble",
+            lambda filler: {
+                "flow": {
+                    **_HUBBLE_FLOW,
+                    "l4": {"TCP": {"destination_port": 443}},
+                    "destination_names": ["static.example.com"] * filler + ["api.openai.com"],
+                }
+            },
+            id="hubble-destination-names",
+        ),
+    ],
+)
+def test_ebpf_native_lists_past_the_limit_mark_the_scan_incomplete(producer, event) -> None:
+    """Regression: ``args`` and ``destination_names`` were cut at 100 entries in
+    silence, so a socket or AI host name in entry 101 went unread on a scan that
+    stayed complete."""
+    within = _ebpf_connector()
+    list(within.analyze([event(99)]))
+    assert within.ctx.stats.warnings == []
+    assert not within.ctx.stats.incomplete
+
+    past = _ebpf_connector()
+    assert list(past.analyze([event(100), event(150)])) == []
+    assert past.ctx.stats.incomplete
+    assert past.ctx.stats.warnings == [
+        f"endpoint.ebpf: {producer} event list limit reached; entries past it were not analyzed"
+    ]
+
+
 def test_kubernetes_offline_resource_identity_and_security_tags() -> None:
     connector = KubernetesConnector(ConnectorContext(config={"cluster": "test-cluster"}))
     findings = list(

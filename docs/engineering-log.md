@@ -23,7 +23,17 @@ Counts and figures quoted in an entry are those of its date.
   record shape, and reports one warning that marks the scan incomplete when
   records match no known shape, so an unread export cannot look like a clean
   scan. Fixtures cover all four producers, and the Falco example rule also
-  emits `fd.sip.name` so AI host names reach the alert.
+  emits `fd.sip.name` so AI host names reach the alert. Review found that
+  the native readers still read a wrong-typed field as empty in silence (a
+  Tetragon `process` given as a string, `args` given as a map, a list in
+  place of a `sock_arg`, a Hubble `l4` list, Tracee `args` as text) and cut
+  `args` and `destination_names` at 100 entries without a word, so a
+  socket in entry 101 went unread on a complete scan, while the flat
+  shape's malformed `process` already marked the scan incomplete. Each
+  reader now notes the fields it could not read, and the connector records
+  one fixed-text warning per producer for malformed fields and one for the
+  list limit, either of which marks the scan incomplete; the event is still
+  scored on what was read. Negative tests cover each producer.
 - `endpoint.host` reports a host inventory row only when its name or path
   matches an AI product signature, its whole name is a known AI product or
   local model runtime, or its `type`/`category` names an AI category;

@@ -1294,7 +1294,8 @@ model metadata and eBPF event exports; see the
 Tetragon, Falco, Tracee and Hubble event shapes as well as flat records
 (see [eBPF event formats](connectors/endpoint.md#ebpf-event-formats)); a
 record matching none of them is reported, not silently dropped, and marks the
-scan incomplete. They do not perform local host
+scan incomplete, as does an event with a field of the wrong type or a list
+past 100 entries. They do not perform local host
 filesystem discovery, and their findings carry no device name, so lifecycle
 links do not apply to them. The one live probe among them is opt-in:
 `endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (at most

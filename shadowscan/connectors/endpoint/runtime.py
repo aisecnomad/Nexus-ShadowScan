@@ -864,10 +864,11 @@ class ModelArtifactConnector(_EndpointConnector):
 
 # endpoint.ebpf reads each producer's native export shape. A helper returns the
 # flat record ``EbpfConnector.analyze`` scores, or ``None`` when the record is
-# not that producer's format. Field names follow the producers' published
-# schemas; where exporters differ, both snake_case and lowerCamelCase
-# spellings are read. A record no reader recognizes is reported, not silently
-# dropped: an export full of unread events must not look like a clean scan.
+# not that producer's format, and notes in ``defects`` the fields it could not
+# read. Field names follow the producers' published schemas; where exporters
+# differ, both snake_case and lowerCamelCase spellings are read. A record no
+# reader recognizes is reported, not silently dropped: an export full of unread
+# events must not look like a clean scan.
 
 # The flat shape ``analyze`` scores, also accepted directly as an export format.
 _EBPF_FLAT_KEYS = frozenset(
@@ -898,9 +899,48 @@ _TETRAGON_EVENT_KEYS = (
     "processLsm",
 )
 _EBPF_ARG_LIMIT = 100
+# A port is a number or, in Tracee's sockaddr maps, its decimal text.
+_EBPF_PORT = (int, str)
+# What a reader could not read in an event it recognized: a field of the wrong
+# type ("malformed"), or the entries of a list past _EBPF_ARG_LIMIT ("limit").
+# Each is reported once per producer and leaves the scan incomplete, as a
+# malformed flat record does: a malformed or oversized export must not hide a
+# connection on a scan that looks complete.
+_EBPF_DEFECT_WARNINGS = {
+    "malformed": "endpoint.ebpf: malformed {producer} event fields were not analyzed",
+    "limit": "endpoint.ebpf: {producer} event list limit reached; entries past it were not analyzed",
+}
 
 
-def _tetragon_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
+def _ebpf_field(
+    container: dict[str, Any], keys: tuple[str, ...], kinds: type | tuple[type, ...], defects: set[str]
+) -> Any:
+    """The first non-empty value of ``keys`` in ``container`` that is of ``kinds``, or None.
+
+    A value of another type, even an empty one, is not read: it is noted in
+    ``defects`` as a malformed field, as the flat shape's malformed ``process`` is.
+    An empty value of the right type carries nothing and is passed over.
+    """
+    for key in keys:
+        value = container.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, kinds):
+            defects.add("malformed")
+        elif value:
+            return value
+    return None
+
+
+def _ebpf_list(container: dict[str, Any], key: str, defects: set[str]) -> list[Any]:
+    """``container[key]`` cut to _EBPF_ARG_LIMIT entries; a malformed or cut list is noted in ``defects``."""
+    value: list[Any] = _ebpf_field(container, (key,), list, defects) or []
+    if len(value) > _EBPF_ARG_LIMIT:
+        defects.add("limit")
+    return value[:_EBPF_ARG_LIMIT]
+
+
+def _tetragon_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
     """Tetragon event: ``{"process_kprobe": {"process": {...}, "args": [...]}}``."""
     event = next(
         (record[key] for key in _TETRAGON_EVENT_KEYS if isinstance(record.get(key), dict)),
@@ -908,83 +948,88 @@ def _tetragon_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
     )
     if event is None:
         return None
-    process = event.get("process")
-    binary = pod_name = namespace = ""
-    if isinstance(process, dict):
-        binary = process.get("binary") or ""
-        pod = process.get("pod")
-        if isinstance(pod, dict):
-            namespace, pod_name = pod.get("namespace") or "", pod.get("name") or ""
-    destination: Any = ""
-    port: Any = None
-    args = event.get("args")
-    for arg in args[:_EBPF_ARG_LIMIT] if isinstance(args, list) else []:
-        if not isinstance(arg, dict):
-            continue
-        sock = arg.get("sock_arg") or arg.get("sockArg")
-        if isinstance(sock, dict):
-            destination, port = sock.get("daddr") or "", sock.get("dport")
-            break
-        sockaddr = arg.get("sockaddr_arg") or arg.get("sockaddrArg")
-        if isinstance(sockaddr, dict):
-            destination, port = sockaddr.get("addr") or "", sockaddr.get("port")
-            break
+    process = _ebpf_field(event, ("process",), dict, defects) or {}
+    pod = _ebpf_field(process, ("pod",), dict, defects) or {}
+    destination, port = _tetragon_socket(_ebpf_list(event, "args", defects), defects)
     return {
-        "process_name": binary,
+        "process_name": _ebpf_field(process, ("binary",), str, defects) or "",
         "destination": destination,
         "destination_port": port,
-        "namespace": namespace,
-        "pod": pod_name,
+        "namespace": _ebpf_field(pod, ("namespace",), str, defects) or "",
+        "pod": _ebpf_field(pod, ("name",), str, defects) or "",
     }
 
 
-def _falco_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
+def _tetragon_socket(args: list[Any], defects: set[str]) -> tuple[str, Any]:
+    """Destination address and port of the first ``sock_arg`` or ``sockaddr_arg`` argument."""
+    for arg in args:
+        if not isinstance(arg, dict):
+            defects.add("malformed")
+            continue
+        sock = _ebpf_field(arg, ("sock_arg", "sockArg"), dict, defects)
+        if sock is not None:
+            return (
+                _ebpf_field(sock, ("daddr",), str, defects) or "",
+                _ebpf_field(sock, ("dport",), _EBPF_PORT, defects),
+            )
+        sockaddr = _ebpf_field(arg, ("sockaddr_arg", "sockaddrArg"), dict, defects)
+        if sockaddr is not None:
+            return (
+                _ebpf_field(sockaddr, ("addr",), str, defects) or "",
+                _ebpf_field(sockaddr, ("port",), _EBPF_PORT, defects),
+            )
+    return "", None
+
+
+def _falco_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
     """Falco JSON alert: dotted field names under ``output_fields``."""
     fields = record.get("output_fields")
     if not isinstance(fields, dict) or not ("rule" in record or "priority" in record):
         return None
     return {
-        "process_name": fields.get("proc.name"),
-        "destination": fields.get("fd.sip.name")
-        or fields.get("fd.rip.name")
-        or fields.get("fd.sip")
-        or fields.get("fd.rip"),
-        "destination_port": fields.get("fd.sport") or fields.get("fd.rport"),
-        "namespace": fields.get("k8s.ns.name"),
-        "pod": fields.get("k8s.pod.name"),
+        "process_name": _ebpf_field(fields, ("proc.name",), str, defects),
+        "destination": _ebpf_field(fields, ("fd.sip.name", "fd.rip.name", "fd.sip", "fd.rip"), str, defects),
+        "destination_port": _ebpf_field(fields, ("fd.sport", "fd.rport"), _EBPF_PORT, defects),
+        "namespace": _ebpf_field(fields, ("k8s.ns.name",), str, defects),
+        "pod": _ebpf_field(fields, ("k8s.pod.name",), str, defects),
     }
 
 
-def _tracee_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
+def _tracee_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
     """Tracee event: ``eventName``/``processName`` with sockaddr maps in ``args``."""
     if not isinstance(record.get("eventName"), str):
         return None
     if "processName" not in record and "args" not in record:
         return None
-    kubernetes = record.get("kubernetes")
-    if not isinstance(kubernetes, dict):
-        kubernetes = {}
-    destination: Any = ""
-    port: Any = None
-    args = record.get("args")
-    for arg in args[:_EBPF_ARG_LIMIT] if isinstance(args, list) else []:
-        if not isinstance(arg, dict):
-            continue
-        value = arg.get("value")
-        if isinstance(value, dict) and ("sin_addr" in value or "sin6_addr" in value):
-            destination = value.get("sin_addr") or value.get("sin6_addr") or ""
-            port = value.get("sin_port") or value.get("sin6_port")
-            break
+    kubernetes = _ebpf_field(record, ("kubernetes",), dict, defects) or {}
+    destination, port = _tracee_socket(_ebpf_list(record, "args", defects), defects)
     return {
-        "process_name": record.get("processName"),
+        "process_name": _ebpf_field(record, ("processName",), str, defects),
         "destination": destination,
         "destination_port": port,
-        "namespace": kubernetes.get("podNamespace") or record.get("podNamespace"),
-        "pod": kubernetes.get("podName") or record.get("podName"),
+        "namespace": _ebpf_field(kubernetes, ("podNamespace",), str, defects)
+        or _ebpf_field(record, ("podNamespace",), str, defects),
+        "pod": _ebpf_field(kubernetes, ("podName",), str, defects)
+        or _ebpf_field(record, ("podName",), str, defects),
     }
 
 
-def _hubble_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
+def _tracee_socket(args: list[Any], defects: set[str]) -> tuple[str, Any]:
+    """Destination address and port of the first sockaddr map among the event's arguments."""
+    for arg in args:
+        if not isinstance(arg, dict):
+            defects.add("malformed")
+            continue
+        value = arg.get("value")
+        if isinstance(value, dict) and ("sin_addr" in value or "sin6_addr" in value):
+            return (
+                _ebpf_field(value, ("sin_addr", "sin6_addr"), str, defects) or "",
+                _ebpf_field(value, ("sin_port", "sin6_port"), _EBPF_PORT, defects),
+            )
+    return "", None
+
+
+def _hubble_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
     """Hubble flow: the ``hubble observe -o json`` wrapper, or a bare flow."""
     flow = record.get("flow")
     if not isinstance(flow, dict):
@@ -994,40 +1039,43 @@ def _hubble_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
         if not bare:
             return None
         flow = record
-    raw_ip = flow.get("IP")
-    ip: dict[str, Any] = raw_ip if isinstance(raw_ip, dict) else {}
-    destination: Any = ""
-    names = flow.get("destination_names")
-    if isinstance(names, list):
-        destination = next((name for name in names[:_EBPF_ARG_LIMIT] if isinstance(name, str)), "")
-    destination = destination or ip.get("destination") or ""
-    port: Any = None
-    l4 = flow.get("l4")
-    if isinstance(l4, dict):
-        for proto in ("TCP", "UDP", "tcp", "udp", "SCTP"):
-            entry = l4.get(proto)
-            if isinstance(entry, dict):
-                port = entry.get("destination_port")
-                break
-    raw_source = flow.get("source")
-    source: dict[str, Any] = raw_source if isinstance(raw_source, dict) else {}
+    ip = _ebpf_field(flow, ("IP",), dict, defects) or {}
+    address = _ebpf_field(ip, ("destination",), str, defects) or ""
+    names = _ebpf_list(flow, "destination_names", defects)
+    if not all(isinstance(name, str) for name in names):
+        defects.add("malformed")
+    destination = next((name for name in names if isinstance(name, str) and name), address)
+    l4 = _ebpf_field(flow, ("l4",), dict, defects) or {}
+    entry = _ebpf_field(l4, ("TCP", "UDP", "tcp", "udp", "SCTP"), dict, defects) or {}
+    source = _ebpf_field(flow, ("source",), dict, defects) or {}
     return {
         "process_name": "",
         "destination": destination,
-        "destination_port": port,
-        "namespace": source.get("namespace"),
-        "pod": source.get("pod_name"),
+        "destination_port": _ebpf_field(entry, ("destination_port",), _EBPF_PORT, defects),
+        "namespace": _ebpf_field(source, ("namespace",), str, defects),
+        "pod": _ebpf_field(source, ("pod_name",), str, defects),
     }
 
 
-def _normalize_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
-    """The flat record to score, or None for a record no reader recognizes."""
-    for reader in (_tetragon_ebpf_record, _falco_ebpf_record, _tracee_ebpf_record, _hubble_ebpf_record):
-        normalized = reader(record)
+# The native readers, by the producer name their warnings carry.
+_EBPF_READERS: tuple[tuple[str, Callable[[dict[str, Any], set[str]], dict[str, Any] | None]], ...] = (
+    ("Tetragon", _tetragon_ebpf_record),
+    ("Falco", _falco_ebpf_record),
+    ("Tracee", _tracee_ebpf_record),
+    ("Hubble", _hubble_ebpf_record),
+)
+
+
+def _normalize_ebpf_record(record: dict[str, Any]) -> tuple[str, dict[str, Any], set[str]] | None:
+    """The producer, the flat record to score and what its reader could not read
+    (see _EBPF_DEFECT_WARNINGS), or None for a record no reader recognizes."""
+    for producer, reader in _EBPF_READERS:
+        defects: set[str] = set()
+        normalized = reader(record, defects)
         if normalized is not None:
-            return normalized
+            return producer, normalized, defects
     if _EBPF_FLAT_KEYS.intersection(record):
-        return record
+        return "flat", record, set()
     return None
 
 
@@ -1038,11 +1086,20 @@ class EbpfConnector(_EndpointConnector):
     config_keys = {"input": "Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export (native shapes)."}
     # Whether an unrecognized record was reported (one fixed-text warning).
     _unrecognized_records = False
+    # The (producer, defect) pairs already reported (one fixed-text warning each).
+    _reported_defects: frozenset[tuple[str, str]] = frozenset()
+
+    def _report_defects(self, producer: str, defects: set[str]) -> None:
+        """Warn once per producer and defect: what a reader could not read leaves the scan incomplete."""
+        for defect in sorted(defects):
+            if (producer, defect) not in self._reported_defects:
+                self._reported_defects |= {(producer, defect)}
+                self.ctx.warn(_EBPF_DEFECT_WARNINGS[defect].format(producer=producer))
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for raw in records:
-            record = _normalize_ebpf_record(raw)
-            if record is None:
+            normalized = _normalize_ebpf_record(raw)
+            if normalized is None:
                 # The record was not analyzed, so the scan is incomplete; one
                 # fixed-text warning however many records are unrecognized.
                 if not self._unrecognized_records:
@@ -1052,6 +1109,9 @@ class EbpfConnector(_EndpointConnector):
                         "exports are Tetragon, Falco, Tracee, Hubble and the flat record shape"
                     )
                 continue
+            producer, record, defects = normalized
+            # The event is still scored on what was read.
+            self._report_defects(producer, defects)
             serialized = " ".join(
                 self._text(record.get(key), 512)
                 for key in ("destination", "remote_addr", "hostname", "server.address", "url")

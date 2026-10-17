@@ -203,7 +203,16 @@ and Tracee connects contribute local model ports and process names; AI host
 matching needs a name-bearing source such as Falco's `fd.sip.name`, Hubble's
 `destination_names`, or a flat export. A record that matches none of these
 shapes is not analyzed: the connector records one warning and marks the scan
-incomplete rather than letting an unread export look clean. See
+incomplete rather than letting an unread export look clean. A recognized
+event is scored on what can be read, and the scan is incomplete when any of
+it cannot: a field above of the wrong type (a `process`, `pod`,
+`kubernetes`, `IP`, `l4`, `source` or socket map that is not a map, `args`
+or `destination_names` that is not a list, an argument that is not a map, a
+name that is not text, a port that is neither a number nor text), or an
+`args` or `destination_names` list longer than 100 entries, whose entries
+past the hundredth are not read. Each producer records one warning for
+malformed fields and one for the list limit, naming the producer and no
+value from the export. See
 `examples/ebpf/` for a Tetragon TracingPolicy and Falco rules that emit the
 fields above.
 
