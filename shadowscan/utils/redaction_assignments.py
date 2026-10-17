@@ -13,6 +13,7 @@ import bisect
 import re
 
 from shadowscan.utils.redaction_rules import (
+    _CALLEE_WORD,
     _CLI_WORD,
     _COMPARISONS,
     _FILE_PATH,
@@ -28,9 +29,11 @@ from shadowscan.utils.redaction_rules import (
     _interpolated,
     _kept_value,
     _name_before,
+    _placeholder,
     _redact_value,
     _sensitive_assignment_key,
     _withhold_spans,
+    pasted_key_name,
 )
 
 # A key must be consumed in full: truncating it to a fixed number of characters
@@ -1224,8 +1227,31 @@ _TEXT_LINE = re.compile(r"[^\r\n]++")
 # What a scan of a line's string literals and comment stops at: a quote, which
 # opens a string literal, and the comment markers of code and of XML or HTML.
 _LINE_PIECE = re.compile(r"[\"'`]|//|/\*|#|<!--")
-# A name joined to a value on a line ('apiKey:', 'api_key =', '"token":').
-_LINE_NAME = re.compile(r"(?<![\w$.-])(?P<name>[A-Za-z_$][\w$.-]*+)[\"']?[ \t]*+(?::(?!:)|=(?![=>~]))")
+# A name joined to a value on a line ('apiKey:', 'api_key =', '"token":', and
+# the "'api_key' =>" of a PHP or Ruby array).
+_LINE_NAME = re.compile(r"(?<![\w$.-])(?P<name>[A-Za-z_$][\w$.-]*+)[\"']?[ \t]*+(?::(?!:)|=(?![=~]))")
+# A callee given its arguments ('sgMail.setApiKey(', '.apiKey('): one whose last
+# word names a credential takes it as an argument.
+_LINE_CALLEE = re.compile(r"(?<![\w$])(?P<name>[A-Za-z_$][\w$]*+)\(")
+# The next entry of a mapping or an object on the line ('{ dbPassword: ..., model: ...'),
+# which ends the value before it.
+_NEXT_ENTRY = re.compile(r"[,{;][ \t]*+[\"']?[A-Za-z_$][\w$.-]*+[\"']?[ \t]*+(?::(?!:)|=(?![=~]))")
+# A line that goes on with the value of the line before it: it starts with a
+# fallback operator, as Black and styles that break before an operator write
+# ('    or "<key>",', '  || "<key>"'), or the line before ends with one
+# ('setApiKey(cfg("a", "b") ||'). A comment line between keeps the value going.
+_CONTINUED_LINE = re.compile(r"[ \t]*+(?:(?:or|else)\b|\|\||\?\?|\?:|[?:+])")
+_OPEN_OPERATOR = re.compile(r"(?:\|\||\?\?|\?:|[?:+]|(?<![\w$.])(?:or|else))[ \t]*+\Z")
+_COMMENT_LINE = re.compile(r"[ \t]*+(?://|#|/\*|<!--)")
+# The end of a block comment that may run past its line.
+_COMMENT_CLOSERS = {"/*": "*/", "<!--": "-->"}
+# The last words of a password's name, whose value a person chose: any literal
+# of it is withheld, not only one that looks like an opaque key.
+_PASSWORD_WORDS = frozenset({"pass", "passphrase", "passwd", "password", "pwd"})
+# A literal shorter than this in a password's value is an argument or a flag ('a', 'utf8').
+_PASSWORD_LITERAL = 6
+# An upper-case variable name, as an environment read names one.
+_VARIABLE_NAME = re.compile(r"[A-Z_][A-Z0-9_]*+")
 # A run of a comment that could be key material: the base64 and URL-safe alphabet.
 _COMMENT_TOKEN = re.compile(r"[A-Za-z0-9+/_.~=-]{8,}+")
 # The same in a string literal, where '=' joins a name to its value
@@ -1280,12 +1306,130 @@ def _line_regions(line: str) -> tuple[list[tuple[int, int]], int | None]:
     return literals, None
 
 
-def _credential_assignment_end(line: str, end: int) -> int | None:
-    """Where the first credential name on a line before ``end`` is joined to its value, or None."""
+def _credential_assignment_end(line: str, end: int) -> tuple[int, str] | None:
+    """Where the first credential name on a line before ``end`` is joined to its value, and the name, or None.
+
+    A name joined by ':', '=' or '=>' names a credential as the assignment
+    passes read it (``_sensitive_assignment_key``, or ``_credential_name``:
+    its last word names one); a callee does when its last word names one
+    ('setApiKey(', 'apiKey(').
+    """
+    found: list[tuple[int, int, str]] = []
     for match in _LINE_NAME.finditer(line, 0, end):
         if _sensitive_assignment_key(match["name"]) or _credential_name(match["name"]):
-            return match.end()
+            found.append((match.start(), match.end(), match["name"]))
+            break
+    for match in _LINE_CALLEE.finditer(line, 0, end):
+        if _credential_name(match["name"]):
+            found.append((match.start(), match.end(), match["name"]))
+            break
+    if not found:
+        return None
+    _, joined, name = min(found)
+    return joined, name
+
+
+def _password_name(name: str) -> bool:
+    """Whether a credential's name names a password ('dbPassword', 'DB_PASS', 'smtp.passwd')."""
+    words = _CALLEE_WORD.findall(name.rsplit(".", 1)[-1])
+    return bool(words) and words[-1].lower() in _PASSWORD_WORDS
+
+
+def _password_literal(value: str) -> bool:
+    """Whether a literal in a password's value may be the password: not a name, path, URL or placeholder.
+
+    A password need not look like an opaque key ('Xk9#mQ2$vL!pR7@wZ4%',
+    'correct horse battery staple'), so its shape is not tested.
+    """
+    value = value.strip()
+    if len(value) < _PASSWORD_LITERAL or _kept_value(value) or "://" in value:
+        return False
+    if _VARIABLE_NAME.fullmatch(value) and not pasted_key_name(value):
+        return False  # the variable a read names ('PGPASSWORD', 'DB_PASSWORD')
+    return not (_FILE_PATH.fullmatch(value) or _placeholder(value))
+
+
+def _value_end(line: str, start: int, literals: list[tuple[int, int]]) -> int:
+    """Where a value that starts at ``start`` ends on its line: at the next entry's name outside a literal."""
+    starts = [left for left, _ in literals]
+    for match in _NEXT_ENTRY.finditer(line, start):
+        # The literals are in line order and do not overlap.
+        inside = bisect.bisect_right(starts, match.start()) - 1
+        if inside < 0 or match.start() >= literals[inside][1]:
+            return match.start()
+    return len(line)
+
+
+def _comment_closer(line: str, comment: int) -> str | None:
+    """The closer of a block comment that starts at ``comment`` and stays open past its line, or None."""
+    for opener, closer in _COMMENT_CLOSERS.items():
+        if line.startswith(opener, comment):
+            return closer if line.find(closer, comment + len(opener)) < 0 else None
     return None
+
+
+def _token_spans(
+    line: str, offset: int, start: int, end: int, tokens: re.Pattern[str]
+) -> list[tuple[int, int]]:
+    """The spans of the tokens in ``line[start:end]`` that ``_credential_literal`` takes for opaque keys."""
+    return [
+        (offset + token.start(), offset + token.end())
+        for token in tokens.finditer(line, start, end)
+        if _credential_literal(token.group(), positional=False)
+    ]
+
+
+def _carried_name(line: str, carried: tuple[str, bool] | None) -> str | None:
+    """The credential name whose value ``line`` goes on with, or None (``_CONTINUED_LINE``).
+
+    ``carried`` is the name of the line before and whether that line ended
+    with a fallback operator.
+    """
+    if carried is None:
+        return None
+    name, open_operator = carried
+    return name if open_operator or _CONTINUED_LINE.match(line) or _COMMENT_LINE.match(line) else None
+
+
+def _line_tail(
+    line: str, offset: int, carried: tuple[str, bool] | None
+) -> tuple[list[tuple[int, int]], tuple[str, bool] | None, str | None]:
+    """What ``_redact_line_tails`` withholds on one line.
+
+    Returns the spans, the credential name whose value the next line may go
+    on with and whether this line ends with a fallback operator, and the
+    closer of a block comment the line leaves open. A line can go on with the
+    value of the credential named on the line before (``_carried_name``).
+    """
+    literals, comment = _line_regions(line)
+    code_end = len(line) if comment is None else comment
+    joined = _credential_assignment_end(line, code_end)
+    if joined is None:
+        name = _carried_name(line, carried)
+        if name is None:
+            return [], None, None
+        if _COMMENT_LINE.match(line) and carried is not None:
+            # A comment line between the operator and its operand keeps the value going.
+            closer = None if comment is None else _comment_closer(line, comment)
+            return _token_spans(line, offset, 0, len(line), _COMMENT_TOKEN), carried, closer
+        joined = (0, name)
+    named, name = joined
+    spans: list[tuple[int, int]] = []
+    for start, end in literals:
+        if start >= named:
+            spans.extend(_token_spans(line, offset, start, end, _LITERAL_TOKEN))
+    if _password_name(name):
+        value_end = _value_end(line, named, literals)
+        spans.extend(
+            (offset + start, offset + end)
+            for start, end in literals
+            if start >= named and end <= value_end and _password_literal(line[start:end])
+        )
+    closer = None
+    if comment is not None:
+        spans.extend(_token_spans(line, offset, comment, len(line), _COMMENT_TOKEN))
+        closer = _comment_closer(line, comment)
+    return spans, (name, _OPEN_OPERATOR.search(line, 0, code_end) is not None), closer
 
 
 def _redact_line_tails(text: str) -> str:
@@ -1300,30 +1444,37 @@ def _redact_line_tails(text: str) -> str:
     '<key>'", 'os.getenv("K", "<key>")', 'cfg("a", "b") || "<key>"') was
     shown in 'name: value' form. On a line where a name the assignment passes
     read as a credential's (``_sensitive_assignment_key``, or
-    ``_credential_name``: its last word names one) is joined to a value, each
+    ``_credential_name``: its last word names one) is joined to a value by
+    ':', '=' or '=>', or where a callee whose last word names one is given
+    arguments ('sgMail.setApiKey(process.env.K?.trim() ?? "<key>")'), each
     token of a string literal after that name, and of the comment, that
     ``_credential_literal`` takes for an opaque key is withheld; words,
-    references, model names and placeholders stay. A line is read once.
+    references, model names and placeholders stay. A password's value
+    (``_password_name``) is withheld whole up to the next entry on the line,
+    whatever its shape ('dbPassword: process.env.P?.trim() || "<password>"',
+    as 'db_password = os.getenv("P", "<password>")' is), unless it is a
+    variable's name, a path, a URL, a placeholder or shorter than
+    ``_PASSWORD_LITERAL``. The next line goes on with the value when it
+    starts with a fallback operator (Black's '    or "<key>",') or the line
+    before ends with one, through comment lines, and a block comment a
+    credential's line leaves open ('<!--', '/*') is read to its end. A line
+    is read once.
     """
     if not any(mark in text for mark in "\"'`#/<"):
         return text
     spans: list[tuple[int, int]] = []
+    carried: tuple[str, bool] | None = None
+    closer: str | None = None
     for line in _TEXT_LINE.finditer(text):
         body = line.group()
-        literals, comment = _line_regions(body)
-        if not literals and comment is None:
-            continue
-        named = _credential_assignment_end(body, len(body) if comment is None else comment)
-        if named is None:
-            continue
-        regions = [(start, end) for start, end in literals if start >= named]
-        if comment is not None:
-            regions.append((comment, len(body)))
-        for start, end in regions:
-            tokens = _COMMENT_TOKEN if start == comment else _LITERAL_TOKEN
-            for token in tokens.finditer(body, start, end):
-                if _credential_literal(token.group(), positional=False):
-                    spans.append((line.start() + token.start(), line.start() + token.end()))
+        if closer is not None:
+            close = body.find(closer)
+            inside = len(body) if close < 0 else close
+            spans.extend(_token_spans(body, line.start(), 0, inside, _COMMENT_TOKEN))
+            if close < 0:
+                continue
+        found, carried, closer = _line_tail(body, line.start(), carried)
+        spans.extend(found)
     return _withhold_spans(text, spans)
 
 

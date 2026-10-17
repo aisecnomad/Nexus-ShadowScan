@@ -1256,3 +1256,98 @@ def test_a_dotted_passphrase_outside_source_code_is_a_credential(index: Signatur
     assert _generic(index, line, code=False) != []
     # In source code it still reads as a name ('android.injected.signing.store').
     assert _generic(index, line.replace("=", ' = "').replace(": ", ' = "') + '"', code=True) == []
+
+
+# A password that is not one opaque token stayed visible after a read the
+# value lexer cut, in 'name: value' form, while the assignment form withheld
+# the whole value. Assembled at run time so no password sits in the source.
+TAIL_PASSWORDS = [
+    "Xk9#mQ2$" + "vL!pR7@wZ4%",
+    "hunter2!" * 2,
+    "S3cr3t!" + "P@ssw0rd",
+    "9fK!x2#L" + "q8$zP0&w",
+    "P@ssw0rd" + "-2024!Prod",
+    "aB3$dE6^" + "gH9*jK2(mN5",
+    "Tr0ub4dor" + "&3",
+    "snout-fiber-thump-bloom-gravel",
+    "correct horse battery staple",
+]
+
+
+@pytest.mark.parametrize("password", TAIL_PASSWORDS)
+@pytest.mark.parametrize(
+    "line",
+    [
+        'dbPassword: process.env.DB_PASSWORD?.trim() || "<P>",',
+        "db_password: os.environ[ 'DB_PASSWORD' ] if PROD else '<P>'",
+        'db_password: os.getenv("<K>", "<P>")',
+        'db_password: os.getenv("DB_PASS", "<P>")',
+        "{ smtpPassword: cfg.get('smtp', 'password') ?? '<P>', model: 'gpt-4o' }",
+    ],
+)
+def test_a_password_after_a_cut_read_is_withheld_whole(line: str, password: str):
+    text = line.replace("<K>", TAIL_KEY).replace("<P>", password)
+    safe = sanitize_text(text)
+    assert password not in safe and TAIL_KEY not in safe and REDACTED in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    ("line", "kept"),
+    [
+        # A variable's name and the next entry's value keep their text.
+        ('password = os.getenv("PGPASSWORD")', 'os.getenv("PGPASSWORD")'),
+        (
+            "{ dbPassword: process.env.DB_PASSWORD, model: 'gpt-4o-mini-2024-07-18' }",
+            "'gpt-4o-mini-2024-07-18'",
+        ),
+        (
+            "dbPassword: cfg.get('db') ?? process.env.DB_PASSWORD, label: 'Primary database'",
+            "'Primary database'",
+        ),
+    ],
+)
+def test_other_literals_beside_a_password_value_keep_their_text(line: str, kept: str):
+    assert kept in sanitize_text(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A credential-named callee's argument, a PHP or Ruby '=>' entry, a
+        # fallback on the next line (Black), a Java builder's ternary and a
+        # block comment that runs past the credential's line.
+        'sgMail.setApiKey(process.env.SENDGRID_API_KEY?.trim() ?? "<K>");',
+        'client.setApiKey(process.env.OPENAI_API_KEY?.trim() || "<K>");',
+        "'api_key' => trim(getenv('OPENAI_API_KEY')) ?: '<K>',",
+        "'api_key' => trim(env('OPENAI_API_KEY', '')) ?: '<K>',",
+        ":api_key => ENV.fetch('OPENAI_API_KEY') { '<K>' },",
+        'llm = ChatOpenAI(\n    openai_api_key=settings.openai_api_key\n    or "<K>",\n)',
+        'client = OpenAI(\n    api_key=os.getenv("OPENAI_API_KEY")\n    or "<K>",\n)',
+        'const apiKey = process.env.OPENAI_API_KEY\n  || "<K>";',
+        'client.setApiKey(cfg("a", "b") ||\n  "<K>");',
+        'client.setApiKey(cfg("a", "b") ||\n  // dev fallback\n  "<K>");',
+        'OpenAIClient.builder().apiKey(System.getenv("OPENAI_API_KEY") != null ? '
+        'System.getenv("OPENAI_API_KEY") : "<K>").build();',
+        '<add key="OpenaiApiKey" value="%OPENAI_API_KEY%" /> <!--\n  old: <K>\n-->',
+        "  apiKey: process.env.OPENAI_API_KEY, /*\n   old: <K>\n  */",
+    ],
+)
+def test_a_key_after_a_cut_read_in_other_shapes_is_withheld(line: str):
+    safe = sanitize_text(line.replace("<K>", TAIL_KEY))
+    assert TAIL_KEY not in safe and REDACTED in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Only a line that starts with an operator goes on with the value, and
+        # a comment closed on its line ends there.
+        "apiKey: process.env.OPENAI_API_KEY,\nmodel: 'gpt-4o-mini-2024-07-18'",
+        "apiKey: process.env.OPENAI_API_KEY, // old\nconst build = 'a1B2c3D4e5F6g7H8'",
+        "<add key='OpenaiApiKey' value='%OPENAI_API_KEY%' /> <!-- rotated -->\n<add key='Build' value='release-2024' />",
+    ],
+)
+def test_text_after_a_credential_line_keeps_its_text(text: str):
+    assert sanitize_text(text) == text
