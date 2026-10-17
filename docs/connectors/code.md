@@ -70,12 +70,14 @@ declare them (an Ansible task writing `~/.cursor/mcp.json` or
 `~/.continue/config.yaml` from structured `content`, a list of client
 profiles, a registry catalog of `install` blocks) is read as the server
 tables its entries hold, merged into one MCP configuration finding (a name
-repeated across entries keeps a numbered suffix); a list that holds none
-under a dedicated MCP name is an input defect (`MCP configuration must be an
-object`). When a document is larger or deeper than the walk's bounds, the
-structure cannot rule a table out, so the file is decided from its text, and
-a table in a list past the bounds is recorded as a limit (`MCP server tables
-in a list past the walk limit`), which makes the scan incomplete. A
+repeated across entries keeps a numbered suffix), and so is a mapping that
+holds its tables only below its top level (`profiles: [{mcpServers: ...}]`,
+a client's per-project `projects: {path: {mcpServers: ...}}`); a list that
+holds none under a dedicated MCP name is an input defect (`MCP configuration
+must be an object`). When a document is larger or deeper than the walk's
+bounds, the structure cannot rule a table out, so the file is decided from
+its text, and a table past the bounds is recorded as a limit (`MCP server
+tables past the walk limit`), which makes the scan incomplete. A
 dedicated MCP configuration name (`.mcp.json`, `mcp.json`, `smithery.yaml`, …)
 is always parsed, so its defects still make the scan incomplete, as does a
 document that declares servers in malformed form or cannot be read at all.

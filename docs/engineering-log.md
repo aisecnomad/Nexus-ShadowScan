@@ -130,6 +130,14 @@ file_matches)`, now serves every gap site.
   scan complete, since nothing is hidden once its tables are parsed, and a
   table past the bounds is recorded as a limit (`analysis-limit`). A
   dedicated name holding a list with no table keeps the old diagnostic.
+- **A mapping's nested server tables are read too.** The structural check
+  routed a mapping whose only table sat below its top level
+  (`profiles: [{mcpServers: ...}]`, a client's per-project
+  `projects: {path: {mcpServers: ...}}`) to the parser, which read the top
+  level alone, found nothing and let the file pass as ordinary
+  configuration with no finding and no gap (on main too). The parser now
+  reads such a mapping's nested tables (`_nested_server_entries`) with the
+  same bounded walk, so the servers are reported.
 - **With `scan_secrets` off, oversize agent configuration in tests stays a
   gap.** `_skipped_oversize` skipped any oversize file under a test path as a
   discounted fixture once credential detection was off, so a 5 KB
