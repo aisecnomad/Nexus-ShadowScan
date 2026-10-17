@@ -301,13 +301,14 @@ _CLI_WORD = re.compile(r"[a-z][a-z_-]*")
 # no credential and stays visible after a credential name ('apiKey = ...'),
 # where it shows how the credential is read. Only these exact forms with an
 # upper-case variable name qualify: a default argument ('os.getenv("K", "v")'),
-# a fallback ('|| "v"') or any other operand keeps the value withheld.
+# a fallback ('|| "v"') or any other operand keeps the value withheld, and so
+# does a name that looks like an opaque key (see _environment_lookup).
 _ENVIRONMENT_LOOKUP = re.compile(
-    r"(?:process\.env|import\.meta\.env|Bun\.env)\.[A-Z_][A-Z0-9_]*+(?![\w$.(\[])"
-    r"|(?:process\.env|os\.environ|ENV)\[[ \t]*+(?P<subscript_quote>[\"'`])[A-Z_][A-Z0-9_]*+"
+    r"(?:process\.env|import\.meta\.env|Bun\.env)\.(?P<member>[A-Z_][A-Z0-9_]*+)(?![\w$.(\[])"
+    r"|(?:process\.env|os\.environ|ENV)\[[ \t]*+(?P<subscript_quote>[\"'`])(?P<subscript>[A-Z_][A-Z0-9_]*+)"
     r"(?P=subscript_quote)[ \t]*+\]"
     r"|(?:os\.getenv|os\.environ\.get|os\.Getenv|System\.getenv|Environment\.GetEnvironmentVariable"
-    r"|ENV\.fetch|Deno\.env\.get|getenv)\([ \t]*+(?P<argument_quote>[\"'])[A-Z_][A-Z0-9_]*+"
+    r"|ENV\.fetch|Deno\.env\.get|getenv)\([ \t]*+(?P<argument_quote>[\"'])(?P<argument>[A-Z_][A-Z0-9_]*+)"
     r"(?P=argument_quote)[ \t]*+\)"
 )
 # What may end an assigned value after the read and any blanks: the end of the
@@ -323,9 +324,13 @@ def _environment_lookup(text: str, start: int = 0, end: int | None = None) -> bo
     only spaces and tabs may follow the read before the end of the text or a
     value end: in 'apiKey: process.env.KEY // old: <key>' or
     'apiKey: process.env.KEY ?? "<key>"' the value goes on past the read.
+
+    The variable's name must be shaped like a name, not like an opaque key
+    (``_opaque``): an upper-case key or base32 secret pasted in its place
+    ('os.getenv("JBSWY3DPEHPK3PXP...")') is the credential itself.
     """
     match = _ENVIRONMENT_LOOKUP.match(text, start)
-    if match is None:
+    if match is None or _opaque(match["member"] or match["subscript"] or match["argument"]):
         return False
     if end is not None:
         return match.end() == end
