@@ -345,6 +345,48 @@ def test_read_text_unusable_or_utf8_cookie_keeps_default_decoding(tmp_path, cook
     assert errors == []
 
 
+@pytest.mark.parametrize("cookie", ["punycode", "utf_32_le", "utf-16"])
+def test_read_text_cookie_the_interpreter_refuses_stays_a_gap(tmp_path, monkeypatch, cookie):
+    """Regression: Python 3.14's ``detect_encoding`` refuses ``punycode`` and
+    UTF-32 cookies itself, and the refusal fell into the keep-default branch,
+    so a hostile cookie was silently analyzed with the default decoding. The
+    scanned estate's interpreter may still honor the cookie, so it stays a
+    coverage gap on every interpreter; ``detect_encoding`` is forced to refuse
+    here so the pre-3.14 legs exercise the same path."""
+
+    def refuse(readline):
+        raise SyntaxError("invalid or missing encoding declaration")
+
+    monkeypatch.setattr(text.tokenize, "detect_encoding", refuse)
+    (tmp_path / "a.py").write_bytes(f"# coding: {cookie}\n".encode() + b"import openai\n")
+    errors: list[str] = []
+    assert read_text(tmp_path / "a.py", 1000, errors) is None
+    assert errors == [BINARY_CONTENT_ERROR]
+
+
+@pytest.mark.parametrize("cookie", ["nonsense", "utf8"])
+def test_read_text_refused_unknown_or_utf8_cookie_keeps_default_decoding(tmp_path, monkeypatch, cookie):
+    def refuse(readline):
+        raise SyntaxError("invalid or missing encoding declaration")
+
+    monkeypatch.setattr(text.tokenize, "detect_encoding", refuse)
+    (tmp_path / "a.py").write_bytes(f"# coding: {cookie}\nimport openai\n".encode())
+    errors: list[str] = []
+    assert read_text(tmp_path / "a.py", 1000, errors) == f"# coding: {cookie}\nimport openai\n"
+    assert errors == []
+
+
+def test_declared_source_cookie_reads_the_lines_the_interpreter_reads():
+    declared = text._declared_source_cookie
+    assert declared(b"# coding: punycode\nx = 1\n") == "punycode"
+    assert declared(b"#!/usr/bin/env python\n# coding: utf_32_le\n") == "utf_32_le"
+    assert declared(b"\n# -*- coding: latin-1 -*-\n") == "latin-1"
+    # A cookie on the second line counts only below a blank or comment line.
+    assert declared(b"x = 1\n# coding: punycode\n") is None
+    assert declared(b"print('coding: punycode')\n") is None
+    assert declared(b"import openai\n") is None
+
+
 def test_read_text_does_not_decode_hostile_slow_codec(tmp_path):
     # punycode decoding re-copies its output per code point: ~1.3 s for 200 KB,
     # ~30 s for 1 MB, with the GIL held where no deadline can interrupt it.
