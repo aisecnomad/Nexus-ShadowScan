@@ -747,9 +747,14 @@ public repositories with the tool and read the committed benchmark metrics.
   `import.meta.env.`, `os.environ.`, `self.` or `this.`, is now a reference,
   not a credential; a quoted value is always a literal, a random-looking value
   is never a name, and in an env file an unquoted value
-  (`DB_PASSWORD=Summer.Vacation2024`) stays a candidate. A reference ends its
-  value only when blanks and then `;`, `,`, `)`, `}`, `]` or the line end
-  follow it, or a call or subscript opens on it. A fallback, concatenation or
+  (`DB_PASSWORD=Summer.Vacation2024`) stays a candidate. A reference's value
+  goes on past a call, subscript, optional or non-null chain on it
+  (`Environment.GetEnvironmentVariable("X") ??`, `process.env.X?.trim() ||`,
+  `configService.getX() ??`) and through operators, which may end a line or
+  start the next one (also after a comment or a backslash continuation); a
+  blank line, `;`, `,`, a closing bracket or any other token ends it. The
+  operands are read once, left to right, within 512 characters of the
+  match. A fallback, concatenation or
   ternary after it (`process.env.OPENAI_API_KEY || "<key>"`, `?? "<key>"`,
   `process.env.PREFIX + '<key>'`) is still reported when a string literal
   that is a direct operand of `||`, `??`, `?:`, `or`, a ternary branch or `+`
