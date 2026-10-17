@@ -977,7 +977,7 @@ directory of the revision you run is the source of truth.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 make install          # hash-locked runtime, cloud, dev and docs toolchain
-make check            # lint, format, types, signatures, mappings, secrets, audit, coverage, connector floor, evaluation
+make check            # lint, format, types, complexity, signatures, mappings, secrets, audit, coverage, connector floor, evaluation
 ```
 
 <details>
@@ -990,6 +990,7 @@ make check            # lint, format, types, signatures, mappings, secrets, audi
 | `make lint` | Run ruff linter |
 | `make format` | Run ruff formatter |
 | `make typecheck` | Run mypy type checker |
+| `make complexity` | Fail when a function or module grows past `tools/complexity_baseline.json` |
 | `make test` | Test suite with coverage (80% floor) |
 | `make test-fast` | Tests without coverage, stop at first failure |
 | `make test-parallel` | Tests in parallel with pytest-xdist |

@@ -44,6 +44,10 @@ format-check: ## Check ruff formatting without changes
 typecheck: ## Run mypy type checker
 	mypy shadowscan tools benchmarks
 
+.PHONY: complexity
+complexity: ## Fail when a function or module grows past tools/complexity_baseline.json, or the baseline allows more than the code has
+	python -m tools.complexity_gate
+
 .PHONY: test
 test: ## Run test suite with coverage
 	python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
@@ -102,7 +106,7 @@ evaluate: ## Run the bundled detection regression corpora (reports go to a tempo
 
 .PHONY: check
 .NOTPARALLEL: check
-check: lint format-check typecheck signatures mappings secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
+check: lint format-check typecheck complexity signatures mappings secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 .PHONY: policy
@@ -110,7 +114,7 @@ policy: ## Check repository policy: action pins, permissions, links, anchors, Ma
 	python -m pytest -q tests/test_repository_policy.py tests/test_repository_consistency.py
 
 .PHONY: check-fast
-check-fast: lint format-check typecheck signatures mappings secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
+check-fast: lint format-check typecheck complexity signatures mappings secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
 
 # Not part of `check`: fuzzing has no end, and the engine (Atheris, Linux x86_64 only) comes from
 # requirements-fuzz.lock, which `make install` does not install. The Fuzz workflow runs the same

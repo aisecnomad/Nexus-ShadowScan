@@ -166,6 +166,7 @@ exact supported Python matrix and dependency pins.
 | Lint | `ruff check shadowscan tests tools benchmarks` | No errors |
 | Format | `ruff format --check shadowscan tests tools benchmarks` | No changes |
 | Types | `mypy shadowscan tools benchmarks` | No errors |
+| Size | `make complexity` | No function above ruff's `C901` limit of 20 and no `shadowscan` module above 2,000 lines grows past `tools/complexity_baseline.json`, and the baseline allows no more than the code has |
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
@@ -188,6 +189,14 @@ repository test requires the reason. Mypy requires annotated definitions
 (`disallow_untyped_defs`) and reports unused `type: ignore` comments.
 `pyproject.toml` holds the complete rule sets.
 
+`make complexity` keeps the functions and modules that are already too large from growing, and
+stops a new one from joining them. When it fails because your change made a function more
+complex or a module longer, split it; do not raise the number. When it fails because you
+improved one, run `python -m tools.complexity_gate --update` and commit the lower baseline, so
+the room cannot be spent again. A rise that is unavoidable is recorded with
+`python -m tools.complexity_gate --rebaseline` and explained in the pull request.
+[Testing](docs/testing.md#function-and-module-size) has the details.
+
 The same gates as individual commands:
 
 ```bash
@@ -198,6 +207,7 @@ make secrets
 ruff check shadowscan tests tools benchmarks
 ruff format --check shadowscan tests tools benchmarks
 mypy shadowscan tools benchmarks
+python -m tools.complexity_gate
 make audit
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 make coverage-gate

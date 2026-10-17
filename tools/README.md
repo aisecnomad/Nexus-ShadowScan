@@ -14,6 +14,7 @@ These run in CI and in `make check`; see
 | Module | What it does | Run it with |
 |---|---|---|
 | [`check_secrets.py`](check_secrets.py) | Fails on credential-shaped values in tracked files; narrow exceptions live in [`secret_allowlist.json`](secret_allowlist.json), each bound to a path and a value digest | `make secrets` |
+| [`complexity_gate.py`](complexity_gate.py) | Fails when a function above ruff's `C901` limit of 20 or a `shadowscan` module above 2,000 lines grows past [`complexity_baseline.json`](complexity_baseline.json), or when that baseline allows more than the code has; `--update` lowers it, `--rebaseline` records a reviewed rise | `make complexity` |
 | [`coverage_gate.py`](coverage_gate.py) | Fails when aggregate coverage hides a built-in connector module below its own floor | `make coverage-gate` |
 | [`connector_reference.py`](connector_reference.py) | Renders [`docs/connectors/reference.md`](../docs/connectors/reference.md) from the connector classes | `make connector-reference` |
 | [`readme_visuals.py`](readme_visuals.py) | Renders the README banner and the architecture diagrams under [`docs/assets/`](../docs/assets/) as SVG from the surfaces, connectors and report formats | `make readme-visuals` |

@@ -15,11 +15,12 @@
 
 ### Required for all changes
 
-Shortcut: `make check` runs the lint, format, type, test, coverage, evaluation,
+Shortcut: `make check` runs the lint, format, type, complexity, test, coverage, evaluation,
 audit, validator and secrets gates below in one command.
 
 - [ ] `make lint` and `make format-check` pass
 - [ ] `make typecheck` passes
+- [ ] `make complexity` passes (split a function or module that grew; commit a lower baseline with `--update` after an improvement; explain any `--rebaseline`)
 - [ ] `make test` passes (full suite, 80% aggregate coverage)
 - [ ] `make coverage-gate` passes after that coverage run (per-connector floor)
 - [ ] `make evaluate` passes (all bundled corpora; explain any intended corpus change)

@@ -818,6 +818,13 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Release, CI and supply chain
 
+- New `tools/complexity_gate.py` (`make complexity`, part of `make check` and `make check-fast`, and
+  a step of the CI test job) holds every function above ruff's `C901` limit of 20 and every
+  `shadowscan` module above 2,000 lines to `tools/complexity_baseline.json`: nothing listed may
+  grow, nothing new may join, and an improvement fails the check until `--update` lowers the
+  baseline, so the room it made cannot be spent again. `--rebaseline` records a reviewed rise as a
+  visible diff of the baseline. The gate fails closed (exit 2) when ruff or the baseline cannot be
+  trusted. See `docs/testing.md`. (Oct 17)
 - New `tools/fuzz` fuzzes `sanitize_text`, `sanitize` and the source lexer with Atheris 3.1.0,
   hash-locked in `requirements-fuzz.lock` (Linux x86_64 only). `make fuzz` and the weekly `Fuzz`
   workflow run it, the workflow with a read-only token and no stored corpus; a failing lexing input

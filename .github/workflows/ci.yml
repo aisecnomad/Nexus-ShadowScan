@@ -138,6 +138,11 @@ jobs:
       - run: ruff check shadowscan tests tools benchmarks
       - run: ruff format --check shadowscan tests tools benchmarks
       - run: mypy shadowscan tools benchmarks
+      - name: Check function and module size against the complexity baseline
+        # A function above ruff's C901 limit of 20 or a package module above 2,000
+        # lines may not grow, and the baseline may not allow more than the code has.
+        # docs/testing.md says how to lower or, after review, raise it.
+        run: python -m tools.complexity_gate
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off
