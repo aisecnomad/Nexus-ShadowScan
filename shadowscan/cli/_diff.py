@@ -8,7 +8,8 @@ from typing import Any
 
 import click
 
-from shadowscan.cli import LEVELS, console, main
+import shadowscan.cli as _cli
+from shadowscan.cli import LEVELS, main
 from shadowscan.comparison import (
     DRIFT_CLASSES,
     MAX_BASELINE_AGE_DAYS,
@@ -143,20 +144,20 @@ def diff(
         new, resolved, unknown, changed = (comparison[key] for key in keys)
         # Scan-local IDs (baseline "<", current ">") cannot be matched across reports.
         local_baseline, local_current = (comparison["not_comparable"][key] for key in ("baseline", "current"))
-        console.print(
+        _cli.console.print(
             f"[bold]{len(new)} new[/bold], [bold]{len(resolved)} resolved[/bold],"
             f" [bold]{len(unknown)} unknown[/bold], [bold]{len(changed)} changed[/bold],"
             f" [bold]{len(local_baseline) + len(local_current)} not comparable[/bold]"
         )
         totals = ", ".join(f"{name} {count}" for name, count in comparison["drift_summary"].items())
         adverse = [name for name, flagged in comparison["adverse"].items() if flagged]
-        console.print(
+        _cli.console.print(
             f"drift: {totals}" + (f" (adverse: {', '.join(adverse)})" if adverse else ""),
             markup=False,
             highlight=False,
         )
         for reason in comparison["reasons"]:
-            console.print(f"Comparison incomplete: {reason}", markup=False)
+            _cli.console.print(f"Comparison incomplete: {reason}", markup=False)
         # Imported titles and resources are untrusted: Rich's highlighter is
         # quadratic on long tokens (a 50k-character title took about 30 s).
         for marker, records in (
@@ -168,7 +169,7 @@ def diff(
         ):
             for d in sorted(displayed(records), key=lambda d: -d["risk"]["score"]):
                 line = f"  {marker} {d['risk']['level']:8} {d['title']}  {d['resource']}"
-                console.print(terminal_text(line), markup=False, highlight=False)
+                _cli.console.print(terminal_text(line), markup=False, highlight=False)
         for change in changed:
             if shadow_only and change["after"].get("shadow") is not True:
                 continue
@@ -178,7 +179,7 @@ def diff(
             classes = list(dict.fromkeys(entry["class"] for entry in change["drift"]))
             if classes:
                 line += f" [{', '.join(classes)}]"
-            console.print(terminal_text(line), markup=False, highlight=False)
+            _cli.console.print(terminal_text(line), markup=False, highlight=False)
     if not comparison["comparable"]:
         raise click.exceptions.Exit(3)
     if fail_on_new and (comparison["new"] or any(_risk_rose(change) for change in comparison["changed"])):

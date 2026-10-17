@@ -9,9 +9,9 @@ import click
 from rich.table import Table
 from rich.text import Text
 
-from shadowscan.cli import console, err_console, main
+import shadowscan.cli as _cli
+from shadowscan.cli import main
 from shadowscan.connectors import (
-    available_connectors,
     builtin_connector_names,
     connectors_for_surface,
     get_connector_class,
@@ -26,7 +26,7 @@ from shadowscan.models import Surface
 @click.option("--json", "as_json", is_flag=True, help="print JSON instead of the human-readable output")
 def list_connectors(surface: str | None, as_json: bool) -> None:
     """List available connectors and their configuration keys."""
-    names = connectors_for_surface(surface) if surface else sorted(available_connectors())
+    names = connectors_for_surface(surface) if surface else sorted(_cli.available_connectors())
     rows: list[dict[str, Any]] = []
     for n in names:
         if n not in builtin_connector_names():
@@ -61,7 +61,7 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
             }
         )
     for problem in plugin_registry_errors():
-        err_console.print(Text(f"warning: plugin registry: {problem}", style="yellow"))
+        _cli.err_console.print(Text(f"warning: plugin registry: {problem}", style="yellow"))
     if as_json:
         click.echo(json.dumps(rows, indent=2))
         return
@@ -87,4 +87,4 @@ def list_connectors(surface: str | None, as_json: bool) -> None:
             description.append("\n")
             description.append(f"requires: {', '.join(r['requires'])}", style="dim")
         table.add_row(Text(r["name"]), Text(str(r["surface"])), description, keys)
-    console.print(table)
+    _cli.console.print(table)

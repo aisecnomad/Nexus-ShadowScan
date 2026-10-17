@@ -8,7 +8,8 @@ from typing import Any
 import click
 from rich.text import Text
 
-from shadowscan.cli import ScanOptions, err_console, main, scan_options
+import shadowscan.cli as _cli
+from shadowscan.cli import ScanOptions, main, scan_options
 from shadowscan.config import ConnectorSpec
 from shadowscan.endpoint import (
     appdata_outside_profile,
@@ -61,9 +62,9 @@ def endpoint(home_dir: str | None, label: str | None, list_only: bool, opts: Sca
         for line in describe(found, home):
             click.echo(encodable_text(terminal_text(line)))
         for error in discovery_errors:
-            err_console.print(Text(terminal_text(error)))
+            _cli.err_console.print(Text(terminal_text(error)))
         if not found and not discovery_errors:
-            err_console.print(
+            _cli.err_console.print(
                 Text(terminal_text(f"no known AI client configuration locations exist under {home}"))
             )
         if discovery_errors:
@@ -90,8 +91,6 @@ def endpoint(home_dir: str | None, label: str | None, list_only: bool, opts: Sca
         "scan_secrets": True,
     }
     extra = [discovery] if discovery.errors or discovery.warnings else None
-    import shadowscan.cli as _cli_pkg
-
-    _cli_pkg._run_scan(
+    _cli._run_scan(
         opts.config([ConnectorSpec(name="code.filesystem", config=config)]), opts, extra_stats=extra
     )

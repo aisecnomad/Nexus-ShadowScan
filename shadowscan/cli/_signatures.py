@@ -11,7 +11,8 @@ from rich.markup import escape
 from rich.table import Table
 from rich.text import Text
 
-from shadowscan.cli import _log_masked_failure, console, main
+import shadowscan.cli as _cli
+from shadowscan.cli import _log_masked_failure, main
 from shadowscan.errors import SetupError
 from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.signatures.loader import VALID_CATEGORIES
@@ -113,7 +114,7 @@ def signatures_list(
             str(len(s.signals)),
             agent,
         )
-    console.print(table)
+    _cli.console.print(table)
 
 
 @signatures.command("show")
@@ -259,9 +260,9 @@ def signatures_test(
                 shown += f" ({m.signal.ecosystem or 'any'})"
             agent = "yes" if m.agent_indicator else "no "
             caps = ",".join(m.capabilities()) or "-"
-            console.print(
+            _cli.console.print(
                 f"[bold]{k:11}[/bold] {m.signature_id:40} weight={m.weight:.2f} agent={agent} caps={caps}"
                 f"  ← {escape(shown)}"
             )
     if not found:
-        console.print("[dim]no match[/dim]")
+        _cli.console.print("[dim]no match[/dim]")

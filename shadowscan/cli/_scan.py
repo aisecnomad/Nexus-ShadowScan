@@ -7,13 +7,8 @@ from typing import Any
 import click
 import yaml
 
-from shadowscan.cli import (
-    ScanOptions,
-    _warn_argv_secret,
-    available_connectors,
-    main,
-    scan_options,
-)
+import shadowscan.cli as _cli
+from shadowscan.cli import ScanOptions, _warn_argv_secret, main, scan_options
 from shadowscan.config import (
     ConfigValidationError,
     ConnectorSpec,
@@ -59,9 +54,7 @@ def scan(config_path: str, only: tuple[str, ...], opts: ScanOptions) -> None:
         cfg.incremental = opts.incremental
     if opts.state_dir is not None:
         cfg.state_dir = opts.state_dir
-    import shadowscan.cli as _cli_pkg
-
-    _cli_pkg._run_scan(cfg, opts, only=list(only) or None)
+    _cli._run_scan(cfg, opts, only=list(only) or None)
 
 
 # ----------------------------------------------------------------------- run
@@ -83,7 +76,7 @@ def scan(config_path: str, only: tuple[str, ...], opts: ScanOptions) -> None:
 @scan_options
 def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts: ScanOptions) -> None:
     """Run a single connector, e.g. `shadowscan run identity.okta --set org_url=https://acme.okta.com`."""
-    if connector not in available_connectors():
+    if connector not in _cli.available_connectors():
         raise click.BadParameter(f"unknown connector {connector!r}; see `shadowscan connectors`")
     try:
         conf = parse_set_options(list(settings))
@@ -98,9 +91,7 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
     exposed = argv_credential_keys({k: v for k, v in conf.items() if k != "input"})
     if exposed:
         _warn_argv_secret(f"--set {', '.join(exposed)}", "a ${ENV_VAR} reference in a scan configuration")
-    import shadowscan.cli as _cli_pkg
-
-    _cli_pkg._run_scan(opts.config([ConnectorSpec(name=connector, config=conf)]), opts)
+    _cli._run_scan(opts.config([ConnectorSpec(name=connector, config=conf)]), opts)
 
 
 # ---------------------------------------------------------------------- code
@@ -214,9 +205,7 @@ def code(
         specs.append(ConnectorSpec(name="code.gitlab", config=gl))
     if not specs:
         raise click.UsageError("give at least one PATH, --github-org/--github-repo or --gitlab-group")
-    import shadowscan.cli as _cli_pkg
-
-    _cli_pkg._run_scan(opts.config(specs), opts)
+    _cli._run_scan(opts.config(specs), opts)
 
 
 # ------------------------------------------------------------------- gateway
@@ -289,6 +278,4 @@ def gateway(
             conf["label"] = label
         instance = f"gateway.logs#{i + 1}" if len(logs) > 1 else None
         specs.append(ConnectorSpec(name="gateway.logs", config=conf, label=instance))
-    import shadowscan.cli as _cli_pkg
-
-    _cli_pkg._run_scan(opts.config(specs), opts)
+    _cli._run_scan(opts.config(specs), opts)
