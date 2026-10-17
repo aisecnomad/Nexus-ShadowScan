@@ -411,8 +411,9 @@ and tests, which call and test the products they detect.
   candidate. Outside source code the name-shape rules apply only to token names (`API_KEY`, `ACCESS_TOKEN`,
   `CLIENT_SECRET`); a PASSWORD or CREDENTIAL value there (`POSTGRES_PASSWORD=TrustNoOneEverAgain`) cannot
   name a variable. When operators follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, a blank
-  line), past any call, subscript, optional or non-null chain on it (`GetEnvironmentVariable("X") ??`,
-  `process.env.X?.trim() ||`) and on the same or the next line (after a comment or a backslash
+  line), past any call, subscript, optional or non-null chain or TypeScript cast on it
+  (`GetEnvironmentVariable("X") ??`, `process.env.X?.trim() ||`, `as string ||`), through parentheses
+  around an operand (`|| ("<key>")`) and Python's triple quotes, and on the same or the next line (after a comment or a backslash
   continuation too, with any blanks between tokens, a no-break or zero-width space as well), the match is kept if a string literal that is a direct operand of `||`, `??`, `?:`, `or`,
   a ternary branch or `+` is one token of the value class and looks like a key: the pattern's value stops
   at the first blank, so `apiKey = process.env.OPENAI_API_KEY || "<key>"` matches only the read and the
