@@ -10,7 +10,6 @@ import re
 import string
 import threading
 from bisect import bisect_left, bisect_right
-from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -30,10 +29,10 @@ from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import (
     _FOLLOWER_CHARS,
     _HOST_TOKEN_RX,
-    _SECRET_CANDIDATES_PER_SIGNAL,
     MAX_SECRETS_PER_SIGNAL,
     WALL_BUDGET_FACTOR,
     MatchTimeoutError,
+    _credential_candidate,
     keep_file_matches,
     keep_secret_matches,
     language_for_path,
@@ -575,8 +574,10 @@ def _reference_regex_matches(
     ends: list[int] = []
     newlines = [m.start() for m in re.finditer("\n", text)]
     if signal_type == "secret":
-        # Secret candidates are read past the reported cap and filtered first (match_secrets).
-        max_per_signal = _SECRET_CANDIDATES_PER_SIGNAL
+        # Secret matches are judged as they are found and only accepted ones
+        # count toward the reported cap (match_secrets).
+        max_per_signal = MAX_SECRETS_PER_SIGNAL
+    accepted: dict[str, list[tuple[int, int]]] = {}
     for sig, s in index._by_type.get(signal_type, []):
         if language and s.languages and language not in s.languages:
             continue
@@ -593,6 +594,8 @@ def _reference_regex_matches(
                     hints,
                     m.group(0),
                 )
+                if signal_type == "secret" and not _credential_candidate(text, False, accepted, sig, m):
+                    continue
                 line = bisect_left(newlines, m.start()) + 1
                 value = m.group(0) if signal_type == "secret" else sanitize_text(m.group(0))[:200]
                 out.append((sig.id, sig.signals.index(s), value, s.weight, line))
@@ -603,19 +606,12 @@ def _reference_regex_matches(
             if hits >= max_per_signal:
                 break
     if signal_type == "secret":
-        # match_secrets applies the same deterministic post-filter after the regex pass,
-        # then reports at most MAX_SECRETS_PER_SIGNAL kept matches per signal.
+        # match_secrets applies the same deterministic cross-signal filter after the regex pass.
         keep = keep_secret_matches(
             [(sig_id, value, line) for sig_id, _, value, _, line in out],
             followers=[text[end : end + _FOLLOWER_CHARS] for end in ends],
         )
-        kept_per_signal: Counter[tuple[str, int]] = Counter()
-        reported = []
-        for item, kept in zip(out, keep, strict=True):
-            if kept and kept_per_signal[item[:2]] < MAX_SECRETS_PER_SIGNAL:
-                kept_per_signal[item[:2]] += 1
-                reported.append(item)
-        out = reported
+        out = [item for item, kept in zip(out, keep, strict=True) if kept]
     return out
 
 

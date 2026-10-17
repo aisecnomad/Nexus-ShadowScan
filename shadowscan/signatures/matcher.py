@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
+from functools import partial
 from itertools import islice
 from operator import itemgetter
 from typing import Any, NamedTuple
@@ -200,15 +201,16 @@ def _quota_matches(
     quota: int,
     excluded: Callable[[int], bool] | None,
     limited: set[str] | None,
+    selected: Callable[[Any], bool] | None = None,
 ) -> list[Any]:
-    """At most ``quota`` matches of ``rx``; with ``limited``, one past it is looked for.
+    """At most ``quota`` selected matches of ``rx``; with ``limited``, one past it is looked for.
 
     A match past the quota is never returned. It records ``signature_id`` in
     ``limited``, so the caller can disclose that the matches are a lower bound.
     """
     if limited is None:
-        return _finditer(rx, text, signature_id, quota, excluded)
-    found = _finditer(rx, text, signature_id, quota + 1, excluded)
+        return _finditer(rx, text, signature_id, quota, excluded, selected)
+    found = _finditer(rx, text, signature_id, quota + 1, excluded, selected)
     if len(found) > quota:
         limited.add(signature_id)
         del found[quota:]
@@ -273,9 +275,6 @@ UNATTRIBUTED_KEY = "heuristic.unattributed-api-key"
 # credentials of one format than this is reported with the quota's worth of
 # evidence and a disclosure that the count is a lower bound (``match_secrets``).
 MAX_SECRETS_PER_SIGNAL = 5
-# Candidates read per secret signal before filtering, so that rejected
-# references cannot use up the quota's places ahead of a real key.
-_SECRET_CANDIDATES_PER_SIGNAL = 25
 # An unattributed sk- value shorter than this after the prefix must look random.
 _SHORT_KEY_BODY = 32
 _VALUE_END = frozenset("\"',;")
@@ -301,6 +300,8 @@ def _assigned_value(value: str) -> str:
 # 'hasher.encode') or a single identifier. The generic pattern's value class
 # admits '.' and '_', so these passed as long, diverse credentials.
 _IDENTIFIER_CHAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+# A lower-case letter followed by a capital: the word boundary of camelCase.
+_CASE_BOUNDARY = re.compile(r"[a-z][A-Z]")
 # The words of a name: 'fireCrawlApiKey' is fire, Crawl, Api, Key; 'ANTHROPIC_API_KEY'
 # is ANTHROPIC, API, KEY.
 _NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
@@ -400,8 +401,12 @@ def _reference_value(value: str, *, code: bool, follower: str = "") -> bool:
     after 'hasher.encode' or ';' after 'process.env.KEY' in a documentation
     snippet) or that starts from the environment or the instance is one. A
     quoted value is always a literal, and a random-looking value is never a
-    name. Operands after a reference are read by ``_fallback_literal``.
+    name. Operands after a reference are read by ``_fallback_literal``. A
+    match that assigns nothing (the bare ``AKIA...`` and ``ghp_...`` token
+    patterns) is the token itself, never a name for one.
     """
+    if "=" not in value and ":" not in value:
+        return False
     candidate, quoted = _assignment_parts(value)
     if quoted or not _IDENTIFIER_CHAIN.fullmatch(candidate) or not _identifier_shaped(candidate):
         return False
@@ -505,13 +510,26 @@ def _label_slug(value: str, candidate: str) -> bool:
     return not words.isdisjoint(_LABEL_WORDS) or not words.isdisjoint(name)
 
 
+def _name_shaped(candidate: str) -> bool:
+    """Whether a value is built like a program name: snake_case, dotted, CONSTANT_CASE or camelCase.
+
+    A single run of letters ('correcthorsebatterystaple', an AKIA key's
+    digit-free body) is not: it carries no name structure to tell it from a
+    token, so only the entropy tests judge it.
+    """
+    return _IDENTIFIER_CHAIN.fullmatch(candidate) is not None and (
+        "_" in candidate or "." in candidate or _CASE_BOUNDARY.search(candidate) is not None
+    )
+
+
 def _high_entropy_credential(value: str) -> bool:
     """Require a generic assigned credential to be long, diverse and shaped like a token, not a name.
 
     Shannon entropy alone does not separate the two: ordinary identifiers
-    clear 3 bits per character. A value with no digit must mix cases evenly,
-    unless it is a passphrase of words (``_label_slug``); a value with digits
-    must not be a single-case identifier (``_single_case_identifier``).
+    clear 3 bits per character. A name-shaped value with no digit
+    (``_name_shaped``) must mix cases evenly, unless it is a passphrase of
+    words (``_label_slug``); a value with digits must not be a single-case
+    identifier (``_single_case_identifier``).
     """
     candidate = _assigned_value(value)
     passphrase = _WORD_SLUG.fullmatch(candidate) is not None
@@ -529,7 +547,7 @@ def _high_entropy_credential(value: str) -> bool:
             return False
         upper_share = sum(char.isupper() for char in letters) / len(letters)
         low, high = _RANDOM_UPPER_SHARE
-        if not passphrase and (upper_share < low or upper_share > high):
+        if not passphrase and _name_shaped(candidate) and (upper_share < low or upper_share > high):
             return False
     elif _single_case_identifier(candidate):
         return False
@@ -571,6 +589,37 @@ def _generic_literal(value: str, *, code: bool, follower: str) -> str | None:
     if _reference_value(value, code=code, follower=follower):
         return _fallback_literal(follower)
     return _assigned_value(value) if _high_entropy_credential(value) else None
+
+
+def reported_credential(signature_id: str, value: str) -> str:
+    """The credential a secret match stands for: a generic assignment's value, or the match itself.
+
+    ``OPENAI_KEY=ghp_...`` read as a line and ``ghp_...`` read as that line's
+    parsed value are one credential, however the match was cut.
+    """
+    return _assigned_value(value) if signature_id == GENERIC_CREDENTIAL else value
+
+
+def _credential_candidate(
+    text: str, code: bool, accepted: dict[str, list[tuple[int, int]]], signature: Signature, match: Any
+) -> bool:
+    """Whether a regex match of a secret signature is a credential the quota should count.
+
+    A second match of a signature over text one of its matches already
+    covers is the same credential; a generic match that holds no key-shaped
+    literal (``_generic_literal``) is none. ``accepted`` records each
+    signature's accepted spans for the rest of the text.
+    """
+    start, end = match.span()
+    spans = accepted.setdefault(signature.id, [])
+    if any(start < other_end and other_start < end for other_start, other_end in spans):
+        return False
+    if signature.id == GENERIC_CREDENTIAL:
+        follower = text[end : end + _FOLLOWER_CHARS]
+        if _generic_literal(match.group(0), code=code, follower=follower) is None:
+            return False
+    spans.append((start, end))
+    return True
 
 
 def keep_secret_matches(
@@ -1515,11 +1564,12 @@ class SignatureIndex:
         ignore_spans: Sequence[tuple[int, int]] = (),
         scan: LiteralScan | None = None,
         limited: set[str] | None = None,
+        accept: Callable[[Signature, Any], bool] | None = None,
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
         with self._input_budget():
             return self._match_regex_signals_with_budget(
-                signal_type, text, language, max_per_signal, ignore_spans, scan, limited
+                signal_type, text, language, max_per_signal, ignore_spans, scan, limited, accept
             )
 
     def _match_regex_signals_with_budget(
@@ -1531,8 +1581,13 @@ class SignatureIndex:
         ignore_spans: Sequence[tuple[int, int]],
         scan: LiteralScan | None = None,
         limited: set[str] | None = None,
+        accept: Callable[[Signature, Any], bool] | None = None,
     ) -> list[Match]:
         """Match the regex signals of one type, at most ``max_per_signal`` per signal.
+
+        ``accept``, when given, judges each regex match of a signature as it is
+        found; a rejected match is skipped and does not count toward the quota
+        or the look past it.
 
         ``limited``, when given, collects the id of every signature whose
         signal had more matches than its quota: the matcher then looks one
@@ -1572,6 +1627,7 @@ class SignatureIndex:
         hits = 0
         for number in sorted(candidates):
             sig, s, rx, rest, fold = plan.entries[number]
+            select = None if accept is None else partial(accept, sig)
             if id(s) != current:
                 current, hits = id(s), 0
             elif hits >= max_per_signal:
@@ -1580,12 +1636,12 @@ class SignatureIndex:
                 # same signal is still given one bounded search, so a credential
                 # that only its second pattern recognizes is counted as hidden.
                 if limited is not None and sig.id not in limited and hinted(rest, fold):
-                    if _finditer(rx, text, sig.id, 1, skip):
+                    if _finditer(rx, text, sig.id, 1, skip, select):
                         limited.add(sig.id)
                 continue
             if not hinted(rest, fold):
                 continue
-            for m in _quota_matches(rx, text, sig.id, max_per_signal - hits, skip, limited):
+            for m in _quota_matches(rx, text, sig.id, max_per_signal - hits, skip, limited, select):
                 if newlines is None:
                     newlines = [newline.start() for newline in re.finditer("\n", text)]
                 line = bisect_left(newlines, m.start()) + 1
@@ -1655,44 +1711,36 @@ class SignatureIndex:
         """Credential matches in ``text``, at most :data:`MAX_SECRETS_PER_SIGNAL` per signal.
 
         ``code`` says the text is source code (see ``keep_secret_matches``).
-        Matches are filtered before they are capped: five rejected references
-        ('self.api_key = api_key' in a settings module) must not use up the
-        places of a key written further down, so up to
-        ``_SECRET_CANDIDATES_PER_SIGNAL`` candidates per signal are read first.
+        Matches are judged as they are found (``_credential_candidate``): a
+        value that only names a credential ('self.api_key = api_key' in a
+        settings module), and a credential another pattern of the same
+        signal already matched (``TOKEN=ghp_...`` is the assignment and the
+        bare token), count toward nothing, so no number of them can push a
+        key written further down past the quota.
 
-        The quota bounds the work one text can cost and the evidence one
-        finding can carry. It also hides every further credential of a format
-        once that many have matched, so a caller that reports credentials
-        passes ``limited``: it receives the ids of the signatures whose kept
-        matches may be a lower bound -- more accepted matches than the quota,
-        or more candidates than were read before filtering -- and can disclose
-        that rather than report a complete-looking result.
+        The quota bounds the evidence one finding can carry. It also hides
+        every further credential of a format once that many have matched, so
+        a caller that reports credentials passes ``limited``: it receives the
+        ids of the signatures with more accepted matches than the quota and
+        can disclose that its count is a lower bound rather than report a
+        complete-looking result.
         """
-        unread: set[str] | None = set() if limited is not None else None
+        accepted: dict[str, list[tuple[int, int]]] = {}
         matches = self._match_regex_signals(
-            "secret", text, None, max_per_signal=_SECRET_CANDIDATES_PER_SIGNAL, scan=scan, limited=unread
+            "secret",
+            text,
+            None,
+            max_per_signal=MAX_SECRETS_PER_SIGNAL,
+            scan=scan,
+            limited=limited,
+            accept=partial(_credential_candidate, text, code, accepted),
         )
         ends = [m.extra.get("end") for m in matches]
         followers = [text[end : end + _FOLLOWER_CHARS] if end is not None else "" for end in ends]
         keep = keep_secret_matches(
             [(m.signature_id, m.value, m.line) for m in matches], code=code, followers=followers
         )
-        kept: list[Match] = []
-        per_signal: Counter[tuple[str, int]] = Counter()
-        for match, keep_match in zip(matches, keep, strict=True):
-            if not keep_match:
-                continue
-            key = (match.signature_id, id(match.signal))
-            if per_signal[key] < MAX_SECRETS_PER_SIGNAL:
-                per_signal[key] += 1
-                kept.append(match)
-            elif limited is not None:
-                limited.add(match.signature_id)
-        if limited is not None and unread:
-            # Candidates past the read were never filtered: one of them may be
-            # a key, so the kept matches are a lower bound for that signature.
-            limited.update(unread)
-        return kept
+        return [match for match, keep_match in zip(matches, keep, strict=True) if keep_match]
 
     def match_user_agent(self, ua: str) -> list[Match]:
         if not ua:
