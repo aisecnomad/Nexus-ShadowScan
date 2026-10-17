@@ -609,3 +609,54 @@ def test_digit_free_tokens_without_name_structure_are_reported(index: SignatureI
 )
 def test_digit_free_names_are_still_not_credentials(index: SignatureIndex, line: str):
     assert _generic(index, line, code=False) == []
+
+
+# In an env or credential file a PASSWORD or CREDENTIAL value is chosen by a
+# person and cannot name another variable, so the name rules (#258's case mix,
+# single-case identifiers, CONSTANT_CASE slugs) do not drop it there. Token
+# names (API_KEY, ACCESS_TOKEN, CLIENT_SECRET) keep them, and labels and
+# placeholders stay unreported under any name.
+@pytest.mark.parametrize(
+    "line",
+    [
+        "DB_PASSWORD=correct-horse-battery-staple",
+        "POSTGRES_PASSWORD=TrustNoOneEverAgain",
+        "SERVICE_CREDENTIAL=TrustNoOneEverAgain",
+        "DB_PASSWORD=summer_vacation_beach_2024",
+        "DB_PASSWORD=SNOUT_FIBER_THUMP_BLOOM",
+    ],
+)
+def test_a_password_in_an_env_file_is_never_read_as_a_name(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=False) != []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "OPENAI_API_KEY=include_tracing_api_key",
+        "CLIENT_SECRET=resolvedClientSecret",
+        "ACCESS_TOKEN=ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY=sua_chave_openai",
+        "DB_PASSWORD=request-scoped-credential",
+        "DB_PASSWORD=local-development-only",
+        "DB_PASSWORD=your_database_password_here",
+    ],
+)
+def test_token_names_labels_and_placeholders_keep_their_exemptions_in_env_files(
+    index: SignatureIndex, line: str
+):
+    assert _generic(index, line, code=False) == []
+
+
+def test_a_password_name_in_source_code_still_reads_a_name(index: SignatureIndex):
+    assert _generic(index, 'DB_PASSWORD = "POSTGRES_ROOT_PASSWORD_FILE"', code=True) == []
+    assert _generic(index, 'DB_PASSWORD = "summer_vacation_beach_2024"', code=True) == []
+
+
+def test_a_scan_reports_env_file_passwords_and_withholds_them(tmp_path: Path, run_connector):
+    env = "DB_PASSWORD=correct-horse-battery-staple\nPOSTGRES_PASSWORD=TrustNoOneEverAgain\n"
+    findings = _scan(tmp_path, run_connector, {".env": env})
+    [secret] = [f for f in findings if f.kind.value == "secret"]
+    assert secret.metadata["count"] == 2
+    dumped = json.dumps(secret.to_dict(), default=str)
+    assert "TrustNoOneEverAgain" not in dumped and "battery-staple" not in dumped

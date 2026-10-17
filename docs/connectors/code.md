@@ -497,7 +497,11 @@ generated path it keeps that context's weight and confidence cap and the
 assigned-credential rule (`heuristic.inline-credential`) never reports a value
 shaped like the name of another variable (`self.api_key = resolved_api_key`,
 `include_tracing_api_key=include_tracing_api_key`, `BuildConfig.OPENAI_API_KEY`)
-or a translated placeholder (`sua_chave_openai`); see
+or a translated placeholder (`sua_chave_openai`). Outside source code the
+name test applies to token names only (`API_KEY`, `ACCESS_TOKEN`,
+`CLIENT_SECRET`): a PASSWORD or CREDENTIAL value in an env or credential
+file (`POSTGRES_PASSWORD=TrustNoOneEverAgain`) cannot name a variable and is
+reported unless it is a label or a placeholder; see
 [scanning](../scanning.md#test-and-fixture-code).
 
 An `image:` line in a CI pipeline (`.github/workflows/`, `.gitlab-ci.yml`,
