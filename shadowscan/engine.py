@@ -290,6 +290,12 @@ def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Fin
     entry or a plugin worker's result is read. A plugin finding then gets the id
     its own name derives, and registry records are withheld: an overrun cannot
     report what the same plugin's completed run would not.
+
+    This runs on the supervisor thread, outside any worker's isolation, while the
+    objects and the job's class can still run plugin code. Whatever that code
+    raises, ``sys.exit()`` included, omits the finding or withholds the records,
+    as ``_run_one`` and ``_hook_failure`` treat it; only a KeyboardInterrupt
+    still ends the scan.
     """
     plugin = spec.name not in builtin_connector_names()
     surrendered = []
@@ -300,13 +306,21 @@ def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Fin
             if plugin:
                 copied.reattribute(spec.name, derive_id=True)
             copied.sanitize()
-        except Exception:  # noqa: BLE001 - one the worker is still changing is omitted, never guessed at
+        except KeyboardInterrupt:
+            raise
+        except BaseException:  # noqa: BLE001 - one the worker is still changing is omitted, never guessed at
             omitted += 1
             continue
         surrendered.append(copied)
     if omitted:
         st.errors.append(f"{omitted} finding(s) completed before the deadline omitted: not readable")
-    _withhold_registry_records(state.hooks, not plugin, surrendered, st)
+    try:
+        _withhold_registry_records(state.hooks, not plugin, surrendered, st)
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - reading a plugin class's declarations runs plugin code
+        # It fails before any record is touched; a job that declares nothing keeps none.
+        _withhold_registry_records(None, not plugin, surrendered, st)
     return surrendered
 
 

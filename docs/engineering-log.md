@@ -13,6 +13,20 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
+
+- An overrunning thread-mode plugin could still end a scan with exit 0 and
+  no report. The engine prepares an expired job's surrendered findings on
+  the supervisor thread, outside the worker's isolation, and caught only
+  `Exception` there: an object the plugin put into a finding it had already
+  yielded, raising `SystemExit(0)` from `__deepcopy__` or `__str__`, or a
+  metaclass property behind its registry-record declarations, escaped
+  `Engine.run`. Both are now the worker's failure, as everywhere else plugin
+  code runs: the finding is omitted with a counted error, a class that
+  cannot say what it declares keeps no registry record, the connector stays
+  incomplete and the scan exits 3 with its report. A KeyboardInterrupt still
+  ends the scan. Regression-tested through the command line.
+
 ### Review fixes: connector correctness, CI check names, benchmark framing (October 17)
 
 - `gateway.otel` no longer loses resource attributes from nested OTLP

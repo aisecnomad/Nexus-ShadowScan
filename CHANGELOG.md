@@ -17,6 +17,7 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
 - Review fixes: connector correctness, CI check names, benchmark framing (October 17)
 - Review fixes: credential precision, the ci profile, incomplete reasons, the ownership move and plugin environments (October 17)
 - Credential quota disclosed, Bedrock owner tags collected, repeated tags count once (October 17)
