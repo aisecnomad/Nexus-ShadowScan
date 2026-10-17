@@ -376,6 +376,19 @@ class ConnectorContext:
         if self.stats is not None and entries > 0:
             self.stats.declared_omissions += entries
 
+    def count_incomplete(self, reason: str, entries: int = 1) -> None:
+        """Count ``entries`` more incomplete diagnostics of ``reason`` without another line.
+
+        For a caller that recorded one representative error for a run of
+        identical gaps (``strict_coverage`` names one skipped link per root):
+        ``incomplete_reasons`` counts each, as a budget's quiet ledger entries
+        do, so strict accounting and a budget of 0 count the same tree alike.
+        """
+        if self.stats is not None and entries > 0:
+            self.stats.incomplete = True
+            key = reason if reason in INCOMPLETE_REASONS else "other"
+            self.stats.incomplete_reasons[key] = self.stats.incomplete_reasons.get(key, 0) + entries
+
     # ------------------------------------------------------- coverage gaps
     def set_coverage_policy(self, policy: CoveragePolicy) -> None:
         """Install the budget this connector's partial gaps are judged against."""

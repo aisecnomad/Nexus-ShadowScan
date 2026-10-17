@@ -453,6 +453,15 @@ file_matches)`, now serves every gap site.
   (`_ledger_refutes`); a ledger that is not one the scanner writes stays with
   the unread-content check, which already holds back every missing finding
   of that connector.
+- **Strict accounting counts every link, as a budget of 0 does.**
+  `strict_coverage` named one skipped link per root and counted only that
+  one, and counted no special file past the first ten, so 50 dangling links
+  and 15 FIFOs gave `incomplete_reasons` `{unresolved-link: 1,
+  unscanned-input: 11}` under `--strict-coverage` and `{unresolved-link:
+  50, unscanned-input: 15}` under `--max-coverage-gap 0`, although
+  scanning.md calls the two one rule. The representative errors stay, and
+  `ConnectorContext.count_incomplete` counts each further entry under its
+  reason, as the budget's quiet ledger entries already did.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 
