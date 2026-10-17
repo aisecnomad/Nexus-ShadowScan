@@ -564,6 +564,12 @@ class Finding:
                 raise ValueError(f"finding {name} is required")
         d = {name: d[name] for name in _FINDING_FIELDS if name in d}
         _validate_shapes(d)
+        # The add_* methods keep these lists free of repeats; a report, cache
+        # entry or plugin result is canonicalized the same way at import, so a
+        # repeated tag cannot count twice in risk scoring, merging or diffs.
+        for name in _TEXT_LIST_FIELDS:
+            if name in d:
+                d[name] = list(dict.fromkeys(d[name]))
         if "metadata" in d:
             d["metadata"] = {k: v for k, v in d["metadata"].items() if k not in DERIVED_METADATA_KEYS}
         # Reading an old report preserves its identity rather than silently

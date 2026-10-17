@@ -782,6 +782,29 @@ class AwsConnector(BaseConnector):
             self._attest_call(operation, outcome)
         return result
 
+    def _resource_tags(self, client: Any, arn: Any) -> dict[str, str]:
+        """The tags of one Bedrock or AgentCore resource, through ``ListTagsForResource``.
+
+        Both control planes return a string map under ``tags``. ``GetAgent`` and
+        ``GetAgentRuntime`` carry no tags, so this is the only way an agent's
+        ``owner`` tag reaches its finding. Without an ARN (a listing whose
+        detail call already failed) there is nothing to look up; a denied or
+        failed call is reported by ``_safe`` and a malformed response here, and
+        the resource is recorded without tags either way.
+        """
+        if not isinstance(arn, str) or not arn:
+            return {}
+        response = self._safe(client.list_tags_for_resource, resourceArn=arn)
+        if response is None:
+            return {}
+        tags = response.get("tags") if isinstance(response, dict) else None
+        if not isinstance(tags, dict) or any(
+            not isinstance(key, str) or not isinstance(value, str) for key, value in tags.items()
+        ):
+            self.ctx.warn("cloud.aws: invalid list_tags_for_resource response; owner coverage incomplete")
+            return {}
+        return tags
+
     def _call(self, fn: Any, *args: Any, **kwargs: Any) -> tuple[Any, str]:
         """``_safe`` without recording: the result (None on failure) and the live scope outcome."""
         try:
@@ -942,6 +965,9 @@ class AwsConnector(BaseConnector):
         agent["_action_groups"] = groups
         agent["_knowledge_bases"] = knowledge_bases
         agent["_collaborators"] = collaborators
+        # After the DRAFT snapshot: tags are not a GetAgent field, and
+        # ``_h_bedrock_agent`` reads the agent's owner from them.
+        agent["tags"] = self._resource_tags(ba, agent.get("agentArn"))
         return agent
 
     def _collect_agentcore(self, region: str) -> Iterator[dict[str, Any]]:
@@ -959,6 +985,7 @@ class AwsConnector(BaseConnector):
             rec = {**rt, **_without_metadata(detail)}
             rec["_kind"] = "agentcore-runtime"
             rec["_region"] = region
+            rec["tags"] = self._resource_tags(ac, rec.get("agentRuntimeArn"))
             yield rec
         for gw in self._list_items(ac, "list_gateways", "items"):
             gateway = guarded_record(
@@ -2065,6 +2092,7 @@ class AwsConnector(BaseConnector):
         auth = rec.get("authorizerConfiguration")
         if not auth:
             f.add_tag("iam-auth-only")
+        f.owner = first_tag(rec.get("tags"), "owner", "Owner")
         f.metadata.update(
             {
                 "status": rec.get("status"),

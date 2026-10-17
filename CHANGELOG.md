@@ -198,6 +198,43 @@ summarizes each release for people who install and operate ShadowScan.
     comes from `verifiedPublisher`. Agent identities need
     `AgentIdentity.Read.All`, now documented.
 
+### Credential quota disclosed, Bedrock owner tags collected, repeated tags count once (October 17)
+
+- `code.filesystem`: the credential matcher keeps at most five matches per
+  credential format and file (`MAX_SECRETS_PER_SIGNAL`). A file holding more
+  used to be reported with `count: 5`, no diagnostic and a complete scan, so a
+  clean-looking report under-counted the one finding whose count is read
+  literally. The matcher now looks one match past the quota when the caller
+  asks (`match_secrets(..., limited=)`), and the connector records
+  `<file>: more than 5 credentials matched <format>; credential evidence
+  incomplete` (exit 3) and sets `metadata.secrets_limited` on the finding.
+  Callers that report no credentials (connector blob scans) are unchanged.
+- `code.filesystem`: the tool credential files `.npmrc`, `.yarnrc`, `.netrc`,
+  `_netrc`, `.pypirc`, `.git-credentials`, `.boto` and `.s3cfg` are read by
+  name (`CREDENTIAL_FILE_NAMES`). They have no suffix, so no rule selected
+  them and a provider key committed in one was neither reported nor disclosed
+  as unread. The connector guide now says what makes a file analyzable and
+  that an unselected name (`*.jsonl`, `*.bak`, `*.j2`) is never opened.
+- `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
+  `GetAgent` and `ListAgents` return no tags and the collector never called
+  `ListTagsForResource`, so no live scan could attribute a Bedrock agent to
+  its owner (the offline fixture carried a `tags` block the API never
+  produces). Bedrock agents and AgentCore runtimes now carry their tags from
+  `ListTagsForResource` (covered by the documented `bedrock:List*` and
+  `bedrock-agentcore:List*` grants); a denied or malformed listing marks the
+  scan incomplete and leaves the resource without an owner. AgentCore
+  runtime findings gain `owner` from the `owner`/`Owner` tag.
+- Risk: `_weighted_factors` deduplicated capabilities but not tags or
+  providers, so a finding listing `hardcoded-credential` three times scored
+  100 where one scored 65. Each tag and provider now counts once, and
+  `Finding.from_dict` canonicalizes the list fields of a report, cache entry or
+  plugin result the way the `add_*` methods already did for built-in findings.
+- Docs: record export replay has a third pitfall (an export is sanitized, so
+  the replay of a live run cannot observe its `plaintext-credential`
+  evidence and reports no gap for the difference), and SECURITY.md lists the
+  plural `secrets`/`tokens` collection keys among the forms redaction keeps
+  by design.
+
 ### README: benchmark chart generated from the committed ShadowBench cases run (October 16)
 
 - From #249: the README's Benchmarks section gains a cross-tool chart. It is

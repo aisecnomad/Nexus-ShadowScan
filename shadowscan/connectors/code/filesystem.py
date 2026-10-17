@@ -289,6 +289,7 @@ from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
 from shadowscan.signatures.matcher import (
+    MAX_SECRETS_PER_SIGNAL,
     SOURCE_EXTENSIONS,
     WALL_BUDGET_FACTOR,
     LiteralScan,
@@ -663,6 +664,25 @@ MCP_CONFIG_NAMES = {
 }
 
 
+# Tool credential files whose whole purpose is to hold a token or password:
+# package-registry, HTTP and cloud client configuration that a repository or
+# a home-directory checkout can commit by mistake. They have no suffix (or a
+# leading dot only), so the suffix rules below never select them; the
+# credential pass is what reads them.
+CREDENTIAL_FILE_NAMES = frozenset(
+    {
+        ".npmrc",  # npm: //registry/:_authToken=...
+        ".yarnrc",  # Yarn 1: registry tokens
+        ".netrc",  # curl, pip, git: machine/login/password
+        "_netrc",  # the same on Windows
+        ".pypirc",  # twine: repository password or token
+        ".git-credentials",  # git credential store: one URL per line with its user and token
+        ".boto",  # legacy boto: aws_access_key_id / aws_secret_access_key
+        ".s3cfg",  # s3cmd: access_key / secret_key
+    }
+)
+
+
 def _analyzed_by_name(name: str) -> bool:
     """Whether the name alone makes a file source or configuration that the walker reads."""
     ext = Path(name).suffix.lower()
@@ -670,6 +690,7 @@ def _analyzed_by_name(name: str) -> bool:
         ext in SOURCE_EXTENSIONS
         or ext in TEXT_CONFIG_EXTENSIONS
         or name.lower().startswith(".env")
+        or name.lower() in CREDENTIAL_FILE_NAMES
         or is_manifest_name(name)
         or "." not in name
     )
@@ -825,6 +846,8 @@ class _ScanState:
     # Selected files the exhausted artifact budget left uninspected.
     artifacts_uninspected: int = 0
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
+    # relpath -> signature ids whose per-signal credential quota the file exceeded
+    secrets_limited: dict[str, set[str]] = field(default_factory=dict)
     # relpath, parsed servers
     mcp_files: list[tuple[str, list[dict[str, Any]]]] = field(default_factory=list)
     # relpath, text, kind, project root
@@ -3189,7 +3212,8 @@ class FilesystemConnector(BaseConnector):
         # 'api_key = api_key' names a variable. A notebook's raw document is JSON
         # with outputs and markdown, where an unquoted value is printed text.
         code = file.lang is not None and not from_raw_notebook
-        for m in self.index.match_secrets(raw, scan=file.literals, code=code):
+        limited: set[str] = set()
+        for m in self.index.match_secrets(raw, scan=file.literals, code=code, limited=limited):
             if (m.signature_id, m.value) in skip_values:
                 continue
             key = (m.signature_id, m.value, m.line)
@@ -3206,6 +3230,28 @@ class FilesystemConnector(BaseConnector):
                 snippet = self._file_excerpt(file, m.line, m.value)
             scan.secret_hits.setdefault(file.rel, []).append((m, snippet))
             self._record(file.proj, m, file.rel, None)
+        self._record_secret_limit(scan.secrets_limited, file.rel, limited)
+
+    def _record_secret_limit(self, secrets_limited: dict[str, set[str]], rel: str, limited: set[str]) -> None:
+        """Disclose that ``rel`` holds more credentials of a format than the matcher reports.
+
+        The per-signal quota (:data:`MAX_SECRETS_PER_SIGNAL`) bounds the
+        evidence one file can contribute, but a match past it is never read,
+        so the scanner cannot tell a real key there from a placeholder. A scan
+        that hid them would look complete while under-counting the one
+        finding kind whose count is read literally, so the file is recorded
+        as incomplete here and its finding carries ``secrets_limited`` (see
+        ``_secret_finding``). Each format is named once per file, however
+        many passes observe the quota.
+        """
+        new = limited - secrets_limited.get(rel, set())
+        if not new:
+            return
+        secrets_limited.setdefault(rel, set()).update(new)
+        self.ctx.error(
+            f"code.filesystem: {rel}: more than {MAX_SECRETS_PER_SIGNAL} credentials matched "
+            f"{', '.join(sorted(new))}; credential evidence incomplete"
+        )
 
     def _detect_mcp(self, file: _SourceFile) -> None:
         """Parse an MCP client/server configuration.
@@ -3345,6 +3391,7 @@ class FilesystemConnector(BaseConnector):
                 scan.infra_files,
                 scan.secret_hits,
                 scan.infra_names,
+                secrets_limited=scan.secrets_limited,
                 image_scale=image_scale,
             )
 
@@ -4093,7 +4140,7 @@ class FilesystemConnector(BaseConnector):
                 )
         for rel, hits in scan.secret_hits.items():
             with self._isolated(rel, "credential analysis"):
-                f = self._secret_finding(label, root, rel, hits)
+                f = self._secret_finding(label, root, rel, hits, limited=scan.secrets_limited.get(rel, set()))
                 if f:
                     yield f
 
@@ -4174,6 +4221,7 @@ class FilesystemConnector(BaseConnector):
         secret_hits: dict[str, list[tuple[Match, str]]],
         infra_names: dict[str, list[str]] | None = None,
         *,
+        secrets_limited: dict[str, set[str]],
         image_scale: float = 1.0,
     ) -> None:
         """Record a manifest artifact: an image, variable, credential, IaC type, model, action or module.
@@ -4200,7 +4248,8 @@ class FilesystemConnector(BaseConnector):
                 self._record(proj, m, rel, f"{art.kind}: {art.value}")
             val = art.extra.get("value") if art.extra else None
             if val and self.scan_secrets:
-                for m in self.index.match_secrets(val):
+                limited: set[str] = set()
+                for m in self.index.match_secrets(val, limited=limited):
                     m.line = art.line
                     # Judge the matched credential, not the whole assignment:
                     # a trailing comment must not hide a real key.
@@ -4210,6 +4259,7 @@ class FilesystemConnector(BaseConnector):
                         continue
                     secret_hits.setdefault(rel, []).append((m, f"{art.value}={redact(m.value)}"))
                     self._record(proj, m, rel, None)
+                self._record_secret_limit(secrets_limited, rel, limited)
         elif art.kind == "iac":
             for m in self.index.match_iac(art.value):
                 m.line = art.line
@@ -5594,6 +5644,8 @@ class FilesystemConnector(BaseConnector):
         root: Path,
         rel: str,
         hits: list[tuple[Match, str]],
+        *,
+        limited: AbstractSet[str] = frozenset(),
     ) -> Finding | None:
         # A structured value (e.g. a .env assignment) and the raw text pass can
         # both observe the same credential on the same line; count it once.
@@ -5624,6 +5676,11 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("test-code-only")
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
         f.metadata["count"] = len(hits)
+        if limited:
+            # The matcher stopped at its per-signal quota for these formats:
+            # ``count`` is a lower bound, and the scan is already incomplete
+            # (``_record_secret_limit``).
+            f.metadata["secrets_limited"] = sorted(limited)
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.SECRET

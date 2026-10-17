@@ -30,7 +30,7 @@ from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import (
     _HOST_TOKEN_RX,
     _SECRET_CANDIDATES_PER_SIGNAL,
-    _SECRETS_PER_SIGNAL,
+    MAX_SECRETS_PER_SIGNAL,
     WALL_BUDGET_FACTOR,
     MatchTimeoutError,
     keep_file_matches,
@@ -603,7 +603,7 @@ def _reference_regex_matches(
                 break
     if signal_type == "secret":
         # match_secrets applies the same deterministic post-filter after the regex pass,
-        # then reports at most _SECRETS_PER_SIGNAL kept matches per signal.
+        # then reports at most MAX_SECRETS_PER_SIGNAL kept matches per signal.
         keep = keep_secret_matches(
             [(sig_id, value, line) for sig_id, _, value, _, line in out],
             followers=[text[end : end + 1] for end in ends],
@@ -611,7 +611,7 @@ def _reference_regex_matches(
         kept_per_signal: Counter[tuple[str, int]] = Counter()
         reported = []
         for item, kept in zip(out, keep, strict=True):
-            if kept and kept_per_signal[item[:2]] < _SECRETS_PER_SIGNAL:
+            if kept and kept_per_signal[item[:2]] < MAX_SECRETS_PER_SIGNAL:
                 kept_per_signal[item[:2]] += 1
                 reported.append(item)
         out = reported

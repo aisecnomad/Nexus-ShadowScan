@@ -603,16 +603,20 @@ def _governance_factors(finding: Finding, inventory_present: bool, policy: RiskP
 
 
 def _weighted_factors(finding: Finding, index: SignatureIndex | None, policy: RiskPolicy) -> list[RiskFactor]:
-    """Capability, tag and provider weights, then the signatures' vendor risk notes."""
+    """Capability, tag and provider weights, then the signatures' vendor risk notes.
+
+    Each capability, tag and provider counts once however often a finding
+    lists it: ``Finding.from_dict`` canonicalizes imported lists, and a finding
+    a plugin or test builds directly is read the same way here, so a repeated
+    ``hardcoded-credential`` tag cannot lift a score on its own.
+    """
     factors: list[RiskFactor] = []
-    seen_caps = set()
-    for cap in _strings(finding.capabilities):
-        if cap in policy.capabilities and cap not in seen_caps:
-            seen_caps.add(cap)
+    for cap in dict.fromkeys(_strings(finding.capabilities)):
+        if cap in policy.capabilities:
             w, d = policy.capabilities[cap]
             factors.append(RiskFactor(f"capability:{cap}", d, w))
 
-    for tag in _strings(finding.tags):
+    for tag in dict.fromkeys(_strings(finding.tags)):
         if tag in policy.tags:
             w, d = policy.tags[tag]
             if w:
@@ -620,16 +624,16 @@ def _weighted_factors(finding: Finding, index: SignatureIndex | None, policy: Ri
 
     # Interactions, after the individual capabilities so the breakdown reads
     # as "these capabilities, and what holding them together enables".
-    # ``seen_caps`` holds only capabilities the policy weighs; match on the
-    # finding's own set so a combination still fires when an operator has
-    # zeroed one member's individual weight.
+    # The capability loop above weighs only capabilities the policy lists;
+    # match on the finding's own set so a combination still fires when an
+    # operator has zeroed one member's individual weight.
     present = set(_strings(finding.capabilities))
     for cid in sorted(policy.combinations):
         caps, weight, description = policy.combinations[cid]
         if weight and caps <= present:
             factors.append(RiskFactor(f"combination:{cid}", description, weight))
 
-    for pid in _strings(finding.model_providers):
+    for pid in dict.fromkeys(_strings(finding.model_providers)):
         if pid in policy.providers:
             w, d = policy.providers[pid]
             factors.append(RiskFactor(f"provider:{pid}", d, w))

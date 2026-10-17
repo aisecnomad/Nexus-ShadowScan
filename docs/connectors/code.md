@@ -554,7 +554,26 @@ also matches source files a scanned repository names freely
 analyzable file, prose and fixtures included, so while `scan_secrets` is on
 (the default) an oversize `README.md`, `CHANGELOG.md` or recorded cassette is
 a coverage gap like any other unread file:
-a key planted in it is never lost to an exit 0. With `scan_secrets: false`
+a key planted in it is never lost to an exit 0. A file is analyzable when its
+name selects an analysis: a source extension, a text configuration extension
+(`.json`, `.yaml`, `.toml`, `.ini`, `.cfg`, `.conf`, `.properties`, `.xml`,
+`.sh`, …), a `.env*` name, a dependency manifest, a name without any suffix
+(`Dockerfile`, `Makefile`, `credentials`), a file-name signature, or one of
+the tool credential files that exist only to hold a token or password:
+`.npmrc`, `.yarnrc`, `.netrc`, `_netrc`, `.pypirc`, `.git-credentials`,
+`.boto` and `.s3cfg`. Those credential files are read for the credential pass
+alone; their registry or package tokens are not provider credentials and are
+not reported, while a provider key committed in one is reported like a key
+anywhere else. A file whose name selects no analysis (`*.jsonl`, `*.bak`,
+`*.j2`, binary and media suffixes) is never opened, so it is neither scanned
+for credentials nor counted as a coverage gap; name such files in a file-name
+signature pack to read them. A file's credential finding carries at most
+five matches per credential format (`metadata.count` counts them). A file
+holding more credentials of one format is reported with that quota's worth of
+evidence, `metadata.secrets_limited` naming the formats, and the diagnostic
+`more than 5 credentials matched <format>; credential evidence incomplete`,
+which makes the scan incomplete: the count is a lower bound, never a complete
+inventory that happens to stop at five. With `scan_secrets: false`
 two more kinds are skipped with a warning and the scan stays complete: a
 documentation file (`.md`, `.mdc`, `.mdx`, `.txt` that is not a manifest, a
 coding-agent instruction document such as `CLAUDE.md` or `AGENTS.md`, an
