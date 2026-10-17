@@ -170,6 +170,33 @@ def test_fleet_rejects_malformed_incomplete_reasons_and_omission_counts(tmp_path
         merge_reports([("broken", report)])
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "within budget",
+        [],
+        {"within_budget": True},
+        {
+            "examined": 1,
+            "gaps": 1,
+            "blinding_gaps": 0,
+            "gap_entries": 1,
+            "weighted_gap_entries": 1.0,
+            "allowance": 2.0,
+            "within_budget": "yes",
+            "max_gap_ratio": 0.02,
+            "details": [],
+        },
+    ],
+)
+def test_fleet_rejects_a_malformed_coverage_ledger(tmp_path: Path, value):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    report["stats"][0]["coverage"] = value
+    with pytest.raises(ValueError, match="coverage"):
+        merge_reports([("broken", report)])
+
+
 def test_fleet_carries_incomplete_reasons_and_declared_omissions(tmp_path: Path):
     path = _report(tmp_path, "laptop", {".mcp.json": MCP})
     report = json.loads(path.read_text())

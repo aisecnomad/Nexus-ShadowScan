@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.coverage import validate_coverage_summary
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import Signature, SignatureIndex
 from shadowscan.utils.redaction import sanitize
@@ -400,6 +401,7 @@ def _decode_result(
         for reason, count in reasons.items()
     ):
         raise ValueError("invalid plugin incomplete reasons")
+    validate_coverage_summary(raw["coverage"])
     stats = ScanStats(**sanitize(raw))
     stats.connector = spec.id
     stats.incomplete = stats.incomplete or stats.skipped or bool(stats.errors)

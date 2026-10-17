@@ -109,6 +109,68 @@ def validate_max_coverage_gap(value: object) -> float:
     return ratio
 
 
+_SUMMARY_COUNTS = ("examined", "gaps", "blinding_gaps", "gap_entries")
+_SUMMARY_AMOUNTS = ("weighted_gap_entries", "allowance", "max_gap_ratio")
+_SUMMARY_KEYS = frozenset(
+    (*_SUMMARY_COUNTS, *_SUMMARY_AMOUNTS, "within_budget", "details", "details_truncated")
+)
+_GAP_KEYS = frozenset({"detail", "path", "kind", "entries", "full_weight", "relevance"})
+
+
+def validate_coverage_summary(value: object) -> dict[str, Any] | None:
+    """Return *value* if it has the shape :meth:`CoverageLedger.evaluate` publishes, else raise ValueError.
+
+    ``stats.coverage`` crosses a trust boundary twice: a process-mode plugin
+    worker returns it, and ``merge`` and ``dashboard`` read it from report
+    files. Both readers check every other statistic's type, so this one is
+    checked the same way: a forged or malformed ledger is refused rather than
+    republished as if the scanner had computed it. None means no gap was
+    recorded.
+    """
+    if value is None:
+        return None
+    message = "coverage must be a coverage ledger summary"
+    if (
+        not isinstance(value, dict)
+        or not set(value) <= _SUMMARY_KEYS
+        or not _SUMMARY_KEYS - {"details_truncated"} <= set(value)
+    ):
+        raise ValueError(message)
+    if any(type(value[key]) is not int or value[key] < 0 for key in _SUMMARY_COUNTS):
+        raise ValueError(message)
+    for key in _SUMMARY_AMOUNTS:
+        amount = value[key]
+        if (
+            isinstance(amount, bool)
+            or not isinstance(amount, int | float)
+            or not math.isfinite(amount)
+            or amount < 0
+        ):
+            raise ValueError(message)
+    if type(value["within_budget"]) is not bool:
+        raise ValueError(message)
+    truncated = value.get("details_truncated", 0)
+    if type(truncated) is not int or truncated < 0:
+        raise ValueError(message)
+    details = value["details"]
+    if not isinstance(details, list) or len(details) > MAX_PUBLISHED_GAPS:
+        raise ValueError(message)
+    for gap in details:
+        if (
+            not isinstance(gap, dict)
+            or set(gap) != _GAP_KEYS
+            or not isinstance(gap["detail"], str)
+            or not isinstance(gap["path"], str)
+            or gap["kind"] not in (BLINDING, PARTIAL)
+            or type(gap["entries"]) is not int
+            or gap["entries"] < 0
+            or type(gap["full_weight"]) is not bool
+            or gap["relevance"] not in ("low", "high")
+        ):
+            raise ValueError(message)
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class CoverageGap:
     """One stretch of content the scan could not read.

@@ -22,6 +22,7 @@ import shadowscan
 from shadowscan import engine as engine_module
 from shadowscan.cli import main
 from shadowscan.config import ConfigValidationError, ConnectorSpec, ScanConfig
+from shadowscan.coverage import CoverageGap, CoverageLedger, CoveragePolicy
 from shadowscan.engine import Engine
 from shadowscan.models import DERIVED_METADATA_KEYS, ScanStats
 from shadowscan.plugin_process import (
@@ -661,6 +662,10 @@ def test_result_encoder_still_rejects_nan():
         ("warnings", "ok"),
         ("started_at", []),
         ("skip_reason", {}),
+        # The coverage ledger (#254) is checked like every other statistic.
+        ("coverage", "within budget"),
+        ("coverage", []),
+        ("coverage", {"within_budget": True}),
     ],
 )
 def test_result_stats_schema_is_not_trusted(field, value):
@@ -669,6 +674,17 @@ def test_result_stats_schema_is_not_trusted(field, value):
     payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
     with pytest.raises(ValueError):
         _decode_result(payload, 1, ConnectorSpec(ENTRY))
+
+
+def test_result_stats_keep_a_coverage_ledger_the_worker_computed():
+    ledger = CoverageLedger()
+    ledger.add_examined(40)
+    ledger.record(CoverageGap(detail="code.filesystem: tests/a.bin: unreadable", path="tests/a.bin"))
+    _, summary = ledger.evaluate(CoveragePolicy())
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": summary}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.coverage == summary
 
 
 @pytest.mark.parametrize("value", [None, True, 1, [], "fork", "Process", ""])
