@@ -74,7 +74,14 @@ from shadowscan.utils.text import line_counter, python_source_lines
 
 MAX_AST_NODES = 50_000
 MAX_BOUND_CALLS = 512
-MAX_CALL_TEXT = 8192
+# Agent constructions carry their instructions and tool definitions inline, and
+# real ones pass 8 KiB (a realtime agent's prompt, a streamText call with its
+# tools): read only that far, their options were unread and the scan was
+# incomplete. A call longer than this still is.
+MAX_CALL_TEXT = 65_536
+# The parentheses a JavaScript call's argument text is balanced by, found by
+# the regex engine so a long call costs one pass over its parentheses only.
+_PARENTHESIS = re.compile(r"[()]")
 MAX_DECLARATION_TOKENS = 50_000
 # The Python binder checks the file's matching budget every this many visited
 # nodes: its walk is pure Python, which no regex timeout covers.
@@ -192,7 +199,11 @@ _FACTORIES = {
     ),
     "framework.smolagents": r"(?:CodeAgent|ToolCallingAgent|ManagedAgent)",
     "framework.transformers-agents": r"(?:ReactCodeAgent|ReactJsonAgent|HfAgent)",
-    "framework.openai-agents-sdk": r"(?:Agent|Runner\.run(?:_sync|_streamed|Sync)?)",
+    # RealtimeAgent is the voice agent of '@openai/agents/realtime' and 'agents.realtime':
+    # the same tools, handoffs and guardrails, run by a RealtimeSession / RealtimeRunner.
+    "framework.openai-agents-sdk": (
+        r"(?:Agent|RealtimeAgent|Runner\.run(?:_sync|_streamed|Sync)?|RealtimeSession|RealtimeRunner)"
+    ),
     "framework.openai-swarm": r"(?:Agent|Swarm)",
     "framework.claude-agent-sdk": r"(?:ClaudeSDKClient|query)",
     "framework.pydantic-ai": r"Agent",
@@ -2169,10 +2180,13 @@ def _javascript_calls(text: str, masked: str, bindings: dict[str, _Binding]) -> 
         if len(calls) >= MAX_BOUND_CALLS:
             raise SourceBudgetExceeded("source binding call limit exceeded")
         opening = match.end() - 1
-        depth, end = 1, opening + 1
-        while end < min(len(masked), opening + MAX_CALL_TEXT) and depth:
-            depth += (masked[end] == "(") - (masked[end] == ")")
-            end += 1
+        limit = min(len(masked), opening + MAX_CALL_TEXT)
+        depth, end = 1, limit
+        for parenthesis in _PARENTHESIS.finditer(masked, opening + 1, limit):
+            depth += 1 if parenthesis.group() == "(" else -1
+            if not depth:
+                end = parenthesis.end()
+                break
         symbol = ".".join(filter(None, (binding.symbol, *parts[1:])))
         # A longer call (a Genkit flow body, an agent with long instructions) is
         # analyzed from its first MAX_CALL_TEXT characters, as the Python binder

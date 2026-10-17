@@ -93,7 +93,12 @@ that are never silent:
   analyze (source, manifests, `.env`, configuration, MCP and agent files,
   notebooks) that is not text in a supported encoding makes the scan incomplete
   with `binary or undecodable content in analyzable file`; the rules above say
-  which invalid UTF-8 and NUL-bearing files are read instead. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  which invalid UTF-8 and NUL-bearing files are read instead. Under a test or
+  fixture path, with `include_tests` false and `strict_coverage` unset, such a
+  file (a syntax-highlighting sample, a PNG attachment saved as `.txt`) is read
+  for credentials only, its bytes as Latin-1 without NUL bytes and without
+  excerpts, and is then a warning that leaves the scan complete: its other
+  evidence would be discounted, and credentials never are. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
@@ -378,6 +383,13 @@ incomplete depends on what the file could hide:
   project's approval gate, which then covers only some actions. With credential
   detection on, or `include_tests: true`, the file is analyzable like any
   other and the gap returns; `strict_coverage` records it as an error.
+* With `include_tests` unset and `strict_coverage` unset, a file under a test
+  or fixture path that is read but cannot be fully analyzed (manifest XML that
+  does not parse, YAML that fails the integrity checks, source the lexer cannot
+  settle, a parser input defect) is a warning ending `test code is discounted
+  evidence (include_tests is false)`, and the scan stays complete. Its
+  credentials were scanned on the text as read. The same file outside a test
+  path is a gap, and `include_tests: true` or `strict_coverage` keeps it one.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
   document, is skipped and makes the scan incomplete (exit 3). With
   `strict_coverage: true` (`--strict-coverage`) it is recorded as an error

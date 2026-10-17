@@ -10,8 +10,9 @@ assignments and tenant-owned app registrations, then reports:
 
 Opt-in collections (default off):
 
-* ``include_agent_identities``: Entra Agent ID agent identities (Graph beta), which
-  enrich the service principal finding of the same id or stand alone;
+* ``include_agent_identities``: Entra Agent ID agent identities (read from Graph beta;
+  the listing needs ``AgentIdentity.Read.All``, which the base permissions do not
+  grant), which enrich the service principal finding of the same id or stand alone;
 * ``include_agent_registry``: Microsoft Agent 365 catalog packages, reported as
   vendor registry records (``metadata.registry_record``, registry
   ``microsoft-agent-365``, see :mod:`shadowscan.registries`).
@@ -563,9 +564,12 @@ class EntraConnector(BaseConnector):
     def collect(self) -> Iterable[dict[str, Any]]:
         self._auth()
         assert self.http
+        # Only properties of the v1.0 servicePrincipal resource: it defines neither publisherName
+        # nor createdDateTime, so selecting them returned nothing at best and risked a refused
+        # listing. The publisher comes from verifiedPublisher; offline exports may carry both.
         sp_select = (
-            "id,appId,displayName,appDisplayName,publisherName,servicePrincipalType,accountEnabled,"
-            "createdDateTime,tags,appOwnerOrganizationId,homepage,replyUrls,signInAudience,verifiedPublisher,"
+            "id,appId,displayName,appDisplayName,servicePrincipalType,accountEnabled,"
+            "tags,appOwnerOrganizationId,homepage,replyUrls,signInAudience,verifiedPublisher,"
             "notes,appRoleAssignmentRequired,appRoles,oauth2PermissionScopes,description,loginUrl"
         )
         sps = list(self._pages("/servicePrincipals", params={"$select": sp_select, "$top": 999}))

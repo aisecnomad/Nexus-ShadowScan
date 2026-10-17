@@ -55,6 +55,19 @@ A2A agent cards, M365 declarative agents, LangGraph/CrewAI manifests, exported
 low-code flows, IaC (Terraform, CloudFormation, ARM/Bicep, wrangler) and
 container files, `.env`/CI secret references, provider credentials (redacted).
 
+A JSON, YAML or TOML file with another name is read as an MCP configuration
+when its structure declares servers (an `mcpServers` or `mcp_servers` key, or
+`mcp` with `servers`, within six levels of mappings). A document that parses to
+an array or a scalar, or a YAML mapping that declares no servers, is not one,
+even when those keys appear in its values (a session transcript listing
+`mcp_servers`, a workflow example whose step writes an MCP configuration with
+a heredoc), and the other passes read it as ordinary configuration. A
+dedicated MCP configuration name (`.mcp.json`, `mcp.json`, `smithery.yaml`, …)
+is always parsed, so its defects still make the scan incomplete, as does a
+document that declares servers in malformed form or cannot be read at all.
+Workflows under `.github/workflows/` are read for the MCP configurations their
+agent steps take as inputs.
+
 Python and common JavaScript/TypeScript constructors are resolved against imports,
 including aliases, namespaces and ordinary CommonJS bindings. Generic loops,
 subprocess calls and repeated weak idioms cannot independently establish an agent.
@@ -609,11 +622,12 @@ that needs more, which ordinary code does not, is treated like one that imports
 a signature's library. Any other Python module over `max_ast_nodes` (default
 50000) keeps its lexical evidence without import-bound analysis: a warning in
 test code, an error elsewhere. A call into a signature's library is analyzed
-from its first 8,192 characters in Python, JavaScript and TypeScript alike. A
-longer JavaScript or TypeScript call (a Genkit flow body, an agent with long
-instructions) keeps its construction evidence, as does the rest of the file's
-import-bound evidence, but an option past that point is unread: the scan
-records `import-bound call at line N analyzed from its first 8192
+from its first 65,536 characters in Python, JavaScript and TypeScript alike;
+agent constructions carry their instructions and tool definitions inline and
+routinely pass the 8,192 characters this limit used to be. A longer JavaScript
+or TypeScript call keeps its construction evidence, as does the rest of the
+file's import-bound evidence, but an option past that point is unread: the
+scan records `import-bound call at line N analyzed from its first 65536
 characters; options after them were not read, so coverage is incomplete` and
 is incomplete (exit 3), a warning in test code as for the other binder limits.
 

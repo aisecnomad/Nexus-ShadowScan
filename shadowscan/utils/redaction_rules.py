@@ -295,6 +295,39 @@ _OPAQUE_RUN = re.compile(r"[A-Za-z0-9]{8,}")
 _CLI_WORD = re.compile(r"[a-z][a-z_-]*")
 
 
+# A read of one environment variable by its name: 'process.env.OPENAI_API_KEY',
+# 'os.environ["OPENAI_API_KEY"]', 'os.getenv("OPENAI_API_KEY")'. The variable's
+# name is not its value and the expression has no other operand, so it holds
+# no credential and stays visible after a credential name ('apiKey = ...'),
+# where it shows how the credential is read. Only these exact forms with an
+# upper-case variable name qualify: a default argument ('os.getenv("K", "v")'),
+# a fallback ('|| "v"') or any other operand keeps the value withheld.
+_ENVIRONMENT_LOOKUP = re.compile(
+    r"(?:process\.env|import\.meta\.env|Bun\.env)\.[A-Z_][A-Z0-9_]*+(?![\w$.(\[])"
+    r"|(?:process\.env|os\.environ|ENV)\[[ \t]*+(?P<subscript_quote>[\"'`])[A-Z_][A-Z0-9_]*+"
+    r"(?P=subscript_quote)[ \t]*+\]"
+    r"|(?:os\.getenv|os\.environ\.get|os\.Getenv|System\.getenv|Environment\.GetEnvironmentVariable"
+    r"|ENV\.fetch|Deno\.env\.get|getenv)\([ \t]*+(?P<argument_quote>[\"'])[A-Z_][A-Z0-9_]*+"
+    r"(?P=argument_quote)[ \t]*+\)"
+)
+# What may end an assigned value: the end of the text or line, a statement or
+# argument separator, a closing bracket, or blanks before an operator or comment.
+_VALUE_END_CHARACTERS = frozenset(" \t\r\n;,)}]")
+
+
+def _environment_lookup(text: str, start: int = 0, end: int | None = None) -> bool:
+    """Whether an environment variable read starts at ``start`` and ends the value there.
+
+    With ``end`` the read must span exactly ``text[start:end]``.
+    """
+    match = _ENVIRONMENT_LOOKUP.match(text, start)
+    if match is None:
+        return False
+    if end is not None:
+        return match.end() == end
+    return match.end() == len(text) or text[match.end()] in _VALUE_END_CHARACTERS
+
+
 def _kept_value(value: str) -> bool:
     """Empty, already withheld, or only variable references and placeholders."""
     value = value.strip()

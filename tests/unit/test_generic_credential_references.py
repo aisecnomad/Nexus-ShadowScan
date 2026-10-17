@@ -1,0 +1,204 @@
+"""The generic assigned-credential rule reports literals, not names of credentials.
+
+Its value class admits '.' and '_', so an environment read, a member chain or a
+variable passed through ('api_key = api_key') looked like a long, diverse key
+and was reported as a hard-coded credential at high risk. Labels made of words
+and documentation ellipses were reported the same way. A read of an
+environment variable by name was also withheld from evidence, which hid what a
+reviewer needs to see.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from shadowscan.connectors.common import placeholder_reason
+from shadowscan.signatures import SignatureIndex
+from shadowscan.utils.redaction import REDACTED, sanitize_text
+
+GENERIC = "heuristic.inline-credential"
+RANDOM = "R4nd0m9Qx2Vb7Lp6"  # the same synthetic value the rule's own tests use
+
+
+def _generic(index: SignatureIndex, text: str, *, code: bool) -> list[str]:
+    """The generic matches the scanner reports as credentials (not placeholders)."""
+    return [
+        m.value
+        for m in index.match_secrets(text, code=code)
+        if m.signature_id == GENERIC and placeholder_reason(m.value) is None
+    ]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "const anthropicApiKey = process.env.ANTHROPIC_API_KEY;",
+        "self.serper_search_api_key = serper_search_api_key",
+        'old_password = self.cleaned_data["old_password"]',
+        "usable_password = SetUnusablePasswordMixin.create_usable_password_field()",
+        'old_password = connection.settings_dict["PASSWORD"]',
+        "requireCredential: options.requireCredential ?? false,",
+        "api_key = settings.OPENAI_API_KEY",
+    ],
+)
+def test_names_and_member_chains_in_source_code_are_not_credentials(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=True) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Code in documentation and in configuration strings: code follows the chain.
+        "const FIRECRAWL_API_KEY = process.env.FIRECRAWL_API_KEY;",
+        "user.password = hasher.encode_md5_hash(md5_hash, salt)",
+        "(config) => ({ env: { FIRECRAWL_API_KEY: config.fireCrawlApiKey, URL: u } })",
+        # An environment or instance root is a reference wherever it is written.
+        "OPENAI_API_KEY=process.env.OPENAI_API_KEY",
+    ],
+)
+def test_member_chains_that_code_follows_are_not_credentials_in_any_text(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=False) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "const REQUEST_SCOPED_CREDENTIAL = 'request-scoped-credential';",
+        "const resolvedApiKey = 'fc-resolved-api-key-value';",
+        "FIRECRAWL_API_KEY: 'fc-shared-env-must-not-be-used',",
+    ],
+)
+def test_labels_made_of_words_are_not_credentials(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=True) == []
+
+
+def test_a_documentation_ellipsis_is_a_placeholder(index: SignatureIndex):
+    [match] = [
+        m for m in index.match_secrets('anthropic_api_key: "sk-ant-api03-..."') if m.signature_id == GENERIC
+    ]
+    assert placeholder_reason(match.value) == "placeholder-word"
+
+
+@pytest.mark.parametrize(
+    ("line", "code"),
+    [
+        (f"CUSTOM_API_KEY={RANDOM}", False),
+        (f"CUSTOM_API_KEY={RANDOM}", True),  # an unquoted random value in code (a comment) stays
+        (f'CUSTOM_API_KEY = "{RANDOM}"', True),
+        # In an env file an unquoted value is a literal, dotted or not.
+        ("DB_PASSWORD=Summer.Vacation2024", False),
+        ("SERVICE_API_KEY = 'XyZ9.QwErTy8.UiOp7AsDf6'", True),
+    ],
+)
+def test_literal_credentials_are_still_reported(index: SignatureIndex, line: str, code: bool):
+    assert _generic(index, line, code=code) != []
+
+
+def test_rejected_references_do_not_use_up_the_places_of_a_later_key(index: SignatureIndex):
+    # At most five matches per signal are reported; references are dropped
+    # before that cap, so a settings module full of them still shows its key.
+    references = "".join(f"self.service{n}_api_key = service{n}_api_key\n" for n in range(8))
+    found = _generic(index, references + f'BACKUP_API_KEY = "{RANDOM}"\n', code=True)
+    assert found == [f'BACKUP_API_KEY = "{RANDOM}']
+
+
+def _scan(tmp_path: Path, run_connector, files: dict[str, str]):
+    for name, content in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.errors, ctx.stats.errors
+    return findings
+
+
+def test_a_scan_reports_no_credential_for_references(tmp_path: Path, run_connector):
+    findings = _scan(
+        tmp_path,
+        run_connector,
+        {
+            "src/validate-env.ts": (
+                "export function validate() {\n"
+                "  const anthropicApiKey = process.env.ANTHROPIC_API_KEY;\n"
+                "  return anthropicApiKey;\n"
+                "}\n"
+            ),
+            "search/rm.py": (
+                "class SearchRM:\n"
+                "    def __init__(self, serper_search_api_key=None):\n"
+                "        self.serper_search_api_key = serper_search_api_key\n"
+            ),
+            "accounts/forms.py": (
+                "def clean(self):\n"
+                '    old_password = self.cleaned_data["old_password"]\n'
+                "    return old_password\n"
+            ),
+            "docs/setup.md": "```js\nconst FIRECRAWL_API_KEY = process.env.FIRECRAWL_API_KEY;\n```\n",
+        },
+    )
+    assert [f.title for f in findings if f.kind.value == "secret"] == []
+
+
+def test_a_scan_still_reports_a_literal_key_and_withholds_it(tmp_path: Path, run_connector):
+    findings = _scan(tmp_path, run_connector, {"settings.py": f'CUSTOM_API_KEY = "{RANDOM}"\n'})
+    [secret] = [f for f in findings if f.kind.value == "secret"]
+    assert RANDOM not in json.dumps(secret.to_dict(), default=str)
+
+
+# ------------------------------------------------------------------ evidence
+@pytest.mark.parametrize(
+    "line",
+    [
+        "const anthropicApiKey = process.env.ANTHROPIC_API_KEY;",
+        "const apiKey = import.meta.env.VITE_OPENAI_API_KEY;",
+        'api_key = os.environ["OPENAI_API_KEY"]',
+        'api_key = os.getenv("OPENAI_API_KEY")',
+        'api_key = os.environ.get("OPENAI_API_KEY")',
+        'String apiKey = System.getenv("OPENAI_API_KEY");',
+        'apiKey := os.Getenv("OPENAI_API_KEY")',
+        'api_key = ENV["OPENAI_API_KEY"]',
+        "apiKey: process.env.OPENAI_API_KEY,",
+    ],
+)
+def test_an_environment_read_stays_visible_after_a_credential_name(line: str):
+    assert sanitize_text(line) == line
+
+
+HEX = "a8f3c91d7e2b4f6a9d0c"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A default, a fallback or any other operand keeps the whole value withheld.
+        f'api_key = os.getenv("OPENAI_API_KEY", "{HEX}")',
+        f'const apiKey = process.env.OPENAI_API_KEY || "{HEX}";',
+        f'api_key = os.getenv("OPENAI_API_KEY") or "{HEX}"',
+        f'const apiKey = process.env.OPENAI_API_KEY ?? "{HEX}";',
+        f'apiKey = process.env.OPENAI_API_KEY + "{HEX}"',
+        f'apiKey: process.env.OPENAI_API_KEY, secret: "{HEX}"',
+    ],
+)
+def test_a_literal_beside_an_environment_read_is_still_withheld(line: str):
+    safe = sanitize_text(line)
+    assert HEX not in safe and REDACTED in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Not a read by name: a computed name, a method on the value, a variable,
+        # a call, or an unquoted literal in an env file.
+        "api_key = os.environ[name]",
+        "const apiKey = process.env.OPENAI_API_KEY.trim();",
+        "self.api_key = api_key",
+        "password = getpass.getpass()",
+        "DB_PASSWORD=Summer.Vacation2024",
+    ],
+)
+def test_other_values_after_a_credential_name_stay_withheld(line: str):
+    assert REDACTED in sanitize_text(line)

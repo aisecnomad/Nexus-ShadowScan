@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from shadowscan.connectors.code.source_semantics import MAX_CALL_TEXT
 from shadowscan.models import Kind
 
 _INITIALIZE = 'import { genkit } from "genkit";\nconst ai = genkit({plugins: []});\n'
@@ -179,12 +180,26 @@ def test_long_bound_agent_calls_are_read_partially(tmp_path, run_connector, suff
     # the unread options leave the scan incomplete as before.
     (tmp_path / f"app{suffix}").write_text(
         'import { Agent } from "@openai/agents";\n'
-        'const worker = new Agent({name: "worker", instructions: "' + "x" * 9000 + '"});\n'
+        'const worker = new Agent({name: "worker", instructions: "' + "x" * (MAX_CALL_TEXT + 1000) + '"});\n'
     )
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False)
     assert ctx.stats.incomplete
     assert any(f"app{suffix}: import-bound call at line 2" in error for error in ctx.stats.errors)
     assert any(f.kind == Kind.AGENT and "framework.openai-agents-sdk" in f.frameworks for f in findings)
+
+
+@pytest.mark.parametrize("suffix", [".js", ".ts"])
+def test_instructions_past_8_kib_are_read_in_full(tmp_path, run_connector, suffix):
+    # Agents with long inline instructions pass 8 KiB; read only that far, the
+    # options after the prompt (tools, handoffs) were unread and the scan incomplete.
+    (tmp_path / f"app{suffix}").write_text(
+        'import { Agent, tool } from "@openai/agents";\n'
+        'const worker = new Agent({name: "worker", instructions: "' + "x" * 9000 + '", tools: [lookup]});\n'
+    )
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), scan_secrets=False, use_git=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    [agent] = [f for f in findings if f.kind == Kind.AGENT and "framework.openai-agents-sdk" in f.frameworks]
+    assert "tool-use" in agent.capabilities
 
 
 @pytest.mark.parametrize("suffix", [".js", ".ts"])
