@@ -376,9 +376,12 @@ public repositories with the tool and read the committed benchmark metrics.
   shows in the baseline's diff for review.
 - 62 timing guards measured wall time for what is an algorithmic, CPU-bound
   question, so a parallel run failed linear code. They measure CPU time now,
-  which contention cannot inflate; `tests/perf.py` carries a calibrated
-  budget, a single retry and a `load_factor` for the few guards where elapsed
-  real time is genuinely the subject.
+  with inline `time.process_time()` bounds that contention cannot inflate.
+  `tests/perf.py` explains the choice and holds the helpers: a calibrated CPU
+  budget with a single retry (`assert_cpu_budget`, which no guard uses yet)
+  and a wall budget scaled by `load_factor` (`wall_budget`) for a guard whose
+  subject is elapsed real time. The symbolic-link listing-deadline test uses
+  it: its simulated cost is a sleep, which spends no CPU time.
 - `tests/unit/test_aws_stubber.py` exercises AWS collection through botocore's
   own `Stubber`: continuation tokens, the page cap, pages kept across a
   mid-listing failure, real `ClientError` shapes, and that an SDK error

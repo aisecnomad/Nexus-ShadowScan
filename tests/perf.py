@@ -7,7 +7,7 @@ process competing for the core — so under a parallel test run they failed on
 code that was perfectly linear. One was reproducibly flaky under load and
 passed in isolation.
 
-:func:`cpu_budget` measures CPU time instead. Algorithmic cost is CPU-bound,
+:func:`assert_cpu_budget` measures CPU time instead. Algorithmic cost is CPU-bound,
 so this is both the stricter and the more stable measurement: contention no
 longer inflates it, while a genuine blow-up still shows up in full.
 
