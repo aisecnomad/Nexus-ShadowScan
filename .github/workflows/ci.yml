@@ -150,6 +150,12 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - name: Validate threat and control mapping catalogs
         run: python -m shadowscan.mappings.validate
+      - name: Self-scan this checkout (a complete report is required)
+        run: |
+          # Findings do not fail this step; an incomplete scan (exit 3) does. The
+          # documented exclusions are in the config. It runs before the steps
+          # below write caches, reports and distributions into the checkout.
+          shadowscan scan -c examples/shadowscan.self-scan.yaml --format json -o "$RUNNER_TEMP/shadowscan-self-scan.json"
       - name: Check the vendored OCSF requirements match the reporter
         run: python -m tools.ocsf_schema --check
       - name: Check function and module size against the complexity baseline
@@ -243,6 +249,13 @@ jobs:
           name: shadowscan-sarif-${{ matrix.python }}
           path: shadowscan.sarif
           retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: shadowscan-self-scan-${{ matrix.python }}
+          path: ${{ runner.temp }}/shadowscan-self-scan.json
+          if-no-files-found: ignore
+          retention-days: 7
   container-security:
     runs-on: ubuntu-latest
     timeout-minutes: 30
