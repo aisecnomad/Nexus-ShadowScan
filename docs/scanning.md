@@ -359,7 +359,9 @@ recomputes it from the stats and treats a source whose summary states a
 different value as inconsistent (incomplete). A ledger summary that claims to
 be within budget while losing more than it allows, or whose part counts its
 own counts refute, is refused, and one over budget or blinded marks its
-connector incomplete whatever the report or a plugin worker says.
+connector incomplete whatever the report or a plugin worker says, in
+`shadowscan merge`, in a plugin worker's result and in `shadowscan diff`, which
+then resolves no finding from that report.
 
 Every gap a `code.filesystem` scan records (and every gap in a `code.github`
 or `code.gitlab` checkout, which that connector scans) is decided by one rule,

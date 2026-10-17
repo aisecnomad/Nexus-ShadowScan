@@ -443,6 +443,16 @@ file_matches)`, now serves every gap site.
   detail it publishes; `validate_coverage_summary`, and through it `shadowscan
   merge` and the plugin result check, accepts it as an optional non-empty
   string, so older reports load, and refuses any other value.
+- **Diff reads a ledger over budget as incomplete, as merge does.** Merge
+  and the plugin result check treat a stats ledger over budget or blinded as
+  an incomplete run whatever its `incomplete` flag says, but
+  `comparison._complete` read only the flag: a report whose `.mcp.json`
+  finding was gone and whose ledger said `within_budget: false` was
+  incomplete to `shadowscan merge` and still resolved the server in
+  `shadowscan diff`. `_complete` now applies the same rule
+  (`_ledger_refutes`); a ledger that is not one the scanner writes stays with
+  the unread-content check, which already holds back every missing finding
+  of that connector.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 
