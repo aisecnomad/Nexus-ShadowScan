@@ -1146,10 +1146,15 @@ def _is_coding_agent_doc(name: str) -> bool:
     return name.lower() in _CODING_AGENT_DOC_NAMES
 
 
-def _credential_store_name(name: str) -> bool:
-    """Whether ``name`` exists to hold credentials: a dotenv file or a tool credential file."""
-    lower = name.lower()
-    return lower.startswith(".env") or lower in CREDENTIAL_FILE_NAMES
+def _dotenv_name(name: str) -> bool:
+    """Whether ``name`` is a dotenv file (``.env``, ``.env.production``), which exists to hold credentials.
+
+    An oversize one was a gap before the coverage budget existed, as any oversize
+    analyzable file was, and stays one no budget absorbs. A tool credential file
+    (``CREDENTIAL_FILE_NAMES``) has been read only since the credential pass took
+    it up, as one entry of the budget when oversize, like other unread content.
+    """
+    return name.lower().startswith(".env")
 
 
 def _agent_file_signal(match: Match) -> bool:
@@ -3689,8 +3694,7 @@ class FilesystemConnector(BaseConnector):
         bytes may name a server table (``_oversize_declares_mcp``), so padding a
         ``deploy/tools.json`` that holds ``mcpServers`` hides it no better than
         padding a ``.mcp.json``. Nor does a file that exists to hold credentials
-        while they are scanned: a dotenv or tool credential file, unread,
-        hides one.
+        while they are scanned: a dotenv file, unread, hides one.
 
         While ``scan_secrets`` is on, none of the file's bytes was read for
         credentials, so its gap is never declared and never weighed down by its
@@ -3700,7 +3704,7 @@ class FilesystemConnector(BaseConnector):
         """
         selected = (
             self._agent_configuration(rel, name)
-            or (self.scan_secrets and _credential_store_name(name))
+            or (self.scan_secrets and _dotenv_name(name))
             or (_guessed_mcp_name(rel, name) and self._oversize_declares_mcp(on_disk, root_fd))
         )
         if not selected and not self.scan_secrets and self._discounted_test_gap(rel):

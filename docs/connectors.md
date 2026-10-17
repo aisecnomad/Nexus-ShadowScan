@@ -472,7 +472,7 @@ and agent configuration (an MCP configuration by its name in any letter case
 or by a server table its bytes name, a coding-agent instruction, rule or
 settings file, an agent card) makes the scan incomplete at once, as a link to
 it or a FIFO in its place does; an oversize manifest costs one entry, and an
-oversize `.env` or tool credential file exits 3 while credentials are scanned.
+oversize `.env` file exits 3 while credentials are scanned.
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
 relative to it without following a link in any path component. A root that
