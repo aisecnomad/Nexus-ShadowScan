@@ -1074,6 +1074,18 @@ public repositories with the tool and read the committed benchmark metrics.
   files, the pass now changes 13 against 12: a JSON schema's description
   under a `machine` word is new, and more words are withheld in the netrc
   examples of SECURITY.md and this log and in a test's netrc string.
+- Redaction: a netrc entry spread over adjacent string literals is read as
+  one string. In Python's implicit concatenation
+  (`NETRC = ("machine h\n"`, then `"login u\n"` and `"password v\n")`
+  on the next lines), a JavaScript or C `"...\n" +` chain, or literals
+  parted by a line continuation, the closing quote and the next line's
+  opening quote were tokens the format does not define, so the entry ended
+  after `machine` and the password was in the report excerpt; a single
+  literal was withheld. A closing quote, then blanks, line breaks, a `+` or
+  a line continuation, then an opening quote now part tokens as a blank
+  does, and an opening quote right before a token is skipped alone, so a
+  comment between two literals ends nothing either. Every earlier round of
+  the netrc rule showed these passwords; main had no netrc rule.
 - `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
   `GetAgent` and `ListAgents` return no tags and the collector never called
   `ListTagsForResource`, so no live scan could attribute a Bedrock agent to

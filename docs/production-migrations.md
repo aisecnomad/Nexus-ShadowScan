@@ -288,8 +288,9 @@ across this change reports findings as resolved or new that are neither.
   the format does not define on the line of the entry's last token or on
   a later line before a `password`, `passwd` or `account` in the entry's
   eight-line region, an indented or trailing comment in a string with `\n`
-  escapes, where a comment ends at the next one, and a netrc file's own
-  comment with a path in it, which runs to the end of its line;
+  escapes, where a comment ends at the next one, a netrc file's own
+  comment with a path in it, which runs to the end of its line, and an
+  entry spread over adjacent string literals;
   SECURITY.md lists the forms that can remain), so excerpts that showed
   them change, and so does a prose word after `default password`, or after
   `password` or `account` when `machine` or `login` comes before it on its

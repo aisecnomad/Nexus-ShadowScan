@@ -157,6 +157,22 @@ PATH_COMMENT_FORMS = [
     f"machine h\nforce yes\npassword {SECRET}\n",
     f"machine h\n  force\n  yes\n  login u\n  password {SECRET}\n",
 ]
+# An entry spread over adjacent string literals: Python's implicit
+# concatenation, a JavaScript or C '+' chain, literals parted by a line
+# continuation or by a comment. The closing quote and the next line's
+# opening quote were tokens the format does not define, so the entry ended
+# after 'machine' and the password was shown.
+ADJACENT_FORMS = [
+    f'NETRC = ("machine api.openai.com\\n"\n         "login bot\\n"\n         "password {SECRET}\\n")',
+    f'const n = "machine h\\n" +\n  "login u\\n" +\n  "password {SECRET}\\n";',
+    f'NETRC = "machine api.openai.com\\n" "login bot\\n" "password {SECRET}\\n"',
+    f"NETRC = ('machine h\\n'\n         'login bot\\n'\n         'password {SECRET}\\n')",
+    f'char *n = "machine h\\n"\n           "login u\\n"\n           "password {SECRET}\\n";',
+    f'NETRC = ("machine h "\n         "login bot "\n         "password {SECRET}")',
+    f'n = "machine h\\n" \\\n  "login u\\n" \\\n  "password {SECRET}\\n"',
+    f'n = "machine h\\n"\r\n  "login u\\n"\r\n  "password {SECRET}\\n"',
+    f'n = ("machine h\\n"  # the proxy\n  "password {SECRET}\\n")',
+]
 # What is glued to a closing quote is the next token, as clients read it: read
 # as the rest of the quoted name or value, a 'password' there hid its value.
 GLUED_FORMS = [
@@ -201,6 +217,7 @@ OWN_SYNTAX_FORMS = [
     + SPLIT_FORMS
     + COMMENT_FORMS
     + PATH_COMMENT_FORMS
+    + ADJACENT_FORMS
     + GLUED_FORMS
     + MACRO_FORMS
     + YARNRC_FORMS
@@ -234,6 +251,7 @@ def _only_adds_markers(before: str, after: str) -> bool:
     + SPLIT_FORMS
     + COMMENT_FORMS
     + PATH_COMMENT_FORMS
+    + ADJACENT_FORMS
     + GLUED_FORMS
     + MACRO_FORMS
     + YARNRC_FORMS,
@@ -304,6 +322,11 @@ def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(so
             f"machine fs.corp\n  # Bob's share is C:\\new\\data\n  login bob\n  password {REDACTED}\n",
         ),
         ("machine h\nforce yes\npassword VALUE\n", f"machine h\nforce yes\npassword {REDACTED}\n"),
+        # Adjacent string literals stay, and so does what parts them.
+        (
+            'NETRC = ("machine h\\n"\n  "login u\\n" +\n  "password VALUE\\n")',
+            f'NETRC = ("machine h\\n"\n  "login u\\n" +\n  "password {REDACTED}")',
+        ),
     ],
 )
 def test_names_hosts_and_layout_stay_visible(source, expected):
@@ -391,14 +414,20 @@ def test_a_prose_word_after_a_netrc_keyword_is_withheld(source, expected):
             '  password VALUE  # proxy for api.openai.com\n"""',
             "proxy for api.openai.com",
         ),
+        (
+            'NETRC = ("machine proxy.corp\\n"\n         "login bot\\n"\n'
+            '         "password VALUE\\n")  # proxy for api.openai.com',
+            "proxy for api.openai.com",
+        ),
     ],
 )
 def test_no_report_format_shows_a_netrc_password_from_source(tmp_path, index, line, shown):
     # An app that uses OpenAI and keeps a netrc entry in a string or a
     # comment: the entry ended at the escape a domain login seemed to hold, an
-    # indented comment in the string hid the lines after it, or a comment with
-    # an apostrophe and a path ended at the path, and the excerpt showed the
-    # password in every report format.
+    # indented comment in the string hid the lines after it, a comment with
+    # an apostrophe and a path ended at the path, or the entry was spread over
+    # adjacent string literals, and the excerpt showed the password in every
+    # report format.
     password = "pw-" + _random(24)
     (tmp_path / "app.py").write_text(
         "import openai\n\nclient = openai.OpenAI()\n" + line.replace("VALUE", password) + "\n"
