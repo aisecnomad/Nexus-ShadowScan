@@ -694,6 +694,32 @@ def test_profile_ci_reads_an_undecodable_file_for_credentials_before_it_declares
     assert default.stats.incomplete == (not rel.startswith("tests/"))
 
 
+@pytest.mark.parametrize("profile", ["default", "ci"])
+def test_an_oversize_fixture_left_unread_for_credentials_weighs_a_whole_entry(
+    tmp_path, run_connector, profile
+):
+    # No byte of it was read for a key, so its path does not weigh the gap down:
+    # four such cassettes in 65 entries cost 4.0 against 1.3, not 1.0.
+    cassette = '{"k": "' + _openai_project_key(1) + '", "pad": "' + "a" * 3_000 + '"}'
+    _tree(tmp_path, {f"tests/fixtures/rec{i}.json": cassette for i in range(4)})
+    _, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, profile=profile, max_file_size=1_000
+    )
+    assert ctx.stats.incomplete and ctx.stats.declared_omissions == 0
+    assert ctx.stats.coverage["weighted_gap_entries"] == pytest.approx(4.0)
+    assert {gap["full_weight"] for gap in ctx.stats.coverage["details"]} == {True}
+    # With credential detection off nothing reads it for a key: a counted skip.
+    _, off = run_connector(
+        "code.filesystem",
+        path=str(tmp_path),
+        use_git=False,
+        profile=profile,
+        max_file_size=1_000,
+        scan_secrets=False,
+    )
+    assert not off.stats.incomplete and off.stats.coverage is None
+
+
 def test_profile_ci_never_declares_a_fixture_it_could_not_read(tmp_path, run_connector, monkeypatch):
     # EACCES, simulated so the test holds when it runs with DAC override (root):
     # none of the file's bytes was read for credentials, so it is not declared.

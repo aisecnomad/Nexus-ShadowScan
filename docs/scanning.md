@@ -246,7 +246,8 @@ budget: `max_coverage_gap` (`--max-coverage-gap`), by default 2% of the entries
 the connector examined and at most 100 weighted entries. A gap under a
 dependency, cache or test path (`node_modules`, `vendor`, `tests`, `fixtures`
 and similar) is charged a quarter of its entries, unless the scanner could not
-read or decode the content. Within the budget the scan stays complete and the
+read or decode the content or, while `scan_secrets` is on, read no byte of it
+for credentials (a file over `max_file_size`). Within the budget the scan stays complete and the
 gaps' diagnostics remain warnings; over it the scan is incomplete and every
 partial gap is counted under its reason in `stats[].incomplete_reasons`.
 `strict_coverage: true` or `--max-coverage-gap 0` sets the budget to zero.
@@ -308,7 +309,10 @@ deployed code as the scan reads it: under a dependency tree or tool cache
 (`node_modules`, `vendor`, `third_party`, …), or under a test path while
 `include_tests` is off (the test paths of
 [test and fixture code](#test-and-fixture-code), test file names such as
-`test_*.py`, `*.test.ts` and `conftest.py` included). With `include_tests` a
+`test_*.py`, `*.test.ts` and `conftest.py` included), unless no byte of the
+file was read for credentials while `scan_secrets` is on: an oversize fixture
+or cassette, or one the scanner could not read, weighs a whole entry wherever
+it lies, since a key in it is missed. With `include_tests` a
 test path is source and its gaps weigh in full, and so does a file whose
 findings keep their full weight under a test path (an MCP configuration such
 as `tests/.mcp.json`, a coding-agent instruction, rule or settings file, an
@@ -386,9 +390,13 @@ applied in this order:
    credential detection while `scan_secrets` is on (a file over
    `max_file_size`, a notebook's saved outputs, a file that could not be
    opened or read) is recorded as without the
-   profile, an oversize file as one entry of the budget weighed by its path
-   like any other gap, or blinding when its name selects it as
-   configuration. A binary or undecodable file whose gap would be discounted
+   profile, an oversize file as one whole entry of the budget wherever it
+   lies (never a quarter under a test path), or blinding when it is agent
+   configuration or a dotenv or tool credential file. Oversize content is not
+   read for credentials at all: a key in an oversize fixture is missed while
+   the budget tolerates the entry, the trade-off
+   [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain)
+   records; raise `max_file_size` to read such files. A binary or undecodable file whose gap would be discounted
    or declared (a test fixture, or a documentation, example or generated file
    under `profile: ci`) is read for credentials before its gap is recorded,
    under every accounting, so `profile: ci` declares it only after that read.

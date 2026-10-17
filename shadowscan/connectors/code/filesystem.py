@@ -3682,6 +3682,12 @@ class FilesystemConnector(BaseConnector):
         padding a ``.mcp.json``. Nor does a file that exists to hold credentials
         while they are scanned: a dotenv or tool credential file, unread,
         hides one.
+
+        While ``scan_secrets`` is on, none of the file's bytes was read for
+        credentials, so its gap is never declared and never weighed down by its
+        path: a fixture or cassette under ``tests/`` costs a whole entry, as one
+        in ``src/`` does. Reading oversize content for credentials alone is not
+        done; a key in it is the trade-off the budget accepts (SECURITY.md).
         """
         selected = (
             self._agent_configuration(rel, name)
@@ -3699,6 +3705,7 @@ class FilesystemConnector(BaseConnector):
             + ("coverage incomplete" if selected else "coverage gap"),
             declared=f"code.filesystem: {rel}: skipped, {issue}",
             blinding=selected,
+            full_weight=self.scan_secrets,
             reason="oversize-file",
             unread_credentials=True,
         )

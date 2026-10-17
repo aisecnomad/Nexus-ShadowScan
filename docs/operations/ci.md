@@ -61,7 +61,8 @@ recognised by name wherever they lie (`*_pb2.py`, `*.generated.*`), so one under
 `src/` is declared too. A file over `max_file_size` is declared only while
 credential detection is off: with it on, a cassette or fixture over the limit
 may hide a key, and credentials are never declared without a read, so its gap is
-charged to the budget as without the profile (raise `max_file_size` for a
+charged to the budget as without the profile, a whole entry even under a test
+path (raise `max_file_size` for a
 repository whose recorded cassettes exceed it). A credential limit, and a gap in
 an MCP configuration, coding-agent file or agent card, are never declared. An
 undecodable documentation, example or generated file is read for credentials

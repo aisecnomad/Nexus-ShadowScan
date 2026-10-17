@@ -418,6 +418,16 @@ file_matches)`, now serves every gap site.
   is charged as without the profile, one whole entry. With this and the
   credential-only read of declared undecodable files, the README's claim
   that the profile never declares a file left unread for credentials holds.
+- **Content left unread for credentials weighs a whole entry.** The
+  previous change stopped declaring an oversize fixture, but charged it at a
+  quarter under a test path, so four 1 MB cassettes each holding a key, in a
+  65-entry tree, cost 1.0 against an allowance of 1.3 and the scan exited 0
+  with no key read, where main exited 3. The plan decided that content left
+  unread for credentials is never discounted or declared and is charged at
+  full weight whatever its path: `_oversize_gap` now passes `full_weight`
+  while `scan_secrets` is on (unreadable files already did). Reading oversize
+  content for credentials alone stays out of scope; SECURITY.md ("What can
+  remain") and scanning.md record the trade-off and its remedies.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 

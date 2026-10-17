@@ -468,6 +468,17 @@ coverage, even when a response includes an empty collection field.
 
 ### What can remain
 
+- **Credentials in a file over `max_file_size` are not read.** The credential
+  pass reads every analyzable file up to `max_file_size` (1,000,000 bytes by
+  default), and no further: a key in an oversize cassette, fixture or data
+  export is not reported. The scan records the file as a coverage gap of a
+  whole entry wherever it lies (it is never declared by `profile: ci` or
+  weighed down as test code), so a few such files are tolerated within the
+  coverage budget, listed in `stats[].coverage.details` and counted in
+  `summary.tolerated_gaps`, and more of them exit 3. An oversize dotenv or tool
+  credential file (`.env`, `.npmrc`, `.netrc`) always exits 3. Raise
+  `max_file_size`, or set `--max-coverage-gap 0`, where such a key must not be
+  missed.
 - **Limitations:** Redaction cannot withhold a credential that nothing names or shapes as one,
   so treat reports as confidential. In evidence snippets only, a last-resort
   pass also withholds a quoted literal that looks generated: at least 20
