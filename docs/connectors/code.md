@@ -523,7 +523,9 @@ in advance: oversize files, unread symbolic links, non-regular entries,
 unparsed content and analysis limits under test, fixture, documentation,
 example and generated paths are warnings that leave the scan complete and are
 counted in the report's `declared_omissions`; every other gap still marks the
-scan incomplete. It conflicts with `strict_coverage`. See
+scan incomplete. Documentation and example directories count below the file's
+project root, so a project under `demo/` or `examples/svc/` with its own
+manifest keeps its gaps. It conflicts with `strict_coverage`. See
 [the `ci` profile](../scanning.md#the-ci-profile) and the reason categories in
 `incomplete_reasons` that explain an exit 3.
 

@@ -36,7 +36,7 @@ shadowscan code . --inventory ./inventory --fail-on high   # with inventory reco
 | `--no-secrets` | Skip credential detection |
 | `--strict-coverage` | Record incomplete file/symlink coverage as errors |
 | `--include-tests` | Let test/fixture code establish agents at full weight |
-| `--profile ci` | Declare oversize files, unread links and analysis limits under test, fixture, documentation, example and generated paths as counted omissions instead of gaps, so a complete source scan exits 0 (conflicts with `--strict-coverage`) |
+| `--profile ci` | Declare oversize files, unread links and analysis limits under test, fixture, documentation, example and generated paths (below the file's project root) as counted omissions instead of gaps, so a complete source scan exits 0 (conflicts with `--strict-coverage`) |
 | `--triage` | Fast subset scan (manifests, MCP/agent configs, flows, IaC only) |
 
 ### `shadowscan scan -c CONFIG`

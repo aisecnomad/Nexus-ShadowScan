@@ -44,8 +44,9 @@ certificate links each exit 3 by default, because the credential pass would
 have read them. A gate on the repository's source can declare those gaps in
 advance with `--profile ci`: a gap under a test, fixture, documentation, example
 or generated path becomes a warning that names it and is counted in
-`summary.declared_omissions`, and the scan stays complete; a gap in `src/` or at
-the root still exits 3. The example workflow passes the flag. Leave it out when
+`summary.declared_omissions`, and the scan stays complete; a gap in `src/`, at
+the root or in a project of its own under `demo/` or `examples/` (one that holds
+a manifest) still exits 3. The example workflow passes the flag. Leave it out when
 the gate should also establish that every fixture was read for credentials, and
 never combine it with `--strict-coverage`.
 

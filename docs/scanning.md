@@ -195,7 +195,11 @@ it and ends in `declared omission (profile ci)`, counted in
 `stats[].declared_omissions` and `summary.declared_omissions`, and the scan
 stays complete. Test paths are declared only while `include_tests` is false,
 when their evidence is discounted; with it set they are source like any other.
-Every other gap, in `src/`, at the repository root or in a path the profile
+Documentation and example directories count only below the file's project
+root, as they do for evidence: a directory that holds its own manifest
+(`demo/pyproject.toml`, `examples/svc/package.json`) is a deployable project
+reported at full weight, whatever it is called, so a gap in it still marks
+the scan incomplete. Every other gap, in `src/`, at the repository root or in a path the profile
 does not name, still marks the scan incomplete, and so does a connector
 deadline, a `max_files` or `max_entries` limit and a triage scan. The profile
 and `strict_coverage` conflict and are rejected together. The report of a

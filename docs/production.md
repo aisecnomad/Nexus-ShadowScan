@@ -538,7 +538,8 @@ or declare the gaps a source gate accepts with `profile: ci` (`--profile ci`):
 under it an oversize file, an unread link, a non-regular entry, unparsed content
 or an analysis limit under a test, fixture, documentation, example or generated
 path is a warning that leaves the scan complete and is counted in the report's
-`declared_omissions`, while every other gap still exits 3 (see
+`declared_omissions`, while every other gap still exits 3, including one in a
+project under `demo/` or `examples/` that holds its own manifest (see
 [the `ci` profile](scanning.md#the-ci-profile)). Every diagnostic that leaves a
 scan incomplete is counted by reason category in `summary.incomplete_reasons`
 and named on stderr with the exit 3.

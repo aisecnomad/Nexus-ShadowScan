@@ -104,7 +104,13 @@ public repositories with the tool and read the committed benchmark metrics.
   end in "declared omission (profile ci)", are counted in the new
   `declared_omissions` stat and leave the scan complete; every other gap, a
   connector deadline, a `max_files` limit and a triage scan still exit 3,
-  and the profile is rejected with `strict_coverage`. Every diagnostic that
+  and the profile is rejected with `strict_coverage`. Documentation and
+  example directories are judged below the file's project root, as
+  `negative_context` judges evidence: a project under `demo/` or
+  `examples/svc/` with its own manifest is reported at full weight, so a NUL
+  byte hiding its tool code still exits 3 under the profile (a review found
+  it declared). A directory link takes the project of the directory that
+  lists it. Every diagnostic that
   leaves a scan incomplete is counted by reason category in
   `stats[].incomplete_reasons` and `summary.incomplete_reasons`
   (`oversize-file`, `unresolved-link`, `unparsed-input`,

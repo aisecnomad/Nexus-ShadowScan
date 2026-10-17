@@ -1496,8 +1496,9 @@ class FilesystemConnector(BaseConnector):
             "default | ci; ci declares as omissions, with a warning that leaves the scan complete, the "
             "coverage gaps a source gate accepts in advance: oversize files, unread symbolic links, "
             "non-regular entries, unparsed content and analysis limits under test, fixture, documentation, "
-            "example and generated paths (test paths only while include_tests is false); every other gap "
-            "still marks the scan incomplete, and the report counts the omissions (default: default)"
+            "example and generated paths (documentation and example directories below the file's project "
+            "root, test paths only while include_tests is false); every other gap still marks the scan "
+            "incomplete, and the report counts the omissions (default: default)"
         ),
         "triage": (
             "fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC "
@@ -1648,6 +1649,9 @@ class FilesystemConnector(BaseConnector):
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
         self._lockfile_governed: dict[str, bool] = {}
+        # Files of the current root's walk -> the project root it assigned them,
+        # which decides whether the ci profile declares a gap there (_declared_omission).
+        self._entry_projects: dict[str, str] = {}
         # (project root, path) of settings files the walk skipped (a link gap or a non-regular entry).
         self._unread_settings: list[tuple[str, str]] = []
         # Settings files of the scanned tree that a remote API snapshot did not include (set by
@@ -1839,12 +1843,21 @@ class FilesystemConnector(BaseConnector):
         cassettes, fixtures, tutorials, samples and generated files. Test paths
         count only while ``include_tests`` is false, when their evidence is
         discounted; with it set they are source like any other.
+
+        Documentation and example directories count as ``negative_context``
+        counts them, below the file's project root: a project under ``demo/``
+        or ``examples/svc/`` holds its own manifest and is reported at full
+        weight, so its gaps are not declared either. The project root is the
+        one the walk assigned to ``rel`` (``_entry_projects``); a path the walk
+        assigned none, a project root itself among them, is not declared for
+        its directory names.
         """
         if self.profile != "ci":
             return False
         if _is_test_path(rel):
             return not self.include_tests
-        return _is_docs_path(rel) or _is_example_path(rel) or _is_generated_path(rel)
+        project_root = self._entry_projects.get(rel, rel)
+        return rel != project_root and negative_context(rel, project_root) is not None
 
     def _gap(
         self, rel: str, message: str, *, error: bool = False, suffix: bool = True, reason: str | None = None
@@ -2217,6 +2230,7 @@ class FilesystemConnector(BaseConnector):
             except OSError:
                 self.ctx.error(f"code.filesystem: could not inspect {root.name}")
                 return
+            self._entry_projects[root.name] = "."
             if size > self._size_limit(root.name) and self._skipped_oversize(root.name, root.name, size):
                 return
             yield root.name, root, ".", size
@@ -2259,6 +2273,7 @@ class FilesystemConnector(BaseConnector):
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
                 if self._excluded_file(rel) or not self._included(rel):
                     continue
+                self._entry_projects[rel] = proj
                 p = Path(dirpath) / fn
                 if fn.lower() in LOCKFILE_NAMES:
                     self._lockfile_governed[rel] = self._lockfile_manifest_beside(rel_dir, fn, filenames)
@@ -2343,13 +2358,26 @@ class FilesystemConnector(BaseConnector):
             kept.append(name)
         return kept
 
+    def _walk_declared(self, root: Path, rel: str, walk: _WalkCounters) -> bool:
+        """``_declared_omission`` for an entry the walk is listing.
+
+        A file's project is recorded before the walk examines it. A directory
+        entry (a directory link, a directory named like a configuration file)
+        has none, so the walker's lookup assigns it the project of the directory
+        that lists it, and the record keeps the gap ``_gap`` then records
+        consistent with this answer.
+        """
+        if self.profile == "ci" and rel not in self._entry_projects:
+            self._entry_projects[rel] = _project_root(root, rel, walk.project_roots, budget=walk.budget)
+        return self._declared_omission(rel)
+
     def _skip_non_regular(self, walk: _WalkCounters, root: Path, rel: str, kind: str) -> None:
         """Record an entry the scanner cannot read as a file although its name says it would.
 
         Like a link, such an entry hides whatever a client would find there:
         coverage is incomplete. The first few are named; the rest are counted.
         """
-        if self._declared_omission(rel):
+        if self._walk_declared(root, rel, walk):
             # Declared, counted and named in full: it does not take the gap budget below.
             self._gap(
                 rel, f"code.filesystem: {rel}: skipped, not a regular file ({kind})", reason="unscanned-input"
@@ -2413,7 +2441,7 @@ class FilesystemConnector(BaseConnector):
             self._lockfile_gap(rel, "symbolic link is not followed")
             return True
         message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
-        if self._declared_omission(rel):
+        if self._walk_declared(root, rel, walk):
             # One representative note per root, like the gap below, and it
             # leaves that gap's own representative slot for an undeclared link.
             if root not in self._declared_link_notes:
@@ -2711,6 +2739,7 @@ class FilesystemConnector(BaseConnector):
         try:
             self._unread_settings = []
             self._lockfile_governed = {}
+            self._entry_projects = {}
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
             # Enumeration hit max_entries or its share of the deadline: the

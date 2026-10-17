@@ -135,6 +135,24 @@ def test_ci_profile_turns_a_declared_omission_into_exit_0(tmp_path):
     assert conflict.exit_code == 1 and "--profile ci and --strict-coverage conflict" in conflict.output
 
 
+def test_ci_profile_exits_3_for_a_gap_in_a_deployable_project_named_demo(tmp_path):
+    # demo/ holds its own manifest: a deployable project, reported at full
+    # weight, so a NUL byte hiding its tool code is not a declared omission.
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "root"\nversion = "0.1"\n')
+    (tmp_path / "demo").mkdir()
+    (tmp_path / "demo" / "pyproject.toml").write_text(
+        '[project]\nname = "support-agent"\nversion = "1.0"\ndependencies = ["openai-agents"]\n'
+    )
+    (tmp_path / "demo" / "tools.py").write_bytes(b"from agents import function_tool\n\x00\n@function_tool\n")
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--profile", "ci", "-f", "json"])
+    assert result.exit_code == 3, result.output
+    # Without that manifest demo/ is sample code whose gap the profile declares.
+    (tmp_path / "demo" / "pyproject.toml").unlink()
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--profile", "ci", "-f", "json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["summary"]["declared_omissions"] == 1
+
+
 def test_module_entry_point_exits_1_on_a_usage_error(tmp_path):
     result = subprocess.run(
         [sys.executable, "-m", "shadowscan", "code", str(tmp_path), "--min-confidence", "1.5"],

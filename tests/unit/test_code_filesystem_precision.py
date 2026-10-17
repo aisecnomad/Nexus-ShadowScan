@@ -660,6 +660,60 @@ def test_non_regular_entry_is_unscanned_input_whatever_its_path(run_connector, t
     assert stats.incomplete and stats.incomplete_reasons == {"unscanned-input": 1}
 
 
+# A NUL byte hides the rest of a source file from the scanner (the shell tool below it).
+_HIDDEN_TOOL = b"from agents import function_tool\n\x00\n@function_tool\ndef shell(cmd: str) -> str: ...\n"
+_AGENT_PROJECT = '[project]\nname = "support-agent"\nversion = "1.0"\ndependencies = ["openai-agents"]\n'
+
+
+@pytest.mark.parametrize("project", ["demo", "examples/support", "docs/site"])
+def test_ci_profile_keeps_gaps_in_deployable_example_projects(run_connector, tmp_path, project):
+    # The project's own manifest makes it a deployable unit, whatever its
+    # directory is called: its evidence is reported at full weight
+    # (negative_context below the project root), so its gaps are not declared.
+    write(tmp_path, "pyproject.toml", '[project]\nname = "root"\nversion = "0.1"\n')
+    write(tmp_path, f"{project}/pyproject.toml", _AGENT_PROJECT)
+    write(tmp_path, f"{project}/agent.py", "from agents import Agent, Runner\nagent = Agent(name='a')\n")
+    (tmp_path / project / "tools.py").write_bytes(_HIDDEN_TOOL)
+    findings, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.incomplete and stats.declared_omissions == 0
+    assert [e for e in stats.errors if f"{project}/tools.py" in e and "undecodable" in e]
+    agent = next(f for f in findings if f.resource_type == "project")
+    assert agent.metadata["path"] == project and "example-code-only" not in agent.tags
+    # Below the project root, its own docs/ and examples/ are discounted, and declared.
+    (tmp_path / project / "tools.py").unlink()
+    (tmp_path / project / "docs").mkdir()
+    (tmp_path / project / "docs" / "tools.py").write_bytes(_HIDDEN_TOOL)
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and stats.declared_omissions == 1
+
+
+@pytest.mark.parametrize("directory", ["docs/snippets", "examples/basic"])
+def test_ci_profile_still_declares_gaps_in_plain_docs_and_example_trees(run_connector, tmp_path, directory):
+    write(tmp_path, "pyproject.toml", '[project]\nname = "root"\nversion = "0.1"\n')
+    (tmp_path / directory).mkdir(parents=True)
+    (tmp_path / directory / "tools.py").write_bytes(_HIDDEN_TOOL)
+    _, stats = scan(run_connector, tmp_path)
+    assert stats.incomplete
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and not stats.errors and stats.declared_omissions == 1
+
+
+@needs_symlinks
+def test_ci_profile_judges_directory_links_by_their_project(run_connector, tmp_path, tmp_path_factory):
+    # A directory link is never entered, so the walk records no project for
+    # it: the walker's lookup gives it the project of the directory listing it.
+    outside = tmp_path_factory.mktemp("outside")
+    write(tmp_path, "examples/svc/pyproject.toml", _AGENT_PROJECT)
+    (tmp_path / "examples" / "svc" / "lib").symlink_to(outside, target_is_directory=True)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api").symlink_to(outside, target_is_directory=True)
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.declared_omissions == 1
+    assert [w for w in stats.warnings if "docs/api" in w and "declared omission (profile ci)" in w]
+    assert [w for w in stats.warnings if "examples/svc/lib" in w and "coverage gap" in w]
+    assert not [w for w in stats.warnings if "examples/svc/lib" in w and "declared omission" in w]
+
+
 def test_ci_profile_rejects_strict_coverage_and_unknown_profiles(run_connector, tmp_path):
     write(tmp_path, "app.py", "print('hi')\n")
     with pytest.raises(ConnectorError, match="strict_coverage"):
