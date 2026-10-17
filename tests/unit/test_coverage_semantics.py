@@ -668,6 +668,32 @@ def test_profile_ci_never_declares_a_fixture_left_unread_for_credentials(tmp_pat
     assert off.stats.coverage is None and not off.stats.incomplete
 
 
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "docs/setup.md",
+        "examples/attachments/notes.txt",
+        "src/client.generated.json",
+        "tests/fixtures/dump.txt",
+    ],
+)
+def test_profile_ci_reads_an_undecodable_file_for_credentials_before_it_declares_it(
+    tmp_path, run_connector, rel
+):
+    # A documentation, example or generated file is declared like a test
+    # fixture, and like one it is read for credentials first: the key is found.
+    fixture = BINARY + f'\nCUSTOM_API_KEY = "{FIXTURE_KEY}"\n'.encode() + b"\x00\xff"
+    _tree(tmp_path, {rel: fixture})
+    found, ci = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile="ci")
+    assert not ci.stats.incomplete and ci.stats.declared_omissions == 1
+    assert [f.metadata.get("path") for f in found if f.kind.value == "secret"] == [rel]
+    assert FIXTURE_KEY not in repr([f.to_dict() for f in found])
+    assert any(rel in w and "read for credentials only; declared omission" in w for w in ci.stats.warnings)
+    # Without the profile it is no test fixture: blinding outside discounted test code.
+    _, default = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert default.stats.incomplete == (not rel.startswith("tests/"))
+
+
 def test_profile_ci_never_declares_notebook_outputs_unread_for_credentials(tmp_path, run_connector):
     import json
 
