@@ -217,6 +217,43 @@ def test_configuration_and_signature_changes_invalidate(tmp_path, index, monkeyp
     assert len(calls) == 3
 
 
+def test_a_stricter_coverage_budget_is_never_answered_from_a_looser_runs_cache(tmp_path, index, monkeypatch):
+    # One oversize file is a partial gap the default 2% budget tolerates, so
+    # the scan is complete and cached. The same input under max_coverage_gap 0
+    # is incomplete without the cache and must be incomplete with it too.
+    cfg = config(tmp_path)
+    repo = tmp_path / "repo"
+    for number in range(60):
+        (repo / f"module{number}.py").write_text(f"VALUE = {number}\n")
+    (repo / "agent.py").write_text("import langchain\n" + "#" * 2_000)
+    cfg.connectors[0].config["max_file_size"] = 1_000
+    calls = count_runs(monkeypatch)
+    first = Engine(cfg, index).run()
+    assert first.complete and first.stats[0].coverage["gaps"] == 1
+    replayed = Engine(cfg, index).run()
+    assert replayed.complete and replayed.stats[0].cached
+    # The tolerated gap is still published when the result comes from the cache.
+    assert replayed.stats[0].coverage == first.stats[0].coverage
+    cfg.max_coverage_gap = 0.0
+    strict = Engine(cfg, index).run()
+    assert not strict.stats[0].cached and not strict.complete
+    assert not strict.stats[0].coverage["within_budget"]
+    assert len(calls) == 2
+
+
+def test_a_cached_profile_scan_still_counts_its_declared_omissions(tmp_path, index):
+    # A complete ci-profile scan is never read as one that read everything:
+    # the replayed stats keep the omission the profile declared.
+    cfg = config(tmp_path)
+    (tmp_path / "repo" / "tests").mkdir()
+    (tmp_path / "repo" / "tests" / "large.py").write_text("x = 1\n" + "#" * 2_000)
+    cfg.connectors[0].config.update(profile="ci", max_file_size=1_000)
+    first = Engine(cfg, index).run()
+    assert first.complete and first.stats[0].declared_omissions == 1
+    replayed = Engine(cfg, index).run()
+    assert replayed.stats[0].cached and replayed.stats[0].declared_omissions == 1
+
+
 def test_inventory_and_confidence_are_reapplied_even_with_same_engine(tmp_path, index):
     cfg = config(tmp_path)
     first = Engine(cfg, index).run()
@@ -335,6 +372,28 @@ def test_cache_entry_with_non_text_warnings_is_a_miss(tmp_path, index, monkeypat
     assert result.findings and result.complete and not result.stats[0].cached
     assert len(calls) == 2
     assert all(isinstance(warning, str) for warning in result.stats[0].warnings)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [("coverage", {"within_budget": True}), ("coverage", []), ("declared_omissions", -1)]
+    + [("declared_omissions", value) for value in (True, 1.0, None)],
+)
+def test_cache_entry_with_a_malformed_coverage_account_is_a_miss(tmp_path, index, monkeypatch, field, value):
+    # As for warnings, the digest is recomputed: a stored ledger or omission count
+    # that the scanner could not have published must not be replayed as its own.
+    cfg = config(tmp_path)
+    calls = count_runs(monkeypatch)
+    Engine(cfg, index).run()
+    entry = next((tmp_path / "state").glob("*.json"))
+    data = json.loads(entry.read_text())
+    data["payload"][field] = value
+    data["payload_sha256"] = hashlib.sha256(_json(data["payload"])).hexdigest()
+    entry.write_text(json.dumps(data))
+    result = Engine(cfg, index).run()
+    assert result.complete and not result.stats[0].cached
+    assert result.stats[0].coverage is None and result.stats[0].declared_omissions == 0
+    assert len(calls) == 2
 
 
 def test_keyed_cache_rejects_an_entry_rewritten_without_the_key(tmp_path, index):

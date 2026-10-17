@@ -31,15 +31,17 @@ that replaces a built-in connector, which may read inputs the cache does not kno
 
 The fingerprint is a SHA-256 digest over the cache format, the ShadowScan version, a
 digest of the scanner's source, the signature index, the connector's name, id and
-configuration, a commitment to `SHADOWSCAN_IDENTITY_KEY` when it is set, and each input
-root: the content of every file below it, apart from directories a code scan excludes by
-name, plus the mode, times, device and inode of every file and directory, each file's
-size and, with `use_git`, each Git checkout's HEAD and shallow boundary. For
-`code.github` and `code.gitlab` only the checkout directories inside the `input`
-directory count. A code file over `max_file_size` contributes only its metadata.
-Hashing is bounded (512 MiB, 200,000 entries and 30 seconds per snapshot, 64 MiB per
-file); exceeding a bound, or meeting a symbolic link or special file, falls back to a
-full run.
+configuration, the scan-wide coverage gap budget (`max_coverage_gap`), a commitment to
+`SHADOWSCAN_IDENTITY_KEY` when it is set, and each input root: the content of every file
+below it, apart from directories a code scan excludes by name, plus the mode, times,
+device and inode of every file and directory, each file's size and, with `use_git`, each
+Git checkout's HEAD and shallow boundary. For `code.github` and `code.gitlab` only the
+checkout directories inside the `input` directory count. A code file over
+`max_file_size` contributes only its metadata. Hashing is bounded (512 MiB, 200,000
+entries and 30 seconds per snapshot, 64 MiB per file); exceeding a bound, or meeting a
+symbolic link or special file, falls back to a full run. Because the budget is part of
+the fingerprint, a stricter budget never reuses a result that a looser one judged
+complete.
 
 The input is fingerprinted again before a cached result is used, and a fresh collection
 follows when it changed. After a fresh collection it is fingerprinted once more; a
@@ -49,8 +51,8 @@ exits 3.
 
 Findings are stored before reconciliation, scoring and correlation, and those stages
 always run again. Only a result without errors that was neither skipped nor incomplete
-is stored. Its warnings are stored with it and replayed on every hit, and the
-connector's statistics report `cached: true` with zero objects examined. A result that
+is stored. Its warnings, coverage ledger (`coverage`) and `declared_omissions` are stored
+with it and replayed on every hit, and the connector's statistics report `cached: true` with zero objects examined. A result that
 carries credential pseudonyms is stored only when `SHADOWSCAN_IDENTITY_KEY` supplies a
 stable key.
 
