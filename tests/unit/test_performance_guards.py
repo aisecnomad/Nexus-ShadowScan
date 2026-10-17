@@ -28,6 +28,7 @@ from shadowscan.connectors.code.filesystem import (
 from shadowscan.engine import Engine
 from shadowscan.signatures import SignatureIndex
 from shadowscan.signatures.matcher import (
+    _FOLLOWER_CHARS,
     _HOST_TOKEN_RX,
     _SECRET_CANDIDATES_PER_SIGNAL,
     MAX_SECRETS_PER_SIGNAL,
@@ -606,7 +607,7 @@ def _reference_regex_matches(
         # then reports at most MAX_SECRETS_PER_SIGNAL kept matches per signal.
         keep = keep_secret_matches(
             [(sig_id, value, line) for sig_id, _, value, _, line in out],
-            followers=[text[end : end + 1] for end in ends],
+            followers=[text[end : end + _FOLLOWER_CHARS] for end in ends],
         )
         kept_per_signal: Counter[tuple[str, int]] = Counter()
         reported = []
