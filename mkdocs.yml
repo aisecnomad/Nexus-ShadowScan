@@ -182,6 +182,7 @@ nav:
   - Security: security.md
   - Release notes: release-notes.md
   - Changelog: changelog.md
+  - Engineering log: engineering-log.md
 
 extra:
   social:
