@@ -975,7 +975,10 @@ public repositories with the tool and read the committed benchmark metrics.
   (`Environment.GetEnvironmentVariable("X") ??`, `process.env.X?.trim() ||`,
   `configService.getX() ??`) and through operators, which may end a line or
   start the next one (also after a comment or a backslash continuation); a
-  blank line, `;`, `,`, a closing bracket or any other token ends it. The
+  blank line, `;`, `,`, a closing bracket or any other token ends it. Any
+  white space but a line end separates tokens, as do the zero-width space,
+  word joiner and byte order mark (a no-break space before `||` had ended the
+  value, which 90d22be and main reported). The
   operands are read once, left to right, within 512 characters of the
   match. A fallback, concatenation or
   ternary after it (`process.env.OPENAI_API_KEY || "<key>"`, `?? "<key>"`,
