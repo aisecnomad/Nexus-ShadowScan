@@ -15,6 +15,7 @@ import ast
 import io
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
@@ -68,3 +69,43 @@ def test_replaced_console_receives_output_from_a_submodule(monkeypatch):
     result = CliRunner().invoke(main, ["connectors", "--surface", "identity"])
     assert result.exit_code == 0, result.output
     assert "identity.okta" in output.getvalue()
+
+
+# Every click command the single cli.py module defined, by the name it had there.
+_COMMANDS = (
+    "code",
+    "controls_command",
+    "dashboard_command",
+    "diff",
+    "endpoint",
+    "gateway",
+    "inventory",
+    "inventory_check",
+    "inventory_stubs",
+    "jwt",
+    "list_connectors",
+    "mcp_registry",
+    "mcp_registry_snapshot",
+    "merge_command",
+    "run",
+    "scan",
+    "signatures",
+    "signatures_list",
+    "signatures_show",
+    "signatures_test",
+)
+
+
+@pytest.mark.parametrize("name", _COMMANDS)
+def test_each_command_stays_importable_from_the_package(name: str) -> None:
+    import click
+
+    import shadowscan.cli as cli
+
+    command = getattr(cli, name)
+    assert isinstance(command, click.Command)
+    # It is the command the group runs, not a copy.
+    registered = {id(c) for c in cli.main.commands.values()}
+    for group in (c for c in cli.main.commands.values() if isinstance(c, click.Group)):
+        registered |= {id(c) for c in group.commands.values()}
+    assert id(command) in registered

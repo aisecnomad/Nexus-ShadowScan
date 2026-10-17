@@ -720,5 +720,28 @@ from shadowscan.cli import (  # noqa: E402, F401
     _signatures,
 )
 
+# The click commands were importable from the single cli.py module, so a script
+# that invokes one directly (``from shadowscan.cli import scan``) keeps working.
+from shadowscan.cli._connectors import list_connectors as list_connectors  # noqa: E402
+from shadowscan.cli._controls import controls_command as controls_command  # noqa: E402
+from shadowscan.cli._dashboard import dashboard_command as dashboard_command  # noqa: E402
+from shadowscan.cli._diff import diff as diff  # noqa: E402
+from shadowscan.cli._endpoint import endpoint as endpoint  # noqa: E402
+from shadowscan.cli._inventory import inventory as inventory  # noqa: E402
+from shadowscan.cli._inventory import inventory_check as inventory_check  # noqa: E402
+from shadowscan.cli._inventory import inventory_stubs as inventory_stubs  # noqa: E402
+from shadowscan.cli._jwt import jwt as jwt  # noqa: E402
+from shadowscan.cli._mcp_registry import mcp_registry as mcp_registry  # noqa: E402
+from shadowscan.cli._mcp_registry import mcp_registry_snapshot as mcp_registry_snapshot  # noqa: E402
+from shadowscan.cli._merge import merge_command as merge_command  # noqa: E402
+from shadowscan.cli._scan import code as code  # noqa: E402
+from shadowscan.cli._scan import gateway as gateway  # noqa: E402
+from shadowscan.cli._scan import run as run  # noqa: E402
+from shadowscan.cli._scan import scan as scan  # noqa: E402
+from shadowscan.cli._signatures import signatures as signatures  # noqa: E402
+from shadowscan.cli._signatures import signatures_list as signatures_list  # noqa: E402
+from shadowscan.cli._signatures import signatures_show as signatures_show  # noqa: E402
+from shadowscan.cli._signatures import signatures_test as signatures_test  # noqa: E402
+
 # Backward-compat re-exports: tests monkeypatch these via "shadowscan.cli.<name>".
 from shadowscan.reporters.dashboard import render_dashboard as render_dashboard  # noqa: E402
