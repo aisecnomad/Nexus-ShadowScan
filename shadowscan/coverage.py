@@ -19,7 +19,8 @@ budget:
   entry, one unparseable manifest, one link whose target lies outside the tree.
   These accumulate against :attr:`CoveragePolicy.max_gap_ratio`. Within budget
   the scan stays complete and every gap is still published under
-  ``coverage_gaps``; over budget the scan is incomplete exactly as before.
+  ``stats[].coverage.details``; over budget the scan is incomplete exactly as
+  before.
 
 Gaps are weighted by whether the path could plausibly hide a deployed agent.
 An unreadable file under ``node_modules/`` or ``tests/fixtures/`` is weighted
@@ -27,8 +28,10 @@ down, not ignored: it still consumes budget, so a tree with thousands of them
 fails. ``strict_coverage`` sets the budget to zero and restores the original
 behaviour exactly.
 
-Nothing here can *hide* a gap. Tolerated gaps are reported in full, counted in
-``coverage_gap_entries``, and summarised in one line on the scan stats, so a
+Nothing here can *hide* a gap. Tolerated gaps are listed in
+``stats[].coverage.details`` (the first :data:`MAX_PUBLISHED_GAPS`, with
+``details_truncated`` counting the rest), counted in ``gaps`` and
+``gap_entries`` beside it, and summarised in one line on the scan stats, so a
 reviewer sees what was skipped whether or not it changed the exit code.
 """
 
@@ -323,5 +326,5 @@ class CoverageLedger:
             )
         return (
             f"coverage gaps tolerated: {lost} entr(y/ies) unread of {summary['examined']} examined, "
-            f"within the {policy.max_gap_ratio:.1%} budget; see coverage_gaps for each one"
+            f"within the {policy.max_gap_ratio:.1%} budget; see stats[].coverage.details for each one"
         )

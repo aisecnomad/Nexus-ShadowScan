@@ -8,10 +8,14 @@ that every tolerated gap is still published.
 
 from __future__ import annotations
 
+import json
 import os
+import re
+from pathlib import Path
 
 import pytest
 
+from shadowscan import coverage
 from shadowscan.coverage import (
     BLINDING,
     DEFAULT_MAX_GAP_RATIO,
@@ -271,6 +275,25 @@ class TestEndToEnd:
         stats = self._run(tmp_path)
         assert stats.coverage is not None
         assert stats.coverage["details"][0]["relevance"] == "high"
+
+    def test_the_verdict_and_readme_name_the_published_gap_list(self, tmp_path) -> None:
+        """An operator scripting against the key the scan names must find the gaps there."""
+        from shadowscan.models import ScanResult
+
+        self._tree(tmp_path, 200)
+        self._dangling_link(tmp_path, "tests/certs/ca")
+        stats = self._run(tmp_path)
+        (verdict,) = [warning for warning in stats.warnings if "tolerated" in warning]
+        match = re.search(r"see (\S+) for each one", verdict)
+        assert match is not None
+        assert match.group(1) == "stats[].coverage.details"
+        report = json.loads(ScanResult(stats=[stats]).to_json())
+        assert stats.coverage is not None
+        assert report["stats"][0]["coverage"]["details"] == stats.coverage["details"]
+        readme = (Path(__file__).resolve().parents[2] / "README.md").read_text(encoding="utf-8")
+        assert "`stats[].coverage.details`" in readme
+        assert "``stats[].coverage.details``" in (coverage.__doc__ or "")
+        assert "coverage_gaps" not in readme + (coverage.__doc__ or "")
 
     def test_a_clean_tree_publishes_no_coverage_block(self, tmp_path) -> None:
         self._tree(tmp_path, 20)
