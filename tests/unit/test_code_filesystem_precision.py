@@ -710,7 +710,10 @@ def test_ci_profile_judges_directory_links_by_their_project(run_connector, tmp_p
     _, stats = scan(run_connector, tmp_path, profile="ci")
     assert stats.declared_omissions == 1
     assert [w for w in stats.warnings if "docs/api" in w and "declared omission (profile ci)" in w]
-    assert [w for w in stats.warnings if "examples/svc/lib" in w and "coverage gap" in w]
+    # A link to a directory outside the tree is never budgeted; in a deployable
+    # project it is not declared either, so it leaves the scan incomplete.
+    assert stats.incomplete
+    assert [e for e in stats.errors if "examples/svc/lib" in e and "coverage incomplete" in e]
     assert not [w for w in stats.warnings if "examples/svc/lib" in w and "declared omission" in w]
 
 

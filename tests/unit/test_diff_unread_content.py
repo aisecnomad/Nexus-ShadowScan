@@ -144,6 +144,7 @@ def _gap(path: str) -> dict:
         "kind": "partial",
         "entries": 1,
         "full_weight": False,
+        "reason": "unresolved-link",
         "relevance": "high",
     }
 
