@@ -238,6 +238,9 @@ the scan is incomplete.
 | `max_gap_ratio` | The ratio in force |
 | `details` | The first 50 gaps (`MAX_PUBLISHED_GAPS`) in the order they were recorded |
 | `details_truncated` | Present only when more than 50 gaps were recorded: how many `details` leaves out. Every gap is still counted in `gaps` and `gap_entries`. |
+| `parts` | Present only when the connector was judged in parts (several roots or repositories): how many parts recorded a gap |
+| `parts_over_budget` | Present with `parts`: how many of them went over their own allowance, so `within_budget` is false exactly when it is above 0 |
+| `tolerated_gap_entries` | Present with `parts`: the entries of the parts that stayed within their own allowance, which `summary.tolerated_gaps` counts even when another part went over |
 
 Each entry of `details` has `detail` (the diagnostic), `path`, `kind`
 (`blinding` or `partial`), `entries`, `full_weight` (true when the path discount

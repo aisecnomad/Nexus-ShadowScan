@@ -110,14 +110,16 @@ def test_tolerated_coverage_gap_does_not_resolve_a_credential(tmp_path, index):
     assert any(_UNREAD in reason and "1 tolerated coverage gap" in reason for reason in comparison["reasons"])
 
 
-@pytest.mark.parametrize("unread", ["declared", "tolerated"])
+@pytest.mark.parametrize("unread", ["ci-profile", "tolerated"])
 def test_a_result_reused_by_incremental_keeps_unread_content_from_resolving(tmp_path, index, unread):
     # The review's --incremental case: the third run reuses the second's
     # result, which once dropped declared_omissions and stats.coverage, so
     # diff of the first and third runs read the credential as resolved.
     root = _repo(tmp_path / "repo")
-    if unread == "declared":
-        path, options, budget = root / "docs" / "setup.md", {"profile": "ci"}, 0.02
+    if unread == "ci-profile":
+        # The profile never declares a file left unread for credentials, so the
+        # oversize docs file is a gap the budget tolerates, under the profile too.
+        path, options, budget = root / "docs" / "setup.md", {"profile": "ci"}, 0.5
         path.parent.mkdir()
         path.write_text("# Setup\n\n" + _credential("docs"))
     else:
@@ -141,10 +143,8 @@ def test_a_result_reused_by_incremental_keeps_unread_content_from_resolving(tmp_
     current = scan()
     stats = current["stats"][0]
     assert current["summary"]["complete"] and stats["cached"] and _secrets(current) == []
-    if unread == "declared":
-        assert stats["declared_omissions"] == 1
-    else:
-        assert [gap["path"] for gap in stats["coverage"]["details"]] == ["src/app/settings.py"]
+    assert stats["declared_omissions"] == 0
+    assert [gap["path"] for gap in stats["coverage"]["details"]] == [path.relative_to(root).as_posix()]
     result = _diff(tmp_path, baseline, current)
     assert result.exit_code == 3, result.output
     comparison = json.loads(result.output)
@@ -183,12 +183,15 @@ def test_unread_content_inside_a_project_holds_it_back_whatever_its_name(tmp_pat
     baseline = _scan(index, root, max_file_size=4096, **options)
     projects = [f for f in baseline["findings"] if f.get("resource_type") == "project"]
     assert len({f["metadata"]["path"] for f in projects if f["metadata"]["path"] != "."}) == 1
-    # The agent's code moves into a file the scan no longer reads.
+    # The agent's code moves somewhere the scan no longer reads: behind a link
+    # the profile declares, or into a file the budget tolerates.
     os.unlink(os.path.join(project, b"agent.py"))
-    hidden = os.path.join(project, b"examples") if unread == "declared" else project
-    os.makedirs(hidden, exist_ok=True)
-    with open(os.path.join(hidden, b"agent.py" if unread == "declared" else b"tools.py"), "w") as handle:
-        handle.write(_AGENT + "#" * 5000 + "\n")
+    if unread == "declared":
+        os.makedirs(os.path.join(project, b"examples"))
+        os.symlink(b"../../outside/agent.py", os.path.join(project, b"examples", b"agent.py"))
+    else:
+        with open(os.path.join(project, b"tools.py"), "w") as handle:
+            handle.write(_AGENT + "#" * 5000 + "\n")
     current = _scan(index, root, max_file_size=4096, **options)
     assert current["summary"]["complete"]
     result = _diff(tmp_path, baseline, current)
@@ -212,7 +215,8 @@ def test_a_removed_project_resolves_unless_a_declared_omission_lies_in_it(tmp_pa
     )
     (project / "agent.py").write_text(_AGENT)
     (root / cassettes).mkdir(parents=True)
-    (root / cassettes / "run.json").write_text(json.dumps({"body": "y" * 5000}))
+    # A dangling link: declared under the profile, and no credential left unread.
+    (root / cassettes / "run.json").symlink_to(root / "missing-run.json")
     baseline = _scan(index, root, profile="ci", max_file_size=4096)
     assert baseline["summary"]["complete"] and baseline["summary"]["declared_omissions"] == 1
     assert "src/bot" in {f["metadata"].get("path") for f in baseline["findings"]}
@@ -251,14 +255,15 @@ def test_a_credential_removed_from_read_content_still_resolves_under_the_profile
     assert [f["metadata"]["path"] for f in comparison["resolved"]] == ["src/app/settings.py"]
 
 
-@pytest.mark.parametrize("unread", ["declared", "tolerated"])
+@pytest.mark.parametrize("unread", ["ci-profile", "tolerated"])
 def test_a_labeled_connectors_unread_content_does_not_resolve_a_credential(tmp_path, index, unread):
     # The review's labeled case: stats[].connector is the label while the
     # finding names code.filesystem, so the lookup missed and diff printed
     # "1 resolved", exit 0, for a key still in the file.
     root = _repo(tmp_path / "repo")
-    if unread == "declared":
-        path, options = root / "docs" / "setup.md", {"profile": "ci"}
+    if unread == "ci-profile":
+        # Never declared while unread for credentials: the budget tolerates it.
+        path, options = root / "docs" / "setup.md", {"profile": "ci", "max_coverage_gap": 0.5}
         path.parent.mkdir()
         path.write_text("# Setup\n\n" + _credential("docs"))
     else:
