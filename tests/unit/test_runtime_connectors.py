@@ -369,10 +369,118 @@ def test_ollama_and_model_artifact_risk_tags() -> None:
     assert "unsafe-serialization" in artifact_findings[0].tags
 
 
+def test_endpoint_host_reports_only_ai_relevant_inventory_rows() -> None:
+    """Regression: every named row of a general software inventory became a
+    0.7-confidence "Host AI runtime" finding with no AI check at all."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    findings = list(
+        connector.analyze(
+            [
+                {"name": "Random Updater", "type": "application"},
+                {"name": "Slack", "type": "application"},
+                {"name": "Claude Desktop", "type": "mcp-client"},
+                {"name": "Ollama", "type": "local-llm-runtime"},
+                {"name": "GitHub Copilot"},
+            ]
+        )
+    )
+    assert sorted(finding.resource for finding in findings) == [
+        "Claude Desktop",
+        "GitHub Copilot",
+        "Ollama",
+    ]
+    # Filtered rows are an informational note, not a coverage gap.
+    assert not connector.ctx.stats.incomplete
+    assert sum("not reported" in warning for warning in connector.ctx.stats.warnings) == 1
+
+
 def test_ebpf_known_local_model_port_is_tagged() -> None:
     findings = list(EbpfConnector(ConnectorContext()).analyze([{"binary": "python", "port": 11434}]))
     assert len(findings) == 1
     assert "local-llm-traffic" in findings[0].tags
+
+
+def test_ebpf_reads_native_tetragon_events() -> None:
+    """Regression: the connector claimed Tetragon support but only read flat
+    top-level keys, so native exports produced zero findings on a scan that
+    looked complete."""
+    connector = EbpfConnector(ConnectorContext(config={"input": str(FIXTURES / "ebpf/tetragon.jsonl")}))
+    findings = connector.run()
+    assert sorted(finding.resource for finding in findings) == [
+        "ai/agent-0//usr/bin/python3",
+        "ai/model-0//usr/local/bin/ollama",
+    ]
+    by_resource = {finding.resource: finding for finding in findings}
+    assert "local-llm-traffic" in by_resource["ai/agent-0//usr/bin/python3"].tags
+    assert "llm-egress" in by_resource["ai/model-0//usr/local/bin/ollama"].tags
+    assert connector.ctx.stats is None or not connector.ctx.stats.incomplete
+
+
+def test_ebpf_reads_camel_case_tetragon_and_sockaddr_arguments() -> None:
+    findings = list(
+        EbpfConnector(ConnectorContext()).analyze(
+            [
+                {
+                    "processKprobe": {
+                        "process": {"binary": "python3", "pod": {"namespace": "ai", "name": "agent-1"}},
+                        "args": [{"sockaddrArg": {"family": "AF_INET", "addr": "10.0.0.8", "port": 11434}}],
+                    }
+                }
+            ]
+        )
+    )
+    assert [finding.resource for finding in findings] == ["ai/agent-1/python3"]
+    assert "local-llm-traffic" in findings[0].tags
+
+
+def test_ebpf_reads_native_falco_alerts() -> None:
+    connector = EbpfConnector(ConnectorContext(config={"input": str(FIXTURES / "ebpf/falco.jsonl")}))
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == ["ai/agent-0/python3"]
+    assert "llm-egress" in findings[0].tags
+
+
+def test_ebpf_reads_native_tracee_events() -> None:
+    connector = EbpfConnector(ConnectorContext(config={"input": str(FIXTURES / "ebpf/tracee.jsonl")}))
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == ["ai/model-0/uvicorn"]
+    assert "local-llm-traffic" in findings[0].tags
+
+
+def test_ebpf_reads_native_hubble_flows() -> None:
+    connector = EbpfConnector(ConnectorContext(config={"input": str(FIXTURES / "ebpf/hubble.jsonl")}))
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == ["ai/agent-0/runtime-process"]
+    assert "llm-egress" in findings[0].tags
+
+    bare_flow = {
+        "verdict": "FORWARDED",
+        "IP": {"source": "10.8.0.14", "destination": "203.0.113.9"},
+        "l4": {"TCP": {"destination_port": 11434}},
+        "source": {"namespace": "ai", "pod_name": "agent-2"},
+    }
+    bare = list(EbpfConnector(ConnectorContext()).analyze([bare_flow]))
+    assert [finding.resource for finding in bare] == ["ai/agent-2/runtime-process"]
+    assert "local-llm-traffic" in bare[0].tags
+
+
+def test_ebpf_unrecognized_records_warn_once_and_mark_incomplete() -> None:
+    """An export full of unread events must not look like a clean scan."""
+    connector = EbpfConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.ebpf", started_at="2026-01-01T00:00:00Z")
+    findings = list(
+        connector.analyze(
+            [
+                {"unknown_tool": {"event": 1}},
+                {"another": "shape"},
+                {"binary": "python", "port": 11434},
+            ]
+        )
+    )
+    assert len(findings) == 1
+    assert connector.ctx.stats.incomplete
+    assert sum("unrecognized" in warning for warning in connector.ctx.stats.warnings) == 1
 
 
 def test_kubernetes_offline_resource_identity_and_security_tags() -> None:
@@ -426,6 +534,7 @@ def test_offline_fixture_connectors_run_through_the_shared_loader() -> None:
     otel = OtelConnector(ConnectorContext(config={"input": str(FIXTURES / "otel/genai_spans.json")}))
     findings = otel.run()
     assert len(findings) == 1
+    assert findings[0].resource == "service:example-agent/agent:example-agent"
     assert "must not be retained" not in str(findings[0].to_dict())
 
     mcp = MCPInventoryConnector(ConnectorContext(config={"input": str(FIXTURES / "mcp/tool_inventory.json")}))
@@ -445,9 +554,7 @@ def test_offline_fixture_connectors_run_through_the_shared_loader() -> None:
 
 def test_endpoint_malformed_records_limits_and_negative_detection() -> None:
     host_ctx = ConnectorContext()
-    host_findings = list(
-        HostConnector(host_ctx).analyze([{"name": 42}, {"path": "~/.config/codex/config.toml"}])
-    )
+    host_findings = list(HostConnector(host_ctx).analyze([{"name": 42}, {"path": "~/.codex/config.toml"}]))
     assert len(host_findings) == 1
 
     mcp = MCPInventoryConnector(ConnectorContext())
@@ -1153,6 +1260,47 @@ def test_kubernetes_malformed_cronjobs_retain_valid_findings_and_fail_closed(
     assert [finding.resource for finding in findings] == ["k8s:synthetic/ai/CronJob/scheduled-model"]
     assert ctx.stats is not None and ctx.stats.incomplete
     assert any("malformed" in warning for warning in ctx.stats.warnings)
+
+
+def test_otel_nested_export_keeps_resource_service_names() -> None:
+    """Regression: ``_records`` flattened resource attributes while ``analyze``
+    read ``resource["attributes"]``, so nested OTLP exports lost ``service.name``
+    and every caller collapsed into one ``unknown-service`` finding."""
+
+    def envelope(service: str, model: str) -> dict[str, object]:
+        return {
+            "resourceSpans": [
+                {
+                    "resource": {"attributes": [{"key": "service.name", "value": {"stringValue": service}}]},
+                    "scopeSpans": [
+                        {
+                            "spans": [
+                                {
+                                    "attributes": [
+                                        {"key": "gen_ai.system", "value": {"stringValue": "openai"}},
+                                        {"key": "gen_ai.request.model", "value": {"stringValue": model}},
+                                    ]
+                                }
+                            ]
+                        }
+                    ],
+                }
+            ]
+        }
+
+    findings = list(
+        OtelConnector(ConnectorContext()).analyze(
+            [envelope("payments-agent", "model-a"), envelope("support-agent", "model-b")]
+        )
+    )
+
+    assert sorted(finding.resource for finding in findings) == [
+        "service:payments-agent/agent:payments-agent",
+        "service:support-agent/agent:support-agent",
+    ]
+    by_service = {finding.resource: finding for finding in findings}
+    assert by_service["service:payments-agent/agent:payments-agent"].metadata["models"] == ["model-a"]
+    assert by_service["service:support-agent/agent:support-agent"].metadata["models"] == ["model-b"]
 
 
 def test_otlp_prompt_completion_and_message_events_never_reach_findings():
