@@ -326,7 +326,10 @@ and tests, which call and test the products they detect.
   large inputs. `python -m shadowscan.signatures.validate` rejects secret
   patterns slower than that allowance on a pathological keyword-dense
   corpus. Fixed linear hostname
-  and environment tokenizers use the shared input deadline instead. Filesystem scans share a configurable
+  and environment tokenizers use the shared input deadline instead, and so
+  does the judge that reads the text after each secret match: matches are
+  read in batches of 64, judged between regex executions, and the
+  executions together keep one pattern's allowance. Filesystem scans share a configurable
   execution budget across the file's matching operations (2 seconds by default).
   Exceeding either limit raises an error and makes the scan incomplete; timeout
   is never treated as a clean non-match. A costly custom pattern should be
