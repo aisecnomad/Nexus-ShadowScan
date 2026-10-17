@@ -207,8 +207,18 @@ example and generated code like any other source. A real-format credential under
 fixture or `cassettes/` path is still reported as a `secret` finding, because
 recorded cassettes capture real traffic and a committed key is exposed wherever
 it lives; without `include_tests` it has half weight and the `test-code-only`
-tag. Recognisable placeholders (repeated characters, marker words such as
-`EXAMPLE`, or very low character diversity) are never reported.
+tag. A credential under a documentation, example or generated path outside the
+test paths is likewise reported with that context's weight and confidence cap
+and the `docs-only`, `example-code-only` or `generated-code-only` tag. Recognisable
+placeholders (repeated characters, marker words such as `EXAMPLE` or their
+Portuguese, Spanish, French, German, Italian, Dutch, Indonesian and Turkish
+equivalents, a possessive followed by words such as `sua_chave_openai`, or
+very low character diversity) are never reported, and neither is an assigned
+value shaped like the name of another variable (`api_key = resolved_api_key`,
+`ENV_API_KEY = "ANTHROPIC_API_KEY"`, `settings.openai_api_key_v2`): the
+generic assigned-credential rule accepts an unquoted value because `.env` and
+shell assignments carry none, so it requires a token's shape, digits or evenly
+mixed cases, rather than an identifier's.
 Evidence that only names a coding agent in a test path (an environment variable,
 a display name, a dependency or a code pattern) likewise does not establish a
 coding-agent configuration; instruction documents and coding-agent config
@@ -660,9 +670,11 @@ program can be, still produce ordinary SDK evidence and leave coverage complete.
 
 Several rules keep weak observations from producing strong or high-risk
 findings. A credential whose value looks like a documentation placeholder
-(`REPLACE_ME`, `<your-key>`, `xxxx`, all zeros, `abcdef...` or `1234567890`
-sequences after the provider prefix) is never a `secret` finding; it is listed
-on the project finding as low-weight `example-credential` evidence. A key alone
+(`REPLACE_ME`, `<your-key>`, `sua_chave_openai`, `xxxx`, all zeros, `abcdef...`
+or `1234567890` sequences after the provider prefix) is never a `secret`
+finding; it is listed on the project finding as low-weight `example-credential`
+evidence. An assigned value shaped like an identifier (`api_key = resolved_api_key`)
+is not a credential at all. A key alone
 does not establish LLM usage, a coding-agent configuration needs more than an
 environment-variable or display-name mention (`GOOSE_PROVIDER` in a detector
 list is not "Goose configured"; a config file, instruction document,

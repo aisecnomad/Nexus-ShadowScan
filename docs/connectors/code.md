@@ -465,6 +465,17 @@ provider finding. Imports, dependencies and code patterns in tests still
 anchor (tagged `test-code-only`). A project dropped for this reason is named
 in a note, like one whose evidence is only uncorroborated patterns.
 
+A `secret` finding follows the same contexts: under a test path it keeps half
+weight and the `test-code-only` tag; under a documentation, example or
+generated path it keeps that context's weight and confidence cap and the
+`docs-only`, `example-code-only` or `generated-code-only` tag
+(`metadata.negative_contexts`, `metadata.confidence_cap`). The generic
+assigned-credential rule (`heuristic.inline-credential`) never reports a value
+shaped like the name of another variable (`self.api_key = resolved_api_key`,
+`include_tracing_api_key=include_tracing_api_key`, `BuildConfig.OPENAI_API_KEY`)
+or a translated placeholder (`sua_chave_openai`); see
+[scanning](../scanning.md#test-and-fixture-code).
+
 An `image:` line in a CI pipeline (`.github/workflows/`, `.gitlab-ci.yml`,
 `.circleci/`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `.drone.yml`,
 `.woodpecker*`, `.buildkite/`, `.gitlab/`, `Jenkinsfile`) runs a job in that

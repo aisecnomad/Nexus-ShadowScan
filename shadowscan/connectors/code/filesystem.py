@@ -169,6 +169,7 @@ from shadowscan.connectors.code.path_context import (  # noqa: F401 - re-exporte
     EXAMPLE_PATH_WEIGHT_SCALE,
     GENERATED_MAX_CONFIDENCE,
     GENERATED_WEIGHT_SCALE,
+    NEGATIVE_CONTEXT_TAGS,
     NegativeContext,
     _is_docs_path,
     _is_example_path,
@@ -802,6 +803,7 @@ class _ScanState:
     # Selected files the exhausted artifact budget left uninspected.
     artifacts_uninspected: int = 0
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
+    secret_project: dict[str, str] = field(default_factory=dict)  # relpath -> project root
     # relpath, parsed servers
     mcp_files: list[tuple[str, list[dict[str, Any]]]] = field(default_factory=list)
     # relpath, text, kind, project root
@@ -2996,6 +2998,7 @@ class FilesystemConnector(BaseConnector):
             else:
                 snippet = self._file_excerpt(file, m.line, m.value)
             scan.secret_hits.setdefault(file.rel, []).append((m, snippet))
+            scan.secret_project.setdefault(file.rel, file.proj_root)
             self._record(file.proj, m, file.rel, None)
 
     def _detect_mcp(self, file: _SourceFile) -> None:
@@ -3884,7 +3887,8 @@ class FilesystemConnector(BaseConnector):
                 )
         for rel, hits in scan.secret_hits.items():
             with self._isolated(rel, "credential analysis"):
-                f = self._secret_finding(label, root, rel, hits)
+                project_root = scan.secret_project.get(rel, ".")
+                f = self._secret_finding(label, root, rel, hits, project_root=project_root)
                 if f:
                     yield f
 
@@ -5374,6 +5378,7 @@ class FilesystemConnector(BaseConnector):
         root: Path,
         rel: str,
         hits: list[tuple[Match, str]],
+        project_root: str = ".",
     ) -> Finding | None:
         # A structured value (e.g. a .env assignment) and the raw text pass can
         # both observe the same credential on the same line; count it once.
@@ -5391,8 +5396,18 @@ class FilesystemConnector(BaseConnector):
         # The credential is still reported: cassettes record real traffic, and a
         # key committed under tests/ is as exposed as one anywhere else.
         test_only = not self.include_tests and _is_test_path(rel)
+        # Documentation, example and generated paths are discounted the same way
+        # project evidence is (``negative_context``): a credential-shaped value
+        # in a tutorial is more often a sample than a live key, but it is still
+        # reported, with the context named, because samples are sometimes real.
+        context = None if self.include_tests or test_only else negative_context(rel, project_root)
+        weight_scale = 1.0
+        if test_only:
+            weight_scale = 0.5
+        elif context is not None:
+            weight_scale = context.weight_scale
         for m, snip in hits:
-            apply_matches(f, [m], location=rel, snippet=snip, weight_scale=0.5 if test_only else 1.0)
+            apply_matches(f, [m], location=rel, snippet=snip, weight_scale=weight_scale)
         f.add_tag("hardcoded-credential")
         if not f.model_providers:
             # Only the generic rules matched (an assigned PASSWORD, ACCESS_TOKEN or *_API_KEY): the value
@@ -5402,10 +5417,19 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("unattributed-credential")
         if test_only:
             f.add_tag("test-code-only")
+        elif context is not None:
+            f.add_tag(NEGATIVE_CONTEXT_TAGS[context.reason])
+            f.metadata["negative_contexts"] = [context.reason]
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
         f.metadata["count"] = len(hits)
         f.owner = self._owner_for(root, rel) or f.owner
         finalize(f, self.index)
+        if context is not None and context.confidence_cap is not None:
+            cap_confidence(f, context.confidence_cap)
+            f.metadata["confidence_cap"] = {
+                "reason": NEGATIVE_CONTEXT_TAGS[context.reason],
+                "maximum": context.confidence_cap,
+            }
         f.kind = Kind.SECRET
         return f
 
