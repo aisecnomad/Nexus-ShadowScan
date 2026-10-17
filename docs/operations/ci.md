@@ -63,11 +63,11 @@ credential detection is off: with it on, a cassette or fixture over the limit
 may hide a key, and credentials are never declared without a read, so its gap is
 charged to the budget as without the profile (raise `max_file_size` for a
 repository whose recorded cassettes exceed it). A credential limit, and a gap in
-an MCP configuration, coding-agent file or agent card, are never declared. The
-example workflow passes the flag. Leave it out when the gate should also
-establish that every undecodable documentation, example or generated file was
-read for credentials (the profile still declares those without a credential
-read), and never combine it with `--strict-coverage` or `--max-coverage-gap 0`:
+an MCP configuration, coding-agent file or agent card, are never declared. An
+undecodable documentation, example or generated file is read for credentials
+before the profile declares it, as a binary test fixture is. The example
+workflow passes the flag. Never combine it with `--strict-coverage` or
+`--max-coverage-gap 0`:
 both are
 [strict accounting](../scanning.md#coverage-budget-and-strict-accounting), which
 counts every gap the profile declares, so the CLI refuses either pairing.

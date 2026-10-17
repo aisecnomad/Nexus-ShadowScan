@@ -387,10 +387,10 @@ applied in this order:
    `max_file_size`, a notebook's saved outputs) is recorded as without the
    profile, an oversize file as one entry of the budget weighed by its path
    like any other gap, or blinding when its name selects it as
-   configuration. A binary or undecodable test fixture is read for
-   credentials before its gap is recorded, under every accounting. The one
-   exception left is an undecodable file under a documentation, example or
-   generated path, which `profile: ci` declares without that read.
+   configuration. A binary or undecodable file whose gap would be discounted
+   or declared (a test fixture, or a documentation, example or generated file
+   under `profile: ci`) is read for credentials before its gap is recorded,
+   under every accounting, so `profile: ci` declares it only after that read.
 3. **Declared omissions.** Under `profile: ci`, a gap in a path the
    [profile](#the-ci-profile) names is declared: counted in
    `declared_omissions`, every entry of it, never charged to the budget. A
@@ -428,7 +428,10 @@ or generated path, but only while `scan_secrets` is off (an oversize test
 fixture is then skipped with a warning under every profile): with credential
 detection on (the default) a recorded cassette or fixture over the limit may
 hide a key, and credentials are never declared without a read, so its gap is
-charged to the budget as without the profile. Every declared entry is counted:
+charged to the budget as without the profile. For the same reason an
+undecodable file under those paths is read for credentials, its bytes as
+Latin-1 without NUL bytes, before it is declared, and a key in it is reported.
+Every declared entry is counted:
 of a run of skipped links,
 one warning per root names the first and the rest are counted without one, as
 the budget counts every undeclared link. Test paths are declared only while

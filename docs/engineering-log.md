@@ -139,6 +139,18 @@ file_matches)`, now serves every gap site.
   JSON, TOML or YAML fixture to the reader, whose content check
   (`_oversize_gap`) keeps the gap when its bytes name a server table and
   otherwise skips it with the same counted warning.
+- **Profile ci reads an undecodable declared file for credentials first.**
+  #255 read a binary test fixture for credentials before discounting it,
+  but #258 declared undecodable documentation, example and generated files
+  without any read, so under `--profile ci` a key in a binary
+  `docs/setup.md` or `src/client.generated.json` was never reported while
+  the same bytes at `tests/fixtures/dump.txt` were. `_read_source` now hands
+  any undecodable file whose gap would be discounted or declared
+  (`_credential_only_read`) to the credential-only read
+  (`_scan_undecodable_file`, formerly `_scan_binary_test_fixture`), which
+  records the declared gap after it, naming the read. `_is_generated_path`
+  still matches by file name anywhere, so `src/*.generated.*` and `*_pb2.py`
+  are declared; ci.md already says so, and such a file is now read first.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 

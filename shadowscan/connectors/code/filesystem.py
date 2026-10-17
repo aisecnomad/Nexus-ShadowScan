@@ -957,8 +957,8 @@ class _ScanState:
 
 
 @dataclass(frozen=True)
-class _BinaryTestFixture:
-    """A binary or undecodable file in discounted test code, read for credentials only.
+class _UndecodableFile:
+    """A binary or undecodable file whose gap is discounted or declared, read for credentials only.
 
     ``on_disk`` is its name below the open scan root, as ``_read_source`` read it.
     """
@@ -3256,9 +3256,9 @@ class FilesystemConnector(BaseConnector):
                 return
         named = by_name or self._named_by_signature(rel, file_matches)
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
-        if isinstance(loaded, _BinaryTestFixture):
+        if isinstance(loaded, _UndecodableFile):
             _note_unread_settings(proj, rel)
-            self._scan_binary_test_fixture(scan, proj, proj_root, rel, path, loaded, file_matches)
+            self._scan_undecodable_file(scan, proj, proj_root, rel, path, loaded, file_matches)
             return
         if loaded is None:
             _note_unread_settings(proj, rel)
@@ -3397,7 +3397,7 @@ class FilesystemConnector(BaseConnector):
         in such a file is a warning that leaves the scan complete, as an oversize
         test fixture or test code that does not parse already is. Credentials are
         never discounted: a fixture that cannot be decoded is still read for them
-        (``_scan_binary_test_fixture``). Strict accounting keeps every gap, and
+        (``_scan_undecodable_file``). Strict accounting keeps every gap, and
         so does agent configuration, whose evidence is not discounted in test
         code either (``_agent_configuration``, or ``full_weight`` from a caller
         that found an MCP configuration by its structure).
@@ -3455,21 +3455,36 @@ class FilesystemConnector(BaseConnector):
         else:
             self._gap(rel, message, error=error, suffix=suffix, reason=reason, full_weight=full_weight)
 
-    def _scan_binary_test_fixture(
+    def _credential_only_read(self, rel: str) -> bool:
+        """Whether an undecodable ``rel`` is read for credentials alone before its gap is recorded.
+
+        So it is when that gap would be discounted as test code
+        (``_discounted_test_path``, under every accounting) or declared by the
+        ``ci`` profile (``_declared_omission``: a documentation, example or
+        generated file), since credentials are never discounted or declared
+        without a read. Any other undecodable file is a blinding gap.
+        """
+        return self._discounted_test_path(rel) or self._declared_omission(rel)
+
+    def _scan_undecodable_file(
         self,
         scan: _ScanState,
         proj: _Project,
         proj_root: str,
         rel: str,
         path: Path,
-        fixture: _BinaryTestFixture,
+        fixture: _UndecodableFile,
         file_matches: list[Match],
     ) -> None:
-        """Read a binary or undecodable test fixture for credentials, the one evidence not discounted.
+        """Read a binary or undecodable file for credentials, the one evidence never discounted or declared.
 
-        Its bytes are read as Latin-1 without NUL bytes (``read_credential_text``),
-        so a key written in it is still found; nothing else is analyzed, and no
-        excerpt is cut from it. A fixture that cannot be read at all stays a gap.
+        The file is a test fixture whose gap is discounted, or a documentation,
+        example or generated file the ``ci`` profile declares
+        (``_credential_only_read``). Its bytes are read as Latin-1 without NUL
+        bytes (``read_credential_text``), so a key written in it is still found;
+        nothing else is analyzed, no excerpt is cut from it, and its gap is
+        recorded after: discounted, or declared with the read named. A file that
+        cannot be read at all stays a gap.
         So does one whose text reads as an MCP configuration (``tests/agent.yaml``
         with ``mcpServers``, ``_binary_declares_mcp``), which is reported at full
         weight in test code too: a JSON, TOML or YAML fixture is read for that
@@ -3551,7 +3566,7 @@ class FilesystemConnector(BaseConnector):
         fail-closed.
 
         The exception is test code whose evidence the walk discounts
-        (include_tests off, as _BinaryTestFixture decides it), where a file of
+        (include_tests off, as _credential_only_read decides it), where a file of
         deliberately invalid bytes is ordinary and no deployed agent lives. A
         vendored directory is no exception: the walk skips those by name,
         case-sensitively, while default_excludes is on, so what it reads under
@@ -3574,7 +3589,7 @@ class FilesystemConnector(BaseConnector):
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
-    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | _BinaryTestFixture | None:
+    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | _UndecodableFile | None:
         """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
 
         A notebook's last element lists the cells declared another language (``_notebook_source``).
@@ -3585,9 +3600,10 @@ class FilesystemConnector(BaseConnector):
         in it. None means nothing is analyzed; the recorded diagnostics say why.
         ``named`` is False when only a directory-wide signature glob selects the
         file, so a recognised binary artifact there (an image beside coding-agent
-        rules) is skipped without a coverage gap. A ``_BinaryTestFixture`` means
-        the file is binary or undecodable and in discounted test code: the caller
-        reads it for credentials only (``_scan_binary_test_fixture``).
+        rules) is skipped without a coverage gap. An ``_UndecodableFile`` means
+        the file is binary or undecodable and its gap is discounted test code or a
+        ``ci`` declaration (``_credential_only_read``): the caller reads it for
+        credentials only (``_scan_undecodable_file``), and records the gap after.
         """
         read_errors: list[str] = []
         read_notes: list[str] = []
@@ -3602,13 +3618,13 @@ class FilesystemConnector(BaseConnector):
         )
         for note in read_notes:
             self._note_file(rel, note)
-        binary_fixture = False
+        undecodable = False
         for issue in read_errors:
-            if issue == BINARY_CONTENT_ERROR and self._discounted_test_path(rel):
-                # Read for credentials first, under every accounting; the
-                # fixture's gap is recorded after that read, as an error under
-                # strict accounting (_scan_binary_test_fixture).
-                binary_fixture = True
+            if issue == BINARY_CONTENT_ERROR and self._credential_only_read(rel):
+                # Read for credentials first, under every accounting; the gap is
+                # recorded after that read: discounted, declared, or an error
+                # under strict accounting (_scan_undecodable_file).
+                undecodable = True
             elif self.strict_coverage:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             elif issue == "file exceeds max_file_size":
@@ -3616,7 +3632,7 @@ class FilesystemConnector(BaseConnector):
             else:
                 self._unreadable_gap(rel, issue)
         if text is None:
-            return _BinaryTestFixture(on_disk) if binary_fixture else None
+            return _UndecodableFile(on_disk) if undecodable else None
         if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
             # A checkout made without git-lfs holds a pointer in place of the
             # file: its content was never read, whatever the name promises.
