@@ -556,9 +556,11 @@ or declare the gaps a source gate accepts with `profile: ci` (`--profile ci`):
 under it an oversize file, an unread link, a non-regular entry, unparsed content
 or an analysis limit under a test, fixture, documentation, example or generated
 path is a warning that leaves the scan complete and is counted in the report's
-`declared_omissions`, while every other gap still exits 3, including one in a
-project under `demo/` or `examples/` that holds its own manifest (see
-[the `ci` profile](scanning.md#the-ci-profile)). `diff` never resolves a finding
+`declared_omissions`, while every other gap still exits 3, including one in any
+directory that holds its own manifest: a project under `demo/` or `examples/`,
+or a documentation site with its own `docs/package.json`, whose own content is
+source although the `docs/` and `examples/` directories below it are still
+declared (see [the `ci` profile](scanning.md#the-ci-profile)). `diff` never resolves a finding
 missing from content a complete current scan declared or tolerated as unread;
 it reports it `unknown` and exits 3 (see
 [comparing reports](scanning.md#comparing-reports)). Every diagnostic that leaves a

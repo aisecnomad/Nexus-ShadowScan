@@ -251,7 +251,13 @@ Documentation and example directories count only below the file's project
 root, as they do for evidence: a directory that holds its own manifest
 (`demo/pyproject.toml`, `examples/svc/package.json`) is a deployable project
 reported at full weight, whatever it is called, so a gap in it still marks
-the scan incomplete. A template is not such a project: a directory with
+the scan incomplete. That holds for any directory with a manifest, not only
+`demo/` and `examples/`: a documentation site that is its own package
+(`docs/package.json` in a Docusaurus or VitePress layout) is a project, so
+an oversize blog post, a generated search index or a binary page directly in
+it exits 3 under the profile. The `docs/` and `examples/` directories below
+such a project, and test paths anywhere, are still declared (`docs/docs/`
+in that layout); its own content is not. A template is not such a project: a directory with
 template syntax in its path (`templates/crew/{{cookiecutter.slug}}/`, a `{%`
 or `${` segment), or one none of whose JSON or TOML manifests parses (a
 templated `package.json`), is judged by the project around it, so the

@@ -62,6 +62,14 @@ tolerated gap.
   project around it; a manifest that cannot be read or is over a megabyte
   counts as parsing, so the doubt keeps the gap. Project findings and
   evidence weighting are unchanged.
+- **The guides say which directories are projects.** The scanning, CI and
+  production guides named only `demo/` and `examples/` projects as the
+  exception to the profile's documentation and example paths. Any directory
+  with a parsable manifest is one, including a documentation site that is
+  its own package (`docs/package.json` in a Docusaurus layout): its blog
+  posts, static assets and search index are its source, so their gaps exit
+  3, while the `docs/` and `examples/` directories below it stay declared.
+  The behaviour is intended and unchanged; the guides now say so.
 
 ### Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
 

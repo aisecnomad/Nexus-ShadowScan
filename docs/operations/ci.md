@@ -45,8 +45,12 @@ have read them. A gate on the repository's source can declare those gaps in
 advance with `--profile ci`: a gap under a test, fixture, documentation, example
 or generated path becomes a warning that names it and is counted in
 `summary.declared_omissions`, and the scan stays complete; a gap in `src/`, at
-the root or in a project of its own under `demo/` or `examples/` (one that holds
-a manifest) still exits 3. The example workflow passes the flag. Leave it out when
+the root or in any directory that holds a manifest of its own still exits 3.
+Such a directory is a project whatever it is called: a `demo/` or
+`examples/svc/` with a `pyproject.toml`, and also a documentation site with its
+own `docs/package.json`, whose blog posts and static assets are then its
+source. The documentation and example directories below a project are still
+declared (`docs/docs/` in that layout); its own content is not. The example workflow passes the flag. Leave it out when
 the gate should also establish that every fixture was read for credentials, and
 never combine it with `--strict-coverage`.
 
