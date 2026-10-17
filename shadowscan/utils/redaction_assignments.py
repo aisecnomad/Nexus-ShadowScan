@@ -765,9 +765,14 @@ _NETRC_WORD = re.compile(_NETRC_WORDS)
 # literal does, or an escape next to a keyword, also one that indentation
 # parts from it ('machine h\nlogin u', 'machine h\n  login u' in an unquoted
 # value). On a netrc file's own lines, which hold neither, a backslash before
-# a letter is part of a name ('login CORP\nancy').
+# a letter is part of a name ('login CORP\nancy'). A keyword that is a
+# directory of a Windows path is no such escape: one right after a path's
+# backslash ('\\nas\user\fred', 'C:\Users\bob\default\new') or right before
+# one that starts no escape ('C:\x\nlogin\y') reads the line as a netrc
+# file's own, so a comment that holds the path runs to the end of its line.
 _NETRC_KEYED = re.compile(
-    rf"{_NETRC_ESCAPE}[ \t]*+{_NETRC_WORDS}(?![A-Za-z0-9_])|(?<![A-Za-z0-9_]){_NETRC_WORDS}{_NETRC_ESCAPE}"
+    rf"{_NETRC_ESCAPE}[ \t]*+{_NETRC_WORDS}(?![A-Za-z0-9_]|\\(?![nrtvf]))"
+    rf"|(?<![A-Za-z0-9_\\]){_NETRC_WORDS}{_NETRC_ESCAPE}"
 )
 _NETRC_STRING = re.compile(rf"[\"'`]|{_NETRC_KEYED.pattern}")
 # The characters of an unquoted value, up to the next blank or escape. A token
