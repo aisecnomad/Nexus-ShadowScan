@@ -228,8 +228,10 @@ Gate CI on any non-zero exit: exit 1 means nothing was scanned, and an
 incomplete scan never reads as clean. On exit 3 the CLI names the reason
 categories on stderr (`scan incomplete (exit 3): oversize-file 2`) and the
 report counts them in `summary.incomplete_reasons`; `shadowscan code --profile ci`
-declares the gaps a source gate accepts (fixtures, cassettes, documentation) in
-advance and counts them in `summary.declared_omissions`. Exit 0 from a complete
+declares the gaps a source gate accepts (dangling test certificate links,
+malformed fixtures, generated code) in advance and counts them in
+`summary.declared_omissions`, never one that left a file unread for
+credentials. Exit 0 from a complete
 static scan does not prove that no agent runs; see
 [scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md).
 
