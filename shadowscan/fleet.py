@@ -55,6 +55,7 @@ from shadowscan.comparison import (
     _started_at,
     _summary_matches_findings,
 )
+from shadowscan.connectors.base import known_incomplete_reasons
 from shadowscan.coverage import validate_coverage_summary
 from shadowscan.governance import DECLARED_GOVERNANCE_KEY, valid_declared_governance
 from shadowscan.merge import merge
@@ -185,7 +186,10 @@ def _stats(report: dict[str, Any]) -> list[ScanStats]:
         ):
             raise ValueError("report stats incomplete reasons must map names to nonnegative integers")
         validate_coverage_summary(entry.get("coverage"))
-        out.append(ScanStats(**{k: v for k, v in entry.items() if k in _STATS_FIELDS}))
+        stats = ScanStats(**{k: v for k, v in entry.items() if k in _STATS_FIELDS})
+        # A source's reason keys are untrusted text bound for the banner: only the fixed categories pass.
+        stats.incomplete_reasons = known_incomplete_reasons(stats.incomplete_reasons)
+        out.append(stats)
     return out
 
 

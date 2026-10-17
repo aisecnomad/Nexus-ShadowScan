@@ -676,6 +676,20 @@ def test_result_stats_schema_is_not_trusted(field, value):
         _decode_result(payload, 1, ConnectorSpec(ENTRY))
 
 
+def test_result_stats_count_an_unknown_incomplete_reason_as_other():
+    # The plugin process writes its own reason keys; the scanner prints them in the
+    # table banner and the exit-3 line, so only the fixed categories pass.
+    stats = {
+        **asdict(ScanStats(ENTRY, "now")),
+        "incomplete": True,
+        "warnings": ["connector timed out"],
+        "incomplete_reasons": {"\x1b]0;pwned\x07\x1b[2J": 2, "src/app.py": 1, "timeout": 1},
+    }
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.incomplete_reasons == {"other": 3, "timeout": 1}
+
+
 def test_result_stats_keep_a_coverage_ledger_the_worker_computed():
     ledger = CoverageLedger()
     ledger.add_examined(40)

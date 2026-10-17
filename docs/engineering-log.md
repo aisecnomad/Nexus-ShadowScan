@@ -111,7 +111,11 @@ public repositories with the tool and read the committed benchmark metrics.
   `sanitization-limit`, `timeout`, `access-denied`, `upstream-error`,
   `analysis-limit`, `subset-scan`, `unscanned-input`, `other`), named on
   stderr with the exit 3 and shown in the table banner; the fleet reader
-  validates the new fields and loads older reports unchanged. The example
+  validates the new fields and loads older reports unchanged. A reason key
+  that a merged report or a plugin worker supplies outside these categories
+  is counted as `other`, and the banner escapes the reason text like other
+  report text, so a crafted report cannot send terminal control sequences
+  (a window title, a screen clear) through `shadowscan merge`. The example
   GitHub Action passes `--profile ci`.
 - **ADR-005, first move.** The ownership group of `FilesystemConnector`
   (`_git_info`, CODEOWNERS reading and matching, their caches and budgets)

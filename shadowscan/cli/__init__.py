@@ -19,6 +19,7 @@ from typing import IO, Any, NoReturn, TypeVar
 import click
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.text import Text
 
 from shadowscan import __version__
@@ -193,7 +194,7 @@ def _abandoned_exit_message(result: ScanResult, code: int, abandoned: int) -> st
     """The notice for leaving timed-out workers behind; with exit 3 it leads with the reasons."""
     message = f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]"
     if code == 3:
-        message = f"[yellow]{terminal_text(_incomplete_explanation(result))}[/yellow]\n{message}"
+        message = f"[yellow]{escape(terminal_text(_incomplete_explanation(result)))}[/yellow]\n{message}"
     return message
 
 

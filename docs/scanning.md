@@ -170,8 +170,11 @@ context that could not be established, so excerpts were withheld), `timeout`
 `access-denied`, `upstream-error` (a live API, network or rate-limit failure),
 `analysis-limit` (a per-file budget such as `max_ast_nodes` or the model
 literal limit), `subset-scan` (a `triage` scan), `unscanned-input` and `other`.
-A connector that was skipped, or timed out before it recorded a diagnostic,
-has no entry; the summary's `status` still says `incomplete`.
+Counts read back from a source report (`shadowscan merge`) or a plugin worker
+keep their totals, but a key that is not one of these categories is counted as
+`other`, so the table banner and the stderr line never print a source's own
+text there. A connector that was skipped, or timed out before it recorded a
+diagnostic, has no entry; the summary's `status` still says `incomplete`.
 
 ### The `ci` profile
 

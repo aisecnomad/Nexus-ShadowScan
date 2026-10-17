@@ -55,7 +55,9 @@ def _header(result: ScanResult) -> Text:
     if not result.complete:
         header.append("INCOMPLETE SCAN", style="bold red")
         if s["incomplete_reasons"]:
-            header.append(f" ({incomplete_reasons_text(s['incomplete_reasons'])})", style="red")
+            # Reason keys can come from a merged report or a plugin worker: escape them as report text.
+            reasons = terminal_text(incomplete_reasons_text(s["incomplete_reasons"]))
+            header.append(f" ({reasons})", style="red")
         header.append("  •  ", style="bold red")
     header.append(f"{s['total']} findings", style="bold")
     if s["declared_omissions"]:

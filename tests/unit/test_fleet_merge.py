@@ -212,6 +212,36 @@ def test_fleet_carries_incomplete_reasons_and_declared_omissions(tmp_path: Path)
     assert merged.summary()["incomplete_reasons"] == {"oversize-file": 3, "timeout": 1}
 
 
+def test_merge_counts_an_unknown_incomplete_reason_as_other(tmp_path: Path):
+    # A source report's reason keys reach the table banner: one outside the fixed
+    # categories (here a terminal title, clear-screen and colour sequence) is counted
+    # as "other", so the merged report and its terminal output name categories only.
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    broken = json.loads(path.read_text())
+    broken["stats"][0]["incomplete"] = True
+    broken["stats"][0]["incomplete_reasons"] = {
+        "\x1b]0;pwned\x07\x1b[2J\x1b[31mFAKE": 2,
+        "other": 1,
+        "timeout": 1,
+    }
+    broken["stats"][0]["warnings"] = ["connector timed out"]
+    broken["summary"]["complete"] = False
+    merged = merge_reports([("laptop", broken)])
+    assert merged.summary()["incomplete_reasons"] == {"other": 3, "timeout": 1}
+    hostile = tmp_path / "hostile.json"
+    hostile.write_text(json.dumps(broken))
+    result = CliRunner().invoke(main, ["merge", str(hostile), str(path), "--format", "table"])
+    assert result.exit_code == 3, result.output
+    assert "INCOMPLETE SCAN (other 3, timeout 1)" in result.output
+    assert "\x1b" not in result.output and "pwned" not in result.output
+    out = tmp_path / "merged.json"
+    result = CliRunner().invoke(main, ["merge", str(hostile), str(path), "--format", "json", "-o", str(out)])
+    assert result.exit_code == 3, result.output
+    report = json.loads(out.read_text())
+    assert report["summary"]["incomplete_reasons"] == {"other": 3, "timeout": 1}
+    assert all("pwned" not in json.dumps(entry["incomplete_reasons"]) for entry in report["stats"])
+
+
 def test_merge_refuses_a_reused_id_for_another_identity(tmp_path: Path):
     # Report ids are untrusted: a copy that keeps the ids but names other
     # resources must not fold the original findings into its own.

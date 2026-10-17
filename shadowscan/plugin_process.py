@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.connectors.base import known_incomplete_reasons
 from shadowscan.coverage import validate_coverage_summary
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import Signature, SignatureIndex
@@ -407,6 +408,8 @@ def _decode_result(
     _check_statistics(raw)
     stats = ScanStats(**sanitize(raw))
     stats.connector = spec.id
+    # Reason keys are the plugin process's own text, bound for the banner and the exit-3 line.
+    stats.incomplete_reasons = known_incomplete_reasons(stats.incomplete_reasons)
     stats.incomplete = stats.incomplete or stats.skipped or bool(stats.errors)
     findings = [Finding.from_dict(item) for item in data["findings"]]
     if any(finding.connector != spec.name for finding in findings) or stats.findings != len(findings):

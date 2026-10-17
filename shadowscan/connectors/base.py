@@ -192,6 +192,21 @@ def incomplete_reason(message: str) -> str:
     return "other"
 
 
+def known_incomplete_reasons(reasons: dict[str, int]) -> dict[str, int]:
+    """``reasons`` with every key outside ``INCOMPLETE_REASONS`` counted as ``other``.
+
+    For reason counts read from a report or a plugin worker: their keys are
+    untrusted text that reaches the table banner and the exit-3 line, which
+    must only ever name the fixed categories. The counts are kept, so an
+    unknown category still says the scan is incomplete.
+    """
+    known: dict[str, int] = {}
+    for reason, count in reasons.items():
+        key = reason if reason in INCOMPLETE_REASONS else "other"
+        known[key] = known.get(key, 0) + count
+    return known
+
+
 class ConnectorContext:
     """Runtime context handed to a connector."""
 
