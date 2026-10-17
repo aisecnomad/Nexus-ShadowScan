@@ -10,6 +10,10 @@ import pytest
 from shadowscan.connectors.code.source_semantics import MAX_AST_NODES, _Binding, _PythonBindings
 from shadowscan.models import Kind
 
+# Slow by nature: builds large synthetic modules to time scope binding.
+# `make test-fast` skips these; CI runs them.
+pytestmark = pytest.mark.slow
+
 
 def _bindings(text: str) -> dict[str, _Binding | None]:
     binder = _PythonBindings(text)

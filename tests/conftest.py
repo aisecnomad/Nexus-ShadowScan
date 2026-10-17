@@ -100,6 +100,12 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "production_budgets: the test exercises signature-matching budgets and keeps their shipped values",
     )
+    config.addinivalue_line(
+        "markers",
+        "slow: a timed sweep over every pattern or a large synthetic corpus. CI always runs "
+        "these; `make test-fast` skips them so a local edit-test loop stays short. Never mark a "
+        "test slow to avoid fixing it -- the marker is for tests that are slow by nature.",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:

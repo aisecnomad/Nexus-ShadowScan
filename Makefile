@@ -159,6 +159,10 @@ docker-test: docker ## Run container smoke test
 
 # --- Demo ------------------------------------------------------------------
 
+.PHONY: test-fast
+test-fast: ## Run the suite without the slow timed sweeps (CI still runs them)
+	python -m pytest -q -m "not slow"
+
 .PHONY: demo
 demo: ## Run the bundled offline demo scan
 	shadowscan scan -c examples/shadowscan.offline.yaml --format table

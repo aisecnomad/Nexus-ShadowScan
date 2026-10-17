@@ -1458,6 +1458,20 @@ def test_documented_coverage_budget_matches_the_default() -> None:
         )
 
 
+def test_ci_never_deselects_the_slow_timed_sweeps() -> None:
+    """``make test-fast`` is a local convenience; CI must still run everything.
+
+    The slow marker covers the ReDoS sweeps, which are the tests most worth
+    keeping and the most tempting to skip when a pipeline is over time.
+    """
+    for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        text = _read(workflow)
+        assert "not slow" not in text, (
+            f"{_relative(workflow)} deselects the slow tests; they are the ReDoS and "
+            "linearity sweeps and CI is the one place that must run them"
+        )
+
+
 def test_the_fail_closed_summary_names_the_coverage_budget() -> None:
     """The one line an operator reads before wiring exit 3 into a CI gate.
 

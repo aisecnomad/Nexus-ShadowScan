@@ -22,6 +22,10 @@ from shadowscan.engine import Engine
 from shadowscan.utils import redaction
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize_text
 
+# Slow by nature: scales annotation redaction across input sizes.
+# `make test-fast` skips these; CI runs them.
+pytestmark = pytest.mark.slow
+
 UNFINISHED = "import openai\n" + "token: (\n" * 3500  # 31 KB
 
 
