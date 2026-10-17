@@ -29,8 +29,9 @@ that starts when its worker begins. While the default is in effect, a connector 
 input may raise its own deadline, to at most 1800 s; a value the caller sets, 120 included, is
 never raised. On expiry a connector on a worker thread
 is cancelled cooperatively: the findings it had already produced are kept (in an incremental
-scan split by repository, only those of the repository in progress), its late result is
-discarded and its entry is marked incomplete. A plugin worker process is terminated instead,
+scan split by repository, every root's, those reused from the cache included), as copies
+prepared as a completed job's are, for at most 5 s of supervisor time; its late result is
+discarded and its entry is marked incomplete, with the reason `timeout`. A plugin worker process is terminated instead,
 and its results are discarded. The id of a connector whose worker thread is still running, for
 example blocked in an SDK call, is listed in `Engine.abandoned_workers`.
 `options.job_deadline_seconds` is the CLI's process deadline, not an engine one: the expiry

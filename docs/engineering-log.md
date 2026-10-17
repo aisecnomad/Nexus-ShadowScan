@@ -15,6 +15,39 @@ Counts and figures quoted in an entry are those of its date.
 
 ### Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
 
+- The incremental cache is keyed on the coverage gap budget it was judged
+  under. The engine hands each connector the scan-wide `max_coverage_gap`
+  as a private key, outside the connector configuration the cache
+  fingerprint hashes, so a tree that was complete under the default 2% and
+  cached was answered from that entry when rerun with `max_coverage_gap: 0`
+  and reported complete, while the same run without the cache exits 3. The
+  fingerprint now includes the budget. Entries also store the sanitized
+  coverage ledger and the declared omission count, which every replay used
+  to drop (a cached `ci`-profile scan read as one that had declared
+  nothing), and a load refuses either when it is not what the scanner
+  publishes. The entry format moves to 5, so every existing entry, keyed or
+  unkeyed, misses once after upgrading (`RELEASE_NOTES.md`,
+  `docs/production-migrations.md`).
+- An explicit 120-second connector timeout is honoured. The engine scaled a
+  job's deadline whenever `connector_timeout_seconds` equalled 120, so
+  `--connector-timeout-seconds 120`, the same YAML option or
+  `ScanConfig(connector_timeout_seconds=120.0)` was raised for a large tree
+  like the unset default. The unset default is now
+  `config.DEFAULT_CONNECTOR_TIMEOUT`, a 120.0 of its own float subtype that
+  the dataclass, the YAML loader and the legacy null use;
+  `connector_timeout_is_default()` tells it apart and only it is scaled.
+  Readers of the option still see a float equal to 120.
+- A job split into repository roots carries every root's account. The
+  incremental split rebuilt one `ScanStats` from the roots and dropped
+  `coverage`, `incomplete_reasons` and `declared_omissions`, so a multi-root
+  scan published no gap ledger, an incomplete one gave no reason and a
+  `ci`-profile one read as having declared nothing; the job now publishes
+  the roots' combined ledger (`coverage.combine_coverage_summaries`), the
+  summed reasons and the summed omissions. Each root is still judged
+  against its own budget. The job state kept only the last root's findings
+  list for an expiry, and a root reused from the cache registered none, so
+  an overrun in the last root reported only that root's findings; every
+  root's list is now kept, cache hits included.
 - An overrunning thread-mode plugin could still end a scan with exit 0 and
   no report. The engine prepares an expired job's surrendered findings on
   the supervisor thread, outside the worker's isolation, and caught only

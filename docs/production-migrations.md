@@ -7,6 +7,38 @@ revision; at release time they fold into the release notes. The
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
+## October 17 engine review migration (Unreleased)
+
+- **Every incremental cache entry misses once.** The entry format moves to 5:
+  entries now record the scan-wide `max_coverage_gap` they were judged under,
+  the coverage ledger and the declared omission count. Every existing entry,
+  keyed or unkeyed, misses once after upgrading, so the first incremental scan
+  analyses every repository root again and takes as long as a scan without the
+  cache; plan the first CI run accordingly. A later scan under another gap
+  budget misses as well instead of replaying the earlier verdict.
+- **An explicit deadline is fixed.** `connector_timeout_seconds: 120` (or
+  `--connector-timeout-seconds 120`) is honoured as a fixed 120 seconds; only
+  an unset deadline is raised to fit a large tree. Earlier sample
+  configurations set exactly that line: remove it from configurations copied
+  from them to keep the scaling. A `ScanConfig` given the deprecated
+  `connector_timeout` beside an explicit `connector_timeout_seconds` of 120 is
+  now rejected as giving both, as any other pair is.
+- **Split jobs publish their coverage.** An incremental scan of several
+  repository roots now carries `stats[].coverage`, `incomplete_reasons` and
+  `declared_omissions` for the job, and an expiry in a later root reports the
+  findings of every root already finished, cache hits included.
+- **Timeouts are named.** A timed-out connector, and one left unstarted
+  because timed-out calls hold every worker slot, count `timeout` in
+  `stats[].incomplete_reasons` and `summary.incomplete_reasons`; the exit-3
+  line on stderr says `timeout N` instead of "a connector was skipped or
+  recorded no diagnostic". A consumer that reads the counts sees them for
+  timeouts for the first time.
+- **Surrendered findings are bounded.** The findings an overrunning connector
+  had produced are prepared for at most 5 seconds per expired job; the rest,
+  and any its worker changed into something that is not plain data, are
+  omitted and counted in that connector's errors. The scan is incomplete
+  either way.
+
 ## October 17 connector correctness migration (Unreleased)
 
 Three offline connectors change which findings they report, and

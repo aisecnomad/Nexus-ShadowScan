@@ -111,6 +111,15 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   `scheduled` tag. Risk levels of affected low-code findings move; rebaseline.
 - Keyed incremental cache entries are authenticated with an HMAC and miss once
   after upgrading; unkeyed caches are unchanged.
+- The incremental cache entry format moves to 5, so every entry, keyed or
+  unkeyed, misses once after upgrading and the first incremental scan
+  analyses every repository root again. Entries are keyed on the scan-wide
+  `max_coverage_gap` as well, so a scan under another budget also misses
+  instead of replaying a verdict taken under the old one.
+- An explicit connector deadline is now fixed, 120 seconds included: only an
+  unset `connector_timeout_seconds` is raised to fit a large tree. Remove
+  `connector_timeout_seconds: 120` from configurations copied from earlier
+  sample configurations, or a large repository keeps exiting 3 at 120 seconds.
 
 ### What changes in scan results
 

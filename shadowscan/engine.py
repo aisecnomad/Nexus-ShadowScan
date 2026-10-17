@@ -427,7 +427,8 @@ class _ScopeLedger:
     """Live collection scope records reported by connector workers of one run, by configuration ordinal.
 
     A cancelled job reports nothing, and ``records`` drops what a timed-out job reported:
-    its findings are discarded, so its scope must not be attested either.
+    it surrenders only the findings it had produced, a subset of its scope, so that scope
+    must not be attested.
     """
 
     def __init__(self) -> None:

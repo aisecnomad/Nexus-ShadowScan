@@ -619,14 +619,27 @@ Listing stops after half of the time in which a file can still start and records
 `connector deadline: listing stopped after N entries`, so a large tree or a slow
 filesystem still scans the entries it listed. A root that starts when no file can
 start any more lists nothing (`listing stopped after 0 entries`), so it cannot run
-the connector past the deadline and discard the findings of the roots before it.
+the connector past the deadline into an expiry, which reports the findings
+already produced but none of the connector's own diagnostics.
 A tree whose listing alone takes more than that half is reported incomplete even
 when listing and scanning together would have finished; raise
 `connector_timeout_seconds` or narrow the root with `exclude` for such a tree.
 
-On expiry, the engine discards that connector's results, records incomplete
-coverage and the reason, retains other completed connectors' findings, and
-returns an incomplete scan (CLI exit 3). Cancellation is cooperative: Python
+On expiry, the engine reports the findings that connector had already produced
+and sanitized, and discards the rest of its result: its statistics, any later
+finding and any artifact it publishes afterwards. For a job split into
+repository roots that is every root's findings, those reused from the
+incremental cache included. The surrendered findings are copies taken from the
+abandoned worker and prepared as a completed job's are: a plugin's get the id
+its own name derives and lose any registry record. Preparing them stops after 5
+seconds; the findings left then, and any the worker changed into something that
+is not plain data, are omitted and counted in the connector's errors. A plugin
+in its own worker process (the default) surrenders nothing: the process is
+killed and its result discarded. The entry is marked incomplete with the
+timeout diagnostic and the reason `timeout`, a warning says that the findings
+are a subset of what a full run would find, other completed connectors'
+findings are retained, and the scan is incomplete (CLI exit 3). Cancellation is
+cooperative: Python
 cannot forcibly interrupt a thread blocked in a vendor SDK call, or in a plugin
 call under `plugin_execution: thread` (a plugin in its default spawned worker is
 killed). Such a call may outlive `Engine.run()`; once timeout handling returns,
