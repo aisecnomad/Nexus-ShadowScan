@@ -98,7 +98,14 @@ that are never silent:
   file (a syntax-highlighting sample, a PNG attachment saved as `.txt`) is read
   for credentials only, its bytes as Latin-1 without NUL bytes and without
   excerpts, and is then a warning that leaves the scan complete: its other
-  evidence would be discounted, and credentials never are. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  evidence would be discounted, and credentials never are. That exception
+  does not cover a file whose findings keep their full weight under a test
+  path: an MCP configuration (by a dedicated name such as `.mcp.json`, or a
+  JSON, TOML or YAML file, `settings.json` included, whose text declares
+  servers, which is read for that check even with `scan_secrets` off), a
+  coding-agent instruction, rule or settings file (`CLAUDE.md`,
+  `AGENTS.md`, `.cursor/rules/`, `.claude/settings.json`, …) and an agent
+  manifest or card stay a gap there as anywhere else. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
@@ -437,6 +444,11 @@ incomplete depends on what the file could hide:
   evidence (include_tests is false)`, and the scan stays complete. Its
   credentials were scanned on the text as read. The same file outside a test
   path is a gap, and `include_tests: true` or `strict_coverage` keeps it one.
+  An MCP configuration (by a dedicated name or by the structure that
+  declares its servers), a coding-agent instruction, rule or settings file
+  and an agent manifest or card are reported at full weight under a test
+  path, so a defect in one (`tests/.mcp.json` with a syntax error,
+  `testing/CLAUDE.md` with a NUL byte) is a gap there too.
 * Every other oversize file, for example a 2 MiB Python module, JSON or YAML
   document, is skipped and makes the scan incomplete (exit 3). With
   `strict_coverage: true` (`--strict-coverage`) it is recorded as an error

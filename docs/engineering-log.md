@@ -262,7 +262,19 @@ public repositories with the tool and read the committed benchmark metrics.
     as Latin-1 without NUL bytes, no excerpts), since credentials are never
     discounted, and is then a warning. `strict_coverage` and `include_tests`
     keep every such gap, and the same files in product code are gaps as
-    before.
+    before. So are files whose findings test paths do not discount: an MCP
+    configuration (by a dedicated name such as `.mcp.json`, or a JSON, TOML
+    or YAML file, `settings.json` and `config.yaml` included, whose structure
+    or, for a binary one, text declares servers), a coding-agent instruction,
+    rule or settings file (`CLAUDE.md`, `.cursor/rules/`,
+    `.claude/settings.json`, the MCP and coding-agent file-name signatures)
+    and an agent manifest or card (`FilesystemConnector._full_weight_in_tests`).
+    The first cut discounted every file under a test path, so
+    `tests/.mcp.json` with a NUL byte or a missing brace, or
+    `testing/CLAUDE.md` with a NUL byte, dropped its 0.96 to 0.98 confidence
+    finding and the scan still reported complete. Tests:
+    `test_a_full_weight_file_under_a_test_path_that_cannot_be_read_stays_a_gap`
+    and `test_a_structured_fixture_without_mcp_keys_stays_discounted`.
 - **OpenAI Agents SDK realtime agents are agents.** `RealtimeAgent` from
   `@openai/agents/realtime` (and `agents.realtime` in Python), and the
   `RealtimeSession` / `RealtimeRunner` that run one, are agent constructions

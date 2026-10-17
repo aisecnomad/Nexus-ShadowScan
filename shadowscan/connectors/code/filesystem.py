@@ -732,6 +732,8 @@ _DEDICATED_MCP_CONFIG_NAMES = frozenset(
         "smithery.yaml",
     }
 )
+# Suffixes of a file whose structure can make it an MCP configuration whatever its name.
+_MCP_STRUCTURE_SUFFIXES = (".json", ".toml", ".yaml", ".yml")
 
 
 def _document_declares_mcp(document: dict[str, Any], depth: int = 0) -> bool:
@@ -2910,7 +2912,7 @@ class FilesystemConnector(BaseConnector):
                 # emit read from it afterwards is only cut from the redacted lines.
                 self._redacted_lines(file)
 
-    def _discounted_test_gap(self, rel: str) -> bool:
+    def _discounted_test_gap(self, rel: str, *, full_weight: bool = False) -> bool:
         """Whether a coverage gap in ``rel`` is in test code whose evidence the scan discounts.
 
         With ``include_tests`` off, test and fixture code establishes no agent at
@@ -2919,18 +2921,61 @@ class FilesystemConnector(BaseConnector):
         in such a file is a warning that leaves the scan complete, as an oversize
         test fixture or test code that does not parse already is. Credentials are
         never discounted: a fixture that cannot be decoded is still read for them
-        (``_scan_binary_test_fixture``). ``strict_coverage`` keeps every gap.
+        (``_scan_binary_test_fixture``). ``strict_coverage`` keeps every gap, and
+        so does a file whose evidence is not discounted in test code either
+        (``_full_weight_in_tests``, or ``full_weight`` from a caller that found an
+        MCP configuration by its structure).
         """
-        return not self.include_tests and not self.strict_coverage and _is_test_path(rel)
+        return (
+            not full_weight
+            and not self.include_tests
+            and not self.strict_coverage
+            and _is_test_path(rel)
+            and not self._full_weight_in_tests(rel)
+        )
 
-    def _discounted_gap(self, rel: str, message: str, *, error: bool = True, suffix: bool = True) -> None:
+    def _full_weight_in_tests(self, rel: str) -> bool:
+        """Whether ``rel`` is named as a file whose findings keep their full weight under a test path.
+
+        MCP configurations, coding-agent instruction, rule and settings files
+        and agent manifests or cards are reported the same in ``tests/`` as
+        anywhere else (a client started there reads ``tests/.mcp.json``, Claude
+        Code reads ``testing/CLAUDE.md``), so a NUL byte or a syntax error that
+        hides one is a gap there too. Decided as the passes that read them
+        decide: by dedicated MCP configuration name, manifest kind, settings
+        path, instruction document name and the MCP or coding-agent file-name
+        signatures, whose file evidence ``_record`` keeps in test code. A
+        shared client name (``settings.json``, ``config.yaml``) is an MCP
+        configuration only by its content, as ``_looks_like_mcp_config``
+        decides, so it keeps the gap only when that content declares servers
+        (``_detect_mcp``, ``_scan_binary_test_fixture``).
+        """
+        name = PurePosixPath(rel).name
+        return (
+            name.lower() in _DEDICATED_MCP_CONFIG_NAMES
+            or agent_manifest_kind(rel) is not None
+            or is_agent_config_path(rel)
+            or posture_client(rel) is not None
+            or _is_coding_agent_doc(name)
+            or any(directory in rel for directory in _AGENT_DEFINITION_DIRS)
+            or any(
+                m.signal.type == "file"
+                and (m.signature.category == "coding-agent" or m.signature_id == "protocol.mcp")
+                for m in self.index.match_file(rel)
+            )
+        )
+
+    def _discounted_gap(
+        self, rel: str, message: str, *, error: bool = True, suffix: bool = True, full_weight: bool = False
+    ) -> None:
         """Record ``message`` about ``rel`` as a gap (``_gap``), or as a warning in discounted test code.
 
         A ``ci`` profile declaration takes precedence over the discount, so the
         omission is counted in ``declared_omissions`` like every other one the
         profile accepts; ``error`` and ``suffix`` are passed on to ``_gap``.
+        ``full_weight`` keeps the discount off (see ``_discounted_test_gap``).
         """
-        if self._discounted_test_gap(rel) and not self._declared_omission(rel):
+        if self._discounted_test_gap(rel, full_weight=full_weight) and not self._declared_omission(rel):
             self.ctx.warn(
                 f"{message}; test code is discounted evidence (include_tests is false)", incomplete=False
             )
@@ -2952,9 +2997,14 @@ class FilesystemConnector(BaseConnector):
         Its bytes are read as Latin-1 without NUL bytes (``read_credential_text``),
         so a key written in it is still found; nothing else is analyzed, and no
         excerpt is cut from it. A fixture that cannot be read at all stays a gap.
+        So does one whose text reads as an MCP configuration (``tests/agent.yaml``
+        with ``mcpServers``), which is reported at full weight in test code too:
+        a JSON, TOML or YAML fixture is read for that check even when credentials
+        are not scanned, and is then charged like undecodable product content.
         """
         message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
-        if not self.scan_secrets or self.triage:
+        analyzed = self.scan_secrets and not self.triage
+        if not analyzed and not rel.endswith(_MCP_STRUCTURE_SUFFIXES):
             self._discounted_gap(rel, f"{message}; not analyzed")
             return
         errors: list[str] = []
@@ -2963,19 +3013,49 @@ class FilesystemConnector(BaseConnector):
             for issue in errors:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
             return
-        file = _SourceFile(
-            rel=rel,
-            path=path,
-            proj_root=proj_root,
-            proj=proj,
-            text=text,
-            lang=None,
-            file_matches=file_matches,
+        if analyzed:
+            file = _SourceFile(
+                rel=rel,
+                path=path,
+                proj_root=proj_root,
+                proj=proj,
+                text=text,
+                lang=None,
+                file_matches=file_matches,
+            )
+            # No structured context: none of a binary file's excerpts is emitted.
+            file.excerpts = _ExcerptSource(rel, path, text, None)
+            self._detect_secrets(scan, file)
+        if self._looks_like_mcp_config(rel, path.name, text):
+            self._unreadable_gap(rel, BINARY_CONTENT_ERROR)
+            return
+        self._discounted_gap(rel, f"{message}; {'read for credentials only' if analyzed else 'not analyzed'}")
+
+    def _unreadable_gap(self, rel: str, issue: str) -> None:
+        """Charge content of ``rel`` that the scanner could not read or decode to the coverage budget.
+
+        Editors and runtimes tolerate bytes the scanner cannot decode, so
+        undecodable content is how a definition would be hidden from it: a NUL
+        in a settings.json, an agent document or a Dockerfile. That stays
+        fail-closed.
+
+        The exception is test code whose evidence the walk discounts
+        (include_tests off, as _BinaryTestFixture decides it), where a file of
+        deliberately invalid bytes is ordinary and no deployed agent lives. A
+        vendored directory is no exception: the walk skips those by name,
+        case-sensitively, while default_excludes is on, so what it reads under
+        one (Vendor/, or vendor/ with default_excludes off) is source to it.
+        Exceptions are charged to the budget at full weight -- never discounted
+        the way an unreadable fixture is -- so a tree seeded with them still
+        exhausts it.
+        """
+        incidental = self._discounted_test_gap(rel)
+        self._budgeted_gap(
+            rel,
+            f"code.filesystem: {rel}: {issue}",
+            blinding=not incidental,
+            full_weight=True,
         )
-        # No structured context: none of a binary file's excerpts is emitted.
-        file.excerpts = _ExcerptSource(rel, path, text, None)
-        self._detect_secrets(scan, file)
-        self._discounted_gap(rel, f"{message}; read for credentials only")
 
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
@@ -3028,28 +3108,7 @@ class FilesystemConnector(BaseConnector):
             elif issue == BINARY_CONTENT_ERROR and self._discounted_test_gap(rel):
                 binary_fixture = True
             else:
-                # Editors and runtimes tolerate bytes the scanner cannot
-                # decode, so undecodable content is how a definition would be
-                # hidden from it: a NUL in a settings.json, an agent document
-                # or a Dockerfile. That stays fail-closed.
-                #
-                # The exception is test code whose evidence the walk discounts
-                # (include_tests off, as _BinaryTestFixture decides it), where
-                # a file of deliberately invalid bytes is ordinary and no
-                # deployed agent lives. A vendored directory is no exception:
-                # the walk skips those by name, case-sensitively, while
-                # default_excludes is on, so what it reads under one
-                # (Vendor/, or vendor/ with default_excludes off) is source to
-                # it. Exceptions are charged to the budget at full weight --
-                # never discounted the way an unreadable fixture is -- so a
-                # tree seeded with them still exhausts it.
-                incidental = self._discounted_test_gap(rel)
-                self._budgeted_gap(
-                    rel,
-                    f"code.filesystem: {rel}: {issue}",
-                    blinding=not incidental,
-                    full_weight=True,
-                )
+                self._unreadable_gap(rel, issue)
         if text is None:
             return _BinaryTestFixture(on_disk) if binary_fixture else None
         if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
@@ -3188,18 +3247,18 @@ class FilesystemConnector(BaseConnector):
             rel, f"code.filesystem: {rel}: structured {stage} incomplete ({failure}); excerpts withheld"
         )
 
-    def _input_defect(self, rel: str, issue: str) -> None:
+    def _input_defect(self, rel: str, issue: str, *, full_weight: bool = False) -> None:
         """Record a defect attributable to the file's own content.
 
         Templates and fixtures may be intentionally malformed, but the
         scanner cannot establish their content as fully analyzed. Preserve
         valid neighboring findings and mark coverage incomplete, except in
-        discounted test code (see ``_discounted_test_gap``).
-        ``strict_coverage`` promotes the diagnostic from warning to error;
-        both forms fail closed.
+        discounted test code (see ``_discounted_test_gap``, which also takes
+        ``full_weight``). ``strict_coverage`` promotes the diagnostic from
+        warning to error; both forms fail closed.
         """
         message = f"code.filesystem: {rel}: input defect: {issue}"
-        self._discounted_gap(rel, message, error=self.strict_coverage, suffix=False)
+        self._discounted_gap(rel, message, error=self.strict_coverage, suffix=False, full_weight=full_weight)
 
     # Syntax/shape defects get a distinct diagnostic so operators can find
     # templates and fixtures. This taxonomy never changes completeness:
@@ -3212,26 +3271,30 @@ class FilesystemConnector(BaseConnector):
         "MCP servers must be an object or array",
     )
 
-    def _file_errors(self, rel: str, issues: Iterable[str], *, defect: bool = False) -> None:
+    def _file_errors(
+        self, rel: str, issues: Iterable[str], *, defect: bool = False, full_weight: bool = False
+    ) -> None:
         """Record parser or validator issues for ``rel``.
 
         ``defect`` routes recognized input failures through
         :meth:`_input_defect` for a distinct diagnostic. Every issue marks
         coverage incomplete, regardless of diagnostic severity, except in
-        discounted test code (see ``_discounted_test_gap``).
+        discounted test code (see ``_discounted_test_gap``); ``full_weight``
+        says the file is an MCP configuration by its structure, which is not
+        discounted there either.
 
         These stay errors rather than budgeted coverage gaps. A parser or
         validator issue means a file the scanner *selected* -- a manifest, an
         agent card, a tool catalog -- could not be read, and that is the one
         place a definition would be hidden from it. The budget is for content
         whose loss is incidental; this is not. Incidental unreadable content
-        is charged to the budget in :meth:`_read_source` instead.
+        is charged to the budget in :meth:`_unreadable_gap` instead.
         """
         for issue in issues:
             if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):
-                self._input_defect(rel, issue)
+                self._input_defect(rel, issue, full_weight=full_weight)
             else:
-                self._discounted_gap(rel, f"code.filesystem: {rel}: {issue}")
+                self._discounted_gap(rel, f"code.filesystem: {rel}: {issue}", full_weight=full_weight)
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
@@ -3430,7 +3493,8 @@ class FilesystemConnector(BaseConnector):
         if file.is_mcp:
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors, document)
-            self._file_errors(file.rel, dict.fromkeys(mcp_errors), defect=True)
+            # An MCP configuration is reported at full weight in test code, so its defects are gaps there.
+            self._file_errors(file.rel, dict.fromkeys(mcp_errors), defect=True, full_weight=True)
             dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             if not file.mcp_servers and not mcp_errors and not dedicated:
                 # The content heuristic (an "mcp" and a "servers" key anywhere
@@ -4517,7 +4581,7 @@ class FilesystemConnector(BaseConnector):
             )
         if lower in _DEDICATED_MCP_CONFIG_NAMES:
             return True
-        if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
+        if lower in MCP_CONFIG_NAMES or rel.endswith(_MCP_STRUCTURE_SUFFIXES):
             # Decide from the parsed structure when it is held (JSON/TOML): leading
             # padding before the keys then cannot hide a server table. A JSON object
             # must be decided structurally; the text fallback below never sees past

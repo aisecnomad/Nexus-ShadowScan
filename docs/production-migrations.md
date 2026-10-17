@@ -29,8 +29,13 @@ full dated log.
   (`include_tests` false) now complete. Each discounted gap is still listed as
   a warning, and a binary test fixture is still scanned for credentials. Set
   `strict_coverage: true` to keep treating every such gap as incomplete
-  (exit 3), as before; product code, dedicated MCP configuration names and
-  calls over 65,536 characters are gaps either way.
+  (exit 3), as before; product code, calls over 65,536 characters and, under
+  a test path too, MCP configurations (by a dedicated name such as
+  `.mcp.json`, or by a structure or text that declares servers),
+  coding-agent instruction, rule and settings files (`CLAUDE.md`,
+  `.cursor/rules/`, `.claude/settings.json`, …) and agent manifests and
+  cards are gaps either way, because their findings are not discounted
+  there.
 - **Realtime agents.** A project that builds OpenAI Agents SDK realtime
   agents (`RealtimeAgent`, `RealtimeSession`, `RealtimeRunner`) is now an
   `agent` finding with its tool and handoff capabilities and a higher

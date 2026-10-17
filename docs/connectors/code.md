@@ -65,6 +65,10 @@ a heredoc), and the other passes read it as ordinary configuration. A
 dedicated MCP configuration name (`.mcp.json`, `mcp.json`, `smithery.yaml`, …)
 is always parsed, so its defects still make the scan incomplete, as does a
 document that declares servers in malformed form or cannot be read at all.
+That holds under a test or fixture path too, where other malformed fixtures
+are discounted (see the [coverage policy](../scanning.md#coverage-policy)): an MCP configuration is
+reported at full weight there, so a NUL byte or a syntax error that hides
+one is a gap.
 Workflows under `.github/workflows/` are read for the MCP configurations their
 agent steps take as inputs.
 
