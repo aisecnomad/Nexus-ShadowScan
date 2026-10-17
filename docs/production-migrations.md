@@ -212,10 +212,13 @@ across this change reports findings as resolved or new that are neither.
   no longer exits 3. A digit-free
   value is held to the mixed-case rule only when it is built like a name
   (snake_case, dotted or camelCase), so a single-word passphrase or an AWS
-  key id whose body has no digit is reported. Outside source code the name
-  rules apply only to token names (`API_KEY`, `ACCESS_TOKEN`,
-  `CLIENT_SECRET`): a PASSWORD or CREDENTIAL value in an env file
-  (`POSTGRES_PASSWORD=TrustNoOneEverAgain`) is reported as before.
+  key id whose body has no digit is reported. In an env or credential file
+  (not a template such as `.env.example`) the name rules apply only to token
+  names (`API_KEY`, `ACCESS_TOKEN`, `CLIENT_SECRET`): a PASSWORD or
+  CREDENTIAL value there (`POSTGRES_PASSWORD=TrustNoOneEverAgain`) is
+  reported as before, unless its words make it a label
+  (`KeycloakAdminPassword`). Env templates, Helm values, compose files,
+  workflows and documentation keep the name rules.
 - **Evidence text.** An environment read by name after a credential name
   (`apiKey = process.env.OPENAI_API_KEY`, `os.getenv("OPENAI_API_KEY")`) is
   shown instead of `[REDACTED]`. Any other value after a credential name,

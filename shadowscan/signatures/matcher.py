@@ -821,18 +821,41 @@ def keep_file_matches(signatures: Sequence[Signature]) -> list[bool]:
     return [s.category == "coding-agent" or s.vendor not in agents for s in signatures]
 
 
-def _generic_literal(value: str, *, code: bool, follower: str) -> str | None:
+def _generic_literal(value: str, *, code: bool, follower: str, env_file: bool = False) -> str | None:
     """The literal a generic match reports, or None when it holds no key-shaped one.
 
     A literal value reports itself when it looks random; a reference reports
-    the fallback literal after it, if any (``_fallback_literal``).
+    the fallback literal after it, if any (``_fallback_literal``). In an env
+    or credential file (``env_file``) a password's value is never another
+    variable's name: such a file has no variables to name, only values. A
+    template of one (``.env.example``), a Helm values file, a compose file,
+    a workflow or a document is no such file: a PASSWORD value there may name
+    a setting, a secret or a placeholder (``springDatasourcePassword``,
+    ``useExistingSecretKey``), so the name rules still apply.
     """
     if _reference_value(value, code=code, follower=follower):
         return _fallback_literal(value, follower)
-    # Outside source code a password's value is never another variable's
-    # name: an env file has no variables to name, only values.
-    names = code or not _assigned_name(value).lower().endswith(_PASSWORD_NAMES)
+    names = code or not env_file or not _assigned_name(value).lower().endswith(_PASSWORD_NAMES)
+    if not names and _label_name(value, _assigned_value(value)):
+        return None
     return _assigned_value(value) if _high_entropy_credential(value, names=names) else None
+
+
+def _label_name(value: str, candidate: str) -> bool:
+    """Whether a value built like a name is a label: one of its words is label vocabulary or the name's.
+
+    A person's password in an env file can be built like a name
+    (``TrustNoOneEverAgain``, ``summer_vacation_beach_2024``), so the name
+    rules do not drop it there; a value whose words say what it stands for
+    (``KeycloakAdminPassword`` under ``KEYCLOAK_ADMIN_PASSWORD``,
+    ``svc1_local_dev_password``, ``change_me_to_a_strong_password``) is a
+    label all the same, as ``_label_slug`` reads a word slug.
+    """
+    if not _name_shaped(candidate):
+        return False
+    words = {word.lower() for word in _NAME_WORD.findall(candidate) if word.isalpha()}
+    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if len(word) >= 3}
+    return any(_label_word(word) for word in words) or not words.isdisjoint(name)
 
 
 # The generic patterns' names whose value a person chose (DB_PASSWORD,
@@ -874,8 +897,15 @@ class _CredentialJudge:
     kept per signature, a bounded number.
     """
 
-    def __init__(self, text: str, code: bool, placeholder: Callable[[str], object] | None = None) -> None:
-        self.text, self.code, self.placeholder = text, code, placeholder
+    def __init__(
+        self,
+        text: str,
+        code: bool,
+        placeholder: Callable[[str], object] | None = None,
+        *,
+        env_file: bool = False,
+    ) -> None:
+        self.text, self.code, self.placeholder, self.env_file = text, code, placeholder, env_file
         self.accepted: dict[str, list[tuple[int, int]]] = {}
         self.samples: list[tuple[Signature, Signal, Any]] = []
         self._kept_samples: Counter[str] = Counter()
@@ -891,7 +921,9 @@ class _CredentialJudge:
         credential: str | None = match.group(0)
         if signature.id == GENERIC_CREDENTIAL:
             follower = self.text[end : end + _FOLLOWER_CHARS]
-            credential = _generic_literal(match.group(0), code=self.code, follower=follower)
+            credential = _generic_literal(
+                match.group(0), code=self.code, follower=follower, env_file=self.env_file
+            )
         elif signature.id == UNATTRIBUTED_KEY and len(match.group(0)) - len("sk-") < _SHORT_KEY_BODY:
             body = match.group(0)[len("sk-") :]
             if self._covered(GENERIC_CREDENTIAL, start, end) or not _random_key_body(body):
@@ -931,6 +963,7 @@ def keep_secret_matches(
     *,
     code: bool = False,
     followers: Sequence[str] | None = None,
+    env_file: bool = False,
 ) -> list[bool]:
     """Which ``(signature id, value, line)`` secret matches to keep.
 
@@ -941,10 +974,12 @@ def keep_secret_matches(
     ``_reference_value``: ``code`` says the text is source code, and
     ``followers`` holds the text after each match, '' at the end), unless the
     operands after the reference hold a literal key (``_fallback_literal``).
-    A short unattributed ``sk-`` value only adds keys nothing else reports: it
-    is kept when it looks random and no kept generic match covers it.
+    ``env_file`` says the text is an env or credential file, where a
+    password's value names nothing (``_generic_literal``). A short
+    unattributed ``sk-`` value only adds keys nothing else reports: it is
+    kept when it looks random and no kept generic match covers it.
     """
-    credentials = _kept_credentials(matches, code=code, followers=followers)
+    credentials = _kept_credentials(matches, code=code, followers=followers, env_file=env_file)
     return [credential is not None for credential in credentials]
 
 
@@ -953,6 +988,7 @@ def _kept_credentials(
     *,
     code: bool = False,
     followers: Sequence[str] | None = None,
+    env_file: bool = False,
 ) -> list[str | None]:
     """The credential each match of ``keep_secret_matches`` stands for, or None where it is not kept.
 
@@ -974,7 +1010,7 @@ def _kept_credentials(
         if signature_id != GENERIC_CREDENTIAL:
             kept.append(value)
             continue
-        literal = _generic_literal(value, code=code, follower=follower)
+        literal = _generic_literal(value, code=code, follower=follower, env_file=env_file)
         others = specific.get(line, ())
         if literal is None or any(other in value or other in literal or literal in other for other in others):
             kept.append(None)
@@ -2027,10 +2063,12 @@ class SignatureIndex:
         code: bool = False,
         limited: set[str] | None = None,
         placeholder: Callable[[str], object] | None = None,
+        env_file: bool = False,
     ) -> list[Match]:
         """Credential matches in ``text``, at most :data:`MAX_SECRETS_PER_SIGNAL` per signal.
 
-        ``code`` says the text is source code (see ``keep_secret_matches``).
+        ``code`` says the text is source code, ``env_file`` that it is an env
+        or credential file, not a template of one (see ``keep_secret_matches``).
         Matches are judged as they are found (``_CredentialJudge``): a value
         that only names a credential ('self.api_key = api_key' in a settings
         module), a short ``sk-`` look-alike, and a credential another pattern
@@ -2050,7 +2088,7 @@ class SignatureIndex:
         can disclose that its count is a lower bound rather than report a
         complete-looking result.
         """
-        judge = _CredentialJudge(text, code, placeholder)
+        judge = _CredentialJudge(text, code, placeholder, env_file=env_file)
         matches = self._match_regex_signals(
             "secret",
             text,
@@ -2064,7 +2102,10 @@ class SignatureIndex:
         ends = [m.extra.get("end") for m in matches]
         followers = [text[end : end + _FOLLOWER_CHARS] if end is not None else "" for end in ends]
         credentials = _kept_credentials(
-            [(m.signature_id, m.value, m.line) for m in matches], code=code, followers=followers
+            [(m.signature_id, m.value, m.line) for m in matches],
+            code=code,
+            followers=followers,
+            env_file=env_file,
         )
         kept = []
         for match, credential in zip(matches, credentials, strict=True):

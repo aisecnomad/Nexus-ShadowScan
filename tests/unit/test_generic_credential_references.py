@@ -25,7 +25,7 @@ GENERIC = "heuristic.inline-credential"
 RANDOM = "R4nd0m9Qx2Vb7Lp6"  # the same synthetic value the rule's own tests use
 
 
-def _generic(index: SignatureIndex, text: str, *, code: bool) -> list[str]:
+def _generic(index: SignatureIndex, text: str, *, code: bool, env_file: bool = False) -> list[str]:
     """The generic matches the scanner reports as credentials (not placeholders).
 
     A placeholder test judges the literal a match stands for, which for a
@@ -33,7 +33,7 @@ def _generic(index: SignatureIndex, text: str, *, code: bool) -> list[str]:
     """
     return [
         m.value
-        for m in index.match_secrets(text, code=code)
+        for m in index.match_secrets(text, code=code, env_file=env_file)
         if m.signature_id == GENERIC and placeholder_reason(m.extra.get("credential", m.value)) is None
     ]
 
@@ -783,7 +783,8 @@ def test_digit_free_names_are_still_not_credentials(index: SignatureIndex, line:
 # person and cannot name another variable, so the name rules (#258's case mix,
 # single-case identifiers, CONSTANT_CASE slugs) do not drop it there. Token
 # names (API_KEY, ACCESS_TOKEN, CLIENT_SECRET) keep them, and labels and
-# placeholders stay unreported under any name.
+# placeholders stay unreported under any name. A template of an env file, a
+# Helm values file, a compose file, a workflow or a document is no env file.
 @pytest.mark.parametrize(
     "line",
     [
@@ -795,7 +796,7 @@ def test_digit_free_names_are_still_not_credentials(index: SignatureIndex, line:
     ],
 )
 def test_a_password_in_an_env_file_is_never_read_as_a_name(index: SignatureIndex, line: str):
-    assert _generic(index, line, code=False) != []
+    assert _generic(index, line, code=False, env_file=True) != []
 
 
 @pytest.mark.parametrize(
@@ -808,12 +809,82 @@ def test_a_password_in_an_env_file_is_never_read_as_a_name(index: SignatureIndex
         "DB_PASSWORD=request-scoped-credential",
         "DB_PASSWORD=local-development-only",
         "DB_PASSWORD=your_database_password_here",
+        # A value built like a name whose words say what it stands for.
+        "KEYCLOAK_ADMIN_PASSWORD=KeycloakAdminPassword",
+        "POSTGRES_PASSWORD=change_me_to_a_strong_password",
+        "SVC1_DB_PASSWORD=svc1_local_dev_password",
+        "DB_PASSWORD=admin_password_123",
+        "DB_PASSWORD=DbPasswordFromSecretsManager",
+        "DB_PASSWORD=managedIdentityCredential",
     ],
 )
 def test_token_names_labels_and_placeholders_keep_their_exemptions_in_env_files(
     index: SignatureIndex, line: str
 ):
-    assert _generic(index, line, code=False) == []
+    assert _generic(index, line, code=False, env_file=True) == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "change_me_to_a_strong_password",
+        "a_very_long_random_string",
+        "admin_password_123",
+        "password_for_local_db_1",
+        "postgres_password_2024",
+        "the_quick_brown_fox_1",
+        "AzureKeyVaultReference",
+        "DbPasswordFromSecretsManager",
+        "managedIdentityCredential",
+        "springDatasourcePassword",
+        "useExistingSecretKey",
+    ],
+)
+def test_a_password_outside_an_env_file_keeps_the_name_rules(index: SignatureIndex, value: str):
+    # Helm values, compose files, workflows, documentation and env templates
+    # name settings and secrets in a password's place; 90d22be reported none.
+    assert _generic(index, f"DB_PASSWORD={value}", code=False) == []
+
+
+def test_env_templates_and_configuration_files_report_no_password_labels(tmp_path: Path, run_connector):
+    postgres = "POSTGRES_PASSWORD=change_me_to_a_strong_password\n"
+    files = {
+        ".env.example": "KEYCLOAK_ADMIN_PASSWORD=KeycloakAdminPassword\n" + postgres,
+        ".env.sample": postgres,
+        "config/.env.template": postgres,
+        "docs/configuration.md": "```\n" + postgres + "```\n",
+        "charts/app/values.yaml": "adminPassword: useExistingSecretKey\nclientCredential: ManagedIdentityCredential\n",
+        "src/main/resources/application.properties": "spring.datasource.password=springDatasourcePassword\n",
+        "docker-compose.yml": "services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: PostgresDockerPassword\n",
+        ".github/workflows/ci.yml": "env:\n  POSTGRES_PASSWORD: CiPostgresPassword\n",
+        # More than a quota's worth: the scan must stay complete (_scan checks).
+        "svc/.env.example": "".join(f"SVC{n}_DB_PASSWORD=svc{n}_local_dev_password\n" for n in range(8)),
+        "svc/.env": "".join(f"SVC{n}_DB_PASSWORD=svc{n}_local_dev_password\n" for n in range(8)),
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    assert [f.metadata["path"] for f in findings if f.kind.value == "secret"] == []
+
+
+@pytest.mark.parametrize(
+    ("name", "values"),
+    [
+        (".env", True),
+        (".env.local", True),
+        (".env.production", True),
+        ("prod.env", True),
+        (".netrc", True),
+        (".env.example", False),
+        (".env.sample", False),
+        (".env.template", False),
+        (".env.dist", False),
+        ("values.yaml", False),
+        ("docker-compose.yml", False),
+    ],
+)
+def test_env_values_files_are_told_from_templates(name: str, values: bool):
+    from shadowscan.connectors.code.filesystem import _env_values_file
+
+    assert _env_values_file(name) is values
 
 
 def test_a_password_name_in_source_code_still_reads_a_name(index: SignatureIndex):
