@@ -238,6 +238,12 @@ def test_ambiguous_source_in_test_code_is_a_warning(tmp_path, run_connector):
     _, ctx = _scan(tmp_path, run_connector, {**FILLER, "tests/highlighted/Component.js": source})
     assert not ctx.stats.incomplete and not ctx.stats.errors
     assert any("incomplete source lexical analysis" in warning for warning in ctx.stats.warnings)
+    # Discounted, not dropped: the gap is charged to the budget at a quarter and listed.
+    coverage = ctx.stats.coverage
+    assert coverage is not None and coverage["within_budget"] is True
+    [gap] = [gap for gap in coverage["details"] if gap["path"] == "tests/highlighted/Component.js"]
+    assert gap["kind"] == "partial" and gap["relevance"] == "low" and gap["full_weight"] is False
+    assert "discounted evidence" in gap["detail"] and gap["reason"] == "unparsed-input"
     _, product = _scan(tmp_path / "product", run_connector, {"src/Component.js": source})
     assert product.stats.incomplete
 
@@ -343,3 +349,12 @@ def test_a_structured_fixture_without_mcp_keys_stays_discounted(
     _, ctx = _scan(tmp_path, run_connector, {**FILLER, name: content}, scan_secrets=scan_secrets)
     assert not ctx.stats.incomplete and not ctx.stats.errors
     assert any(name in warning and "discounted" in warning for warning in ctx.stats.warnings)
+    # Each discounted gap is published in the budget: a binary fixture at a whole
+    # entry, a structured one at a quarter per gap.
+    coverage = ctx.stats.coverage
+    assert coverage is not None and coverage["within_budget"] is True
+    gaps = [gap for gap in coverage["details"] if gap["path"] == name]
+    assert gaps and all("discounted evidence" in gap["detail"] for gap in gaps)
+    binary = isinstance(content, bytes)
+    assert all(gap["full_weight"] is binary and gap["relevance"] == "low" for gap in gaps)
+    assert coverage["weighted_gap_entries"] == pytest.approx(len(gaps) * (1.0 if binary else 0.25))
