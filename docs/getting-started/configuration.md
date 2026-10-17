@@ -21,7 +21,7 @@ options:
   min_confidence: 0.3                 # finding threshold (0.0–1.0)
   fail_on: high                       # exit 2 if any finding reaches this level
   dump_records: ./exports             # sanitized records for offline re-runs
-  connector_timeout_seconds: 120      # cooperative deadline per connector
+  # connector_timeout_seconds: 300    # fixed deadline per connector; omit it for 120 s, raised to fit a large tree
   allow_private_origin: false         # permit non-global IP addresses (every connector)
   allow_instance_credentials: false   # permit cloud instance-metadata credentials
   allow_credential_mixing: false      # permit repo + live tenant in one scan
@@ -36,6 +36,12 @@ connectors:
     token: ${GITHUB_TOKEN}
   # ... see docs/connectors.md for all connector keys
 ```
+
+`connector_timeout_seconds` is commented out on purpose. Left unset, each
+connector starts from a 120-second deadline that `code.filesystem` raises to
+fit a large tree; any value you set, 120 included, is a fixed deadline that is
+never raised (see
+[connector deadlines](../scanning.md#connector-deadlines-and-parallelism)).
 
 `workdir` is the parent directory for the private temporary checkouts that
 `code.github` and `code.gitlab` write for each live repository, in clone or API

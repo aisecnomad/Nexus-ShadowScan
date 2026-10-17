@@ -585,6 +585,19 @@ once per process. Configure only one YAML key; supplying both is rejected.
 Legacy YAML `connector_timeout: null` uses the 120-second default; it does not
 disable the deadline.
 
+Leaving the option out and setting it are not the same. Left out (or given as
+legacy `connector_timeout: null`), the 120 seconds is where a connector starts,
+and a connector may raise its own deadline to fit its input: `code.filesystem`
+counts up to 20,000 entries of the tree it is about to walk and, above 12,000,
+scales its deadline in proportion, to at most 200 seconds, and reports
+`input is large; deadline raised to ...` in its progress output. The engine caps
+any connector's proposal at 30 minutes. A value you set, from a configuration
+file, `--connector-timeout-seconds` or `ScanConfig`, is used as it is and never
+raised, and that includes 120: a configuration that spells out
+`connector_timeout_seconds: 120` gives a large repository 120 seconds and
+reports it incomplete. The sample configurations therefore leave the option
+out. Set it for a fixed bound, or for a tree larger than the probe can measure.
+
 Setup failures that name only paths, option names and positions are printed
 verbatim by the CLI: a missing inventory path or signature directory, a
 malformed signature pack (file and document number), an unknown connector key,

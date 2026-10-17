@@ -297,7 +297,7 @@ options:
   min_confidence: 0.3                 # finding threshold (0.0-1.0)
   fail_on: high                       # exit 2 if any finding reaches this level
   dump_records: ./exports             # sanitized records for offline re-runs
-  connector_timeout_seconds: 120      # cooperative deadline per connector
+  # connector_timeout_seconds: 300    # fixed deadline per connector; omit it for 120 s, raised to fit a large tree
   job_deadline_seconds: 600           # whole-process deadline
   allow_private_origin: false         # permit non-global IP addresses
   allow_instance_credentials: false   # permit cloud instance-metadata credentials

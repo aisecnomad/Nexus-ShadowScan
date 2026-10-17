@@ -236,7 +236,6 @@ options:
   allow_private_origin: false
   allow_credential_mixing: false
   allow_instance_credentials: false
-  connector_timeout_seconds: 120
 connectors:
   - name: identity.jwt
     input: ./tokens.json
@@ -479,7 +478,11 @@ incomplete (exit 3).
 A limit hit is a diagnostic and incomplete coverage, not proof of absence. Exit 3
 must remain a failed gate in CI. Exit 2 means a complete scan exceeded the chosen
 risk threshold. `connector_timeout_seconds` defaults to 120 seconds and must be a strictly positive
-finite number. It starts when the connector worker begins, and split filesystem
+finite number. Left unset, it is a starting point that `code.filesystem` raises to fit a large
+tree (to at most 200 seconds); a value you set, 120 included, is a fixed deadline that is never
+raised, so leave the option out of a configuration unless you mean to fix it
+([connector deadlines](scanning.md#connector-deadlines-and-parallelism)). It starts when the
+connector worker begins, and split filesystem
 roots share that connector's deadline. The engine stops accepting a connector's
 results after the deadline and records incomplete coverage. Python
 worker threads (built-in connectors, and plugins under `plugin_execution: thread`)

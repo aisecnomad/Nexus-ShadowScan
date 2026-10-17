@@ -26,7 +26,8 @@ no enabled connector stops the run before collection with an incomplete result.
 
 Each connector has a completion deadline, `options.connector_timeout_seconds` (default 120 s),
 that starts when its worker begins. While the default is in effect, a connector with a large
-input may raise its own deadline, to at most 1800 s. On expiry a connector on a worker thread
+input may raise its own deadline, to at most 1800 s; a value the caller sets, 120 included, is
+never raised. On expiry a connector on a worker thread
 is cancelled cooperatively: the findings it had already produced are kept (in an incremental
 scan split by repository, only those of the repository in progress), its late result is
 discarded and its entry is marked incomplete. A plugin worker process is terminated instead,

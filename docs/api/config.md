@@ -31,7 +31,7 @@ signatures:
 options:
   min_confidence: 0.3         # drop findings below this confidence (default 0.0)
   fail_on: high               # exit 2 when a complete scan has a finding at or above high
-  connector_timeout_seconds: 300  # completion deadline per connector (default 120)
+  connector_timeout_seconds: 300  # fixed deadline per connector (omitted: 120, raised for a large tree)
   job_deadline_seconds: 3600  # CLI process deadline; exit 3 on expiry (default: none)
   dump_records: ./exports     # save sanitized connector records (JSONL) for offline re-analysis
   allow_private_origin: false

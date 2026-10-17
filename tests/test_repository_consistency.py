@@ -1658,6 +1658,65 @@ def test_documented_automatic_deadline_ceiling_matches_the_probe() -> None:
     )
 
 
+# A connector deadline set to the default's value, as a configuration key (YAML or Python) or a
+# command-line flag, on a line that is not a comment.
+_EXPLICIT_DEFAULT_TIMEOUT = re.compile(
+    r"^[^#\n]*?(?:\bconnector_timeout(?:_seconds)?\s*[:=]\s*|--connector-timeout(?:-seconds)?[ =]+)"
+    rf"{DEFAULT_CONNECTOR_TIMEOUT:.0f}(?:\.0*)?(?![\w.])",
+    re.MULTILINE,
+)
+_CODE_FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})[^\n]*\n(.*?)^[ \t]*\1[ \t]*$", re.MULTILINE | re.DOTALL)
+# Dated records quote what a page or a configuration once said; prose may name the setting it warns
+# against. Only the configurations and commands people copy are checked.
+_DATED_RECORDS = frozenset({"CHANGELOG.md", "RELEASE_NOTES.md", "docs/engineering-log.md"})
+
+
+def _copyable_samples() -> Iterator[tuple[str, str]]:
+    """Every code block of the live documentation, and every example file, with where it is."""
+    for path in _markdown_files():
+        dated = _relative(path) in _DATED_RECORDS or path.is_relative_to(ROOT / "docs" / "history")
+        if dated or any(path.is_relative_to(ROOT / folder) for folder in ("archive", "benchmarks")):
+            continue
+        for match in _CODE_FENCE.finditer(_read(path)):
+            yield _relative(path), match.group(2)
+    for path in sorted((ROOT / "examples").rglob("*")):
+        if path.is_file() and path.suffix != ".md":
+            yield _relative(path), _read(path)
+
+
+def test_explicit_default_timeout_check_flags_only_live_settings() -> None:
+    flagged = (
+        "  connector_timeout_seconds: 120      # cooperative deadline per connector\n",
+        "options:\n  connector_timeout: 120.0\n",
+        "shadowscan code . --connector-timeout-seconds 120\n",
+        "ScanConfig(connector_timeout_seconds=120)\n",
+    )
+    passed = (
+        "  # connector_timeout_seconds: 120    # omit it to let the deadline scale\n",
+        "  connector_timeout_seconds: 1200\n",
+        "  connector_timeout_seconds: 120.5\n",
+        "shadowscan code . --connector-timeout-seconds 300\n",
+    )
+    assert all(_EXPLICIT_DEFAULT_TIMEOUT.search(text) for text in flagged)
+    assert not any(_EXPLICIT_DEFAULT_TIMEOUT.search(text) for text in passed)
+    fenced = "Prose `connector_timeout_seconds: 120` stays.\n\n```yaml\noptions:\n  parallel: 2\n```\n"
+    assert [match.group(2) for match in _CODE_FENCE.finditer(fenced)] == ["options:\n  parallel: 2\n"]
+
+
+def test_no_sample_configuration_sets_the_default_connector_timeout() -> None:
+    """Regression: README's full reference, the getting-started page, the production guide and the
+    plugin example set ``connector_timeout_seconds: 120``. Only the unset default is raised to fit
+    a large tree; a value someone sets, 120 included, is honoured unchanged, so a configuration
+    copied from those samples gave a large repository a fixed 120 seconds and an incomplete scan.
+    A sample leaves the option out, or sets a value it means to fix."""
+    explicit = [
+        f"{where}: {match.group(0).strip()}"
+        for where, text in _copyable_samples()
+        for match in _EXPLICIT_DEFAULT_TIMEOUT.finditer(text)
+    ]
+    assert not explicit, f"samples fix the default connector deadline, which disables its scaling: {explicit}"
+
+
 _PLUGIN_EXECUTION_ROW = re.compile(r"^\| `plugin_execution` \| `(\w+)` \|", re.MULTILINE)
 _PLUGIN_EXECUTION_DEFAULT_CLAIM = re.compile(
     r"\bdefaults?\b[^.;`]{0,40}`(?:options\.)?(?:plugin_execution: )?(thread|process)`"

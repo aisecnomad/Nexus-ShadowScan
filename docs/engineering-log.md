@@ -52,6 +52,16 @@ Counts and figures quoted in an entry are those of its date.
   in a configuration file. The constructor compared the canonical value
   with 120, so an explicit 120, which the engine now honours unscaled, was
   silently replaced by the deprecated alias's value.
+- The sample configurations no longer set `connector_timeout_seconds: 120`.
+  README's full reference, the getting-started page, the production guide
+  and the plugin example all did, and since an explicit value is honoured
+  unchanged, a configuration copied from them gave a large repository a
+  fixed 120 seconds where the unset default would have been raised. The two
+  references show the key commented out; `docs/scanning.md` (connector
+  deadlines), the architecture options table, the production guide and the
+  API pages say that leaving the option out and setting it differ. A
+  consistency test fails on any code block of the live documentation or
+  example file that sets the default value as a key or flag.
 
 ### Review fixes: connector correctness, CI check names, benchmark framing (October 17)
 

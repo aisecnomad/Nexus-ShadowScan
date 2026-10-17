@@ -102,7 +102,6 @@ SDK or native extension can be stopped at its deadline:
 options:
   plugins: [platform.example=example_connectors.platform:ExampleConnector]
   plugin_execution: process   # the default; thread runs plugins in-process
-  connector_timeout_seconds: 120
 connectors:
   - name: platform.example
 ```
