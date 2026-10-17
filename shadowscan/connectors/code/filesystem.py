@@ -311,6 +311,7 @@ from shadowscan.signatures.matcher import (
     MatchTimeoutError,
     _finditer,
     language_for_path,
+    reported_credential,
 )
 from shadowscan.utils.files import (  # noqa: F401 - re-exported
     link_in_path,
@@ -6097,12 +6098,15 @@ class FilesystemConnector(BaseConnector):
         project_root: str = ".",
     ) -> Finding | None:
         # A structured value (e.g. a .env assignment) and the raw text pass can
-        # both observe the same credential on the same line; count it once.
+        # both observe the same credential on the same line, one as the value
+        # and one as the whole assignment; count it once.
         # Placeholders are filtered again here so every caller shares the rule.
         unique: dict[tuple[str, str, int | None], tuple[Match, str]] = {}
         for m, snip in hits:
             if not looks_like_placeholder(m.value):
-                unique.setdefault((m.signature_id, m.value, m.line), (m, snip))
+                unique.setdefault(
+                    (m.signature_id, reported_credential(m.signature_id, m.value), m.line), (m, snip)
+                )
         hits = list(unique.values())
         if not hits:
             return None

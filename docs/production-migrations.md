@@ -201,8 +201,12 @@ across this change reports findings as resolved or new that are neither.
   environment read (`process.env.OPENAI_API_KEY || "<key>"`) and generated
   passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`; a label of words
   carries credential or test vocabulary or the assigned name) are reported as
-  before. A file with more than five rejected references before a real key
-  now reports that key, which the per-signal cap used to drop.
+  before. References, and a second pattern matching a credential already
+  counted, take no place in the five-per-format quota, so a real key after
+  any number of them is reported (the quota used to drop it). A digit-free
+  value is held to the mixed-case rule only when it is built like a name
+  (snake_case, dotted or camelCase), so a single-word passphrase or an AWS
+  key id whose body has no digit is reported.
 - **Evidence text.** An environment read by name after a credential name
   (`apiKey = process.env.OPENAI_API_KEY`, `os.getenv("OPENAI_API_KEY")`) is
   shown instead of `[REDACTED]`. Any other value after a credential name,

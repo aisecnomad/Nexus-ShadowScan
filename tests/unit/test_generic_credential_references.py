@@ -320,3 +320,33 @@ def test_a_literal_beside_an_environment_read_is_still_withheld(line: str):
 )
 def test_other_values_after_a_credential_name_stay_withheld(line: str):
     assert REDACTED in sanitize_text(line)
+
+
+# #258 required a digit-free value to mix cases evenly, to drop program names
+# ('include_tracing_api_key', 'ANTHROPIC_API_KEY', 'includeTracingApiKey').
+# Applied to every digit-free value it also dropped single-word passphrases
+# and AWS key ids whose body has no digit; only name-shaped values are held to
+# it now.
+@pytest.mark.parametrize(
+    "line",
+    [
+        "DB_PASSWORD=correcthorsebatterystaple",
+        "DB_PASSWORD=CORRECTHORSEBATTERYSTAPLE",
+        'aws_access_key_id = "' + "AKIA" + 'QSXMKVTWPLRNHGDJ"',
+    ],
+)
+def test_digit_free_tokens_without_name_structure_are_reported(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=False)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "include_tracing_api_key=include_tracing_api_key",
+        'ENV_API_KEY = "ANTHROPIC_API_KEY"',
+        'apiKey = "includeTracingApiKey"',
+        'secret_key = "settings.openai_api_key"',
+    ],
+)
+def test_digit_free_names_are_still_not_credentials(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=False) == []
