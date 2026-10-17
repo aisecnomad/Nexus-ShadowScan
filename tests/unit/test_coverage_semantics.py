@@ -177,11 +177,16 @@ def test_remote_connectors_refuse_profile_ci_under_a_zero_budget_before_fetching
 @pytest.mark.parametrize("cls", PROVIDERS)
 def test_a_zero_budget_counts_a_checkout_test_fixture_gap(tmp_path, run_connector, cls):
     # The nested code.filesystem connector reads the outer connector's budget.
-    _tree(tmp_path / "acme__svc", {"tests/fixtures/a.txt": BINARY})
+    # A fixture whose structured checks were skipped is a note, not a ledger
+    # gap: only that read of the parent's policy (_strict_accounting) makes it
+    # count, so the case fails if the nested scan ignores the parent's budget.
+    _tree(tmp_path / "acme__svc", {"tests/fixtures/broken.json": '{"a": \n'})
     _, default = run_connector(cls.name, input=str(tmp_path), use_git=False)
     assert not default.stats.incomplete
     _, zero = run_connector(cls.name, input=str(tmp_path), use_git=False, _max_coverage_gap=0.0)
     assert zero.stats.incomplete
+    assert zero.stats.incomplete_reasons == {"unparsed-input": 1}
+    assert any(w.endswith("structured checks skipped; coverage incomplete") for w in zero.stats.warnings)
 
 
 def test_the_code_command_refuses_profile_ci_with_a_zero_budget(tmp_path):
