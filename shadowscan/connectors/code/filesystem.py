@@ -2202,7 +2202,10 @@ class FilesystemConnector(BaseConnector):
         technology passes never read, and, when ``include_tests`` is false, a
         file under a test path (a recorded cassette, a fixture), whose evidence
         is discounted and cannot establish a deployment; the latter is counted
-        in ``skipped_oversize_test_fixtures``. With credential detection on
+        in ``skipped_oversize_test_fixtures``. Agent configuration there is not
+        discounted (``_discounted_test_path``) and stays a gap, and a JSON, TOML
+        or YAML fixture is left to the reader, which skips it only when its bytes
+        name no MCP server table (``_oversize_gap``). With credential detection on
         (the default) every read file, prose and fixtures included, is scanned
         for credentials, so an unread copy may hide a real key and stays a gap
         (fail closed). Strict accounting keeps the test-path case a gap too.
@@ -2235,18 +2238,28 @@ class FilesystemConnector(BaseConnector):
                 "so its text is not read",
             )
             return True
-        if not self.include_tests and _is_test_path(rel):
-            if self._strict_accounting():
+        if self._discounted_test_path(rel) and not self._strict_accounting():
+            if _guessed_mcp_name(rel, name):
+                # A server table in it keeps the gap: the reader reads its bytes for one (_oversize_gap).
                 return False
-            self.skipped_oversize_test_fixtures += 1
-            self.ctx.warn(
-                f"code.filesystem: {rel}: skipped oversize test fixture ({size} bytes over max_file_size "
-                f"{self.max_file_size}); test code is discounted evidence, include_tests is false and "
-                "credential detection is off",
-                incomplete=False,
-            )
+            self._skip_oversize_test_fixture(rel, size)
             return True
         return False
+
+    def _skip_oversize_test_fixture(self, rel: str, size: int | None) -> None:
+        """Skip an oversize file of discounted test code with a counted warning, credentials not scanned.
+
+        Agent configuration is not discounted test code (``_discounted_test_path``),
+        so ``tests/.mcp.json`` or ``tests/CLAUDE.md`` never comes here: it stays a gap.
+        """
+        self.skipped_oversize_test_fixtures += 1
+        over = f"{size} bytes over" if size is not None else "over"
+        self.ctx.warn(
+            f"code.filesystem: {rel}: skipped oversize test fixture ({over} max_file_size "
+            f"{self.max_file_size}); test code is discounted evidence, include_tests is false and "
+            "credential detection is off",
+            incomplete=False,
+        )
 
     def _link_target_is_scanned(
         self, rel: str, target: Path, root: Path, walk: _WalkCounters | None = None
@@ -3634,6 +3647,10 @@ class FilesystemConnector(BaseConnector):
             or (self.scan_secrets and _credential_store_name(name))
             or (_guessed_mcp_name(rel, name) and self._oversize_declares_mcp(on_disk, root_fd))
         )
+        if not selected and not self.scan_secrets and self._discounted_test_gap(rel):
+            # A test fixture the walk left to this content check, which found no server table.
+            self._skip_oversize_test_fixture(rel, None)
+            return
         issue = "file exceeds max_file_size"
         self._budgeted_gap(
             rel,

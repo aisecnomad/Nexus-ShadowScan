@@ -709,9 +709,11 @@ incomplete depends on what the file could hide:
   `test_*.py`) is skipped with the warning `skipped oversize test fixture` and
   the scan stays complete: test code is discounted evidence that cannot
   establish a deployment, so its omission is disclosed and counted (one
-  summary warning per root) rather than treated as a gap. A coding-agent
-  settings file under such a path is still recorded as unread for its
-  project's approval gate, which then covers only some actions. With credential
+  summary warning per root) rather than treated as a gap. Agent configuration
+  is not discounted test code, so an oversize `tests/.mcp.json`,
+  `tests/CLAUDE.md`, coding-agent rule or settings file, or a JSON, TOML or
+  YAML fixture whose bytes name an MCP server table, makes the scan
+  incomplete under such a path too. With credential
   detection on, or `include_tests: true`, the file is analyzable like any
   other and the gap returns; strict accounting keeps it a gap too, and
   `strict_coverage` records it as an error.

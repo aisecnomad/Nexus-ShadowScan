@@ -678,7 +678,9 @@ file under a test or fixture path (a recorded cassette under
 cannot establish a deployment (warning `skipped oversize test fixture`; the
 connector counts them in `skipped_oversize_test_fixtures` and reports the
 count in one summary warning per root). Instruction documents, agent
-definitions, source and configuration keep the gap in every mode. Every
+definitions and other agent configuration keep the gap in every mode, under a
+test path too, and so does a JSON, TOML or YAML fixture whose bytes name an MCP
+server table: the reader checks its content before it skips it. Every
 skipped file is still named. A coding-agent settings file skipped by either
 rule, or by an operator's `oversize_skip_globs`, is still recorded as unread
 for the approval gate of its project (see

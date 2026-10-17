@@ -569,6 +569,41 @@ def test_an_oversize_file_whose_content_declares_mcp_servers_is_blinding(
     assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 1
 
 
+@pytest.mark.parametrize(
+    ("rel", "content"),
+    [
+        pytest.param("tests/.mcp.json", MCP_CONFIG + PAD, id="mcp"),
+        pytest.param("tests/CLAUDE.md", INSTRUCTIONS + PAD, id="instructions"),
+        pytest.param("tests/e2e/.roo/rules/deploy.md", INSTRUCTIONS + PAD, id="directory-wide-signature"),
+        pytest.param("tests/fixtures/tools.json", PAD + MCP_CONFIG, id="mcp-by-content"),
+    ],
+)
+def test_oversize_agent_configuration_under_a_test_path_stays_a_gap_without_credential_detection(
+    tmp_path, run_connector, rel, content
+):
+    # With scan_secrets off an oversize fixture is skipped as discounted test
+    # code, but agent configuration is not discounted there.
+    _tree(tmp_path, {rel: content})
+    _, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, max_file_size=1_000, scan_secrets=False
+    )
+    assert ctx.stats.incomplete, f"oversize {rel} was skipped as a test fixture"
+    assert ctx.stats.coverage["blinding_gaps"] == 1
+
+
+def test_an_oversize_fixture_that_names_no_server_table_is_still_skipped_without_credential_detection(
+    tmp_path, run_connector
+):
+    _tree(
+        tmp_path, {"tests/fixtures/big.json": '{"a": "' + "x" * 2_000 + '"}', "tests/cassettes/run.yaml": PAD}
+    )
+    _, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, max_file_size=1_000, scan_secrets=False
+    )
+    assert not ctx.stats.incomplete and ctx.stats.coverage is None
+    assert len([w for w in ctx.stats.warnings if "skipped oversize test fixture" in w]) == 2
+
+
 def test_a_server_table_past_the_first_chunk_of_an_oversize_file_is_found(tmp_path, run_connector):
     # Read in 1 MiB chunks: a key cut at the boundary is still seen whole.
     for offset in (1024 * 1024 - 5, 3 * 1024 * 1024):
