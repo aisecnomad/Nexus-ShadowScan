@@ -2145,6 +2145,25 @@ def test_pages_requires_explicit_manual_publication_from_main() -> None:
     )
 
 
+def test_documents_name_every_way_the_docs_workflow_publishes() -> None:
+    """Regression: #256 let a docs push to main deploy Pages when DOCS_PUBLISH is true, but the
+    documentation index still said the Docs workflow publishes only on a publish=true dispatch.
+
+    The documents that state the publication policy name each trigger the deploy job admits."""
+    condition = re.sub(r"\s+", " ", _load(GITHUB / "workflows" / "docs.yml")["jobs"]["deploy"]["if"])
+    triggers = {"publish": "inputs.publish" in condition, "DOCS_PUBLISH": "vars.DOCS_PUBLISH" in condition}
+    assert all(triggers.values()), f"the deploy condition changed; update this test: {condition}"
+    for document in (ROOT / "docs" / "index.md", GITHUB / "workflows" / "README.md"):
+        [paragraph] = [
+            " ".join(block.split())
+            for block in re.split(r"\n[ \t]*\n", document.read_text(encoding="utf-8"))
+            if "docs.yml" in block and "publish" in block
+        ]
+        for trigger in triggers:
+            assert f"`{trigger}" in paragraph, f"{document.relative_to(ROOT)} should name `{trigger}`"
+        assert "publishes only" not in paragraph, f"{document.relative_to(ROOT)} names one publish path only"
+
+
 def test_stale_automation_never_closes_issues_or_pull_requests() -> None:
     workflow = _load(GITHUB / "workflows" / "stale.yml")
     steps = [
