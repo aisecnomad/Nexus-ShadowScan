@@ -44,12 +44,12 @@ from shadowscan.utils.credential_identity import keyed_credential_digest
 from shadowscan.utils.redaction_assignments import (
     _redact_connection_passwords,
     _redact_fallback_defaults,
+    _redact_line_tails,
     _redact_mapping_values,
     _redact_netrc_entries,
     _redact_opaque_assignments,
     _redact_plain_assignments,
     _redact_rc_credentials,
-    _redact_trailing_comments,
     _redact_yaml_multiline_values,
 )
 from shadowscan.utils.redaction_calls import _redact_auth_pairs, _redact_credential_calls
@@ -556,9 +556,9 @@ def _redact_extended(text: str, *, reread: bool = False) -> str:
     compact = _redact_compact_colons(headers)
     reshaped = compact != text
     text = _redact_aws_configure(_redact_opaque_options(compact))
-    # A comment after a credential's value end comes next: the passes above
-    # decide where each value ends.
-    text = _redact_trailing_comments(text)
+    # Literals and a comment after a credential's value end come next: the
+    # passes above decide where each value ends.
+    text = _redact_line_tails(text)
     # netrc entries and Yarn 1 settings part a credential from its name by
     # blanks alone, which no rule above reads; read last, they only add markers.
     text = _redact_netrc_entries(_redact_rc_credentials(text))
