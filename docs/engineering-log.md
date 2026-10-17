@@ -26,6 +26,20 @@ Counts and figures quoted in an entry are those of its date.
   cannot say what it declares keeps no registry record, the connector stays
   incomplete and the scan exits 3 with its report. A KeyboardInterrupt still
   ends the scan. Regression-tested through the command line.
+- Surrendering an expired job's findings is cheap and bounded. Each was
+  copied through `to_dict`/`from_dict`, which sanitized its evidence and the
+  finding again in full on the supervisor thread: about 27 ms per finding,
+  5.5 s for 200, during which no other job's deadline was enforced.
+  `models.detached_copy` now reads only the plain data a sanitizer pass
+  leaves (exact model objects and enums, dicts with text keys, lists,
+  tuples, text, numbers and the scalars the sanitizer keeps), within the
+  sanitizer's node and nesting limits, and never runs code a value's own
+  class defines; anything else is omitted as "not readable". The copy keeps
+  the worker's verified-clean marker, so a finding nobody changed costs a
+  digest check, and `reattribute` keeps an id that is already the derived
+  text, so a plugin's own findings do too: about 0.5 ms each, built-in or
+  plugin. The loop stops after 5 seconds per expired job; the findings left
+  are omitted with a counted error and the job stays incomplete.
 
 ### Review fixes: connector correctness, CI check names, benchmark framing (October 17)
 

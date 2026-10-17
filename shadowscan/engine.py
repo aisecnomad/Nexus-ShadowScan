@@ -40,7 +40,7 @@ from shadowscan.governance import apply_declared_governance
 from shadowscan.incremental import IncrementalCache
 from shadowscan.mcp_registry import LoadedRegistries, enrich_mcp_findings, load_registries
 from shadowscan.merge import merge
-from shadowscan.models import Finding, ScanResult, ScanStats, Surface, now_iso
+from shadowscan.models import Finding, ScanResult, ScanStats, Surface, detached_copy, now_iso
 from shadowscan.registries import (
     RECORD_KEY,
     REGISTRY_TYPES,
@@ -92,6 +92,10 @@ _TIMEOUT_WARNING = (
 _TRIAGE_RESERVE_SHARE = 0.1
 _TRIAGE_RESERVE_MIN = 5.0
 _TRIAGE_RESERVE_MAX = 60.0
+# The supervisor's time for preparing one expired job's surrendered findings. It
+# enforces no other job's deadline meanwhile, and the report waits; what is left
+# when it is spent is omitted and counted, never reported as a complete result.
+_SURRENDER_BUDGET_SECONDS = 5.0
 
 # The operator's stable identity key comes from IDENTITY_KEY_ENV only, never
 # from a configuration field.
@@ -282,38 +286,57 @@ def _withhold_registry_records(
         )
 
 
+def _surrendered_copy(finding: Finding, plugin: str | None) -> Finding | None:
+    """One surrendered finding detached from its worker and prepared, or None when it cannot be read."""
+    try:
+        copied = detached_copy(finding)
+        if plugin is not None:
+            copied.reattribute(plugin, derive_id=True)
+        copied.sanitize()
+    except KeyboardInterrupt:
+        raise
+    except BaseException:  # noqa: BLE001 - one the worker is still changing is omitted, never guessed at
+        return None
+    return copied
+
+
 def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Finding]:
     """An expired job's findings, prepared as ``_collect`` and ``_run_one`` prepare a completed job's.
 
     The abandoned worker still holds these objects and may change them while the
-    report is built, so each is copied through its serialized form, as a cache
-    entry or a plugin worker's result is read. A plugin finding then gets the id
-    its own name derives, and registry records are withheld: an overrun cannot
-    report what the same plugin's completed run would not.
+    report is built, so each is copied first (``detached_copy``), reading only the
+    plain data a sanitizer pass leaves, and the copy is prepared. A plugin finding
+    gets the id its own name derives, and registry records are withheld: an
+    overrun cannot report what the same plugin's completed run would not. A copy
+    of a finding nobody changed since the worker sanitized it costs a digest
+    check, not another sanitizer pass.
 
-    This runs on the supervisor thread, outside any worker's isolation, while the
-    objects and the job's class can still run plugin code. Whatever that code
-    raises, ``sys.exit()`` included, omits the finding or withholds the records,
-    as ``_run_one`` and ``_hook_failure`` treat it; only a KeyboardInterrupt
-    still ends the scan.
+    This runs on the supervisor thread, which meanwhile enforces no other job's
+    deadline, so it stops after ``_SURRENDER_BUDGET_SECONDS``: the findings left
+    are omitted and counted. It is outside any worker's isolation, and the job's
+    class can still run plugin code. Whatever that code raises, ``sys.exit()``
+    included, omits the finding or withholds the records, as ``_run_one`` and
+    ``_hook_failure`` treat it; only a KeyboardInterrupt still ends the scan.
     """
     plugin = spec.name not in builtin_connector_names()
+    candidates = state.take_partial()
     surrendered = []
-    omitted = 0
-    for finding in state.take_partial():
-        try:
-            copied = Finding.from_dict(finding.to_dict())
-            if plugin:
-                copied.reattribute(spec.name, derive_id=True)
-            copied.sanitize()
-        except KeyboardInterrupt:
-            raise
-        except BaseException:  # noqa: BLE001 - one the worker is still changing is omitted, never guessed at
-            omitted += 1
-            continue
-        surrendered.append(copied)
-    if omitted:
-        st.errors.append(f"{omitted} finding(s) completed before the deadline omitted: not readable")
+    unreadable = 0
+    ends = time.monotonic() + _SURRENDER_BUDGET_SECONDS
+    for number, finding in enumerate(candidates):
+        if time.monotonic() >= ends:
+            st.errors.append(
+                f"{len(candidates) - number} finding(s) completed before the deadline omitted: "
+                f"the {_SURRENDER_BUDGET_SECONDS:g}-second budget for reporting them was spent"
+            )
+            break
+        copied = _surrendered_copy(finding, spec.name if plugin else None)
+        if copied is None:
+            unreadable += 1
+        else:
+            surrendered.append(copied)
+    if unreadable:
+        st.errors.append(f"{unreadable} finding(s) completed before the deadline omitted: not readable")
     try:
         _withhold_registry_records(state.hooks, not plugin, surrendered, st)
     except KeyboardInterrupt:
