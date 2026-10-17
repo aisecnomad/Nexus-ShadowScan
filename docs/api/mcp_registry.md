@@ -42,20 +42,22 @@ identifier), the normalized URL of a remote server, or every package and remote 
 manifest declares. Names a client configuration gives its servers are never looked up, and a
 server without such an identity is unidentified. Each server that is identified, or named by its
 manifest, gets a `registry` list with one entry per registry that lists it, including the
-registry's `status` (`active`, `deprecated` or `deleted`) and `is_latest`. The finding gets
-`metadata.mcp_registry` (`registries`, `approved_checked`, `not_in_approved`, `unidentified`) and
-review tags from `REGISTRY_TAGS`, such as `mcp-registry-published`, `mcp-unpublished` and
+`status` the registry gives the matched version (`active`, `deprecated` or `deleted`) and
+`is_latest`, both null when the match is ambiguous. The finding gets `metadata.mcp_registry`
+(`registries`, `approved_checked`, `not_in_approved`, `unidentified`; an MCP tool finding, which
+has no server list, also keeps its server's entries there as `matches`) and review tags from
+`REGISTRY_TAGS`, such as `mcp-registry-published`, `mcp-unpublished` and
 `mcp-registry-unidentified`, each with zero-weight evidence. Disabled servers get `registry`
-entries but no tags and no count. A finding whose servers cannot be matched is left without registry data,
-and the scan is incomplete (exit 3).
+entries but no tags and no count. A finding whose servers cannot be matched is left without
+registry data, and the scan is incomplete (exit 3).
 
 ## Approved catalogs
 
 An approved catalog is not an inventory source: it never approves a finding or changes `shadow`
 or `registry_match`. When at least one is configured and every approved snapshot loaded,
 `not_in_approved` counts the enabled servers that no approved registry lists by their identity,
-or lists only as deleted, unidentified servers included, and scoring adds the governance factor
-`mcp-not-in-approved-registry`. [MCP registry provenance](../connectors/code.md#mcp-registry-provenance)
+or lists only as deleted, unidentified servers included, and a finding whose count is above
+zero gets the governance factor `mcp-not-in-approved-registry`. [MCP registry provenance](../connectors/code.md#mcp-registry-provenance)
 describes the matching rules and tags in full.
 
 ::: shadowscan.mcp_registry
