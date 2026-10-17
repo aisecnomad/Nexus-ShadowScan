@@ -32,7 +32,7 @@ from shadowscan.signatures.matcher import (
     MAX_SECRETS_PER_SIGNAL,
     WALL_BUDGET_FACTOR,
     MatchTimeoutError,
-    _credential_candidate,
+    _CredentialJudge,
     keep_file_matches,
     keep_secret_matches,
     language_for_path,
@@ -577,7 +577,7 @@ def _reference_regex_matches(
         # Secret matches are judged as they are found and only accepted ones
         # count toward the reported cap (match_secrets).
         max_per_signal = MAX_SECRETS_PER_SIGNAL
-    accepted: dict[str, list[tuple[int, int]]] = {}
+    judge = _CredentialJudge(text, False)
     for sig, s in index._by_type.get(signal_type, []):
         if language and s.languages and language not in s.languages:
             continue
@@ -594,7 +594,7 @@ def _reference_regex_matches(
                     hints,
                     m.group(0),
                 )
-                if signal_type == "secret" and not _credential_candidate(text, False, accepted, sig, m):
+                if signal_type == "secret" and not judge(sig, s, m):
                     continue
                 line = bisect_left(newlines, m.start()) + 1
                 value = m.group(0) if signal_type == "secret" else sanitize_text(m.group(0))[:200]

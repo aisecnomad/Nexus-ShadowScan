@@ -640,7 +640,10 @@ for credentials nor counted as a coverage gap; name such files in a file-name
 signature pack to read them. A file's credential finding carries at most
 five matches per credential format (`metadata.count` counts them, one per
 credential however many patterns match it). A reference to a credential
-(`api_key = settings.API_KEY`) takes no place in that quota. A file
+(`api_key = settings.API_KEY`), a documentation placeholder
+(`OPENAI_API_KEY=sk-your-key-here-1a2b`, which becomes example evidence) and
+a short `sk-` value that does not look random take no place in that quota,
+so a `.env.example` of sample keys is complete. A file
 holding more credentials of one format is reported with that quota's worth of
 evidence, `metadata.secrets_limited` naming the formats, and the diagnostic
 `more than 5 credentials matched <format>; credential evidence incomplete`,

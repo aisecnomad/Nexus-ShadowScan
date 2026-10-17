@@ -753,26 +753,73 @@ def reported_credential(match: Match) -> str:
     return _assigned_value(match.value) if match.signature_id == GENERIC_CREDENTIAL else match.value
 
 
-def _credential_candidate(
-    text: str, code: bool, accepted: dict[str, list[tuple[int, int]]], signature: Signature, match: Any
-) -> bool:
-    """Whether a regex match of a secret signature is a credential the quota should count.
+class _CredentialJudge:
+    """Judges each regex match of a secret signature as ``match_secrets`` finds it.
 
-    A second match of a signature over text one of its matches already
-    covers is the same credential; a generic match that holds no key-shaped
-    literal (``_generic_literal``) is none. ``accepted`` records each
-    signature's accepted spans for the rest of the text.
+    Called with (signature, signal, match), it says whether the match is a
+    credential the quota should count. A second match of a signature over text
+    one of its matches already covers is the same credential; a generic match
+    that holds no key-shaped literal (``_generic_literal``) is none, nor is a
+    short ``sk-`` value that does not look random or that a counted generic
+    assignment covers (the rules ``keep_secret_matches`` applies). With
+    ``placeholder`` (the caller's documentation-sample test, run on the
+    credential a match stands for) a sample counts toward nothing either: up
+    to :data:`MAX_SECRETS_PER_SIGNAL` of them per signature are kept in
+    ``samples`` for the caller's example evidence, and the rest are dropped,
+    since none of them is reported. ``accepted`` holds the spans counted or
+    kept per signature, a bounded number.
     """
-    start, end = match.span()
-    spans = accepted.setdefault(signature.id, [])
-    if any(start < other_end and other_start < end for other_start, other_end in spans):
-        return False
-    if signature.id == GENERIC_CREDENTIAL:
-        follower = text[end : end + _FOLLOWER_CHARS]
-        if _generic_literal(match.group(0), code=code, follower=follower) is None:
+
+    def __init__(self, text: str, code: bool, placeholder: Callable[[str], object] | None = None) -> None:
+        self.text, self.code, self.placeholder = text, code, placeholder
+        self.accepted: dict[str, list[tuple[int, int]]] = {}
+        self.samples: list[tuple[Signature, Signal, Any]] = []
+        self._kept_samples: Counter[str] = Counter()
+
+    def _covered(self, signature_id: str, start: int, end: int) -> bool:
+        spans = self.accepted.get(signature_id, ())
+        return any(start < other_end and other_start < end for other_start, other_end in spans)
+
+    def __call__(self, signature: Signature, signal: Signal, match: Any) -> bool:
+        start, end = match.span()
+        if self._covered(signature.id, start, end):
             return False
-    spans.append((start, end))
-    return True
+        credential: str | None = match.group(0)
+        if signature.id == GENERIC_CREDENTIAL:
+            follower = self.text[end : end + _FOLLOWER_CHARS]
+            credential = _generic_literal(match.group(0), code=self.code, follower=follower)
+        elif signature.id == UNATTRIBUTED_KEY and len(match.group(0)) - len("sk-") < _SHORT_KEY_BODY:
+            body = match.group(0)[len("sk-") :]
+            if self._covered(GENERIC_CREDENTIAL, start, end) or not _random_key_body(body):
+                credential = None
+        if credential is None:
+            return False
+        if self.placeholder is not None and self.placeholder(credential):
+            if self._kept_samples[signature.id] < MAX_SECRETS_PER_SIGNAL:
+                self._kept_samples[signature.id] += 1
+                self.accepted.setdefault(signature.id, []).append((start, end))
+                self.samples.append((signature, signal, match))
+            return False
+        self.accepted.setdefault(signature.id, []).append((start, end))
+        return True
+
+
+def _sample_matches(text: str, samples: Sequence[tuple[Signature, Signal, Any]]) -> list[Match]:
+    """The documentation samples a ``_CredentialJudge`` kept, as matches of ``text``."""
+    if not samples:
+        return []
+    newlines = [newline.start() for newline in re.finditer("\n", text)]
+    return [
+        Match(
+            signature,
+            signal,
+            match.group(0),
+            signal.weight,
+            line=bisect_left(newlines, match.start()) + 1,
+            extra={"start": match.start(), "end": match.end()},
+        )
+        for signature, signal, match in samples
+    ]
 
 
 def keep_secret_matches(
@@ -1732,7 +1779,7 @@ class SignatureIndex:
         ignore_spans: Sequence[tuple[int, int]] = (),
         scan: LiteralScan | None = None,
         limited: set[str] | None = None,
-        accept: Callable[[Signature, Any], bool] | None = None,
+        accept: Callable[[Signature, Signal, Any], bool] | None = None,
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
         with self._input_budget():
@@ -1749,11 +1796,11 @@ class SignatureIndex:
         ignore_spans: Sequence[tuple[int, int]],
         scan: LiteralScan | None = None,
         limited: set[str] | None = None,
-        accept: Callable[[Signature, Any], bool] | None = None,
+        accept: Callable[[Signature, Signal, Any], bool] | None = None,
     ) -> list[Match]:
         """Match the regex signals of one type, at most ``max_per_signal`` per signal.
 
-        ``accept``, when given, judges each regex match of a signature as it is
+        ``accept``, when given, judges each regex match (signature, signal, match) as it is
         found; a rejected match is skipped and does not count toward the quota
         or the look past it.
 
@@ -1795,7 +1842,7 @@ class SignatureIndex:
         hits = 0
         for number in sorted(candidates):
             sig, s, rx, rest, fold = plan.entries[number]
-            select = None if accept is None else partial(accept, sig)
+            select = None if accept is None else partial(accept, sig, s)
             if id(s) != current:
                 current, hits = id(s), 0
             elif hits >= max_per_signal:
@@ -1875,16 +1922,22 @@ class SignatureIndex:
         *,
         code: bool = False,
         limited: set[str] | None = None,
+        placeholder: Callable[[str], object] | None = None,
     ) -> list[Match]:
         """Credential matches in ``text``, at most :data:`MAX_SECRETS_PER_SIGNAL` per signal.
 
         ``code`` says the text is source code (see ``keep_secret_matches``).
-        Matches are judged as they are found (``_credential_candidate``): a
-        value that only names a credential ('self.api_key = api_key' in a
-        settings module), and a credential another pattern of the same
-        signal already matched (``TOKEN=ghp_...`` is the assignment and the
-        bare token), count toward nothing, so no number of them can push a
-        key written further down past the quota.
+        Matches are judged as they are found (``_CredentialJudge``): a value
+        that only names a credential ('self.api_key = api_key' in a settings
+        module), a short ``sk-`` look-alike, and a credential another pattern
+        of the same signal already matched (``TOKEN=ghp_...`` is the
+        assignment and the bare token), count toward nothing, so no number of
+        them can push a key written further down past the quota. Neither does
+        a documentation sample when the caller passes its ``placeholder``
+        test, which judges the credential a match stands for
+        (``reported_credential``): a few samples per signature are returned
+        besides the quota, for example evidence, and a file of them is never
+        reported as holding more credentials than the quota.
 
         The quota bounds the evidence one finding can carry. It also hides
         every further credential of a format once that many have matched, so
@@ -1893,7 +1946,7 @@ class SignatureIndex:
         can disclose that its count is a lower bound rather than report a
         complete-looking result.
         """
-        accepted: dict[str, list[tuple[int, int]]] = {}
+        judge = _CredentialJudge(text, code, placeholder)
         matches = self._match_regex_signals(
             "secret",
             text,
@@ -1901,8 +1954,9 @@ class SignatureIndex:
             max_per_signal=MAX_SECRETS_PER_SIGNAL,
             scan=scan,
             limited=limited,
-            accept=partial(_credential_candidate, text, code, accepted),
+            accept=judge,
         )
+        matches.extend(_sample_matches(text, judge.samples))
         ends = [m.extra.get("end") for m in matches]
         followers = [text[end : end + _FOLLOWER_CHARS] if end is not None else "" for end in ends]
         credentials = _kept_credentials(

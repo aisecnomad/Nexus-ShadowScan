@@ -3852,7 +3852,12 @@ class FilesystemConnector(BaseConnector):
         # with outputs and markdown, where an unquoted value is printed text.
         code = file.lang is not None and not from_raw_notebook
         limited: set[str] = set()
-        for m in self.index.match_secrets(raw, scan=file.literals, code=code, limited=limited):
+        # Placeholders take no place in the quota and never count past it, so a
+        # .env.example of sample keys reads as complete rather than exit 3.
+        matches = self.index.match_secrets(
+            raw, scan=file.literals, code=code, limited=limited, placeholder=placeholder_reason
+        )
+        for m in matches:
             if (m.signature_id, m.value) in skip_values:
                 continue
             key = (m.signature_id, m.value, m.line)
@@ -4938,7 +4943,7 @@ class FilesystemConnector(BaseConnector):
             val = art.extra.get("value") if art.extra else None
             if val and self.scan_secrets:
                 limited: set[str] = set()
-                for m in self.index.match_secrets(val, limited=limited):
+                for m in self.index.match_secrets(val, limited=limited, placeholder=placeholder_reason):
                     m.line = art.line
                     # Judge the matched credential, not the whole assignment:
                     # a trailing comment must not hide a real key.
