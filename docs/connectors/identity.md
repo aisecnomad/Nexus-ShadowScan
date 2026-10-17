@@ -39,6 +39,17 @@ name. Such an app is never reported above possible confidence, however many
 observations it has. A generic AI-name hint (`identity-app.generic-ai-name`)
 stays separate, weak evidence, so a hint never lowers the score. Machine
 identities a connector keeps by policy are still inventoried, at that ceiling.
+
+An Okta OAuth app or a third-party Entra service principal that is only a
+sign-in client is not reported at all. That is an app whose every scope is an
+OpenID Connect Core scope (`openid`, `profile`, `email`, `address`, `phone`,
+`offline_access`), with no AI attribution or other tag, and whose display name
+either matches no name signature or matches the generic hint only on a word as
+common outside AI as `agent`, `assistant`, `copilot` or `bot` ("Insurance
+Agent Desk", "Copilot Money"). Any other generic term (LLM, GPT, GenAI, "AI
+assistant", chatbot), a product name (an ambiguous one such as Gemini
+included), any further scope, a machine grant or a retained Entra
+classification keeps the app reported, at the ceiling above.
 The bound is stored in the evidence weights, so a merge that recomputes
 confidence reproduces it.
 

@@ -212,15 +212,12 @@ class OktaConnector(BaseConnector):
             return None
         if not f.frameworks and not machine and not scopes:
             return None
-        # Suppress apps whose only AI signal is a generic name hint (e.g. a
-        # word like "agent" or "copilot" in the display name) and whose scopes
-        # are entirely standard OIDC housekeeping values.  Without a real
-        # product match or a substantive permission signal these are almost
-        # always false positives — an insurance-agent portal, a CI build-agent
-        # admin console, or a Minecraft Bedrock panel, for example.
-        # Machine (service-app) clients are always surfaced regardless: a service
-        # app with no scopes is an incomplete record, not a false positive.
-        if not machine and only_ai_name_hint(f, scopes):
+        # A sign-in client with OpenID Connect scopes only and no AI hint, or
+        # one from a common word ("Insurance Agent Desk", "Copilot Money"),
+        # is a decoy; a stronger hint keeps the app (see only_ai_name_hint).
+        # Machine (service-app) clients are always surfaced: a service app
+        # with no scopes is an incomplete record, not a false positive.
+        if not machine and only_ai_name_hint(f, scopes, index=self.index, names=(label, app.get("name"))):
             return None
         f.metadata.update(
             {

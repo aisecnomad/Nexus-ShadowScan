@@ -70,7 +70,9 @@ def test_okta_app_with_only_offline_access_is_not_flagged_privileged(run_connect
                 {
                     "id": "0oa1wiki",
                     "name": "oidc_client",
-                    "label": "Plain Wiki",
+                    # An AI name keeps the app reported, so the assertion below
+                    # classifies a finding instead of passing on an empty result.
+                    "label": "LLM Wiki",
                     "status": "ACTIVE",
                     "signOnMode": "OPENID_CONNECT",
                     "settings": {"oauthClient": {"grant_types": ["authorization_code", "refresh_token"]}},
@@ -83,6 +85,7 @@ def test_okta_app_with_only_offline_access_is_not_flagged_privileged(run_connect
     )
     findings, ctx = run_connector("identity.okta", input=str(export), org_url="https://acme.okta.com")
     assert not ctx.stats.errors
+    assert findings
     assert not [finding for finding in findings if PRIVILEGED in finding.tags]
 
 
@@ -493,3 +496,111 @@ def test_entra_decoy_name_with_privileged_scope_is_still_reported(run_connector,
     assert any("CI Agent Panel" in t for t in titles), (
         f"SP with privileged scopes must still be reported, got: {titles}"
     )
+
+
+# A sign-in client is where an internal LLM front-end shows up: only a common
+# word ("agent", "assistant", "copilot", "bot") makes an OpenID Connect app a
+# decoy. Every other hint, and every scope beyond OpenID Connect Core, keeps it.
+@pytest.mark.parametrize(
+    "label",
+    [
+        "LLM Gateway",
+        "Company GPT",
+        "GenAI Portal",
+        "AI Assistant",
+        "Support Chatbot",
+        # Three common words fill the name signal's match quota before "Chatbot".
+        "Agent Assistant Copilot Chatbot",
+        # An ambiguous product name is a hint of its own, not a common word.
+        "Gemini",
+    ],
+)
+def test_okta_sign_in_app_with_a_stronger_ai_hint_is_still_reported(run_connector, tmp_path, label: str):
+    export = tmp_path / "okta.json"
+    export.write_text(
+        json.dumps(
+            [
+                _okta_app(
+                    label=label,
+                    grant_types=["authorization_code", "refresh_token"],
+                    app_type="web",
+                    scopes=["openid", "email", "profile", "offline_access"],
+                )
+            ]
+        )
+    )
+    findings, ctx = run_connector("identity.okta", input=str(export), org_url="https://acme.okta.com")
+    assert not ctx.stats.errors
+    assert [f.title for f in findings] == [f"Okta OAuth app: {label}"]
+    assert "ai-name-hint" in findings[0].tags
+
+
+@pytest.mark.parametrize("scope", ["api", "full", "web", "workflow", "okta.apps.read"])
+def test_okta_common_word_app_with_a_resource_scope_is_still_reported(run_connector, tmp_path, scope: str):
+    export = tmp_path / "okta.json"
+    export.write_text(
+        json.dumps(
+            [
+                _okta_app(
+                    label="Insurance Agent Desk",
+                    grant_types=["authorization_code"],
+                    app_type="web",
+                    scopes=["openid", "profile", scope],
+                )
+            ]
+        )
+    )
+    findings, ctx = run_connector("identity.okta", input=str(export), org_url="https://acme.okta.com")
+    assert not ctx.stats.errors
+    assert [f.title for f in findings] == ["Okta OAuth app: Insurance Agent Desk"]
+
+
+def test_okta_plain_sign_in_app_with_oidc_scopes_only_is_not_reported(run_connector, tmp_path):
+    export = tmp_path / "okta.json"
+    export.write_text(
+        json.dumps(
+            [
+                _okta_app(
+                    label="Plain Wiki",
+                    grant_types=["authorization_code", "refresh_token"],
+                    app_type="web",
+                    scopes=["openid", "offline_access"],
+                )
+            ]
+        )
+    )
+    findings, ctx = run_connector("identity.okta", input=str(export), org_url="https://acme.okta.com")
+    assert not ctx.stats.errors
+    assert findings == []
+
+
+def test_entra_sign_in_sp_with_a_stronger_ai_hint_is_still_reported(run_connector, tmp_path):
+    sp = {
+        "@odata.type": "#microsoft.graph.servicePrincipal",
+        "id": "sp-llm",
+        "appId": "app-llm",
+        "displayName": "Internal LLM Gateway",
+        "servicePrincipalType": "Application",
+        "accountEnabled": True,
+        "createdDateTime": "2025-01-01T00:00:00Z",
+        "appOwnerOrganizationId": "external-tenant",
+        "publisherName": "ACME Corp",
+        "signInAudience": "AzureADMultipleOrgs",
+        "tags": [],
+        "replyUrls": [],
+        "notes": None,
+    }
+    grant = {
+        "@odata.type": "#microsoft.graph.oAuth2PermissionGrant",
+        "id": "grant-llm",
+        "clientId": "sp-llm",
+        "consentType": "Principal",
+        "principalId": "user-1",
+        "resourceId": "graph-sp-1",
+        "scope": "openid profile email offline_access",
+    }
+    export = tmp_path / "entra.json"
+    export.write_text(json.dumps([sp, grant]))
+    findings, ctx = run_connector("identity.entra", input=str(export), tenant_id="t")
+    assert not ctx.stats.errors
+    assert any("Internal LLM Gateway" in f.title for f in findings), [f.title for f in findings]

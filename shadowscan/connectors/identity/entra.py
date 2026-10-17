@@ -1324,12 +1324,14 @@ class EntraConnector(BaseConnector):
             account=self.tenant,
             first_seen=sp.get("createdDateTime"),
         )
+        publisher = sp.get("publisherName") or ((sp.get("verifiedPublisher") or {}).get("displayName"))
+        description = " ".join(x for x in [sp.get("notes"), sp.get("description")] if x)
         assess_app(
             self.index,
             f,
             name=name,
-            publisher=sp.get("publisherName") or ((sp.get("verifiedPublisher") or {}).get("displayName")),
-            description=" ".join(x for x in [sp.get("notes"), sp.get("description")] if x),
+            publisher=publisher,
+            description=description,
             urls=[sp.get("homepage"), sp.get("loginUrl"), *(sp.get("replyUrls") or [])],
             # Sets iterate in hash order; sort so reports are reproducible across runs.
             scopes=sorted(delegated) + app_perms,
@@ -1345,12 +1347,20 @@ class EntraConnector(BaseConnector):
             and sp_type != "ManagedIdentity"
         ):
             return None
-        # Suppress third-party SPs whose only AI signal is a generic name hint
-        # (e.g. "Agent Portal", "Bedrock Admin") with no substantive permission
-        # evidence.  Delegated scopes or app-role assignments would have already
-        # returned above if absent; if they are present, only_ai_name_hint
-        # returns False (non-benign scopes remain), so real SPs are unaffected.
-        if not retained and not machine and only_ai_name_hint(f, list(delegated) + app_perms):
+        # A third-party SP that holds only OpenID Connect delegated scopes and
+        # has no AI hint, or one from a common word, is a sign-in client, not
+        # an AI app; any application permission or other delegated scope, or
+        # a stronger name hint, keeps it (see only_ai_name_hint).
+        if (
+            not retained
+            and not machine
+            and only_ai_name_hint(
+                f,
+                list(delegated) + app_perms,
+                index=self.index,
+                names=(name, publisher, description),
+            )
+        ):
             return None
         f.add_evidence(
             Evidence(

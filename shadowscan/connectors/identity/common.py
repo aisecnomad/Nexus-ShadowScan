@@ -138,66 +138,63 @@ def summarize_scopes(scopes: Iterable[str], limit: int = 25) -> list[str]:
     return out[:limit] + ([f"... +{len(out) - limit} more"] if len(out) > limit else [])
 
 
-# Standard OIDC / OAuth housekeeping scopes that carry no AI signal.
-# An app whose permission set is a subset of these is not meaningfully
-# distinguished from a plain SSO app by its scopes alone.
-_BENIGN_OIDC_SCOPES: frozenset[str] = frozenset(
-    {
-        "openid",
-        "profile",
-        "email",
-        "address",
-        "phone",
-        "offline_access",
-        # Salesforce / Okta housekeeping names that are routine and non-AI
-        "refresh_token",
-        "web",
-        "full",
-        "api",
-        # GitHub / GitLab housekeeping
-        "workflow",
-        # generic OIDC-adjacent scopes that policy.yaml explicitly excludes
-        "OFFLINE_ACCESS",
-    }
+# The OpenID Connect Core scopes: they sign a user in and say nothing about
+# what the app does with the session. Resource scopes that only look routine
+# ("api", "full", "web", "workflow") are left out: they grant API or data
+# access, which is a reason to report the app.
+_OIDC_CORE_SCOPES: frozenset[str] = frozenset(
+    {"openid", "profile", "email", "address", "phone", "offline_access"}
 )
+# The generic AI-name signature's words that are just as common in names that
+# are not AI: an insurance or field agent, a CI build agent, a support
+# assistant desk, a personal-finance "copilot", a chat bot integration. Its
+# other terms (LLM, GPT, GenAI, "AI assistant", chatbot, RAG ...) and every
+# product name, ambiguous ones such as Gemini included, are not.
+_COMMON_AI_NAME_WORDS = frozenset({"agent", "agents", "assistant", "copilot", "bot"})
+_COMMON_AI_NAME_WORD = re.compile(r"(?i)\b(?:agents?|assistant|copilot|bot)\b")
+_GENERIC_AI_NAME = "identity-app.generic-ai-name"
 
 
-def only_ai_name_hint(finding: Finding, scopes: Iterable[str]) -> bool:
-    """Return True when the finding has no substantive AI signal and only benign scopes.
+def _common_words_only(index: SignatureIndex, names: Iterable[str | None]) -> bool:
+    """Whether every name signature these texts match is the generic hint on a common word.
 
-    This covers two related suppression cases:
+    The texts are matched again with those words removed, so a term the
+    per-signal match quota left unread behind them (a "chatbot" after three
+    common words) still counts as the stronger hint it is.
+    """
+    texts = [text for text in names if text]
+    matches = [match for text in texts for match in index.match_name(text)]
+    if any(
+        match.signature_id != _GENERIC_AI_NAME or match.value.casefold() not in _COMMON_AI_NAME_WORDS
+        for match in matches
+    ):
+        return False
+    return not any(index.match_name(_COMMON_AI_NAME_WORD.sub(" ", text)) for text in texts)
 
-    1. The *only* AI signal is a generic name hint (``ai-name-hint`` tag) with
-       no identified product, no model provider, no LLM-access or privileged
-       scope tag, and no non-housekeeping permissions.  Emitting it would
-       produce a false positive for any app whose display name happens to
-       contain a word like "agent", "bot", or "copilot" without being AI.
 
-    2. There is *no* AI signal at all — the name matched nothing, the scopes
-       are all standard OIDC housekeeping values, and no framework / provider
-       is established.  Such an app is a plain SSO client that only passed the
-       earlier ``not scopes`` gate because it declared ``openid`` / ``profile``
-       / ``offline_access`` — common on every web app regardless of AI use.
+def only_ai_name_hint(
+    finding: Finding, scopes: Iterable[str], *, index: SignatureIndex, names: Iterable[str | None]
+) -> bool:
+    """Whether an app is a sign-in client with nothing that suggests AI, so it is not reported.
 
-    Callers use this to suppress the finding rather than lower its confidence,
-    keeping the precision improvement invisible to downstream scoring and
-    avoiding a situation where a soft-suppressed finding still shows up in
-    high-sensitivity modes.
+    True when every scope is an OpenID Connect Core scope and the app has no
+    AI attribution at all: no product, provider, LLM-access or other policy
+    tag, agent identity or registry record, and either no name hint or one
+    that comes only from a common word (``_COMMON_AI_NAME_WORDS``) in
+    ``names``, the texts the connector matched name signatures against.
+    That is the decoy case: "Insurance Agent Desk" or "Copilot Money" with
+    openid and profile, or a plain SSO app with nothing but those scopes.
+
+    "LLM Gateway", "Company GPT", "AI Assistant" or an app named Gemini stays
+    reported at the unattributed-app ceiling, as does any app holding a scope
+    beyond those: a sign-in client is where an internal LLM front-end shows
+    up, and the scanner must not hide it to look precise. Callers keep machine
+    clients regardless.
     """
     if finding.frameworks or finding.model_providers:
         return False
-    ai_tags = {"policy.llm-access-scopes", "entra-agent-identity", "registry-record"}
-    if ai_tags.intersection(finding.tags):
+    if set(finding.tags) - {"ai-name-hint"}:
         return False
-    # Allow through if there is a strong AI signal beyond a mere name hint.
-    # (ai-name-hint itself is weak; its absence is even weaker — still suppressed.)
-    tags_set = set(finding.tags)
-    strong_ai_tags = tags_set - {"ai-name-hint"} - ai_tags
-    if strong_ai_tags:
-        # Some other AI-indicative tag (e.g. policy.data-access-scopes, machine-identity
-        # added by the connector, or a product tag from a matched signature) is present;
-        # do not suppress.
+    if any(str(scope).lower() not in _OIDC_CORE_SCOPES for scope in scopes if scope):
         return False
-    scope_set = {str(s).lower() for s in scopes if s}
-    non_benign = scope_set - {s.lower() for s in _BENIGN_OIDC_SCOPES}
-    return not non_benign
+    return "ai-name-hint" not in finding.tags or _common_words_only(index, names)
