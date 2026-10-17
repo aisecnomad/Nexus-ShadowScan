@@ -826,6 +826,128 @@ def test_ebpf_native_lists_past_the_limit_mark_the_scan_incomplete(producer, eve
     ]
 
 
+_TRACEE_CONNECT = {"eventName": "security_socket_connect", "processName": "uvicorn"}
+_FLAT_DEFECTS = [
+    {"process_name": "python3", "destination": ["api.openai.com"], "port": 443},
+    {"process_name": "python3", "destination": {"host": "api.openai.com"}, "port": 443},
+    {"process_name": "python3", "destination": "10.8.0.21", "port": [11434]},
+    {"process_name": "python3", "destination": "10.8.0.21", "destination_port": {"n": 11434}},
+    {"binary": "python3", "url": ["https://api.openai.com/v1"]},
+    {"binary": ["python3"], "hostname": "10.8.0.21"},
+    {"process_name": "python3", "destination": "10.8.0.21", "pod": {"name": "agent-0"}},
+    {"process_name": "python3", "destination": "10.8.0.21", "port": True},
+]
+
+
+@pytest.mark.parametrize(
+    ("producer", "record"),
+    [
+        *(pytest.param("flat", record, id=f"flat-{n}") for n, record in enumerate(_FLAT_DEFECTS)),
+        pytest.param(
+            "Tetragon",
+            {
+                "process_kprobe": {
+                    "process": _TETRAGON_PROCESS,
+                    "args": [{"sock_arg": {"daddr": "10.8.0.21", "dport": True}}],
+                }
+            },
+            id="tetragon-bool-port",
+        ),
+        pytest.param(
+            "Falco",
+            {"rule": "r", "output_fields": {"proc.name": "python3", "fd.sip": "10.8.0.21", "fd.sport": True}},
+            id="falco-bool-port",
+        ),
+        pytest.param(
+            "Hubble",
+            {"flow": {**_HUBBLE_FLOW, "l4": {"TCP": {"destination_port": True}}}},
+            id="hubble-bool-port",
+        ),
+        pytest.param(
+            "Tracee",
+            {
+                **_TRACEE_CONNECT,
+                "args": [
+                    {
+                        "name": "remote_addr",
+                        "type": "struct sockaddr*",
+                        "value": [{"sin_addr": "10.8.0.21", "sin_port": "11434"}],
+                    }
+                ],
+            },
+            id="tracee-remote-addr-list",
+        ),
+        pytest.param(
+            "Tracee",
+            {**_TRACEE_CONNECT, "args": [{"name": "remote_addr", "value": "10.8.0.21:11434"}]},
+            id="tracee-remote-addr-text",
+        ),
+        pytest.param(
+            "Tracee",
+            {**_TRACEE_CONNECT, "args": [{"name": "addr", "type": "struct sockaddr*", "value": "10.8.0.21"}]},
+            id="tracee-sockaddr-type-text",
+        ),
+    ],
+)
+def test_ebpf_wrong_typed_flat_fields_boolean_ports_and_tracee_addresses_mark_incomplete(
+    producer, record
+) -> None:
+    """Regression: a flat record read a wrong-typed destination, url, port, process
+    name or pod as empty without a word, a JSON ``true`` passed as a port because
+    ``bool`` subclasses ``int``, and a Tracee ``remote_addr`` that was not a map was
+    skipped, so each could hide a connection on a scan that stayed complete."""
+    connector = _ebpf_connector()
+    list(connector.analyze([record]))
+    assert connector.ctx.stats.incomplete, record
+    assert connector.ctx.stats.warnings == [
+        f"endpoint.ebpf: malformed {producer} event fields were not analyzed"
+    ], record
+
+
+def test_ebpf_flat_defects_warn_once_and_the_record_is_still_scored() -> None:
+    connector = _ebpf_connector()
+    findings = list(
+        connector.analyze(
+            [
+                *_FLAT_DEFECTS,
+                {"process": "/usr/bin/python3", "destination": "api.openai.com", "port": 443},
+                {"process_name": "python3", "destination": ["x"], "hostname": "api.openai.com", "port": 443},
+            ]
+        )
+    )
+    # One fixed-text warning however many flat records are malformed; no value is echoed.
+    assert connector.ctx.stats.warnings == ["endpoint.ebpf: malformed flat event fields were not analyzed"]
+    assert sorted(finding.resource for finding in findings) == ["python3", "runtime-process"]
+    assert all("llm-egress" in finding.tags for finding in findings if finding.resource == "python3")
+
+
+def test_ebpf_well_formed_flat_and_unix_socket_records_stay_complete() -> None:
+    connector = _ebpf_connector()
+    findings = list(
+        connector.analyze(
+            [
+                *json.loads((FIXTURES / "ebpf/events.json").read_text(encoding="utf-8")),
+                {"process": {"binary": "agent"}, "hostname": "api.openai.com", "timestamp": 1},
+                {"process": {"name": "agent"}, "server.address": "api.anthropic.com", "port": "443"},
+                {
+                    **_TRACEE_CONNECT,
+                    "args": [
+                        {"name": "sockfd", "type": "int", "value": 7},
+                        {
+                            "name": "remote_addr",
+                            "type": "struct sockaddr*",
+                            "value": {"sa_family": "AF_UNIX", "sun_path": "/run/agent.sock"},
+                        },
+                    ],
+                },
+            ]
+        )
+    )
+    assert len(findings) == 4
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
 def test_kubernetes_offline_resource_identity_and_security_tags() -> None:
     connector = KubernetesConnector(ConnectorContext(config={"cluster": "test-cluster"}))
     findings = list(

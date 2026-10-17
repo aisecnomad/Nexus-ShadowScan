@@ -116,7 +116,16 @@ Counts and figures quoted in an entry are those of its date.
   reader now notes the fields it could not read, and the connector records
   one fixed-text warning per producer for malformed fields and one for the
   list limit, either of which marks the scan incomplete; the event is still
-  scored on what was read. Negative tests cover each producer. The Hubble
+  scored on what was read. Negative tests cover each producer. A second
+  review found the flat shape outside this accounting: a flat record read
+  a `destination`, `url` or port given as a list or map as empty in
+  silence, so a connection was hidden on a complete scan. Flat records
+  now go through the same type checks and report one fixed-text warning,
+  `malformed flat event fields`, which also replaces the flat shape's
+  separate `malformed process` warning; a JSON boolean is no longer read
+  as a port (`bool` subclasses `int`), and a Tracee `remote_addr` or
+  `struct sockaddr*` argument whose value is not a map is malformed
+  instead of skipped. Regression-tested per field. The Hubble
   reader also scored only the first `destination_names` entry, so a
   CDN-shared address listed as `static.example.com` before
   `api.openai.com` gave no finding; every name (up to the list limit) is

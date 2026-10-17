@@ -975,10 +975,10 @@ _TETRAGON_EVENT_KEYS = (
 _EBPF_ARG_LIMIT = 100
 # A port is a number or, in Tracee's sockaddr maps, its decimal text.
 _EBPF_PORT = (int, str)
-# What a reader could not read in an event it recognized: a field of the wrong
+# What a reader could not read in a record it recognized: a field of the wrong
 # type ("malformed"), or the entries of a list past _EBPF_ARG_LIMIT ("limit").
-# Each is reported once per producer and leaves the scan incomplete, as a
-# malformed flat record does: a malformed or oversized export must not hide a
+# Each is reported once per producer, the flat record shape included, and
+# leaves the scan incomplete: a malformed or oversized export must not hide a
 # connection on a scan that looks complete.
 _EBPF_DEFECT_WARNINGS = {
     "malformed": "endpoint.ebpf: malformed {producer} event fields were not analyzed",
@@ -992,14 +992,15 @@ def _ebpf_field(
     """The first non-empty value of ``keys`` in ``container`` that is of ``kinds``, or None.
 
     A value of another type, even an empty one, is not read: it is noted in
-    ``defects`` as a malformed field, as the flat shape's malformed ``process`` is.
+    ``defects`` as a malformed field. A JSON boolean is never of ``kinds``: no
+    field is one, and ``bool`` subclasses ``int``, so ``true`` would pass as a port.
     An empty value of the right type carries nothing and is passed over.
     """
     for key in keys:
         value = container.get(key)
         if value is None:
             continue
-        if not isinstance(value, kinds):
+        if not isinstance(value, kinds) or isinstance(value, bool):
             defects.add("malformed")
         elif value:
             return value
@@ -1094,13 +1095,28 @@ def _tracee_socket(args: list[Any], defects: set[str]) -> tuple[str, Any]:
         if not isinstance(arg, dict):
             defects.add("malformed")
             continue
-        value = arg.get("value")
+        value = _tracee_sockaddr(arg, defects)
         if isinstance(value, dict) and ("sin_addr" in value or "sin6_addr" in value):
             return (
                 _ebpf_field(value, ("sin_addr", "sin6_addr"), str, defects) or "",
                 _ebpf_field(value, ("sin_port", "sin6_port"), _EBPF_PORT, defects),
             )
     return "", None
+
+
+def _tracee_sockaddr(arg: dict[str, Any], defects: set[str]) -> Any:
+    """A Tracee argument's value when it may be a sockaddr map.
+
+    An argument Tracee declares a socket address (``remote_addr``, or a
+    ``struct sockaddr*`` type) whose value is not a map is malformed: its
+    destination cannot be read. Any other argument is a sockaddr map only when its
+    value is a map holding an address.
+    """
+    name = _ebpf_field(arg, ("name",), str, defects) or ""
+    kind = _ebpf_field(arg, ("type",), str, defects) or ""
+    if name == "remote_addr" or "sockaddr" in kind:
+        return _ebpf_field(arg, ("value",), dict, defects)
+    return arg.get("value")
 
 
 def _hubble_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
@@ -1143,6 +1159,26 @@ _EBPF_READERS: tuple[tuple[str, Callable[[dict[str, Any], set[str]], dict[str, A
 )
 
 
+def _flat_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any]:
+    """Flat record: the field names other collectors export (_EBPF_FLAT_KEYS), read with
+    the type checks the native readers apply.
+
+    The process is a ``process`` map's ``binary`` or ``name``, else ``binary`` or
+    ``process_name``; every destination field is scored; the port is ``port`` or
+    ``destination_port``.
+    """
+    process = _ebpf_field(record, ("process",), dict, defects) or {}
+    destinations = (_ebpf_field(record, (key,), str, defects) for key in _EBPF_DESTINATION_KEYS)
+    return {
+        "process_name": _ebpf_field(process, ("binary", "name"), str, defects)
+        or _ebpf_field(record, ("binary", "process_name"), str, defects),
+        "destination": tuple(destination for destination in destinations if destination),
+        "destination_port": _ebpf_field(record, ("port", "destination_port"), _EBPF_PORT, defects),
+        "namespace": _ebpf_field(record, ("namespace",), str, defects),
+        "pod": _ebpf_field(record, ("pod", "pod_name"), str, defects),
+    }
+
+
 def _normalize_ebpf_record(record: dict[str, Any]) -> tuple[str, dict[str, Any], set[str]] | None:
     """The producer, the flat record to score and what its reader could not read
     (see _EBPF_DEFECT_WARNINGS), or None for a record no reader recognizes."""
@@ -1152,7 +1188,8 @@ def _normalize_ebpf_record(record: dict[str, Any]) -> tuple[str, dict[str, Any],
         if normalized is not None:
             return producer, normalized, defects
     if _EBPF_FLAT_KEYS.intersection(record):
-        return "flat", record, set()
+        defects = set()
+        return "flat", _flat_ebpf_record(record, defects), defects
     return None
 
 
@@ -1174,16 +1211,14 @@ class EbpfConnector(_EndpointConnector):
                 self.ctx.warn(_EBPF_DEFECT_WARNINGS[defect].format(producer=producer))
 
     def _destination_text(self, record: dict[str, Any]) -> str:
-        """The record's destination fields as one text to score, each value cut to 512 characters.
+        """The record's destinations as one text to score, each value cut to 512 characters.
 
-        A reader passes several destination names as a tuple (Hubble's
-        ``destination_names``); each is read on its own, so none is cut off by those before it.
+        A reader passes several destinations as a tuple (Hubble's ``destination_names``, a
+        flat record's destination fields); each is read on its own, so none is cut off by
+        those before it.
         """
-        values: list[Any] = []
-        for key in _EBPF_DESTINATION_KEYS:
-            value = record.get(key)
-            values.extend(value if isinstance(value, tuple) else (value,))
-        return " ".join(self._text(value, 512) for value in values)
+        value = record.get("destination")
+        return " ".join(self._text(item, 512) for item in (value if isinstance(value, tuple) else (value,)))
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for raw in records:
@@ -1201,16 +1236,10 @@ class EbpfConnector(_EndpointConnector):
             producer, record, defects = normalized
             # The event is still scored on what was read.
             self._report_defects(producer, defects)
-            serialized = self._destination_text(record)
-            process = record.get("process")
-            if isinstance(process, dict):
-                serialized += " " + self._text(process.get("binary") or process.get("name"))
-            else:
-                if process is not None:
-                    self.ctx.warn("endpoint.ebpf: malformed process")
-                serialized += " " + self._text(record.get("binary") or record.get("process_name"))
+            binary = self._text(record.get("process_name"))
+            serialized = self._destination_text(record) + " " + binary
             lower = serialized.lower()
-            port = str(record.get("port") or record.get("destination_port") or "")
+            port = str(record.get("destination_port") or "")
             tags = []
             if _HOST.search(serialized) or any(host in lower for host in ("openai", "anthropic", "ollama")):
                 tags.append("llm-egress")
@@ -1219,12 +1248,8 @@ class EbpfConnector(_EndpointConnector):
             if not tags:
                 self.ctx.examined()
                 continue
-            pod = self._text(record.get("pod") or record.get("pod_name"))
+            pod = self._text(record.get("pod"))
             ns = self._text(record.get("namespace"))
-            process_binary = (
-                process.get("binary") or process.get("name") if isinstance(process, dict) else None
-            )
-            binary = self._text(process_binary or record.get("binary") or record.get("process_name"))
             binary = binary or "runtime-process"
             yield self._finding(
                 f"{ns}/{pod}/{binary}".strip("/"),
