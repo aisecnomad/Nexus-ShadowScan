@@ -336,7 +336,9 @@ coverage, even when a response includes an empty collection field.
   process.env.OPENAI_API_KEY`, `api_key = os.getenv("OPENAI_API_KEY")`). Only
   blanks and then the end of the line, `;`, `,` or a closing bracket may follow
   the read: with a default argument, a fallback literal, any other operand or a
-  comment after it the whole value is withheld.
+  comment after it the whole value is withheld. So is a read whose variable
+  name looks like an opaque key, such as an upper-case key or a base32 secret
+  pasted in place of the name.
 - **Structured records:** Structured name/value records that connectors
   pass to the sanitizer read their name as a setting too, in either field
   order (`{"name": "OpenAI:Secret", "value": "..."}`, and an opaque value under

@@ -981,7 +981,11 @@ public repositories with the tool and read the committed benchmark metrics.
   (`|| "v"`, `or "v"`, `?? "v"`, also chained in a `key: value` entry),
   concatenation, a computed name, a method on the value or a comment after the
   read (`apiKey: process.env.X // old: <key>`) keeps the whole value withheld,
-  as does any other identifier, call or token.
+  as does any other identifier, call or token. The variable name must not look
+  like an opaque key (`redaction_rules._opaque`: letters and digits alternating
+  in a long run), so an upper-case key or base32 secret pasted as the name
+  (`os.getenv("<KEY>")`) stays withheld while `OPENAI_API_KEY`, `PGPASSWORD` and
+  `K8S_TOKEN` are shown.
 - **Fewer spurious incomplete scans.** Exit 3 was the common case on ordinary
   repositories, so a CI gate on a nonzero exit failed on them for good:
   - A JSON or YAML document whose structure declares no MCP servers (a
