@@ -326,6 +326,26 @@ file_matches)`, now serves every gap site.
   blinding; a data export that names no key still costs one entry. A prefix
   peek was the alternative the plan offered; it would let leading padding
   hide the key.
+- **An alias of a scanned directory is one entry; an agent's directory never
+  is.** The walker change that made directory links blinding also caught
+  links whose target the walk scans at its real path (`lib_alias -> lib`,
+  `docs/_static -> ../assets`), with an error saying the target was
+  unscanned: ordinary layouts exited 3 although every file was read. Such an
+  alias (`_alias_of_scanned_directory`: inside the root, every directory on
+  its path walked, within the selected paths, and not test code read as
+  product code) now costs one entry, with a diagnostic saying the paths below
+  it are not assessed. Under `--profile ci` a directory link named like an
+  agent's configuration directory under a test or documentation path
+  (`tests/e2e/.claude`, `tests/e2e/.cursor`, `docs/.vscode` pointing outside
+  the tree) was declared, since `_declared_omission` judged the name as a
+  file's, so the configuration behind it was never inventoried while a link
+  at `tests/e2e/.claude/settings.json` exited 3. `_agent_configuration_link`
+  now decides before the declaration: a link named like agent configuration,
+  or one to a directory (or dangling) whose path names a directory the
+  coding-agent and MCP file signatures read configuration from
+  (`_agent_directory_names`, derived from the loaded signatures), is blinding
+  and never declared, an alias of a scanned directory included; a link to a
+  single file under such a directory is judged by its own name.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 

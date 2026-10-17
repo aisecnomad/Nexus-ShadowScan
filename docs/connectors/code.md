@@ -625,7 +625,10 @@ content are coverage gaps of one entry each, charged to the
 [budget](../scanning.md#coverage-budget-and-strict-accounting). Binary content
 (NUL bytes that are not stray ones in text, see
 [scan semantics](../scanning.md)) in an analyzable file outside discounted test
-code, a link to a directory, and agent configuration (an MCP configuration
+code, a link to a directory other than an alias of one the walk scans whole
+inside the root (which costs one entry), a link to or named like a directory an
+agent reads its configuration from (`.claude`, `.cursor`, `.vscode`), which
+`profile: ci` never declares, and agent configuration (an MCP configuration
 by a dedicated name in any letter case, a coding-agent instruction, rule or
 settings file, a file a coding-agent or MCP file signature selects with a
 directory-wide glob such as `.roo/**`, an agent manifest or card) that is over
@@ -1240,7 +1243,8 @@ repositories each within its budget stays complete. The published
 over their own budget, `tolerated_gap_entries` the entries the others
 tolerated, and its `details` list the gaps of the repositories that left the
 scan incomplete first. Blinding gaps (an LFS pointer, a gitlink,
-a directory link) fail closed without a budget, `profile: ci` declarations
+a directory link other than an alias of a scanned directory) fail closed
+without a budget, `profile: ci` declarations
 are counted apart, and with `--max-coverage-gap 0`
 ([strict accounting](../scanning.md#coverage-budget-and-strict-accounting))
 any gap makes the scan incomplete.

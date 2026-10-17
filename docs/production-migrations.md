@@ -66,6 +66,18 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   TOML or YAML file whose bytes name an MCP server table key anywhere in its
   first 128 MiB (or that is larger), as an oversize `.mcp.json` does; an
   oversize data export that names none still costs one entry.
+- **An alias of a scanned directory costs one entry.** A directory link
+  whose target the walk scans whole inside the root (`lib_alias` to `lib`,
+  `docs/_static` to `../assets`, a monorepo's `packages/web/shared` to
+  `libs/shared`) is one entry of the coverage budget instead of an immediate
+  exit 3, with the diagnostic `an alias of a scanned directory; paths below it
+  not assessed`. A link to a directory outside the root, into an excluded or
+  unselected directory, or that reads test code as product code still exits
+  3, and so does one whose path names an agent's configuration directory
+  (`.claude`, `.cursor`, `.vscode`, `.roo`, `.github` and the others the
+  coding-agent and MCP signatures name), which `profile: ci` now never
+  declares under a test or documentation path (`tests/e2e/.claude`,
+  `docs/.vscode`).
 - **Gap weights follow `include_tests`.** With `include_tests: true` a gap
   under a test path weighs a whole entry in the coverage budget instead of a
   quarter, so fewer such gaps are tolerated. Without it, gaps under
