@@ -15,7 +15,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
+from shadowscan.connectors.code import filesystem
 from shadowscan.connectors.code.filesystem import _document_declares_mcp
 from shadowscan.utils.text import BINARY_CONTENT_ERROR
 
@@ -81,6 +83,51 @@ def test_a_transcript_that_lists_mcp_servers_is_not_an_mcp_configuration(tmp_pat
 def test_a_workflow_example_that_writes_an_mcp_configuration_is_not_one(tmp_path, run_connector):
     _, ctx = _scan(tmp_path, run_connector, {"examples/issue-triage.yml": WORKFLOW_EXAMPLE})
     assert not ctx.stats.incomplete and not ctx.stats.errors
+
+
+OPENAPI = "openapi: 3.0.0\npaths:\n  /items:\n    get:\n      responses:\n        '200':\n          description: ok\n"
+
+
+def _count_yaml_parses(monkeypatch) -> tuple[list[str], list[str]]:
+    """Record each structural MCP check and each YAML configuration-loader parse a scan makes."""
+    checks: list[str] = []
+    loads: list[str] = []
+    check, load = filesystem._yaml_declares_mcp, yaml.load
+
+    def counted_check(text: str) -> bool | None:
+        checks.append(text)
+        return check(text)
+
+    def counted_load(stream, Loader):
+        loads.append(Loader.__name__)
+        return load(stream, Loader=Loader)
+
+    monkeypatch.setattr(filesystem, "_yaml_declares_mcp", counted_check)
+    monkeypatch.setattr(yaml, "load", counted_load)
+    return checks, loads
+
+
+def test_a_yaml_file_without_mcp_keys_is_parsed_once(tmp_path, run_connector, monkeypatch):
+    # The MCP guess reuses the parse every structured file already gets: no second
+    # full strict parse of each OpenAPI spec, Helm chart or manifest in a repository.
+    checks, loads = _count_yaml_parses(monkeypatch)
+    _, ctx = _scan(tmp_path, run_connector, {"api/openapi.yaml": OPENAPI})
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+    assert checks == []
+    assert loads.count("StrictBoundedConfigLoader") == 1
+
+
+def test_a_yaml_mcp_configuration_is_decided_from_the_parse_already_held(
+    tmp_path, run_connector, monkeypatch
+):
+    # A quoted key, which no substring check names, is found in the structure.
+    checks, loads = _count_yaml_parses(monkeypatch)
+    findings, ctx = _scan(
+        tmp_path, run_connector, {"deploy/agent.yaml": "'mcpServers':\n  files:\n    command: npx\n"}
+    )
+    assert [f.kind.value for f in findings if f.kind.value == "mcp-server"] == ["mcp-server"]
+    assert checks == []
+    assert loads.count("StrictBoundedConfigLoader") == 1
 
 
 @pytest.mark.parametrize(

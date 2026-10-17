@@ -788,6 +788,27 @@ def _yaml_declares_mcp(text: str) -> bool | None:
     return _document_declares_mcp(data)
 
 
+def _mentions_mcp_keys(text: str) -> bool:
+    """Whether ``text`` names an MCP server table key anywhere: the cheap check that comes first.
+
+    Used when no parse of the file is held. Substring and anchored searches are
+    linear, so the whole (size-bounded) text is read rather than a prefix a server
+    can be pushed past. A hit is only a candidate: a YAML file's structure then
+    decides (``_yaml_declares_mcp``), and a file without a hit is never parsed for it.
+    """
+    return (
+        '"mcpServers"' in text
+        or '"mcp_servers"' in text
+        or "mcpServers:" in text
+        or "mcp_servers:" in text
+        or "[mcp_servers." in text
+        or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", text) is not None
+        or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", text) is not None
+        or ('"mcp"' in text and '"servers"' in text)
+        or ("mcp:" in text and "servers:" in text)
+    )
+
+
 # Documentation placeholders are informational: enough to be listed, never
 # enough to establish a technology or raise risk.
 EXAMPLE_CREDENTIAL_WEIGHT = 0.1
@@ -3494,7 +3515,9 @@ class FilesystemConnector(BaseConnector):
         is client-specific (Cline and Roo honour it, Claude Code does not) and comes
         from the repository, so honouring it here would let a repository hide a server.
         """
-        document = self._parsed_document(file, (*_JSON_SUFFIXES, ".toml"))
+        # The YAML parse decides whether a guessed file declares servers, so it is not parsed
+        # twice; the server parser itself reloads YAML with string keys required.
+        document = self._parsed_document(file, (*_JSON_SUFFIXES, ".toml", *_YAML_SUFFIXES))
         file.is_mcp = self._looks_like_mcp_config(file.rel, file.name, file.text, document) or (
             file.name.lower() == "server.json" and '"mcpServers"' in file.text
         )
@@ -4590,34 +4613,28 @@ class FilesystemConnector(BaseConnector):
         if lower in _DEDICATED_MCP_CONFIG_NAMES:
             return True
         if lower in MCP_CONFIG_NAMES or rel.endswith(_MCP_STRUCTURE_SUFFIXES):
-            # Decide from the parsed structure when it is held (JSON/TOML): leading
-            # padding before the keys then cannot hide a server table. A JSON object
-            # must be decided structurally; the text fallback below never sees past
-            # its truncation, so a string search of a prefix could miss the keys. An
-            # array declares servers only in a mapping it holds (see
-            # _document_declares_mcp), never in a transcript's "mcp_servers" status list.
-            if document is not None:
+            # Workflows keep the text search: their servers are JSON strings in step
+            # inputs, which _embedded_workflow_mcp reads.
+            workflow = _WORKFLOW_FILE.search(rel) is not None
+            # Decide from the parsed structure when it is held (JSON, TOML, and the YAML
+            # every structured file is parsed into once): leading padding before the keys
+            # then cannot hide a server table. A JSON object must be decided structurally;
+            # the text fallback below never sees past its truncation, so a string search of
+            # a prefix could miss the keys. An array declares servers only in a mapping it
+            # holds (see _document_declares_mcp), never in a transcript's "mcp_servers"
+            # status list.
+            if document is not None and not workflow:
                 return _document_declares_mcp(document)
-            if rel.endswith((".yaml", ".yml")) and not _WORKFLOW_FILE.search(rel):
-                # Workflows keep the text search: their servers are JSON strings in step
-                # inputs, which _embedded_workflow_mcp reads.
+            if not _mentions_mcp_keys(text):
+                return False
+            if rel.endswith(_YAML_SUFFIXES) and not workflow:
+                # No parse is held: the text search also finds the keys inside string
+                # values (a heredoc, a template), so the structure, parsed only now that the
+                # text names a key, decides; a file it cannot read goes to the MCP parser.
                 declared = _yaml_declares_mcp(text)
                 if declared is not None:
                     return declared
-            # No parse is held here (YAML, or a document that did not parse). Substring and
-            # anchored searches are linear, so read the whole (size-bounded) text rather than
-            # a prefix a server can be pushed past.
-            return (
-                '"mcpServers"' in text
-                or '"mcp_servers"' in text
-                or "mcpServers:" in text
-                or "mcp_servers:" in text
-                or "[mcp_servers." in text
-                or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", text) is not None
-                or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", text) is not None
-                or ('"mcp"' in text and '"servers"' in text)
-                or ("mcp:" in text and "servers:" in text)
-            )
+            return True
         return False
 
     # ----------------------------------------------------------------- emits

@@ -259,6 +259,15 @@ public repositories with the tool and read the committed benchmark metrics.
     `test_a_real_mcp_configuration_that_does_not_parse_stays_a_gap`,
     `test_a_list_of_records_with_a_server_status_list_is_not_an_mcp_configuration`
     and `test_the_structural_mcp_walk_descends_into_lists_within_its_bounds`.
+    The structure is the YAML parse every structured file already gets, so a
+    guessed YAML file is not parsed a second time for this check; without a
+    held parse, the substring checks come first and a YAML parse can only
+    veto a text hit. The first cut parsed every non-workflow YAML file twice;
+    in the review's run, 20 OpenAPI-style files of 574 KB took 82 s against
+    42 s on main. Tests:
+    `test_a_yaml_file_without_mcp_keys_is_parsed_once` and
+    `test_a_yaml_mcp_configuration_is_decided_from_the_parse_already_held`
+    count the parses instead of timing them.
   - Import-bound calls are read up to 65,536 characters instead of 8,192
     (`source_semantics.MAX_CALL_TEXT`): agent constructions carry their
     instructions and tools inline, and their options were unread. The
