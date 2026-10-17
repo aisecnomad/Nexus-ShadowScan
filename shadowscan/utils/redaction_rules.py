@@ -337,6 +337,29 @@ def pasted_key_name(name: str) -> bool:
     return _opaque(name) or (len(name) >= _PASTED_KEY_NAME and "_" not in name)
 
 
+# A literal shorter than this in a password's value is an argument or a flag ('a', 'utf8').
+_PASSWORD_LITERAL = 6
+# An upper-case variable name, as an environment read names one.
+_VARIABLE_NAME = re.compile(r"[A-Z_][A-Z0-9_]*+")
+
+
+def password_literal(value: str) -> bool:
+    """Whether a literal in a password's value may be the password: not a name, path, URL or placeholder.
+
+    A password need not look like an opaque key ('Xk9#mQ2$vL!pR7@wZ4%',
+    'correct horse battery staple'), so its shape is not tested. Evidence
+    withholds such a literal under a password's name
+    (``_redact_line_tails``) and the credential detector reports it as a
+    password's fallback (``shadowscan.signatures.matcher``), by this one test.
+    """
+    value = value.strip()
+    if len(value) < _PASSWORD_LITERAL or _kept_value(value) or "://" in value:
+        return False
+    if _VARIABLE_NAME.fullmatch(value) and not pasted_key_name(value):
+        return False  # the variable a read names ('PGPASSWORD', 'DB_PASSWORD')
+    return not (_FILE_PATH.fullmatch(value) or _placeholder(value))
+
+
 def environment_read_name(text: str, start: int = 0) -> str | None:
     """The variable name of the environment read by name (``_ENVIRONMENT_LOOKUP``) at ``start``, or None."""
     match = _ENVIRONMENT_LOOKUP.match(text, start)

@@ -26,7 +26,7 @@ import regex
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
 from shadowscan.utils.placeholders import possessive_phrase
 from shadowscan.utils.redaction import sanitize_text
-from shadowscan.utils.redaction_rules import environment_read_name, pasted_key_name
+from shadowscan.utils.redaction_rules import environment_read_name, password_literal, pasted_key_name
 
 _SCAN_EXECUTION_CAP: ContextVar[float | None] = ContextVar("signature_scan_execution_cap", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
@@ -730,6 +730,11 @@ _FALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_./+=-]{16,256}")
 # A follower without one holds no fallback literal, and the operand reader,
 # Python at several microseconds a token, is not run (``_fallback_literal``).
 _FALLBACK_HINT = re.compile(r"[\"'`][A-Za-z0-9_./+=-]{16}")
+# The last words of a name whose value a person chose, so that any literal the
+# redactor withholds as its password is one (``_password_fallback``), and
+# what such a literal starts with: a quote and six characters.
+_PASSWORD_FALLBACK_NAMES = ("password", "passphrase", "secret")
+_PASSWORD_HINT = re.compile(r"[\"'`][^\"'`\r\n]{6}")
 
 
 class _OperandToken(NamedTuple):
@@ -854,7 +859,8 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     itself (see ``reported_credential``). A follower without the start of
     such a literal anywhere (``_FALLBACK_HINT``) is not read at all.
     """
-    if _FALLBACK_HINT.search(follower) is None:
+    hint = _PASSWORD_HINT if _password_fallback_name(value) else _FALLBACK_HINT
+    if hint.search(follower) is None:
         return None
     tokens = _operand_tokens(follower)
     operand = fallback = False
@@ -990,14 +996,43 @@ def _default_argument(argument: list[_OperandToken], *, positional: bool) -> re.
 
 
 def _fallback_credential(value: str, token: re.Match[str]) -> bool:
-    """Whether a string literal after a fallback operator is a key: one plain token that looks random.
+    """Whether a string literal after a fallback operator is a credential.
 
-    A token made of words and numbers is a mode, a label, a path or a name
-    (``_worded_literal``), not a key, wherever it is a fallback.
+    Under a password's, passphrase's or secret's name it is the password
+    whatever its shape (``_password_fallback``). Under any other name it is a
+    key: one plain token that looks random. A token made of words and
+    numbers is a mode, a label, a path or a name (``_worded_literal``) there,
+    not a key.
     """
     body = token["body"]
-    plain = not _interpolated_literal(token) and _FALLBACK_TOKEN.fullmatch(body) is not None
+    if _interpolated_literal(token):
+        return False
+    if _password_fallback_name(value):
+        return _password_fallback(value, body)
+    plain = _FALLBACK_TOKEN.fullmatch(body) is not None
     return plain and not _worded_literal(body) and _high_entropy_credential(value, literal=body)
+
+
+def _password_fallback_name(value: str) -> bool:
+    """Whether a generic match assigns a password, passphrase or secret (``_PASSWORD_FALLBACK_NAMES``)."""
+    return _assigned_name(value).lower().endswith(_PASSWORD_FALLBACK_NAMES)
+
+
+def _password_fallback(value: str, body: str) -> bool:
+    """Whether a fallback literal under a password's name is the password.
+
+    The redactor withholds any literal of a password's value that may be the
+    password (``password_literal``: not a variable's name, a path, a URL, a
+    placeholder or shorter than six characters), whatever its shape
+    ('Xk9#mQ2$vL!pR7@wZ4%', 'correct horse battery staple',
+    'snout-fiber-thump-bloom-gravel'), and the detector reports the same
+    literal, as it reports the password assigned directly. A phrase of words
+    that labels the value ('change-me-in-production') is no password.
+    """
+    if not password_literal(body):
+        return False
+    slug = "-".join(body.split())
+    return not (_WORD_SLUG.fullmatch(slug) and _label_slug(value, slug))
 
 
 # The separators of a fallback literal's segments, and a segment that reads
