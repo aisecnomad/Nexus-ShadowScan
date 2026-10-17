@@ -391,3 +391,11 @@ def test_ebpf_records_it_could_not_read_are_unparsed_input(tmp_path, run_connect
     _, ctx = run_connector("endpoint.ebpf", input=str(export))
     assert ctx.stats.incomplete
     assert ctx.stats.incomplete_reasons == {"unparsed-input": 1}
+
+
+def test_include_tests_keeps_a_binary_test_fixture_a_gap(tmp_path, run_connector):
+    # With include_tests, test code is source: undecodable bytes there are blinding, as in src/.
+    _tree(tmp_path, {"tests/fixtures/a.txt": BINARY})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, include_tests=True)
+    assert ctx.stats.incomplete
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 1
