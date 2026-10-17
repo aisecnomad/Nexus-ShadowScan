@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -294,6 +295,34 @@ def test_a_literal_that_is_no_direct_fallback_operand_is_not_reported(index: Sig
     if "process.env." in line:
         # An environment read is a reference in documentation too.
         assert _generic(index, line, code=False) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A fallback made of words and numbers is a default mode, a label, a
+        # header name, a URL path or a model id, not a key.
+        'const openaiApiKey = process.env.OPENAI_API_KEY || "anonymous-public-access";',
+        'const openaiApiKey = process.env.OPENAI_API_KEY ?? "disabled-in-this-build";',
+        'const azureClientSecret = process.env.AZURE_CLIENT_SECRET || "managed-identity-fallback";',
+        'this.serviceApiKey = config.serviceApiKey ?? "x-api-key-header-name";',
+        'const authApiKey = process.env.API_BASE + "/oauth2/v2.0/authorize";',
+        'self.openai_api_key = self.openai_api_key or "gpt-4o-mini-2024-07-18"',
+    ],
+)
+def test_a_fallback_of_words_and_numbers_is_not_a_credential(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=True) == []
+
+
+# A base64 key with '/' in it and a UUID, derived so no key sits in the source.
+_SLASHED_KEY = base64.b64encode(hashlib.sha256(b"slashed-fallback").digest()).decode().rstrip("=")
+_UUID_KEY = str(uuid.UUID(bytes=hashlib.sha256(b"uuid-fallback").digest()[:16]))
+
+
+@pytest.mark.parametrize("key", [RANDOM, _SLASHED_KEY, _UUID_KEY])
+def test_a_token_shaped_fallback_with_separators_is_still_reported(index: SignatureIndex, key: str):
+    line = f'const openaiApiKey = process.env.OPENAI_API_KEY || "{key}";'
+    assert _generic(index, line, code=True) != []
 
 
 @pytest.mark.parametrize(
