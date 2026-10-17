@@ -97,6 +97,42 @@ def test_literal_credentials_are_still_reported(index: SignatureIndex, line: str
     assert _generic(index, line, code=code) != []
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        # The match ends at the read; the hard-coded fallback after it is the key.
+        f'const openaiApiKey = process.env.OPENAI_API_KEY || "{RANDOM}";',
+        f'openaiApiKey: process.env.OPENAI_API_KEY ?? "{RANDOM}",',
+        f"const githubAccessToken = process.env.PREFIX + '{RANDOM}';",
+        f"openaiApiKey: process.env.OPENAI_API_KEY ?? process.env.AZURE_KEY_FALLBACK ?? '{RANDOM}',",
+        f"openaiApiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY : '{RANDOM}',",
+        f"openai_api_key = os.environ.OPENAI_API_KEY or '{RANDOM}'",
+    ],
+)
+@pytest.mark.parametrize("code", [True, False])
+def test_a_hard_coded_fallback_after_a_reference_is_reported(index: SignatureIndex, line: str, code: bool):
+    assert _generic(index, line, code=code) != []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "const anthropicApiKey = process.env.ANTHROPIC_API_KEY;",
+        "const anthropicApiKey = process.env.ANTHROPIC_API_KEY",
+        "self.api_key = api_key",
+        # A fallback with no key in it, or a value end before the next literal.
+        "openaiApiKey: process.env.OPENAI_API_KEY || '',",
+        "openaiApiKey: process.env.OPENAI_API_KEY ?? undefined,",
+        "openaiApiKey: process.env.OPENAI_API_KEY || defaults.azureOpenAiKey,",
+        "openaiApiKey: process.env.OPENAI_API_KEY || 'your-openai-api-key',",
+        "openaiApiKey: process.env.OPENAI_API_KEY ? 'configured' : 'missing',",
+        f"openaiApiKey: process.env.OPENAI_API_KEY, model: '{RANDOM}'",
+    ],
+)
+def test_a_reference_without_a_literal_key_after_it_is_not_reported(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=True) == []
+
+
 def test_rejected_references_do_not_use_up_the_places_of_a_later_key(index: SignatureIndex):
     # At most five matches per signal are reported; references are dropped
     # before that cap, so a settings module full of them still shows its key.
@@ -144,6 +180,13 @@ def test_a_scan_reports_no_credential_for_references(tmp_path: Path, run_connect
 
 def test_a_scan_still_reports_a_literal_key_and_withholds_it(tmp_path: Path, run_connector):
     findings = _scan(tmp_path, run_connector, {"settings.py": f'CUSTOM_API_KEY = "{RANDOM}"\n'})
+    [secret] = [f for f in findings if f.kind.value == "secret"]
+    assert RANDOM not in json.dumps(secret.to_dict(), default=str)
+
+
+def test_a_scan_reports_a_hard_coded_fallback_and_withholds_it(tmp_path: Path, run_connector):
+    source = f'const openaiApiKey = process.env.OPENAI_API_KEY || "{RANDOM}";\n'
+    findings = _scan(tmp_path, run_connector, {"src/a.js": source})
     [secret] = [f for f in findings if f.kind.value == "secret"]
     assert RANDOM not in json.dumps(secret.to_dict(), default=str)
 

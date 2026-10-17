@@ -408,8 +408,12 @@ and tests, which call and test the products they detect.
   subscript, `;`, `,`, `)` or `}`) or that starts at `process.env.`, `import.meta.env.`, `os.environ.`,
   `self.` or `this.`. A quoted value is always a literal, a value that does not read as words is never a
   name, and an unquoted value in configuration (`DB_PASSWORD=Summer.Vacation2024` in an env file) stays a
-  candidate. Three or more letter words joined by `-` or `_` (`'request-scoped-credential'`) are a label,
-  not a high-entropy key. Matches are filtered before the five-per-signal cap.
+  candidate. When operands follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, the end
+  of the line), the match is kept if one of their literals looks like a key: the pattern's value stops at
+  the first blank, so `apiKey = process.env.OPENAI_API_KEY || "<key>"` matches only the read and the
+  fallback is the credential. Three or more letter words joined by `-` or `_`
+  (`'request-scoped-credential'`) are a label, not a high-entropy key. Matches are filtered before the
+  five-per-signal cap.
 * `name` patterns for products whose name is also a dictionary word or a first name (Otter, Devin, Jasper,
   Drift...) are context-guarded: the vendor form (`otter\.ai`) matches on its own; the bare word only when it is
   the whole display name (`^[^\S\r\n]*otter[^\S\r\n]*$`, an app called just "Otter") or with product context on

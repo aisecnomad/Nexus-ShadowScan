@@ -348,17 +348,57 @@ def _reference_value(value: str, *, code: bool, follower: str = "") -> bool:
     identifier or a member chain names a variable ('self.api_key = api_key',
     'k = settings.OPENAI_API_KEY'). Elsewhere an unquoted value is a literal
     ('DB_PASSWORD=Summer.Vacation2024' in an env file), so only a member chain
-    that code follows (``follower``: '(' after 'hasher.encode', ';' after
-    'process.env.KEY' in a documentation snippet) or that starts from the
-    environment or the instance is one. A quoted value is always a literal,
-    and a random-looking value is never a name.
+    that code follows (``follower``, the text after the match, starts with '('
+    after 'hasher.encode' or ';' after 'process.env.KEY' in a documentation
+    snippet) or that starts from the environment or the instance is one. A
+    quoted value is always a literal, and a random-looking value is never a
+    name. Operands after a reference are read by ``_fallback_literal``.
     """
     candidate, quoted = _assignment_parts(value)
     if quoted or not _IDENTIFIER_CHAIN.fullmatch(candidate) or not _identifier_shaped(candidate):
         return False
     if code:
         return True
-    return "." in candidate and (follower in _CODE_FOLLOWERS or candidate.startswith(_REFERENCE_ROOTS))
+    return "." in candidate and (follower[:1] in _CODE_FOLLOWERS or candidate.startswith(_REFERENCE_ROOTS))
+
+
+# What ends a value after a reference and any blanks: a statement or argument
+# separator, a closing bracket or the end of the line.
+_VALUE_TERMINATORS = frozenset(";,)}]\r\n")
+# What opens on a reference and makes it a call or a subscript.
+_CALL_OR_SUBSCRIPT = frozenset("([")
+# How much of the text after a generic match is read for operands that follow it.
+_FOLLOWER_CHARS = 512
+# The rest of a value after a reference: string literals, and anything but a
+# value terminator ('|| "<key>"', '?? process.env.B ?? "<key>"', '+ "<key>"').
+_OPERANDS = re.compile(r"(?:\"[^\"\r\n]*+\"|'[^'\r\n]*+'|`[^`\r\n]*+`|[^\"'`;,)}\]\r\n])*+")
+# A literal operand: a quoted string, or a bare run of the generic value class.
+_OPERAND_LITERAL = re.compile(r"\"([^\"\r\n]*+)\"|'([^'\r\n]*+)'|`([^`\r\n]*+)`|([A-Za-z0-9_./+=-]{16,256})")
+
+
+def _fallback_literal(follower: str) -> str | None:
+    """The key-shaped literal among the operands after a reference, or None.
+
+    The generic pattern's value stops at the first blank, so for
+    'apiKey = process.env.OPENAI_API_KEY || "<key>"' it covers only the read.
+    The reference ends the value when only blanks and a value terminator
+    follow it, or a call or subscript opens on it. Otherwise the value goes on
+    with a fallback ('||', '??', '?:', 'or'), a concatenation ('+'), a ternary
+    branch or another operand, and a literal there that looks like a key
+    (``_high_entropy_credential``) is a hard-coded credential. An empty or
+    word-like fallback ('|| ""', '?? "not-configured"') is none, and a bare
+    operand that reads as a name ('|| defaults.azure') is another reference.
+    """
+    rest = follower.lstrip(" \t")
+    if follower[:1] in _CALL_OR_SUBSCRIPT or not rest or rest[0] in _VALUE_TERMINATORS:
+        return None
+    operands = _OPERANDS.match(rest)
+    for operand in _OPERAND_LITERAL.finditer(rest, 0, operands.end() if operands else 0):
+        literal = operand[operand.lastindex or 0]
+        bare = operand.lastindex == 4
+        if not (bare and _identifier_shaped(literal)) and _high_entropy_credential(literal):
+            return str(literal)
+    return None
 
 
 # Below this share of digits a separated single-case value reads as an identifier
@@ -449,6 +489,17 @@ def keep_file_matches(signatures: Sequence[Signature]) -> list[bool]:
     return [s.category == "coding-agent" or s.vendor not in agents for s in signatures]
 
 
+def _generic_literal(value: str, *, code: bool, follower: str) -> str | None:
+    """The literal a generic match reports, or None when it holds no key-shaped one.
+
+    A literal value reports itself when it looks random; a reference reports
+    the fallback literal after it, if any (``_fallback_literal``).
+    """
+    if _reference_value(value, code=code, follower=follower):
+        return _fallback_literal(follower)
+    return _assigned_value(value) if _high_entropy_credential(value) else None
+
+
 def keep_secret_matches(
     matches: Sequence[tuple[str, str, int | None]],
     *,
@@ -462,7 +513,8 @@ def keep_secret_matches(
     same value on the same line: ``OPENAI_API_KEY=sk-...`` is one OpenAI key,
     not two findings. A value that only names a credential is not one (see
     ``_reference_value``: ``code`` says the text is source code, and
-    ``followers`` holds the character after each match, '' at the end).
+    ``followers`` holds the text after each match, '' at the end), unless the
+    operands after the reference hold a literal key (``_fallback_literal``).
     A short unattributed ``sk-`` value only adds keys nothing else reports: it
     is kept when it looks random and no kept generic match covers it.
     """
@@ -481,12 +533,13 @@ def keep_secret_matches(
         if signature_id != GENERIC_CREDENTIAL:
             keep.append(True)
             continue
-        candidate = _assigned_value(value)
-        repeated = any(other in value or candidate in other for other in specific.get(line, ()))
-        reference = _reference_value(value, code=code, follower=follower)
-        keep.append(not repeated and not reference and _high_entropy_credential(value))
-        if keep[-1]:
-            generic.setdefault(line, []).append(value)
+        literal = _generic_literal(value, code=code, follower=follower)
+        others = specific.get(line, ())
+        if literal is None or any(other in value or other in literal or literal in other for other in others):
+            keep.append(False)
+            continue
+        keep.append(True)
+        generic.setdefault(line, []).extend((value, literal))
     for position, ((_, value, line), is_short) in enumerate(zip(matches, short, strict=True)):
         if is_short:
             covered = any(value in other for other in generic.get(line, ()))
@@ -1546,7 +1599,8 @@ class SignatureIndex:
         matches = self._match_regex_signals(
             "secret", text, None, max_per_signal=_SECRET_CANDIDATES_PER_SIGNAL, scan=scan, limited=unread
         )
-        followers = [text[m.extra["end"] : m.extra["end"] + 1] if "end" in m.extra else "" for m in matches]
+        ends = [m.extra.get("end") for m in matches]
+        followers = [text[end : end + _FOLLOWER_CHARS] if end is not None else "" for end in ends]
         keep = keep_secret_matches(
             [(m.signature_id, m.value, m.line) for m in matches], code=code, followers=followers
         )
