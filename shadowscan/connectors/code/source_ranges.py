@@ -895,6 +895,8 @@ class _JavaScriptLexer:
                 i += 3 if text.startswith("\r\n", i + 1) else 2
             else:
                 i += 1
+        # A backslash that ends the text steps over its end, and a span may not run past it.
+        i = min(i, size)
         if i < size and text[i] == quote:
             i += 1
         self.spans.append((start, i))

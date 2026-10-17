@@ -448,6 +448,17 @@ def test_string_line_continuation_over_crlf_does_not_hide_following_code() -> No
     assert _masked(source) == ['"abc\\\r\ndef"', '"openai"']
 
 
+@pytest.mark.parametrize("quote", ['"', "'"])
+@pytest.mark.parametrize("prefix", ["", "const s = ", "x = f(a, "])
+def test_string_ending_in_a_backslash_does_not_run_past_the_end_of_the_text(prefix: str, quote: str) -> None:
+    # The backslash steps over the next character, which is not there. The span used to end one past
+    # the text (found by the coverage-guided fuzz target in tools/fuzz): every reader of the spans
+    # may rely on them lying inside it.
+    source = f"{prefix}{quote}abc\\"
+    ignored, _ = noncode_ranges(source, "javascript", ".js")
+    assert ignored == [(len(prefix), len(source))]
+
+
 @pytest.mark.parametrize("terminator", ["\r", LS, PS], ids=["cr", "line-separator", "paragraph-separator"])
 def test_line_comment_does_not_hide_the_code_of_a_file_node_runs(tmp_path: Path, terminator: str) -> None:
     source = f"// note{terminator}" + EVASION_PAYLOAD.replace("; ", f";{terminator}")

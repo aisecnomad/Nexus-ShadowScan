@@ -240,6 +240,8 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Collection and coverage
 
+- A JavaScript-family string that ends in a backslash (`"\`) no longer makes the lexer return a span
+  longer than the text; spans are clamped to it. Found by the same fuzzing. (Oct 17)
 - `FilesystemConnector` (`shadowscan/connectors/code/filesystem.py`, 5,456 lines) is now a
   1,009-line façade over four collaborator classes in modules of their own, the split ADR-005
   describes: `CodeOwnership` (Git history and CODEOWNERS), `TreeWalker` (the walk and its
