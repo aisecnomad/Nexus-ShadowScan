@@ -1344,6 +1344,44 @@ def test_every_password_entry_on_a_line_is_withheld_whole(line: str, password: s
     assert password not in again and TAIL_KEY not in again
 
 
+# A password whose start reads as an opaque token: the token's span and the
+# whole literal's span overlap, and only the shorter one was withheld, so the
+# tail after the token stayed visible ('"[REDACTED]&mypass"').
+OPAQUE_START_PASSWORDS = [
+    TAIL_KEY[:12] + "&mypass",
+    "Tr0ub4dor" + "&3xyz",
+    TAIL_KEY[4:14] + "#!" + "tail-end",
+]
+
+
+@pytest.mark.parametrize("password", OPAQUE_START_PASSWORDS)
+@pytest.mark.parametrize(
+    "line",
+    [
+        'dbPassword: process.env.DB_PASSWORD?.trim() || "<P>",',
+        "db_password: os.environ[ 'DB_PASSWORD' ] if PROD else '<P>'",
+        'db_password: os.getenv("DB_PASS", "<P>")',
+        "password: Joi.string().default('<P>')",
+        "password: z.string().default('<P>'),",
+        'export const c2 = { openaiApiKey: "<K>", dbPassword: process.env.P?.trim() || "<P>" };',
+    ],
+)
+def test_a_password_that_starts_like_a_token_is_withheld_whole(line: str, password: str):
+    text = line.replace("<K>", TAIL_KEY).replace("<P>", password)
+    safe = sanitize_text(text)
+    tail = password[password.index(next(c for c in password if not c.isalnum())) :]
+    assert password not in safe and tail not in safe and REDACTED in safe
+
+
+def test_overlapping_spans_are_withheld_to_their_union():
+    from shadowscan.utils.redaction_rules import _withhold_spans
+
+    assert _withhold_spans("ab-cdef-gh", [(3, 5), (3, 7)]) == "ab-" + REDACTED + "-gh"
+    assert _withhold_spans("ab-cdef-gh", [(0, 4), (3, 7), (8, 10)]) == REDACTED + "-" + REDACTED
+    # Spans that only touch keep a marker each, as before.
+    assert _withhold_spans("abcd", [(0, 2), (2, 4)]) == REDACTED + REDACTED
+
+
 @pytest.mark.parametrize(
     ("line", "kept"),
     [

@@ -481,7 +481,13 @@ def _blanks_before(text: str, end: int) -> int:
 
 
 def _withhold_spans(text: str, spans: list[tuple[int, int]]) -> str:
-    """Replace each span that does not overlap an earlier one with the marker."""
+    """Replace the union of the spans with the marker, one marker for spans that overlap.
+
+    Overlapping spans are withheld to their union, never to the first of
+    them: a token span at the start of a password literal and the span of the
+    whole literal overlap, and keeping the shorter one showed the password's
+    tail ('"[REDACTED]&tail"').
+    """
     if not spans:
         return text
     pieces: list[str] = []
@@ -491,5 +497,7 @@ def _withhold_spans(text: str, spans: list[tuple[int, int]]) -> str:
             pieces.append(text[cursor:start])
             pieces.append(REDACTED)
             cursor = end
+        elif end > cursor:
+            cursor = end  # it overlaps the span withheld last, and runs past it
     pieces.append(text[cursor:])
     return "".join(pieces)

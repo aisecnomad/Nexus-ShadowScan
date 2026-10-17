@@ -96,6 +96,8 @@ VALUES: dict[str, str] = {
     "<GHP>": "ghp_" + _key("oracle-ghp", 36),
     # A mixed-case letters-only run, as in a token after a possessive.
     "<MIX>": "QzWp" + "LmNx" + "VbRt" + "YcDf" + "Gh",
+    # A password's opaque-looking start, before its tail.
+    "<KS>": _key("oracle-ks", 12),
     **{f"<OAI{n}>": _openai_key(n) for n in range(1, 9)},
     **{f"<HEX{n}>": hashlib.sha256(f"oracle-hex-{n}".encode()).hexdigest()[:32] for n in range(1, 8)},
 }
@@ -3748,6 +3750,58 @@ ROWS = [
         mode="",
         head=(("app/s.py:1", "src/a.ts:1", "src/a.ts:2"), "complete", "withheld"),
         main=(("app/s.py:1", "src/a.ts:1", "src/a.ts:2"), "complete", "shown"),
+    ),
+    # --- r4-review-creds4.json: a password that starts like a token (its tail is a secret too)
+    Row(
+        "r4.2-token-start-optional-chain",
+        "sanitize",
+        'dbPassword: process.env.DB_PASSWORD?.trim() || "<KS>&<=mypass>",',
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-token-start-ternary",
+        "sanitize",
+        "db_password: os.environ[ 'DB_PASSWORD' ] if PROD else '<KS>&<=mypass>'",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-token-start-default-argument",
+        "sanitize",
+        'db_password: os.getenv("<K>", "<KS>&<=mypass>")',
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-token-start-joi-default",
+        "sanitize",
+        "password: Joi.string().default('<KS>&<=3xyz>')",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-token-start-zod-default",
+        "sanitize",
+        "password: z.string().default('<KS>&<=mypass>'),",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.2-report-excerpt",
+        "scan",
+        {
+            "src/a.ts": 'export const c1 = { openaiApiKey: "<OAI3>" };\n'
+            'export const c2 = { openaiApiKey: "<OAI4>", dbPassword: process.env.P?.trim() || "<KS>&<=mypass>" };\n'
+        },
+        mode="",
+        head=(("src/a.ts:1", "src/a.ts:2"), "complete", "withheld"),
+        main=(("src/a.ts:1", "src/a.ts:2"), "complete", "shown"),
     ),
 ]
 

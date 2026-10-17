@@ -44,6 +44,8 @@ AZURE = "https://contoso.openai.azure.com/"
 # A person's password: punctuation parts it into runs too short to read as an opaque token.
 _WORD_ALPHABET = string.ascii_letters + string.digits
 PUNCTUATED = _random(_WORD_ALPHABET, 6) + "#" + _random(_WORD_ALPHABET, 5) + "$!" + _random(_WORD_ALPHABET, 6)
+# One whose start reads as an opaque token, with a tail after it.
+TOKEN_START = _random(_WORD_ALPHABET, 12) + "&" + "mypass"
 
 CASES = {
     "csharp-credential-source-trivia": (
@@ -424,6 +426,15 @@ CASES = {
             f"CONF = {{'endpoint': '{AZURE}', 'PASSWORD': cfg.get('db', 'password', fallback='{PUNCTUATED}')}}\n"
         ),
         PUNCTUATED,
+    ),
+    # A password that starts like a token: its tail was shown after the token's marker.
+    "password-that-starts-like-a-token": (
+        "src/c2.ts",
+        (
+            'import OpenAI from "openai";\n'
+            f'export const c2 = {{ endpoint: "{AZURE}", dbPassword: process.env.P?.trim() || "{TOKEN_START}" }};\n'
+        ),
+        (TOKEN_START, TOKEN_START[12:]),
     ),
 }
 # A marker followed by another ']' (escaped or not): a corrupted marker.
