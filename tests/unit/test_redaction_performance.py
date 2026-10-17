@@ -352,6 +352,7 @@ shapes = [
     '//' + 'a' * n + ' x', '_auth ' * (n // 6), '"//' + 'a:' * (n // 2),
     'machine h ' + 'force ' * (n // 6) + 'password x', 'machine h ' + 'login CORP\\\\fred ' * (n // 16),
     'default\\n' + '# machine b login u\\n' * (n // 20) + 'force', 'machine h ' + 'force "machine ' * (n // 15),
+    'x = "machine h\\\\n' + '  # c\\\\nlogin u # c\\\\n' * (n // 26) + '"', '#machine h ' * (n // 11),
 ]
 for shape in shapes:
     try:
@@ -397,6 +398,9 @@ def _best_cpu(work, repeats: int = 3) -> float:
         lambda n: "default\n" + "# machine b login u\n" * n + "force",
         lambda n: "default\r" + "# machine b login u\r" * n + "force",
         lambda n: "machine h " + 'force "machine ' * n,
+        lambda n: 'x = "machine h\\n' + "  # note\\nlogin u # c\\n" * n + '"',
+        lambda n: 'x = "machine a # ' + "machine k # " * n + '\\nx"',
+        lambda n: "#machine h " * n,
     ],
     ids=[
         "names",
@@ -419,6 +423,9 @@ def _best_cpu(work, repeats: int = 3) -> float:
         "comment-heads",
         "carriage-return-heads",
         "heads-in-unknown-tokens",
+        "escaped-comments",
+        "escaped-comment-line",
+        "hash-heads",
     ],
 )
 def test_netrc_redaction_scales_linearly(shape):

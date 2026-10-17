@@ -121,6 +121,19 @@ SPLIT_FORMS = [
     f'x = "machine h\\nforce yes\\npassword {SECRET}"',
     f'machine a login u password {OTHER} x="macdef init\\nuser deploy {SECRET}\\n\\n"',
 ]
+# A comment in an escaped string ends at the next line-break escape, where
+# its line does: read to the end of the physical line, an indented comment
+# line or a trailing comment hid every escaped line after it, the password
+# among them. An entry right after a comment's '#' is read too.
+COMMENT_FORMS = [
+    f'x = "machine h\\n  # note\\nlogin u\\npassword {SECRET}\\n"',
+    f'x = "machine h\\nlogin u # note\\npassword {SECRET}\\n"',
+    f'x = "machine h\\n\\t# note\\nlogin u\\npassword {SECRET}\\n"',
+    f"x = 'machine h\\r\\n  # note\\r\\nlogin u\\r\\npassword {SECRET}\\r\\n'",
+    f'Set-Content $HOME\\_netrc "machine h`n  # note`nlogin u`npassword {SECRET}"',
+    f'{{"netrc": "machine api.openai.com\\n  # deploy bot\\n  login bot\\n  password {SECRET}\\n"}}',
+    f"#machine h login u password {SECRET}\n",
+]
 # A macro's lines are withheld up to the empty line that ends it.
 MACRO_FORMS = [
     f"machine h login u password {OTHER}\nmacdef init\ncd /pub\nuser deploy {SECRET}\n\n",
@@ -151,7 +164,14 @@ OWN_SYNTAX_FORMS = [
 
 @pytest.mark.parametrize(
     "source",
-    NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + SPLIT_FORMS + MACRO_FORMS + YARNRC_FORMS + OWN_SYNTAX_FORMS,
+    NETRC_FORMS
+    + EMBEDDED_FORMS
+    + CLIENT_FORMS
+    + SPLIT_FORMS
+    + COMMENT_FORMS
+    + MACRO_FORMS
+    + YARNRC_FORMS
+    + OWN_SYNTAX_FORMS,
 )
 def test_a_credential_file_value_is_withheld_in_its_own_syntax(source):
     safe = sanitize_text(source)
@@ -174,7 +194,8 @@ def _only_adds_markers(before: str, after: str) -> bool:
 
 
 @pytest.mark.parametrize(
-    "source", NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + SPLIT_FORMS + MACRO_FORMS + YARNRC_FORMS
+    "source",
+    NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + SPLIT_FORMS + COMMENT_FORMS + MACRO_FORMS + YARNRC_FORMS,
 )
 def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(source):
     # Every form reached them intact: no earlier rule withheld its secret.
@@ -228,6 +249,11 @@ def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(so
             f'NETRC = "machine h\\nlogin CORP\\\\frank\\npassword {REDACTED}"',
         ),
         ("machine h force yes password VALUE\n", f"machine h force yes password {REDACTED}\n"),
+        # A comment in an escaped string stays, up to the next line-break escape.
+        (
+            'x = "machine h\\n  # note\\nlogin u # bot\\npassword VALUE"',
+            f'x = "machine h\\n  # note\\nlogin u # bot\\npassword {REDACTED}"',
+        ),
     ],
 )
 def test_names_hosts_and_layout_stay_visible(source, expected):
@@ -289,16 +315,21 @@ def test_a_prose_word_after_a_netrc_keyword_is_withheld(source, expected):
 
 
 @pytest.mark.parametrize(
-    "line",
+    ("line", "shown"),
     [
-        'NETRC = "machine api.openai.com login CORP\\\\fred password VALUE"',
-        "# machine api.openai.com login CORP\\victor password VALUE",
+        ('NETRC = "machine api.openai.com login CORP\\\\fred password VALUE"', "CORP"),
+        ("# machine api.openai.com login CORP\\victor password VALUE", "CORP"),
+        (
+            'NETRC = "machine api.openai.com\\n  # deploy bot\\n  login bot\\n  password VALUE\\n"',
+            "deploy bot",
+        ),
     ],
 )
-def test_no_report_format_shows_a_netrc_password_beside_a_windows_login(tmp_path, index, line):
-    # An app that uses OpenAI and keeps a netrc entry for a domain login, in a
-    # string or a comment: the entry ended at the escape the login seemed to
-    # hold, and the excerpt showed the password in every report format.
+def test_no_report_format_shows_a_netrc_password_from_source(tmp_path, index, line, shown):
+    # An app that uses OpenAI and keeps a netrc entry in a string or a
+    # comment: the entry ended at the escape a domain login seemed to hold, or
+    # an indented comment in the string hid the lines after it, and the
+    # excerpt showed the password in every report format.
     password = "pw-" + _random(24)
     (tmp_path / "app.py").write_text(
         "import openai\n\nclient = openai.OpenAI()\n" + line.replace("VALUE", password) + "\n"
@@ -307,5 +338,5 @@ def test_no_report_format_shows_a_netrc_password_beside_a_windows_login(tmp_path
     result = Engine(ScanConfig(connectors=[spec]), index).run()
     assert result.complete
     reports = {name: render(result) for name, render in RENDERERS.items()}
-    assert any("CORP" in report for report in reports.values())  # the excerpt is reported
+    assert any(shown in report for report in reports.values())  # the excerpt is reported
     assert [name for name, report in reports.items() if password in report] == []

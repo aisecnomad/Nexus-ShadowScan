@@ -681,6 +681,19 @@ public repositories with the tool and read the committed benchmark metrics.
   that follows `machine` or `login` on its line is withheld (`my machine has
   no login password [REDACTED]`). SECURITY.md lists the later-line token as
   what can remain.
+- Redaction: a netrc comment in an escaped string ends at the next
+  line-break escape, where its line does. A `#` after a blank was read to
+  the end of the physical line even in a string whose lines are `\n`
+  escapes, so an indented comment line or a trailing comment there
+  (`"machine h\n  # deploy bot\n  login bot\n  password v\n"`,
+  `"login u # note\npassword v"`) hid every escaped line after it, and the
+  active password among them was in the JSON report of an app that keeps
+  such a string. An entry right after a comment's `#`
+  (`#machine h login u password v`) is read as well. SECURITY.md and the
+  connector guide said an entry in a comment was withheld and listed only a
+  comment line of its own as what can remain; they now say where a comment
+  ends, and SECURITY.md lists a commented-out token outside an entry of its
+  comment, a trailing one (`login u # was password v`) included.
 - `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
   `GetAgent` and `ListAgents` return no tags and the collector never called
   `ListTagsForResource`, so no live scan could attribute a Bedrock agent to

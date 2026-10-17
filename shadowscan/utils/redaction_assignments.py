@@ -718,18 +718,20 @@ def _redact_connection_passwords(text: str) -> str:
 # the line of the entry's last token: curl skips it, and the value after a
 # 'password', 'passwd' or 'account' after it is withheld ('machine h force
 # yes password v'). On a later line such a token ends the entry, as prose
-# after 'machine learning' does. A '#' after a blank starts a comment up to
-# the end of its line, and one after a line-break escape on an escaped
-# string's line up to the next such escape; a comment, like a quoted name, is
-# also read on its own, so an entry commented out in it is withheld. 'macdef
-# <name>' starts a macro, whose
-# lines up to the empty line that ends it, and the rest of its name's line,
-# are withheld whole (see ``_netrc_macro``). An entry starts at 'machine' or
-# 'default' anywhere a word starts, and at 'macdef' only first on a line or
-# after a quote, when its name ends that line: that is also an ordinary
-# word. 'default' is one as well ('the default password is ...'), and the
-# word after it is withheld then: a prose word is withheld rather than a
-# password shown.
+# after 'machine learning' does. A '#' after a blank, or after a line-break
+# escape, starts a comment, which ends where its line does: at the end of a
+# line of plain text, and at the next line-break escape on an escaped
+# string's line ('"machine h\n  # note\npassword v"'). A comment, like a
+# quoted name, is also read on its own, so an entry commented out in it is
+# withheld; a commented-out token outside such an entry is not ('login u #
+# was password v'). 'macdef <name>' starts a macro, whose lines up to the
+# empty line that ends it, and the rest of its name's line, are withheld
+# whole (see ``_netrc_macro``). An entry starts at 'machine' or 'default'
+# anywhere a word starts or right after a comment's '#', and at 'macdef'
+# only first on a line or after a quote, when its name ends that line: that
+# is also an ordinary word. 'default' is one as well ('the default password
+# is ...'), and the word after it is withheld then: a prose word is withheld
+# rather than a password shown.
 _NETRC_SPACE = r"[ \t\r\n\v\f]"
 _NETRC_ESCAPE = r"[\\`][nrtvf]"
 _NETRC_BREAK = rf"(?:{_NETRC_SPACE}|{_NETRC_ESCAPE})"
@@ -765,7 +767,7 @@ _NETRC_NAME = (
 # A macro's name, which may be one of the words.
 _NETRC_MACRO_NAME = rf"(?:{_NETRC_QUOTED.format(unclosed='')}|{_NETRC_LEAD}++)"
 _NETRC_HEAD = re.compile(
-    rf"(?:(?<![^\s\"'`(=])|(?<={_NETRC_ESCAPE}))(?P<machine>(?ai:machine){_NETRC_BREAK}|(?ai:default){_NETRC_END})"
+    rf"(?:(?<![^\s\"'`(=#])|(?<={_NETRC_ESCAPE}))(?P<machine>(?ai:machine){_NETRC_BREAK}|(?ai:default){_NETRC_END})"
     rf"|(?:\A|(?<=[\r\n\"'`])|(?<={_NETRC_ESCAPE}))[ \t\v\f]*+(?P<word>(?ai:macdef)"
     rf"(?=[ \t\v\f]++(?:[^\s\\]|\\(?![nrtvf]))++(?:[ \t\v\f]*+(?:\r?\n|\Z)|{_NETRC_ESCAPE})))"
 )
@@ -786,8 +788,9 @@ _NETRC_UNKNOWN = (re.compile(r"\S++"), re.compile(rf"{_NETRC_LEAD}++"))
 _NETRC_KNOWN = frozenset({"machine", "login", "user"})
 # Where a head may start inside such a token ('force "machine h').
 _NETRC_HEAD_WORD = re.compile(r"(?ai:machine|default|macdef)")
-# The rest of a run of non-blank characters, and of a comment: after a blank, its
-# line; after a line-break escape, up to the next one ('"machine h\n# c\npassword v"').
+# The rest of a run of non-blank characters, and of a comment: on a line of
+# plain text, its line; on an escaped string's, up to the next line-break
+# escape ('"machine h\n  # c\npassword v"').
 _NETRC_RUN = re.compile(r"\S*+")
 _NETRC_LINES = (re.compile(r"[^\r\n]*+"), re.compile(r"(?:[^\r\n\\`]|[\\`](?![nr]))*+"))
 _NETRC_LINE_END = re.compile(r"[\r\n]")
@@ -938,8 +941,10 @@ class _NetrcReader:
             if blanks is not None or line_break:
                 position = blanks.end() if blanks is not None else position + 2
                 if text.startswith("#", position, end):
-                    comment = self._comment_end(position, line_break)
-                    comments.append((position + 1, comment, self._escapes(position)))
+                    # On an escaped string's line, a comment ends where that line does, at an escape.
+                    escaped = self._escapes(position)
+                    comment = self._comment_end(position, escaped)
+                    comments.append((position + 1, comment, escaped))
                     position = comment
             elif escapes and text.startswith(_NETRC_ESCAPES, position, end):
                 position += 2
@@ -1015,7 +1020,11 @@ class _NetrcReader:
         return escapes
 
     def _comment_end(self, position: int, escaped: bool) -> int:
-        """Where the comment at ``position`` ends (see ``_NETRC_LINES``), each comment read once."""
+        """Where the comment at ``position``, on an ``escaped`` string's line or not, ends.
+
+        See ``_NETRC_LINES``. Each comment is read once: one that starts
+        inside the last of its kind ends where that one does.
+        """
         first, last = self.comment[escaped]
         if not first <= position <= last:
             line = _NETRC_LINES[escaped].match(self.text, position, self.end)

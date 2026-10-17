@@ -284,11 +284,15 @@ coverage, even when a response includes an empty collection field.
   string, where an escape is read only on a line that holds a quote or an
   escape next to a keyword) or after a token the format does not define on
   the line of the entry's last token (`machine h force yes password v`), an
-  entry in a comment, and the lines of a netrc `macdef` macro up to the empty
-  line that ends it (a word after `default password` in prose is withheld as
-  well, and so is a word after `password` or `account` that follows
-  `machine` or `login` on its line, as in `the machine needs an account and
-  a key`); Yarn 1's `.yarnrc` registry credentials written `name value`
+  entry in a comment, also right after its `#` (a `#` after a blank or a
+  line-break escape starts a comment, which runs to the end of its line or,
+  where escapes are read, to the next line-break escape, so the password of
+  `"machine h\n  # bot\npassword v"` is withheld), and the lines of a
+  netrc `macdef` macro up to the empty line that ends it (a word after
+  `default password` in prose is withheld as well, and so is a word after
+  `password` or `account` that follows `machine` or `login` on its line, as
+  in `the machine needs an account and a key`); Yarn 1's `.yarnrc` registry
+  credentials written `name value`
   (`"//registry.yarnpkg.com/:_authToken" "v"`, `_auth v`);
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
@@ -456,10 +460,11 @@ coverage, even when a response includes an empty collection field.
   format does not define on a later line than the entry's last token, which
   ends the entry there as prose after `machine learning` does (`force yes` on
   a line of its own between `machine h` and `password v`), or in an entry
-  whose `machine` is glued to other text; a commented-out netrc token on a
-  comment line of its own that holds no `machine` or `default`
-  (`# password v` under a commented `# machine h`); and sensitive business
-  data.
+  whose `machine` is glued to other text; a commented-out netrc token that
+  is not part of an entry in its comment, on a comment line of its own that
+  holds no `machine` or `default` (`# password v` under a commented
+  `# machine h`) or after an entry's own tokens (`login u # was password v`);
+  and sensitive business data.
 - **Plural collection names are not sensitive names.** `credentials` names a
   credential, but the list or mapping under a plural `secrets` or `tokens`
   key keeps its values unless each one has a recognized shape or a sensitive
