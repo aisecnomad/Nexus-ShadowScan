@@ -282,19 +282,30 @@ coverage, even when a response includes an empty collection field.
   (`login account password v` withholds both words after `account`), one
   after a Windows domain login (`login CORP\fred`, also `CORP\\fred` in a
   string, where an escape is read only on a line that holds a quote or an
-  escape next to a keyword) or after a token the format does not define on
-  the line of the entry's last token (`machine h force yes password v`), one
-  after a keyword glued to a closing quote, which Python's `netrc` reads as
-  the next token (`login "u"password v`), an entry in a comment, also right
+  escape next to a keyword) or after a token the format does not define,
+  on the line of the entry's last token (`machine h force yes password v`)
+  or on a later line before a `password`, `passwd` or `account` in the
+  entry's region, which spans the eight lines from that of the entry's last
+  token and ends before at a blank line or the next entry's `machine`,
+  `default` or `macdef` (`machine h`, then `force yes`, then `password v`
+  on the next lines), one after a
+  keyword glued to a closing quote, which Python's `netrc` reads as the
+  next token (`login "u"password v`), an entry in a comment, also right
   after its `#` (a `#` after a blank or a line-break escape starts a
-  comment, which runs to the end of its line or, where escapes are read, to
-  the next line-break escape, so the password of
-  `"machine h\n  # bot\npassword v"` is withheld), and the lines of a
-  netrc `macdef` macro up to the empty line that ends it (a word after
-  `default password` in prose is withheld as well, and so is a word after
-  `password` or `account` that follows `machine` or `login` on its line, as
-  in `the machine needs an account and a key`); Yarn 1's `.yarnrc` registry
-  credentials written `name value`
+  comment, which runs to the end of its line or, in an escaped string, to
+  the next line-break escape: where escapes are read and its line holds an
+  escape next to a keyword (`machine h # c\nlogin u`), a line-break escape
+  before the `#` or the same quote both before and after it, so the
+  password of
+  `"machine h\n  # bot\npassword v"` is withheld, while a netrc file's own
+  `# Bob's share is C:\new\data` runs to the end of its line), and the
+  lines of a netrc `macdef` macro up to
+  the empty line that ends it (a word after `default password` in prose is
+  withheld as well, and so is a word after `password` or `account` that
+  follows `machine` or `login` on its line or in its region, as in `the
+  machine needs an account and a key`, or `machine learning tools` with
+  `create an account for each user` on the next line); Yarn 1's `.yarnrc`
+  registry credentials written `name value`
   (`"//registry.yarnpkg.com/:_authToken" "v"`, `_auth v`);
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
@@ -501,13 +512,19 @@ coverage, even when a response includes an empty collection field.
   record outside the bounded sibling/flow rules above; a
   value split across concatenated strings; a netrc value after a token the
   format does not define on a later line than the entry's last token, which
-  ends the entry there as prose after `machine learning` does (`force yes` on
-  a line of its own between `machine h` and `password v`), or in an entry
-  whose `machine` is glued to other text; a commented-out netrc token that
-  is not part of an entry in its comment, on a comment line of its own that
-  holds no `machine` or `default` (`# password v` under a commented
-  `# machine h`) or after an entry's own tokens (`login u # was password v`);
-  and sensitive business data.
+  ends the entry there as prose after `machine learning` does, when a blank
+  line, the next entry's `machine`, `default` or `macdef`, or the end of the
+  eight-line region comes before the value's `password`, `passwd` or
+  `account` (`force yes` and an empty line between `machine h` and
+  `password v`), or in an entry whose `machine` is glued to other text; a
+  commented-out netrc token that is not part of an entry in its comment, on
+  a comment line of its own that holds no `machine` or `default`
+  (`# password v` under a commented `# machine h`) or after an entry's own
+  tokens (`login u # was password v`); the escaped lines after a netrc
+  comment that those rules run to the end of its line, in escaped text
+  where no escape sits next to a keyword, none breaks a line before the
+  `#` and no quote comes both before and after it
+  (`machine h # it's\nforce password v`); and sensitive business data.
 - **Plural collection names are not sensitive names.** `credentials` names a
   credential, but the list or mapping under a plural `secrets` or `tokens`
   key keeps its values unless each one has a recognized shape or a sensitive

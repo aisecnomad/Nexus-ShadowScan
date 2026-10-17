@@ -353,6 +353,9 @@ shapes = [
     'machine h ' + 'force ' * (n // 6) + 'password x', 'machine h ' + 'login CORP\\\\fred ' * (n // 16),
     'default\\n' + '# machine b login u\\n' * (n // 20) + 'force', 'machine h ' + 'force "machine ' * (n // 15),
     'x = "machine h\\\\n' + '  # c\\\\nlogin u # c\\\\n' * (n // 26) + '"', '#machine h ' * (n // 11),
+    'machine h\\n' + "  # Bob's share is C:\\\\new\\\\data\\n" * (n // 32) + 'password x',
+    'machine h\\n' + 'force yes\\n' * (n // 10) + 'password x', 'machine h\\nforce\\n' * (n // 16),
+    'machine h\\n' + 'x ' * (n // 2) + '\\npassword x', 'machine h\\n' + 'x account\\n' * (n // 10),
 ]
 for shape in shapes:
     try:
@@ -403,6 +406,16 @@ def _best_cpu(work, repeats: int = 3) -> float:
         lambda n: "#machine h " * n,
         lambda n: "machine h " + 'login "u"password ' * n + "v",
         lambda n: 'x = "machine h ' + 'login \\"u\\"password ' * n + 'v"',
+        lambda n: "machine h\n" + "  # Bob's share is C:\\new\\data\n" * n + "  password v\n",
+        lambda n: 'x = "machine h\\n' + "  # it's C:\\new\\data 'a'\\n" * n + '"',
+        lambda n: "machine h\n" + "force yes\n" * n + "password v",
+        lambda n: "machine h\nforce\n" * n + "password v",
+        lambda n: "machine h\n" + "x " * n + "\npassword v",
+        lambda n: "machine h\nx\n\n" * n,
+        lambda n: "machine h\n" + "x account\n" * n,
+        lambda n: "machine h\n" + "x machine\n" * n,
+        lambda n: ("machine h " + "a" * 50 + "\n") * n,
+        lambda n: "machine h\r\n" + "x\r\n" * n,
     ],
     ids=[
         "names",
@@ -430,6 +443,16 @@ def _best_cpu(work, repeats: int = 3) -> float:
         "hash-heads",
         "glued-quotes",
         "escaped-glued-quotes",
+        "path-comments",
+        "escaped-path-comments",
+        "later-line-tokens",
+        "later-line-entries",
+        "far-secret",
+        "blank-line-regions",
+        "secrets-ahead",
+        "heads-ahead",
+        "long-line-regions",
+        "crlf-regions",
     ],
 )
 def test_netrc_redaction_scales_linearly(shape):

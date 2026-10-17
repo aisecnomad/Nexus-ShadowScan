@@ -133,6 +133,29 @@ COMMENT_FORMS = [
     f'Set-Content $HOME\\_netrc "machine h`n  # note`nlogin u`npassword {SECRET}"',
     f'{{"netrc": "machine api.openai.com\\n  # deploy bot\\n  login bot\\n  password {SECRET}\\n"}}',
     f"#machine h login u password {SECRET}\n",
+    # Escaped text with no quote: its escapes next to keywords give it away.
+    f"NETRC=machine h # note\\nlogin u\\npassword {SECRET}",
+]
+# A netrc file's own comment that holds an apostrophe or a quote and a Windows
+# path. Read as an escaped string because its line held a quote, the comment
+# ended at the path's first '\n' or '\r', the rest of it ended the entry, and
+# the password on a later line was shown. A comment now ends at such an escape
+# only in an escaped string, and a token the format does not define ends no
+# entry before a password that follows it in the entry's region, as the rest
+# of a comment cut inside quotes does not either.
+PATH_COMMENT_FORMS = [
+    f"machine fileserver.corp\n  # Bob's share is C:\\new\\data\n  login bob\n  password {SECRET}\n",
+    f"machine fs.corp\n# don't change: used by \\\\nas\\backup\nlogin svc\npassword {SECRET}\n",
+    f"machine fs.corp login svc\n# it's for D:\\repo\\nightly\npassword {SECRET}\n",
+    f'machine fs.corp\n  # share: "C:\\new\\data"\n  login svc\n  password {SECRET}\n',
+    f"machine fs.corp\n  # see `\\\\fs\\releases`\n  login svc\n  password {SECRET}\n",
+    f"machine h\n  login u\n  # Bob's PC at C:\\new\n  password {SECRET}\n",
+    f"machine h\r\n  # Bob's share is C:\\new\\data\r\n  login bob\r\n  password {SECRET}\r\n",
+    f"machine h\n  # Bob's share is C:\\new\\data\n  # and D:\\rest\\of\\it\n  login bob\n  password {SECRET}\n",
+    f'x = """\nmachine proxy.corp\n  # Bob\'s proxy share is C:\\new\\data\n  login bob\n  password {SECRET}\n"""',
+    f'machine h\n  "x" # see "C:\\new\\data"\n  login u\n  password {SECRET}\n',
+    f"machine h\nforce yes\npassword {SECRET}\n",
+    f"machine h\n  force\n  yes\n  login u\n  password {SECRET}\n",
 ]
 # What is glued to a closing quote is the next token, as clients read it: read
 # as the rest of the quoted name or value, a 'password' there hid its value.
@@ -177,6 +200,7 @@ OWN_SYNTAX_FORMS = [
     + CLIENT_FORMS
     + SPLIT_FORMS
     + COMMENT_FORMS
+    + PATH_COMMENT_FORMS
     + GLUED_FORMS
     + MACRO_FORMS
     + YARNRC_FORMS
@@ -209,6 +233,7 @@ def _only_adds_markers(before: str, after: str) -> bool:
     + CLIENT_FORMS
     + SPLIT_FORMS
     + COMMENT_FORMS
+    + PATH_COMMENT_FORMS
     + GLUED_FORMS
     + MACRO_FORMS
     + YARNRC_FORMS,
@@ -272,6 +297,13 @@ def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(so
             'x = "machine h\\n  # note\\nlogin u # bot\\npassword VALUE"',
             f'x = "machine h\\n  # note\\nlogin u # bot\\npassword {REDACTED}"',
         ),
+        # A netrc file's own comment stays whole, a path in it included, and so
+        # does a token the format does not define on a line of its own.
+        (
+            "machine fs.corp\n  # Bob's share is C:\\new\\data\n  login bob\n  password VALUE\n",
+            f"machine fs.corp\n  # Bob's share is C:\\new\\data\n  login bob\n  password {REDACTED}\n",
+        ),
+        ("machine h\nforce yes\npassword VALUE\n", f"machine h\nforce yes\npassword {REDACTED}\n"),
     ],
 )
 def test_names_hosts_and_layout_stay_visible(source, expected):
@@ -301,8 +333,11 @@ def test_a_reference_in_place_of_the_value_stays_visible(source):
         "machine learning models need a login and password",
         "machine = Machine()\nmachine.login(user)",
         "macdef is an ftp macro keyword",
-        # A token the format does not define on a later line ends the entry.
-        "machine learning tools\ncreate an account for each user",
+        # A token the format does not define on a later line ends the entry when
+        # no 'password', 'passwd' or 'account' follows it in the entry's region,
+        # which a blank line ends, and which spans eight lines at most.
+        "machine learning tools\n\ncreate an account for each user",
+        "machine learning tools\n" + "and more\n" * 7 + "create an account for each user",
         "_auth helpers live in auth.py",
     ],
 )
@@ -326,6 +361,16 @@ def test_prose_and_code_that_merely_use_the_words_stay(source):
             "This machine learning library needs an account and a key",
             f"This machine learning library needs an account {REDACTED} a key",
         ),
+        # Nor does one on a later line before an 'account' in the entry's region,
+        # so that the rest of a comment cut at an escape never shows a password.
+        (
+            "machine learning tools\ncreate an account for each user",
+            f"machine learning tools\ncreate an account {REDACTED} each user",
+        ),
+        (
+            "machine learning tools\n" + "and more\n" * 6 + "create an account for each user",
+            "machine learning tools\n" + "and more\n" * 6 + f"create an account {REDACTED} each user",
+        ),
     ],
 )
 def test_a_prose_word_after_a_netrc_keyword_is_withheld(source, expected):
@@ -341,13 +386,19 @@ def test_a_prose_word_after_a_netrc_keyword_is_withheld(source, expected):
             'NETRC = "machine api.openai.com\\n  # deploy bot\\n  login bot\\n  password VALUE\\n"',
             "deploy bot",
         ),
+        (
+            'NETRC = r"""\nmachine proxy.corp\n  # Bob\'s proxy share is C:\\new\\data\n  login bob\n'
+            '  password VALUE  # proxy for api.openai.com\n"""',
+            "proxy for api.openai.com",
+        ),
     ],
 )
 def test_no_report_format_shows_a_netrc_password_from_source(tmp_path, index, line, shown):
     # An app that uses OpenAI and keeps a netrc entry in a string or a
-    # comment: the entry ended at the escape a domain login seemed to hold, or
-    # an indented comment in the string hid the lines after it, and the
-    # excerpt showed the password in every report format.
+    # comment: the entry ended at the escape a domain login seemed to hold, an
+    # indented comment in the string hid the lines after it, or a comment with
+    # an apostrophe and a path ended at the path, and the excerpt showed the
+    # password in every report format.
     password = "pw-" + _random(24)
     (tmp_path / "app.py").write_text(
         "import openai\n\nclient = openai.OpenAI()\n" + line.replace("VALUE", password) + "\n"

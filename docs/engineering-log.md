@@ -1048,6 +1048,32 @@ public repositories with the tool and read the committed benchmark metrics.
   `password "a"password v`, `login \"u\"password v` in a JSON string),
   and the password was shown; a value is still withheld up to the next
   blank.
+- Redaction: a netrc file's own comment that holds an apostrophe or a quote
+  and a Windows path (`# Bob's share is C:\new\data`, `# don't change: used
+  by \\nas\backup`) runs to the end of its line again. Its line held a
+  quote, so it was read as an escaped string, and the comment ended at the
+  path's first `\n` or `\r`; the rest of it was a token the format does not
+  define on a later line than the entry's last token, which ended the
+  entry, and the password on the next line was shown (`shadowscan code`
+  exited 0 with it in the JSON, SARIF, Markdown, HTML, OCSF and table
+  reports of an app that kept such an entry in a raw string, which was
+  withheld before the comment change above). A comment
+  now ends at a line-break escape only where escapes are read and it is in
+  escaped text: its line holds an escape next to a keyword, a line-break
+  escape comes before the `#`, or the same quote comes both before and
+  after it. Failing closed
+  whatever a comment's reading, a token the format does not define on a
+  later line no longer ends an entry while a `password`, `passwd` or
+  `account` follows it in the entry's region, the eight lines from that of
+  the entry's last token up to a blank line or the next entry's head. This
+  also withholds `machine h`, then `force yes`, then `password v` on the
+  next lines, which SECURITY.md listed as what can remain. Prose pays for
+  it: a word after `account` or `password` within the region of a prose
+  `machine` is withheld (`machine learning tools` / `create an account
+  [REDACTED] each user`). Over 23,360 repository and installed-package
+  files, the pass now changes 13 against 12: a JSON schema's description
+  under a `machine` word is new, and more words are withheld in the netrc
+  examples of SECURITY.md and this log and in a test's netrc string.
 - `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
   `GetAgent` and `ListAgents` return no tags and the collector never called
   `ListTagsForResource`, so no live scan could attribute a Bedrock agent to

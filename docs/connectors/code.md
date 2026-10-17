@@ -643,8 +643,9 @@ Wherever their syntax appears in report text (a Dockerfile that writes a
 `.netrc`, a CI script, a PowerShell `Set-Content` with `` `n `` escapes), the
 passwords, accounts and macros of netrc entries, with keywords in any case
 as curl reads them, including an entry in a comment (a comment in a string
-with `\n` escapes ends at the next one), and Yarn 1's `name value` registry
-credentials are withheld (see
+with `\n` escapes ends at the next one; a netrc file's own comment runs to
+the end of its line, a Windows path in it included), and Yarn 1's
+`name value` registry credentials are withheld (see
 [what is redacted](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-is-redacted),
 and [what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain)
 for the netrc forms it does not read, a commented-out token outside an
