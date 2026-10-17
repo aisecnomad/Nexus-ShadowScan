@@ -674,7 +674,10 @@ def test_the_operands_after_a_reference_are_read_once_and_within_the_follower(in
 
     counting = _CountingTokens(matcher._OPERAND_TOKEN)
     monkeypatch.setattr(matcher, "_OPERAND_TOKEN", counting)
-    text = "".join(f"const key{n}ApiKey = process.env.KEY{n}_API_KEY{tail}\n" for n in range(3))
+    # A comment with a key-length literal in it makes the reader run; the
+    # reader skips the comment, so the tail is read as it is.
+    hint = " /* 'not-a-fallback-literal' */"
+    text = "".join(f"const key{n}ApiKey = process.env.KEY{n}_API_KEY{hint}{tail}\n" for n in range(3))
     index.match_secrets(text, code=True)
     assert counting.reads
     runs: list[int] = []
@@ -689,6 +692,29 @@ def test_the_operands_after_a_reference_are_read_once_and_within_the_follower(in
         end = token_end
     assert max(runs) <= _FOLLOWER_CHARS
     assert len(counting.reads) <= len(runs) * _FOLLOWER_CHARS
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "?.trim()" * 30 + ";",  # long chains, short or no literals
+        '.get("a")' * 20 + ";",
+        " || a || b || c || d || e || f;",
+        ' || cfg.get("svc").and("x").then((v) => v.trim()).catch(() => null) || undefined',
+    ],
+    ids=lambda tail: repr(tail[:8]),
+)
+def test_a_follower_without_a_key_length_literal_is_not_read(index, monkeypatch, tail):
+    # The operand reader costs several microseconds a token in Python; a
+    # follower with no quote followed by 16 characters of the value class can
+    # hold no fallback literal, so the reader does not run on it at all.
+    from shadowscan.signatures import matcher
+
+    counting = _CountingTokens(matcher._OPERAND_TOKEN)
+    monkeypatch.setattr(matcher, "_OPERAND_TOKEN", counting)
+    text = "".join(f"const svc{n}ApiKey = process.env.SVC{n}_API_KEY{tail}\n" for n in range(20))
+    assert index.match_secrets(text, code=True) == []
+    assert counting.reads == []
 
 
 def _slow_judge(monkeypatch, seconds: float) -> None:
