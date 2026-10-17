@@ -137,7 +137,17 @@ Counts and figures quoted in an entry are those of its date.
   CDN-shared address listed as `static.example.com` before
   `api.openai.com` gave no finding; every name (up to the list limit) is
   now scored on its own. Regression-tested with the AI host second and
-  third.
+  third. A flat record that also carried a key a native reader claims (a
+  string `eventName` with `processName` is taken by the Tracee reader,
+  `rule` with an `output_fields` map by the Falco reader) lost its
+  top-level destination in silence, because that reader found none and
+  the flat fields were never read. When the native reader finds no
+  destination and the record has flat destination or port fields, it is
+  now scored on those, with the native reading filling the process and
+  pod; a Falco alert's own `hostname` (the sensor) and a bare Hubble
+  flow's `destination` endpoint do not count as flat fields.
+  Regression-tested with both shapes, and with a Falco alert from a node
+  named after a runtime that stays unreported.
 - `endpoint.host` reports a host inventory row only when its name or path
   matches an AI product signature, its whole name is a known AI product or
   local model runtime, or its `type`/`category` names an AI category;

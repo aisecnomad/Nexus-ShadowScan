@@ -989,6 +989,65 @@ def test_ebpf_well_formed_flat_and_unix_socket_records_stay_complete() -> None:
     assert not connector.ctx.stats.incomplete
 
 
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(
+            {
+                "eventName": "connect",
+                "processName": "python",
+                "destination": "api.openai.com",
+                "destination_port": 443,
+            },
+            id="tracee-keys",
+        ),
+        pytest.param(
+            {
+                "process_name": "python",
+                "destination": "api.openai.com",
+                "port": 443,
+                "rule": "r",
+                "output_fields": {},
+            },
+            id="falco-keys",
+        ),
+    ],
+)
+def test_ebpf_flat_record_with_native_keys_keeps_its_destination(record) -> None:
+    """Regression: a flat record that also carries a key a native reader claims (a
+    string ``eventName`` with ``processName`` is Tracee, ``rule`` with an
+    ``output_fields`` map is Falco) was read by that reader alone, which found no
+    destination, so its top-level destination was lost on a complete scan."""
+    connector = _ebpf_connector()
+    findings = list(connector.analyze([record]))
+    assert [finding.resource for finding in findings] == ["python"]
+    assert "llm-egress" in findings[0].tags
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+def test_ebpf_native_events_keep_their_own_top_level_fields() -> None:
+    """A Falco alert's ``hostname`` is the sensor's host and a bare Hubble flow's
+    ``destination`` is its destination endpoint: neither turns the event into a flat
+    record, so a node named after a runtime is not egress and the flow is not malformed."""
+    connector = _ebpf_connector()
+    falco = {
+        "hostname": "ollama-node-1",
+        "rule": "r",
+        "priority": "Notice",
+        "output_fields": {"proc.name": "cat"},
+    }
+    hubble = {
+        "verdict": "FORWARDED",
+        "l4": {"ICMPv4": {"type": 8}},
+        "source": {"namespace": "ai", "pod_name": "agent-0"},
+        "destination": {"namespace": "ai", "pod_name": "model-0"},
+    }
+    assert list(connector.analyze([falco, hubble])) == []
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
 def test_kubernetes_offline_resource_identity_and_security_tags() -> None:
     connector = KubernetesConnector(ConnectorContext(config={"cluster": "test-cluster"}))
     findings = list(

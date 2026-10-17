@@ -210,7 +210,7 @@ ports:
 | Falco | JSON alerts (`json_output: true`) | `output_fields`: `proc.name`, `fd.sip.name`/`fd.rip.name`/`fd.sip`/`fd.rip`, `fd.sport`/`fd.rport`, `k8s.ns.name`, `k8s.pod.name` |
 | Tracee | JSON events | `processName`, `kubernetes.podName`/`podNamespace`, and every sockaddr map in `args` (`sin_addr`/`sin6_addr`, `sin_port`/`sin6_port`), each scored |
 | Hubble | `hubble observe -o json` flows, wrapped under `flow` or bare | every `destination_names` entry (a CDN-shared address resolves from several names, and the AI host need not come first), or `IP.destination` when there are none, the `l4` TCP/UDP `destination_port`, and the client workload from `source.namespace`/`pod_name` |
-| Flat | Records exported by other collectors | `process_name`/`binary` or a `process` object, `destination`/`remote_addr`/`hostname`/`server.address`/`url`, `port`/`destination_port`, `namespace`, `pod`/`pod_name` |
+| Flat | Records exported by other collectors | `process_name`/`binary` or a `process` object, `destination`/`remote_addr`/`hostname`/`server.address`/`url`, `port`/`destination_port`, `namespace`, `pod`/`pod_name`; a flat record that also carries a key a native reader claims (a string `eventName` with `processName`, or `rule`/`priority` with an `output_fields` map) and in which that reader finds no destination is read by these flat fields, with the native fields filling the gaps — a Falco alert's own `hostname` and a bare Hubble flow's `destination` endpoint are not flat fields |
 
 Kernel-level events usually carry numeric destination addresses, so Tetragon
 and Tracee connects contribute local model ports and process names; AI host

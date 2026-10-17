@@ -1200,17 +1200,43 @@ def _flat_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, An
     }
 
 
-def _normalize_ebpf_record(record: dict[str, Any]) -> tuple[str, dict[str, Any], set[str]] | None:
-    """The producer, the flat record to score and what its reader could not read
-    (see _EBPF_DEFECT_WARNINGS), or None for a record no reader recognizes."""
+# The flat fields that say where a record connected.
+_EBPF_FLAT_DESTINATION_KEYS = frozenset({*_EBPF_DESTINATION_KEYS, "port", "destination_port"})
+# Top-level keys of a producer's own events that the flat shape also names: a
+# Falco alert's ``hostname`` is the sensor's host, and a bare Hubble flow's
+# ``destination`` is the destination endpoint, neither of them a flat destination.
+_EBPF_PRODUCER_KEYS = {"Falco": frozenset({"hostname"}), "Hubble": frozenset({"destination"})}
+
+# A record to score and, for each reader that read it, the producer and what it
+# could not read (see _EBPF_DEFECT_WARNINGS).
+_EbpfReading = tuple[dict[str, Any], list[tuple[str, set[str]]]]
+
+
+def _normalize_ebpf_record(record: dict[str, Any]) -> _EbpfReading | None:
+    """The record to score and what each reader that read it could not read, or None for
+    a record no reader recognizes.
+
+    A flat record can carry a key a native reader claims: a string ``eventName`` beside
+    ``processName`` reads as Tracee, ``rule`` beside an ``output_fields`` map as Falco.
+    When that reader finds no destination and the record has flat destination fields
+    of its own, the record is also read as flat and scored on its flat fields, with what
+    the native reader read filling the gaps, so its top-level destination is not lost.
+    """
     for producer, reader in _EBPF_READERS:
         defects: set[str] = set()
         normalized = reader(record, defects)
-        if normalized is not None:
-            return producer, normalized, defects
+        if normalized is None:
+            continue
+        flat_keys = _EBPF_FLAT_DESTINATION_KEYS - _EBPF_PRODUCER_KEYS.get(producer, frozenset())
+        if normalized["destination"] or normalized["destination_port"] or flat_keys.isdisjoint(record):
+            return normalized, [(producer, defects)]
+        flat_defects: set[str] = set()
+        flat = _flat_ebpf_record(record, flat_defects)
+        merged = {key: value or normalized.get(key) for key, value in flat.items()}
+        return merged, [(producer, defects), ("flat", flat_defects)]
     if _EBPF_FLAT_KEYS.intersection(record):
         defects = set()
-        return "flat", _flat_ebpf_record(record, defects), defects
+        return _flat_ebpf_record(record, defects), [("flat", defects)]
     return None
 
 
@@ -1253,9 +1279,10 @@ class EbpfConnector(_EndpointConnector):
                         "exports are Tetragon, Falco, Tracee, Hubble and the flat record shape"
                     )
                 continue
-            producer, record, defects = normalized
+            record, readings = normalized
             # The event is still scored on what was read.
-            self._report_defects(producer, defects)
+            for producer, defects in readings:
+                self._report_defects(producer, defects)
             binary = self._text(record.get("process_name"))
             serialized = self._destination_text(record) + " " + binary
             lower = serialized.lower()
