@@ -207,7 +207,8 @@ across this change reports findings as resolved or new that are neither.
   (`apiKey = process.env.OPENAI_API_KEY`, `os.getenv("OPENAI_API_KEY")`) is
   shown instead of `[REDACTED]`. Any other value after a credential name,
   including an environment read with a default, a fallback literal or a
-  comment after it, stays withheld. Excerpts and report text change accordingly; finding ids do not.
+  comment after it, or one whose variable name looks like a pasted key, stays
+  withheld. Excerpts and report text change accordingly; finding ids do not.
 - **Completeness.** Scans incomplete only because of a file guessed to be an
   MCP configuration that is not one, an import-bound call between 8,192 and
   65,536 characters, or a malformed or binary fixture in discounted test code

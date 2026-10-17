@@ -10,6 +10,8 @@ reviewer needs to see.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -228,6 +230,9 @@ def test_a_scan_reports_a_hard_coded_fallback_and_withholds_it(tmp_path: Path, r
         'apiKey := os.Getenv("OPENAI_API_KEY")',
         'api_key = ENV["OPENAI_API_KEY"]',
         "apiKey: process.env.OPENAI_API_KEY,",
+        # Names of one word or with digits are names too.
+        'password = os.getenv("PGPASSWORD")',
+        "token = process.env.K8S_TOKEN",
         # Blanks may come between the read and the end of its value.
         "apiKey: process.env.OPENAI_API_KEY ,",
         "new OpenAI({ apiKey: process.env.OPENAI_API_KEY })",
@@ -259,6 +264,25 @@ def test_text_after_an_environment_read_keeps_the_value_withheld(line: str):
     safe = sanitize_text(line)
     assert AZURE_KEY not in safe and REDACTED in safe
     assert sanitize_text(safe) == safe
+
+
+# An upper-case random key and a base32 TOTP secret, derived so no key sits in the source.
+UPPER_KEY = base64.b32encode(hashlib.sha256(b"upper-case-key").digest()).decode()[:40]
+TOTP_SECRET = base64.b32encode(hashlib.sha256(b"totp-secret").digest()).decode()[:32]
+
+
+@pytest.mark.parametrize(
+    ("line", "secret"),
+    [
+        # A credential pasted where the variable's name belongs is not a name.
+        (f'aws_secret_access_key = os.getenv("{UPPER_KEY}")', UPPER_KEY),
+        (f'otp_secret = os.getenv("{TOTP_SECRET}")', TOTP_SECRET),
+        (f"password: ENV['{UPPER_KEY[:30]}']", UPPER_KEY[:30]),
+    ],
+)
+def test_a_key_in_place_of_the_variable_name_is_withheld(line: str, secret: str):
+    safe = sanitize_text(line)
+    assert secret not in safe and REDACTED in safe
 
 
 HEX = "a8f3c91d7e2b4f6a9d0c"
