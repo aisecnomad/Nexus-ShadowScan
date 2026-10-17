@@ -17,8 +17,9 @@ import string
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
+from shadowscan.connectors.common import placeholder_reason
 from shadowscan.models import Kind
-from shadowscan.signatures.matcher import MAX_SECRETS_PER_SIGNAL
+from shadowscan.signatures.matcher import MAX_SECRETS_PER_SIGNAL, reported_credential
 
 _RANDOM = random.Random(5811)
 _ALPHABET = string.ascii_letters + string.digits
@@ -142,6 +143,47 @@ def test_references_never_hide_the_keys_after_them(index):
 
 def test_a_settings_module_of_references_stays_complete(tmp_path, index):
     findings, ctx = _scan(index, tmp_path, {"config.ts": _environment_reads(60)})
+    assert not [f for f in findings if f.kind == Kind.SECRET]
+    assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+def _samples(count: int) -> str:
+    """Documentation samples that pass the generic rule's entropy test but are placeholders."""
+    return "".join(f"SERVICE{n}_API_KEY=sk-your-key-here-{n}a7c9e1f3\n" for n in range(count))
+
+
+def test_placeholders_take_no_place_in_the_quota(index):
+    limited: set[str] = set()
+    text = _samples(8) + "REAL_API_KEY=R4nd0m9Qx2Vb7Lp6\n"
+    matches = index.match_secrets(text, limited=limited, placeholder=placeholder_reason)
+    assert limited == set()
+    reported = [m for m in matches if placeholder_reason(reported_credential(m)) is None]
+    assert [reported_credential(m) for m in reported] == ["R4nd0m9Qx2Vb7Lp6"]
+    # A few samples per format come back for the example evidence, never more.
+    assert 0 < len(matches) - len(reported) <= MAX_SECRETS_PER_SIGNAL
+
+
+def test_a_file_of_placeholders_is_complete_and_its_real_key_reported(tmp_path, index):
+    findings, ctx = _scan(index, tmp_path / "samples", {".env.example": _samples(8)})
+    assert not [f for f in findings if f.kind == Kind.SECRET]
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    words = "".join(f"SERVICE{n}_API_KEY=your_service{n}_api_key_here\n" for n in range(8))
+    findings, ctx = _scan(index, tmp_path / "words", {".env.example": words})
+    assert not [f for f in findings if f.kind == Kind.SECRET]
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    text = _samples(8) + "REAL_API_KEY=R4nd0m9Qx2Vb7Lp6\n"
+    findings, ctx = _scan(index, tmp_path / "mixed", {".env.example": text})
+    assert _secret_finding(findings).metadata["count"] == 1
+    assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+def test_short_sk_look_alikes_take_no_place_in_the_quota(tmp_path, index):
+    # Ticket branches have the short sk- shape but not its randomness; none is reported.
+    branches = "".join(f'BRANCH_{n} = "sk-1234-fix-the-login-page-{n:02d}"\n' for n in range(8))
+    limited: set[str] = set()
+    assert index.match_secrets(branches, code=True, limited=limited) == []
+    assert limited == set()
+    findings, ctx = _scan(index, tmp_path, {"release.py": branches})
     assert not [f for f in findings if f.kind == Kind.SECRET]
     assert not ctx.stats.incomplete, ctx.stats.errors
 

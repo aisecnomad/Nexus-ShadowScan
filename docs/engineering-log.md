@@ -788,6 +788,13 @@ public repositories with the tool and read the committed benchmark metrics.
   `<file>: more than 5 credentials matched <format>; credential evidence
   incomplete` (exit 3) and sets `metadata.secrets_limited` on the finding.
   Callers that report no credentials (connector blob scans) are unchanged.
+  Only matches the connector would report count toward the quota and the
+  look past it: a reference, a short `sk-` look-alike that is not random or
+  that a counted assignment covers, and a documentation placeholder (the
+  connector passes `placeholder_reason` as `match_secrets(...,
+  placeholder=)`, judged on the credential a match stands for) take no
+  place. A `.env.example` of sample keys is therefore complete, with up to
+  five samples per format kept as example evidence.
 - `code.filesystem`: the tool credential files `.npmrc`, `.yarnrc`, `.netrc`,
   `_netrc`, `.pypirc`, `.git-credentials`, `.boto` and `.s3cfg` are read by
   name (`CREDENTIAL_FILE_NAMES`). They have no suffix, so no rule selected

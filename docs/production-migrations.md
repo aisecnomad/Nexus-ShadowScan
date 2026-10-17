@@ -205,9 +205,11 @@ across this change reports findings as resolved or new that are neither.
   `.` or in upper case; a label of words carries credential, test,
   development-default or filler vocabulary or the assigned name, such as
   `local-development-only`) are reported as
-  before. References, and a second pattern matching a credential already
-  counted, take no place in the five-per-format quota, so a real key after
-  any number of them is reported (the quota used to drop it). A digit-free
+  before. References, documentation placeholders, short `sk-` look-alikes
+  and a second pattern matching a credential already counted take no place
+  in the five-per-format quota, so a real key after any number of them is
+  reported (the quota used to drop it) and a `.env.example` of sample keys
+  no longer exits 3. A digit-free
   value is held to the mixed-case rule only when it is built like a name
   (snake_case, dotted or camelCase), so a single-word passphrase or an AWS
   key id whose body has no digit is reported.
