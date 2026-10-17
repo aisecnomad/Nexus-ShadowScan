@@ -128,7 +128,7 @@ from shadowscan.connectors.code.manifests import (
     manifest_comment_projection,
     parse_manifest,
 )
-from shadowscan.connectors.code.mcp_config import _mcp_client_for, _parse_mcp_servers
+from shadowscan.connectors.code.mcp_config import _mcp_client_for, _parse_mcp_servers, mcp_server_holders
 from shadowscan.connectors.code.mcp_tools import MCPToolLimitError, mcp_tool_capabilities, mcp_tool_names
 from shadowscan.connectors.code.model_artifacts import (
     ARTIFACT_SUFFIXES,
@@ -760,36 +760,24 @@ _DEDICATED_MCP_CONFIG_NAMES = frozenset(
 _MCP_STRUCTURE_SUFFIXES = (".json", ".toml", ".yaml", ".yml")
 
 
-def _document_declares_mcp(document: Any, depth: int = 0, *, listed: bool = False) -> bool:
+def _document_declares_mcp(document: Any) -> bool | None:
     """Whether a parsed JSON/TOML/YAML document configures MCP servers, wherever the table sits.
 
-    Decided from the structure, not a text prefix: a key named ``mcpServers`` or
-    ``mcp_servers`` holding a mapping, or an ``mcp`` mapping with a ``servers`` mapping,
-    at the top level, nested within a client's section or in a mapping inside a list (an
-    Ansible task that writes ``~/.cursor/mcp.json`` from structured ``content``, a list of
-    client profiles). Bounded in depth (mappings and lists alike) and breadth so a hostile
-    document cannot make the walk expensive.
+    Decided from the structure, not a text prefix (``mcp_server_holders``): a key
+    named ``mcpServers`` or ``mcp_servers``, or an ``mcp`` mapping with a
+    ``servers`` key, at the top level, nested within a client's section or in a
+    mapping inside a list (an Ansible task that writes ``~/.cursor/mcp.json``
+    from structured ``content``, a list of client profiles), where it must hold
+    a mapping of servers or a list of server records (Continue's
+    ``mcpServers: [{name, command}]``), not a transcript's status list. The
+    walk is bounded in depth and breadth so a hostile document cannot make it
+    expensive; None when those bounds stopped it before it found a table, so
+    the caller decides from the text instead of taking the file to declare none.
     """
-    if depth > 12:
-        return False
-    if isinstance(document, list):
-        return any(_document_declares_mcp(item, depth + 1, listed=True) for item in document[:256])
-    if not isinstance(document, dict):
-        return False
-    # Outside a list the key's presence is the signal, whatever its value: a malformed value
-    # (``mcpServers: "x"``) must still route to the server parser, which records the input
-    # defect, exactly as the former substring check did — only now it cannot be hidden behind
-    # leading padding. A list holds records, and a record's ``mcp_servers`` can be a status
-    # list (a session transcript), so there only a mapping of servers declares them.
-    for key in ("mcpServers", "mcp_servers"):
-        if key in document and (not listed or isinstance(document[key], dict)):
-            return True
-    mcp = document.get("mcp")
-    if isinstance(mcp, dict) and "servers" in mcp and (not listed or isinstance(mcp["servers"], dict)):
+    holders, truncated = mcp_server_holders(document, first=True)
+    if holders:
         return True
-    return any(
-        _document_declares_mcp(value, depth + 1, listed=listed) for value in list(document.values())[:256]
-    )
+    return None if truncated else False
 
 
 _WORKFLOW_FILE = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
@@ -5257,7 +5245,9 @@ class FilesystemConnector(BaseConnector):
             # holds (see _document_declares_mcp), never in a transcript's "mcp_servers"
             # status list.
             if document is not None and not workflow:
-                return _document_declares_mcp(document)
+                declared = _document_declares_mcp(document)
+                if declared is not None:
+                    return declared
             if not _mentions_mcp_keys(text):
                 return False
             if rel.endswith(_YAML_SUFFIXES) and not workflow:

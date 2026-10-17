@@ -108,6 +108,27 @@ file_matches)`, now serves every gap site.
   declaration as `full_weight`), and the servers its text declares are
   reported. The parametrized full-weight tests now run in a 61-entry tree
   under both profiles, with these spellings added.
+- **Server tables in a list are read, and the walk's bounds fail closed.**
+  Inside a list the structural check counted a server table only when it
+  was a mapping, so Continue's list of server records (`mcpServers: [{name,
+  command}]`), written by an Ansible copy task or held in a JSON list of
+  clients, completed silently where main exited 3. Past its bounds (12
+  levels, 256 entries per container) the walk returned False, so a playbook
+  with 300 tasks before the copy task, or a table wrapped in 13 lists, was
+  never sent to the parser. And a list-rooted document that did reach the
+  parser, a server catalog under `tests/fixtures/` among them, exited 3 with
+  `MCP configuration must be an object`, which names no defect anyone can
+  fix. The walk moved to `mcp_config.mcp_server_holders`, iterative and
+  bounded as before: inside a list it also counts a list of server records
+  (a mapping carrying `command`, `url`, `args`, `type` or `transport`, which
+  a transcript's `{name, status}` does not), and it says when the bounds cut
+  it, so `_document_declares_mcp` returns None and `_looks_like_mcp_config`
+  decides from the text instead. The parser reads a list-rooted document as
+  the server tables its entries hold (`_listed_server_tables`), merged with
+  numbered duplicate names: a catalog or a play is reported and leaves the
+  scan complete, since nothing is hidden once its tables are parsed, and a
+  table past the bounds is recorded as a limit (`analysis-limit`). A
+  dedicated name holding a list with no table keeps the old diagnostic.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 
