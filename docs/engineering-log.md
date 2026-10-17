@@ -747,8 +747,13 @@ public repositories with the tool and read the committed benchmark metrics.
   `import.meta.env.`, `os.environ.`, `self.` or `this.`, is now a reference,
   not a credential; a quoted value is always a literal, a random-looking value
   is never a name, and in an env file an unquoted value
-  (`DB_PASSWORD=Summer.Vacation2024`) stays a candidate. Labels of three or
-  more letter words (`'request-scoped-credential'`,
+  (`DB_PASSWORD=Summer.Vacation2024`) stays a candidate. A reference ends its
+  value only when blanks and then `;`, `,`, `)`, `}`, `]` or the line end
+  follow it, or a call or subscript opens on it. A fallback, concatenation or
+  ternary after it (`process.env.OPENAI_API_KEY || "<key>"`, `?? "<key>"`,
+  `process.env.PREFIX + '<key>'`) is still reported when one of its literals
+  looks like a key; an empty or word-like fallback (`|| ''`) is not. Labels
+  of three or more letter words (`'request-scoped-credential'`,
   `'fc-shared-env-must-not-be-used'`) are not high-entropy keys, and a value
   with an ellipsis (`sk-ant-api03-...`) is a documentation placeholder
   (`example-credential` evidence). Secret matches are filtered before the

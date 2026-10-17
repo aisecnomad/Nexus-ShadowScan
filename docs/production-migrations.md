@@ -108,9 +108,10 @@ across this change reports findings as resolved or new that are neither.
   ellipsis (now `example-credential` evidence). A comparison with an earlier
   baseline shows those `secret` findings as resolved; review any `--fail-on`
   threshold that only these findings reached. Literal keys, provider key
-  formats and unquoted values in env files are reported as before. A file
-  with more than five rejected references before a real key now reports that
-  key, which the per-signal cap used to drop.
+  formats, unquoted values in env files and a hard-coded fallback after an
+  environment read (`process.env.OPENAI_API_KEY || "<key>"`) are reported as
+  before. A file with more than five rejected references before a real key
+  now reports that key, which the per-signal cap used to drop.
 - **Evidence text.** An environment read by name after a credential name
   (`apiKey = process.env.OPENAI_API_KEY`, `os.getenv("OPENAI_API_KEY")`) is
   shown instead of `[REDACTED]`. Any other value after a credential name,
