@@ -343,19 +343,19 @@ applied in this order:
    default accounting only notes (invalid structured syntax, a test file over
    the binder's budget, text that is not valid UTF-8) is an error or a warning
    that marks the scan incomplete and ends in `coverage incomplete`.
-2. **Credentials.** No credential is declared, discounted or budgeted
-   without a read. A credential limit is never declared, discounted or
+2. **Credentials.** A credential limit is never declared, discounted or
    budgeted: a file holding more matches of one credential format than the
    matcher reports (`more than 5 credentials matched`) marks the scan
-   incomplete under every profile, in test code too. A gap that left a file's
-   bytes unread by credential detection while `scan_secrets` is on (a file
-   over `max_file_size`, a notebook's saved outputs) is never declared: it is
-   recorded as without the profile, an oversize file as one entry of the
-   budget, or blinding when its name selects it as configuration. A binary or
-   undecodable test fixture is read for credentials before its gap is
-   recorded, under every accounting. The one exception left is an
-   undecodable file under a documentation, example or generated path, which
-   `profile: ci` declares without that read.
+   incomplete under every profile, in test code too. No file is declared
+   without a credential read: a gap that left a file's bytes unread by
+   credential detection while `scan_secrets` is on (a file over
+   `max_file_size`, a notebook's saved outputs) is recorded as without the
+   profile, an oversize file as one entry of the budget weighed by its path
+   like any other gap, or blinding when its name selects it as
+   configuration. A binary or undecodable test fixture is read for
+   credentials before its gap is recorded, under every accounting. The one
+   exception left is an undecodable file under a documentation, example or
+   generated path, which `profile: ci` declares without that read.
 3. **Declared omissions.** Under `profile: ci`, a gap in a path the
    [profile](#the-ci-profile) names is declared: counted in
    `declared_omissions`, every entry of it, never charged to the budget. A
