@@ -368,9 +368,9 @@ _WORD_SLUG = re.compile(r"[A-Za-z]{2,}(?:[-_][A-Za-z]{2,}){2,}")
 # source code or configuration names something: a package or an Android key
 # ('net.openid.appauth.state', 'com.google.android.geo'), an i18n message
 # ('forms.login.field.hint'), a namespace ('Microsoft.Identity.Client') or a
-# member chain ('config.openai.apiKey'). Only where a value can name nothing,
-# a password in an env or credential file, is a dotted slug whose words are
-# each lower case, Capitalized or upper case a passphrase
+# member chain ('config.openai.apiKey'). Only a password's value outside
+# source code (in an env or credential file, YAML, a compose file) is a dotted
+# slug whose words are each lower case, Capitalized or upper case a passphrase
 # ('snout.fiber.thump', 'Snout.Fiber.Thump'); see _high_entropy_credential.
 _SLUG_WORD = r"(?:[a-z]{2,}|[A-Z][a-z]+|[A-Z]{2,})"
 _DOTTED_SLUG = re.compile(_SLUG_WORD + r"(?:\." + _SLUG_WORD + r"){2,}")
@@ -848,9 +848,14 @@ def _single_case_identifier(candidate: str) -> bool:
 
 
 def _assigned_name(value: str) -> str:
-    """The name of a ``NAME = value`` or ``NAME: value`` match, or '' when it is no assignment."""
+    """The name of a ``NAME = value`` or ``NAME: value`` match, or '' when it is no assignment.
+
+    The blanks and the quote between the name and its operator are no part
+    of it: python-dotenv and Node's dotenv read ``POSTGRES_PASSWORD = value``,
+    and JSON quotes a key (``"db_password": ...``).
+    """
     positions = [i for i in (value.find("="), value.find(":")) if i >= 0]
-    return value[: min(positions)] if positions else ""
+    return value[: min(positions)].rstrip(" \t\"'") if positions else ""
 
 
 def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
@@ -920,20 +925,23 @@ def _program_name(candidate: str, body: str, *, passphrase: bool) -> bool:
     return upper_share < low or upper_share > high
 
 
-def _high_entropy_credential(value: str, *, literal: str | None = None, names: bool = True) -> bool:
+def _high_entropy_credential(
+    value: str, *, literal: str | None = None, names: bool = True, dotted: bool = False
+) -> bool:
     """Require a generic assigned credential to be long, diverse and shaped like a token, not a name.
 
     Shannon entropy alone does not separate the two: ordinary identifiers
     clear 3 bits per character. With ``names`` the value may be another
-    variable's name, so one built like a name is none (``_program_name``),
-    a CONSTANT_CASE word slug is a label (``_label_slug``) and a dotted
-    string of words is a name (``_DOTTED_SLUG``). ``literal``
+    variable's name, so one built like a name is none (``_program_name``)
+    and a CONSTANT_CASE word slug is a label (``_label_slug``). A dotted
+    string of words is a name (``_DOTTED_SLUG``) unless ``dotted`` or not
+    ``names`` says the value is a password outside source code. ``literal``
     is the value to judge when it is not the one ``value`` assigns (a
     fallback after a reference); ``value`` still names it.
     """
     candidate = _assigned_value(value) if literal is None else literal
     passphrase = _WORD_SLUG.fullmatch(candidate) is not None or (
-        not names and _DOTTED_SLUG.fullmatch(candidate) is not None
+        (dotted or not names) and _DOTTED_SLUG.fullmatch(candidate) is not None
     )
     if len(candidate) < 16 or (passphrase and _label_slug(value, candidate, names=names)):
         return False
@@ -981,35 +989,46 @@ def _generic_literal(value: str, *, code: bool, follower: str, env_file: bool = 
     the key pasted as its variable's name (``_pasted_key_read``), else the
     fallback literal after it, if any (``_fallback_literal``). In an env or
     credential file (``env_file``) a password's value is never another
-    variable's name: such a file has no variables to name, only values. A
-    template of one (``.env.example``), a Helm values file, a compose file,
-    a workflow or a document is no such file: a PASSWORD value there may name
-    a setting, a secret or a placeholder (``springDatasourcePassword``,
-    ``useExistingSecretKey``), so the name rules still apply.
+    variable's name: such a file has no variables to name, only values, and
+    only a label phrase (``_label_phrase``) is no password there. A template
+    of one (``.env.example``), a Helm values file, a compose file, a workflow
+    or a document is no such file: a PASSWORD value there may name a
+    setting, a secret or a placeholder (``springDatasourcePassword``,
+    ``useExistingSecretKey``), so the name rules still apply, but a
+    password's words joined by '.' are a passphrase outside source code.
     """
     if _reference_value(value, code=code, follower=follower):
         return _pasted_key_read(value, follower) or _fallback_literal(value, follower)
-    names = code or not env_file or not _assigned_name(value).lower().endswith(_PASSWORD_NAMES)
-    if not names and _label_name(value, _assigned_value(value)):
+    password = _assigned_name(value).lower().endswith(_PASSWORD_NAMES)
+    names = code or not env_file or not password
+    if not names and _label_phrase(value, _assigned_value(value)):
         return None
-    return _assigned_value(value) if _high_entropy_credential(value, names=names) else None
+    # Outside source code a password's dotted words are a passphrase, as in an env file.
+    dotted = password and not code
+    return _assigned_value(value) if _high_entropy_credential(value, names=names, dotted=dotted) else None
 
 
-def _label_name(value: str, candidate: str) -> bool:
-    """Whether a value built like a name is a label: one of its words is label vocabulary or the name's.
+def _label_phrase(value: str, candidate: str) -> bool:
+    """Whether a password built like a name is a label phrase: each of its words says what it stands for.
 
     A person's password in an env file can be built like a name
-    (``TrustNoOneEverAgain``, ``summer_vacation_beach_2024``), so the name
-    rules do not drop it there; a value whose words say what it stands for
-    (``KeycloakAdminPassword`` under ``KEYCLOAK_ADMIN_PASSWORD``,
-    ``svc1_local_dev_password``, ``change_me_to_a_strong_password``) is a
-    label all the same, as ``_label_slug`` reads a word slug.
+    (``TrustNoOneEverAgain``, ``PostgresProd2024Secure``,
+    ``snout_passed_thump_bloom``), so the name rules do not drop it there. A
+    value is a label only when every word is label vocabulary of either
+    strength, a function word or a word of the name it is assigned to, and
+    every number is the name's own (``KeycloakAdminPassword`` under
+    ``KEYCLOAK_ADMIN_PASSWORD``, ``svc1_local_dev_password`` under
+    ``SVC1_DB_PASSWORD``, ``change_me_to_a_strong_password``). Any other
+    word or number (a year, a generated word, a letter) makes it a password;
+    a word slug is then read as ``_label_slug`` reads it anywhere.
     """
     if not _name_shaped(candidate):
         return False
-    words = {word.lower() for word in _NAME_WORD.findall(candidate) if word.isalpha()}
-    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if len(word) >= 3}
-    return any(_label_word(word) for word in words) or not words.isdisjoint(name)
+    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value))}
+    return all(
+        word in name or (word.isalpha() and (_label_word(word) or word in _FUNCTION_WORDS))
+        for word in (word.lower() for word in _NAME_WORD.findall(candidate))
+    )
 
 
 # Python's environment mapping read as an attribute ('os.environ.<NAME>'),
