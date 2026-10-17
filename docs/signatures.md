@@ -416,11 +416,14 @@ and tests, which call and test the products they detect.
   at the first blank, so `apiKey = process.env.OPENAI_API_KEY || "<key>"` matches only the read and the
   fallback is the credential (`Match.extra["credential"]`, which the placeholder test judges). A literal
   passed to a call there (`?? getSecret("<path>")`, `?: error("X is not set")`) is not a fallback operand.
-  Three or more letter words joined by `-` or `_` are a label, not a
-  high-entropy key, when one of them is credential, test or instruction vocabulary
-  (`'request-scoped-credential'`, `'fc-shared-env-must-not-be-used'`) or a word of the assigned name, or
-  when they are all upper case; other word slugs are generated passphrases
-  (`snout-fiber-thump-bloom-gravel`) and are reported. Matches are filtered before the five-per-signal cap.
+  Three or more letter words joined by `-`, `_` or `.` (a dotted slug's words each lower case, Capitalized
+  or upper case) are a label, not a high-entropy key, when one of them, without a plural `-s` or past `-ed`,
+  is credential, test, instruction, development-default or filler vocabulary
+  (`'request-scoped-credential'`, `'fc-shared-env-must-not-be-used'`, `'this-should-be-changed'`,
+  `'local-development-only'`, `'lorem-ipsum-dolor-sit-amet'`) or a word of three letters or more of the
+  assigned name, or when the slug is CONSTANT_CASE (upper case joined by `_`); other word slugs are generated
+  passphrases (`snout-fiber-thump-bloom-gravel`, `snout.fiber.thump.bloom.gravel`,
+  `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are reported. Matches are filtered before the five-per-signal cap.
 * `name` patterns for products whose name is also a dictionary word or a first name (Otter, Devin, Jasper,
   Drift...) are context-guarded: the vendor form (`otter\.ai`) matches on its own; the bare word only when it is
   the whole display name (`^[^\S\r\n]*otter[^\S\r\n]*$`, an app called just "Otter") or with product context on

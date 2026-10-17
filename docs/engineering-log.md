@@ -764,11 +764,16 @@ public repositories with the tool and read the committed benchmark metrics.
   (`|| ''`) are not, and the placeholder test judges the fallback literal
   itself (`?? "sk-ant-api03-..."` is `example-credential` evidence). Labels
   of three or more letter words (`'request-scoped-credential'`,
-  `'fc-shared-env-must-not-be-used'`) are not high-entropy keys when a word is
-  credential, test or instruction vocabulary or repeats the assigned name;
-  other word slugs are generated passphrases
-  (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`) and are still reported, even
-  without digits or mixed case. A value
+  `'fc-shared-env-must-not-be-used'`) are not high-entropy keys when a word,
+  read without a plural `-s` or past `-ed`, is credential, test, instruction,
+  development-default or filler vocabulary (`this-should-be-changed`,
+  `local-development-only`, `foo-bar-baz-qux-quux`,
+  `lorem-ipsum-dolor-sit-amet`) or repeats a word of three letters or more of
+  the assigned name, or when the slug is CONSTANT_CASE (upper case joined by
+  `_`); other word slugs, joined by `-`, `_` or `.` and in any case, are
+  generated passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`,
+  `snout.fiber.thump.bloom.gravel`, `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are
+  still reported, even without digits or mixed case. A value
   with an ellipsis (`sk-ant-api03-...`) is a documentation placeholder
   (`example-credential` evidence). Secret matches are filtered before the
   five-per-signal cap, so rejected references no longer use up the places of a
