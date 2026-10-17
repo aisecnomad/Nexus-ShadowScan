@@ -13,6 +13,119 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Credential review fixes: env-file passwords, typed reads, pasted names, repeated credentials, labels and cut-read evidence (October 17)
+
+Fixes from two reviews of the credential pipeline (round 3, rebased as
+5aa142b), judged against main 8c72467 on one table of every concrete input
+those reviews and the earlier rounds used: `tests/unit/test_credential_oracle.py`
+holds 368 inputs (sanitizer lines, matcher lines with their mode, small file
+trees, `saas.generic` records and placeholder values), the outcome on this
+branch and the outcome on main, computed once and written in as data. A row
+where this branch is worse than main must name why: a value that is no
+credential (a reference, a label, a placeholder), the quota disclosure of
+more than five distinct credentials, or one credential repeated on several
+lines, reported once.
+
+- **Env-file passwords built like names are reported again.** In `.env`,
+  `.env.local` and the tool credential files, a PASSWORD or CREDENTIAL
+  value with one label word or one word of its name was dropped as a label:
+  `POSTGRES_PASSWORD=PostgresProd2024Secure`, `DB_PASSWORD=LocalAdmin2024Strong`,
+  `snout_passed_thump_bloom` and, by the review's count, 15 of 20 realistic
+  camel or snake case passwords with a year, which YAML and compose files and
+  main reported. Such
+  a value is now a label only when every word of it is label vocabulary of
+  either strength, a function word or a word of the name, and every number
+  is the name's (`KeycloakAdminPassword` under `KEYCLOAK_ADMIN_PASSWORD`,
+  `svc1_local_dev_password` under `SVC1_DB_PASSWORD`,
+  `change_me_to_a_strong_password`). `admin_password_123`,
+  `DbPasswordFromSecretsManager` and `managedIdentityCredential` in a real
+  `.env` are reported, as on main; in templates and other configuration the
+  name rules are unchanged.
+- **Blanks around `=` keep a password named.** python-dotenv and Node's
+  dotenv read `POSTGRES_PASSWORD = TrustNoOneEverAgain`; the assigned name kept
+  its blank (`'POSTGRES_PASSWORD '`), so it named no password and the name
+  rules dropped the value, which main reported. `matcher._assigned_name` drops
+  the blanks and a closing quote before the operator.
+- **A password's dotted words are a passphrase outside source code.**
+  `DB_PASSWORD=snout.fiber.thump.bloom.gravel` in YAML, compose or another
+  non-code file was read as a dotted name; main reported it. Only source
+  code reads such a string as a package, preference key or i18n message.
+- **Typed reads keep their fallback.** A generic call's type arguments
+  between the read and the operator (`configService.get<string>("X") ??
+  "<key>"`, C#'s `GetValue<string>(...)`, Kotlin's `getProperty<String>(...)`)
+  ended the operand reader at `<`, so the fallback key main reported was
+  lost. `matcher._type_arguments` reads a balanced list of type names and
+  marks (nested lists, `?`, `[]`, `|`, `&`) after a name with no blank
+  before the `<`; a cast to a generic type (`as Record<string, string> ||`)
+  is read through the same way.
+- **A key pasted as the variable's name is reported.** Evidence withheld
+  `process.env.<KEY>` when the name looks like a key (letters and digits
+  alternating, or 16 characters or more without `_`), but the detector read
+  it as a reference and reported nothing, which main reported. One test,
+  `redaction_rules.pasted_key_name`, now decides both: the matcher reports
+  the name as the credential of a read by name (`process.env`,
+  `import.meta.env`, `Bun.env`, the call and subscript forms the redactor
+  reads, and `os.environ.<NAME>`).
+- **One credential repeated counts once.** One password in each of six
+  compose services, or one key in each of six manifest documents, counted
+  six toward the five-per-format quota, so the scan exited 3 with "more than
+  5 credentials" for one credential, where main completed. The judge
+  recognizes a credential its signature already counted by a BLAKE2b digest
+  keyed with a random key of that judge alone, so no credential is kept past
+  its match; the repeat is neither counted nor reported again. Six distinct
+  keys still disclose the quota, and a finding's `count` is distinct
+  credentials.
+- **Instruction labels are labels again.** `must`, `never` and `not` had
+  become function words, `change` and `key` common words, and a two-letter
+  word of the name had stopped counting, so `change-me-before-deploying`,
+  `do-not-commit-this`, `must-be-set-at-runtime`, `not-configured-yet` and
+  `pg-replica-sync-user` were reported, and an `.env.example` of six exited
+  3. Two function words now make an instruction, `me`, `at`, `via`, `yet`,
+  `please`, `now`, `before`, `by`, `my`, `a` and `an` are function words,
+  `jwt` and `environment` label words, `admin`, `user`, `internal`, `commit`
+  and `strong` common words, and a two-letter word of the name counts as a
+  common word. The passphrases the earlier rounds named
+  (`snout-passed-thump-bloom-gravel`, `db-fiber-thump-bloom-gravel`, the
+  stemmed and filler forms) are still reported: none has a function word,
+  and none has two common words.
+- **Possessive placeholders need words that name a credential.** A
+  possessive followed by any words was a template, so in `saas.generic` a
+  letters-only credential that begins with one (`je-suis-le-patron`,
+  `ta-<mixed-case run>`, `your-secret-garden`) was left out of the credential
+  context and its copies in other columns were reported raw, which main
+  withheld. `common._possessive_template` requires the credential's noun or a
+  placeholder word last (English, German and Dutch possessives) or first or
+  last (the others), two words after a two-letter possessive and each word in
+  one case. #258's placeholders (`sua_chave_openai`, `votre-cle-api`,
+  `your_api_key`, `sua_serper_api_key`) stay templates, `tu_clave` is a
+  placeholder by its translated word, and a possessive alone (`sua`) or with
+  a trailing separator (`seu_token_`) is a template again.
+- **Evidence after a cut read.** In `name: value` form a password after a
+  read the value lexer cuts (`dbPassword: process.env.P?.trim() ||
+  "<password>"`, `db_password: os.getenv("K", "<password>")`) was shown when
+  it was not one opaque token (punctuation, a passphrase), and a key was
+  shown after a credential-named callee (`sgMail.setApiKey(process.env.K?.trim()
+  ?? "<key>")`, a builder's `.apiKey(...)` ternary), in a PHP or Ruby `=>`
+  entry, on Black's next line (`    or "<key>",`) and in an XML comment that
+  runs past its line; main showed all of them. `_redact_line_tails` now reads
+  a callee whose last word names a credential and `=>` as joins, goes on to a
+  line that starts with a fallback operator or follows one that ends with
+  one (through comment lines), reads a block comment a credential's line
+  opens to its end, and withholds every literal of a password's value up to
+  the line's next entry whatever its shape, except an upper-case variable
+  name, a path, a URL, a placeholder and a literal under six characters.
+  What can still remain is listed in SECURITY.md's "what can remain".
+  `AzureKeyCredential(str("<key>"))` now withholds a key that looks opaque,
+  which an earlier test kept.
+- **Docs.** A placeholder fallback is `example-credential` evidence only
+  when it reads as a token (`?? "your-api-key-here-Abc123XyZ"`); one of words
+  and an ellipsis (`?? "sk-ant-api03-..."`) records nothing, which two
+  passages had claimed otherwise. docs/scanning.md says translated
+  placeholder words count only between separators.
+
+The evaluation corpora give the same per-case results and tp/fp/fn/tn as
+5aa142b; the complexity gate passes with no function above its allowance.
+
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 
 Three mechanisms decided when unread content leaves a scan incomplete, each
@@ -593,9 +706,11 @@ public repositories with the tool and read the committed benchmark metrics.
   CONSTANT_CASE label rule, apply there only to token names (`API_KEY`,
   `ACCESS_TOKEN`, `CLIENT_SECRET`): `POSTGRES_PASSWORD=TrustNoOneEverAgain`
   and `DB_PASSWORD=summer_vacation_beach_2024` in `.env` are reported. A
-  value built like a name whose words are label vocabulary or the name's
+  value built like a name whose words are all label vocabulary, function
+  words or the name's, and whose numbers are the name's
   (`KEYCLOAK_ADMIN_PASSWORD=KeycloakAdminPassword`,
-  `svc1_local_dev_password`) is a label there, and placeholders stay
+  `svc1_local_dev_password`), is a label there (as narrowed by the credential
+  review fixes above; one such word had been enough), and placeholders stay
   unreported. The first version of this rule applied to every text that is
   not source code, so env templates, Helm values, compose files, workflows,
   `.properties` files and Markdown reported setting names and placeholders
@@ -1021,7 +1136,9 @@ public repositories with the tool and read the committed benchmark metrics.
   (`or "gpt-4o-mini-2024-07-18"`), which 90d22be reported as keys; a
   fallback must look like a token, so a generated passphrase there is given
   up. The placeholder test judges the fallback literal
-  itself (`?? "sk-ant-api03-..."` is `example-credential` evidence). Labels
+  itself (`?? "your-api-key-here-Abc123XyZ"` is `example-credential`
+  evidence; `?? "sk-ant-api03-..."` reads as words and an ellipsis, so it is
+  no fallback credential and records no evidence at all). Labels
   of three or more letter words (`'request-scoped-credential'`,
   `'fc-shared-env-must-not-be-used'`) are not high-entropy keys when, read
   without a plural `-s` or past `-ed`, one word is credential, placeholder,

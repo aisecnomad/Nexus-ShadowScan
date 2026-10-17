@@ -414,10 +414,14 @@ and tests, which call and test the products they detect.
   candidate. In an env or credential file (`match_secrets(env_file=True)`: `.env`, `.env.local`, `.netrc`,
   not a template such as `.env.example`) the name-shape rules apply only to token names (`API_KEY`,
   `ACCESS_TOKEN`, `CLIENT_SECRET`); a PASSWORD or CREDENTIAL value there
-  (`POSTGRES_PASSWORD=TrustNoOneEverAgain`) cannot name a variable, unless its words make it a label
-  (`KeycloakAdminPassword`). When operators follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, an
-  empty line before an operator), past any call, subscript, optional or non-null chain or TypeScript cast
-  on it (`GetEnvironmentVariable("X") ??`, `process.env.X?.trim() ||`, `as string ||`), through
+  (`POSTGRES_PASSWORD=TrustNoOneEverAgain`, also with blanks around `=`) cannot name a variable, unless every
+  word of it is label vocabulary, a function word or a word of the name and every number is the name's
+  (`KeycloakAdminPassword`; `PostgresProd2024Secure` is a password). A reference whose variable name is a key
+  pasted in the name's place (`process.env.<KEY>`, `os.environ.<KEY>`; `redaction_rules.pasted_key_name`, the
+  test that withholds the read from evidence) reports that name. When operators follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, an
+  empty line before an operator), past any call, subscript, optional or non-null chain, generic call's type
+  arguments or TypeScript cast on it (`GetEnvironmentVariable("X") ??`, `process.env.X?.trim() ||`,
+  `configService.get<string>("X") ??`, `GetValue<string>("X") ??`, `as string ||`), through
   parentheses around an operand (`|| ("<key>")`) and Python's triple quotes, and on the same or a later
   line (after comment lines or a backslash continuation too, with empty or comment lines between an operator
   and its operand, and with any blanks between tokens, a no-break or zero-width space as well), the match is
@@ -427,17 +431,22 @@ and tests, which call and test the products they detect.
   at the first blank, so `apiKey = process.env.OPENAI_API_KEY || "<key>"` matches only the read and the
   fallback is the credential (`Match.extra["credential"]`, which the placeholder test judges). A literal
   passed to a call there (`?? getSecret("<path>")`, `?: error("X is not set")`) is not a fallback operand.
-  Three or more letter words joined by `-` or `_`, or by `.` as a password in an env or credential file
-  (a dotted slug's words each lower case, Capitalized or upper case; elsewhere a dotted string of words names
-  a package, a key or a namespace, such as `net.openid.appauth.state`), are a label, not a high-entropy key,
-  when, without a plural `-s` or past `-ed`, one of them is credential, placeholder, development or filler
+  Three or more letter words joined by `-` or `_`, or by `.` as a password outside source code
+  (a dotted slug's words each lower case, Capitalized or upper case; in source code a dotted string of words
+  names a package, a key or a namespace, such as `net.openid.appauth.state`), are a label, not a high-entropy
+  key, when, without a plural `-s` or past `-ed`, one of them is credential, placeholder, development or filler
   vocabulary that word lists leave out (`'request-scoped-credential'`, `'local-development-only'`,
   `'lorem-ipsum-dolor-sit-amet'`), two are such vocabulary that is also a common word
-  (`'unsafe-dev-only-default'`), one common one comes with a function word (`'this-should-be-changed'`), or
-  one is a word of three letters or more of the assigned name (one common word alone, as in
-  `snout-passed-thump-bloom-gravel`, labels nothing), or when the slug is CONSTANT_CASE (upper case joined
+  (`'unsafe-dev-only-default'`), one common one comes with a function word (`'this-should-be-changed'`,
+  `'change-me-please'`), two are function words (`'do-not-commit-this'`, `'must-be-set-at-runtime'`), or
+  one is a word of three letters or more of the assigned name; a word of two letters of the name counts as a
+  common word (`PG_PASSWORD=pg-replica-sync-user` is a label). One common word alone, as in
+  `snout-passed-thump-bloom-gravel` or `db-fiber-thump-bloom-gravel`, labels nothing. A slug is a label as
+  well when it is CONSTANT_CASE (upper case joined
   by `_`); other word slugs are generated passphrases (`snout-fiber-thump-bloom-gravel`,
-  `snout.fiber.thump.bloom.gravel` in an env file, `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are reported. Matches are filtered before the five-per-signal cap.
+  `snout.fiber.thump.bloom.gravel` outside source code, `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are reported.
+  Matches are filtered before the five-per-signal cap, and a credential a signature already counted counts
+  once however often the text repeats it.
 * `name` patterns for products whose name is also a dictionary word or a first name (Otter, Devin, Jasper,
   Drift...) are context-guarded: the vendor form (`otter\.ai`) matches on its own; the bare word only when it is
   the whole display name (`^[^\S\r\n]*otter[^\S\r\n]*$`, an app called just "Otter") or with product context on

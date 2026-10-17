@@ -341,15 +341,27 @@ coverage, even when a response includes an empty collection field.
   the read: with a default argument, a fallback literal, any other operand or a
   comment after it the value is withheld up to where the value lexer ends it
   (a quote, bracket, `,` or `;` of the expression). On a line that joins a
-  credential name to a value, every string literal after that name and the
-  comment (`//`, `#`, `/* */` or an XML or HTML `<!-- -->`) keep their words,
+  credential name to a value (by `:`, `=` or a PHP or Ruby `=>`), or that
+  gives a callee whose last word names a credential its arguments
+  (`sgMail.setApiKey(...)`, a builder's `.apiKey(...)`), every string literal
+  after that name and the comment (`//`, `#`, `/* */` or an XML or HTML
+  `<!-- -->`, read to its end when it runs past the line) keep their words,
   references and model names, but each token in them
   that looks like an opaque key is withheld, wherever the value ended: a
   fallback after a cut read (`azureApiKey: process.env.K?.trim() || "..."`,
   `os.environ[ 'K' ] if PROD else '...'`, `cfg("a", "b") || "..."`), a default
   argument (`os.getenv("K", "...")`) and a comment after the `,` or `;` that
   ends the value (`apiKey: process.env.KEY, // old: ...`, `api_key =
-  os.environ["KEY"]; # ...`). A template that assembles its text from
+  os.environ["KEY"]; # ...`). A later line goes on with that value when it
+  starts with a fallback operator (Black's `    or "...",`) or the line before
+  ends with one, with comment lines between. Under a
+  password's name (`password`, `passwd`, `pwd`, `passphrase` or `pass` as the
+  last word) every string literal of the value up to the line's next entry is
+  withheld whole, whatever its shape (`dbPassword:
+  process.env.DB_PASSWORD?.trim() || "..."`, `db_password: os.getenv("K",
+  "...")`, a passphrase with spaces too), as the assignment form withholds
+  it; an upper-case variable name, a path, a URL, a placeholder and a literal
+  of fewer than six characters stay. A template that assembles its text from
   expressions (`${prefix}...`) stays, as in assignments. A read is withheld
   as well when its variable name looks like a key pasted in place of the
   name: letters and digits
@@ -431,9 +443,18 @@ coverage, even when a response includes an empty collection field.
   identifiers keep their text; a short or low-entropy secret can still pass,
   and descriptions, titles and metadata do not get this pass. Outside
   snippets, these forms can remain: an unprefixed
-  literal passed to an ordinary function or nested in another call inside a
-  credential constructor (`AzureKeyCredential(str("..."))`); a value assembled
-  by a computed expression. Recognized credential calls with mixed interpolation
+  literal passed to an ordinary function, or nested in another call inside a
+  credential constructor (`AzureKeyCredential(str("..."))`) when it does not
+  look like an opaque key (one that does is withheld, as after any credential
+  name on its line); a value assembled by a computed expression; after a read
+  the value lexer cuts, in `name: value` form or a callee's arguments, a
+  literal under a name that is no password's that does not look like an
+  opaque key (`apiKey: cfg("a", "b") || "correct-horse-battery-staple"`), and
+  under a password's name a literal of fewer than six characters or one that
+  reads as an upper-case variable name (`|| "HUNTERPASS"`); a literal on a later
+  line that the value lexer does not reach when that line does not start with
+  a fallback operator and the line before does not end with one; a key in a
+  block comment opened on a line that names no credential. Recognized credential calls with mixed interpolation
   withhold opaque static material; pure variable references remain visible. A few LLM SDK
   calls take a key positionally under a name that names no credential; the
   literal at the key's position in these is withheld: Semantic Kernel's .NET

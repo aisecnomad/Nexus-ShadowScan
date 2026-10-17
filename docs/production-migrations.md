@@ -198,35 +198,65 @@ across this change reports findings as resolved or new that are neither.
   baseline shows those `secret` findings as resolved; review any `--fail-on`
   threshold that only these findings reached. Literal keys, provider key
   formats, unquoted values in env files, a hard-coded fallback after an
-  environment read (`process.env.OPENAI_API_KEY || "<key>"`; a literal passed
-  to a call there, such as `?? fail("X is not set")`, is no fallback, and a
-  placeholder fallback is `example-credential` evidence) and generated
+  environment read (`process.env.OPENAI_API_KEY || "<key>"`, also past a
+  generic call's type arguments such as `configService.get<string>("X") ??
+  "<key>"`; a literal passed to a call there, such as `?? fail("X is not
+  set")`, is no fallback; a placeholder fallback that reads as a token, such
+  as `?? "your-api-key-here-Abc123XyZ"`, is `example-credential` evidence,
+  and one of words and an ellipsis, such as `?? "sk-ant-api03-..."`, is
+  neither reported nor evidence), a key pasted as an environment variable's
+  name (`process.env.<KEY>`, the name evidence withholds) and generated
   passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`, also in upper
-  case, and joined by `.` in an env file; a label of words carries
-  credential, placeholder, development or filler vocabulary or the assigned
-  name, such as `local-development-only`, while one common word such as
-  `default` or `passed` alone does not make a label) are reported as
-  before. References, documentation placeholders, short `sk-` look-alikes
-  and a second pattern matching a credential already counted take no place
-  in the five-per-format quota, so a real key after any number of them is
-  reported (the quota used to drop it) and a `.env.example` of sample keys
-  no longer exits 3. A digit-free
+  case, and joined by `.` as a password outside source code; a label of
+  words carries credential, placeholder, development or filler vocabulary or
+  a word of three letters or more of the assigned name, such as
+  `local-development-only`, two common such words, one with a function
+  word, or two function words, such as `change-me-please` and
+  `must-be-set-at-runtime`, while one common word such as `default`,
+  `passed` or a two-letter word of the name such as `db` alone does not make
+  a label) are reported as before. References, documentation placeholders,
+  short `sk-` look-alikes, a second pattern matching a credential already
+  counted and a credential repeated on another line (one password in each
+  service of a compose file) take no place in the five-per-format quota, so
+  a real key after any number of them is reported (the quota used to drop
+  it), a `.env.example` of sample keys no longer exits 3, and a finding's
+  `count` counts each credential of a format once: a repeated one is
+  reported at its first line only. A digit-free
   value is held to the mixed-case rule only when it is built like a name
   (snake_case, dotted or camelCase), so a single-word passphrase or an AWS
   key id whose body has no digit is reported. In an env or credential file
   (not a template such as `.env.example`) the name rules apply only to token
   names (`API_KEY`, `ACCESS_TOKEN`, `CLIENT_SECRET`): a PASSWORD or
-  CREDENTIAL value there (`POSTGRES_PASSWORD=TrustNoOneEverAgain`) is
-  reported as before, unless its words make it a label
-  (`KeycloakAdminPassword`). Env templates, Helm values, compose files,
-  workflows and documentation keep the name rules.
+  CREDENTIAL value there (`POSTGRES_PASSWORD=TrustNoOneEverAgain`,
+  `POSTGRES_PASSWORD = PostgresProd2024Secure` with blanks around `=` as
+  python-dotenv and Node's dotenv read it) is reported as before, unless
+  every word of it is label vocabulary, a function word or a word of the
+  name and every number is the name's (`KeycloakAdminPassword`,
+  `svc1_local_dev_password` under `SVC1_DB_PASSWORD`). Env templates, Helm
+  values, compose files, workflows and documentation keep the name rules,
+  so a single-case snake_case password with digits there
+  (`admin_password_123`) reads as a setting's name and is not reported.
 - **Evidence text.** An environment read by name after a credential name
   (`apiKey = process.env.OPENAI_API_KEY`, `os.getenv("OPENAI_API_KEY")`) is
   shown instead of `[REDACTED]`. Any other value after a credential name,
   including an environment read with a default, a fallback literal or a
   comment after it, or one whose variable name looks like a pasted key
-  (letters and digits alternating, or 16 characters or more without `_`), stays
-  withheld. Excerpts and report text change accordingly; finding ids do not.
+  (letters and digits alternating, or 16 characters or more without `_`), is
+  withheld up to where the value lexer ends it (a quote, bracket, `,` or `;`
+  of the expression). After that end, on a line that joins a credential name
+  to a value (`:`, `=`, `=>`) or gives a credential-named callee its
+  arguments (`setApiKey(...)`), each string-literal or comment token that
+  looks like an opaque key is withheld, and so is every literal of a
+  password's value up to the line's next entry, whatever its shape
+  (`dbPassword: process.env.DB_PASSWORD?.trim() || "<password>"`). A later
+  line that starts with a fallback operator, or follows a line that ends
+  with one, and a block comment that runs past the line are read the same
+  way. What can still remain after such a read (a word-like literal under a
+  name that is no password's, a password literal of fewer than six
+  characters or that reads as an upper-case variable name, a literal on a
+  later line that no operator joins) is listed under
+  [what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain).
+  Excerpts and report text change accordingly; finding ids do not.
 - **Completeness.** Scans incomplete only because of a file guessed to be an
   MCP configuration that is not one, an import-bound call between 8,192 and
   65,536 characters, or a malformed or binary fixture in discounted test code

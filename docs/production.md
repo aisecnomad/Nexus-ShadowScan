@@ -592,7 +592,13 @@ manifest, exported workflow, IaC or credential finding is not emitted again.
 Recognisable placeholder credentials (repeated characters, marker words such as
 `EXAMPLE` or its translation, very low character diversity) are no longer
 reported, and neither is an assigned value shaped like the name of another
-variable (`api_key = resolved_api_key`). A real-format credential in a test,
+variable (`api_key = resolved_api_key`) or an instruction label
+(`change-me-please`, `must-be-set-at-runtime`). A password in an env or
+credential file is reported unless every word of it labels it, a key pasted
+as an environment variable's name is reported, and one credential repeated
+on several lines (one password per compose service) counts once toward the
+five-per-format quota, so it no longer makes the scan incomplete; see the
+[migration notes](production-migrations.md). A real-format credential in a test,
 fixture or `cassettes/` path is still a `secret` finding, at half weight and
 tagged `test-code-only` unless `include_tests: true` is set; one under a
 documentation, example or generated path carries that context's tag and

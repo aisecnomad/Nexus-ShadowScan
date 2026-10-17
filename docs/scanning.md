@@ -506,10 +506,16 @@ test paths is likewise reported with that context's weight and confidence cap
 and the `docs-only`, `example-code-only` or `generated-code-only` tag. Recognisable
 placeholders (repeated characters, marker words such as `EXAMPLE` or their
 Portuguese, Spanish, French, German, Italian, Dutch, Indonesian and Turkish
-equivalents, a possessive followed by words such as `sua_chave_openai`, or
-very low character diversity) are never reported, and neither is an assigned
-value shaped like the name of another variable (`api_key = resolved_api_key`,
-`ENV_API_KEY = "ANTHROPIC_API_KEY"`, `settings.openai_api_key_v2`): the
+equivalents written as whole words between separators, such as
+`sk-proj-sua-chave-aqui-...`, a possessive followed by words that name the
+credential, such as `sua_chave_openai`, `votre-cle-api` or `your_api_key`, or
+very low character diversity) are never reported. A translated word joined to
+the rest by a case boundary (`SuaChaveDaOpenAI`) is read as part of a token,
+as random keys hold such runs, and so is a passphrase that only begins with a
+possessive or a pronoun (`je-suis-le-patron`). An assigned value shaped like
+the name of another variable (`api_key = resolved_api_key`,
+`ENV_API_KEY = "ANTHROPIC_API_KEY"`, `settings.openai_api_key_v2`) is not
+reported either: the
 generic assigned-credential rule accepts an unquoted value because `.env` and
 shell assignments carry none, so it requires a token's shape, digits or evenly
 mixed cases, rather than an identifier's.
