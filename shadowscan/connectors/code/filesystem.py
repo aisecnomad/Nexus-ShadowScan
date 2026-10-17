@@ -2095,6 +2095,7 @@ class FilesystemConnector(BaseConnector):
         full_weight: bool = False,
         reason: str | None = None,
         unread_credentials: bool = False,
+        configuration: bool = False,
     ) -> None:
         """Charge a gap at ``rel`` to the coverage budget, unless the ``ci`` profile declared it.
 
@@ -2102,9 +2103,11 @@ class FilesystemConnector(BaseConnector):
         ``declared`` as its message when given) and is never also charged to
         the budget, so a gap is counted once: in ``declared_omissions`` or in
         ``stats.coverage``. ``reason`` and ``unread_credentials`` are passed on
-        to either.
+        to either. ``full_weight`` charges the gap a whole entry whatever its
+        path; ``configuration`` says a caller found the file to declare MCP
+        servers by its content, which the profile never declares.
         """
-        if self._declared_omission(rel, unread_credentials=unread_credentials):
+        if self._declared_omission(rel, full_weight=configuration, unread_credentials=unread_credentials):
             self._gap(rel, declared or message, reason=reason, unread_credentials=unread_credentials)
             return
         self._ledger_gap(rel, message, blinding=blinding, full_weight=full_weight, reason=reason)
@@ -3488,15 +3491,17 @@ class FilesystemConnector(BaseConnector):
         so a key written in it is still found; nothing else is analyzed, and no
         excerpt is cut from it. A fixture that cannot be read at all stays a gap.
         So does one whose text reads as an MCP configuration (``tests/agent.yaml``
-        with ``mcpServers``), which is reported at full weight in test code too:
-        a JSON, TOML or YAML fixture is read for that check even when credentials
-        are not scanned, and is then charged like undecodable product content.
-        Strict accounting reads it too, and only then records its gap, as an
-        error: it never finds fewer credentials than the default accounting.
+        with ``mcpServers``, ``_binary_declares_mcp``), which is reported at full
+        weight in test code too: a JSON, TOML or YAML fixture is read for that
+        check even when credentials are not scanned, is then blinding like
+        undecodable product content, never discounted or declared, and its
+        servers are reported from that text when it parses. Strict accounting
+        reads it too, and only then records its gap, as an error: it never finds
+        fewer credentials than the default accounting.
         """
         message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
         analyzed = self.scan_secrets and not self.triage
-        if not analyzed and not rel.endswith(_MCP_STRUCTURE_SUFFIXES):
+        if not analyzed and not _guessed_mcp_name(rel, path.name):
             self._discounted_gap(
                 rel, f"{message}; not analyzed", reason="unparsed-input", charged_in_full=True
             )
@@ -3520,8 +3525,12 @@ class FilesystemConnector(BaseConnector):
             # No structured context: none of a binary file's excerpts is emitted.
             file.excerpts = _ExcerptSource(rel, path, text, None)
             self._detect_secrets(scan, file)
-        if self._looks_like_mcp_config(rel, path.name, text):
-            self._unreadable_gap(rel, BINARY_CONTENT_ERROR)
+        declares, document = self._binary_declares_mcp(rel, path.name, text)
+        if declares:
+            servers = _parse_mcp_servers(rel, text, [], document)
+            if servers:
+                scan.mcp_files.append((rel, servers))
+            self._unreadable_gap(rel, BINARY_CONTENT_ERROR, by_content=True)
             return
         self._discounted_gap(
             rel,
@@ -3530,7 +3539,30 @@ class FilesystemConnector(BaseConnector):
             charged_in_full=True,
         )
 
-    def _unreadable_gap(self, rel: str, issue: str) -> None:
+    def _binary_declares_mcp(self, rel: str, name: str, text: str) -> tuple[bool, Any]:
+        """Whether the NUL-stripped text of an undecodable file declares MCP servers, and its parse.
+
+        Decided as for a readable file the MCP parser judges by its content
+        (``_guessed_mcp_name``): parsed with the same bounded loader
+        (``_structured_context``), the structure decides (``_looks_like_mcp_config``),
+        so a quoted (``'mcpServers':``), spaced, explicit (``? mcpServers``) or
+        escaped key and a TOML inline table or literal key are read as the client
+        reads them. Text that does not parse to a mapping or a list is read for
+        any spelling of a server table key (``_may_declare_mcp``) instead of
+        being taken to declare none. The parse is returned when it is a mapping
+        or a list, else None.
+        """
+        if not _guessed_mcp_name(rel, name):
+            return False, None
+        try:
+            document = _structured_context(rel, text)
+        except (JSONIntegrityError, YAMLIntegrityError, YAMLResourceLimitError, SanitizationLimitError):
+            document = None
+        if isinstance(document, dict | list):
+            return self._looks_like_mcp_config(rel, name, text, document), document
+        return _may_declare_mcp(text.encode("latin-1", "replace").lower()), None
+
+    def _unreadable_gap(self, rel: str, issue: str, *, by_content: bool = False) -> None:
         """Charge content of ``rel`` that the scanner could not read or decode to the coverage budget.
 
         Editors and runtimes tolerate bytes the scanner cannot decode, so
@@ -3546,15 +3578,18 @@ class FilesystemConnector(BaseConnector):
         one (Vendor/, or vendor/ with default_excludes off) is source to it.
         Exceptions are charged to the budget at full weight -- never discounted
         the way an unreadable fixture is -- so a tree seeded with them still
-        exhausts it.
+        exhausts it. ``by_content`` says the caller found the file to declare
+        MCP servers: agent configuration, which is no exception there and is
+        never declared (``_agent_configuration``).
         """
-        incidental = self._discounted_test_gap(rel)
+        incidental = self._discounted_test_gap(rel, full_weight=by_content)
         self._budgeted_gap(
             rel,
             f"code.filesystem: {rel}: {issue}",
             blinding=not incidental,
             full_weight=True,
             reason=_read_issue_reason(issue),
+            configuration=by_content,
         )
 
     def _read_source(

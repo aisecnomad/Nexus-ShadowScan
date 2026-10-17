@@ -141,7 +141,12 @@ that are never silent:
   servers, which is read for that check even with `scan_secrets` off), a
   coding-agent instruction, rule or settings file (`CLAUDE.md`,
   `AGENTS.md`, `.cursor/rules/`, `.claude/settings.json`, …) and an agent
-  manifest or card stay a gap there as anywhere else. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
+  manifest or card make the scan incomplete there as anywhere else, under
+  either profile. For the check, the text without its NUL bytes is parsed as
+  the client parses the file, so a quoted, spaced, explicit or escaped key, a
+  TOML inline table or literal key counts, and the servers it declares are
+  reported; text that does not parse counts when any spelling of a server
+  table key appears in it. Text with a UTF-8, UTF-16 or UTF-32 byte-order mark is
   decoded and analyzed (the mark is removed, so a BOM-prefixed `.mcp.json`
   parses). A file with a NUL byte in its first 8 KiB and no byte-order mark is
   not text in any supported encoding, yet interpreters such as Node and `sh`
