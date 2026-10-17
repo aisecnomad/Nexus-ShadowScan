@@ -426,8 +426,9 @@ and tests, which call and test the products they detect.
   at the first blank, so `apiKey = process.env.OPENAI_API_KEY || "<key>"` matches only the read and the
   fallback is the credential (`Match.extra["credential"]`, which the placeholder test judges). A literal
   passed to a call there (`?? getSecret("<path>")`, `?: error("X is not set")`) is not a fallback operand.
-  Three or more letter words joined by `-`, `_` or `.` (a dotted slug's words each lower case, Capitalized
-  or upper case) are a label, not a high-entropy key, when one of them, without a plural `-s` or past `-ed`,
+  Three or more letter words joined by `-` or `_`, or by `.` as a password in an env or credential file
+  (a dotted slug's words each lower case, Capitalized or upper case; elsewhere a dotted string of words names
+  a package, a key or a namespace, such as `net.openid.appauth.state`), are a label, not a high-entropy key, when one of them, without a plural `-s` or past `-ed`,
   is credential, test, instruction, development-default or filler vocabulary
   (`'request-scoped-credential'`, `'fc-shared-env-must-not-be-used'`, `'this-should-be-changed'`,
   `'local-development-only'`, `'lorem-ipsum-dolor-sit-amet'`) or a word of three letters or more of the

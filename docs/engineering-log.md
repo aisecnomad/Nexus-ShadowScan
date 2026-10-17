@@ -1023,10 +1023,16 @@ public repositories with the tool and read the committed benchmark metrics.
   `local-development-only`, `foo-bar-baz-qux-quux`,
   `lorem-ipsum-dolor-sit-amet`) or repeats a word of three letters or more of
   the assigned name, or when the slug is CONSTANT_CASE (upper case joined by
-  `_`); other word slugs, joined by `-`, `_` or `.` and in any case, are
+  `_`); other word slugs, joined by `-` or `_` and in any case, are
   generated passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`,
-  `snout.fiber.thump.bloom.gravel`, `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are
-  still reported, even without digits or mixed case. A value
+  `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are still reported, even without
+  digits or mixed case. Words joined by `.` are a passphrase
+  (`snout.fiber.thump.bloom.gravel`) only as a password in an env or
+  credential file: in source code and other configuration a dotted string
+  of words names a package, an Android preference key, an i18n message or
+  a namespace (`KEY_ACCESS_TOKEN = "net.openid.appauth.state"`,
+  `I18N_PASSWORD = "forms.login.field.hint"`), which 90d22be did not report
+  and the first version of the dotted rule did. A value
   with an ellipsis (`sk-ant-api03-...`) is a documentation placeholder
   (`example-credential` evidence). Secret matches are filtered before the
   five-per-signal cap, so rejected references no longer use up the places of a

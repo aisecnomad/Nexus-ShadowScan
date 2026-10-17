@@ -362,13 +362,17 @@ _NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 # Three or more letter words joined by '-' or '_': a label or a test value
 # ('request-scoped-credential', 'fc-shared-env-must-not-be-used'), or a
 # generated passphrase ('snout-fiber-thump-bloom-gravel'); see _label_slug.
-# Password managers also join words with '.', which joins names too
-# ('config.openai.apiKey'), so a dotted slug's words must each be lower case,
-# Capitalized or upper case ('snout.fiber.thump', 'Snout.Fiber.Thump').
+_WORD_SLUG = re.compile(r"[A-Za-z]{2,}(?:[-_][A-Za-z]{2,}){2,}")
+# Password managers also join words with '.', but a dotted string of words in
+# source code or configuration names something: a package or an Android key
+# ('net.openid.appauth.state', 'com.google.android.geo'), an i18n message
+# ('forms.login.field.hint'), a namespace ('Microsoft.Identity.Client') or a
+# member chain ('config.openai.apiKey'). Only where a value can name nothing,
+# a password in an env or credential file, is a dotted slug whose words are
+# each lower case, Capitalized or upper case a passphrase
+# ('snout.fiber.thump', 'Snout.Fiber.Thump'); see _high_entropy_credential.
 _SLUG_WORD = r"(?:[a-z]{2,}|[A-Z][a-z]+|[A-Z]{2,})"
-_WORD_SLUG = re.compile(
-    r"[A-Za-z]{2,}(?:[-_][A-Za-z]{2,}){2,}|" + _SLUG_WORD + r"(?:\." + _SLUG_WORD + r"){2,}"
-)
+_DOTTED_SLUG = re.compile(_SLUG_WORD + r"(?:\." + _SLUG_WORD + r"){2,}")
 _SLUG_SEPARATOR = re.compile(r"[-_.]")
 # Words that make a word slug a label rather than a passphrase, read with a
 # plural '-s' or a past '-ed' taken off (``_label_word``).
@@ -775,13 +779,16 @@ def _high_entropy_credential(value: str, *, literal: str | None = None, names: b
 
     Shannon entropy alone does not separate the two: ordinary identifiers
     clear 3 bits per character. With ``names`` the value may be another
-    variable's name, so one built like a name is none (``_program_name``)
-    and a CONSTANT_CASE word slug is a label (``_label_slug``). ``literal``
+    variable's name, so one built like a name is none (``_program_name``),
+    a CONSTANT_CASE word slug is a label (``_label_slug``) and a dotted
+    string of words is a name (``_DOTTED_SLUG``). ``literal``
     is the value to judge when it is not the one ``value`` assigns (a
     fallback after a reference); ``value`` still names it.
     """
     candidate = _assigned_value(value) if literal is None else literal
-    passphrase = _WORD_SLUG.fullmatch(candidate) is not None
+    passphrase = _WORD_SLUG.fullmatch(candidate) is not None or (
+        not names and _DOTTED_SLUG.fullmatch(candidate) is not None
+    )
     if len(candidate) < 16 or (passphrase and _label_slug(value, candidate, names=names)):
         return False
     body = re.sub(r"[^A-Za-z0-9]", "", candidate)

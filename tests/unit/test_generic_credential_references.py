@@ -101,18 +101,62 @@ def test_generated_passphrases_are_credentials(index: SignatureIndex, line: str,
 @pytest.mark.parametrize(
     "passphrase",
     [
-        # A '.' separator (a password manager option), an upper-case slug that
-        # is not CONSTANT_CASE, and a word as short as the name's 'db'.
-        "snout.fiber.thump.bloom.gravel",
-        "Snout.Fiber.Thump.Bloom.Gravel",
+        # An upper-case slug that is not CONSTANT_CASE, and a word as short as
+        # the name's 'db'.
         "SNOUT-FIBER-THUMP-BLOOM-GRAVEL",
-        "SNOUT.FIBER.THUMP.BLOOM.GRAVEL",
         "db-fiber-thump-bloom-gravel",
     ],
 )
 def test_passphrases_in_other_separators_and_cases_are_credentials(index: SignatureIndex, passphrase: str):
     assert _generic(index, f"DB_PASSWORD={passphrase}", code=False) != []
     assert _generic(index, f'DB_PASSWORD = "{passphrase}"', code=True) != []
+
+
+@pytest.mark.parametrize(
+    "passphrase",
+    ["snout.fiber.thump.bloom.gravel", "Snout.Fiber.Thump.Bloom.Gravel", "SNOUT.FIBER.THUMP.BLOOM.GRAVEL"],
+)
+def test_a_dotted_passphrase_is_a_credential_in_an_env_file(index: SignatureIndex, passphrase: str):
+    # A password manager's '.' separator: only a password in an env or
+    # credential file can name nothing, so only there is it read as one.
+    assert _generic(index, f"DB_PASSWORD={passphrase}", code=False, env_file=True) != []
+
+
+@pytest.mark.parametrize(
+    ("line", "code"),
+    [
+        # Android preference and extra keys, i18n message keys, package names
+        # and namespaces under credential-named constants name something.
+        ('const val KEY_ACCESS_TOKEN = "net.openid.appauth.state"', True),
+        ('const val KEYSTORE_PASSWORD = "android.injected.signing.store"', True),
+        ('export const I18N_PASSWORD = "forms.login.field.hint";', True),
+        ('export const msg_password = "validation.errors.too.short";', True),
+        ('PREF_ACCESS_TOKEN = "com.acme.mobile.session"', True),
+        ('PREF_ACCESS_TOKEN = "com.acme.mobile.session"', False),
+        ('BUNDLE_API_KEY = "com.google.android.geo"', True),
+        ('BUNDLE_API_KEY = "com.google.android.geo"', False),
+        ('const string CREDENTIAL_PROVIDER = "Microsoft.Identity.Client";', True),
+    ],
+)
+def test_a_dotted_string_of_words_in_code_or_configuration_is_a_name(
+    index: SignatureIndex, line: str, code: bool
+):
+    assert _generic(index, line, code=code) == []
+
+
+def test_a_scan_reports_no_credential_for_dotted_keys(tmp_path: Path, run_connector):
+    files = {
+        "app/src/main/java/com/acme/AuthKeys.kt": (
+            'const val KEY_ACCESS_TOKEN = "net.openid.appauth.state"\n'
+            'const val KEYSTORE_PASSWORD = "android.injected.signing.store"\n'
+        ),
+        "src/i18n/keys.ts": (
+            'export const I18N_PASSWORD = "forms.login.field.hint";\n'
+            'export const msg_password = "validation.errors.too.short";\n'
+        ),
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    assert [f.metadata["path"] for f in findings if f.kind.value == "secret"] == []
 
 
 @pytest.mark.parametrize(
