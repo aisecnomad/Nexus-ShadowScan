@@ -1040,6 +1040,58 @@ def test_a_scan_reports_a_fallback_after_typed_reads(tmp_path: Path, run_connect
     assert TAIL_KEY not in json.dumps([f.to_dict() for f in secrets], default=str)
 
 
+# A hard-coded key given as the default argument of a settings read was read
+# as a literal passed to a call, which is no fallback, so these documented
+# default-value APIs lost the key main 8c72467 reported (main read the
+# reference itself as the credential).
+DEFAULT_ARGUMENT_READS = [
+    'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey", "<K>");',
+    'var openaiApiKey = configuration.GetValue("OpenAI:ApiKey", "<K>");',
+    "const openaiApiKey = this.configService.get('OPENAI_API_KEY', '<K>');",
+    "const openaiApiKey = this.configService.get<string>('OPENAI_API_KEY', '<K>');",
+    'String openaiApiKey = Optional.ofNullable(System.getenv("OPENAI_API_KEY")).orElse("<K>");',
+    'String openaiApiKey = Objects.requireNonNullElse(System.getenv("OPENAI_API_KEY"), "<K>");',
+    'String openaiApiKey = System.getProperty("openai.api.key", "<K>");',
+    'OPENAI_API_KEY = settings_dict.get("OPENAI_API_KEY", "<K>")',
+    'OPENAI_API_KEY = config_values.get("OPENAI_API_KEY", default="<K>")',
+    'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey", defaultValue: "<K>");',
+    # A blank before the type arguments.
+    "const openaiApiKey = this.configService.get <string>('OPENAI_API_KEY') ?? '<K>';",
+]
+
+
+@pytest.mark.parametrize("line", DEFAULT_ARGUMENT_READS)
+def test_a_key_given_as_a_settings_read_default_is_reported(index: SignatureIndex, line: str):
+    assert _generic(index, line.replace("<K>", TAIL_KEY), code=True) != []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A default that is no key, an argument in another place, and a call
+        # that reads no setting.
+        "const openaiApiKey = this.configService.get('OPENAI_API_KEY', 'not-configured-yet');",
+        "const openaiApiKey = this.configService.get('OPENAI_API_KEY', '');",
+        'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey", fallbackName: "<K>");',
+        'const openaiApiKey = this.secretsClient.resolve("OPENAI_API_KEY", "<K>");',
+    ],
+)
+def test_other_arguments_of_a_read_are_no_default_key(index: SignatureIndex, line: str):
+    assert _generic(index, line.replace("<K>", TAIL_KEY), code=True) == []
+
+
+def test_a_scan_reports_settings_read_defaults_and_withholds_them(tmp_path: Path, run_connector):
+    files = {
+        "src/A.cs": DEFAULT_ARGUMENT_READS[0].replace("<K>", TAIL_KEY) + "\n",
+        "src/a.ts": DEFAULT_ARGUMENT_READS[2].replace("<K>", TAIL_KEY) + "\n",
+        "src/A.java": DEFAULT_ARGUMENT_READS[4].replace("<K>", TAIL_KEY) + "\n",
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    secrets = [f for f in findings if f.kind.value == "secret"]
+    assert sorted(f.metadata["path"] for f in secrets) == ["src/A.cs", "src/A.java", "src/a.ts"]
+    assert TAIL_KEY not in json.dumps([f.to_dict() for f in findings], default=str)
+
+
 # A key pasted in place of an environment variable's name reads no variable:
 # the name is the credential, written into the code. Evidence withheld it,
 # but the detector read the chain as a reference and reported nothing, where
