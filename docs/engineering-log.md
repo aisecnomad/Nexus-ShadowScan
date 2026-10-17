@@ -587,8 +587,12 @@ public repositories with the tool and read the committed benchmark metrics.
   clean-looking report under-counted the one finding whose count is read
   literally. The matcher now looks one match past the quota when the caller
   asks (`match_secrets(..., limited=)`), and the connector records
-  `<file>: more than 5 credentials matched <format>; credential evidence
-  incomplete` (exit 3) and sets `metadata.secrets_limited` on the finding.
+  `<file>: credential quota limit reached: more than 5 credentials matched
+  <format>; credential evidence incomplete` (exit 3, passed to `ctx.error`
+  with `reason="analysis-limit"`, so `incomplete_reasons` counts it as an
+  analysis limit whatever words the path holds) and sets
+  `metadata.secrets_limited` on the finding. No candidate cap remains
+  (d6ebf33 removed #255's 25-candidate read), so this is the only message.
   Callers that report no credentials (connector blob scans) are unchanged.
   Only matches the connector would report count toward the quota and the
   look past it: a reference, a short `sk-` look-alike that is not random or
