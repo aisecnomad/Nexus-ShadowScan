@@ -170,7 +170,7 @@ these paired cases:
   must identify unknown fields and must never satisfy full release verification.
 
 Commission fresh blinded human labels and scoped live acceptance using the
-[migration and acceptance guidance](../production.md#unreleased-attribution-migration);
+[migration and acceptance guidance](../production-migrations.md#unreleased-attribution-migration);
 the authored regression cases in this change are not a held-out field sample.
 
 ## Suggested deliverable
@@ -191,7 +191,7 @@ For the unreleased review corrections, verify these paired cases:
   identify unknown fields, and strict release verification must still fail an
   incomplete readback. Inspect retained observation provenance as well.
 
-Use the [migration and acceptance procedure](../production.md#unreleased-review-migration)
+Use the [migration and acceptance procedure](../production-migrations.md#unreleased-review-migration)
 to plan fresh human labels and scoped live canaries. The authored regression
 fixtures do not constitute that independent evidence.
 
