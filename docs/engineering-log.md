@@ -751,8 +751,13 @@ public repositories with the tool and read the committed benchmark metrics.
   value only when blanks and then `;`, `,`, `)`, `}`, `]` or the line end
   follow it, or a call or subscript opens on it. A fallback, concatenation or
   ternary after it (`process.env.OPENAI_API_KEY || "<key>"`, `?? "<key>"`,
-  `process.env.PREFIX + '<key>'`) is still reported when one of its literals
-  looks like a key; an empty or word-like fallback (`|| ''`) is not. Labels
+  `process.env.PREFIX + '<key>'`) is still reported when a string literal
+  that is a direct operand of `||`, `??`, `?:`, `or`, a ternary branch or `+`
+  is one token of the value class and looks like a key. A literal passed to a
+  call, a constructor or a throw there (`?? getSecret("<path>")`,
+  `?: error("X is not set")`), a sentence and an empty or word-like fallback
+  (`|| ''`) are not, and the placeholder test judges the fallback literal
+  itself (`?? "sk-ant-api03-..."` is `example-credential` evidence). Labels
   of three or more letter words (`'request-scoped-credential'`,
   `'fc-shared-env-must-not-be-used'`) are not high-entropy keys when a word is
   credential, test or instruction vocabulary or repeats the assigned name;

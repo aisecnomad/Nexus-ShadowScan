@@ -3640,7 +3640,7 @@ class FilesystemConnector(BaseConnector):
             if key in seen_secrets:
                 continue
             seen_secrets.add(key)
-            reason = placeholder_reason(m.value)
+            reason = placeholder_reason(reported_credential(m))
             if reason:
                 self._record_example_credential(file.proj, m, file.rel, reason)
                 continue
@@ -4700,7 +4700,7 @@ class FilesystemConnector(BaseConnector):
                     m.line = art.line
                     # Judge the matched credential, not the whole assignment:
                     # a trailing comment must not hide a real key.
-                    reason = placeholder_reason(m.value)
+                    reason = placeholder_reason(reported_credential(m))
                     if reason:
                         self._record_example_credential(proj, m, rel, reason)
                         continue
@@ -5861,10 +5861,9 @@ class FilesystemConnector(BaseConnector):
         # Placeholders are filtered again here so every caller shares the rule.
         unique: dict[tuple[str, str, int | None], tuple[Match, str]] = {}
         for m, snip in hits:
-            if not looks_like_placeholder(m.value):
-                unique.setdefault(
-                    (m.signature_id, reported_credential(m.signature_id, m.value), m.line), (m, snip)
-                )
+            credential = reported_credential(m)
+            if not looks_like_placeholder(credential):
+                unique.setdefault((m.signature_id, credential, m.line), (m, snip))
         hits = list(unique.values())
         if not hits:
             return None
