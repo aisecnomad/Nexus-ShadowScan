@@ -218,8 +218,9 @@ the scan is incomplete.
 
 Each entry of `details` has `detail` (the diagnostic), `path`, `kind`
 (`blinding` or `partial`), `entries`, `full_weight` (true when the path discount
-was not applied) and `relevance` (`low` for a dependency, cache or test path,
-otherwise `high`). `shadowscan merge` and a process-mode plugin's result are
+was not applied), `reason` (the `incomplete_reasons` category the gap counts
+under if it leaves the scan incomplete) and `relevance` (`low` for a dependency,
+cache or test path, otherwise `high`). `shadowscan merge` and a process-mode plugin's result are
 checked against this shape (`shadowscan.coverage.validate_coverage_summary`), and
 a ledger that does not match is refused rather than republished.
 

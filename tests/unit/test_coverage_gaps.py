@@ -352,7 +352,9 @@ class TestEndToEnd:
         """
         self._tree(tmp_path, 100)
         (tmp_path / "tests" / "fixtures").mkdir(parents=True)
-        (tmp_path / "tests" / "fixtures" / "settings.json").write_text("{}" + " " * 1_100_000, encoding="utf-8")
+        (tmp_path / "tests" / "fixtures" / "settings.json").write_text(
+            "{}" + " " * 1_100_000, encoding="utf-8"
+        )
         stats = self._run(tmp_path)
         assert stats.incomplete is False
         assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 0
@@ -407,7 +409,9 @@ class TestEndToEnd:
         (tmp_path / "tests" / "agent" / "settings.json").write_bytes(b'{"editor.tabSize": 2}\xff\xfe\x00')
         stats = self._run(tmp_path)
         assert stats.incomplete is False
-        assert any("tests/agent/settings.json" in w and "read for credentials only" in w for w in stats.warnings)
+        assert any(
+            "tests/agent/settings.json" in w and "read for credentials only" in w for w in stats.warnings
+        )
 
     def test_undecodable_mcp_configuration_under_a_test_path_is_never_budgeted(self, tmp_path) -> None:
         # A NUL hides a dedicated MCP configuration under tests/ as well as anywhere: in a tree
