@@ -728,31 +728,33 @@ def _redact_connection_passwords(text: str) -> str:
 # ('"machine h\nlogin u\npassword v"'); on any other line, such as a netrc
 # file's own, an escape is part of the token it is in, as clients read it
 # ('login CORP\fred'). A value is withheld up to the next blank all the same,
-# so a backslash in it never shows its tail. Once a 'machine', 'login' or
-# 'user' token is read, a token the format does not define ends no entry on
-# the line of the entry's last token: curl skips it, and the value after a
-# 'password', 'passwd' or 'account' after it is withheld ('machine h force
-# yes password v'). On a later line it ends no entry either while such a
-# keyword follows it in the entry's region (``_NETRC_AHEAD``); past that, it
-# ends the entry, as prose after 'machine learning' does. Adjacent string
-# literals are one string ('"machine h\n" +', then '"login u\n"' on the next
-# line): a closing quote, then blanks, line breaks or a '+', then an opening
-# quote part tokens as a blank does (``_NETRC_JOIN``). A '#' after a
-# blank, or after a line-break escape, starts a comment, which ends where its
-# line does: at the end of a line of plain text, and at the next line-break
-# escape where the comment is in an escaped string (``_NetrcLines.in_string``:
-# '"machine h\n  # note\npassword v"'), not merely on a line that holds an
-# apostrophe ("# Bob's share is C:\new\data"). A comment, like a quoted name,
-# is also read on its own, so an entry commented out in it is withheld; a
-# commented-out token outside such an entry is not ('login u # was password
-# v'). 'macdef <name>' starts a macro, whose lines up to the
-# empty line that ends it, and the rest of its name's line, are withheld
-# whole (see ``_netrc_macro``). An entry starts at 'machine' or 'default'
-# anywhere a word starts or right after a comment's '#', and at 'macdef'
-# only first on a line or after a quote, when its name ends that line: that
-# is also an ordinary word. 'default' is one as well ('the default password
-# is ...'), and the word after it is withheld then: a prose word is withheld
-# rather than a password shown.
+# so a backslash in it never shows its tail. Once a 'machine', 'default',
+# 'login' or 'user' token is read, a token the format does not define ends no
+# entry on the line of the entry's last token: curl skips it, and the value
+# after a 'password', 'passwd' or 'account' after it is withheld ('machine h
+# force yes password v', 'default force yes password v'), as it is after a
+# quoted word glued to a quoted name ('login "u""v"password v'). On a later
+# line it ends no entry either while such a keyword follows it in the
+# entry's region (``_NETRC_AHEAD``); past that, it ends the entry, as prose
+# after 'machine learning' does. Adjacent string literals are one string
+# ('"machine h\n" +', then '"login u\n"' on the next line): a closing quote,
+# then blanks, line breaks or a '+', then an opening quote part tokens as a
+# blank does (``_NETRC_JOIN``). A '#' after a blank, or after a line-break
+# escape, starts a comment, which ends where its line does: at the end of a
+# line of plain text, and at the next line-break escape where the comment is
+# in an escaped string (``_NetrcLines.in_string``: '"machine h\n  # note\n
+# password v"'), not merely on a line that holds an apostrophe ("# Bob's
+# share is C:\new\data"). A comment, like a quoted name, is also read on its
+# own, so an entry commented out in it is withheld; a commented-out token
+# outside such an entry is not ('login u # was password v'). 'macdef <name>'
+# starts a macro, whose lines up to the empty line that ends it, and the
+# rest of its name's line, are withheld whole (see ``_netrc_macro``). An
+# entry starts at 'machine' or 'default' anywhere a word starts or right
+# after a comment's '#', and at 'macdef' only first on a line or after a
+# quote, when its name ends that line: that is also an ordinary word.
+# 'default' is one as well ('the default password is ...'), and the word
+# after it is withheld then: a prose word is withheld rather than a password
+# shown.
 _NETRC_SPACE = r"[ \t\r\n\v\f]"
 _NETRC_ESCAPE = r"[\\`][nrtvf]"
 _NETRC_BREAK = rf"(?:{_NETRC_SPACE}|{_NETRC_ESCAPE})"
@@ -760,11 +762,12 @@ _NETRC_END = rf"(?={_NETRC_BREAK}|\Z)"
 _NETRC_WORDS = r"(?ai:login|user|port|protocol|machine|macdef|default|password|passwd|account)"
 _NETRC_WORD = re.compile(_NETRC_WORDS)
 # A line written as an escaped string: one that holds a quote, as a string
-# literal does, or an escape next to a keyword ('machine h\nlogin u' in an
-# unquoted value). On a netrc file's own lines, which hold neither, a
-# backslash before a letter is part of a name ('login CORP\nancy').
+# literal does, or an escape next to a keyword, also one that indentation
+# parts from it ('machine h\nlogin u', 'machine h\n  login u' in an unquoted
+# value). On a netrc file's own lines, which hold neither, a backslash before
+# a letter is part of a name ('login CORP\nancy').
 _NETRC_KEYED = re.compile(
-    rf"{_NETRC_ESCAPE}{_NETRC_WORDS}(?![A-Za-z0-9_])|(?<![A-Za-z0-9_]){_NETRC_WORDS}{_NETRC_ESCAPE}"
+    rf"{_NETRC_ESCAPE}[ \t]*+{_NETRC_WORDS}(?![A-Za-z0-9_])|(?<![A-Za-z0-9_]){_NETRC_WORDS}{_NETRC_ESCAPE}"
 )
 _NETRC_STRING = re.compile(rf"[\"'`]|{_NETRC_KEYED.pattern}")
 # The characters of an unquoted value, up to the next blank or escape. A token
@@ -804,12 +807,18 @@ _NETRC_TOKEN = re.compile(
     rf"(?P<secret>(?ai:password|passwd|account)){_NETRC_BREAK}++(?P<value>{_NETRC_VALUE})"
     rf"|(?P<keyword>(?ai:login|user|port|protocol|machine)){_NETRC_END}{_NETRC_NAME}"
     rf"|(?P<macdef>(?ai:macdef)){_NETRC_END}(?:{_NETRC_BREAK}++{_NETRC_MACRO_NAME})?"
-    rf"|(?ai:default){_NETRC_END}"
+    rf"|(?P<default>(?ai:default)){_NETRC_END}"
 )
 # A token the format does not define, on a line of plain text and on an escaped
-# string's, where an escape ends it; and the tokens after which one ends no entry.
-_NETRC_UNKNOWN = (re.compile(r"\S++"), re.compile(rf"{_NETRC_LEAD}++"))
-_NETRC_KNOWN = frozenset({"machine", "login", "user"})
+# string's, where an escape ends it, and a quoted word, which holds no escape,
+# ends at its closing quote ('"v"' in 'login "u""v"password w'; '"`npassword`n"'
+# is a quote, an escape and a keyword); and the tokens that start an entry,
+# after which one need not end it.
+_NETRC_UNKNOWN = (
+    re.compile(r"\S++"),
+    re.compile(rf"\"[^\s\"\\`]*+\"|\\\"[^\s\"\\`]*+\\\"|{_NETRC_LEAD}++"),
+)
+_NETRC_KNOWN = frozenset({"machine", "default", "login", "user"})
 # Where two adjacent string literals meet: a closing quote, then blanks, line
 # breaks, a '+' or a line continuation, then an opening quote; and the quotes
 # that open a literal.
@@ -824,6 +833,7 @@ _NETRC_AHEAD = re.compile(
     rf"(?P<secret>(?:(?<![^\s\"'`])|(?<={_NETRC_ESCAPE}))(?ai:password|passwd|account){_NETRC_BREAK})"
     rf"|{_NETRC_HEAD.pattern}"
 )
+_NETRC_AHEAD_WORD = re.compile(r"(?ai:password|passwd|account|machine|default|macdef)")
 _NETRC_WINDOW = re.compile(r"(?:[^\r\n]*+(?:\r\n?+|\n)(?![ \t\v\f]*+[\r\n])){0,7}[^\r\n]*+")
 # Where a head may start inside such a token ('force "machine h').
 _NETRC_HEAD_WORD = re.compile(r"(?ai:machine|default|macdef)")
@@ -978,17 +988,17 @@ class _NetrcReader:
         password v" > ~/.netrc'): the last one in a value closes that string, so
         the value is withheld up to it.
 
-        Once a 'machine', 'login' or 'user' token is read, a token the format
-        does not define is skipped, as curl skips it, on the line of the
-        entry's last token and before a 'password', 'passwd' or 'account' in
-        the entry's region (see ``_skip``): an entry that ended there left the
-        password after it unread ('machine h force yes password v', 'login
-        CORP\\fred password v', whose name an escape ended, and the rest of a
-        comment cut at a line-break escape). An entry of 'default' alone still
-        ends at one, as prose does ('the default is').
+        Once a 'machine', 'default', 'login' or 'user' token is read, a token
+        the format does not define is skipped, as curl skips it, on the line
+        of the entry's last token and before a 'password', 'passwd' or
+        'account' in the entry's region (see ``_skip``): an entry that ended
+        there left the password after it unread ('machine h force yes password
+        v', 'default force yes password v', 'login CORP\\fred password v',
+        whose name an escape ended, and the rest of a comment cut at a
+        line-break escape).
         """
         position = start
-        line = -1  # where the line of the entry's last token starts, once 'machine' or 'login' is read
+        line = -1  # where the line of the entry's last token starts, once the entry has started
         while True:
             gap, comments = self._gap(position)
             token = self._token(gap)
@@ -999,7 +1009,7 @@ class _NetrcReader:
             self.ranges.extend(comments)
             comments.clear()
             position = following
-            if token is not None and (line >= 0 or (token.group("keyword") or "").lower() in _NETRC_KNOWN):
+            if token is not None and (line >= 0 or _netrc_starts(token)):
                 self._escapes(token.end() - 1)
                 line = self.line[0]
 
@@ -1074,7 +1084,7 @@ class _NetrcReader:
         """Where the token at ``position``, which the format does not define, ends, or None if the entry does.
 
         ``line`` is where the line of the entry's last token starts, or -1
-        before its 'machine' or 'login'. The token is skipped on that line,
+        before the entry has started. The token is skipped on that line,
         and on a later one before a 'password', 'passwd' or 'account' in the
         entry's region (see ``_secret_ahead``): so a comment that a line-break
         escape seemed to end costs at most a word withheld, never a password
@@ -1106,17 +1116,23 @@ class _NetrcReader:
         at ``line``, for eight lines, and ends before that at a blank line or
         at the next head, which starts an entry of its own. A line is read for
         a region at most eight times, and each stretch searched once: a search
-        from inside the last one finds what it found.
+        from inside the last one finds what it found. Only the words that may
+        start a match are tried (``_NETRC_AHEAD_WORD``).
         """
         limit = self.windows.get(line)
         if limit is None:
             window = _NETRC_WINDOW.match(self.text, line, self.end)
             limit = self.windows[line] = window.end() if window is not None else line
+        if position >= limit:
+            return False
         first, found, secret = self.ahead
         if not first <= position <= found:
-            match = _NETRC_AHEAD.search(self.text, position, self.end)
-            found = match.start() if match is not None else self.end
-            secret = match is not None and match.group("secret") is not None
+            found, secret = self.end, False
+            for word in _NETRC_AHEAD_WORD.finditer(self.text, position, self.end):
+                match = _netrc_ahead(self.text, word, self.end)
+                if match is not None:
+                    found, secret = word.start(), match.group("secret") is not None
+                    break
             self.ahead = (position, found, secret)
         return secret and found < limit
 
@@ -1189,6 +1205,22 @@ class _NetrcReader:
             self.quotes[quote] = self.text.rfind(quote, first, last)
         found = self.quotes[quote]
         return found if found >= end else self.text.rfind(quote, start, end)
+
+
+def _netrc_ahead(text: str, word: re.Match[str], end: int) -> re.Match[str] | None:
+    """The match of ``_NETRC_AHEAD`` that ``word`` starts, a 'macdef' head from the blanks before it."""
+    match = _NETRC_AHEAD.match(text, word.start(), end)
+    if match is None and word.group().lower() == "macdef":
+        blanks = word.start()
+        while blanks and text[blanks - 1] in " \t\v\f":
+            blanks -= 1
+        match = _NETRC_AHEAD.match(text, blanks, end)
+    return match
+
+
+def _netrc_starts(token: re.Match[str]) -> bool:
+    """Whether ``token`` starts an entry: 'machine', 'default', 'login' or 'user'."""
+    return (token.group("keyword") or token.group("default") or "").lower() in _NETRC_KNOWN
 
 
 def _netrc_macro(text: str, start: int, end: int, spans: list[tuple[int, int]]) -> int:

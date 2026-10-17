@@ -173,6 +173,24 @@ ADJACENT_FORMS = [
     f'n = "machine h\\n"\r\n  "login u\\n"\r\n  "password {SECRET}\\n"',
     f'n = ("machine h\\n"  # the proxy\n  "password {SECRET}\\n")',
 ]
+# A 'default' entry with no login, which curl reads past a token the format
+# does not define, a quoted word glued to a quoted name, and an indented
+# comment in escaped text with no quote: each ended the entry or hid the
+# lines after it, and the password was shown.
+DEFAULT_FORMS = [
+    f"default force yes password {SECRET}\n",
+    f"default port 443 force yes password {SECRET}\n",
+    f"default port 443 force yes passwd {SECRET}\n",
+    f"default force yes account {SECRET}\n",
+    f"default\nforce yes\npassword {SECRET}\n",
+    f"default # Bob's C:\\new\\x\n  login u\n  password {SECRET}\n",
+    f'machine h login "u""v"password {SECRET}\n',
+    f'x = "machine h login \\"u\\"\\"v\\"password {SECRET}"',
+    # A quoted word holds no escape: here a quote, an escape and a keyword.
+    f'$n = "machine h`n  "`npassword`n"{SECRET}""',
+    f"NETRC=machine h\\n  # note\\n  login u\\n  password {SECRET}",
+    f"NETRC=machine h\\n\\t# note\\n\\tlogin u\\n\\tpassword {SECRET}",
+]
 # What is glued to a closing quote is the next token, as clients read it: read
 # as the rest of the quoted name or value, a 'password' there hid its value.
 GLUED_FORMS = [
@@ -218,6 +236,7 @@ OWN_SYNTAX_FORMS = [
     + COMMENT_FORMS
     + PATH_COMMENT_FORMS
     + ADJACENT_FORMS
+    + DEFAULT_FORMS
     + GLUED_FORMS
     + MACRO_FORMS
     + YARNRC_FORMS
@@ -252,6 +271,7 @@ def _only_adds_markers(before: str, after: str) -> bool:
     + COMMENT_FORMS
     + PATH_COMMENT_FORMS
     + ADJACENT_FORMS
+    + DEFAULT_FORMS
     + GLUED_FORMS
     + MACRO_FORMS
     + YARNRC_FORMS,
@@ -327,6 +347,9 @@ def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(so
             'NETRC = ("machine h\\n"\n  "login u\\n" +\n  "password VALUE\\n")',
             f'NETRC = ("machine h\\n"\n  "login u\\n" +\n  "password {REDACTED}")',
         ),
+        # A 'default' entry keeps what it skips, and a quoted word glued to a name stays.
+        ("default force yes password VALUE\n", f"default force yes password {REDACTED}\n"),
+        ('machine h login "u""v"password VALUE\n', f'machine h login "u""v"password {REDACTED}\n'),
     ],
 )
 def test_names_hosts_and_layout_stay_visible(source, expected):
@@ -361,6 +384,7 @@ def test_a_reference_in_place_of_the_value_stays_visible(source):
         # which a blank line ends, and which spans eight lines at most.
         "machine learning tools\n\ncreate an account for each user",
         "machine learning tools\n" + "and more\n" * 7 + "create an account for each user",
+        "The default value\n\nis the account name",
         "_auth helpers live in auth.py",
     ],
 )
@@ -377,6 +401,16 @@ def test_prose_and_code_that_merely_use_the_words_stay(source):
         # password v >> ~/.netrc').
         ("Change the default password before deploying", f"Change the default password {REDACTED} deploying"),
         ("Default Password Policy", f"Default Password {REDACTED}"),
+        # 'default' starts an entry as 'machine' does, so what it skips on its
+        # line or in its region is skipped as well.
+        (
+            "Use the default settings and a password manager",
+            f"Use the default settings and a password {REDACTED}",
+        ),
+        (
+            "Uses the default service\naccount of the instance",
+            f"Uses the default service\naccount {REDACTED} the instance",
+        ),
         # After 'machine' or 'login', a token the format does not define on the
         # same line ends no entry, as it ends none for curl.
         ("my machine has no login password set", f"my machine has no login password {REDACTED}"),

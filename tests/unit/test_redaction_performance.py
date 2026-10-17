@@ -357,6 +357,8 @@ shapes = [
     'machine h\\n' + 'force yes\\n' * (n // 10) + 'password x', 'machine h\\nforce\\n' * (n // 16),
     'machine h\\n' + 'x ' * (n // 2) + '\\npassword x', 'machine h\\n' + 'x account\\n' * (n // 10),
     'x = ("machine h\\\\n"' + '\\n  "login u\\\\n"' * (n // 14) + ')', 'machine h "' + ' +' * (n // 2),
+    'the default value\\nand more\\n' * (n // 27) + 'account v', 'machine h\\nx\\n' + 'passwords ' * (n // 10),
+    'machine h login "u"' + '"v"' * (n // 3) + 'password w',
 ]
 for shape in shapes:
     try:
@@ -423,6 +425,13 @@ def _best_cpu(work, repeats: int = 3) -> float:
         lambda n: "machine h " + ('"' + " " * 20 + "x ") * n,
         lambda n: "machine h\n" + ' "login u' * n,
         lambda n: 'machine h "' + '" "' * n,
+        lambda n: "machine h\nx\n" + "passwords " * n,
+        lambda n: "machine h\nx\n" + (" " * 20 + "macdefs\n") * n,
+        lambda n: "the default value\nand more\n" * n + "account v",
+        lambda n: "default\n" + '  # it\'s "C:\\new\\x"\n' * n + "password v",
+        lambda n: "NETRC=" + "machine h\\n  login u\\n  # c\\n" * n,
+        lambda n: 'machine h login "u"' + '"v"' * n + "password w",
+        lambda n: 'x = "machine h login \\"u\\"' + '\\"v\\"' * n + 'password w"',
     ],
     ids=[
         "names",
@@ -466,6 +475,13 @@ def _best_cpu(work, repeats: int = 3) -> float:
         "join-blank-runs",
         "opening-quotes",
         "quote-runs",
+        "keyword-candidates",
+        "indented-macro-candidates",
+        "default-regions",
+        "default-comments",
+        "indented-escaped-comments",
+        "glued-quoted-words",
+        "escaped-glued-quoted-words",
     ],
 )
 def test_netrc_redaction_scales_linearly(shape):
