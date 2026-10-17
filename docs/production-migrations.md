@@ -36,8 +36,10 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   undecodable file there is read for credentials before it is declared: `declared_omissions` falls by their number,
   and each gap is charged to the coverage budget (listed in
   `stats[].coverage` and counted in `summary.tolerated_gaps` when tolerated)
-  as without the profile, so a ci scan of a small repository holding one, or
-  of one holding many, now exits 3. Raise `max_file_size` for such files, or
+  as without the profile, at a whole entry under a test path too (not a
+  quarter, since no byte of it was read for credentials), so a ci or default
+  scan of a small repository holding one, or of one holding a few, now exits
+  3. Raise `max_file_size` for such files, or
   set `scan_secrets: false` on a gate that does not need credential findings.
 - **A link or special file named like agent configuration fails closed.**
   A dangling symbolic link or one to a single file, a FIFO, socket or device
