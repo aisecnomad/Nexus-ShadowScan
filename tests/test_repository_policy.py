@@ -1167,23 +1167,28 @@ def test_ci_gate_executes_fail_closed(
 def test_one_linux_leg_enforces_both_coverage_floors_and_every_leg_runs_the_suite() -> None:
     jobs = _load(GITHUB / "workflows" / "ci.yml")["jobs"]
     matrix = jobs["test"]["strategy"]["matrix"]
-    # Exactly one include entry, extending an existing leg rather than adding one.
-    (leg,) = matrix["include"]
-    assert leg == {"python": leg["python"], "coverage": True} and leg["python"] in matrix["python"]
+    # The coverage leg is selected by an environment expression, never a
+    # matrix ``include`` key: an added matrix value joins the job's check
+    # name, renaming the leg to ``test (3.11, true)`` so the required
+    # ``test (3.11)`` status could never report.
+    assert "include" not in matrix
+    coverage_leg = jobs["test"]["env"]["COVERAGE_LEG"]
+    python = re.fullmatch(r"\$\{\{ matrix\.python == '(3\.\d+)' \}\}", coverage_leg).group(1)
+    assert python in matrix["python"]
     steps = jobs["test"]["steps"]
     pytest_steps = [
         step for step in steps if re.search(r"(?:^|\s)(?:python -m )?pytest\b", step.get("run", ""))
     ]
     traced = [step for step in pytest_steps if "--cov=shadowscan" in step["run"]]
-    assert [step.get("if") for step in traced] == ["${{ matrix.coverage }}"]
+    assert [step.get("if") for step in traced] == ["${{ env.COVERAGE_LEG == 'true' }}"]
     assert "--cov-fail-under=80" in traced[0]["run"]
     gate = [step for step in steps if "python -m tools.coverage_gate" in step.get("run", "")]
-    assert [step.get("if") for step in gate] == ["${{ matrix.coverage }}"]
+    assert [step.get("if") for step in gate] == ["${{ env.COVERAGE_LEG == 'true' }}"]
     assert steps.index(gate[0]) > steps.index(traced[0])
     # Every other leg, and macOS, still runs the whole suite (no selection flags).
     untraced = [step for step in pytest_steps if step not in traced]
     assert [(step.get("if"), step["run"].strip()) for step in untraced] == [
-        ("${{ !matrix.coverage }}", "python -m pytest -q")
+        ("${{ env.COVERAGE_LEG != 'true' }}", "python -m pytest -q")
     ]
     # macOS runs the whole suite through the console entry point, which must
     # import the checkout-only tools packages without a caller-supplied PYTHONPATH.
