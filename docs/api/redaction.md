@@ -22,7 +22,7 @@ or diagnostic output — regardless of which output format is selected.
 | Category | Examples |
 |----------|---------|
 | Token formats | API keys (`sk-...`), bearer tokens, JWTs, OAuth client secrets |
-| URLs with credentials | `https://user:password@host/` |
+| URLs with credentials | `https://user:<password>@host/` |
 | Assignment statements | `API_KEY = "sk-..."`, `token: "eyJ..."` in code or YAML |
 | Command arguments | `--token=sk-...`, `-p password123` |
 | Markup attributes | `value="Bearer ey..."` in HTML/XML |
