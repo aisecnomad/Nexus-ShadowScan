@@ -45,8 +45,10 @@ from shadowscan.utils.redaction_assignments import (
     _redact_connection_passwords,
     _redact_fallback_defaults,
     _redact_mapping_values,
+    _redact_netrc_entries,
     _redact_opaque_assignments,
     _redact_plain_assignments,
+    _redact_rc_credentials,
     _redact_yaml_multiline_values,
 )
 from shadowscan.utils.redaction_calls import _redact_auth_pairs, _redact_credential_calls
@@ -533,9 +535,10 @@ def _redact_extended(text: str, *, reread: bool = False) -> str:
     YAML values under credential-like names, and opaque values of options
     named for a credential. The options come last: withheld earlier, a value
     glued to a following name ('--key v#openaiKey = ...') would hide that
-    name from the others. URLs inside another URL's text are read after all
-    of them, and a text they change is then read once more, as the next
-    sanitization would read it (``reread``).
+    name from the others. Only the netrc and Yarn 1 rc credentials, whose
+    names no other rule reads, come after them. URLs inside another URL's
+    text are read after all of them, and a text they change is then read once
+    more, as the next sanitization would read it (``reread``).
     """
     text = _redact_markup_settings(text)
     text = _redact_record_settings(text)
@@ -552,6 +555,9 @@ def _redact_extended(text: str, *, reread: bool = False) -> str:
     compact = _redact_compact_colons(headers)
     reshaped = compact != text
     text = _redact_aws_configure(_redact_opaque_options(compact))
+    # netrc entries and Yarn 1 settings part a credential from its name by
+    # blanks alone, which no rule above reads; read last, they only add markers.
+    text = _redact_netrc_entries(_redact_rc_credentials(text))
     # A bare marker that these passes leave after a sensitive key's colon
     # ('api_key : <opaque>') is read by the established mapping pass as the start
     # of a mapping value; normalize it here so that sanitizing again changes nothing.

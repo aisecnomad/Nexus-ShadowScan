@@ -593,9 +593,20 @@ name selects an analysis: a source extension, a text configuration extension
 the tool credential files that exist only to hold a token or password:
 `.npmrc`, `.yarnrc`, `.netrc`, `_netrc`, `.pypirc`, `.git-credentials`,
 `.boto` and `.s3cfg`. Those credential files are read for the credential pass
-alone; their registry or package tokens are not provider credentials and are
-not reported, while a provider key committed in one is reported like a key
-anywhere else. A file whose name selects no analysis (`*.jsonl`, `*.bak`,
+alone. No other analysis reads them: the provider host of a netrc `machine`
+entry is where a credential is sent, not evidence that the provider is used.
+No excerpt is cut from them either, since their lines are their secrets: a
+credential finding in one names the file and line, its count and formats,
+with an empty snippet. A credential in one is reported where a credential
+rule recognizes it, as in any other file (a provider key, an assignment such
+as `aws_secret_access_key = …`); a netrc password or a registry token that no
+rule recognizes is not reported, so the findings do not inventory the file.
+With `scan_secrets: false` or `--triage` these files are not opened.
+Wherever their syntax appears in report text (a Dockerfile that writes a
+`.netrc`, a CI script), the passwords, accounts and macros of netrc entries
+and Yarn 1's `name value` registry credentials are withheld (see
+[what is redacted](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-is-redacted)).
+A file whose name selects no analysis (`*.jsonl`, `*.bak`,
 `*.j2`, binary and media suffixes) is never opened, so it is neither scanned
 for credentials nor counted as a coverage gap; name such files in a file-name
 signature pack to read them. A file's credential finding carries at most

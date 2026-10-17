@@ -327,6 +327,29 @@ assert secret not in sanitize_text('secret_value: ' + secret)
 """)
 
 
+def test_netrc_and_yarnrc_patterns_read_hostile_text_in_linear_time():
+    # An entry's tokens are read once from its head (a head inside a read entry
+    # is skipped), each value and macro line once, and an rc name once per line.
+    _bounded_process("""
+from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize_text
+n = 200_000
+shapes = [
+    'machine ' * (n // 8), 'machine h ' + 'login u ' * (n // 8), 'machine h login ' + 'a' * n,
+    'machine h password ' + '\\\\n' * (n // 2), 'machine h password "' + 'a' * n,
+    'machine h password \\\\"' + 'a' * n, '\\ndefault' * (n // 8), 'macdef m\\n' + 'x\\n' * (n // 2),
+    'macdef m\\n' * (n // 9), 'machine h' + ' \\n' * (n // 2) + 'password x', 'machine h' + ' #c\\n' * (n // 4),
+    'machine\\\\n' * (n // 9), '"' * n + 'machine h login u', 'machine h login u password ' + 'a\\\\' * (n // 2),
+    '//' + 'a' * n + ' x', '_auth ' * (n // 6), '"//' + 'a:' * (n // 2),
+]
+for shape in shapes:
+    try:
+        sanitize_text(shape)
+    except SanitizationLimitError:
+        pass  # a nesting limit fails closed, quickly
+assert sanitize_text('machine h login u password ' + 'a' * n) == 'machine h login u password ' + REDACTED
+""")
+
+
 def test_quadratic_tokenizer_versions_pay_for_each_line_copy(monkeypatch):
     """CPython 3.12.0 to 3.12.3 copy the whole line into every token.
 

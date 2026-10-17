@@ -209,6 +209,32 @@ public repositories with the tool and read the committed benchmark metrics.
   them and a provider key committed in one was neither reported nor disclosed
   as unread. The connector guide now says what makes a file analyzable and
   that an unselected name (`*.jsonl`, `*.bak`, `*.j2`) is never opened.
+- `code.filesystem`: those files are read by the credential pass alone
+  (`_scan_credential_file`), with no excerpt cut from them. As first
+  integrated, selecting them by name ran every analysis pass over them, and
+  `sanitize_text` did not read netrc's `password <value>`, so the one-line
+  entry `machine api.openai.com login deploy password <pw>` became
+  framework-usage evidence (`domain:provider.openai`) whose snippet was the
+  whole line: `shadowscan code` exited 0 with the password in the JSON,
+  SARIF, HTML, Markdown and OCSF reports, as for `_netrc` (read before as a
+  file without a suffix) and `.NETRC`. A provider key in a login field also
+  put the password beside it into the credential finding's own snippet.
+  Their credential findings, counts and formats are unchanged, with empty
+  snippets; a netrc host is no longer LLM-usage evidence; and with
+  `scan_secrets: false` or `--triage` the files are not opened, so an
+  oversize one is no gap there.
+- Redaction: wherever their syntax appears (a Dockerfile or CI script that
+  writes a `.netrc`, a JSON string), `sanitize_text` withholds the value after
+  netrc's `password`, `passwd` and `account` (one line or one token per line,
+  comments, `\n` escapes, quoted values, `echo "..." > ~/.netrc`), the lines
+  of a `macdef` macro, and Yarn 1's `.yarnrc` registry credentials written
+  `name value`; references (`$NETRC_TOKEN`, `${{ secrets.X }}`) stay. The two
+  rules run after every other pass and only add markers. The other files'
+  syntax (`.npmrc` `_authToken=`/`_auth=`/`_password=`, `.pypirc`
+  `password =`, `.git-credentials` URL userinfo, `.boto` and `.s3cfg`
+  secret keys) was already withheld and is pinned by
+  `tests/unit/test_credential_file_redaction.py`; `test_credential_file_names.py`
+  renders every report format of a repository holding each kind.
 - `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
   `GetAgent` and `ListAgents` return no tags and the collector never called
   `ListTagsForResource`, so no live scan could attribute a Bedrock agent to

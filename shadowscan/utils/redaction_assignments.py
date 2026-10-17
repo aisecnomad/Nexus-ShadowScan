@@ -693,6 +693,148 @@ def _redact_connection_passwords(text: str) -> str:
     return _withhold_spans(text, spans)
 
 
+# A netrc entry, which curl, git, pip and ftp read from ~/.netrc or _netrc:
+# 'machine <host>' or 'default', then tokens separated by any blanks and line
+# breaks, all on one line or one per line: 'login <name>' ('user' too),
+# 'password <string>' ('passwd' too) and 'account <string>', and the 'port'
+# and 'protocol' that the netrc credential helper of Git reads. The value after
+# 'password', 'passwd' or 'account' is a secret whatever it looks like, so it
+# is withheld unless it is only a reference ('password $NETRC_TOKEN'); a name
+# is never read as one of those words, so a missing login cannot hide the
+# password after it. A quoted value (curl) runs to its closing quote, or to
+# the end of its line when it never closes. JSON and shell '\n', '\r' and '\t'
+# escapes separate tokens as well ('"machine h\nlogin u\npassword v"'), but a
+# value is withheld up to the next blank all the same, so a backslash in it
+# never shows its tail. 'macdef <name>' starts a macro, whose lines up to the
+# empty line that ends it are withheld whole (see ``_netrc_macro``). An entry
+# starts at 'machine' anywhere a word starts, and at 'default' or 'macdef'
+# only first on a line or after a quote, and 'macdef' only when its name ends
+# that line: those are also ordinary words.
+_NETRC_BREAK = r"(?:[ \t\r\n]|\\[nrt])"
+_NETRC_END = r"(?=[ \t\r\n]|\\[nrt]|\Z)"
+_NETRC_WORDS = r"(?:login|user|port|protocol|machine|macdef|default|password|passwd|account)"
+# A value: quoted ('"v"', '\"v\"' inside a JSON string), or up to the next blank,
+# its {lead} the part before a '\n', '\r' or '\t' escape.
+_NETRC_VALUE = (
+    r"\"(?:[^\"\\\r\n]|\\.)*+(?:\"\S*+|[^\r\n]*+)"
+    r"|\\\"(?:[^\\\r\n]|\\(?!\"))*+(?:\\\"\S*+|[^\r\n]*+)"
+    r"|(?P<{lead}>(?:[^\s\\]|\\(?![nrt]))++)\S*+"
+)
+# The optional name after 'login', 'machine' and the like, never one of the words.
+_NETRC_NAME_VALUE = _NETRC_VALUE.format(lead="name_lead")
+_NETRC_NAME = rf"(?:{_NETRC_BREAK}++(?!{_NETRC_WORDS}{_NETRC_END})(?P<name>{_NETRC_NAME_VALUE}))?"
+_NETRC_SECRET = _NETRC_VALUE.format(lead="value_lead")
+_NETRC_HEAD = re.compile(
+    rf"(?:(?<![^\s\"'`(=])|(?<=\\[nrt]))(?P<machine>machine){_NETRC_BREAK}"
+    rf"|(?:\A|(?<=[\r\n\"'`])|(?<=\\[nrt]))[ \t]*+(?P<word>default{_NETRC_END}"
+    r"|macdef(?=[ \t]++(?:[^\s\\]|\\(?![nrt]))++(?:[ \t]*+(?:\r?\n|\Z)|\\[nrt])))"
+)
+_NETRC_TOKEN = re.compile(
+    r"(?:[ \t\r\n]++(?:#[^\r\n]*+)?|\\[nrt])*+"
+    rf"(?:(?P<secret>password|passwd|account){_NETRC_BREAK}++(?P<value>{_NETRC_SECRET})"
+    rf"|(?P<keyword>login|user|port|protocol|machine|macdef){_NETRC_END}{_NETRC_NAME}"
+    rf"|default{_NETRC_END})"
+)
+
+
+def _redact_netrc_entries(text: str) -> str:
+    """Withhold the passwords, accounts and macros of netrc entries (see ``_NETRC_TOKEN``)."""
+    if "machine" not in text and "default" not in text and "macdef" not in text:
+        return text
+    spans: list[tuple[int, int]] = []
+    position = 0
+    while (head := _NETRC_HEAD.search(text, position)) is not None:
+        start = head.start("machine") if head.group("machine") else head.start("word")
+        before = text[head.start() - 1] if head.start() else ""
+        quote = before if before in "\"'`" else ""
+        position = max(_netrc_spans(text, start, quote, spans), head.end())
+    return _withhold_spans(text, spans)
+
+
+def _netrc_spans(text: str, start: int, quote: str, spans: list[tuple[int, int]]) -> int:
+    """Collect the secrets of the netrc tokens read from ``start`` in ``spans``; return where they end.
+
+    ``quote`` is the quote an entry is written in ('echo "machine h login u
+    password v" > ~/.netrc'): the last one in a value closes that string, so
+    the value is withheld up to it.
+    """
+    position = start
+    while (token := _NETRC_TOKEN.match(text, position)) is not None:
+        if token.group("secret"):
+            value_start, value_end = token.span("value")
+            closing = text.rfind(quote, value_start, value_end) if quote else -1
+            if closing >= 0:
+                value_end = closing
+            if value_end > value_start and not _kept_value(text[value_start:value_end]):
+                spans.append((value_start, value_end))
+            position = _netrc_next(token, "value_lead")
+        elif token.group("keyword") == "macdef":
+            position = _netrc_macro(text, _netrc_next(token, "name_lead"), spans)
+        else:
+            position = _netrc_next(token, "name_lead")
+    return position
+
+
+def _netrc_next(token: re.Match[str], lead: str) -> int:
+    """Where the token after ``token`` starts: past its value's ``lead``, the part before an escape."""
+    end = token.end(lead)
+    return end if end > 0 else token.end()
+
+
+def _netrc_macro(text: str, start: int, spans: list[tuple[int, int]]) -> int:
+    """Withhold the lines of the macro whose name ends at ``start``; return where the macro ends.
+
+    Its lines follow the line of its name, up to the first empty line (a
+    line of blanks does not end it). A macro written on the line of its name
+    (in a string with '\\n' escapes) is that line's rest. Line breaks stay,
+    so excerpt lines keep their numbers.
+    """
+    line_end = text.find("\n", start)
+    end = len(text) if line_end < 0 else line_end
+    rest = text[start:end].rstrip()
+    if rest.strip():
+        spans.append((start + len(rest) - len(rest.lstrip()), start + len(rest)))
+        return end
+    position = end + 1
+    while position < len(text):
+        line_end = text.find("\n", position)
+        end = len(text) if line_end < 0 else line_end
+        line = text[position:end]
+        if not line.rstrip("\r"):
+            return position
+        if line.strip():
+            spans.append((position + len(line) - len(line.lstrip()), position + len(line.rstrip())))
+        position = end + 1
+    return len(text)
+
+
+# Yarn 1's .yarnrc writes a setting as 'name value', either one optionally
+# quoted: '"//registry.yarnpkg.com/:_authToken" "v"', '_auth v'. npm names a
+# registry credential '_authToken', '_auth' or '_password', alone or after
+# the registry's '//host/path/:' prefix, first on its line; the value runs to
+# the end of the line. A bare unquoted name is also a word ('_auth helpers
+# ...'), so only a lone value follows it. '_authToken=v' and '_auth = v'
+# (.npmrc) are assignments, read before.
+_RC_CREDENTIAL = re.compile(
+    r"(?m)^[ \t]*+(?:(?P<quote>\"?)//[^\s\"]*+(?:(?<=:_authToken)|(?<=:_auth)|(?<=:_password))(?P=quote)"
+    r"|\"(?:_authToken|_auth|_password)\""
+    r"|(?:_authToken|_auth|_password)(?=[ \t]++(?:\"[^\"\r\n]*+\"|[^\s\"]\S*+)[ \t]*+\r?$))"
+    r"[ \t]++(?P<value>[^\s=:][^\r\n]*+)"
+)
+
+
+def _redact_rc_credentials(text: str) -> str:
+    """Withhold the registry credentials of a Yarn 1 ``.yarnrc`` (see ``_RC_CREDENTIAL``)."""
+    if "_auth" not in text and "_password" not in text:
+        return text
+    spans = [
+        match.span("value")
+        for match in _RC_CREDENTIAL.finditer(text)
+        if not _kept_value(match.group("value"))
+    ]
+    return _withhold_spans(text, spans)
+
+
 # A literal default for a credential read from the environment or a
 # credential-named field: 'process.env.OPENAI_API_KEY || "v"',
 # 'Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? "v"',

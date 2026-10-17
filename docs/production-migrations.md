@@ -36,6 +36,16 @@ full dated log.
   `.cursor/rules/`, `.claude/settings.json`, …) and agent manifests and
   cards are gaps either way, because their findings are not discounted
   there.
+- **Tool credential files.** `.npmrc`, `.yarnrc`, `.netrc`, `_netrc`,
+  `.pypirc`, `.git-credentials`, `.boto` and `.s3cfg` are read for
+  credentials only: a credential a rule recognizes in one is a new `secret`
+  finding, located by file and line with an empty snippet. `_netrc`, read
+  before as a file without a suffix, no longer gives LLM-usage evidence for
+  the hosts its entries name, so a comparison shows a framework-usage finding
+  that only a netrc entry established as resolved. Report text withholds
+  netrc passwords, accounts and macros and Yarn 1 registry credentials
+  wherever they appear, so excerpts that showed them change; finding ids do
+  not.
 - **Realtime agents.** A project that builds OpenAI Agents SDK realtime
   agents (`RealtimeAgent`, `RealtimeSession`, `RealtimeRunner`) is now an
   `agent` finding with its tool and handoff capabilities and a higher

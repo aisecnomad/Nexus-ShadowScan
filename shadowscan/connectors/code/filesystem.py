@@ -2902,6 +2902,10 @@ class FilesystemConnector(BaseConnector):
             # Triage never reads plain source files; the per-root warning
             # already discloses the skipped stages.
             return
+        credential_file = path.name.lower() in CREDENTIAL_FILE_NAMES
+        if credential_file and (not self.scan_secrets or self.triage):
+            # Only the credential pass reads a tool credential file.
+            return
         named = by_name or self._named_by_signature(rel, file_matches)
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if isinstance(loaded, _BinaryTestFixture):
@@ -2912,30 +2916,20 @@ class FilesystemConnector(BaseConnector):
             _note_unread_settings(proj, rel)
             return
         text, raw_notebook, cells, foreign = loaded
-        if path.name.lower() in LOCKFILE_NAMES:
-            manifest = parse_manifest(rel, text)
-            if manifest is not None:
-                if manifest.lockfile_issue is not None:
-                    self._lockfile_gap(rel, manifest.lockfile_issue)
-                self._file_errors(rel, manifest.errors)
-                if manifest.lockfile is not None:
-                    self._lockfile_inventory(scan, rel, manifest.lockfile)
-            if self.scan_secrets and not self.triage:
-                # A lockfile is a read file: the credential pass covers it
-                # like any other text. A pinned registry or source URL can
-                # embed a token that the dependency inventory never retains.
-                file = _SourceFile(
-                    rel=rel,
-                    path=path,
-                    proj_root=proj_root,
-                    proj=proj,
-                    text=text,
-                    lang=lang,
-                    file_matches=file_matches,
-                )
-                file.structure, file.structure_strict = self._structure_for(rel, text)
-                file.excerpts = _ExcerptSource(rel, path, text, file.structure)
-                self._detect_secrets(scan, file)
+        if credential_file or path.name.lower() in LOCKFILE_NAMES:
+            read = _SourceFile(
+                rel=rel,
+                path=path,
+                proj_root=proj_root,
+                proj=proj,
+                text=text,
+                lang=lang,
+                file_matches=file_matches,
+            )
+            if credential_file:
+                self._scan_credential_file(scan, read)
+            else:
+                self._scan_lockfile(scan, read)
             return
         nul_text = None
         if "\x00" in text and path.suffix.lower() != ".ipynb":
@@ -3009,6 +3003,39 @@ class FilesystemConnector(BaseConnector):
                 # file: what the re-export pass, a consumer it never reaches and
                 # emit read from it afterwards is only cut from the redacted lines.
                 self._redacted_lines(file)
+
+    def _scan_lockfile(self, scan: _ScanState, file: _SourceFile) -> None:
+        """Inventory a lockfile's locked dependencies, then run the credential pass over it."""
+        manifest = parse_manifest(file.rel, file.text)
+        if manifest is not None:
+            if manifest.lockfile_issue is not None:
+                self._lockfile_gap(file.rel, manifest.lockfile_issue)
+            self._file_errors(file.rel, manifest.errors)
+            if manifest.lockfile is not None:
+                self._lockfile_inventory(scan, file.rel, manifest.lockfile)
+        if self.scan_secrets and not self.triage:
+            # A lockfile is a read file: the credential pass covers it
+            # like any other text. A pinned registry or source URL can
+            # embed a token that the dependency inventory never retains.
+            file.structure, file.structure_strict = self._structure_for(file.rel, file.text)
+            file.excerpts = _ExcerptSource(file.rel, file.path, file.text, file.structure)
+            self._detect_secrets(scan, file)
+
+    def _scan_credential_file(self, scan: _ScanState, file: _SourceFile) -> None:
+        """Run the credential pass alone over a tool credential file (``CREDENTIAL_FILE_NAMES``).
+
+        Such a file exists to hold a password or token, in a syntax the
+        sanitizer may not know: netrc writes 'machine h login u password v',
+        so an excerpt of any of its lines could show one. No other analysis
+        reads it (a provider host in a netrc entry is where a credential
+        goes, not usage of that provider), and no excerpt is cut from it: a
+        credential finding names the file and line, and its count and
+        providers, without the line.
+        """
+        # Matched as the other passes match a file (see _scan_file), without stray NUL bytes.
+        file.text = file.text.replace("\x00", "")
+        file.excerpts = _ExcerptSource(file.rel, file.path, file.text, None)
+        self._detect_secrets(scan, file)
 
     def _discounted_test_gap(self, rel: str, *, full_weight: bool = False) -> bool:
         """Whether a coverage gap in ``rel`` is in test code whose evidence the scan discounts.
