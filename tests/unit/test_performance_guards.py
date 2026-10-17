@@ -636,6 +636,60 @@ def test_prefiltered_regex_signals_equal_the_exhaustive_reference(index):
     assert hits > 50
 
 
+class _CountingTokens:
+    """Stands in for the operand tokenizer and records every token read: (position, end)."""
+
+    def __init__(self, pattern: re.Pattern[str]) -> None:
+        self.pattern = pattern
+        self.reads: list[tuple[int, int]] = []
+
+    def match(self, text: str, position: int) -> re.Match[str] | None:
+        token = self.pattern.match(text, position)
+        self.reads.append((position, token.end() if token else position))
+        return token
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "(" * 5000,  # a call that never closes
+        "[{(" * 2000,
+        "?.a" * 2000,  # an optional chain of any length
+        "!" * 5000,
+        " || x" * 1000,  # operators and operands up to the end
+        '"' + '\\"' * 3000,  # a string that never closes
+        " /*" + "'" * 5000,  # a block comment that never closes
+        " // don't\n||" * 500,  # comments with apostrophes between operators
+        "\\\n" * 3000,  # Python line continuations
+        "(" + '"' * 5000,
+        " ||\n" * 1000,
+    ],
+    ids=lambda tail: repr(tail[:8]),
+)
+def test_the_operands_after_a_reference_are_read_once_and_within_the_follower(index, monkeypatch, tail):
+    # Counts tokens instead of timing them: every follower is read left to
+    # right, one token where the last one ended, never past _FOLLOWER_CHARS.
+    from shadowscan.signatures import matcher
+
+    counting = _CountingTokens(matcher._OPERAND_TOKEN)
+    monkeypatch.setattr(matcher, "_OPERAND_TOKEN", counting)
+    text = "".join(f"const key{n}ApiKey = process.env.KEY{n}_API_KEY{tail}\n" for n in range(3))
+    index.match_secrets(text, code=True)
+    assert counting.reads
+    runs: list[int] = []
+    end = 0
+    for position, token_end in counting.reads:
+        if position == 0:
+            runs.append(0)
+        else:
+            assert position == end  # contiguous: no character is read twice
+        assert token_end > position
+        runs[-1] += token_end - position
+        end = token_end
+    assert max(runs) <= _FOLLOWER_CHARS
+    assert len(counting.reads) <= len(runs) * _FOLLOWER_CHARS
+
+
 @pytest.mark.parametrize(
     "pattern, expected",
     [

@@ -418,18 +418,25 @@ def _reference_value(value: str, *, code: bool, follower: str = "") -> bool:
 # How much of the text after a generic match is read for operands that follow it.
 _FOLLOWER_CHARS = 512
 # The text after a reference, read as tokens: each one is matched where the
-# last one ended, so the read is linear in the follower. A string literal
-# with its prefix ('f"..."', C#'s '$"..."'), an operator, a member access, a
-# word, and any other single character, which ends the value.
+# last one ended, so the read is linear in the follower. Blanks with Python's
+# backslash continuation, a line end, a comment, a string literal with its
+# prefix ('f"..."', C#'s '$"..."'), a member access ('.trim', '?.trim', '?.'
+# before a call), an operator, TypeScript's non-null '!', a word, a bracket,
+# and any other single character.
 _OPERAND_TOKEN = re.compile(
-    r"(?P<blank>[ \t]++)"
+    r"(?P<blank>(?:[ \t]|\\(?:\r\n|\r|\n))++)"
+    r"|(?P<newline>\r\n|\r|\n)"
+    r"|(?P<comment>(?://|#)[^\r\n]*+|/\*(?:[^*]|\*(?!/))*+\*/)"
     r"|(?P<string>(?P<prefix>[rRbBuUfF]{1,2}|[@$])?(?P<quote>[\"'`])"
     r"(?P<body>(?:\\[^\r\n]|(?!(?P=quote))[^\\\r\n])*+)(?P=quote))"
+    r"|(?P<member>\??\.[A-Za-z_$][\w$]*+|\?\.(?=[(\[]))"
     r"|(?P<operator>\|\||\?\?|\?:|&&|===?|!==?|[?:+])"
-    r"|(?P<member>\??\.[A-Za-z_$][\w$]*+)"
+    r"|(?P<postfix>!)"
     r"|(?P<word>[A-Za-z_$][\w$]*+)"
+    r"|(?P<open>[(\[{])|(?P<close>[)\]}])"
     r"|(?P<other>[\s\S])"
 )
+_CLOSERS = {"(": ")", "[": "]", "{": "}"}
 # Operators whose next operand is the value when the reference is unset: a
 # fallback ('||', '??', Kotlin's '?:', Python's 'or'), a ternary branch ('?',
 # ':', Python's 'else') or a concatenation ('+').
@@ -442,24 +449,58 @@ _OTHER_OPERATORS = frozenset({"&&", "==", "===", "!=", "!==", "and", "if"})
 _FALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_./+=-]{16,256}")
 
 
-def _operand_tokens(follower: str) -> Iterator[tuple[str, re.Match[str]]]:
-    """The tokens of ``follower`` that are not blanks, as (kind, match), up to the first other character."""
+class _OperandToken(NamedTuple):
+    kind: str
+    token: re.Match[str]
+    # Whether blanks, a comment or a line end came before the token, and how many line ends.
+    spaced: bool
+    lines: int
+
+
+def _operand_tokens(follower: str) -> Iterator[_OperandToken]:
+    """The tokens of ``follower`` other than blanks, comments and line ends, which they annotate."""
     position = 0
+    spaced, lines = False, 0
     while position < len(follower):
         token = _OPERAND_TOKEN.match(follower, position)
         if token is None:  # pragma: no cover - the last alternative matches any character
             return
         position = token.end()
         kind = token.lastgroup or "other"
-        if kind != "blank":
-            yield kind, token
+        if kind in {"blank", "comment", "newline"}:
+            spaced, lines = True, lines + (kind == "newline")
+            continue
+        yield _OperandToken(kind, token, spaced, lines)
+        spaced, lines = False, 0
 
 
-def _operator(kind: str, token: re.Match[str]) -> str | None:
-    """The operator a token is, or None: a symbol, or one of Python's word operators."""
-    text = token.group()
-    if kind == "operator" or (kind == "word" and text in _FALLBACK_OPERATORS | _OTHER_OPERATORS):
-        return text
+def _closed_group(tokens: Iterator[_OperandToken], opener: str) -> bool:
+    """Read the tokens of a call, subscript or other bracketed group up to its closing bracket.
+
+    False when the group does not close, or closes with the wrong bracket,
+    within the follower.
+    """
+    expected = [_CLOSERS[opener]]
+    for kind, token, _, _ in tokens:
+        if kind == "open":
+            expected.append(_CLOSERS[token.group()])
+        elif kind == "close":
+            if token.group() != expected.pop():
+                return False
+            if not expected:
+                return True
+    return False
+
+
+def _operator(item: _OperandToken) -> str | None:
+    """The operator a token is, or None: a symbol, or one of Python's word operators.
+
+    Python's 'if' at the start of a line begins a statement, not the
+    condition of a conditional expression.
+    """
+    text = item.token.group()
+    if item.kind == "operator" or (item.kind == "word" and text in _FALLBACK_OPERATORS | _OTHER_OPERATORS):
+        return None if text == "if" and item.lines else text
     return None
 
 
@@ -469,36 +510,52 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     The generic pattern's value stops at the first blank, so for
     'apiKey = process.env.OPENAI_API_KEY || "<key>"' it covers only the read.
     The value goes on only through operators (``_FALLBACK_OPERATORS`` and
-    ``_OTHER_OPERATORS``) between operands that are string literals, names
-    and member chains ('?? process.env.B ?? "<key>"'); anything else, a call
-    or a subscript included, ends it. A string literal right after a fallback
-    operator is a hard-coded credential when it is one token of the value
-    class (``_FALLBACK_TOKEN``) that looks like a key
-    (``_high_entropy_credential``). A literal passed to a call
+    ``_OTHER_OPERATORS``) between operands: string literals, names and member
+    chains ('?? process.env.B ?? "<key>"'), each with its calls, subscripts
+    and non-null or optional members ('GetEnvironmentVariable("X") ??',
+    'process.env.X?.trim() ||', 'getKey()!.value ??'), and bracketed groups.
+    An operator may end a line or start the next one, after a comment or a
+    backslash continuation; a blank line, a value end (';', ',', a closing
+    bracket) or any other token ends the value. A string literal right after
+    a fallback operator is a hard-coded credential when it is one token of the
+    value class (``_FALLBACK_TOKEN``) that looks like a key
+    (``_high_entropy_credential``). A literal inside a call
     ('?? getSecret("<path>")', '?: error("X is not set")') is no fallback,
     nor is an empty, word-like or interpolated one ('|| ""', '|| f"{x}"').
     Whether the literal is a placeholder is the caller's test, on the literal
     itself (see ``reported_credential``).
     """
+    tokens = _operand_tokens(follower)
     operand = fallback = False
-    for kind, token in _operand_tokens(follower):
-        if not operand:
-            operator = _operator(kind, token)
-            if kind == "member":
-                continue
+    for item in tokens:
+        kind, token = item.kind, item.token
+        if item.lines > 1:
+            return None
+        if operand:
+            if kind == "string" and fallback and _fallback_credential(value, token):
+                return str(token["body"])
+            if kind not in {"string", "word", "open"} or (
+                kind == "open" and not _closed_group(tokens, token.group())
+            ):
+                return None
+            operand = False
+        elif kind == "member" or (not item.spaced and kind in {"open", "postfix"}):
+            # A member, call, subscript or non-null assertion on the operand before.
+            if kind == "open" and not _closed_group(tokens, token.group()):
+                return None
+        else:
+            operator = _operator(item)
             if operator is None:
                 return None
             operand, fallback = True, operator in _FALLBACK_OPERATORS
-            continue
-        if kind == "string":
-            body = token["body"]
-            literal = fallback and not _interpolated_literal(token) and _FALLBACK_TOKEN.fullmatch(body)
-            if literal and _high_entropy_credential(value, literal=body):
-                return body
-        elif kind != "word":
-            return None
-        operand = False
     return None
+
+
+def _fallback_credential(value: str, token: re.Match[str]) -> bool:
+    """Whether a string literal after a fallback operator is a key: one plain token that looks random."""
+    body = token["body"]
+    plain = not _interpolated_literal(token) and _FALLBACK_TOKEN.fullmatch(body) is not None
+    return plain and _high_entropy_credential(value, literal=body)
 
 
 def _interpolated_literal(token: re.Match[str]) -> bool:
