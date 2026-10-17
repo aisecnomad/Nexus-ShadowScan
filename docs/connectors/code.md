@@ -592,7 +592,9 @@ settings file, a file a coding-agent or MCP file signature selects with a
 directory-wide glob such as `.roo/**`, an agent manifest or card) that is over
 `max_file_size`, a link to a file the walk does not scan, or a FIFO, socket or
 device, make the scan incomplete at once, under a test path too, whatever the
-budget allows; `strict_coverage` promotes their diagnostics to errors. A
+budget allows, and so does a JSON, TOML or YAML file over `max_file_size`
+whose bytes name an MCP server table key (read for that check only, behind any
+padding, up to 128 MiB); `strict_coverage` promotes their diagnostics to errors. A
 manifest or build file (`Dockerfile`, `package.json`, `requirements.txt`,
 `.env`) or a shared client name (`config.json`, `settings.json`) linked or
 replaced by a FIFO costs one entry, as an asset beside agent rules

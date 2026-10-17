@@ -424,6 +424,65 @@ def test_an_oversize_credential_store_is_blinding_while_credentials_are_scanned(
     assert not off.stats.incomplete and off.stats.coverage["blinding_gaps"] == 0
 
 
+# An MCP configuration found by its content is agent configuration too: padded
+# past max_file_size, its bytes are read for any spelling of a server table key.
+PAD = " " * 2_000
+MCP_BY_CONTENT = [
+    pytest.param("deploy/tools.json", MCP_CONFIG + PAD, id="json-padded-after"),
+    pytest.param("deploy/tools.json", PAD + MCP_CONFIG, id="json-padded-before"),
+    pytest.param(
+        "deploy/tools.json", '{"\\u006dcpServers": {"e": {"command": "npx"}}}' + PAD, id="json-escaped"
+    ),
+    pytest.param("deploy/agent.yaml", "'mcpServers':\n  e:\n    command: npx\n" + PAD, id="yaml-quoted"),
+    pytest.param("deploy/agent.yaml", "? mcpServers\n: e: {command: npx}\n" + PAD, id="yaml-explicit"),
+    pytest.param("deploy/codex.toml", "[mcp_servers.e]\ncommand = 'npx'\n" + PAD, id="toml-table"),
+    pytest.param("deploy/codex.toml", "mcp_servers = { e = { command = 'npx' } }\n" + PAD, id="toml-inline"),
+    pytest.param(
+        ".vscode/settings.json", PAD + '{"mcp": {"servers": {"e": {"command": "npx"}}}}', id="vscode"
+    ),
+    pytest.param("deploy/tools.json", (PAD + MCP_CONFIG).encode("utf-16-le"), id="utf-16"),
+]
+
+
+@pytest.mark.parametrize(("rel", "content"), MCP_BY_CONTENT)
+def test_an_oversize_file_whose_content_declares_mcp_servers_is_blinding(
+    tmp_path, run_connector, rel, content
+):
+    _tree(tmp_path, {rel: content})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=1_000)
+    assert ctx.stats.incomplete, f"a padded MCP configuration {rel} was budgeted"
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 1
+
+
+def test_a_server_table_past_the_first_chunk_of_an_oversize_file_is_found(tmp_path, run_connector):
+    # Read in 1 MiB chunks: a key cut at the boundary is still seen whole.
+    for offset in (1024 * 1024 - 5, 3 * 1024 * 1024):
+        _tree(tmp_path, {"deploy/tools.json": " " * offset + MCP_CONFIG})
+        _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=1_000)
+        assert ctx.stats.coverage["blinding_gaps"] == 1, offset
+
+
+@pytest.mark.parametrize(
+    ("rel", "content"),
+    [
+        pytest.param("data/export.json", '{"rows": [' + "1," * 1_500 + "1]}", id="data-export"),
+        pytest.param(
+            "data/catalog.json",
+            '{"description": "an mcp server list", "tags": ["mcp", "ai"]}' + PAD,
+            id="mentions-mcp",
+        ),
+        pytest.param("docs/notes.txt", MCP_CONFIG + PAD, id="not-decided-by-content"),
+    ],
+)
+def test_oversize_content_that_declares_no_server_table_costs_one_entry(
+    tmp_path, run_connector, rel, content
+):
+    _tree(tmp_path, {rel: content})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=1_000)
+    assert not ctx.stats.incomplete
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 0
+
+
 def _openai_project_key(number: int) -> str:
     """A distinct synthetic OpenAI project-key form, assembled at run time."""
     body = "".join("abcdefghijKLMNOPQRST0123456789"[(number * 7 + i * 11) % 30] for i in range(48))

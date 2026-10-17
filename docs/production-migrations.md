@@ -62,7 +62,10 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   `Dockerfile` to a shared copy stays complete; an image or video beside
   agent rules (`.cursor/rules/demo.mp4`) over `max_file_size` costs one
   entry too. An oversize `.env` or tool credential file (`.npmrc`,
-  `.netrc`) exits 3 while `scan_secrets` is on.
+  `.netrc`) exits 3 while `scan_secrets` is on, and so does an oversize JSON,
+  TOML or YAML file whose bytes name an MCP server table key anywhere in its
+  first 128 MiB (or that is larger), as an oversize `.mcp.json` does; an
+  oversize data export that names none still costs one entry.
 - **Gap weights follow `include_tests`.** With `include_tests: true` a gap
   under a test path weighs a whole entry in the coverage budget instead of a
   quarter, so fewer such gaps are tolerated. Without it, gaps under

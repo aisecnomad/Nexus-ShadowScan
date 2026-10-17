@@ -53,6 +53,22 @@ file_matches)`, now serves every gap site.
   `_skip_non_regular`, `_declared_omission`, `_discounted_test_path` (and
   through it the discount and the gap weight) read the one predicate, so a
   link and an oversize copy of one file are judged alike.
+- **An oversize MCP configuration found by its content is blinding.** A
+  `deploy/tools.json` holding `mcpServers`, reported as an MCP configuration
+  when readable, cost one budgeted entry once padded past `max_file_size`,
+  where main exited 3. The oversize gap (`_oversize_gap`) now reads the bytes
+  of a file the MCP parser decides by its content (`_guessed_mcp_name`: a
+  JSON, TOML or YAML file, or a shared client name) in 1 MiB chunks, confined
+  as the reader opens it, lower-cased and without NUL bytes, for any
+  spelling of a server table key (`_MCP_KEY_BYTES`: quoted, spaced, explicit,
+  dotted and inline-table keys, an `mcp` key, a letter written as an escape,
+  a quoted key folded across a line break), and finds one behind any
+  padding, past a chunk boundary or in UTF-16. A hit, a file the check cannot
+  read, one over 128 MiB (more than a Git host stores outside LFS) and an MCP
+  registry `server.json`, which declares its server without such a key, are
+  blinding; a data export that names no key still costs one entry. A prefix
+  peek was the alternative the plan offered; it would let leading padding
+  hide the key.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 

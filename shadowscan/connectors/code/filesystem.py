@@ -833,6 +833,41 @@ def _mentions_mcp_keys(text: str) -> bool:
     )
 
 
+# Any spelling of an MCP server table key, in bytes lower-cased and stripped of NUL
+# bytes: the check of content whose structure cannot be read (an oversize file, a
+# binary one). ``mcpServers`` and ``mcp_servers`` however quoted, spaced, made
+# explicit (``? mcpServers``) or dotted (``['mcp_servers'.e]``); an ``mcp`` key
+# (``"mcp":``, ``mcp =``, a ``[mcp]`` table, ``mcp.servers``); and an ASCII letter of the
+# key written as an escape (``m``, ``\x6d``) or a quoted key folded across a
+# line break, so no encoding the parser would undo hides the key from the check.
+_MCP_KEY_BYTES = re.compile(
+    rb"mcp(?:[_-]?servers|[\"']?\s{0,256}(?:[:=]|\.\s{0,256}[\"']?servers)|[\"']?\s{1,256}#|[\"']?\s{256})"
+    rb"|(?:^|\n)[ \t]{0,256}\[[ \t]{0,256}[\"']?mcp[\"']?[ \t]{0,256}\]"
+    rb"|\\(?:u0{2,6}|x)(?:4d|6d|43|63|50|70)|\\\r?\n"
+)
+# Bytes of an oversize file read for that check, in chunks: more than any file a
+# Git host stores outside LFS (GitHub refuses one over 100 MiB). Past them the
+# file is taken to declare servers, since the check cannot rule it out.
+_MCP_CHECK_BYTES = 128 * 1024 * 1024
+_MCP_CHECK_CHUNK = 1024 * 1024
+# What a chunk keeps of the one before it, so a key cut at a chunk boundary is
+# still seen whole (none of the spellings above is longer than 525 bytes).
+_MCP_CHECK_OVERLAP = 1024
+
+
+def _may_declare_mcp(data: bytes) -> bool:
+    """Whether ``data`` (lower-cased, without NUL bytes) may name an MCP server table key."""
+    return _MCP_KEY_BYTES.search(data) is not None
+
+
+def _guessed_mcp_name(rel: str, name: str) -> bool:
+    """Whether ``_looks_like_mcp_config`` decides by its content if ``rel`` is MCP configuration."""
+    lower = name.lower()
+    if "{{" in rel or lower.endswith((".lock.yml", ".lock.yaml")):
+        return False
+    return lower in MCP_CONFIG_NAMES or rel.endswith(_MCP_STRUCTURE_SUFFIXES)
+
+
 # Documentation placeholders are informational: enough to be listed, never
 # enough to establish a technology or raise risk.
 EXAMPLE_CREDENTIAL_WEIGHT = 0.1
@@ -3448,21 +3483,7 @@ class FilesystemConnector(BaseConnector):
             elif self.strict_coverage:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             elif issue == "file exceeds max_file_size":
-                # Other oversize content (generated source, a data export) is
-                # incidental and costs one entry (_agent_configuration). A file
-                # that exists to hold credentials does not: unread, it hides one.
-                selected = self._agent_configuration(rel, path.name) or (
-                    self.scan_secrets and _credential_store_name(path.name)
-                )
-                self._budgeted_gap(
-                    rel,
-                    f"code.filesystem: {rel}: skipped, {issue}; "
-                    + ("coverage incomplete" if selected else "coverage gap"),
-                    declared=f"code.filesystem: {rel}: skipped, {issue}",
-                    blinding=selected,
-                    reason="oversize-file",
-                    unread_credentials=True,
-                )
+                self._oversize_gap(rel, path.name, on_disk, root_fd)
             else:
                 self._unreadable_gap(rel, issue)
         if text is None:
@@ -3479,6 +3500,63 @@ class FilesystemConnector(BaseConnector):
         if path.suffix.lower() != ".ipynb":
             return text, None, (), ()
         return self._notebook_source(rel, text)
+
+    def _oversize_gap(self, rel: str, name: str, on_disk: PurePosixPath, root_fd: int) -> None:
+        """Record a file over ``max_file_size``: blinding when it hides agent configuration, else one entry.
+
+        Incidental content (generated source, a data export) costs one entry of
+        the budget. Agent configuration does not (``_agent_configuration``): by
+        its name, or, for a file the MCP parser decides by its content, when its
+        bytes may name a server table (``_oversize_declares_mcp``), so padding a
+        ``deploy/tools.json`` that holds ``mcpServers`` hides it no better than
+        padding a ``.mcp.json``. Nor does a file that exists to hold credentials
+        while they are scanned: a dotenv or tool credential file, unread,
+        hides one.
+        """
+        selected = (
+            self._agent_configuration(rel, name)
+            or (self.scan_secrets and _credential_store_name(name))
+            or (_guessed_mcp_name(rel, name) and self._oversize_declares_mcp(on_disk, root_fd))
+        )
+        issue = "file exceeds max_file_size"
+        self._budgeted_gap(
+            rel,
+            f"code.filesystem: {rel}: skipped, {issue}; "
+            + ("coverage incomplete" if selected else "coverage gap"),
+            declared=f"code.filesystem: {rel}: skipped, {issue}",
+            blinding=selected,
+            reason="oversize-file",
+            unread_credentials=True,
+        )
+
+    @staticmethod
+    def _oversize_declares_mcp(on_disk: PurePosixPath, root_fd: int) -> bool:
+        """Whether an oversize file's bytes may name an MCP server table key (``_may_declare_mcp``).
+
+        The file is opened as the reader opens it, confined below the scan root,
+        and read in chunks up to ``_MCP_CHECK_BYTES``, lower-cased and without
+        NUL bytes (a UTF-16 copy then reads as ASCII), so a key anywhere in it
+        is found, behind any padding. Only this check reads it: nothing is
+        analyzed or excerpted. An MCP registry manifest (``server.json``)
+        declares its server without such a key, and a file the check cannot
+        read, or one longer than the bytes it reads, may declare servers too.
+        """
+        if on_disk.name.lower() == "server.json":
+            return True
+        try:
+            with open_confined_file(on_disk, label="file", dir_fd=root_fd) as (fh, _):
+                window, read = b"", 0
+                while read < _MCP_CHECK_BYTES:
+                    chunk = fh.read(_MCP_CHECK_CHUNK)
+                    if not chunk:
+                        return False
+                    read += len(chunk)
+                    window = window[-_MCP_CHECK_OVERLAP:] + chunk.replace(b"\x00", b"").lower()
+                    if _may_declare_mcp(window):
+                        return True
+        except (OSError, ValueError):
+            pass
+        return True
 
     def _agent_configuration(
         self,
