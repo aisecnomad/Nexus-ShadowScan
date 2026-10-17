@@ -269,6 +269,16 @@ class TestEndToEnd:
         assert stats.coverage is not None
         assert stats.coverage["within_budget"] is False
 
+    def test_every_non_regular_entry_reaches_the_budget(self, tmp_path) -> None:
+        """Only the diagnostics stop after the first few; the ledger charges every entry."""
+        self._tree(tmp_path, 600)
+        for i in range(200):
+            (tmp_path / f"svc{i}" / ".mcp.json").mkdir(parents=True)
+        stats = self._run(tmp_path)
+        assert stats.coverage is not None and stats.coverage["gaps"] == 200
+        assert stats.incomplete is True and stats.coverage["within_budget"] is False
+        assert len([w for w in stats.warnings if "not a regular file" in w or "not listed" in w]) == 11
+
     def test_a_directory_link_to_an_outside_tree_is_never_budgeted(self, tmp_path) -> None:
         """One link can stand for a whole service of agents and MCP servers: no budget bounds it."""
         from click.testing import CliRunner

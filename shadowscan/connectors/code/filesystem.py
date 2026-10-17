@@ -2272,8 +2272,9 @@ class FilesystemConnector(BaseConnector):
             self._gap(rel, f"code.filesystem: {rel}: skipped, not a regular file ({kind})")
             return
         walk.non_regular += 1
-        if walk.non_regular > _MAX_NON_REGULAR_NOTES + 1:
-            return
+        # Only the diagnostics are bounded: past them the budget still counts
+        # every entry, via quiet ledger entries, as it does for links.
+        quiet = walk.non_regular > _MAX_NON_REGULAR_NOTES + 1
         if walk.non_regular == _MAX_NON_REGULAR_NOTES + 1:
             message = f"code.filesystem: further non-regular entries under {root} not listed"
         else:
@@ -2282,10 +2283,11 @@ class FilesystemConnector(BaseConnector):
                 "analyzable content"
             )
         if self.strict_coverage:
-            self.ctx.error(f"{message}; coverage incomplete")
+            if not quiet:
+                self.ctx.error(f"{message}; coverage incomplete")
         else:
             # One entry of known, bounded lost coverage: budgeted, not fatal.
-            self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1)
+            self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1, quiet=quiet)
 
     def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
         """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
