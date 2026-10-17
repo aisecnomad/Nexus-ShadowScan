@@ -422,12 +422,14 @@ def _redact_yaml_multiline_values(text: str) -> str:
     return "".join(pieces)
 
 
-def _mapping_expression_end(text: str, start: int) -> int:
+def _mapping_expression_end(text: str, start: int, *, owed: int = 0) -> int:
     """Find a mapping value's delimiter without evaluating source code.
 
     Quoted scalars, escaped/doubled quotes, concatenations and nested containers
     are consumed in full. Malformed expressions are withheld through EOF.
     Values are visited once and nesting is bounded before allocating more work.
+    ``owed`` closing brackets (')' or ']') whose opener an earlier pass
+    withheld are read as part of the value rather than as its end.
     """
     position = start
     brackets: list[str] = []
@@ -459,9 +461,11 @@ def _mapping_expression_end(text: str, start: int) -> int:
                 raise SanitizationLimitError("mapping expression nesting limit exceeded")
             brackets.append(char)
         elif char in ")]}":
-            if not brackets:
+            if not brackets and owed and char != "}":
+                owed -= 1
+            elif not brackets:
                 return position
-            if brackets.pop() != {")": "(", "]": "[", "}": "{"}[char]:
+            elif brackets.pop() != {")": "(", "]": "[", "}": "{"}[char]:
                 return len(text)
         elif not brackets and char in ",;\r\n#":
             return position
@@ -506,7 +510,15 @@ def _redact_mapping_values(text: str) -> str:
                 pieces.append(REDACTED + text[after + len(kept) : close])
                 cursor = close
                 continue
-        end = _mapping_expression_end(text, start)
+        # A marker before a quote stands for a read cut at its call or subscript
+        # ('api_key: os.environ[' of "os.environ['K'] or '<key>'"): the bracket
+        # it opened closes after the quoted argument, and the value goes on to
+        # its fallback, which must not be shown.
+        owed = int(
+            text.startswith(REDACTED, start)
+            and text[start + len(REDACTED) : start + len(REDACTED) + 1] in "\"'"
+        )
+        end = _mapping_expression_end(text, start, owed=owed)
         raw = text[start:end]
         bare = raw.strip()
         if len(bare) > 1 and bare[0] in "\"'" and bare[-1] == bare[0] and _FINGERPRINT.fullmatch(bare[1:-1]):
@@ -1133,10 +1145,17 @@ _FALLBACK_DEFAULT = re.compile(
 )
 _SHELL_DEFAULT = re.compile(r"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*):?[-=](?P<value>[^{}\r\n]*)\}")
 _FALLBACK_NAME_LITERAL = 256
+# Operators ending in ':' or '=' that assign nothing ('==', '!=', '<=', a C++ scope).
+_OPERATOR_PAIRS = frozenset({"==", "!=", "<=", ">=", "::"})
 
 
 def _fallback_name(text: str, operator: int) -> str:
-    """The name whose value the operator at ``operator`` falls back from."""
+    """The name whose value the operator at ``operator`` falls back from.
+
+    After a call or subscript that reads a name ('os.environ["K"] or "v"')
+    it is the name read, unless that names no credential and the read is
+    assigned to a name that does ('azureKey: process.env["K"] ?? "v"').
+    """
     end = _blanks_before(text, operator)
     if end == 0 or text[end - 1] not in ")]":
         return _name_before(text, end, "_$.").rsplit(".", 1)[-1]
@@ -1144,7 +1163,32 @@ def _fallback_name(text: str, operator: int) -> str:
     if end == 0 or text[end - 1] not in "\"'":
         return ""
     opening = text.rfind(text[end - 1], max(0, end - 1 - _FALLBACK_NAME_LITERAL), end - 1)
-    return text[opening + 1 : end - 1] if opening >= 0 else ""
+    if opening < 0:
+        return ""
+    read = text[opening + 1 : end - 1]
+    if _sensitive_assignment_key(read) or _credential_name(read, numbered=True):
+        return read
+    return _read_target(text, opening) or read
+
+
+def _read_target(text: str, opening: int) -> str:
+    """The name a call or subscript read is assigned to, given the quote that opens its argument, or ''."""
+    bracket = _blanks_before(text, opening)
+    if bracket == 0 or text[bracket - 1] not in "([":
+        return ""
+    callee = _name_before(text, bracket - 1, "_$.")
+    separator = _blanks_before(text, bracket - 1 - len(callee))
+    if (
+        not callee
+        or separator == 0
+        or text[separator - 1] not in ":="
+        or text[separator - 2 : separator] in _OPERATOR_PAIRS
+    ):
+        return ""
+    end = _blanks_before(text, separator - 1)
+    if end > 0 and text[end - 1] in "\"'":
+        end -= 1
+    return _name_before(text, end, "_$.-")
 
 
 def _redact_fallback_defaults(text: str, *, extended: bool = False) -> str:

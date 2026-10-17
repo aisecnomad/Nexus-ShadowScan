@@ -307,7 +307,10 @@ coverage, even when a response includes an empty collection field.
   `cf`), `sshpass -p`, MySQL's `-pVALUE` and a literal echoed into
   `--password-stdin`; literal defaults of credentials read from the
   environment (`process.env.OPENAI_API_KEY || "..."`, `?? "..."`,
-  `or "..."`, `?: "..."`, `${OPENAI_API_KEY:-...}`); and string literals,
+  `or "..."`, `?: "..."`, `${OPENAI_API_KEY:-...}`), also after a subscript
+  or call read assigned to a credential name (`azure_api_key:
+  os.environ['K'] if PROD else '...'`, `or '...'`, and an opaque one under
+  `azureKey: process.env['K'] ?? '...'`); and string literals,
   including Python f-strings without replacement fields and backtick
   strings, passed to credential constructors and helpers such as
   `AzureKeyCredential("...")`, Rust's `AzureKeyCredential::new("...")`, C#'s
