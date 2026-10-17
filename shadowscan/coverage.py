@@ -25,8 +25,11 @@ budget:
 Gaps are weighted by whether the path could plausibly hide a deployed agent.
 An unreadable file under ``node_modules/`` or ``tests/fixtures/`` is weighted
 down, not ignored: it still consumes budget, so a tree with thousands of them
-fails. ``strict_coverage`` sets the budget to zero and restores the original
-behaviour exactly.
+fails. The connector that records a gap decides that relevance when it knows
+how it reads the path (``code.filesystem`` reads a test path as source while
+``include_tests`` is set); :meth:`CoverageGap.relevance` judges by path
+segment for one that passes none. ``strict_coverage`` sets the budget to zero
+and restores the original behaviour exactly.
 
 Nothing here can *hide* a gap. Tolerated gaps are listed in
 ``stats[].coverage.details`` (the first :data:`MAX_PUBLISHED_GAPS`, with
@@ -121,6 +124,12 @@ _TEST_SEGMENTS = frozenset(
         "tests",
     }
 )
+
+
+def is_vendored_path(path: str) -> bool:
+    """Whether a segment of ``path`` names a dependency tree or tool cache (``node_modules``, ``vendor``)."""
+    segments = {part.lower() for part in path.replace("\\", "/").split("/") if part}
+    return bool(segments & _VENDORED_SEGMENTS)
 
 
 def validate_max_coverage_gap(value: object) -> float:
@@ -249,6 +258,10 @@ class CoverageGap:
     #: leaves the scan incomplete, decided when it was recorded: ``detail``
     #: names the path, which must not choose the category.
     reason: str = "other"
+    #: ``low`` or ``high`` as the recording connector judged the path, which
+    #: knows how it reads it; None leaves it to :meth:`relevance`'s segment
+    #: list. Published as ``relevance``, not under this name.
+    assessed_relevance: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in (BLINDING, PARTIAL):
@@ -257,13 +270,22 @@ class CoverageGap:
             raise ValueError("coverage gap entries must not be negative")
         if self.reason not in INCOMPLETE_REASONS:
             raise ValueError(f"unknown coverage gap reason {self.reason!r}")
+        if self.assessed_relevance not in (None, "low", "high"):
+            raise ValueError(f"unknown coverage gap relevance {self.assessed_relevance!r}")
 
     @property
     def blinding(self) -> bool:
         return self.kind == BLINDING
 
     def relevance(self) -> str:
-        """``low`` when the path cannot plausibly hold a deployed agent, else ``high``."""
+        """``low`` when the path cannot plausibly hold a deployed agent, else ``high``.
+
+        The recording connector's own judgement (``assessed_relevance``) when
+        it gave one; otherwise any vendored or test segment of the path,
+        the file name included, makes it ``low``.
+        """
+        if self.assessed_relevance is not None:
+            return self.assessed_relevance
         segments = {part.lower() for part in self.path.replace("\\", "/").split("/") if part}
         if segments & _VENDORED_SEGMENTS or segments & _TEST_SEGMENTS:
             return "low"
@@ -277,6 +299,7 @@ class CoverageGap:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
+        del data["assessed_relevance"]
         data["relevance"] = self.relevance()
         return data
 

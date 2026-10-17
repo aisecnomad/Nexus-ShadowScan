@@ -56,6 +56,17 @@ strict accounting, credentials, declaration, discount, budget.
   structure, so those gaps go to the budget or fail closed as in the default
   profile. A credential limit was never declared (it is an error under
   every profile); a test pins that.
+- **Gap weight follows the connector's own test-path rule.** #254 weighed a
+  gap at a quarter by its path segments alone (`CoverageGap.relevance`), so
+  `include_tests: true`, which makes test code source everywhere else, still
+  weighed `tests/` gaps at a quarter, while `testing/`, `e2e/`,
+  `cassettes/` and test file names (`src/agent.test.ts`, `test_*.py`), which
+  #255 and #258 treat as test code, weighed in full. `coverage_gap()` takes
+  the recording connector's `relevance`; `code.filesystem` passes `low` for
+  a vendored path, or a test path as `_is_test_path` names it while
+  `include_tests` is off, and `high` otherwise. A caller that passes none
+  keeps the segment rule, so other connectors are unchanged, and the
+  published gap shape is the same.
 
 ### Review fixes: what diff holds back under the ci profile (October 17)
 

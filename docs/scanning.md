@@ -246,8 +246,15 @@ non-regular entry, an incidental file over `max_file_size`. Partial gaps
 accumulate against the gap budget, `options.max_coverage_gap`
 (`--max-coverage-gap`; `code.filesystem` also takes its own
 `max_coverage_gap`): 2% of examined entries by default, at most 100 weighted
-entries. Within the budget the scan stays complete; every gap is still listed
-in `stats[].coverage.details`, with its path, reason and weight.
+entries. A gap weighs a quarter of an entry when its path cannot hold
+deployed code as the scan reads it: under a dependency tree or tool cache
+(`node_modules`, `vendor`, `third_party`, …), or under a test path while
+`include_tests` is off (the test paths of
+[test and fixture code](#test-and-fixture-code), test file names such as
+`test_*.py`, `*.test.ts` and `conftest.py` included). With `include_tests` a
+test path is source and its gaps weigh in full. Within the budget the scan
+stays complete; every gap is still listed in `stats[].coverage.details`, with
+its path, reason and `relevance` (`low` for a quarter-weight gap).
 
 Every gap a `code.filesystem` scan records (and every gap in a `code.github`
 or `code.gitlab` checkout, which that connector scans) is decided by one rule,

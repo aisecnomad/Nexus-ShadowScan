@@ -395,6 +395,7 @@ class ConnectorContext:
         quiet: bool = False,
         full_weight: bool = False,
         reason: str | None = None,
+        relevance: str | None = None,
     ) -> None:
         """Record content the scan could not read, and say so in the report.
 
@@ -419,6 +420,11 @@ class ConnectorContext:
         under if it leaves the scan incomplete; without one it is classified
         from ``msg`` with ``path`` left out. The gap keeps it, so a budget
         verdict at the end of the run counts each gap as it was recorded.
+
+        ``relevance`` (``low`` or ``high``) is this connector's judgement of
+        whether the path could hold deployed code, for a connector that knows
+        how it reads the path; None leaves it to the path's segments
+        (:meth:`CoverageGap.relevance`).
         """
         if reason is None or reason not in INCOMPLETE_REASONS:
             reason = incomplete_reason(msg, path=path)
@@ -429,6 +435,7 @@ class ConnectorContext:
             entries=max(0, entries),
             full_weight=full_weight,
             reason=reason,
+            assessed_relevance=relevance,
         )
         self._coverage.record(gap)
         if gap.blinding:

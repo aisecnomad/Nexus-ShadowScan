@@ -24,6 +24,11 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   malformed or oversize MCP configuration, coding-agent instruction, rule or
   settings file, or agent card under a test, documentation or example path
   is no longer declared, so a ci scan holding one exits 3.
+- **Gap weights follow `include_tests`.** With `include_tests: true` a gap
+  under a test path weighs a whole entry in the coverage budget instead of a
+  quarter, so fewer such gaps are tolerated. Without it, gaps under
+  `testing/`, `e2e/`, `cassettes/`, `__mocks__/` and in test files such as
+  `src/agent.test.ts` now weigh a quarter, as `tests/` already did.
 
 ## October 17 engine review migration (Unreleased)
 

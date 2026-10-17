@@ -299,7 +299,7 @@ from shadowscan.connectors.posture import (
 )
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
-from shadowscan.coverage import validate_max_coverage_gap
+from shadowscan.coverage import is_vendored_path, validate_max_coverage_gap
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -2011,9 +2011,48 @@ class FilesystemConnector(BaseConnector):
         if self._declared_omission(rel):
             self._gap(rel, declared or message, reason=reason)
             return
+        self._ledger_gap(rel, message, blinding=blinding, full_weight=full_weight, reason=reason)
+
+    def _ledger_gap(
+        self,
+        rel: str,
+        message: str,
+        *,
+        blinding: bool = False,
+        quiet: bool = False,
+        full_weight: bool = False,
+        reason: str | None = None,
+    ) -> None:
+        """Charge one entry at ``rel`` to the coverage ledger, weighed as this connector reads the path.
+
+        Every gap of this connector reaches the ledger here, so each is weighed
+        by ``_gap_relevance`` rather than by ``CoverageGap.relevance``'s own
+        segment list, which knows neither ``include_tests`` nor test file names.
+        """
         self.ctx.coverage_gap(
-            message, path=rel, entries=1, blinding=blinding, full_weight=full_weight, reason=reason
+            message,
+            path=rel,
+            entries=1,
+            blinding=blinding,
+            quiet=quiet,
+            full_weight=full_weight,
+            reason=reason,
+            relevance=self._gap_relevance(rel),
         )
+
+    def _gap_relevance(self, rel: str) -> str:
+        """``low`` when a gap at ``rel`` is weighed down in the budget, else ``high``.
+
+        Decided as the rest of the scan reads the path: a vendored directory
+        (``node_modules``, ``vendor``, ...) is low, and so is a test path as
+        ``_is_test_path`` names it (``testing/``, ``e2e/``, ``cassettes/``,
+        ``test_*.py``, ``*.test.ts``, ``conftest.py``, ...) while
+        ``include_tests`` is off and its evidence is discounted. With
+        ``include_tests`` a test path is source and its gaps weigh in full.
+        """
+        if is_vendored_path(rel) or (not self.include_tests and _is_test_path(rel)):
+            return "low"
+        return "high"
 
     def _lockfile_gap(self, rel: str, reason: str) -> None:
         """Report a supported lockfile that was not inventoried, scoped to that lockfile.
@@ -2508,9 +2547,7 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"{message}; coverage incomplete", reason="unscanned-input")
         else:
             # One entry of known, bounded lost coverage: budgeted, not fatal.
-            self.ctx.coverage_gap(
-                f"{message}; coverage gap", path=rel, entries=1, quiet=quiet, reason="unscanned-input"
-            )
+            self._ledger_gap(rel, f"{message}; coverage gap", quiet=quiet, reason="unscanned-input")
 
     def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
         """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
@@ -2581,14 +2618,12 @@ class FilesystemConnector(BaseConnector):
         first = root not in noted
         noted.add(root)
         if bounded:
-            self.ctx.coverage_gap(
-                f"{message}; coverage gap", path=rel, entries=1, quiet=not first, reason="unresolved-link"
-            )
+            self._ledger_gap(rel, f"{message}; coverage gap", quiet=not first, reason="unresolved-link")
         else:
-            self.ctx.coverage_gap(
+            self._ledger_gap(
+                rel,
                 f"code.filesystem: skipped symbolic link {rel} whose target may hold any number of "
                 "files and is unscanned; coverage incomplete",
-                path=rel,
                 blinding=True,
                 quiet=not first,
                 reason="unresolved-link",

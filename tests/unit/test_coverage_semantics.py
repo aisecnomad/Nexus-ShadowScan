@@ -191,3 +191,74 @@ def test_a_credential_limit_in_test_code_is_never_declared(tmp_path, run_connect
     assert any(
         "tests/keys_fixture.py" in e and "credential evidence incomplete" in e for e in ctx.stats.errors
     )
+
+
+# ---------------------------------------------------------------- gap relevance
+# The connector weighs a gap as it reads the path: a test path is low only while
+# include_tests is off, and the test file names the rest of the scan discounts
+# (test_*.py, *.test.ts, conftest.py) count as test paths.
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "src/agent.test.ts",
+        "src/test_client.py",
+        "testing/certs/ca.pem",
+        "e2e/certs/ca.pem",
+        "cassettes/run.json",
+    ],
+)
+def test_a_gap_in_a_test_path_the_scan_discounts_weighs_low(tmp_path, run_connector, rel):
+    _tree(tmp_path, links=[rel])
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.coverage is not None
+    [gap] = ctx.stats.coverage["details"]
+    assert gap["relevance"] == "low"
+    assert ctx.stats.coverage["weighted_gap_entries"] == pytest.approx(0.25)
+
+
+def test_include_tests_weighs_test_path_gaps_in_full(tmp_path, run_connector):
+    # Three links weigh 0.75 against an allowance of 1.24 while test code is
+    # discounted, and 3.0 once include_tests makes it source.
+    _tree(tmp_path, links=[f"tests/certs/ca{i}.pem" for i in range(3)])
+    _, default = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not default.stats.incomplete
+    assert {gap["relevance"] for gap in default.stats.coverage["details"]} == {"low"}
+    _, included = run_connector("code.filesystem", path=str(tmp_path), use_git=False, include_tests=True)
+    assert included.stats.incomplete
+    assert {gap["relevance"] for gap in included.stats.coverage["details"]} == {"high"}
+    assert included.stats.coverage["weighted_gap_entries"] == pytest.approx(3.0)
+
+
+@pytest.mark.parametrize("include_tests", [False, True])
+def test_a_vendored_gap_weighs_low_whatever_include_tests(tmp_path, run_connector, include_tests):
+    _tree(tmp_path, links=["vendor/pkg/client.py"])
+    _, ctx = run_connector(
+        "code.filesystem",
+        path=str(tmp_path),
+        use_git=False,
+        default_excludes=False,
+        include_tests=include_tests,
+    )
+    assert ctx.stats.coverage is not None
+    assert [gap["relevance"] for gap in ctx.stats.coverage["details"]] == ["low"]
+
+
+def test_a_gap_recorded_without_a_relevance_keeps_the_segment_rule():
+    from shadowscan.coverage import CoverageGap
+
+    assert CoverageGap(detail="d", path="tests/x").relevance() == "low"
+    assert CoverageGap(detail="d", path="src/agent.test.ts").relevance() == "high"
+    assessed = CoverageGap(detail="d", path="tests/x", assessed_relevance="high")
+    assert assessed.relevance() == "high" and assessed.weight() == 1.0
+    # The published shape is unchanged: the judgement is published as ``relevance``.
+    assert set(assessed.to_dict()) == {
+        "detail",
+        "path",
+        "kind",
+        "entries",
+        "full_weight",
+        "reason",
+        "relevance",
+    }
+    with pytest.raises(ValueError, match="relevance"):
+        CoverageGap(detail="d", assessed_relevance="medium")
