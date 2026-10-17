@@ -76,14 +76,6 @@ summarizes each release for people who install and operate ShadowScan.
   definition, and `--check` (wired into CI) fails if the reporter's version
   moves without it.
 
-### `cloud.gcp` no longer calls an unqueried location scope complete (October 17)
-
-- A scan that left `locations` unset warned that resources elsewhere were not
-  scanned while reporting itself complete. An unqueried location can hold any
-  number of agents and the scan never asked, so it is a blinding gap. The
-  operator clears it by declaring the scope: the locations to query, or the
-  literal `default` to accept the built-in list knowingly.
-
 ### Lint, tests and tooling (October 17)
 
 - Ruff's flake8-bandit rules (`S`) are enabled for the shipped package. All 38

@@ -599,7 +599,7 @@ Offline input: JSONL dump of records.
 | Key | Description |
 | --- | --- |
 | `projects` | list of project ids (default: all projects visible to the credentials) |
-| `locations` | Vertex/Dialogflow locations to query (default \['us-central1', 'us-east4', 'us-west1', 'europe-west1', 'europe-west4', 'asia-southeast1', 'asia-northeast1'\]). Leaving this unset records a coverage gap, because resources in unqueried locations are neither scanned nor counted; set the list, or 'default' to accept the built-in scope |
+| `locations` | Vertex/Dialogflow locations (default \['us-central1', 'us-east4', 'us-west1', 'europe-west1', 'europe-west4', 'asia-southeast1', 'asia-northeast1'\]) |
 | `access_token` | OAuth token (env GOOGLE\_OAUTH\_ACCESS\_TOKEN); otherwise Application Default Credentials via google-auth |
 | `credentials_file` | explicit Google credentials file (env GOOGLE\_APPLICATION\_CREDENTIALS); otherwise local gcloud ADC |
 | `allow_instance_credentials` | allow metadata-based Application Default Credentials (default false; inherited from options) |

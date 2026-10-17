@@ -49,8 +49,8 @@ test: ## Run test suite with coverage
 	python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
 
 .PHONY: test-fast
-test-fast: ## Run tests without coverage (faster iteration)
-	python -m pytest -q -x
+test-fast: ## Run tests without coverage or the slow timed sweeps (faster iteration)
+	python -m pytest -q -x -m "not slow"
 
 .PHONY: test-parallel
 test-parallel: ## Run tests in parallel with pytest-xdist
@@ -158,10 +158,6 @@ docker-test: docker ## Run container smoke test
 		-m shadowscan.mappings.validate
 
 # --- Demo ------------------------------------------------------------------
-
-.PHONY: test-fast
-test-fast: ## Run the suite without the slow timed sweeps (CI still runs them)
-	python -m pytest -q -m "not slow"
 
 .PHONY: demo
 demo: ## Run the bundled offline demo scan

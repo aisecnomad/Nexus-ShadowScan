@@ -38,10 +38,6 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   pairing whose joint risk exceeds its parts is visible in the breakdown.
   Scores rise for findings holding those sets; tune or disable them under
   `options.risk_weights.combinations`. Rebaseline.
-- GCP scans that never set `locations` now report a coverage gap and exit 3,
-  because resources in unqueried locations were never counted. Set
-  `locations` to the list to scan, or to `default` to accept the built-in
-  scope knowingly.
 - OCSF events always carry the required `time` attribute. Where no scan
   timestamp parses, the render time is published and
   `unmapped.time_source` is `report_render`. Events previously omitted the
