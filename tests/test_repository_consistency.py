@@ -1091,6 +1091,38 @@ def test_suppressions_of_swallowed_failures_give_a_reason() -> None:
     assert not bare, f"write `# noqa: <CODES> - <reason>`: {bare}"
 
 
+def _package_bandit_suppressions() -> Iterator[tuple[str, str, set[str], str]]:
+    """Each bandit (S) suppression in the shipped package: location, line, codes and reason."""
+    for path in sorted((ROOT / "shadowscan").rglob("*.py")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            match = _SUPPRESSION.search(line)
+            if match is None:
+                continue
+            codes = {code.strip() for code in match.group("codes").split(",")}
+            if any(re.fullmatch(r"S\d+", code) for code in codes):
+                yield f"{path.relative_to(ROOT)}:{number}", line, codes, (match.group("reason") or "").strip()
+
+
+def test_package_bandit_suppressions_give_one_reason() -> None:
+    """pyproject.toml says every S suppression in the package is a reviewed decision with a reason."""
+    unreasoned = [
+        where
+        for where, line, _, reason in _package_bandit_suppressions()
+        if not reason or line.count("# noqa") != 1
+    ]
+    assert not unreasoned, f"write one `# noqa: <CODES> - <reason>` per line: {unreasoned}"
+
+
+def test_partial_path_suppressions_name_the_program_they_start() -> None:
+    """An S607 reason is about the executable on its own line, not one copied from another call."""
+    misnamed = []
+    for where, line, codes, reason in _package_bandit_suppressions():
+        program = re.search(r'\[\s*"([^"]+)"', line)
+        if "S607" in codes and (program is None or program.group(1) not in reason):
+            misnamed.append(where)
+    assert not misnamed, f"name the program each S607 suppression starts: {misnamed}"
+
+
 def test_dev_extra_is_fully_pinned_for_ci() -> None:
     """Every development dependency must occur in a hash-locked CI input."""
     pinned = {

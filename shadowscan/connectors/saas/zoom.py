@@ -62,7 +62,7 @@ class ZoomConnector(BaseConnector):
                     "/marketplace/apps",
                     params={"type": app_type, "page_size": 100},
                     items_key="apps",
-                    token_key="next_page_token",  # noqa: S106 - names a request field, not a credential
+                    token_key="next_page_token",  # noqa: S106 - names a response field, not a credential
                     token_param="next_page_token",  # noqa: S106 - names a request field, not a credential
                 ):
                     app["_type"] = app_type

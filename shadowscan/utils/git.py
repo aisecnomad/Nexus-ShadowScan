@@ -265,8 +265,8 @@ def _signal_clone_group(proc: subprocess.Popen[bytes]) -> None:
         # still required to guarantee termination of a detached descendant.
         if proc.poll() is None:
             try:
-                subprocess.run(  # noqa: S603 - argv list, never a shell; refs validated and the environment stripped by safe_git_env
-                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],  # noqa: S607 - git is resolved from PATH deliberately so the operator's reviewed install is used
+                subprocess.run(  # noqa: S603 - argv list, never a shell; its one variable is our own child's pid
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],  # noqa: S607 - taskkill is a Windows system tool, resolved from the operator's trusted PATH
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,

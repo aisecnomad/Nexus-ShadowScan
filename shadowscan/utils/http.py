@@ -1245,7 +1245,7 @@ class HttpClient:
         path: str,
         params: dict[str, Any] | None = None,
         items_key: str = "items",
-        token_key: str = "nextPageToken",  # noqa: S107 - names a request field, not a credential
+        token_key: str = "nextPageToken",  # noqa: S107 - names a response field, not a credential
         token_param: str = "pageToken",  # noqa: S107 - names a request field, not a credential
         max_pages: int = 1000,
         method: str = "GET",

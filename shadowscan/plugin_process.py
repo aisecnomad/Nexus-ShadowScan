@@ -511,7 +511,7 @@ def _run_plugin_process(
         warnings = [
             "Plugin worker terminated; its descendants and external side effects are not rolled back."
         ]
-    except Exception:  # noqa: BLE001, S110 - no fallback or unsafe exception/configuration diagnostics
+    except Exception:  # noqa: BLE001, S110 - the generic message above stands; the exception may echo plugin configuration
         pass
     finally:
         parent.close()
