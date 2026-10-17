@@ -15,7 +15,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any, ClassVar
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
-from shadowscan.connectors.common import _PLACEHOLDER, config_boolean, finalize
+from shadowscan.connectors.common import config_boolean, finalize, whole_value_placeholder
 from shadowscan.connectors.identity.common import assess_app, summarize_scopes
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
@@ -83,7 +83,7 @@ def _left_out(value: Any, copies: set[str]) -> bool:
     if not isinstance(value, str):
         return False
     text = value.strip()
-    if _PLACEHOLDER.fullmatch(text):
+    if whole_value_placeholder(text):
         return True
     if len(text) >= _SHORT_CREDENTIAL_CHARS:
         return False

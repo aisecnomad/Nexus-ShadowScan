@@ -11,8 +11,10 @@ live secret, when :func:`placeholder_reason` finds one of:
 
 * a template marker anywhere in the value (``<...>``, ``${...}``, ``{{...}}``),
   or a value that is only a possessive (``your``, ``sua``, ``votre``, ``dein``,
-  ``jouw``, ``anda``, ...) followed by a separator and words, whatever the
-  words are (``sua_chave_openai``, ``votre-cle-api``);
+  ``jouw``, ``anda``, ...) followed by a separator and words that name the
+  credential or a placeholder (``sua_chave_openai``, ``votre-cle-api``,
+  ``your_api_key``; see ``_possessive_template``): a passphrase that only
+  begins with a possessive or a pronoun (``je-suis-le-patron``) is none;
 * a placeholder word such as REPLACE, REPLACE_ME, YOUR, EXAMPLE, SAMPLE,
   DUMMY, FAKE, TEST, PLACEHOLDER, CHANGEME, INSERT, PASTE, HERE or TODO,
   case-insensitive, delimited by ``_ - .`` or by a case boundary; a fill run
@@ -381,18 +383,27 @@ def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterab
     apply_matches(finding, matches, weight_scale=0.5)
 
 
-# A value that is only a possessive and words (``your_api_key``, ``sua_chave_openai``,
-# ``votre-cle-api``) is a placeholder in any of the languages documentation is
-# written in; a token carries digits, which the word tail excludes. A separator
-# must follow the possessive: without one, every letters-only token that begins
-# with ``Su``, ``Ta``, ``Je`` or ``Ton`` would read as a possessive and a word.
+# A value that is only a possessive and words naming a credential (``your_api_key``,
+# ``sua_chave_openai``, ``votre-cle-api``) is a placeholder in any of the languages
+# documentation is written in; a token carries digits, which the word tail
+# excludes (see ``_possessive_template``). A separator must follow the
+# possessive: without one, every letters-only token that begins with ``Su``,
+# ``Ta``, ``Je`` or ``Ton`` would read as a possessive and a word.
 _POSSESSIVES = (
     "your|sua|seu|suas|seus|su|tu|tus|votre|vos|ton|ta|dein|deine|ihr|ihre|jouw|uw|je"
     "|tua|tuo|tuoi|vostra|vostro|anda|senin|sizin"
 )
+# Possessives of languages that put the credential's noun last ('your_api_key',
+# 'deine_api_schluessel', 'jouw_sleutel'); the others put it first or last
+# ('sua_chave_openai', 'votre-cle-api', 'sua_serper_api_key').
+_NOUN_LAST_POSSESSIVES = frozenset({"your", "dein", "deine", "ihr", "ihre", "jouw", "uw", "je"})
+# Each word after the possessive is one case, as a written word is: a mixed-case
+# run ('ta-QzWpLmNxVbRtYcDfGh') is a token's body, not a word.
+_POSSESSIVE_TEMPLATE = re.compile(
+    rf"(?P<possessive>(?i:{_POSSESSIVES}))(?P<words>(?:[_-](?:[a-z]+|[A-Z][a-z]*|[A-Z]+))*)(?P<end>[_-]?)"
+)
 _PLACEHOLDER = re.compile(
-    rf"^(?:x{{3,}}|\*{{3,}}|<[^>]+>|\$\{{[^}}]+\}}|(?:{_POSSESSIVES})(?:[_-][a-z]+)+"
-    r"|changeme|redacted|placeholder|todo|null|none)$",
+    r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|changeme|redacted|placeholder|todo|null|none)$",
     re.IGNORECASE,
 )
 _TEMPLATE_MARKER = re.compile(r"<[^<>\s]+>|\$\{[^{}]*\}|\{\{[^{}]*\}\}")
@@ -480,6 +491,70 @@ _MIN_ENTROPY_BODY = 8
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*\s*[=:]\s*[\"']?(.*?)[\"']?$")
 
 
+# The words that name what a possessive placeholder stands for, besides the
+# placeholder words themselves: the credential's noun in English and in the
+# translations too short for ``_TRANSLATED_PLACEHOLDER_WORDS`` ('cle').
+_POSSESSIVE_NOUNS = frozenset(
+    {
+        "api",
+        "apikey",
+        "auth",
+        "cle",
+        "cles",
+        "credential",
+        "credentials",
+        "key",
+        "keys",
+        "pass",
+        "passphrase",
+        "passwd",
+        "password",
+        "pwd",
+        "secret",
+        "secrets",
+        "token",
+        "tokens",
+    }
+)
+
+
+def _template_word(word: str) -> bool:
+    return word in _POSSESSIVE_NOUNS or word in _PLACEHOLDER_WORDS or word in _TRANSLATED_PLACEHOLDER_WORDS
+
+
+def _possessive_template(value: str) -> bool:
+    """Whether a whole value is a possessive and the words of a placeholder ('your_api_key').
+
+    The words must say what the value stands for: the credential's noun or a
+    placeholder word comes last after a possessive of a language that puts
+    it there ('your_client_secret', 'deine_api_schluessel'), and first or
+    last after any other ('sua_chave_openai', 'votre-cle-api',
+    'sua_serper_api_key'). A passphrase that begins with a possessive or a
+    pronoun ('je-suis-le-patron', 'your-secret-garden', 'ton-chat-noir-dort')
+    is no placeholder, nor is a two-letter possessive with one word after it
+    ('ta-QzWpLmNxVbRtYcDfGh'; 'tu_clave' is still a placeholder by its
+    translated word). A possessive of three letters or more alone, or with a
+    separator after it ('sua', 'seu_token_'), is a template.
+    """
+    match = _POSSESSIVE_TEMPLATE.fullmatch(value)
+    if match is None:
+        return False
+    possessive = match["possessive"].lower()
+    words = [word.lower() for word in re.split(r"[_-]", match["words"]) if word]
+    if not words:
+        return len(possessive) >= 3
+    if len(possessive) == 2 and len(words) < 2:
+        return False
+    if possessive in _NOUN_LAST_POSSESSIVES:
+        return _template_word(words[-1])
+    return _template_word(words[0]) or _template_word(words[-1])
+
+
+def whole_value_placeholder(value: str) -> bool:
+    """Whether ``value`` as a whole is a placeholder: a fill run, a marker, a word or a possessive one."""
+    return _PLACEHOLDER.fullmatch(value) is not None or _possessive_template(value)
+
+
 def _case_delimited(value: str, start: int, end: int) -> bool:
     """True when value[start:end] is its own token by separators or case changes."""
     left = (
@@ -542,7 +617,7 @@ def placeholder_reason(value: str) -> str | None:
         value = assignment.group(1).strip()
         if not value:
             return "template"
-    if _PLACEHOLDER.match(value) or _TEMPLATE_MARKER.search(value):
+    if whole_value_placeholder(value) or _TEMPLATE_MARKER.search(value):
         return "template"
     if _FILL_RUN.search(value) or _placeholder_word(value):
         return "placeholder-word"

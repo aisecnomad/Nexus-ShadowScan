@@ -108,7 +108,8 @@ def _finding(**kwargs) -> Finding:
         ("deine_api_schluessel", "template"),
         ("jouw_sleutel", "template"),
         ("anda_kunci_api", "template"),
-        ("tu_clave", "template"),
+        # A two-letter possessive needs two words to make a template; the translated word still marks it.
+        ("tu_clave", "placeholder-word"),
         ("SUA-CHAVE-AQUI", "template"),
         ("sk-proj-sua-chave-aqui-" + "q7Lm3Xz9" * 4, "placeholder-word"),
         ("sk-proj-" + "su_clave_de_ejemplo_1234567890abcd", "placeholder-word"),
@@ -1202,3 +1203,59 @@ def test_bundled_corpus_covers_precision_regressions():
     assert 0.6 <= rows["env-names-only-usage"]["score"] < 0.85
     assert max(f["confidence"] for f in rows["env-names-with-heuristics-agent"]["findings"]) <= 0.8
     assert report["passed"]
+
+
+# A possessive or pronoun followed by words was a template whatever the words
+# were, so a letters-only credential that begins like one was left out of the
+# credential context and its copies in other columns were reported raw, which
+# main 8c72467 withheld. A possessive template now needs words that say what
+# it stands for, two of them after a two-letter possessive, each written in
+# one case.
+_MIXED_RUN = "QzWp" + "LmNx" + "VbRt" + "YcDf" + "Gh"
+POSSESSIVE_CREDENTIALS = [
+    "je-suis-le-patron",
+    "tu-es-ma-cherie",
+    "ta_mere_en_short",
+    "su-casa-es-mi-casa",
+    "ton-chat-noir-dort",
+    "your-secret-garden",
+    "ta-" + _MIXED_RUN,
+    "Su" + _MIXED_RUN,
+]
+
+
+@pytest.mark.parametrize("credential", POSSESSIVE_CREDENTIALS)
+def test_generic_saas_withholds_copies_of_credentials_that_begin_with_a_possessive(index, credential):
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    record = {"id": "app-1", "name": "Claude", "scopes": credential, "publisher": credential}
+    (finding,) = connector.analyze([{**record, "api_key": credential}])
+    assert credential not in json.dumps(finding.to_dict())
+
+
+@pytest.mark.parametrize("value", [v for v in POSSESSIVE_CREDENTIALS if not v.startswith("your")])
+def test_a_passphrase_that_begins_with_a_possessive_is_no_placeholder(value):
+    assert placeholder_reason(value) is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # #258's translated placeholders, a possessive alone and one with a
+        # separator after it stay templates.
+        "sua_chave_openai",
+        "sua_chave_gemini",
+        "sua_serper_api_key",
+        "votre-cle-api",
+        "your_api_key",
+        "your_client_secret",
+        "deine_api_schluessel",
+        "jouw_sleutel",
+        "anda_kunci_api",
+        "SUA_CHAVE_AQUI",
+        "su_clave_openai",
+        "sua",
+        "seu_token_",
+    ],
+)
+def test_possessive_placeholders_that_name_a_credential_stay_templates(value):
+    assert placeholder_reason(value) == "template"
