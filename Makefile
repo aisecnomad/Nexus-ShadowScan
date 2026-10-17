@@ -44,6 +44,10 @@ format-check: ## Check ruff formatting without changes
 typecheck: ## Run mypy type checker
 	mypy shadowscan tools benchmarks
 
+.PHONY: complexity
+complexity: ## Fail when a function or module grows past tools/complexity_baseline.json, or the baseline allows more than the code has
+	python -m tools.complexity_gate
+
 .PHONY: test
 test: ## Run test suite with coverage
 	python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
@@ -53,8 +57,8 @@ test-fast: ## Run tests without coverage (faster iteration)
 	python -m pytest -q -x
 
 .PHONY: test-parallel
-test-parallel: ## Run tests in parallel with pytest-xdist
-	python -m pytest -q -n auto --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+test-parallel: ## Run tests in parallel with pytest-xdist, as the CI jobs do
+	python -m pytest -q -n auto --dist worksteal --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
 
 .PHONY: coverage-gate
 coverage-gate: ## Enforce per-connector coverage floor
@@ -76,10 +80,17 @@ mappings: ## Validate the threat and control mapping catalogs
 secrets: ## Fail on hardcoded credentials in tracked files, as CI does
 	set -o pipefail; git ls-files -z | xargs -0 python tools/check_secrets.py
 
+.PHONY: self-scan
+self-scan: ## Scan this checkout with ShadowScan itself; an incomplete scan (exit 3) fails, as in CI
+	@set -euo pipefail; \
+	out="$$(mktemp -d "$${TMPDIR:-/tmp}/shadowscan-self-scan.XXXXXX")"; \
+	echo "Self-scan report: $$out/shadowscan-self-scan.json"; \
+	shadowscan scan -c examples/shadowscan.self-scan.yaml --format json -o "$$out/shadowscan-self-scan.json"
+
 .PHONY: audit
 audit: ## Audit the environment and every hash-locked dependency set, as CI does
 	pip-audit --skip-editable --progress-spinner off
-	set -e; for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do \
+	set -e; for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock requirements-fuzz.lock; do \
 		pip-audit --require-hashes --strict --progress-spinner off \
 			--disable-pip -r "$$lock"; \
 	done
@@ -102,7 +113,7 @@ evaluate: ## Run the bundled detection regression corpora (reports go to a tempo
 
 .PHONY: check
 .NOTPARALLEL: check
-check: lint format-check typecheck signatures mappings secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
+check: lint format-check typecheck complexity signatures mappings secrets self-scan audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 .PHONY: policy
@@ -110,7 +121,25 @@ policy: ## Check repository policy: action pins, permissions, links, anchors, Ma
 	python -m pytest -q tests/test_repository_policy.py tests/test_repository_consistency.py
 
 .PHONY: check-fast
-check-fast: lint format-check typecheck signatures mappings secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
+check-fast: lint format-check typecheck complexity signatures mappings secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
+
+# Not part of `check`: fuzzing has no end, and the engine (Atheris, Linux x86_64 only) comes from
+# requirements-fuzz.lock, which `make install` does not install. The Fuzz workflow runs the same
+# commands; docs/operations/fuzzing.md has the details, the install command and how to replay a failure.
+FUZZ_SECONDS ?= 60
+
+.PHONY: fuzz
+fuzz: ## Fuzz the redaction and lexing targets with Atheris, FUZZ_SECONDS (default 60) each; needs requirements-fuzz.lock
+	@set -euo pipefail; \
+	case "$(FUZZ_SECONDS)" in ''|0*|*[!0-9]*) echo "FUZZ_SECONDS must be a whole number of seconds, at least 1" >&2; exit 2;; esac; \
+	work="$$(mktemp -d "$${TMPDIR:-/tmp}/shadowscan-fuzz.XXXXXX")"; \
+	echo "Fuzz corpora and any failing inputs: $$work"; \
+	for target in redaction-text redaction-record lexing; do \
+		mkdir -p "$$work/crashes/$$target"; \
+		python -m tools.fuzz.seeds "$$target" "$$work/corpus/$$target" --fixtures tests/fixtures; \
+		python -m tools.fuzz "$$target" -max_total_time="$(FUZZ_SECONDS)" \
+			-artifact_prefix="$$work/crashes/$$target/" "$$work/corpus/$$target"; \
+	done
 
 # --- Build -----------------------------------------------------------------
 

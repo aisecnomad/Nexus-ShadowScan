@@ -57,7 +57,7 @@ classes (`reporters/cyclonedx.py`).
 
 ## Scan pipeline
 
-A scan runs these stages in order. The CLI (`shadowscan/cli.py`) reads the
+A scan runs these stages in order. The CLI (`shadowscan/cli/`) reads the
 configuration in step 1 and renders the reports in step 7; `Engine.run()` in
 `shadowscan/engine.py` runs the rest. Setup refuses an invalid or unsafe
 configuration before anything is collected: the command exits 1 with no
@@ -248,7 +248,7 @@ reports (`--format json`). None contacts a provider except
 | `shadowscan/triage.py` | opt-in, advisory LLM triage of the highest-risk findings |
 | `shadowscan/endpoint.py` | well-known AI client configuration locations that `shadowscan endpoint` reads through `code.filesystem` |
 | `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |
-| `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `endpoint`, `connectors`, `signatures`, `inventory`, `mcp-registry`, `diff`, `merge`, `dashboard`, `controls` |
+| `shadowscan/cli/` | The command line. `__init__.py` holds the shared options, `_run_scan`, report emission and the `shadowscan` group; each command family sits in its own module and registers itself on import: `_scan.py` (`scan`, `run`, `code`, `gateway`), `_jwt.py`, `_endpoint.py`, `_connectors.py`, `_signatures.py`, `_inventory.py`, `_mcp_registry.py`, `_diff.py`, `_merge.py`, `_dashboard.py` and `_controls.py` |
 
 ### Detection, inventory and assessment
 
@@ -308,13 +308,18 @@ The diagram is generated from the connector registry by `python -m tools.readme_
 `code.filesystem` is the largest connector; `code.github` and `code.gitlab`
 reuse it on the checkouts they fetch, in clone or API mode. Its helpers are bounded and conservative:
 each one proves a narrow construct or declines, and none imports or runs
-scanned code. [ADR-005](adrs/005-code-scanner-module-boundaries.md) proposes
-splitting the connector class itself.
+scanned code. [ADR-005](adrs/005-code-scanner-module-boundaries.md) records how
+the connector class itself was split: `filesystem.py` is now the façade, and the
+walk, file scan, findings, shared records and ownership modules below hold the
+rest.
 
 | module | responsibility |
 |---|---|
-| `filesystem.py` | the connector: tree walk, coverage accounting, file dispatch, ownership and finding construction |
-| `walk.py` | bounded, non-recursive directory walking that never follows links; project-root markers |
+| `filesystem.py` | the connector façade (ADR-005): configuration, `collect()`/`analyze()`, the per-root scan state and the identity every finding carries; constructs and wires the walk, file scan, findings and ownership collaborators |
+| `walk.py` | the tree walk (`TreeWalker`): root opening, exclusions and `include`, links, oversize and non-regular entries, submodules, deadline scheduling and the fail-closed coverage accounting; bounded, non-recursive directory walking that never follows links; project-root markers |
+| `file_scan.py` | one file's analysis (`FileScanner`): confined reads, notebooks, redacted excerpts, and dispatch to the credential, MCP, manifest, IaC, configuration and source passes; Python re-export consumers bound after the walk |
+| `project_findings.py` | finding construction (`ProjectFindings`): project, source-agent, coding-agent, MCP, agent-manifest, workflow, IaC and credential findings from one walk's observations |
+| `scan_records.py` | the records the collaborators share (`_Project`, `_SourceFile`, `_MatchedSource`), the `FindingBase` protocol of the connector's finding constructor, and file-scan helpers that need no scanner state; imports none of the collaborators |
 | `path_context.py` | path-derived evidence context: test, documentation, example, generated and CI-pipeline paths, and the discounts they apply |
 | `project_evidence.py` | how a project's observations count toward its finding: corroboration, weak mentions, env-only and model-ids-only capping |
 | `model_identifiers.py` | model-identifier literal recognition: vendor stems, id shapes and tooling look-alikes |
@@ -331,7 +336,7 @@ splitting the connector class itself.
 | `javascript_dispatch.py`, `javascript_reachability.py`, `javascript_tool_attribution.py` | JavaScript Responses dispatch, literal dead-branch exclusion, tool registrations linked to their execution sites |
 | `polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py`, `java_semantics.py` | bounded lexical import and scope checks for LangChainGo constructors, .NET automatic tool invocation and Spring AI annotated tools; no general cross-file type resolution (a Spring AI tool class is matched by its qualified name across the project) |
 | `catalogs.py`, `rule_packs.py` | data files that name technologies without using them, and detection-rule packs, so neither counts as an integration |
-| `ownership.py` | CODEOWNERS glob matching without backtracking regular expressions |
+| `ownership.py` | ownership (`CodeOwnership`): CODEOWNERS matching without backtracking regular expressions, owner lookups within per-root step budgets, and opt-in git history |
 
 ### Utilities
 

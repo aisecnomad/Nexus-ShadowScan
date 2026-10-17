@@ -16,6 +16,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 
 from shadowscan.signatures.matcher import MatchTimeoutError, pattern_timeout
+from shadowscan.utils.python_tokens import TokenizerFault, generate_tokens
 
 _RUBY_BLOCK_END = re.compile(r"(?m)^=end(?:\s|$)")
 
@@ -439,8 +440,10 @@ def _python_ranges_from(
         for name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END")
         if hasattr(tokenize, name)
     }
+    read_to = (1, 0)  # where the last token the tokenizer produced ended
     try:
-        for count, token in enumerate(tokenize.generate_tokens(reader.readline)):
+        for count, token in enumerate(generate_tokens(reader.readline)):
+            read_to = token.end
             # The C tokenizer runs without a Python check point, and on CPython 3.12.0 to
             # 3.12.3 it is quadratic in the tokens of one long logical line. Charge the
             # per-input matching budget between tokens, as the JavaScript lexer does, so a
@@ -503,6 +506,15 @@ def _python_ranges_from(
         # (Python 3.12+ raises for mid-file lexical errors that 3.11 tolerated)
         # masks the remainder ambiguously and must mark the file incomplete.
         return not (isinstance(exc, tokenize.TokenError) and "EOF" in message), None
+    except TokenizerFault:
+        # The interpreter failed, not the text: CPython 3.12's tokenizer does for a NUL byte after an
+        # indented line (found by the fuzz target in tools/fuzz; see shadowscan.utils.python_tokens),
+        # where 3.13 raises TokenError. Nothing past the last token read can be said to be code, so it
+        # is masked and the file reported incomplete, as for any other tokenizer error.
+        start = offset(read_to)
+        if start < len(text):
+            spans.append((start, len(text)))
+        return True, None
     if fstring_starts:
         start = fstring_starts[0]
         spans[:] = [*(span for span in spans if span[1] <= start), (start, len(text))]
@@ -883,6 +895,8 @@ class _JavaScriptLexer:
                 i += 3 if text.startswith("\r\n", i + 1) else 2
             else:
                 i += 1
+        # A backslash that ends the text steps over its end, and a span may not run past it.
+        i = min(i, size)
         if i < size and text[i] == quote:
             i += 1
         self.spans.append((start, i))

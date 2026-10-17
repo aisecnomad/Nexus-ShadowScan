@@ -96,3 +96,21 @@ def test_module_entry_point_exits_1_on_a_usage_error(tmp_path):
     )
     assert result.returncode == 1, result.stderr
     assert "min_confidence must be a finite number between 0 and 1" in result.stderr
+
+
+@pytest.mark.parametrize("module", ["shadowscan", "shadowscan.cli"])
+def test_both_module_entry_points_run_the_command_line(module, tmp_path):
+    """`python -m shadowscan.cli` worked when cli.py was one file; the package keeps it."""
+    result = subprocess.run(
+        [sys.executable, "-m", module, "code", str(tmp_path), "--min-confidence", "1.5"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 1, result.stderr
+    assert "min_confidence must be a finite number between 0 and 1" in result.stderr
+    version = subprocess.run(
+        [sys.executable, "-m", module, "--version"], capture_output=True, text=True, timeout=60, check=False
+    )
+    assert version.returncode == 0 and version.stdout.startswith("shadowscan, version "), version.stderr

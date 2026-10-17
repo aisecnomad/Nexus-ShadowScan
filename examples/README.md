@@ -9,6 +9,7 @@ reviewed values before you use a file outside this repository.
 | Path | What it is | Guide |
 |---|---|---|
 | [`shadowscan.offline.yaml`](shadowscan.offline.yaml) | The offline demo: runs the fixture-backed connectors against `tests/fixtures/` with no credentials (`make demo`) | [Quick start](../docs/getting-started/quickstart.md) |
+| [`shadowscan.self-scan.yaml`](shadowscan.self-scan.yaml) | Scans this checkout with its own scanner and finishes with a complete report: each path that would otherwise leave the scan incomplete is named with its reason (`make self-scan`) | [Quick start](../docs/getting-started/quickstart.md) |
 | [`github-action-code-scan.yml`](github-action-code-scan.yml) | Consumer workflow: scans a checkout and uploads SARIF to code scanning | [CI integration](../docs/operations/ci.md) |
 | [`github-action-drift.yml`](github-action-drift.yml) | Consumer workflow: weekly scan compared with a reviewed baseline | [Scheduled drift detection](../docs/operations/drift.md) |
 | [`k8s-drift-cronjob.yaml`](k8s-drift-cronjob.yaml) | Kubernetes CronJob for the same weekly drift check | [Scheduled drift detection](../docs/operations/drift.md) |

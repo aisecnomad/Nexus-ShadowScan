@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from shadowscan.connectors.code.filesystem import FilesystemConnector
+from shadowscan.connectors.code.walk import TreeWalker
 from shadowscan.utils.git import safe_git_env
 
 # ------------------------------------------------------------------ helpers
@@ -199,7 +200,7 @@ class TestDiffIncluded:
 
     @pytest.fixture(autouse=True)
     def _cls(self):
-        self.included = FilesystemConnector._diff_included
+        self.included = TreeWalker._diff_included
 
     def test_changed_file_included(self) -> None:
         diff = frozenset({"src/app.py", "lib/util.js"})

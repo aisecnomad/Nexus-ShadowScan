@@ -16,7 +16,10 @@ import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
+from shadowscan.connectors.code import file_scan as file_scan_module
 from shadowscan.connectors.code import filesystem as filesystem_module
+from shadowscan.connectors.code import ownership as ownership_module
+from shadowscan.connectors.code import walk as walk_module
 from shadowscan.connectors.code.filesystem import (
     DEADLINE_MARGIN_MIN_SECONDS,
     DEFAULT_OVERSIZE_SKIP_GLOBS,
@@ -53,13 +56,15 @@ def _fake_clock(monkeypatch, *, step: float) -> list[float]:
     """
     clock = [1000.0]
     monkeypatch.setattr(filesystem_module.time, "monotonic", lambda: clock[0])
-    original = filesystem_module.read_text
+    original = file_scan_module.read_text
 
     def read_text(path, max_bytes, errors=None, **options):
         clock[0] += step
         return original(path, max_bytes, errors, **options)
 
-    monkeypatch.setattr(filesystem_module, "read_text", read_text)
+    # Sources are read by the file scan, CODEOWNERS by the ownership collaborator.
+    monkeypatch.setattr(file_scan_module, "read_text", read_text)
+    monkeypatch.setattr(ownership_module, "read_text", read_text)
     return clock
 
 
@@ -109,14 +114,14 @@ def test_root_starting_inside_the_margin_lists_nothing_and_records_one_error(tmp
     _tree(tmp_path, count=3)
     clock = _fake_clock(monkeypatch, step=1.0)
     listed: list[str] = []
-    walk_directories = filesystem_module._walk_directories
+    walk_directories = walk_module._walk_directories
 
     def recorded_walk_directories(top, onerror, *, budget=None):
         for dirpath, dirnames, filenames in walk_directories(top, onerror, budget=budget):
             listed.append(dirpath)
             yield dirpath, dirnames, filenames
 
-    monkeypatch.setattr(filesystem_module, "_walk_directories", recorded_walk_directories)
+    monkeypatch.setattr(walk_module, "_walk_directories", recorded_walk_directories)
     ctx = ConnectorContext(
         config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 1.0
     )
@@ -148,13 +153,13 @@ def test_listing_stops_in_time_to_scan_the_listed_files(tmp_path, index, monkeyp
     # 1008.5), so 9 entries are listed and every one of them is scanned.
     _tree(tmp_path, count=30)
     clock = _fake_clock(monkeypatch, step=0.0)
-    count_entry = FilesystemConnector._count_entry
+    count_entry = walk_module.TreeWalker._count_entry
 
     def slow_count_entry(self, walk, root):
         clock[0] += 1.0
         return count_entry(self, walk, root)
 
-    monkeypatch.setattr(FilesystemConnector, "_count_entry", slow_count_entry)
+    monkeypatch.setattr(walk_module.TreeWalker, "_count_entry", slow_count_entry)
     ctx = ConnectorContext(
         config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 20.0
     )
@@ -183,8 +188,8 @@ def test_root_without_time_to_scan_lists_nothing_and_keeps_earlier_roots(tmp_pat
     clock = _fake_clock(monkeypatch, step=1.0)
     deadline = clock[0] + 10.0
     second_listed_at: list[float] = []
-    count_entry = FilesystemConnector._count_entry
-    scan_priority = filesystem_module._scan_priority
+    count_entry = walk_module.TreeWalker._count_entry
+    scan_priority = walk_module._scan_priority
 
     def slow_count_entry(self, walk, root):
         clock[0] += 0.01
@@ -196,8 +201,8 @@ def test_root_without_time_to_scan_lists_nothing_and_keeps_earlier_roots(tmp_pat
         clock[0] += 0.005
         return scan_priority(rel, name)
 
-    monkeypatch.setattr(FilesystemConnector, "_count_entry", slow_count_entry)
-    monkeypatch.setattr(filesystem_module, "_scan_priority", slow_scan_priority)
+    monkeypatch.setattr(walk_module.TreeWalker, "_count_entry", slow_count_entry)
+    monkeypatch.setattr(walk_module, "_scan_priority", slow_scan_priority)
     cfg = ScanConfig(
         connectors=[
             ConnectorSpec("code.filesystem", {"paths": [str(first), str(second)], "use_git": False}),
@@ -217,13 +222,13 @@ def test_root_without_time_to_scan_lists_nothing_and_keeps_earlier_roots(tmp_pat
 def test_cancellation_mid_walk_is_not_reported_per_file(tmp_path, index, monkeypatch):
     _tree(tmp_path)
     cancelled = threading.Event()
-    original = filesystem_module.read_text
+    original = file_scan_module.read_text
 
     def read_text(path, max_bytes, errors=None, **options):
         cancelled.set()
         return original(path, max_bytes, errors, **options)
 
-    monkeypatch.setattr(filesystem_module, "read_text", read_text)
+    monkeypatch.setattr(file_scan_module, "read_text", read_text)
     ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index, cancelled=cancelled)
     FilesystemConnector(ctx).run()
     assert ctx.stats.skipped and ctx.stats.errors == ["connector completion deadline exceeded"]
@@ -785,13 +790,13 @@ def test_one_large_file_that_does_not_fit_is_skipped_without_ending_the_walk(tmp
 def _count_redactions(monkeypatch) -> list[str]:
     """Record the files whose whole text is redacted for excerpts."""
     redacted: list[str] = []
-    original = filesystem_module._redacted_source
+    original = file_scan_module._redacted_source
 
     def counting(text, structure):
         redacted.append(text)
         return original(text, structure)
 
-    monkeypatch.setattr(filesystem_module, "_redacted_source", counting)
+    monkeypatch.setattr(file_scan_module, "_redacted_source", counting)
     return redacted
 
 
@@ -822,7 +827,7 @@ def test_sanitization_limit_marks_the_scan_incomplete_even_when_every_match_is_d
         attempted.append(text)
         raise SanitizationLimitError("credential replacement work limit exceeded")
 
-    monkeypatch.setattr(filesystem_module, "_redacted_source", failing)
+    monkeypatch.setattr(file_scan_module, "_redacted_source", failing)
     ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
     findings = FilesystemConnector(ctx).run()
     assert not any(f.resource_type == "project" for f in findings)
@@ -840,7 +845,7 @@ def test_sanitization_limit_on_a_retained_file_withholds_its_excerpts(tmp_path, 
     def failing(text, structure):
         raise SanitizationLimitError("credential replacement work limit exceeded")
 
-    monkeypatch.setattr(filesystem_module, "_redacted_source", failing)
+    monkeypatch.setattr(file_scan_module, "_redacted_source", failing)
     ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
     findings = FilesystemConnector(ctx).run()
     project = next(f for f in findings if f.resource_type == "project")
@@ -873,13 +878,13 @@ def test_retained_evidence_is_excerpted_once_per_file_and_sanitized(tmp_path, in
 def _settled_sources(monkeypatch) -> list:
     """Record each file's excerpt source as its analysis settles it."""
     sources: list = []
-    original = FilesystemConnector._settle_excerpts
+    original = file_scan_module.FileScanner._settle_excerpts
 
     def recording(self, file):
         original(self, file)
         sources.append(file.excerpts)
 
-    monkeypatch.setattr(FilesystemConnector, "_settle_excerpts", recording)
+    monkeypatch.setattr(file_scan_module.FileScanner, "_settle_excerpts", recording)
     return sources
 
 

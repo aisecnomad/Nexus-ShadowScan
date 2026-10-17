@@ -66,7 +66,7 @@ Run `make help` for a quick reference of all development commands.
 
 | Path | What lives there |
 |---|---|
-| [`shadowscan/`](shadowscan/) | The scanner package: CLI (`cli.py`), engine, finding model, risk and autonomy scoring, inventory reconciliation, reporters and redaction. [docs/architecture.md](docs/architecture.md#package-layout) describes each module's responsibility. |
+| [`shadowscan/`](shadowscan/) | The scanner package: CLI (`cli/`), engine, finding model, risk and autonomy scoring, inventory reconciliation, reporters and redaction. [docs/architecture.md](docs/architecture.md#package-layout) describes each module's responsibility. |
 | [`shadowscan/connectors/`](shadowscan/connectors/) | One subpackage per discovery surface (`code`, `identity`, `gateway`, `lowcode`, `saas`, `cloud`, `endpoint`, `network`, `runtime`); each connector implements `collect()` and `analyze()`. |
 | [`shadowscan/signatures/data/`](shadowscan/signatures/data/), [`shadowscan/mappings/data/`](shadowscan/mappings/data/) | YAML signature packs and the threat and control mapping catalogs. |
 | [`tests/`](tests/) | The pytest suite. Unit tests sit in [`tests/unit/`](tests/unit/), named after the module they exercise; offline, sanitized fixtures sit under [`tests/fixtures/`](tests/fixtures/); `tests/test_repository_policy.py` and `tests/test_repository_consistency.py` are the `make policy` gates. Other top-level `tests/test_*.py` modules test repository tooling: release, governance, evaluation, canaries and benchmark entry points. Find a module's tests with `git grep -l shadowscan.connectors.identity.okta tests`. |
@@ -89,10 +89,11 @@ Dependabot and the tests read them from there:
 | `requirements-ci.lock` | Hash-locked development and test toolchain (CPython 3.11 to 3.13) |
 | `requirements-ci-constraints.txt` | Reviewed inputs that `requirements-ci.lock` is generated from; never installed directly |
 | `requirements-docs.lock` | Hash-locked MkDocs toolchain for `make docs` and the Docs workflow |
+| `requirements-fuzz.lock` | Hash-locked Atheris fuzzing engine for `make fuzz` and the Fuzz workflow (Linux x86_64) |
 | `mkdocs.yml` | Documentation site configuration and navigation |
 | `Dockerfile`, `.dockerignore` | The worker image and its build-context allow-list |
 | `agent-card.yaml` | Sample Agent Capability Card used by the offline demo, the quick start and the image |
-| `CHANGELOG.md`, `RELEASE_NOTES.md` | Engineering change log, and the operator summary of what changes on upgrade |
+| `CHANGELOG.md`, `RELEASE_NOTES.md` | Summary of every change by version and theme (the earlier per-change engineering log is kept in [`archive/changelog/`](archive/changelog/README.md)), and the operator summary of what changes on upgrade |
 | `AGENTS.md` | Rules for coding agents working in this repository |
 | `CITATION.cff`, `NOTICE`, `LICENSE`, `CODEOWNERS` | Citation metadata, attribution, licence and review ownership |
 
@@ -122,13 +123,14 @@ Existing Make targets provide the next steps:
 make check-fast      # lint, format, types, validators, secrets and policy; no tests
 make test-fast       # full test suite without coverage, stop at first failure
 make test            # full suite with line and branch coverage and the overall floor
-make coverage-gate   # connector coverage; run after make test
+make test-parallel   # the same coverage run on pytest-xdist workers, as CI runs it
+make coverage-gate   # connector coverage; run after make test or make test-parallel
 make check           # all local quality gates
 ```
 
-On CI runners the full suite takes about 15 minutes untraced and about 20 with
-coverage; `make check-fast` takes a minute or two. `make audit`, and therefore
-`make check`, needs network access for pip-audit.
+Run in one process the full suite takes tens of minutes, so CI spreads it over
+one pytest-xdist worker per CPU; `make check-fast` takes a minute or two.
+`make audit`, and therefore `make check`, needs network access for pip-audit.
 
 For detailed testing guidance, environment setup troubleshooting, and advanced patterns,
 see [Testing Guide](docs/testing.md).
@@ -165,6 +167,7 @@ exact supported Python matrix and dependency pins.
 | Lint | `ruff check shadowscan tests tools benchmarks` | No errors |
 | Format | `ruff format --check shadowscan tests tools benchmarks` | No changes |
 | Types | `mypy shadowscan tools benchmarks` | No errors |
+| Size | `make complexity` | No function above ruff's `C901` limit of 20 and no `shadowscan` module above 2,000 lines grows past `tools/complexity_baseline.json`, and the baseline allows no more than the code has |
 | Tests | `pytest --cov --cov-fail-under=80` | ≥ 80% aggregate, statements and branches |
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
@@ -187,6 +190,14 @@ repository test requires the reason. Mypy requires annotated definitions
 (`disallow_untyped_defs`) and reports unused `type: ignore` comments.
 `pyproject.toml` holds the complete rule sets.
 
+`make complexity` keeps the functions and modules that are already too large from growing, and
+stops a new one from joining them. When it fails because your change made a function more
+complex or a module longer, split it; do not raise the number. When it fails because you
+improved one, run `python -m tools.complexity_gate --update` and commit the lower baseline, so
+the room cannot be spent again. A rise that is unavoidable is recorded with
+`python -m tools.complexity_gate --rebaseline` and explained in the pull request.
+[Testing](docs/testing.md#function-and-module-size) has the details.
+
 The same gates as individual commands:
 
 ```bash
@@ -197,6 +208,7 @@ make secrets
 ruff check shadowscan tests tools benchmarks
 ruff format --check shadowscan tests tools benchmarks
 mypy shadowscan tools benchmarks
+python -m tools.complexity_gate
 make audit
 python -m pytest -q --cov=shadowscan --cov-fail-under=80
 make coverage-gate
@@ -257,7 +269,12 @@ repository contains no secrets.
 - Pin GitHub Actions by full commit SHA. Do not leave `persist-credentials`
   enabled on checkouts that do not need to push.
 - Update `CHANGELOG.md` under Unreleased and `docs/production.md` when a change
-  affects rollout, finding identity, or credential policy.
+  affects rollout, finding identity, or credential policy. A changelog entry is
+  one short bullet (at most 1,000 characters, tested) under the matching theme
+  heading, newest first, flagged **(behaviour change)**, **(breaking)** or
+  **(rebaseline needed)** when an operator has to act. The reasoning, test
+  notes and rejected alternatives belong in the pull request or the page for
+  the feature.
 - Include regression tests for bug fixes.
 - Use the PR template checklist; it covers the main gates. `make check` runs
   every local gate; CI also builds the documentation, audits each lock file and

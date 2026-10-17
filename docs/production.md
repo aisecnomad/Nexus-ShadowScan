@@ -832,6 +832,12 @@ different resolver version only as an intentional toolchain change. Use
 `--upgrade` only for an intentional dependency refresh. Preserve each lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
+`requirements-fuzz.lock` is a fifth lock, for the fuzzing engine alone (Atheris,
+which PyPI publishes for Linux x86_64 only). Only the [Fuzz workflow](operations/fuzzing.md)
+and `make fuzz` install it; the worker image, the wheel and the other locks do
+not depend on it. It is written by hand from the PyPI release metadata, like the
+build lock, and every audit of the other locks audits it too.
+
 The Dockerfile installs both locks under `--require-hashes`: the runtime lock
 into the virtual environment the runtime stage copies, and the build lock into
 a separate build environment. That environment builds the package wheel with
@@ -3421,7 +3427,10 @@ workflow's read-only token, so the build job accepts the readback only when it
 matches the job's own read in every other field, `updated_at` included, and
 records in the evidence that `bypass_actors` came from that readback. Retain `release-candidate-<SHA>`,
 `release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
-hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
+hosted retention is 90 days. `release-attestations-<SHA>` holds the Sigstore
+bundles `provenance.sigstore.json` and `sbom.sigstore.json`, which a maintainer
+who creates a GitHub release by hand attaches to it with the distributions.
+Verify the candidate's `SHA256SUMS` and GitHub
 attestations before publication. Publication uploads the wheel and sdist in
 that publication-input artifact and never rebuilds from a tag: the isolated
 `publish` job holds `id-token: write` as its only permission, waits for approval

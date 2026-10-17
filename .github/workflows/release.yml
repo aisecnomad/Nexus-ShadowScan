@@ -232,8 +232,12 @@ jobs:
           SBOM_BUNDLE: ${{ steps.sbom.outputs.bundle-path }}
         run: |
           mkdir attestations
-          cp "$PROVENANCE_BUNDLE" attestations/provenance.json
-          cp "$SBOM_BUNDLE" attestations/sbom.json
+          # Sigstore bundles. The .sigstore.json suffix is the one release-signature
+          # checks, such as OpenSSF Scorecard's Signed-Releases, look for among the
+          # assets of a GitHub release; the maintainer attaches these two files to
+          # a release by hand (docs/operations/publishing.md). Nothing here does.
+          cp "$PROVENANCE_BUNDLE" attestations/provenance.sigstore.json
+          cp "$SBOM_BUNDLE" attestations/sbom.sigstore.json
       - id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -285,8 +289,8 @@ jobs:
             echo "sdist ${sdists[0]} does not match wheel version $version" >&2
             exit 1
           fi
-          test -s attestations/provenance.json
-          test -s attestations/sbom.json
+          test -s attestations/provenance.sigstore.json
+          test -s attestations/sbom.sigstore.json
       - id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

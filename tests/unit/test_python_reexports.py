@@ -6,7 +6,7 @@ import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import ConnectorContext
-from shadowscan.connectors.code import filesystem, python_reexports
+from shadowscan.connectors.code import file_scan, filesystem, ownership, python_reexports
 from shadowscan.engine import Engine
 from shadowscan.models import Kind
 
@@ -141,7 +141,7 @@ def test_sibling_projects_do_not_share_exports(tmp_path, run_connector):
 
 @pytest.mark.parametrize("budget", ["MAX_PENDING_BYTES", "MAX_PENDING_FILES"])
 def test_pending_source_budget_is_incomplete(tmp_path, run_connector, monkeypatch, budget):
-    monkeypatch.setattr(filesystem, budget, 0)
+    monkeypatch.setattr(file_scan, budget, 0)
     findings, ctx = _scan(
         tmp_path,
         run_connector,
@@ -298,13 +298,15 @@ def _fake_clock(monkeypatch) -> list[float]:
     """Freeze ``time.monotonic`` and advance it by one second for every file the scanner reads."""
     clock = [1000.0]
     monkeypatch.setattr(filesystem.time, "monotonic", lambda: clock[0])
-    read_text = filesystem.read_text
+    read_text = file_scan.read_text
 
     def slow_read(path, max_bytes, errors=None, **options):
         clock[0] += 1.0
         return read_text(path, max_bytes, errors, **options)
 
-    monkeypatch.setattr(filesystem, "read_text", slow_read)
+    # Sources are read by the file scan, CODEOWNERS by the ownership collaborator.
+    monkeypatch.setattr(file_scan, "read_text", slow_read)
+    monkeypatch.setattr(ownership, "read_text", slow_read)
     return clock
 
 
@@ -317,7 +319,7 @@ def test_queued_consumers_keep_the_walk_deadline_margin(tmp_path, index, monkeyp
     for number in range(3):
         (tmp_path / f"z_agent_{number}.py").write_text(_FILLER_AGENT)
     clock = _fake_clock(monkeypatch)
-    bind = filesystem.bound_source_matches
+    bind = file_scan.bound_source_matches
 
     def slow_bind(*args, **options):
         # Resolved analysis uses its whole matching budget.
@@ -325,7 +327,7 @@ def test_queued_consumers_keep_the_walk_deadline_margin(tmp_path, index, monkeyp
             clock[0] += 2.0
         return bind(*args, **options)
 
-    monkeypatch.setattr(filesystem, "bound_source_matches", slow_bind)
+    monkeypatch.setattr(file_scan, "bound_source_matches", slow_bind)
     config = ScanConfig(
         connectors=[ConnectorSpec("code.filesystem", {"path": str(tmp_path), "use_git": False})],
         connector_timeout_seconds=5.5,
@@ -346,7 +348,7 @@ def test_a_queued_binders_wall_time_stops_short_of_the_deadline_margin(tmp_path,
     (tmp_path / "b_helpers.py").write_text("def helper():\n    return 1\n")
     clock = _fake_clock(monkeypatch)
     deadline = clock[0] + 30.0
-    resolve = filesystem.FilesystemConnector._resolve_reexport_sources
+    resolve = file_scan.FileScanner.resolve_reexport_sources
     caps = []
     expected = []
 
@@ -363,7 +365,7 @@ def test_a_queued_binders_wall_time_stops_short_of_the_deadline_margin(tmp_path,
         monkeypatch.setattr(self.index, "scan_budget", recording)
         return resolve(self, scan)
 
-    monkeypatch.setattr(filesystem.FilesystemConnector, "_resolve_reexport_sources", late_resolve)
+    monkeypatch.setattr(file_scan.FileScanner, "resolve_reexport_sources", late_resolve)
     ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index, deadline=deadline)
     findings = filesystem.FilesystemConnector(ctx).run()
     assert _uses_openai(findings)
@@ -379,7 +381,7 @@ def test_queued_consumers_are_redacted_in_the_walk_not_after_it(tmp_path, index,
     for name in ("a_app.py", "b_app.py"):
         (tmp_path / name).write_text(_OPENAI_CONSUMER.replace("helpers", "c_helpers"))
     (tmp_path / "c_helpers.py").write_text("def helper():\n    return 1\n")
-    redact = filesystem._redacted_source
+    redact = file_scan._redacted_source
     queued = []
     late = []
 
@@ -388,15 +390,15 @@ def test_queued_consumers_are_redacted_in_the_walk_not_after_it(tmp_path, index,
             late.append(text[:40])
         return redact(text, structure)
 
-    resolve = filesystem.FilesystemConnector._resolve_reexport_sources
+    resolve = file_scan.FileScanner.resolve_reexport_sources
 
     def marking(self, scan):
         queued.extend(source.file.rel for source in scan.reexport_files)
         assert all(source.file.excerpts.safe_lines is not None for source in scan.reexport_files)
         return resolve(self, scan)
 
-    monkeypatch.setattr(filesystem, "_redacted_source", counting)
-    monkeypatch.setattr(filesystem.FilesystemConnector, "_resolve_reexport_sources", marking)
+    monkeypatch.setattr(file_scan, "_redacted_source", counting)
+    monkeypatch.setattr(file_scan.FileScanner, "resolve_reexport_sources", marking)
     ctx = ConnectorContext(config={"path": str(tmp_path), "use_git": False}, index=index)
     findings = filesystem.FilesystemConnector(ctx).run()
     assert sorted(queued) == ["a_app.py", "b_app.py"]
@@ -461,7 +463,7 @@ def test_retained_lexical_evidence_stops_at_half_the_margin(tmp_path, index, mon
     for number in range(2):
         (tmp_path / f"z_agent_{number}.py").write_text(_FILLER_AGENT)
     clock = _fake_clock(monkeypatch)
-    record = filesystem.FilesystemConnector._record_source
+    record = file_scan.FileScanner._record_source
     recorded = []
 
     def slow_record(self, source, bound, unbound):
@@ -470,7 +472,7 @@ def test_retained_lexical_evidence_stops_at_half_the_margin(tmp_path, index, mon
             clock[0] += 1.4
         return record(self, source, bound, unbound)
 
-    monkeypatch.setattr(filesystem.FilesystemConnector, "_record_source", slow_record)
+    monkeypatch.setattr(file_scan.FileScanner, "_record_source", slow_record)
     ctx = ConnectorContext(
         config={"path": str(tmp_path), "use_git": False}, index=index, deadline=clock[0] + 5.5
     )

@@ -15,7 +15,7 @@ import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
-from shadowscan.connectors.code import filesystem as fs_module
+from shadowscan.connectors.code import ownership
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.engine import Engine
 from shadowscan.models import ScanStats
@@ -233,12 +233,12 @@ def test_git_info_rejects_oversized_identity_fields(tmp_path, index, monkeypatch
     fields = ["Author", "author@example.test", "2026-10-01T00:00:00Z"]
     fields[field] = "a" * (limit + 1)
     monkeypatch.setattr(
-        fs_module,
+        ownership,
         "run_bounded_metadata",
         Mock(return_value=subprocess.CompletedProcess([], 0, stdout="\x00".join(fields), stderr="")),
     )
     ctx = _context(index)
-    assert FilesystemConnector(ctx)._git_info(tmp_path, ".") == {}
+    assert FilesystemConnector(ctx).ownership.git_info(tmp_path, ".") == {}
     assert ctx.stats.incomplete and ctx.stats.warnings == [
         "code.filesystem: git metadata field limit exceeded; enrichment skipped"
     ]
@@ -248,12 +248,12 @@ def test_git_info_accepts_identity_fields_at_the_limit(tmp_path, index, monkeypa
     (tmp_path / ".git").mkdir()
     fields = ["A" * 1024, "a" * 1024, "2026-10-01T00:00:00Z"]
     monkeypatch.setattr(
-        fs_module,
+        ownership,
         "run_bounded_metadata",
         Mock(return_value=subprocess.CompletedProcess([], 0, stdout="\x00".join(fields), stderr="")),
     )
     ctx = _context(index)
-    result = FilesystemConnector(ctx)._git_info(tmp_path, ".")
+    result = FilesystemConnector(ctx).ownership.git_info(tmp_path, ".")
     assert result["last_author"] == fields[0] and result["last_author_email"] == fields[1]
     assert not ctx.stats.incomplete
 
@@ -262,12 +262,12 @@ def test_git_info_accepts_identity_fields_at_the_limit(tmp_path, index, monkeypa
 def test_git_info_rejects_ambiguous_field_counts(tmp_path, index, monkeypatch, fields):
     (tmp_path / ".git").mkdir()
     monkeypatch.setattr(
-        fs_module,
+        ownership,
         "run_bounded_metadata",
         Mock(return_value=subprocess.CompletedProcess([], 0, stdout="\x00".join(fields), stderr="")),
     )
     ctx = _context(index)
-    assert FilesystemConnector(ctx)._git_info(tmp_path, ".") == {}
+    assert FilesystemConnector(ctx).ownership.git_info(tmp_path, ".") == {}
     assert ctx.stats.incomplete and "invalid fields" in ctx.stats.warnings[0]
 
 

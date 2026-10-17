@@ -693,8 +693,8 @@ reproduction.
   and every run's normalized predictions committed. The tools' raw output was
   not committed.
 - **Later ShadowScan runs are in-sample.** After the 2026-10-11 run,
-  ShadowScan's detection rules were changed (the changelog's October 14
-  detection-precision entry) with that run's twelve ShadowScan errors in
+  ShadowScan's detection rules were changed (the October 14 detection
+  entries of the changelog) with that run's twelve ShadowScan errors in
   view: ambiguous Gemini names on identity, SaaS and GCP inventory, Notion
   bots, Ollama-style `/api/chat` and text-generation-inference `/generate`
   gateway routes, Kubernetes serving-engine images and GPU limits, n8n HTTP

@@ -204,7 +204,7 @@ def test_local_config_indirections_are_rejected_before_any_git_command(tmp_path,
     connector = FilesystemConnector(
         ConnectorContext(config={"path": str(root), "use_git": True}, index=index)
     )
-    assert connector._git_info(root, ".") == {}
+    assert connector.ownership.git_info(root, ".") == {}
     findings = connector.run()
     assert any("framework.crewai" in finding.frameworks for finding in findings)
     assert connector.ctx.stats.incomplete

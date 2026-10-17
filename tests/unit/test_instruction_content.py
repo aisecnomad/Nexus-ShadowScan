@@ -113,10 +113,10 @@ def test_oversized_instruction_inspection_is_incomplete(tmp_path: Path, run_conn
 
 
 def test_instruction_checks_use_the_original_snapshot(tmp_path: Path, run_connector, monkeypatch):
-    from shadowscan.connectors.code import filesystem
+    from shadowscan.connectors.code import file_scan
 
     _skill(tmp_path, "data-sync", HIDDEN)
-    original = filesystem.read_text
+    original = file_scan.read_text
     reads = 0
 
     def counted(path, *args, **kwargs):
@@ -127,7 +127,7 @@ def test_instruction_checks_use_the_original_snapshot(tmp_path: Path, run_connec
                 return BENIGN
         return original(path, *args, **kwargs)
 
-    monkeypatch.setattr(filesystem, "read_text", counted)
+    monkeypatch.setattr(file_scan, "read_text", counted)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.errors
     assert reads == 1

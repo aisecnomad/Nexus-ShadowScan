@@ -8,12 +8,15 @@ No credentials needed — scan a repository or directory:
 shadowscan code .
 ```
 
-Scanning the ShadowScan checkout itself reports an incomplete scan (exit 3):
-some redaction rules and tests intentionally exceed the sanitizer's limits,
-and some committed benchmark corpora and results exceed the default
+Scanning the ShadowScan checkout itself this way reports an incomplete scan
+(exit 3): some redaction rules and tests intentionally exceed the sanitizer's
+limits, and some committed benchmark corpora and results exceed the default
 `max_file_size`. The scanner fails closed rather than skip them silently.
 Scan one of your own projects, or start with the offline demo below. In a
-ShadowScan checkout, `shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
+ShadowScan checkout, `make self-scan` scans it with
+`examples/shadowscan.self-scan.yaml`, which excludes those paths, each with a
+documented reason, and completes with exit 0.
+`shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
 scans the bundled sample repository and completes in seconds.
 
 To mark which agents are sanctioned, add `--inventory <path>` with an existing

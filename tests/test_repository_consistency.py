@@ -14,6 +14,7 @@ the shipped code. Run both modules with ``make policy``.
 from __future__ import annotations
 
 import functools
+import hashlib
 import importlib.util
 import itertools
 import json
@@ -762,6 +763,110 @@ def test_changelog_has_no_relative_links() -> None:
     prose = re.sub(r"`[^`\n]*`", "", _read(ROOT / "CHANGELOG.md"))  # code spans show link syntax, not links
     links = re.findall(r"\]\((?!https?://|mailto:|#)([^)\s]+)\)", prose)
     assert not links, f"name the file in a code span instead of linking it: {sorted(set(links))}"
+
+
+# CHANGELOG.md is a summary: one short bullet per change, under a theme heading, for each version. It
+# had grown into a 7,050-line engineering log, one long entry per change; that log is kept word for
+# word in archive/changelog/ and pinned by digest. The size limits are generous for a summary and far
+# below the log, so a section that outgrows them is condensed rather than the limit raised by habit.
+_CHANGELOG_THEMES = (
+    "Security and redaction",
+    "Collection and coverage",
+    "Detection and signatures",
+    "Reports and CLI",
+    "Governance, registries and identity",
+    "Benchmarks and evaluation",
+    "Release, CI and supply chain",
+    "Documentation",
+)
+# Sections kept as they were written, before the summary format: the 0.1.2 correction and the notes on
+# the pre-release implementation.
+_CHANGELOG_VERBATIM_SECTIONS = ("0.1.2 — 2026-10-08", "Earlier hardening notes — 2026-09-24")
+_CHANGELOG_MAX_BYTES = 200_000
+_CHANGELOG_MAX_ENTRY_CHARACTERS = 1_000
+_ARCHIVED_CHANGELOG = ROOT / "archive" / "changelog" / "CHANGELOG-through-2026-10-16.md"
+_ARCHIVED_CHANGELOG_SHA256 = "2a5f99929c4a255d9f1347cc989a65c983c2a6c07798befc7001158e7fb8d2c1"
+
+
+def _changelog_problems(text: str) -> list[str]:
+    """Where a changelog leaves the summary format: size, headings, their order and entry length."""
+    problems = []
+    if len(text.encode("utf-8")) > _CHANGELOG_MAX_BYTES:
+        problems.append(f"the file is over {_CHANGELOG_MAX_BYTES:,} bytes")
+    sections: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for _, line in _prose_lines(text):
+        if line.startswith("## "):
+            current = sections.setdefault(line[3:].strip(), [])
+        elif current is not None:
+            current.append(line)
+    for name, lines in sections.items():
+        if name in _CHANGELOG_VERBATIM_SECTIONS:
+            continue
+        theme: str | None = None
+        headings: list[str] = []
+        entries: list[tuple[str | None, str]] = []
+        for line in lines:
+            if line.startswith("### "):
+                theme = line[4:].strip()
+                headings.append(theme)
+            elif line.startswith("- "):
+                entries.append((theme, line[2:].strip()))
+            elif entries and line.startswith("  ") and line.strip():
+                entries[-1] = (entries[-1][0], entries[-1][1] + " " + line.strip())
+        known = [heading for heading in headings if heading in _CHANGELOG_THEMES]
+        problems.extend(
+            f"{name}: '{heading}' is not a theme heading" for heading in headings if heading not in known
+        )
+        if known != sorted(set(known), key=_CHANGELOG_THEMES.index):
+            problems.append(f"{name}: theme headings are repeated or out of order")
+        for under, entry in entries:
+            if under is None:
+                problems.append(f"{name}: a bullet sits above the first theme heading: {entry[:50]!r}")
+            elif len(entry) > _CHANGELOG_MAX_ENTRY_CHARACTERS:
+                problems.append(f"{name}: a {len(entry)}-character entry under '{under}': {entry[:50]!r}")
+    if "Unreleased" not in sections:
+        problems.append("there is no Unreleased section")
+    return problems
+
+
+def test_changelog_is_a_summary_with_one_short_bullet_per_change() -> None:
+    """Add a bullet of at most a thousand characters under the matching theme heading of Unreleased.
+
+    Reasoning, regression-test notes and rejected alternatives belong in the pull request, the
+    documentation page of the feature or an ADR, not here.
+    """
+    problems = _changelog_problems(_read(ROOT / "CHANGELOG.md"))
+    assert not problems, "keep CHANGELOG.md a summary:\n  " + "\n  ".join(problems)
+
+
+def test_changelog_check_flags_what_makes_it_an_essay_log_again() -> None:
+    summary = "## Unreleased\n\n### Security and redaction\n\n- A short entry.\n  Continued here.\n"
+    assert _changelog_problems(summary) == []
+    assert _changelog_problems(summary + "\n### Documentation\n\n- Another.\n") == []
+    long_entry = summary + "- " + "word " * 250 + "\n"
+    assert any(
+        "-character entry under 'Security and redaction'" in p for p in _changelog_problems(long_entry)
+    )
+    per_change = summary + "\n### Plugin workers no longer see the raw identity key (October 16)\n\n- x\n"
+    assert any("is not a theme heading" in p for p in _changelog_problems(per_change))
+    shuffled = summary + "\n### Documentation\n\n### Security and redaction\n"
+    assert any("repeated or out of order" in p for p in _changelog_problems(shuffled))
+    unthemed = "## Unreleased\n\n- A bullet with no theme.\n"
+    assert any("above the first theme heading" in p for p in _changelog_problems(unthemed))
+    assert any("over 200,000 bytes" in p for p in _changelog_problems(summary + "x" * 200_001))
+    assert any("no Unreleased section" in p for p in _changelog_problems("## 0.2.0 — 2027-01-01\n"))
+    # Sections written before the summary format keep their own headings and longer lines.
+    kept = summary + "\n## Earlier hardening notes — 2026-09-24\n\n### Security\n\n- " + "word " * 250 + "\n"
+    assert _changelog_problems(kept) == []
+
+
+def test_archived_changelog_is_the_original_word_for_word() -> None:
+    """The summary leaves detail out on the strength of this copy, so it may not change."""
+    digest = hashlib.sha256(_ARCHIVED_CHANGELOG.read_bytes()).hexdigest()
+    assert digest == _ARCHIVED_CHANGELOG_SHA256, "archive/changelog/ is retained as written"
+    assert _ARCHIVED_CHANGELOG_SHA256 in _read(_ARCHIVED_CHANGELOG.with_name("README.md"))
+    assert f"archive/changelog/{_ARCHIVED_CHANGELOG.name}" in _read(ROOT / "CHANGELOG.md")
 
 
 def test_make_secrets_runs_the_ci_credential_check_and_is_part_of_make_check() -> None:

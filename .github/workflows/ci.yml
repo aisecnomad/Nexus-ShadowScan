@@ -75,8 +75,9 @@ jobs:
       - run: pytest -q
   test:
     runs-on: ubuntu-latest
-    # The coverage-traced 3.11 leg runs the full suite serially and takes about
-    # 40 minutes; the untraced legs finish in about 20.
+    # The suite runs on one pytest-xdist worker per CPU. Run serially, the
+    # coverage-traced 3.11 leg took about 40 minutes and the untraced legs about
+    # 20. The limit stays at an hour until the parallel timings are known.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -135,9 +136,20 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - name: Validate threat and control mapping catalogs
         run: python -m shadowscan.mappings.validate
+      - name: Self-scan this checkout (a complete report is required)
+        run: |
+          # Findings do not fail this step; an incomplete scan (exit 3) does. The
+          # documented exclusions are in the config. It runs before the steps
+          # below write caches, reports and distributions into the checkout.
+          shadowscan scan -c examples/shadowscan.self-scan.yaml --format json -o "$RUNNER_TEMP/shadowscan-self-scan.json"
       - run: ruff check shadowscan tests tools benchmarks
       - run: ruff format --check shadowscan tests tools benchmarks
       - run: mypy shadowscan tools benchmarks
+      - name: Check function and module size against the complexity baseline
+        # A function above ruff's C901 limit of 20 or a package module above 2,000
+        # lines may not grow, and the baseline may not allow more than the code has.
+        # docs/testing.md says how to lower or, after review, raise it.
+        run: python -m tools.complexity_gate
       # Audit installed dependencies; the editable scanner is unpublished source,
       # so querying its version on PyPI is not a dependency vulnerability check.
       - run: pip-audit --skip-editable --progress-spinner off
@@ -145,16 +157,18 @@ jobs:
         run: |
           # Fail if a locked package cannot be checked, even when an installed
           # environment audit permits an intentionally skipped editable package.
-          for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do
+          for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock requirements-fuzz.lock; do
             pip-audit --require-hashes --strict --progress-spinner off \
               --disable-pip -r "$lock"
           done
       - name: Run the test suite
         if: ${{ !matrix.coverage }}
-        run: python -m pytest -q
+        run: python -m pytest -q -n auto --dist worksteal
       - name: Run the test suite with line and branch coverage
         if: ${{ matrix.coverage }}
-        run: python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+        # pytest-cov measures in every worker and combines their data before it
+        # checks the floor, so the report and coverage_gate below see the whole suite.
+        run: python -m pytest -q -n auto --dist worksteal --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Enforce per-connector coverage floor
         if: ${{ matrix.coverage }}
         run: |
@@ -218,6 +232,13 @@ jobs:
           name: shadowscan-sarif-${{ matrix.python }}
           path: shadowscan.sarif
           retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: shadowscan-self-scan-${{ matrix.python }}
+          path: ${{ runner.temp }}/shadowscan-self-scan.json
+          if-no-files-found: ignore
+          retention-days: 7
   container-security:
     runs-on: ubuntu-latest
     timeout-minutes: 30

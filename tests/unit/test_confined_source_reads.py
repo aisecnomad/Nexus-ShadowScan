@@ -19,6 +19,7 @@ import pytest
 
 from shadowscan.connectors import ConnectorContext
 from shadowscan.connectors.code.filesystem import FilesystemConnector
+from shadowscan.connectors.code.walk import TreeWalker
 from shadowscan.utils.files import open_confined_directory, open_confined_file, read_policy_text
 from shadowscan.utils.text import read_text
 
@@ -39,7 +40,7 @@ def test_directory_swapped_for_a_link_after_the_walk_is_never_read(tmp_path, ind
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "package.json").write_text('{"dependencies": {"@langchain/langgraph": "^0.2"}}\n')
-    walk = FilesystemConnector._iter_entries
+    walk = TreeWalker._iter_entries
 
     def walked_then_swapped(self, scan_root):
         entries = list(walk(self, scan_root))  # the walk sees the real directory
@@ -47,7 +48,7 @@ def test_directory_swapped_for_a_link_after_the_walk_is_never_read(tmp_path, ind
         (root / "pkg").symlink_to(outside, target_is_directory=True)
         yield from entries
 
-    monkeypatch.setattr(FilesystemConnector, "_iter_entries", walked_then_swapped)
+    monkeypatch.setattr(TreeWalker, "_iter_entries", walked_then_swapped)
     findings, ctx = _run(index, root)
     assert not any("framework.langgraph" in finding.frameworks for finding in findings)
     assert ctx.stats.incomplete
@@ -71,8 +72,12 @@ def test_source_and_ownership_reads_share_one_root_descriptor(tmp_path, index, m
         reads.append((Path(path), kwargs.get("dir_fd")))
         return read_text(path, *args, **kwargs)
 
-    monkeypatch.setattr("shadowscan.connectors.code.filesystem.open_confined_directory", recording)
-    monkeypatch.setattr("shadowscan.connectors.code.filesystem.read_text", reading)
+    # The walk opens the root and the file scan reads sources; ownership verifies the
+    # root and reads CODEOWNERS.
+    for module in ("walk", "ownership"):
+        monkeypatch.setattr(f"shadowscan.connectors.code.{module}.open_confined_directory", recording)
+    for module in ("file_scan", "ownership"):
+        monkeypatch.setattr(f"shadowscan.connectors.code.{module}.read_text", reading)
     findings, ctx = _run(index, tmp_path)
     # The second open verifies the root's identity before ownership lookup;
     # every source and CODEOWNERS read stays on the original descriptor.
@@ -93,7 +98,7 @@ def test_scan_root_that_cannot_be_opened_safely_is_incomplete(tmp_path, index, m
     def replaced(path):
         raise OSError(errno.ELOOP, "Too many levels of symbolic links", str(path))
 
-    monkeypatch.setattr("shadowscan.connectors.code.filesystem.open_confined_directory", replaced)
+    monkeypatch.setattr("shadowscan.connectors.code.walk.open_confined_directory", replaced)
     findings, ctx = _run(index, tmp_path, **({"label": label} if label else {}))
     assert findings == [] and ctx.stats.objects_examined == 0
     assert ctx.stats.incomplete
@@ -126,7 +131,7 @@ def test_scan_root_open_failure_names_its_reason_not_its_path(tmp_path, index, m
             raise type(failure)(failure.errno, failure.strerror, str(path))
         raise failure
 
-    monkeypatch.setattr("shadowscan.connectors.code.filesystem.open_confined_directory", replaced)
+    monkeypatch.setattr("shadowscan.connectors.code.walk.open_confined_directory", replaced)
     findings, ctx = _run(index, tmp_path, label="repository")
     assert findings == [] and ctx.stats.incomplete
     assert ctx.stats.errors == [

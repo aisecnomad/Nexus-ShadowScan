@@ -392,6 +392,227 @@ _MOVED_FROM_FILESYSTEM = {
     "shadowscan.utils.jsonc": ("_load_json_lenient_marked",),
 }
 
+# The same for the names that the collaborator moves of ADR-005 (from main at
+# 8c72467) took out of filesystem.py: it no longer uses them itself and re-exports
+# them as `name as name` imports (_codeowners_match by assignment). Without those,
+# dir() of the module lacks exactly these and the modules listed after them.
+_MOVED_TO_COLLABORATORS = {
+    "shadowscan.connectors.code.ownership": (
+        "MAX_OWNERSHIP_STEPS",
+        "MAX_PATTERN_LENGTH",
+        "MAX_ROOT_OWNERSHIP_STEPS",
+        "MAX_RULES",
+        "OwnershipBudget",
+        "OwnershipLimitError",
+        "_MAX_GIT_AUTHOR_CHARS",
+        "_MAX_GIT_EMAIL_CHARS",
+        "_MAX_GIT_TIMESTAMP_CHARS",
+        "_codeowners_match",
+    ),
+    "shadowscan.connectors.code.walk": (
+        "DEADLINE_MARGIN_FRACTION",
+        "DEADLINE_MARGIN_MIN_SECONDS",
+        "DISCLOSED_DEFAULT_EXCLUDES",
+        "ENUMERATION_DEADLINE_SHARE",
+        "LOCK_FILES",
+        "MCP_CONFIG_NAMES",
+        "SCAN_TIMEOUT_BAND_HEADROOM_BYTES",
+        "SCAN_TIMEOUT_CAP_SECONDS",
+        "SCAN_TIMEOUT_STEP_BYTES",
+        "TEXT_CONFIG_EXTENSIONS",
+        "_AGENT_DEFINITION_DIRS",
+        "_CODING_AGENT_DOC_NAMES",
+        "_DOCUMENTATION_EXTENSIONS",
+        "_IGNORED_STAT_ERRNOS",
+        "_LOCKFILE_MANIFESTS",
+        "_MAX_NON_REGULAR_NOTES",
+        "_NEVER_READ_SUFFIXES",
+        "_ROOT_OPEN_REASONS",
+        "_WalkBudget",
+        "_WalkCounters",
+        "_WalkLimitError",
+        "_analyzed_by_name",
+        "_below_root",
+        "_check_enumeration_time",
+        "_exception_name",
+        "_file_failure_reason",
+        "_holds_file",
+        "_is_coding_agent_doc",
+        "_marks_project",
+        "_nearest_root",
+        "_never_read_by_name",
+        "_note_unread_settings",
+        "_project_root",
+        "_report_name",
+        "_resolved_link_target",
+        "_root_open_failure",
+        "_scan_priority",
+        "_special_file_kind",
+        "_walk_directories",
+        "deadline_margin",
+        "enumeration_deadline",
+        "scan_timeout_for_size",
+    ),
+    "shadowscan.connectors.code.file_scan": (
+        "AbstractSet",
+        "CI_IMAGE_WEIGHT_SCALE",
+        "MAX_INSTRUCTION_TEXT_BYTES",
+        "_ANY_FILE_NAME",
+        "_COLOCATED_SIGNATURES",
+        "_IAC_EXTENSIONS",
+        "_IAC_MODEL_RE",
+        "_IAM_WILDCARD_RE",
+        "_LFS_POINTER_TEXT",
+        "_LLM_CATEGORIES",
+        "_MANIFEST_EXTENSIONS",
+        "_MAX_AGENT_DEFINITIONS",
+        "_MAX_CARD_FILES",
+        "_MAX_LISTED_RULE_FILES",
+        "_MAX_MCP_SERVER_CONSTRUCTIONS",
+        "_MAX_MCP_TOOLS",
+        "_MCP_REGISTRATION_RE",
+        "_MCP_SERVER_IMPORT_RE",
+        "_WORKFLOW_EXTENSIONS",
+        "_XML_EXTENSIONS",
+        "_clip",
+        "_load_json_lenient",
+        "assess_posture",
+        "posture_parseable",
+    ),
+    "shadowscan.connectors.code.project_findings": (
+        "EXAMPLE_CREDENTIAL_WEIGHT",
+        "MAX_EXAMPLE_CREDENTIAL_EVIDENCE",
+        "_LIBRARY_SIGNALS",
+        "_LOCATION_LINE",
+        "_MCP_CAPABILITY_KEYWORDS",
+        "_MENTION_SIGNALS",
+        "_PROJECT_MANIFESTS",
+    ),
+    "shadowscan.connectors.code.scan_records": (
+        "_BUNDLED_PACKS",
+        "_DEDICATED_MCP_CONFIG_NAMES",
+        "_MCP_TRANSPORTS",
+        "_SourceFile",
+        "_bundled_signature",
+        "_document_declares_mcp",
+        "_local_module_predicate",
+        "_on_disk_project",
+    ),
+    # Importable before only because filesystem.py imported them itself.
+    "bisect": ("bisect_right",),
+    "collections.abc": ("Callable", "Sequence"),
+    "contextlib": ("contextmanager",),
+    "dataclasses": ("replace",),
+    "pathlib": ("PurePosixPath",),
+    "shadowscan.connectors.code.dotnet_semantics": ("microsoft_tool_loop_matches",),
+    "shadowscan.connectors.code.excerpts": ("_ExcerptSource", "_LazyExcerpt", "_Snippet", "_excerpt"),
+    "shadowscan.connectors.code.go_semantics": ("langchaingo_agent_matches",),
+    "shadowscan.connectors.code.import_provenance": ("local_module_conflict",),
+    "shadowscan.connectors.code.instruction_content": ("ContentHit", "inspect_instruction_text"),
+    "shadowscan.connectors.code.java_semantics": ("spring_tool_registration_matches",),
+    "shadowscan.connectors.code.lockfiles": ("LOCKFILE_NAMES", "LockInventory"),
+    "shadowscan.connectors.code.manifests": (
+        "Artifact",
+        "Dep",
+        "_pattern_timeout",
+        "is_manifest_name",
+        "manifest_comment_projection",
+        "parse_manifest",
+    ),
+    "shadowscan.connectors.code.mcp_config": ("_mcp_client_for", "_parse_mcp_servers"),
+    "shadowscan.connectors.code.mcp_tools": ("MCPToolLimitError", "mcp_tool_capabilities", "mcp_tool_names"),
+    "shadowscan.connectors.code.model_artifacts": (
+        "ARTIFACT_SUFFIXES",
+        "ArtifactBudgetExhausted",
+        "inspect_artifact",
+    ),
+    "shadowscan.connectors.code.python_reexports": (
+        "ImportResolver",
+        "MAX_PENDING_BYTES",
+        "MAX_PENDING_FILES",
+        "ReexportLimitError",
+        "has_local_import",
+        "project_path",
+    ),
+    "shadowscan.connectors.code.rule_packs": ("detection_rule_format",),
+    "shadowscan.connectors.code.skill_audit": ("InstructionAudit", "audit_skill_text"),
+    "shadowscan.connectors.code.source_identity": ("named_construction_spans",),
+    "shadowscan.connectors.code.source_ranges": ("noncode_ranges", "nul_reading_ranges"),
+    "shadowscan.connectors.code.source_semantics": (
+        "MAX_CALL_TEXT",
+        "SourceBudgetExceeded",
+        "SourceNotParsed",
+        "bound_source_matches",
+    ),
+    "shadowscan.connectors.code.tool_attribution": ("ToolRegions",),
+    "shadowscan.connectors.common": (
+        "apply_matches",
+        "cap_confidence",
+        "finalize",
+        "looks_like_placeholder",
+        "placeholder_reason",
+    ),
+    "shadowscan.connectors.mcp_risk": ("record_server_risks",),
+    "shadowscan.connectors.posture": (
+        "CLIENT_SIGNATURES",
+        "approval_scopes",
+        "approval_settings",
+        "canonical_settings_path",
+        "posture_client",
+        "record_approval",
+        "record_posture",
+        "unreadable_settings",
+    ),
+    "shadowscan.models": ("Evidence",),
+    "shadowscan.signatures": ("Signature",),
+    "shadowscan.signatures.loader": ("builtin_signature_dir",),
+    "shadowscan.signatures.matcher": (
+        "LiteralScan",
+        "MatchTimeoutError",
+        "SOURCE_EXTENSIONS",
+        "WALL_BUDGET_FACTOR",
+        "_finditer",
+        "language_for_path",
+    ),
+    "shadowscan.utils.files": (
+        "link_in_path",
+        "open_confined_directory",
+        "open_confined_file",
+        "read_policy_text",
+    ),
+    "shadowscan.utils.git": (
+        "LFS_POINTER_MAX_BYTES",
+        "LFS_POINTER_PREFIX",
+        "MAX_GITMODULES_BYTES",
+        "MetadataOutputLimitError",
+        "MetadataTimeoutError",
+        "declared_submodule_paths",
+        "metadata_git_argv_prefix",
+        "metadata_git_env",
+        "read_gitlink_paths",
+        "require_local_git_metadata",
+        "run_bounded_metadata",
+    ),
+    "shadowscan.utils.redaction": ("SanitizationLimitError", "sanitize", "sanitize_text"),
+    "shadowscan.utils.safe_json": ("JSONIntegrityError",),
+    "shadowscan.utils.safe_yaml": (
+        "YAMLIntegrityError",
+        "YAMLResourceLimitError",
+        "strict_bounded_safe_load",
+    ),
+    "shadowscan.utils.text": (
+        "line_counter",
+        "notebook_to_source",
+        "parse_timestamp",
+        "read_text",
+        "redact",
+        "truncate",
+    ),
+}
+_MODULES_MOVED_TO_COLLABORATORS = ("errno", "fnmatch", "regex", "stat", "subprocess", "time", "yaml")
+# Names that filesystem.py bound to another name of the defining module.
+_ALIASED = {"_load_json_lenient_marked": "load_json_lenient_marked", "_codeowners_match": "codeowners_match"}
+
 
 def test_names_moved_out_of_filesystem_stay_importable_from_it():
     # The helper move must not break importers of filesystem.py: each name is
@@ -402,11 +623,11 @@ def test_names_moved_out_of_filesystem_stay_importable_from_it():
 
     from shadowscan.connectors.code import filesystem
 
-    for module_name, names in _MOVED_FROM_FILESYSTEM.items():
+    for module_name, names in (*_MOVED_FROM_FILESYSTEM.items(), *_MOVED_TO_COLLABORATORS.items()):
         module = importlib.import_module(module_name)
         for name in names:
-            # utils.jsonc defines the marked loader without the underscore alias.
-            source = "load_json_lenient_marked" if name == "_load_json_lenient_marked" else name
-            assert getattr(filesystem, name) is getattr(module, source), name
+            assert getattr(filesystem, name) is getattr(module, _ALIASED.get(name, name)), name
     assert filesystem.ast is ast
     assert filesystem.tomllib is tomllib
+    for name in _MODULES_MOVED_TO_COLLABORATORS:
+        assert getattr(filesystem, name) is importlib.import_module(name), name
