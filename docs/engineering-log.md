@@ -814,7 +814,13 @@ public repositories with the tool and read the committed benchmark metrics.
   os.environ["X"]; # <key>`), the read stays visible and the comment keeps
   its words, but `redaction_assignments._redact_trailing_comments` withholds
   each opaque token in a comment on a line that assigns a credential name,
-  after any value (main showed those tokens too). The variable name must not look
+  after any value (main showed those tokens too). In `key: value` form the
+  value lexer stops at the quote of a subscript or call argument, so the
+  fallback after such a read (`azure_api_key: os.environ['K'] if PROD else
+  '<key>'`, `or`, `??`, `||`) was shown, on main as well; the mapping pass
+  now reads past the bracket the withheld read left open, and a fallback
+  after a read assigned to a conditionally named setting (`azureKey:
+  process.env['K'] ?? '<key>'`) takes that setting's name. The variable name must not look
   like an opaque key (`redaction_rules._opaque`: letters and digits alternating
   in a long run) and must not run to 16 characters or more without a `_`
   (`_PASTED_KEY_NAME`), so an upper-case key or base32 secret pasted as the
