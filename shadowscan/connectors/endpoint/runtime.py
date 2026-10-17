@@ -259,15 +259,16 @@ def _ai_category(category: str) -> bool:
 # (Ollama, LM Studio, vLLM, llama.cpp, LocalAI), coding agents, and platforms
 # (self-hosted chat UIs such as Open WebUI and AnythingLLM, LiteLLM, Dify,
 # Flowise). A product name that is also a common word or another program's
-# name is left out by name, not by category (catalog.AMBIGUOUS_PRODUCT_NAMES):
+# name needs context, by name, not by category (catalog.AMBIGUOUS_PRODUCT_NAMES):
 # "Make (Integromat)" is also GNU make.
 _HOST_PRODUCT_CATEGORIES = frozenset({"provider", "coding-agent", "platform"})
 # The products a signature groups, listed in its display name:
 # "Self-hosted chat UIs (Open WebUI, LibreChat, AnythingLLM, ...)".
 _LISTED_PRODUCTS = re.compile(r"\(([^()/]*,[^()/]*)\)")
 _APP_SUFFIX = re.compile(r"\.(?:app|exe)$", re.IGNORECASE)
-# "Ollama version 0.5.7", "LM Studio 0.3.14": Windows program names carry the version.
-_TRAILING_VERSION = re.compile(r"\s+(?:version\s+)?v?\d[\w.+-]*$", re.IGNORECASE)
+# "Ollama version 0.5.7", "LM Studio 0.3.14", "Jan v0.5.17": Windows program names
+# carry the version. A bare number is part of the name ("Codex 3", "Jan 2024").
+_TRAILING_VERSION = re.compile(r"\s+(?:version\s+v?\d|v\d|\d+\.\d)[\w.+-]*$", re.IGNORECASE)
 _NON_ALNUM = re.compile(r"[^0-9a-z]+")
 _PATH_SEPARATOR = re.compile(r"[\\/]")
 # Host inventory paths are read this far, so a long path keeps its file name.
@@ -305,7 +306,8 @@ def _host_product_keys(index: SignatureIndex) -> frozenset[str]:
 
     A signature contributes its product names (see ``_signature_product_names``). The
     endpoint catalog contributes its local model runtimes and AI command-line tools. A
-    name the catalog lists as ambiguous contributes nothing.
+    name the catalog lists as ambiguous is left out: it counts only in context (see
+    ``_names_product``).
     """
     names = [
         product
@@ -316,8 +318,34 @@ def _host_product_keys(index: SignatureIndex) -> frozenset[str]:
     names += [name for store in MODEL_STORES for name in (store.product, store.runtime)]
     names += [name for command, (product, _) in SHELL_TOOLS.items() for name in (command, product)]
     names += LOCAL_RUNTIME_NAMES
-    ambiguous = {_product_key(name) for name in AMBIGUOUS_PRODUCT_NAMES}
+    ambiguous = _ambiguous_product_keys()
     return frozenset(key for key in map(_product_key, names) if key and key not in ambiguous)
+
+
+def _ambiguous_product_keys() -> frozenset[str]:
+    return frozenset(_product_key(name) for name in AMBIGUOUS_PRODUCT_NAMES)
+
+
+def _in_context(part: str, products: frozenset[str]) -> bool:
+    """Whether the path component ``part`` is an ``.app``/``.exe`` application or a
+    dot-directory named after one of ``products``: ``Jan.app``, ``~/.lmstudio``."""
+    return bool(_APP_SUFFIX.search(part) or part.startswith(".")) and _product_key(part) in products
+
+
+def _names_product(text: str, keys: frozenset[str], ambiguous: frozenset[str]) -> bool:
+    """Whether the name or path ``text`` names a known AI product as a whole.
+
+    Its last component qualifies when it is a product name in ``keys``, or any product
+    name in context (``Jan.exe``, ``Goose.app``). A directory on the path qualifies only
+    in context, as an application bundle or dot-directory named after a product
+    (``/Applications/Goose.app/Contents/MacOS/goose``, ``~/.lmstudio/bin/lms``): a plain
+    directory such as a home directory's user name or ``Cellar/goose`` names nothing.
+    """
+    *parents, base = [part for part in _PATH_SEPARATOR.split(text) if part] or [""]
+    products = keys | ambiguous
+    if _product_key(base) in keys or _in_context(base, products):
+        return True
+    return any(_in_context(part, products) for part in parents)
 
 
 def _in_model_store(text: str) -> bool:
@@ -361,8 +389,9 @@ class HostConnector(_EndpointConnector):
         """
         if self._product_keys is None:
             self._product_keys = _host_product_keys(self.index)
+        keys, ambiguous = self._product_keys, _ambiguous_product_keys()
         values = [self._text(record.get(key), _MAX_HOST_PATH) for key in ("name", "path", "process")]
-        return any(_product_key(value) in self._product_keys or _in_model_store(value) for value in values)
+        return any(_names_product(value, keys, ambiguous) or _in_model_store(value) for value in values)
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:

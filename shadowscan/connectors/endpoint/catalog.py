@@ -248,11 +248,22 @@ LOCAL_RUNTIME_NAMES: tuple[str, ...] = (
     "KoboldCpp",
 )
 
-# Product names that are also a common word or the name of unrelated software:
-# a host inventory row named "Make" is GNU make far more often than Make
-# (Integromat), and "Rivet" names more than Ironclad's agent IDE.
-# endpoint.host never reports a row because its whole name is one of these.
+# Product names that are also a common word, a given name or the name of
+# unrelated software: a host inventory row named "Make" is GNU make far more
+# often than Make (Integromat), and Homebrew's "goose" is the pressly/goose
+# database migration tool, not Block's agent. endpoint.host takes one of these
+# as a row's whole name only with context: an ``.app``/``.exe`` application
+# (``Jan.app``, ``Jan.exe``), or a path inside an application bundle or a
+# dot-directory named after a product (``/Applications/Goose.app/...``,
+# ``~/.lmstudio/bin/lms``, ``~/.continue``).
 AMBIGUOUS_PRODUCT_NAMES: tuple[str, ...] = (
     "Make",
     "Rivet",
+    "Goose",  # pressly/goose, a database migration tool
+    "Jan",  # a given name and a month
+    "lms",  # LM Studio's CLI, and the usual abbreviation of a learning management system
+    # Common words.
+    "Continue",
+    "Replicate",
+    "Cohere",
 )

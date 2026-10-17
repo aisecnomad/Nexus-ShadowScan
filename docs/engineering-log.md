@@ -144,7 +144,18 @@ Counts and figures quoted in an entry are those of its date.
   name ("Self-hosted chat UIs (Open WebUI, LibreChat, AnythingLLM, ...)");
   an explicit catalog list of ambiguous names (Make, Rivet) keeps those out
   by name instead; and a path that is or lies in a catalog model store is
-  reported. Regression-tested with each of those rows.
+  reported. Regression-tested with each of those rows. The same review
+  found new false positives from the whole-name rule: Homebrew's `goose`
+  (the pressly/goose database migration tool), `/usr/bin/lms`, a bare
+  `Jan`, common words such as `Continue`, `Replicate` and `Cohere`, and,
+  because any trailing number was stripped as a version, `Codex 3` and
+  `Jan 2024`. A trailing version is now a dotted number or one marked `v`
+  or `version`, and the catalog's ambiguous names count only in context:
+  as an `.app`/`.exe` application, or on a path inside an application
+  bundle or dot-directory named after a product
+  (`/Applications/Goose.app/...`, `~/.lmstudio/bin/lms`). A plain
+  directory, such as a user named `claude`, is no context.
+  Regression-tested both ways.
 - These three connector changes alter which findings a scan reports, and
   `gateway.otel` findings from nested exports get new ids; the
   [connector correctness migration note](production-migrations.md#october-17-connector-correctness-migration-unreleased)

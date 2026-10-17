@@ -415,7 +415,6 @@ def test_endpoint_host_reports_only_ai_relevant_inventory_rows() -> None:
         {"name": "vLLM"},
         {"name": "LocalAI"},
         {"path": "/usr/local/bin/local-ai"},
-        {"name": "Jan"},
         {"name": "Jan.exe"},
         {"name": "Msty"},
     ],
@@ -474,6 +473,59 @@ def test_endpoint_host_reports_self_hosted_platforms_and_model_store_paths(row) 
     findings = list(connector.analyze([row]))
     assert len(findings) == 1
     assert findings[0].resource == next(row[key] for key in ("name", "path") if key in row)
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "goose", "path": "/opt/homebrew/bin/goose"},
+        {"name": "goose"},
+        {"path": "/opt/homebrew/Cellar/goose/3.24.1/bin/goose"},
+        {"name": "Codex 3"},
+        {"name": "Jan 2024"},
+        {"name": "Jan"},
+        {"process": "jan"},
+        {"name": "lms", "path": "/usr/bin/lms"},
+        {"name": "Continue"},
+        {"name": "Replicate"},
+        {"name": "Cohere"},
+        {"name": "Slack", "path": "/Users/claude/Applications/Slack.app"},
+    ],
+)
+def test_endpoint_host_ambiguous_names_need_context(row) -> None:
+    """Regression: the whole-name rule reported Homebrew's ``goose`` (the
+    pressly/goose database migration tool), ``lms``, a bare ``Jan`` and common
+    words as AI runtimes, and stripped any trailing number as a version, so
+    ``Codex 3`` and ``Jan 2024`` became product names. A plain directory on the
+    path, such as a user named claude, is no context either."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert list(connector.analyze([row])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "Jan.app", "path": "/Applications/Jan.app"},
+        {"name": "Jan", "path": "/Applications/Jan.app"},
+        {"path": "C:/Users/u/AppData/Local/Programs/jan/Jan.exe"},
+        {"name": "Goose.app"},
+        {"path": "/Applications/Goose.app/Contents/MacOS/goose"},
+        {"path": "/Users/u/.lmstudio/bin/lms"},
+        {"path": "~/.continue"},
+        {"name": "Rivet.app"},
+        {"name": "Ollama v0.5.7"},
+        {"name": "LM Studio 0.3.14"},
+    ],
+)
+def test_endpoint_host_ambiguous_names_in_context_are_reported(row) -> None:
+    """An ambiguous product name counts as an ``.app``/``.exe`` application, or on a
+    path inside an application bundle or dot-directory named after a product."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert len(list(connector.analyze([row]))) == 1
     assert connector.ctx.stats.warnings == []
 
 

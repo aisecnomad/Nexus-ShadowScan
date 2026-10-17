@@ -174,21 +174,29 @@ osquery `apps` and `programs` rows and most MDM software lists carry an
 application or executable name and no category, so `endpoint.host` also
 reports a row whose name is, as a whole, a known AI product. The `name`,
 the file name of `path` and the `process` are each compared without an
-`.app` or `.exe` suffix or a trailing version, ignoring case, spaces and
-punctuation: `LM Studio.app`, `/usr/local/bin/ollama`, `Jan.exe` and
-`Ollama version 0.5.7` qualify. The known products are the product names of the
+`.app` or `.exe` suffix or a trailing version (`0.3.14`, `v0.5.17`,
+`version 2`; a bare number, such as the `3` of `Codex 3` or the `2024` of
+`Jan 2024`, is part of the name), ignoring case, spaces and punctuation:
+`LM Studio.app`, `/usr/local/bin/ollama`, `Jan.exe` and `Ollama version 0.5.7`
+qualify. The known products are the product names of the
 bundled provider, coding-agent and platform signatures (Ollama, LM Studio,
-vLLM, llama.cpp, LocalAI, SGLang, Aider, Goose, Continue, LiteLLM, Dify,
-Flowise, and the self-hosted chat UIs Open WebUI, LibreChat and AnythingLLM,
-...) and the local model runtimes and AI command-line tools the endpoint
-inventory catalog lists (GPT4All, Jan, Msty, `llama-server`, `lms`,
-`opencode`, ...). A path that is, or lies in, one of the catalog's local model
-stores (`~/.ollama/models`, `~/.lmstudio/models`, `~/.cache/lm-studio/models`,
-`~/.cache/huggingface/hub`, the GPT4All and Jan model directories) is
-reported too. A name that only contains one of them is not enough, and a
-product name that is also a common word or another program's name (Make,
-which is also GNU make, and Rivet) is never enough on its own, so ordinary
-software stays filtered.
+vLLM, llama.cpp, LocalAI, SGLang, Aider, LiteLLM, Dify, Flowise, and the
+self-hosted chat UIs Open WebUI, LibreChat and AnythingLLM, ...) and the local
+model runtimes and AI command-line tools the endpoint inventory catalog lists
+(GPT4All, Msty, `llama-server`, `opencode`, ...). A path that is, or lies in,
+one of the catalog's local model stores (`~/.ollama/models`,
+`~/.lmstudio/models`, `~/.cache/lm-studio/models`, `~/.cache/huggingface/hub`,
+the GPT4All and Jan model directories) is reported too. A name that only
+contains one of them is not enough. A product name that is also a common
+word, a given name or another program's name — Make (also GNU make), Goose
+(Homebrew's `goose` is the pressly/goose database migration tool), Jan,
+`lms`, Continue, Replicate, Cohere and Rivet — counts only in context: as an
+`.app` or `.exe` application (`Jan.app`, `Jan.exe`, `Goose.app`), or on a path
+inside an application bundle or dot-directory named after a product
+(`/Applications/Goose.app/Contents/MacOS/goose`, `~/.lmstudio/bin/lms`,
+`~/.continue`). Other directories on a path, such as a home directory's user
+name or Homebrew's `Cellar/goose`, are no context, so ordinary software stays
+filtered.
 
 ### eBPF event formats
 
