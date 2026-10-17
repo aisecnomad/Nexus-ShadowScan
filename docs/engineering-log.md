@@ -40,6 +40,22 @@ strict accounting, credentials, declaration, discount, budget.
   settings differ only in where a gap is reported: `strict_coverage` as an
   error where it happens, a budget of 0 through the ledger, whose verdict is
   an error and counts each gap by its reason.
+- **Declared omissions count every entry and never a full-weight file.**
+  `profile: ci` recorded one declared note per root for skipped links and
+  returned early for the rest, so 40 dangling links under `tests/certs/`
+  gave `declared_omissions` 1 where the default profile charged 40 entries
+  to the budget. Every declared link is now counted
+  (`ConnectorContext.count_declared_omissions`), with the one representative
+  warning per root kept. The profile also declared gaps in files whose
+  findings keep their full weight under any path: `tests/.mcp.json` with a
+  syntax error or a NUL byte, `tests/CLAUDE.md` with a NUL, a structurally
+  detected `tests/mcp.yaml` and a padded `docs/.mcp.json` all left a ci scan
+  complete. `_declared_omission` now refuses a dedicated MCP name, a
+  coding-agent instruction, rule or settings file, an agent manifest or card
+  (`_full_weight_in_tests`) and a configuration the MCP parser found by its
+  structure, so those gaps go to the budget or fail closed as in the default
+  profile. A credential limit was never declared (it is an error under
+  every profile); a test pins that.
 
 ### Review fixes: what diff holds back under the ci profile (October 17)
 

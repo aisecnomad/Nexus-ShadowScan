@@ -271,7 +271,10 @@ applied in this order:
    incomplete under every profile, in test code too.
 3. **Declared omissions.** Under `profile: ci`, a gap in a path the
    [profile](#the-ci-profile) names is declared: counted in
-   `declared_omissions`, never charged to the budget.
+   `declared_omissions`, every entry of it, never charged to the budget. A
+   file whose findings keep their full weight wherever it lies (an MCP
+   configuration, a coding-agent instruction, rule or settings file, an agent
+   manifest or card) is never declared.
 4. **Discounted test code.** With `include_tests` off, a gap in a test or
    fixture file whose evidence the scan discounts (a malformed or binary
    fixture, test source the lexer cannot settle) is a warning that leaves the
@@ -290,8 +293,18 @@ documentation, example or generated path is recorded as a warning that names
 it and ends in `declared omission (profile ci)`, counted in
 `stats[].declared_omissions` and `summary.declared_omissions` and listed by
 path in `stats[].declared_paths` (the first 200 of each connector), and the
-scan stays complete. Test paths are declared only while `include_tests` is false,
-when their evidence is discounted; with it set they are source like any other.
+scan stays complete. Every declared entry is counted: of a run of skipped links,
+one warning per root names the first and the rest are counted without one, as
+the budget counts every undeclared link. Test paths are declared only while
+`include_tests` is false, when their evidence is discounted; with it set they
+are source like any other. A file whose findings keep their full weight under
+any path is never declared, wherever it lies: an MCP configuration (by a
+dedicated name such as `.mcp.json`, or a structure that declares servers), a
+coding-agent instruction, rule or settings file (`CLAUDE.md`, `.cursor/rules/`,
+`.claude/settings.json`, …) and an agent manifest or card, since a client
+started in `tests/` or `docs/` reads it there. Nor is a credential limit
+(`more than 5 credentials matched`): it marks the scan incomplete under the
+profile too.
 Documentation and example directories count only below the file's project
 root, as they do for evidence: a directory that holds its own manifest
 (`demo/pyproject.toml`, `examples/svc/package.json`) is a deployable project

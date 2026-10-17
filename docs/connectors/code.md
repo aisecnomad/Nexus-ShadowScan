@@ -528,7 +528,13 @@ project root, so a project under `demo/` or `examples/svc/` with its own
 manifest keeps its gaps. A template's directory (template syntax such as
 `{{cookiecutter.slug}}`, `{%` or `${` in its path) and one none of whose JSON
 or TOML manifests parses are not projects for this rule, so a cookiecutter
-template's unparsed manifest and sources stay declared. It conflicts with `strict_coverage`. See
+template's unparsed manifest and sources stay declared. Every declared entry
+is counted, each skipped link included, though one warning per root names the
+links. A file whose findings keep their full weight wherever it lies (an MCP
+configuration, a coding-agent instruction, rule or settings file, an agent
+manifest or card) is never declared, and neither is a credential limit. The
+profile is refused under strict accounting (`strict_coverage`, or a gap budget
+of 0). See
 [the `ci` profile](../scanning.md#the-ci-profile) and the reason categories in
 `incomplete_reasons` that explain an exit 3.
 

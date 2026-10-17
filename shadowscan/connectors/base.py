@@ -365,6 +365,17 @@ class ConnectorContext:
             self.stats.incomplete = True
         self._diagnostic(msg, warning=False, incomplete=True, reason=reason)
 
+    def count_declared_omissions(self, entries: int = 1) -> None:
+        """Count ``entries`` more omissions a profile declared, without another diagnostic line.
+
+        For a caller that already recorded one representative declared warning
+        (``warn(declared=True)``) for a run of identical omissions, as
+        ``coverage_gap(quiet=True)`` is for gaps: the report counts every
+        omission, so ``declared_omissions`` never under-states what was skipped.
+        """
+        if self.stats is not None and entries > 0:
+            self.stats.declared_omissions += entries
+
     # ------------------------------------------------------- coverage gaps
     def set_coverage_policy(self, policy: CoveragePolicy) -> None:
         """Install the budget this connector's partial gaps are judged against."""

@@ -129,3 +129,65 @@ def test_the_code_command_refuses_profile_ci_with_a_zero_budget(tmp_path):
     assert "--profile ci and --max-coverage-gap 0 conflict" in result.output
     result = CliRunner().invoke(main, ["code", str(tmp_path), "--profile", "ci", "--max-coverage-gap", "0.5"])
     assert result.exit_code == 0, result.output
+
+
+# ----------------------------------------------------------- declared omissions
+MCP_CONFIG = '{"mcpServers": {"evil": {"command": "npx", "args": ["-y", "@evil/mcp-server"]}}}'
+GUESSED_MCP = "mcpServers:\n  evil:\n    command: npx\n"
+
+
+def test_every_declared_link_is_counted_and_one_per_root_is_named(tmp_path, run_connector):
+    _tree(tmp_path, links=[f"tests/certs/c{i}.pem" for i in range(40)])
+    _, ci = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile="ci")
+    assert not ci.stats.incomplete
+    assert ci.stats.declared_omissions == 40
+    assert len([w for w in ci.stats.warnings if "declared omission" in w]) == 1
+    # The default profile charges the same 40 entries to the budget.
+    _, default = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert default.stats.coverage is not None and default.stats.coverage["gap_entries"] == 40
+
+
+@pytest.mark.parametrize(
+    ("rel", "content"),
+    [
+        pytest.param("tests/.mcp.json", MCP_CONFIG[:-1], id="mcp-syntax"),
+        pytest.param("tests/.mcp.json", MCP_CONFIG[:-1] + "\x00}", id="mcp-nul"),
+        pytest.param("tests/CLAUDE.md", "# Rules\nAlways run the tests.\n\x00", id="instructions-nul"),
+        pytest.param(
+            "docs/.claude/settings.json", '{"permissions": {"allow": ["Bash(*)"]}}\x00', id="settings-nul"
+        ),
+        # An MCP configuration by its structure only: the parser passes full_weight.
+        pytest.param(
+            "tests/mcp.yaml", GUESSED_MCP + "  evil:\n    command: npx\n", id="guessed-mcp-duplicate"
+        ),
+        pytest.param("docs/.mcp.json", MCP_CONFIG + " " * 2_000, id="mcp-oversize"),
+    ],
+)
+def test_profile_ci_never_declares_a_full_weight_file(tmp_path, run_connector, rel, content):
+    _tree(tmp_path, {rel: content})
+    _, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, profile="ci", max_file_size=1_000
+    )
+    assert ctx.stats.incomplete, f"profile ci declared the gap in {rel}"
+    # Excerpts withheld for a structured-parse failure are not the configuration's gap: the
+    # parse runs before the structure says the file is an MCP configuration.
+    declared = [w for w in ctx.stats.warnings if "declared omission" in w and "excerpts withheld" not in w]
+    assert not declared
+
+
+def _openai_project_key(number: int) -> str:
+    """A distinct synthetic OpenAI project-key form, assembled at run time."""
+    body = "".join("abcdefghijKLMNOPQRST0123456789"[(number * 7 + i * 11) % 30] for i in range(48))
+    tail = "".join("UVWXYZuvwxyz9876543210ABCDEFGH"[(number * 5 + i * 3) % 30] for i in range(20))
+    return "sk-" + "proj-" + body + "T3BlbkFJ" + f"{number:02d}" + tail
+
+
+def test_a_credential_limit_in_test_code_is_never_declared(tmp_path, run_connector):
+    keys = "".join(f'OPENAI_KEY_{n} = "{_openai_project_key(n)}"\n' for n in range(8))
+    _tree(tmp_path, {"tests/keys_fixture.py": keys})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile="ci")
+    assert ctx.stats.incomplete
+    assert ctx.stats.declared_omissions == 0
+    assert any(
+        "tests/keys_fixture.py" in e and "credential evidence incomplete" in e for e in ctx.stats.errors
+    )

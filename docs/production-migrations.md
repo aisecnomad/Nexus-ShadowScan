@@ -18,6 +18,12 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   `strict_coverage` does, so such a scan exits 3 where it exited 0. A
   configuration that combines `profile: ci` with a budget of 0 (per connector,
   in `options.max_coverage_gap` or on the command line) is refused: pick one.
+- **`profile: ci` counts every declared link and declares no agent
+  configuration.** `declared_omissions` rises to the number of links a ci
+  scan skipped (one warning per root still names them). An unreadable,
+  malformed or oversize MCP configuration, coding-agent instruction, rule or
+  settings file, or agent card under a test, documentation or example path
+  is no longer declared, so a ci scan holding one exits 3.
 
 ## October 17 engine review migration (Unreleased)
 

@@ -1904,7 +1904,7 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
-    def _declared_omission(self, rel: str) -> bool:
+    def _declared_omission(self, rel: str, *, full_weight: bool = False) -> bool:
         """Whether a coverage gap at ``rel`` is one the ``ci`` profile declared in advance.
 
         The profile accepts gaps in the paths whose evidence is already
@@ -1920,14 +1920,24 @@ class FilesystemConnector(BaseConnector):
         one the walk assigned to ``rel`` (``_entry_projects``); a path the walk
         assigned none, a project root itself among them, is not declared for
         its directory names.
+
+        A file whose findings keep their full weight wherever it lies is never
+        declared: an MCP configuration (by a dedicated name, or by the
+        structure a caller found, ``full_weight``), a coding-agent instruction,
+        rule or settings file, an agent manifest or card
+        (``_full_weight_in_tests``). A client started under ``tests/`` or
+        ``docs/`` reads it there, so the profile cannot have accepted its gap.
+        Strict accounting declares nothing (``_strict_accounting``).
         """
-        if self.profile != "ci" or self._strict_accounting():
+        if self.profile != "ci" or full_weight or self._strict_accounting():
             return False
         if _is_test_path(rel):
-            return not self.include_tests
-        project_root = self._entry_projects.get(rel, rel)
-        project_root = self._declaring_roots.get(project_root, project_root)
-        return rel != project_root and negative_context(rel, project_root) is not None
+            declared = not self.include_tests
+        else:
+            project_root = self._entry_projects.get(rel, rel)
+            project_root = self._declaring_roots.get(project_root, project_root)
+            declared = rel != project_root and negative_context(rel, project_root) is not None
+        return declared and not self._full_weight_in_tests(rel)
 
     def _note_declaring_root(self, directory: Path, rel_dir: str, parent: str, filenames: list[str]) -> None:
         """Record which root ``_declared_omission`` judges paths in the project root ``rel_dir`` by.
@@ -1946,7 +1956,14 @@ class FilesystemConnector(BaseConnector):
             self._declaring_roots[rel_dir] = self._declaring_roots.get(parent, parent)
 
     def _gap(
-        self, rel: str, message: str, *, error: bool = False, suffix: bool = True, reason: str | None = None
+        self,
+        rel: str,
+        message: str,
+        *,
+        error: bool = False,
+        suffix: bool = True,
+        reason: str | None = None,
+        full_weight: bool = False,
     ) -> None:
         """Record a coverage gap at ``rel``.
 
@@ -1959,9 +1976,11 @@ class FilesystemConnector(BaseConnector):
         ``reason`` is the ``INCOMPLETE_REASONS`` category it is counted under;
         without one it is classified from ``message`` with ``rel`` left out, so
         a file called ``http_client.py`` does not make the gap an upstream error.
+        ``full_weight`` says the file is an MCP configuration by its structure,
+        which the profile never declares (``_declared_omission``).
         """
         reason = reason or incomplete_reason(message, path=rel)
-        if self._declared_omission(rel):
+        if self._declared_omission(rel, full_weight=full_weight):
             self.ctx.warn(
                 f"{message}; declared omission (profile ci)", incomplete=False, declared=True, path=rel
             )
@@ -2534,9 +2553,12 @@ class FilesystemConnector(BaseConnector):
         if self._walk_declared(root, rel, walk):
             # One representative note per root, like the gap below, and it
             # leaves that gap's own representative slot for an undeclared link.
+            # Every declared link is counted, as the budget counts every other.
             if root not in self._declared_link_notes:
                 self._declared_link_notes.add(root)
                 self._gap(rel, message, reason="unresolved-link")
+            else:
+                self.ctx.count_declared_omissions()
             return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names. The budget
@@ -3206,7 +3228,7 @@ class FilesystemConnector(BaseConnector):
                 f"{message}; test code is discounted evidence (include_tests is false)", incomplete=False
             )
         else:
-            self._gap(rel, message, error=error, suffix=suffix, reason=reason)
+            self._gap(rel, message, error=error, suffix=suffix, reason=reason, full_weight=full_weight)
 
     def _scan_binary_test_fixture(
         self,
