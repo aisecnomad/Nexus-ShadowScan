@@ -579,8 +579,11 @@ other values stop the connector with an error that names the option (exit 3).
 match AI SaaS signatures or hold privileged scopes, and service apps
 (`application_type: service` / `client_credentials` / token-exchange).
 Token: SSWS API token (`token`, env `OKTA_API_TOKEN`) or OAuth bearer
-(`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read`; `bearer` wins when
-both are set. Options: `include_inactive`, `fetch_tokens`. A 429 is retried
+(`bearer`, env `OKTA_ACCESS_TOKEN`) with `okta.apps.read` and
+`okta.appGrants.read`; `bearer` wins when both are set. The grants of an app are
+a separate scope from the app itself: a bearer without `okta.appGrants.read` is
+refused on every `/grants` call and the scan is incomplete. Options:
+`include_inactive`, `fetch_tokens`. A 429 is retried
 after the window named by Okta's `X-Rate-Limit-Reset` header (bounded to 120 s
 per wait); exhausted retries mark the scan incomplete.
 Live collection also needs `org_url` (`https://<org>.okta.com`, env
@@ -621,7 +624,8 @@ app registration; a package whose details are missing is `unknown` and binds
 nothing, and an organization's own package with no approval request is
 `registered`, not `approved`.
 `include_agent_identities: true` lists Entra Agent ID
-agent identities from the Graph beta API; they enrich the service principal
+agent identities from the Graph beta API, which needs `AgentIdentity.Read.All`
+(the base permissions above do not grant it); they enrich the service principal
 finding of the same id or stand alone, and are always reported. Records of the
 deprecated Entra agent registry are read from offline exports only, as
 `deprecated` records that never approve. `auth_mode: delegated` reads a
@@ -890,7 +894,10 @@ beside an empty `items` array. Bare recipe arrays remain supported.
 (scopes, pending requests), `team.integrationLogs` (who installed what). The
 app id is matched as the app's client id.
 `team.info` must return an authenticated workspace identity. If `team_id` is
-configured, it must match exactly before inventory calls begin. Missing/null
+configured, it must match exactly before inventory calls begin, and it is sent
+with `users.list`, the `admin.apps.*` lists and `team.integrationLogs`: an
+org-level token (the Enterprise token the `admin.apps.*` lists need) is refused
+there without it, and a workspace-level token ignores it. Missing/null
 collection arrays and malformed pagination are incomplete coverage. Later
 network failures retain already collected observations; provider error text is
 not copied into diagnostics. Complete live acceptance generally requires an
@@ -935,6 +942,16 @@ of its own for it (for example `token: ${GITHUB_APPS_TOKEN}`) rather than relyin
 on `GITHUB_TOKEN`, which `code.github` reads by default for a token that clones
 untrusted repositories; the rule that code scans and live connectors run
 separately does not narrow a shared token's scope.
+
+GitHub serves the approved fine-grained PAT list
+(`GET /orgs/{org}/personal-access-tokens`) only to GitHub App installation or
+user access tokens with the organization "Personal access tokens" read
+permission, and refuses a classic or fine-grained personal token there. One
+GitHub App token with the organization "Administration", "Personal access
+tokens" and "GitHub Copilot Business" read permissions covers every call. With
+an owner's personal token as `token`, set `app_token` (env `GITHUB_APP_TOKEN`)
+to a GitHub App token for the PAT list; without it that listing is refused,
+the scan is incomplete, and the warning says so.
 
 Installation envelopes validate declared totals against unique collected IDs,
 across all pages of a live listing or of an offline export file (one page
@@ -1359,8 +1376,9 @@ All connectors are read-only. Prefer dedicated audit credentials:
 |---|---|
 | GitHub | fine-grained PAT: contents/metadata read; `secrets:read` for Actions secret names, plus `variables:read`, Codespaces `secrets:read` and Dependabot `secrets:read` for the other credential-name listings (each optional; a denied listing marks coverage incomplete) |
 | GitLab | PAT `read_api`, `read_repository` |
-| Okta | API token from a read-only admin, or OAuth `okta.apps.read` |
-| Slack | token with `users:read`; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`) |
+| GitHub Apps | GitHub App token with organization `Administration`, `Personal access tokens` and `GitHub Copilot Business` read permissions; or an organization owner's token plus `app_token`, a GitHub App token for the fine-grained PAT list, which GitHub serves only to GitHub Apps |
+| Okta | API token from a read-only admin, or OAuth `okta.apps.read` and `okta.appGrants.read` |
+| Slack | token with `users:read`; the `admin.apps.*` lists and `team.integrationLogs` need an org admin user token (`admin.apps:read`, `admin`), and an org-level token needs `team_id` |
 | ServiceNow | basic or bearer credentials with read access to the `sn_aia_*`, `sys_hub_flow` and `oauth_entity` tables through the Table API |
 | Salesforce | connected app (client-credentials flow) whose integration user has read access to the objects the REST `query` and Tooling `query` endpoints return; verify the object permissions in your org |
 | n8n | API key; the connector reads `/api/v1/workflows` only |
@@ -1371,7 +1389,7 @@ All connectors are read-only. Prefer dedicated audit credentials:
 | Zoom | Server-to-Server OAuth app with `marketplace:read:list_apps:admin` |
 | Atlassian | site admin basic auth with an API token for the Universal Plugin Manager listing |
 | Auth0 | Management API v2 token with `read:clients`, `read:client_grants` |
-| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: Graph beta service principal read; confirm the least-privileged permission on Microsoft's current beta reference. Comparable drift reads `GET /organization`: `Organization.Read.All` or `Directory.Read.All` (application), `User.Read` (delegated) |
+| Entra / Teams / Power Platform | app permissions `Application.Read.All`, `DelegatedPermissionGrant.Read.All`, `Directory.Read.All`, `AppCatalog.Read.All`, `Team.ReadBasic.All`, `TeamsAppInstallation.ReadForTeam.All`; Power Platform admin application user. Opt-in Agent 365 packages: `CopilotPackages.Read.All` (application, or delegated for a work or school account whose user holds a role that can read the agent catalog). Opt-in agent identities: `AgentIdentity.Read.All` (Microsoft's least-privileged permission for listing agent identities, application or delegated). Comparable drift reads `GET /organization`: `Organization.Read.All` or `Directory.Read.All` (application), `User.Read` (delegated) |
 | Google Workspace | DWD scopes `admin.directory.user.readonly`, `admin.directory.user.security`, `admin.directory.customer.readonly` |
 | AWS | `SecurityAudit` managed policy + `bedrock:List*/Get*`, `bedrock-agentcore:List*/Get*`, `cloudtrail:LookupEvents`; ECS additionally needs `ecs:ListClusters`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ecs:ListServices`, `ecs:DescribeServices`, `ecs:ListTaskDefinitionFamilies`, `ecs:DescribeTaskDefinition`; the opt-in `registry` service needs `agent-registry:ListRegistries`, `agent-registry:GetRegistry`, `agent-registry:ListRegistryRecords`, `agent-registry:GetRegistryRecord` (AgentCore registries are covered by `bedrock-agentcore:List*/Get*`), and `registry_arns` needs `agent-registry:ListDiscoverableRegistryRecords` and `agent-registry:BatchGetDiscoverableRegistryRecord` on those registries. Do not grant `agent-registry:InvokeRegistryMcp` or `Search*` actions: the connector never calls them |
 | GCP | `roles/viewer` + `roles/iam.securityReviewer` (+ `roles/logging.privateLogViewer` for audit logs; with the opt-in catalogs, read access to Agent Registry and to Discovery Engine assistants and agents, for example Google's viewer roles for those APIs: verify the role names in your organization) |

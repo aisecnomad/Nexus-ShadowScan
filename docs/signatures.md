@@ -401,6 +401,15 @@ and tests, which call and test the products they detect.
   never match. Shorter values are not reported. Anthropic API (`sk-ant-api03-`), admin
   (`sk-ant-admin01-`) and Claude Code OAuth (`sk-ant-oat01-`) tokens are attributed to `provider.anthropic`;
   other `sk-ant-` shapes match nothing, because the fallback deliberately excludes the prefix.
+* The generic assigned credential (`heuristic.inline-credential`) reports literals only. Its value class
+  admits `.` and `_`, so `matcher.keep_secret_matches` drops a value that names a credential instead of
+  holding one: in source code an unquoted identifier or member chain (`self.api_key = api_key`,
+  `k = settings.OPENAI_API_KEY`); in any text an unquoted member chain that code follows (a call, a
+  subscript, `;`, `,`, `)` or `}`) or that starts at `process.env.`, `import.meta.env.`, `os.environ.`,
+  `self.` or `this.`. A quoted value is always a literal, a value that does not read as words is never a
+  name, and an unquoted value in configuration (`DB_PASSWORD=Summer.Vacation2024` in an env file) stays a
+  candidate. Three or more letter words joined by `-` or `_` (`'request-scoped-credential'`) are a label,
+  not a high-entropy key. Matches are filtered before the five-per-signal cap.
 * `name` patterns for products whose name is also a dictionary word or a first name (Otter, Devin, Jasper,
   Drift...) are context-guarded: the vendor form (`otter\.ai`) matches on its own; the bare word only when it is
   the whole display name (`^[^\S\r\n]*otter[^\S\r\n]*$`, an app called just "Otter") or with product context on

@@ -7,6 +7,51 @@ Automated validation establishes implementation behavior. Production rollout
 also requires the tenant canaries and container/operational checks below; a
 passing unit suite does not establish complete coverage of a particular estate.
 
+## October 17 precision and completeness migration (Unreleased)
+
+- **Fewer credential findings.** The generic assigned-credential rule no longer
+  reports names of credentials: environment reads, member chains, variables
+  passed through in source code, labels made of words, and values with an
+  ellipsis (now `example-credential` evidence). A comparison with an earlier
+  baseline shows those `secret` findings as resolved; review any `--fail-on`
+  threshold that only these findings reached. Literal keys, provider key
+  formats and unquoted values in env files are reported as before. A file
+  with more than five rejected references before a real key now reports that
+  key, which the per-signal cap used to drop.
+- **Evidence text.** An environment read by name after a credential name
+  (`apiKey = process.env.OPENAI_API_KEY`, `os.getenv("OPENAI_API_KEY")`) is
+  shown instead of `[REDACTED]`. Any other value after a credential name,
+  including an environment read with a default or fallback literal, stays
+  withheld. Excerpts and report text change accordingly; finding ids do not.
+- **Completeness.** Scans incomplete only because of a file guessed to be an
+  MCP configuration that is not one, an import-bound call between 8,192 and
+  65,536 characters, or a malformed or binary fixture in discounted test code
+  (`include_tests` false) now complete. Each discounted gap is still listed as
+  a warning, and a binary test fixture is still scanned for credentials. Set
+  `strict_coverage: true` to keep treating every such gap as incomplete
+  (exit 3), as before; product code, dedicated MCP configuration names and
+  calls over 65,536 characters are gaps either way.
+- **Realtime agents.** A project that builds OpenAI Agents SDK realtime
+  agents (`RealtimeAgent`, `RealtimeSession`, `RealtimeRunner`) is now an
+  `agent` finding with its tool and handoff capabilities and a higher
+  autonomy floor, under the same finding id it had as LLM usage. A drift
+  comparison reports the change once (`capability`, `autonomy`); review it and
+  refresh the baseline.
+- **Live connector credentials.** `identity.okta` OAuth bearers need
+  `okta.appGrants.read` as well as `okta.apps.read`, or every grants call is
+  refused and the scan is incomplete. `saas.slack` sends the configured
+  `team_id` with `users.list`, the `admin.apps.*` lists and
+  `team.integrationLogs`; set it when the token is an org-level one.
+  `saas.github-apps` reads the fine-grained PAT list with `app_token`
+  (env `GITHUB_APP_TOKEN`) when set, since GitHub serves that list only to
+  GitHub App tokens; with an owner's personal token and no `app_token` that
+  listing stays refused and incomplete. `identity.entra` selects only v1.0
+  service principal properties: live service principal findings take the
+  publisher from `verifiedPublisher` and have no Graph creation time. Its
+  opt-in agent identity listing needs `AgentIdentity.Read.All`. These
+  requirements come from the vendors' published references; no live tenant
+  acceptance was performed for them.
+
 ## Unreleased review hardening
 
 - **Git 2.45 for clone mode.** `code.github` and `code.gitlab` clone only with

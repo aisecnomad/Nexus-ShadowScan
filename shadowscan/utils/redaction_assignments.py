@@ -23,6 +23,7 @@ from shadowscan.utils.redaction_rules import (
     _blanks_before,
     _credential_literal,
     _credential_name,
+    _environment_lookup,
     _interpolated,
     _kept_value,
     _name_before,
@@ -778,6 +779,10 @@ def _redact_plain_assignments(value: str, depth: int = 0, *, former: bool = Fals
         operator = sep.strip(" \t\r\n\"'")
         if _sensitive_assignment_key(key):
             if reread and not bare.strip("\\"):
+                return full
+            if not opener and _environment_lookup(m.string, m.start("value")):
+                # 'apiKey = process.env.OPENAI_API_KEY', 'api_key = os.getenv("OPENAI_API_KEY")':
+                # the value reads a variable by name and holds no credential.
                 return full
             if operator in _COMPARISONS:
                 # Only a literal that could be a credential is withheld from a comparison:
