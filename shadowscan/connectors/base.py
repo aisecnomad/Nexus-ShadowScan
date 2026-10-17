@@ -489,11 +489,6 @@ class BaseConnector(ABC):
             "offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB)"
         ),
         "max_input_files": "offline: maximum files read from a directory input (default 10,000)",
-        "max_coverage_gap": (
-            "share of examined entries that may be left unread before this connector reports "
-            "itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot "
-            "bound always fails closed, whatever this allows"
-        ),
     }
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML / CSV export"
     _OFFLINE_COLLECTION_KINDS: ClassVar[dict[str, str]] = {}
@@ -865,19 +860,40 @@ class BaseConnector(ABC):
         stats.findings = len(findings)
         return findings
 
-    def _resolve_coverage_policy(self) -> CoveragePolicy:
-        """Build this run's gap budget from config.
+    def coverage_is_strict(self) -> bool:
+        """Whether every gap, however small, marks this connector incomplete.
 
-        ``strict_coverage`` wins over any budget: it restores the original
-        accounting in which a single unread entry marks the scan incomplete.
+        False here, so the gap budget applies. A connector with its own
+        strictness option (the code connectors' ``strict_coverage``) overrides
+        this; the option stays theirs rather than becoming one every connector
+        appears to accept.
         """
-        # Coerced locally: ``shadowscan.connectors.common`` imports this module,
-        # so its config_boolean cannot be imported back here.
-        strict = self.ctx.config.get("strict_coverage", False)
-        truthy = isinstance(strict, str) and strict.strip().lower() in {"1", "true", "yes", "on"}
-        if strict is True or truthy:
+        return False
+
+    def coverage_gap_override(self) -> float | None:
+        """A gap budget from this connector's own configuration, or None.
+
+        None here: most connectors take the scan-wide policy. A connector that
+        documents its own ``max_coverage_gap`` reads it in an override, so the
+        key belongs to the connectors that advertise it rather than appearing
+        on every one.
+        """
+        return None
+
+    def _resolve_coverage_policy(self) -> CoveragePolicy:
+        """Build this run's gap budget: the connector's own setting, else the scan's.
+
+        Strictness wins over any budget: it restores the original accounting
+        in which a single unread entry marks the scan incomplete.
+        """
+        if self.coverage_is_strict():
             return CoveragePolicy.strict()
-        raw = self.ctx.config.get("max_coverage_gap")
+        raw = self.coverage_gap_override()
+        if raw is None:
+            # Injected by the engine from options.max_coverage_gap. Private,
+            # because it is a scan-wide policy rather than a key each
+            # connector independently accepts.
+            raw = self.ctx.config.get("_max_coverage_gap")
         if raw is None:
             return CoveragePolicy()
         return CoveragePolicy(max_gap_ratio=validate_max_coverage_gap(raw))

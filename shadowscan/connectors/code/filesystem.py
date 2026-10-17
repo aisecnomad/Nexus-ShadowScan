@@ -284,6 +284,7 @@ from shadowscan.connectors.posture import (
 )
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
+from shadowscan.coverage import validate_max_coverage_gap
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -1209,6 +1210,15 @@ class FilesystemConnector(BaseConnector):
     #: entries once signature matching dominates.
     _ENTRIES_PER_DEFAULT_BUDGET = 12_000
 
+    def coverage_is_strict(self) -> bool:
+        # This connector's own option, parsed in __init__.
+        return self.strict_coverage
+
+    def coverage_gap_override(self) -> float | None:
+        """This connector's documented ``max_coverage_gap``, if the scan set one."""
+        raw = self.ctx.get("max_coverage_gap")
+        return None if raw is None else validate_max_coverage_gap(raw)
+
     @classmethod
     def estimate_timeout_seconds(cls, config: dict[str, Any], default: float) -> float | None:
         """Scale the deadline to the size of the tree about to be walked.
@@ -1332,6 +1342,11 @@ class FilesystemConnector(BaseConnector):
         "use_git": (
             "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ "
             "(default false)"
+        ),
+        "max_coverage_gap": (
+            "share of examined entries that may be left unread before this scan reports itself "
+            "incomplete (default: the scan-wide options.max_coverage_gap, 0.02); 0 fails on any "
+            "gap. A gap the scanner cannot bound always fails closed, whatever this allows"
         ),
         "strict_coverage": (
             "report coverage gaps (unread analyzable oversize files, non-regular entries named like "

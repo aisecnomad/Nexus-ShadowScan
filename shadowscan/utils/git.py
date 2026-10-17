@@ -265,8 +265,8 @@ def _signal_clone_group(proc: subprocess.Popen[bytes]) -> None:
         # still required to guarantee termination of a detached descendant.
         if proc.poll() is None:
             try:
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                subprocess.run(  # noqa: S603 - argv list, never a shell; refs validated and the environment stripped by safe_git_env
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],  # noqa: S607 - git is resolved from PATH deliberately so the operator's reviewed install is used
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -429,7 +429,7 @@ def run_bounded_clone(
         if _INTERRUPTED.is_set():
             raise CloneInterruptedError("clone not started: the scan was interrupted")
         if os.name == "posix":
-            proc: subprocess.Popen[bytes] = subprocess.Popen(
+            proc: subprocess.Popen[bytes] = subprocess.Popen(  # noqa: S603 - argv list, never a shell; refs validated and the environment stripped by safe_git_env
                 cmd,
                 env=env,
                 stdin=subprocess.DEVNULL,
@@ -438,7 +438,7 @@ def run_bounded_clone(
                 start_new_session=True,
             )
         else:
-            proc = subprocess.Popen(
+            proc = subprocess.Popen(  # noqa: S603 - argv list, never a shell; refs validated and the environment stripped by safe_git_env
                 cmd,
                 env=env,
                 stdin=subprocess.DEVNULL,
@@ -506,7 +506,7 @@ def run_bounded_metadata(
     deadline = time.monotonic() + timeout
     if ctx.deadline is not None:
         deadline = min(deadline, ctx.deadline)
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # noqa: S603 - argv list, never a shell; refs validated and the environment stripped by safe_git_env
         cmd,
         env=env,
         stdin=subprocess.DEVNULL,
@@ -754,7 +754,7 @@ def git_version() -> tuple[int, int, int] | None:
     if _git_version_cache is None:
         try:
             result = subprocess.run(
-                ["git", "--version"],
+                ["git", "--version"],  # noqa: S607 - git is resolved from PATH deliberately so the operator's reviewed install is used
                 env=safe_git_env(),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,

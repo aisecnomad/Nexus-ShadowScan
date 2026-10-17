@@ -16,7 +16,6 @@ from shadowscan.coverage import (
     BLINDING,
     DEFAULT_MAX_GAP_RATIO,
     MAX_PUBLISHED_GAPS,
-    PARTIAL,
     CoverageGap,
     CoverageLedger,
     CoveragePolicy,
@@ -174,9 +173,7 @@ class TestValidation:
     def test_accepts_a_ratio(self, value: object) -> None:
         assert 0.0 <= validate_max_coverage_gap(value) <= 1.0
 
-    @pytest.mark.parametrize(
-        "value", [-0.1, 1.5, "0.5", None, True, False, float("nan"), float("inf")]
-    )
+    @pytest.mark.parametrize("value", [-0.1, 1.5, "0.5", None, True, False, float("nan"), float("inf")])
     def test_rejects_anything_else(self, value: object) -> None:
         with pytest.raises(ValueError, match="between 0 and 1"):
             validate_max_coverage_gap(value)
@@ -202,8 +199,8 @@ class TestEndToEnd:
         os.symlink(tmp_path / "does-not-exist", target)
 
     def _run(self, tmp_path, **config):
-        from shadowscan.connectors.code.filesystem import FilesystemConnector
         from shadowscan.connectors.base import ConnectorContext
+        from shadowscan.connectors.code.filesystem import FilesystemConnector
 
         ctx = ConnectorContext(config={"paths": [str(tmp_path)], **config})
         connector = FilesystemConnector(ctx)

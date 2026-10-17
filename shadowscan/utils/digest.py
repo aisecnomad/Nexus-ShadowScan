@@ -48,7 +48,7 @@ def runtime_semantics() -> dict[str, Any]:
     env["LC_ALL"] = "C"
     try:
         result = subprocess.run(
-            ["git", "--version"],
+            ["git", "--version"],  # noqa: S607 - git is resolved from PATH deliberately so the operator's reviewed install is used
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

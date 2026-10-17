@@ -457,8 +457,7 @@ class _ConnectorRunner:
         scaled = min(float(proposed), MAX_AUTO_TIMEOUT)
         self._engine._report_progress(
             spec.id,
-            f"input is large; deadline raised to {scaled:.0f}s "
-            f"(set --connector-timeout-seconds to override)",
+            f"input is large; deadline raised to {scaled:.0f}s (set --connector-timeout-seconds to override)",
         )
         return scaled
 
@@ -612,9 +611,10 @@ class _ConnectorRunner:
             cfg["allow_private_origin"] = self._allow_private_origin(spec)
         if spec.label:
             cfg.setdefault("label", spec.label)
-        # The scan-wide gap budget, unless this connector names its own. A
-        # connector that sets strict_coverage still overrides any budget.
-        cfg.setdefault("max_coverage_gap", self._config.max_coverage_gap)
+        # The scan-wide gap budget. Private, like _dump_path: it is a scan
+        # option rather than a key each connector documents. A connector that
+        # accepts a public max_coverage_gap, or that is strict, overrides it.
+        cfg["_max_coverage_gap"] = self._config.max_coverage_gap
         if self._dump_directory:
             label = re.sub(r"[^A-Za-z0-9_-]", "_", spec.id)[:80] or "connector"
             cfg["_dump_path"] = os.path.join(self._dump_directory, f"{dump_key}-{label}.jsonl")
@@ -862,7 +862,7 @@ def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
         try:
             # Built-in connectors only: this lookup never imports a plugin outside a job's deadline.
             declared = _hooks(get_connector_class(spec.name)).scanned_local_paths(spec.config)
-        except Exception:  # noqa: BLE001 - an unknown or unapproved connector declares no tree
+        except Exception:  # noqa: BLE001, S112 - an unknown or unapproved connector declares no tree  # noqa: S112 - teardown must not raise; see the comment above; a lookup failure here must not stop the scan; recorded by the caller
             continue
         roots += [(path, Path(os.path.realpath(path))) for path in declared]
     return roots

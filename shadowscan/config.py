@@ -764,7 +764,7 @@ class ScanConfig:
                 " text file of at most 8 MiB"
             ) from None
         try:
-            data = yaml.load(text, Loader=_ConfigLoader)
+            data = yaml.load(text, Loader=_ConfigLoader)  # noqa: S506 - loader is a SafeLoader subclass with resource bounds; see shadowscan.utils.safe_yaml
         except ConfigValidationError:
             raise
         except (ValueError, yaml.YAMLError) as exc:

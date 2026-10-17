@@ -119,7 +119,7 @@ class TestResolvedTimeout:
             FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
 
     def test_an_estimate_that_raises_falls_back_to_the_default(self, tmp_path, monkeypatch) -> None:
-        def boom(cls, config, default):  # noqa: ANN001, ANN202
+        def boom(cls, config, default):
             raise RuntimeError("probe exploded")
 
         monkeypatch.setattr(FilesystemConnector, "estimate_timeout_seconds", classmethod(boom))
@@ -174,10 +174,10 @@ class TestPartialFindings:
             name = "test.slow"
             surface = Surface.CODE
 
-            def collect(self):  # noqa: ANN201
+            def collect(self):
                 return iter(())
 
-            def analyze(self, records):  # noqa: ANN001, ANN201
+            def analyze(self, records):
                 yield from findings
                 # Outlive the deadline the caller set.
                 time.sleep(5)

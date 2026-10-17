@@ -165,13 +165,14 @@ class Kind(str, Enum):
     AGENT_CONFIG = "agent-config"  # coding-agent / declarative agent configuration file
     OAUTH_GRANT = "oauth-grant"  # an OAuth grant / consented application
     SERVICE_IDENTITY = "service-identity"  # service principal, service account, M2M client
-    TOKEN = "token"  # analysed JWT / API token
+    TOKEN = "token"  # analysed JWT / API token  # noqa: S105 - a finding kind, not a credential
     GATEWAY_CALLER = "gateway-caller"  # principal calling an LLM API observed in logs
     WORKFLOW = "workflow"  # low-code flow / scenario / recipe with AI steps
     BOT_APP = "bot-app"  # SaaS bot / app installation
     CLOUD_RESOURCE = "cloud-resource"  # managed AI resource (endpoint, deployment, function...)
     IAM_GRANT = "iam-grant"  # IAM role / policy enabling LLM or agent access
-    SECRET = "secret"  # credential for an LLM provider found in code / config
+
+    SECRET = "secret"  # noqa: S105 - credential for an LLM provider in code / config
     INFRA = "infra"  # IaC or container definitions provisioning AI agents
     AI_APP = "ai-app"  # AI assistant application or editor/browser extension installed on an endpoint
     LOCAL_MODEL = "local-model"  # model weights stored for a local runtime (Ollama, LM Studio...)

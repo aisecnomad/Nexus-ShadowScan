@@ -200,12 +200,12 @@ def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
     try:
         try:
             err_console.print(message)
-        except Exception:  # noqa: BLE001 - output streams may already be closed
+        except Exception:  # noqa: BLE001, S110 - output streams may already be closed; teardown must not raise; the comment above says why
             pass
         for stream in (sys.stdout, sys.stderr):
             try:
                 stream.flush()
-            except Exception:  # noqa: BLE001 - still try the other stream and exit
+            except Exception:  # noqa: BLE001, S110 - still try the other stream and exit; teardown must not raise; the comment above says why
                 pass
     finally:
         # An abandoned worker may still be waiting to stop its own clone.

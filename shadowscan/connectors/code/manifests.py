@@ -438,7 +438,7 @@ def parse_pom(text: str) -> ManifestResult:
         res.errors.append("POM DTD/entity declarations are unsupported")
         return res
     try:
-        root = ET.fromstring(text)
+        root = ET.fromstring(text)  # noqa: S314 - entity declarations are refused before parsing; see the guard above
     except ET.ParseError:
         res.errors.append("invalid POM XML")
         return res
@@ -633,7 +633,7 @@ def parse_nuget(text: str) -> ManifestResult:
         res.errors.append("NuGet DTD/entity declarations are unsupported")
         return res
     try:
-        root = ET.fromstring(text)
+        root = ET.fromstring(text)  # noqa: S314 - entity declarations are refused before parsing; see the guard above
     except ET.ParseError:
         res.errors.append("invalid NuGet XML")
         return res
@@ -795,7 +795,7 @@ def _docker_comment_projection(text: str) -> str:
             # Resolve spans on the joined instruction, then mask those same
             # offsets in the original so generic detection retains line IDs.
             logical = _docker_join_continuations(instruction, escape)
-            _, ignored, _ = _mask_manifest_comments(logical, shell=True)
+            _, ignored, _ = _mask_manifest_comments(logical, shell=True)  # noqa: S604 - shell= is this local function's own keyword, not a subprocess argument
             masked = list(instruction)
             for start, end in ignored:
                 if logical[start] == "#":

@@ -233,7 +233,11 @@ class GcpConnector(BaseConnector):
     )
     config_keys: ClassVar[dict[str, str]] = {
         "projects": "list of project ids (default: all projects visible to the credentials)",
-        "locations": f"Vertex/Dialogflow locations (default {DEFAULT_LOCATIONS})",
+        "locations": (
+            f"Vertex/Dialogflow locations to query (default {DEFAULT_LOCATIONS}). Leaving this "
+            "unset records a coverage gap, because resources in unqueried locations are neither "
+            "scanned nor counted; set the list, or 'default' to accept the built-in scope"
+        ),
         "access_token": (
             "OAuth token (env GOOGLE_OAUTH_ACCESS_TOKEN); "
             "otherwise Application Default Credentials via google-auth"
@@ -281,8 +285,14 @@ class GcpConnector(BaseConnector):
         try:
             # Locations are interpolated into API hostnames.
             locations = string_list(ctx.get("locations"), "locations", pattern=r"[a-z0-9-]+")
+            # The literal 'default' accepts the built-in list knowingly. It is
+            # a declaration of scope, so it clears the coverage gap that an
+            # unset option raises, while still scanning the same locations.
+            accepted_default = locations == ["default"]
+            if accepted_default:
+                locations = []
             self.locations = locations or DEFAULT_LOCATIONS
-            self._default_locations = not locations
+            self._default_locations = not locations and not accepted_default
             self.projects = string_list(ctx.get("projects"), "projects", pattern=r"[A-Za-z0-9._:-]+") or []
             # Agent Registry locations and Discovery Engine collections become request paths.
             self.agent_registry_locations = string_list(
@@ -710,12 +720,20 @@ class GcpConnector(BaseConnector):
         if not self._default_locations or self._locations_noted:
             return
         self._locations_noted = True
-        # Informational: the operator chose no scope, so name what was and was not covered.
-        self.ctx.warn(
+        # An unqueried location can hold any number of agents, and the scan
+        # cannot bound how many: it never asked. That is a blinding gap, not a
+        # budgeted one, and it previously left the scan reading as complete.
+        # The operator resolves it in one step by declaring the scope -- naming
+        # the locations to query, or accepting these by setting
+        # 'locations: default' -- which turns a scope hole nobody chose into a
+        # decision the report can attest.
+        self.ctx.coverage_gap(
             "cloud.gcp: no 'locations' option set; Vertex AI and Dialogflow CX were queried only in "
-            f"the default locations ({', '.join(self.locations)}). Resources in other locations were "
-            "not scanned. Set 'locations' to a list to change the scope",
-            incomplete=False,
+            f"the default locations ({', '.join(self.locations)}). Resources in other locations "
+            "were not queried and their number is unknown. Set 'locations' to the list to scan, "
+            "or to 'default' to accept this scope",
+            path="cloud.gcp/locations",
+            blinding=True,
         )
 
     def _collect_vertex(self, project: str) -> Iterator[dict[str, Any]]:

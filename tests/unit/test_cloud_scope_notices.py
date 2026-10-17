@@ -147,16 +147,34 @@ def _gcp(index: Any, enabled: tuple[str, ...], **config: Any) -> tuple[GcpConnec
     return connector, fake
 
 
-def test_gcp_default_locations_are_disclosed_once_without_marking_the_scan_incomplete(index):
+def test_gcp_default_locations_are_disclosed_once_and_mark_the_scan_incomplete(index):
+    """An unqueried location can hold any number of agents, and the scan never asked.
+
+    The count is unbounded, so this is a blinding gap rather than a budgeted
+    one; leaving the scan complete let a scope hole nobody chose read as a
+    clean result. The operator clears it by declaring the scope.
+    """
     connector, _ = _gcp(
         index, ("aiplatform.googleapis.com", "dialogflow.googleapis.com"), projects=["p1", "p2"]
     )
     list(connector.collect())
     ctx = connector.ctx
-    (notice,) = [w for w in ctx.stats.warnings if "locations" in w]
+    (notice,) = [e for e in ctx.stats.errors if "locations" in e]
     for location in gcp_module.DEFAULT_LOCATIONS:
         assert location in notice
-    assert "not scanned" in notice and "locations" in notice
+    assert "not queried" in notice and "number is unknown" in notice
+    # The notice names the one step that resolves it.
+    assert "'default'" in notice
+    assert ctx.stats.incomplete
+
+
+def test_gcp_accepting_the_default_scope_explicitly_clears_the_gap(index):
+    """'locations: default' scans the same places, but as a declared choice."""
+    connector, _ = _gcp(index, ("aiplatform.googleapis.com",), projects=["p1"], locations=["default"])
+    assert connector.locations == gcp_module.DEFAULT_LOCATIONS
+    list(connector.collect())
+    ctx = connector.ctx
+    assert [d for d in (*ctx.stats.warnings, *ctx.stats.errors) if "locations" in d] == []
     assert not ctx.stats.incomplete and _complete(ctx)
 
 

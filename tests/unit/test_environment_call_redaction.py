@@ -307,13 +307,16 @@ def test_misread_comment_marker_cannot_withhold_the_rest_of_the_file():
 
 
 def test_unclosed_calls_before_a_long_tail_stay_linear():
+    # CPU time, not wall: the guard is against a quadratic rescan, and wall
+    # time made it fail under a parallel run on code that was linear.
     script = """
 import time
 from shadowscan.utils.redaction import sanitize_text
 source = "".join(f"step{n}(#\\\\n" for n in range(60)) + "plain line\\\\n" * 200_000
-started = time.perf_counter()
+started = time.process_time()
 assert sanitize_text(source) == source
-assert time.perf_counter() - started < 5
+spent = time.process_time() - started
+assert spent < 5, f"sanitize_text used {spent:.2f}s CPU; the unclosed-call scan is not linear"
 """
     result = subprocess.run(
         [sys.executable, "-c", script],
