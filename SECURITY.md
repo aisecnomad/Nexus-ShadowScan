@@ -336,7 +336,10 @@ coverage, even when a response includes an empty collection field.
   process.env.OPENAI_API_KEY`, `api_key = os.getenv("OPENAI_API_KEY")`). Only
   blanks and then the end of the line, `;`, `,` or a closing bracket may follow
   the read: with a default argument, a fallback literal, any other operand or a
-  comment after it the whole value is withheld. So is a read whose variable
+  comment after it the whole value is withheld. A comment after the `,` or `;`
+  that ends the value of a credential name (`apiKey: process.env.KEY, // old:
+  ...`, `api_key = os.environ["KEY"]; # ...`) keeps its words, but each token
+  in it that looks like an opaque key is withheld. So is a read whose variable
   name looks like a key pasted in place of the name: letters and digits
   alternate in a long run of it, or it has 16 characters or more and no `_`
   (an upper-case key or a base32 secret, with or without digits; a name such

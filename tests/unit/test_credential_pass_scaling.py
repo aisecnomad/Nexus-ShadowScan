@@ -64,6 +64,9 @@ def _best_time(source: str, repeats: int = 3) -> float:
         "--user=a://",
         "--api-key=$A#",  # a reference before the next option
         "-u=%K%:",
+        "apiKey: v, // a8f3c91d ",  # a comment after a credential's value, on one long line
+        'apiKey = "\\',  # escaped quotes before any comment
+        "token = v; #",
     ],
 )
 def test_context_named_credential_passes_scale_linearly(unit):

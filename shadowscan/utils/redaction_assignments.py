@@ -1176,6 +1176,81 @@ def _redact_fallback_defaults(text: str, *, extended: bool = False) -> str:
     return _withhold_spans(text, spans)
 
 
+_TEXT_LINE = re.compile(r"[^\r\n]++")
+# What a scan for a line's comment stops at: a quote, which opens a string
+# literal, and the comment markers.
+_LINE_PIECE = re.compile(r"[\"'`]|//|/\*|#")
+# A name joined to a value on a line ('apiKey:', 'api_key =', '"token":').
+_LINE_NAME = re.compile(r"(?<![\w$.-])(?P<name>[A-Za-z_$][\w$.-]*+)[\"']?[ \t]*+(?::(?!:)|=(?![=>~]))")
+# A run of a comment that could be key material: the base64 and URL-safe alphabet.
+_COMMENT_TOKEN = re.compile(r"[A-Za-z0-9+/_.~=-]{8,}+")
+
+
+def _closing_quote(line: str, quote: str, start: int) -> int | None:
+    """Where the string literal that ``quote`` opened before ``start`` closes, or None."""
+    position = line.find(quote, start)
+    while position != -1:
+        # A quote after an odd run of backslashes is escaped. Each run is
+        # counted once, since the next search starts past this quote.
+        backslashes = 0
+        while position - backslashes > start and line[position - backslashes - 1] == "\\":
+            backslashes += 1
+        if backslashes % 2 == 0:
+            return position
+        position = line.find(quote, position + 1)
+    return None
+
+
+def _comment_start(line: str) -> int | None:
+    """Where a comment starts on a line, outside string literals, or None.
+
+    A '//' or '#' starts one at the line's start or after a blank, ',' or ';'
+    ('https://h/#x' and 'this.#k' hold none); a '/*' starts one anywhere. A
+    string literal that does not close on the line leaves the rest unread.
+    """
+    position = 0
+    while (piece := _LINE_PIECE.search(line, position)) is not None:
+        mark, start = piece.group(), piece.start()
+        if mark in "\"'`":
+            close = _closing_quote(line, mark, piece.end())
+            if close is None:
+                return None
+            position = close + 1
+        elif mark == "/*" or start == 0 or line[start - 1] in " \t,;":
+            return start
+        else:
+            position = piece.end()
+    return None
+
+
+def _redact_trailing_comments(text: str) -> str:
+    """Withhold key material in a comment at the end of a line that assigns a credential name.
+
+    The assignment passes withhold a value to its end (',', ';', a blank), so
+    a comment after that end kept its text: 'apiKey: process.env.KEY, // old:
+    <key>' and 'api_key = os.environ["KEY"]; # <key>' showed the old key. On
+    a line where a name the assignment passes read as a credential's
+    (``_sensitive_assignment_key``, or ``_credential_name``: its last word
+    names one) is assigned before a comment, each token of the comment that
+    ``_credential_literal`` takes for an opaque key is withheld; words,
+    references and placeholders stay. A line is read once.
+    """
+    if "//" not in text and "#" not in text and "/*" not in text:
+        return text
+    spans: list[tuple[int, int]] = []
+    for line in _TEXT_LINE.finditer(text):
+        comment = _comment_start(line.group())
+        if comment is None:
+            continue
+        names = (match["name"] for match in _LINE_NAME.finditer(line.group(), 0, comment))
+        if not any(_sensitive_assignment_key(name) or _credential_name(name) for name in names):
+            continue
+        for token in _COMMENT_TOKEN.finditer(line.group(), comment):
+            if _credential_literal(token.group(), positional=False):
+                spans.append((line.start() + token.start(), line.start() + token.end()))
+    return _withhold_spans(text, spans)
+
+
 def _redact_plain_assignments(value: str, depth: int = 0, *, former: bool = False) -> str:
     """Withhold values assigned to sensitive names in ``name=value`` and ``name: value`` form.
 
