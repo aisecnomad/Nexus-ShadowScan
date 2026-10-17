@@ -3427,7 +3427,10 @@ workflow's read-only token, so the build job accepts the readback only when it
 matches the job's own read in every other field, `updated_at` included, and
 records in the evidence that `bypass_actors` came from that readback. Retain `release-candidate-<SHA>`,
 `release-attestations-<SHA>` and `release-publication-input-<SHA>` together;
-hosted retention is 90 days. Verify the candidate's `SHA256SUMS` and GitHub
+hosted retention is 90 days. `release-attestations-<SHA>` holds the Sigstore
+bundles `provenance.sigstore.json` and `sbom.sigstore.json`, which a maintainer
+who creates a GitHub release by hand attaches to it with the distributions.
+Verify the candidate's `SHA256SUMS` and GitHub
 attestations before publication. Publication uploads the wheel and sdist in
 that publication-input artifact and never rebuilds from a tag: the isolated
 `publish` job holds `id-token: write` as its only permission, waits for approval

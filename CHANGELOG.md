@@ -818,6 +818,12 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Release, CI and supply chain
 
+- The release workflow names its two attested bundles `provenance.sigstore.json` and
+  `sbom.sigstore.json` (they were `provenance.json` and `sbom.json`), the suffix that
+  release-signature checks such as OpenSSF Scorecard's Signed-Releases look for among a GitHub
+  release's assets. It still creates no release: `docs/operations/publishing.md` has the maintainer
+  attach the wheel, the sdist, `SHA256SUMS` and both bundles to a release created by hand, and shows
+  how to verify a download against them. **(behaviour change)** (Oct 17)
 - `make self-scan` (part of `make check`) and a CI step scan this checkout with
   `examples/shadowscan.self-scan.yaml` and require a complete report: findings do not fail the step,
   an incomplete scan (exit 3) does. The few paths that deliberately trip a scanner limit, and the
