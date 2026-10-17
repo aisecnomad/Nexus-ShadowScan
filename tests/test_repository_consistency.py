@@ -646,14 +646,31 @@ def test_requires_python_admits_exactly_the_classified_versions() -> None:
     assert _ci_matrix_minors("test-macos") <= admitted, "the macOS job tests an interpreter pyproject refuses"
 
 
-# Two or more CPython minor versions written as one list or range: "3.11, 3.12 and 3.13",
-# "3.11 to 3.14", "3.11-3.14", "macOS 3.11/3.14". A patch release such as 3.12.4 is not a minor
-# version and ends the span, so "3.12.0 to 3.12.3" is not an interpreter claim.
-_MINOR_VERSION = r"(?<![\d.])3\.\d+(?!\.?\d)"
-_INTERPRETER_SPAN = re.compile(
-    rf"{_MINOR_VERSION}(?:(?:,? (?:and|or) |, | to | through |[-–/]){_MINOR_VERSION})+"
+# Two or more CPython minor versions written as one list or range, however it is spelled:
+# "3.11, 3.12 and 3.13", "3.11 to 3.14", "3.11 - 3.14", "3.11 up to Python 3.14", "`3.11`–`3.14`",
+# ">=3.11,<3.15", "3.11+ (tested through 3.14)", "macOS 3.11/3.14". A patch release such as 3.12.4
+# is not a minor version and ends the span, so "3.12.0 to 3.12.3" is not an interpreter claim; nor
+# is a possessive ("3.11, or Python 3.14's syntax"), and an open "3.12+" with no upper bound
+# describes behavior rather than a supported set.
+_MINOR_VERSION = r"`?(?<![\d.])3\.\d+(?!\.?\d|['’]s)`?"
+_LIST_SEPARATOR = r" ?, ?(?:(?:and|or|&) )?| (?:and|or|&|plus) | ?/ ?"
+_UPPER_BOUND = r"(?:[A-Za-z-]+ ){0,3}?(?:to|through|thru|up to) "
+_RANGE_SEPARATOR = (
+    r" ?[-–—] ?| (?:to|through|thru|until|up to) "
+    rf"|\+? (?:and|or) (?:later|newer|above),? \(?{_UPPER_BOUND}|\+ ?[(,]? ?{_UPPER_BOUND}"
 )
-_RANGE_SEPARATORS = frozenset({"to", "through", "-", "–"})
+_SPECIFIER = r">= ?`?3\.\d+`? ?, ?<=? ?`?3\.\d+`?"
+_INTERPRETER_SPAN = re.compile(
+    rf"{_SPECIFIER}|{_MINOR_VERSION}(?:(?:{_LIST_SEPARATOR}|{_RANGE_SEPARATOR})(?:C?Python )?{_MINOR_VERSION})+"
+)
+_RANGE_WORDS = re.compile(r"[-–—+]|\b(?:to|through|thru|until|later|newer|above)\b")
+# A span describes the macOS CI matrix only when macOS alone is the platform its clause names last
+# before it ("macOS 3.11/3.14", "on macOS for 3.11 and 3.14") and the clause is about CI. "Linux and
+# macOS 3.11-3.14" or "on macOS, ShadowScan supports 3.11 to 3.14" state the supported set.
+_CLAUSE_BREAK = re.compile(r"[;!?]|\.(?= )")
+_PLATFORM = re.compile(r"\b(?:Linux|macOS|Ubuntu|Windows|WSL)\b")
+_JOINED_PLATFORM = re.compile(r"\b(?:Linux|Ubuntu|Windows|WSL) ?(?:,|/|&|and|or) ?$")
+_CI_WORDS = re.compile(r"\b(?:CI|jobs?|runners?|matrix|workflows?|legs?|tests?|tested)\b")
 # Spans that record an earlier interpreter set on purpose, and why.
 _DATED_INTERPRETER_SPANS = {
     ("docs/assurance-results.md", "3.11/3.12"): "the CI matrix when that dated result was recorded",
@@ -666,10 +683,31 @@ _LOCK_HEADERS = ("requirements.lock", "requirements-ci.lock", "requirements-ci-c
 def _span_minors(span: str) -> set[int]:
     parts = re.split(r"3\.(\d+)", span)
     minors = [int(part) for part in parts[1::2]]
+    if span.startswith(">="):
+        return set(range(minors[0], minors[1] + ("<=" in span)))
     covered = {minors[0]}
     for previous, separator, current in zip(minors[:-1], parts[2:-1:2], minors[1:], strict=True):
-        covered.update(range(previous, current + 1) if separator.strip() in _RANGE_SEPARATORS else {current})
+        covered.update(range(previous, current + 1) if _RANGE_WORDS.search(separator) else {current})
     return covered
+
+
+def _describes_macos_ci(paragraph: str, match: re.Match[str]) -> bool:
+    before = _CLAUSE_BREAK.split(paragraph[: match.start()])[-1]
+    after = _CLAUSE_BREAK.split(paragraph[match.end() :])[0]
+    platforms = list(_PLATFORM.finditer(before))
+    if not platforms or platforms[-1].group(0) != "macOS":
+        return False
+    if _JOINED_PLATFORM.search(before[: platforms[-1].start()]):
+        return False
+    return _CI_WORDS.search(before + after) is not None
+
+
+def _interpreter_spans(paragraph: str) -> list[tuple[str, bool]]:
+    """``(span, about_macos_ci)`` for every interpreter span in one whitespace-normalized paragraph."""
+    return [
+        (match.group(0), _describes_macos_ci(paragraph, match))
+        for match in _INTERPRETER_SPAN.finditer(paragraph)
+    ]
 
 
 def _comment_header(path: Path) -> str:
@@ -700,16 +738,16 @@ def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
     for name, text in texts:
         for paragraph in re.split(r"\n[ \t]*\n", text):
             paragraph = " ".join(paragraph.split())
-            for match in _INTERPRETER_SPAN.finditer(paragraph):
-                yield name, match.group(0), "macOS" in paragraph[max(0, match.start() - 20) : match.start()]
+            for span, macos in _interpreter_spans(paragraph):
+                yield name, span, macos
 
 
 def test_documented_interpreter_ranges_match_the_classifiers_and_ci() -> None:
     """Every stated set of supported or CI-tested Pythons is the one pyproject and ci.yml declare.
 
-    A span right after "macOS" describes the macOS job's matrix. Any other span describes what is
-    supported and what the Linux job tests, which the matrix test above keeps equal to the
-    classifiers. Adding 3.14 to pyproject and CI left the rollout guide, the testing guide and the
+    A span tied to macOS alone in a clause about CI describes the macOS job's matrix. Any other span
+    describes what is supported and what the Linux job tests, which the matrix test above keeps
+    equal to the classifiers. Adding 3.14 to pyproject and CI left the rollout guide, the testing guide and the
     lock headers promising 3.11 to 3.13 and macOS 3.11/3.13, and the Windows refusal message
     still names 3.11-3.13; package string literals are read as well as documents.
     """
@@ -734,6 +772,52 @@ def test_documented_interpreter_ranges_match_the_classifiers_and_ci() -> None:
     assert any(macos for _, _, macos in claims), "a document should state the macOS CI interpreters"
     unused = set(_DATED_INTERPRETER_SPANS) - {(name, span) for name, span, _ in claims}
     assert not unused, f"stale dated interpreter spans: {sorted(unused)}"
+
+
+@pytest.mark.parametrize(
+    ("paragraph", "expected"),
+    [
+        ("CPython 3.11 – 3.13 on Linux", [({11, 12, 13}, False)]),
+        ("Python 3.11 - 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11—3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11-3.14", [({11, 12, 13, 14}, False)]),
+        ("Python 3.11 up to 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11 through Python 3.13", [({11, 12, 13}, False)]),
+        ("Python `3.11`–`3.13`", [({11, 12, 13}, False)]),
+        ("requires-python >=3.11,<3.14", [({11, 12, 13}, False)]),
+        ("requires-python >=3.11, <=3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11, 3.12 and 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11, 3.12, and 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11 & 3.13", [({11, 13}, False)]),
+        ("Python 3.11 or 3.13", [({11, 13}, False)]),
+        ("Python 3.11 and later (tested through 3.13)", [({11, 12, 13}, False)]),
+        ("Python 3.11+ (tested through 3.13)", [({11, 12, 13}, False)]),
+        ("Python 3.11+, validated up to 3.13", [({11, 12, 13}, False)]),
+        ("macOS runners use Python 3.11 – 3.13", [({11, 12, 13}, True)]),
+        ("CI runs on macOS for 3.11 and 3.14", [({11, 14}, True)]),
+        ("The macOS 3.11 and 3.14 CI jobs install the locks", [({11, 14}, True)]),
+        (
+            "The workflow covers Linux 3.11–3.14 and macOS 3.11/3.14 for lint, types and tests",
+            [({11, 12, 13, 14}, False), ({11, 14}, True)],
+        ),
+        ("ShadowScan supports Linux and macOS 3.11-3.14", [({11, 12, 13, 14}, False)]),
+        ("On macOS, ShadowScan supports 3.11 to 3.14", [({11, 12, 13, 14}, False)]),
+        (
+            "CI tests macOS 3.11/3.14. ShadowScan supports 3.11 to 3.14",
+            [({11, 14}, True), ({11, 12, 13, 14}, False)],
+        ),
+        ("Use CPython 3.12.4 or later rather than 3.12.0 to 3.12.3", []),
+        ("Python 3.12+ tokenizers stop at 200 levels and 3.11 has no limit", []),
+        ("SARIF 2.1.0, 3.11.6", []),
+        ("a `type` statement on Python 3.11, or Python 3.14's `except A, B:` on 3.13", []),
+        ("Python 3.11 is the minimum", []),
+    ],
+)
+def test_interpreter_span_matcher_reads_ordinary_spellings(
+    paragraph: str, expected: list[tuple[set[int], bool]]
+) -> None:
+    """The range check above is only as good as the matcher: each spelling here once passed it."""
+    assert [(_span_minors(span), macos) for span, macos in _interpreter_spans(paragraph)] == expected
 
 
 def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:
