@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from shadowscan.connectors.code.filesystem import _document_declares_mcp
 from shadowscan.utils.text import BINARY_CONTENT_ERROR
 
 RANDOM = "R4nd0m9Qx2Vb7Lp6"
@@ -43,6 +44,19 @@ jobs:
             }
           }
           EOF
+"""
+
+# An Ansible play that deploys a Cursor MCP configuration from structured content.
+ANSIBLE_MCP_TASK = """\
+- hosts: all
+  tasks:
+    - name: Write the Cursor MCP configuration
+      copy:
+        dest: ~/.cursor/mcp.json
+        content:
+          mcpServers:
+            evil:
+              command: npx
 """
 
 
@@ -73,14 +87,63 @@ def test_a_workflow_example_that_writes_an_mcp_configuration_is_not_one(tmp_path
     ("name", "text"),
     [
         # A dedicated MCP configuration name is one whatever it holds.
-        (".mcp.json", TRANSCRIPT),
+        pytest.param(".mcp.json", TRANSCRIPT, id="dedicated-name"),
         # A document whose structure declares servers keeps the strict rules.
-        ("agents/mcp.yaml", "mcpServers:\n  files:\n    command: npx\n  1: nope\n"),
+        pytest.param(
+            "agents/mcp.yaml", "mcpServers:\n  files:\n    command: npx\n  1: nope\n", id="declared"
+        ),
+        # So does a list that holds a mapping of servers: no client reads it, and the MCP
+        # parser rejects its shape, but it carries a server configuration all the same.
+        pytest.param("deploy/agent.yaml", ANSIBLE_MCP_TASK, id="ansible-task"),
+        pytest.param(
+            "deploy/agent.yaml",
+            "- name: client\n  mcpServers:\n    evil:\n      command: npx\n",
+            id="yaml-list",
+        ),
+        pytest.param(
+            "deploy/clients.json",
+            '[{"name": "client", "mcpServers": {"evil": {"command": "npx"}}}]',
+            id="json-list",
+        ),
     ],
 )
 def test_a_real_mcp_configuration_that_does_not_parse_stays_a_gap(tmp_path, run_connector, name, text):
     _, ctx = _scan(tmp_path, run_connector, {name: text})
     assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        pytest.param("data/sample-turns.json", TRANSCRIPT, id="json"),
+        pytest.param(
+            "data/sample-turns.yaml",
+            "- type: system\n  mcp_servers:\n    - name: github\n      status: connected\n",
+            id="yaml",
+        ),
+    ],
+)
+def test_a_list_of_records_with_a_server_status_list_is_not_an_mcp_configuration(
+    tmp_path, run_connector, name, text
+):
+    # Inside a list only a mapping of servers declares them; a status list does not.
+    _, ctx = _scan(tmp_path, run_connector, {name: text})
+    assert not ctx.stats.incomplete and not ctx.stats.errors
+
+
+def test_the_structural_mcp_walk_descends_into_lists_within_its_bounds():
+    servers = {"mcpServers": {"evil": {"command": "npx"}}}
+    # An Ansible block nests the task two more levels down; it is still found.
+    play = [
+        {"hosts": "all", "tasks": [{"block": [{"copy": {"dest": "~/.cursor/mcp.json", "content": servers}}]}]}
+    ]
+    assert _document_declares_mcp(play)
+    assert not _document_declares_mcp([{"mcp_servers": [{"name": "github", "status": "connected"}]}])
+    # Bounded: a document nested far past the depth bound ends the walk instead of the stack.
+    deep: list[object] = [servers]
+    for _ in range(5_000):
+        deep = [deep]
+    assert not _document_declares_mcp(deep)
 
 
 # ------------------------------------------------------ discounted test code

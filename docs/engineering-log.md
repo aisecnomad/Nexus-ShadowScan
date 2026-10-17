@@ -244,11 +244,21 @@ public repositories with the tool and read the committed benchmark metrics.
   keeps the whole value withheld, as does any other identifier or call.
 - **Fewer spurious incomplete scans.** Exit 3 was the common case on ordinary
   repositories, so a CI gate on a nonzero exit failed on them for good:
-  - A JSON array or scalar, or a YAML mapping whose structure declares no MCP
-    servers (a transcript listing `mcp_servers`, a workflow example writing an
-    MCP configuration in a heredoc), is no longer parsed as an MCP
-    configuration and rejected. A dedicated MCP configuration name, or a
-    document whose structure declares servers, keeps the strict rules.
+  - A JSON or YAML document whose structure declares no MCP servers (a
+    transcript array whose records list `mcp_servers` statuses, a scalar, a
+    workflow example writing an MCP configuration in a heredoc) is no longer
+    parsed as an MCP configuration and rejected. A dedicated MCP
+    configuration name, or a document whose structure declares servers, keeps
+    the strict rules. That includes a list holding a mapping of servers within
+    the walk's bounds (twelve levels of mappings and lists, 256 entries each):
+    an Ansible task writing `~/.cursor/mcp.json` from structured `content`, or
+    a top-level `- name: client` / `mcpServers:` list. The first cut returned
+    False for every list and passed those as complete with no finding;
+    `_document_declares_mcp` now walks lists, where only a mapping of servers
+    counts. Tests: the `ansible-task`, `yaml-list` and `json-list` cases of
+    `test_a_real_mcp_configuration_that_does_not_parse_stays_a_gap`,
+    `test_a_list_of_records_with_a_server_status_list_is_not_an_mcp_configuration`
+    and `test_the_structural_mcp_walk_descends_into_lists_within_its_bounds`.
   - Import-bound calls are read up to 65,536 characters instead of 8,192
     (`source_semantics.MAX_CALL_TEXT`): agent constructions carry their
     instructions and tools inline, and their options were unread. The

@@ -736,28 +736,36 @@ _DEDICATED_MCP_CONFIG_NAMES = frozenset(
 _MCP_STRUCTURE_SUFFIXES = (".json", ".toml", ".yaml", ".yml")
 
 
-def _document_declares_mcp(document: dict[str, Any], depth: int = 0) -> bool:
-    """Whether a parsed JSON/TOML object configures MCP servers, wherever the table sits.
+def _document_declares_mcp(document: Any, depth: int = 0, *, listed: bool = False) -> bool:
+    """Whether a parsed JSON/TOML/YAML document configures MCP servers, wherever the table sits.
 
     Decided from the structure, not a text prefix: a key named ``mcpServers`` or
     ``mcp_servers`` holding a mapping, or an ``mcp`` mapping with a ``servers`` mapping,
-    at the top level or nested within a client's section. Bounded in depth and breadth so
-    a hostile document cannot make the walk expensive.
+    at the top level, nested within a client's section or in a mapping inside a list (an
+    Ansible task that writes ``~/.cursor/mcp.json`` from structured ``content``, a list of
+    client profiles). Bounded in depth (mappings and lists alike) and breadth so a hostile
+    document cannot make the walk expensive.
     """
-    if depth > 6:
+    if depth > 12:
         return False
-    # The key's presence is the signal, whatever its value: a malformed value (``mcpServers:
-    # "x"``) must still route to the server parser, which records the input defect, exactly as
-    # the former substring check did — only now it cannot be hidden behind leading padding.
-    if "mcpServers" in document or "mcp_servers" in document:
-        return True
-    mcp = document.get("mcp")
-    if isinstance(mcp, dict) and "servers" in mcp:
-        return True
-    for value in list(document.values())[:256]:
-        if isinstance(value, dict) and _document_declares_mcp(value, depth + 1):
+    if isinstance(document, list):
+        return any(_document_declares_mcp(item, depth + 1, listed=True) for item in document[:256])
+    if not isinstance(document, dict):
+        return False
+    # Outside a list the key's presence is the signal, whatever its value: a malformed value
+    # (``mcpServers: "x"``) must still route to the server parser, which records the input
+    # defect, exactly as the former substring check did — only now it cannot be hidden behind
+    # leading padding. A list holds records, and a record's ``mcp_servers`` can be a status
+    # list (a session transcript), so there only a mapping of servers declares them.
+    for key in ("mcpServers", "mcp_servers"):
+        if key in document and (not listed or isinstance(document[key], dict)):
             return True
-    return False
+    mcp = document.get("mcp")
+    if isinstance(mcp, dict) and "servers" in mcp and (not listed or isinstance(mcp["servers"], dict)):
+        return True
+    return any(
+        _document_declares_mcp(value, depth + 1, listed=listed) for value in list(document.values())[:256]
+    )
 
 
 _WORKFLOW_FILE = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
@@ -777,7 +785,7 @@ def _yaml_declares_mcp(text: str) -> bool | None:
         data = strict_bounded_safe_load(text, require_string_keys=False)
     except (ValueError, RecursionError, yaml.YAMLError):
         return None
-    return isinstance(data, dict) and _document_declares_mcp(data)
+    return _document_declares_mcp(data)
 
 
 # Documentation placeholders are informational: enough to be listed, never
@@ -4585,13 +4593,11 @@ class FilesystemConnector(BaseConnector):
             # Decide from the parsed structure when it is held (JSON/TOML): leading
             # padding before the keys then cannot hide a server table. A JSON object
             # must be decided structurally; the text fallback below never sees past
-            # its truncation, so a string search of a prefix could miss the keys.
-            if isinstance(document, dict):
-                return _document_declares_mcp(document)
+            # its truncation, so a string search of a prefix could miss the keys. An
+            # array declares servers only in a mapping it holds (see
+            # _document_declares_mcp), never in a transcript's "mcp_servers" status list.
             if document is not None:
-                # A parsed array or scalar configures no client: the keys the text
-                # search would find are in its values (a transcript listing "mcp_servers").
-                return False
+                return _document_declares_mcp(document)
             if rel.endswith((".yaml", ".yml")) and not _WORKFLOW_FILE.search(rel):
                 # Workflows keep the text search: their servers are JSON strings in step
                 # inputs, which _embedded_workflow_mcp reads.

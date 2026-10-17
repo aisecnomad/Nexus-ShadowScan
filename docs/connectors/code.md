@@ -57,11 +57,16 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 
 A JSON, YAML or TOML file with another name is read as an MCP configuration
 when its structure declares servers (an `mcpServers` or `mcp_servers` key, or
-`mcp` with `servers`, within six levels of mappings). A document that parses to
-an array or a scalar, or a YAML mapping that declares no servers, is not one,
-even when those keys appear in its values (a session transcript listing
-`mcp_servers`, a workflow example whose step writes an MCP configuration with
-a heredoc), and the other passes read it as ordinary configuration. A
+`mcp` with `servers`, within twelve levels of mappings and lists, the first 256
+entries of each). Inside a list only such a key holding a mapping of servers
+counts, so an array of records is not one because a record lists server
+statuses (a session transcript's `mcp_servers`). A document that declares no
+servers, a scalar included, is not one either, even when those keys appear in
+its values (a workflow example whose step writes an MCP configuration with a
+heredoc), and the other passes read it as ordinary configuration. A list that
+does declare them (an Ansible task writing `~/.cursor/mcp.json` from structured
+`content`) is passed to the MCP parser, which rejects its shape (`MCP
+configuration must be an object`), so the scan is incomplete. A
 dedicated MCP configuration name (`.mcp.json`, `mcp.json`, `smithery.yaml`, …)
 is always parsed, so its defects still make the scan incomplete, as does a
 document that declares servers in malformed form or cannot be read at all.
