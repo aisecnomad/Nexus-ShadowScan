@@ -301,9 +301,15 @@ file_matches)`, now serves every gap site.
   case-insensitively), a file in an agent definition directory or that a
   coding-agent or MCP file signature selects, directory-wide globs included,
   when the file is text the scanner reads or a signature names it, and a file
-  whose content a caller found to declare servers. Generic manifests, build
-  files and shared client names are not: linked or replaced by a FIFO they
-  cost one entry. An oversize dotenv file (`.env`, `.env.production`)
+  whose content a caller found to declare servers. It is true too for a
+  shared client name in the directory of the client that reads servers from
+  it (`.vscode/settings.json`, whose `mcp` table VS Code reads, beside
+  `.gemini/settings.json`, `.continue/config.yaml` and `.codex/config.toml`):
+  a later pass found an outside or dangling `.vscode/settings.json` link
+  costing one entry, where a137fd5 and main exited 3, so the in-tree alias
+  of one is blinding again too, as on both. Generic manifests, build files
+  and shared client names elsewhere are not: linked or replaced by a FIFO
+  they cost one entry. An oversize dotenv file (`.env`, `.env.production`)
   stays blinding while `scan_secrets` is on, as it was and as main had it:
   it exists to hold a key, and unread it hides one, while a link of that name
   hides no byte of the tree. A tool credential file (`.npmrc`, `.netrc`),

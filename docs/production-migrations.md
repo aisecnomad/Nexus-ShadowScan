@@ -59,8 +59,9 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   its path in `exclude` (`exclude: ["apps/web/.mcp.json"]`; an entry without
   `/` or `*` names directories) to keep scanning without it. A manifest or
   build file (`Dockerfile`, `package.json`, `requirements.txt`, `.env`,
-  `*.tf`, `docker-compose.yml`) or a shared client name (`config.json`,
-  `settings.json`) linked, inside the tree or out, or replaced by a FIFO
+  `*.tf`, `docker-compose.yml`) or a shared client name outside its client's
+  directory (`config.json`, `settings.json`, but not `.vscode/settings.json`)
+  linked, inside the tree or out, or replaced by a FIFO
   still costs one entry, so a monorepo that links `apps/web/.env` or a
   `Dockerfile` to a shared copy stays complete; an image or video beside
   agent rules (`.cursor/rules/demo.mp4`) over `max_file_size` costs one

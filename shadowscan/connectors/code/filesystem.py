@@ -777,6 +777,21 @@ _DEDICATED_MCP_CONFIG_NAMES = frozenset(
         "smithery.yaml",
     }
 )
+# Shared client names (MCP_CONFIG_NAMES) in the directory of the client that
+# reads its servers from them: VS Code's workspace settings (an ``mcp`` table),
+# Gemini CLI's settings, Continue's configuration, Codex's ``[mcp_servers]``.
+# Elsewhere such a name is generic (a root ``settings.json`` or ``config.json``)
+# and the file is MCP configuration only by its content; here it is the
+# client's own settings file, however it goes unread.
+_CLIENT_SETTINGS_FILES = frozenset(
+    {
+        (".vscode", "settings.json"),
+        (".gemini", "settings.json"),
+        (".continue", "config.json"),
+        (".continue", "config.yaml"),
+        (".codex", "config.toml"),
+    }
+)
 # Suffixes of a file whose structure can make it an MCP configuration whatever its name.
 _MCP_STRUCTURE_SUFFIXES = (".json", ".toml", ".yaml", ".yml")
 
@@ -1155,6 +1170,12 @@ def _dotenv_name(name: str) -> bool:
     it up, as one entry of the budget when oversize, like other unread content.
     """
     return name.lower().startswith(".env")
+
+
+def _client_settings_file(lower: str) -> bool:
+    """Whether ``lower`` (lower-cased) names a client's own settings file: ``_CLIENT_SETTINGS_FILES``."""
+    path = PurePosixPath(lower)
+    return (path.parent.name, path.name) in _CLIENT_SETTINGS_FILES
 
 
 def _agent_file_signal(match: Match) -> bool:
@@ -3773,6 +3794,8 @@ class FilesystemConnector(BaseConnector):
         alike. It is:
 
         * a dedicated MCP configuration name, a coding-agent settings path, a
+          client's own settings file under a shared name
+          (``.vscode/settings.json``, ``_CLIENT_SETTINGS_FILES``), a
           coding-agent instruction document, an agent manifest or card, each
           compared case-insensitively, as the detectors and a case-insensitive
           file system compare them (``.MCP.JSON``, ``.claude/Settings.json``);
@@ -3788,7 +3811,7 @@ class FilesystemConnector(BaseConnector):
         Generic manifests and build files are not (``requirements.txt``,
         ``Dockerfile``, ``*.tf``, ``package.json``, ``.env``,
         ``docker-compose.yml``), nor shared client names such as
-        ``config.json`` or ``settings.json`` outside an agent's directory,
+        ``config.json`` or ``settings.json`` outside their client's directory,
         which are MCP configuration only by their content: their gaps are
         ordinary, budgeted ones. ``file_matches`` saves a caller that holds
         the file-name matches another lookup.
@@ -3801,6 +3824,7 @@ class FilesystemConnector(BaseConnector):
             name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             or _is_coding_agent_doc(name)
             or is_agent_config_path(lower)
+            or _client_settings_file(lower)
             or posture_client(rel) is not None
             or agent_manifest_kind(lower) is not None
         ):

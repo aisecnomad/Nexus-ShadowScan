@@ -43,13 +43,15 @@ that are never silent:
   configuration, as an oversize copy of that file does, under a test path
   too: an MCP configuration by a dedicated name in any letter case
   (`.mcp.json`, `.MCP.JSON`), a coding-agent instruction, rule or settings
-  file (`CLAUDE.md`, `.claude/settings.json`), a file a coding-agent or MCP
+  file (`CLAUDE.md`, `.claude/settings.json`), a client's own settings file
+  under a shared name (`.vscode/settings.json`, whose `mcp` table VS Code
+  reads servers from), a file a coding-agent or MCP
   file signature selects, directory-wide globs included
   (`.roo/rules/deploy.md`, `.continue/mcpServers/x.yaml`), or an agent
   manifest or card. A link named like a manifest or build file (`Dockerfile`,
   `package.json`, `requirements.txt`, `.env`, `*.tf`) or like a shared client
-  file (`config.json`, `settings.json`), which is MCP configuration only by its
-  content, costs one entry like any other.
+  file outside its client's directory (`config.json`, `settings.json`), which
+  is MCP configuration only by its content, costs one entry like any other.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the
@@ -60,7 +62,7 @@ that are never silent:
   [budget](#coverage-budget-and-strict-accounting), or an immediate exit 3 for
   agent configuration (as the links above), for a JSON, TOML or YAML file
   the MCP parser decides by its content (`deploy/tools.json`,
-  `.vscode/settings.json`) whose bytes may name a server table key
+  `config/settings.json`) whose bytes may name a server table key
   (`mcpServers`, `mcp_servers`, an `mcp` key however quoted, spaced or
   escaped, read behind any padding up to 128 MiB, and taken to name one past
   that), for an MCP registry `server.json`, and, while `scan_secrets` is on,

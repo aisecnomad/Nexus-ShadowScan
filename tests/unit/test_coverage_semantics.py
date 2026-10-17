@@ -349,6 +349,7 @@ AGENT_CONFIGURATION = [
     pytest.param(".augment/rules/deploy.md", id="augment-rules"),
     pytest.param(".trae/rules/deploy.md", id="trae-rules"),
     pytest.param("tests/e2e/.roo/rules/deploy.md", id="test-path-roo-rules"),
+    pytest.param(".vscode/settings.json", id="vscode-workspace-settings"),
 ]
 
 
@@ -391,7 +392,8 @@ def test_an_asset_beside_agent_rules_is_an_ordinary_gap(tmp_path, run_connector)
         pytest.param("requirements.txt", "requirements/prod.txt", id="requirements-alias"),
         pytest.param(".env", ".env.example", id="dotenv-alias"),
         pytest.param("config/config.json", "config.development.json", id="config-json-alias"),
-        pytest.param(".vscode/settings.json", "../tools/vscode-settings.json", id="vscode-settings-alias"),
+        pytest.param("settings.json", None, id="root-settings-json-outside"),
+        pytest.param("tools/settings.json", "missing", id="settings-json-dangling"),
         pytest.param("infra/dev/providers.tf", "../shared/providers.tf", id="terraform-alias"),
     ],
 )
@@ -404,7 +406,6 @@ def test_a_link_named_like_a_manifest_or_build_file_is_an_ordinary_gap(tmp_path,
             "requirements/prod.txt": "anthropic==0.40.0\n",
             ".env.example": "LOG_LEVEL=debug\n",
             "config/config.development.json": "{}\n",
-            "tools/vscode-settings.json": "{}\n",
             "infra/shared/providers.tf": 'provider "aws" {}\n',
         },
     )
@@ -429,6 +430,30 @@ def test_a_special_file_named_like_a_manifest_or_build_file_is_an_ordinary_gap(t
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert not ctx.stats.incomplete
     assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 0
+
+
+VSCODE_SERVERS = '{"mcp": {"servers": {"evil": {"command": "npx"}}}}\n'
+
+
+@pytest.mark.parametrize("rel", [".vscode/settings.json", "web/.VSCode/Settings.json"])
+@pytest.mark.parametrize("how", ["dangling-link", "in-tree-alias", "fifo"])
+def test_a_clients_own_settings_file_left_unread_is_blinding(tmp_path, run_connector, rel, how):
+    # VS Code reads servers from an ``mcp`` table in its workspace settings, as
+    # Gemini CLI does from .gemini/settings.json: in its client's directory the
+    # shared name is that client's settings file, so unread it hides servers and
+    # no budget absorbs it, while a root settings.json costs one entry (above).
+    repo = _tree(tmp_path / "repo", {"tools/vscode-settings.json": VSCODE_SERVERS})
+    path = repo / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if how == "dangling-link":
+        path.symlink_to("missing.json")
+    elif how == "in-tree-alias":
+        path.symlink_to(os.path.relpath(repo / "tools" / "vscode-settings.json", path.parent))
+    else:
+        os.mkfifo(path)
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False)
+    assert ctx.stats.incomplete, f"unread {rel} ({how}) was budgeted"
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 1
 
 
 def test_an_oversize_dotenv_file_is_blinding_while_credentials_are_scanned(tmp_path, run_connector):
