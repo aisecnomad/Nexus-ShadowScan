@@ -512,6 +512,8 @@ def test_a_scan_reports_a_fallback_after_a_comment_line(tmp_path: Path, run_conn
         f'openai_api_key = settings.openai_api_key or """{RANDOM}"""',
         f"openai_api_key = settings.openai_api_key or '''{RANDOM}'''",
         f'const openaiApiKey = process.env.OPENAI_API_KEY as string || "{RANDOM}";',
+        # A cast to a generic type: its type arguments are read through.
+        f'const openaiApiKey = process.env.OPENAI_API_KEY as Record<string, string> || "{RANDOM}";',
     ],
 )
 def test_a_parenthesised_triple_quoted_or_cast_fallback_is_reported(index: SignatureIndex, line: str):
@@ -524,7 +526,6 @@ def test_a_parenthesised_triple_quoted_or_cast_fallback_is_reported(index: Signa
         # Parentheses do not make a call's argument a fallback.
         f'const openaiApiKey = process.env.OPENAI_API_KEY || (getSecret("{RANDOM}"));',
         f'const openaiApiKey = process.env.OPENAI_API_KEY || (() => "{RANDOM}");',
-        f'const openaiApiKey = process.env.OPENAI_API_KEY as Record<string, string> || "{RANDOM}";',
     ],
 )
 def test_a_literal_inside_a_parenthesised_call_is_not_a_fallback(index: SignatureIndex, line: str):
@@ -996,3 +997,43 @@ def test_a_scan_reports_env_file_passwords_and_withholds_them(tmp_path: Path, ru
     assert secret.metadata["count"] == 2
     dumped = json.dumps(secret.to_dict(), default=str)
     assert "TrustNoOneEverAgain" not in dumped and "battery-staple" not in dumped
+
+
+# A generic call's type arguments between the read and the fallback operator
+# ended the operand reader at '<', so the idiomatic NestJS, .NET and Kotlin
+# forms of a typed settings read lost their fallback key, which main 8c72467
+# reported.
+@pytest.mark.parametrize(
+    "line",
+    [
+        "const openaiApiKey = this.configService.get<string>('OPENAI_API_KEY') ?? '<K>';",
+        "  openaiApiKey: this.configService.get<string>('OPENAI_API_KEY') ?? '<K>',",
+        'const openaiApiKey = this.configService.get<string>("OPENAI_API_KEY")! || "<K>";',
+        'const openaiApiKey = this.config.values.get<string>("x") ?? "<K>";',
+        'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey") ?? "<K>";',
+        'val openaiApiKey = config.getProperty<String>("openai") ?: "<K>"',
+        # Nested, nullable, array and union type arguments.
+        'const openaiApiKey = this.configService.get<Map<string, string[]>>("x")?.key ?? "<K>";',
+        'val openaiApiKey = config.getProperty<String?>("openai") ?: "<K>"',
+        'const openaiApiKey = this.configService.get<string | undefined>("x") ?? "<K>";',
+    ],
+)
+def test_a_fallback_after_generic_type_arguments_is_reported(index: SignatureIndex, line: str):
+    assert _generic(index, line.replace("<K>", TAIL_KEY), code=True) != []
+
+
+def test_type_arguments_do_not_make_a_call_argument_a_fallback(index: SignatureIndex):
+    line = f'const openaiApiKey = this.configService.get<string>("{TAIL_KEY}");'
+    assert _generic(index, line, code=True) == []
+
+
+def test_a_scan_reports_a_fallback_after_typed_reads(tmp_path: Path, run_connector):
+    files = {
+        "src/a.ts": f"const openaiApiKey = this.configService.get<string>('OPENAI_API_KEY') ?? '{TAIL_KEY}';\n",
+        "src/A.cs": f'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey") ?? "{TAIL_KEY}";\n',
+        "src/A.kt": f'val openaiApiKey = config.getProperty<String>("openai") ?: "{TAIL_KEY}"\n',
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    secrets = [f for f in findings if f.kind.value == "secret"]
+    assert sorted(f.metadata["path"] for f in secrets) == ["src/A.cs", "src/A.kt", "src/a.ts"]
+    assert TAIL_KEY not in json.dumps([f.to_dict() for f in secrets], default=str)

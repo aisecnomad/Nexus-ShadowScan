@@ -648,6 +648,31 @@ def _closed_group(tokens: Iterator[_OperandToken], opener: str) -> bool:
     return False
 
 
+# What a type argument list holds besides names, members ('System.String') and
+# nested lists: separators, nullable and array marks, unions and intersections.
+_TYPE_ARGUMENT_MARKS = frozenset({",", "?", "[", "]", "|", "&"})
+
+
+def _type_arguments(tokens: Iterator[_OperandToken]) -> bool:
+    """Read the type arguments of a generic call, after its '<', up to the matching '>'.
+
+    'configService.get<string>("X") ?? "<key>"' (NestJS), C#'s
+    'GetValue<string>("X")' and Kotlin's 'getProperty<String>("x")' read the
+    same setting as the untyped call. False when anything but a type's names
+    and marks comes first, or the list does not close within the follower.
+    """
+    depth = 1
+    for item in tokens:
+        text = item.token.group()
+        if text in {"<", ">"}:
+            depth += 1 if text == "<" else -1
+            if not depth:
+                return True
+        elif item.kind not in {"word", "member"} and text not in _TYPE_ARGUMENT_MARKS:
+            return False
+    return False
+
+
 def _operator(item: _OperandToken) -> str | None:
     """The operator a token is, or None: a symbol, or one of Python's word operators.
 
@@ -667,8 +692,9 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     'apiKey = process.env.OPENAI_API_KEY || "<key>"' it covers only the read.
     The value goes on only through operators (``_FALLBACK_OPERATORS`` and
     ``_OTHER_OPERATORS``) between operands: string literals, names and member
-    chains ('?? process.env.B ?? "<key>"'), each with its calls, subscripts
-    and non-null or optional members ('GetEnvironmentVariable("X") ??',
+    chains ('?? process.env.B ?? "<key>"'), each with its calls, subscripts,
+    generic type arguments (``_type_arguments``: 'get<string>("X") ??') and
+    non-null or optional members ('GetEnvironmentVariable("X") ??',
     'process.env.X?.trim() ||', 'getKey()!.value ??') and a TypeScript cast
     ('as string ||'), and bracketed groups. Parentheses around an operand
     ('|| ("<key>")', '|| (a || "<key>")') are read through, so the operand
@@ -713,6 +739,10 @@ def _fallback_literal(value: str, follower: str) -> str | None:
         elif kind == "member" or (not item.spaced and kind in {"open", "postfix"}):
             # A member, call, subscript or non-null assertion on the operand before.
             if kind == "open" and not _closed_group(tokens, token.group()):
+                return None
+        elif token.group() == "<" and not item.spaced:
+            # A generic call's type arguments ('get<string>(...)', 'GetValue<string>(...)').
+            if not _type_arguments(tokens):
                 return None
         else:
             operator = _operator(item)
