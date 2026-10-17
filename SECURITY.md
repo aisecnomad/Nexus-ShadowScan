@@ -446,7 +446,9 @@ coverage, even when a response includes an empty collection field.
   Explicit `${VAR:-default}` fallbacks remain an operator policy decision.
 * Incomplete scans exit 3 and set SARIF executionSuccessful=false. Only complete
   results qualify for incremental reuse. Comparisons infer resolution only for
-  complete scans with matching collection, detection and finding-identity schemas.
+  complete scans with matching collection, detection and finding-identity schemas,
+  and never for a finding in content the current scan declared (`--profile ci`)
+  or tolerated (coverage budget) as unread.
   Explicit unmatched connector selections and unsupported/error exports fail
   visibly. Incremental input roots and ancestor symlinks are ineligible for reuse;
   pre/post hashing is not an atomic filesystem snapshot. Keep inputs immutable

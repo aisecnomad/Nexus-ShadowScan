@@ -204,7 +204,10 @@ does not name, still marks the scan incomplete, and so does a connector
 deadline, a `max_files` or `max_entries` limit and a triage scan. The profile
 and `strict_coverage` conflict and are rejected together. The report of a
 profile scan is not the report of a scan that read everything: read
-`declared_omissions` before treating its exit 0 as full coverage.
+`declared_omissions` before treating its exit 0 as full coverage. `diff` reads
+them too: while the current report counts declared omissions, a missing
+finding under a test, documentation, example or generated path is not resolved
+(see [comparing reports](#comparing-reports)).
 
 Analysis limits are reported with their reason, for example
 `file analysis incomplete (MatchTimeoutError: source binding call limit exceeded)`.
@@ -1053,8 +1056,29 @@ score/factors within the same risk band. Each changed item includes
 completed, declare the same supported finding-identity schema, carry a
 `summary` whose `total` (and `by_surface`/`by_kind` counts) match their
 `findings` array, and have the same `collection_scope` fingerprint. A truncated
-or filtered report is therefore unknown (exit 3), not a resolution. The
-fingerprint is an opaque digest that covers
+or filtered report is therefore unknown (exit 3), not a resolution.
+
+A complete report can still have left content unread: the omissions a `ci`
+profile scan declared and the coverage gaps its budget tolerated
+(`stats.coverage`). A finding missing from such content may only have gone
+unread, so it is not resolved. When a missing finding's file (its
+`metadata.path` or the file an evidence location names) is, or lies below, a
+gap path that `stats[].coverage.details` lists, or lies under a test,
+documentation, example or generated path while the current report counts
+declared omissions (a report counts those but does not list them), the
+comparison is incomplete with the reason `absence there is not resolution`:
+every missing finding is `unknown` and diff exits 3. A project finding is held
+back by a gap anywhere in its directory and by any declared omission, since its
+evidence can come from any file in it. A finding missing from content the scan
+did read still resolves, so a `--profile ci` gate keeps reporting resolutions.
+When the report cannot say where a connector stopped reading (a gap list cut at
+50 entries, a malformed ledger or count, a summary counting declared omissions
+that no connector record holds, or declared omissions from a connector without
+the `ci` profile), every missing finding of that connector is held back. Only
+the current report's unread content counts: the baseline's could only make a
+finding look new, which diff reports anyway.
+
+The fingerprint is an opaque digest that covers
 selected source paths, connector settings, filters, confidence threshold,
 signatures and scanner implementation. File contents and inventory approvals
 are excluded so real removals and approval changes can be compared. A public

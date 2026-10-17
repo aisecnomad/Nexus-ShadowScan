@@ -110,7 +110,18 @@ public repositories with the tool and read the committed benchmark metrics.
   `examples/svc/` with its own manifest is reported at full weight, so a NUL
   byte hiding its tool code still exits 3 under the profile (a review found
   it declared). A directory link takes the project of the directory that
-  lists it. Every diagnostic that
+  lists it. `shadowscan diff` no longer reads such an omission as a
+  resolution: a review's baseline with a credential in `docs/setup.md`,
+  compared with a `--profile ci` scan in which that file had grown past
+  `max_file_size`, printed "1 resolved" and exited 0 with the key still in
+  the file. A missing finding observed under a path the profile declares in
+  (while the current report counts declared omissions), or in a gap path
+  that #254's `stats.coverage` lists as tolerated, now makes the comparison
+  incomplete (exit 3, the finding `unknown`); a project finding is held back
+  by a gap in its directory and by any declared omission, and a report that
+  cannot say where its connector stopped reading holds back every missing
+  finding of that connector. Findings missing from content the scan read
+  still resolve. Every diagnostic that
   leaves a scan incomplete is counted by reason category in
   `stats[].incomplete_reasons` and `summary.incomplete_reasons`
   (`oversize-file`, `unresolved-link`, `unparsed-input`,

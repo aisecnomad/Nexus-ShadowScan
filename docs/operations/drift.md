@@ -97,7 +97,7 @@ such as `[capability, governance]`. Drift values are never printed as text.
 | `0` | The comparison is complete. The selected classes have no adverse drift, and with `--fail-on-new` nothing is new and no risk level rose. |
 | `1` | No usable result. Causes include an invalid option or report, a missing file, and a baseline whose digest does not match `--baseline-sha256`. |
 | `2` | The comparison is complete and has adverse drift in a selected class, or with `--fail-on-new` a new finding or a higher risk level. |
-| `3` | The comparison is incomplete. Causes include an incomplete scan, a different scope or connector coverage, an unattested connector, scan-local identities, and an expired or undatable baseline. |
+| `3` | The comparison is incomplete. Causes include an incomplete scan, a different scope or connector coverage, an unattested connector, scan-local identities, a missing finding in content the current scan declared or tolerated as unread, and an expired or undatable baseline. |
 
 Exit 1 takes precedence over 3, and 3 over 2. Treat every non-zero code as a
 failed job: 2 needs triage of the drift, while 1 and 3 need the job fixed and

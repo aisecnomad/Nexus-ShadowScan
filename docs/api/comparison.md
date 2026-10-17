@@ -23,7 +23,14 @@ sensitive keys, a `code.filesystem` scan with `diff_base`, or `gateway.logs` wit
 counts match their `findings`, both carry the current finding identity schema, the same connectors
 completed and the fingerprints are equal. Unmatched findings with scan-local IDs
 (`metadata.identity_scope` other than `keyed`) are listed under `not_comparable`, and they too make
-the comparison incomplete.
+the comparison incomplete. So does a missing finding the current, complete report may not have
+read: one whose file is, or lies below, a tolerated gap path in `stats[].coverage.details`, one
+under a test, documentation, example or generated path while the report counts declared omissions
+(the `ci` profile counts them but does not list them), and a project finding with a gap in its
+directory or any declared omission. When a connector's unread content cannot be located (a gap
+list cut at 50 entries, a malformed ledger or count, declared omissions no connector record holds,
+or declared omissions from a connector without the `ci` profile), every missing finding of that
+connector is held back. `drift_counts()` applies the same rule.
 
 ## Drift classes
 

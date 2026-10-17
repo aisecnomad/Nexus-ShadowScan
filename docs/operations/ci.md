@@ -52,8 +52,10 @@ never combine it with `--strict-coverage`.
 
 To gate on drift between two reports, `shadowscan diff baseline.json current.json
 --fail-on-new` exits 2 when the current report has new findings or findings
-whose risk level rose, and 3 when the comparison is incomplete (differing scope
-or an incomplete scan). Without the flag, `diff` exits 0 unless the comparison
+whose risk level rose, and 3 when the comparison is incomplete (differing scope,
+an incomplete scan, or a missing finding in content the current scan declared or
+tolerated as unread, so a `--profile ci` report never resolves a credential in a
+file it stopped reading). Without the flag, `diff` exits 0 unless the comparison
 is incomplete. Local `code.filesystem` scans, offline exports from built-in
 connectors and live `cloud.aws`, `cloud.azure`, `cloud.gcp` and
 `identity.entra` collections attest a comparable scope, `gateway.logs` only
