@@ -331,10 +331,18 @@ applied in this order:
    `ci` profile. The profile is therefore refused with either setting: a
    configuration error before anything is read, and a usage error for
    `--profile ci --strict-coverage` or `--profile ci --max-coverage-gap 0`.
-   The two settings differ only in where a gap is reported: `strict_coverage`
-   records each as an error where it happens, while a budget of 0 charges
-   each to the budget, so the gaps stay listed in `stats[].coverage` and the
-   verdict that leaves the scan incomplete is one error line.
+   The two settings differ only in where a gap the budget would charge (a
+   link, a non-regular entry, an incidental oversize file) is reported:
+   `strict_coverage` records each as an error where it happens, while a
+   budget of 0 charges each to the budget, so those gaps stay listed in
+   `stats[].coverage` and the verdict that leaves the scan incomplete is one
+   error line. Every other gap is a diagnostic at the file under either
+   setting, counted under its reason and absent from `stats[].coverage`: a
+   test-code gap the default accounting discounts (a malformed fixture, or a
+   binary one after its credential-only read) is an error, and content the
+   default accounting only notes (invalid structured syntax, a test file over
+   the binder's budget, text that is not valid UTF-8) is an error or a warning
+   that marks the scan incomplete and ends in `coverage incomplete`.
 2. **Credentials.** No credential is declared, discounted or budgeted
    without a read. A credential limit is never declared, discounted or
    budgeted: a file holding more matches of one credential format than the

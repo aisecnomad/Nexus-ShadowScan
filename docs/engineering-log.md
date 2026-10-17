@@ -37,9 +37,16 @@ strict accounting, credentials, declaration, discount, budget.
   connector now reads. The `ci` profile is refused with either setting, by
   `code.filesystem` and by the provider connectors at construction, before
   anything is fetched, and by `shadowscan code` as a usage error. The two
-  settings differ only in where a gap is reported: `strict_coverage` as an
-  error where it happens, a budget of 0 through the ledger, whose verdict is
-  an error and counts each gap by its reason. Strict accounting turns off the
+  settings differ only in where a gap the budget would charge is reported:
+  `strict_coverage` as an error where it happens, a budget of 0 through the
+  ledger, whose verdict is an error and counts each gap by its reason. The
+  rest (the test-code gaps the default accounting discounts, and content it
+  only notes) are diagnostics at the file under either setting, outside
+  `stats.coverage`; the first wording said every gap stayed listed there.
+  Under strict accounting the notes that become gaps (invalid structured
+  syntax, a test file over the binder's budget) now end in `coverage
+  incomplete` (`_strict_gap_warning`) instead of reading as notes while
+  counted under `unparsed-input`. Strict accounting turns off the
   discount, not the credential-only read: the reader had decided both with
   one predicate, so a zero-budget scan of 61 product files and a binary
   `tests/fixtures/dump.txt` holding a GitHub token reported the gap and lost

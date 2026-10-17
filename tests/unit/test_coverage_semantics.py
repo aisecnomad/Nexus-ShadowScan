@@ -110,6 +110,31 @@ def test_strict_accounting_reads_an_undecodable_test_fixture_for_credentials(
     ]
 
 
+@pytest.mark.parametrize("budget", ZERO_BUDGETS)
+def test_a_zero_budget_says_which_diagnostics_are_gaps(tmp_path, run_connector, budget):
+    # A budget of 0 lists the gaps the budget charges in stats.coverage, over
+    # one verdict line; the rest, test-code gaps the default accounting does
+    # not count among them, are diagnostics at the file that must say they
+    # are gaps, since each is counted under its reason.
+    _tree(
+        tmp_path,
+        {"tests/fixtures/broken.json": '{"a": \n', "tests/fixtures/agents.yaml": MALFORMED_YAML},
+        links=["src/linked.py"],
+    )
+    _, default = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    [note] = [w for w in default.stats.warnings if "structured checks skipped" in w]
+    assert not note.endswith("coverage incomplete")
+    _, zero = run_connector("code.filesystem", path=str(tmp_path), use_git=False, **budget)
+    assert zero.stats.incomplete
+    assert [gap["path"] for gap in zero.stats.coverage["details"]] == ["src/linked.py"]
+    assert [e for e in zero.stats.errors if "coverage incomplete: " in e and "over the 0.0% budget" in e]
+    [note] = [w for w in zero.stats.warnings if "structured checks skipped" in w]
+    assert note.endswith("structured checks skipped; coverage incomplete")
+    assert any("tests/fixtures/agents.yaml" in e for e in zero.stats.errors)
+    assert zero.stats.incomplete_reasons["unresolved-link"] == 1
+    assert zero.stats.incomplete_reasons["unparsed-input"] >= 2
+
+
 @pytest.mark.parametrize("setting", STRICT_SETTINGS)
 def test_profile_ci_is_refused_under_either_spelling_of_strict_accounting(tmp_path, run_connector, setting):
     _tree(tmp_path)

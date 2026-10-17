@@ -4420,7 +4420,7 @@ class FilesystemConnector(BaseConnector):
                 "lexical evidence retained"
             )
             if not self.include_tests and _is_test_path(file.rel):
-                self.ctx.warn(message, incomplete=self._strict_accounting(), reason="analysis-limit")
+                self._strict_gap_warning(message, reason="analysis-limit")
             else:
                 self.ctx.error(message, reason="analysis-limit")
             return [], whole
@@ -4449,6 +4449,18 @@ class FilesystemConnector(BaseConnector):
             else:
                 self.ctx.error(message, reason="analysis-limit")
         return bound, list(file.unparsed)
+
+    def _strict_gap_warning(self, message: str, *, reason: str) -> None:
+        """Warn about content the default accounting does not count as a gap; strict accounting does.
+
+        Under strict accounting the warning marks the scan incomplete, under
+        ``reason``, and ends in ``coverage incomplete``, so it reads as the gap
+        it is counted as rather than as a note.
+        """
+        strict = self._strict_accounting()
+        self.ctx.warn(
+            f"{message}; coverage incomplete" if strict else message, incomplete=strict, reason=reason
+        )
 
     def _syntax_warning(self, file: _SourceFile, message: str) -> None:
         """Record source that did not parse: a gap when ``_syntax_gap`` says so, else a plain warning.
@@ -4739,10 +4751,8 @@ class FilesystemConnector(BaseConnector):
             else:
                 # Only the structured projection is lost; the
                 # lexical env and domain passes still read this text.
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: {issue}; structured checks skipped",
-                    incomplete=self._strict_accounting(),
-                    reason="unparsed-input",
+                self._strict_gap_warning(
+                    f"code.filesystem: {rel}: {issue}; structured checks skipped", reason="unparsed-input"
                 )
         for m in structured:
             # A recognised configuration shape declares the product by name.
