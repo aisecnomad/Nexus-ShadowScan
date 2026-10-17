@@ -302,16 +302,17 @@ public repositories with the tool and read the committed benchmark metrics.
   a symbolic link names a directory (inside the tree or outside it), a
   manifest or agent card would not parse, an agent, MCP or dependency
   configuration file its name selects is over `max_file_size`, undecodable
-  bytes outside a test or vendored path, any sanitizer limit -- marks the
-  scan incomplete at once, with no budget: the scanner cannot bound what it
-  missed. A *partial* gap costs a known amount (a dangling link, or a link
-  to one regular file, is one entry) and accumulates against
-  `options.max_coverage_gap` / `--max-coverage-gap`, 2% of examined entries
-  with a ceiling of 100 weighted entries.
+  bytes anywhere but in test code while `include_tests` is off (the walk
+  reads `Vendor/`, or `vendor/` with `default_excludes: false`, as source),
+  any sanitizer limit -- marks the scan incomplete at once, with no budget:
+  the scanner cannot bound what it missed. A *partial* gap costs a known
+  amount (a dangling link, or a link to one regular file, is one entry) and
+  accumulates against `options.max_coverage_gap` / `--max-coverage-gap`, 2%
+  of examined entries with a ceiling of 100 weighted entries.
 - Gaps under paths that cannot hold deployed code (`node_modules`, `vendor`,
   test fixtures) are weighted to a quarter, not ignored, so a tree seeded with
-  thousands still exhausts the budget. Undecodable content is charged at full
-  weight whatever the path.
+  thousands still exhausts the budget. A file that could not be read or
+  decoded is never weighted down by its path.
 - Tolerated gaps are published in full under `stats.coverage` with their
   paths, weights and a one-line verdict, so nothing is hidden by being
   tolerated. `strict_coverage` and `--max-coverage-gap 0` restore the previous

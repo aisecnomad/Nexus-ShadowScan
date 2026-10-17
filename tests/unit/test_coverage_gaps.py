@@ -311,6 +311,38 @@ class TestEndToEnd:
         assert stats.coverage is not None
         assert stats.coverage["gaps"] == 1 and stats.coverage["blinding_gaps"] == 0
 
+    @pytest.mark.parametrize(
+        ("rel", "config"),
+        [
+            # The walk excludes vendored directories case-sensitively, so it reads Vendor/ as first-party code.
+            ("Vendor/agent/.mcp.json", {}),
+            ("Third_Party/agent/.mcp.json", {}),
+            # With include_tests, test code is scanned as source.
+            ("tests/agent/.mcp.json", {"include_tests": True}),
+            # With default_excludes off, vendor/ is scanned as source.
+            ("vendor/agent/.mcp.json", {"default_excludes": False}),
+        ],
+    )
+    def test_undecodable_content_the_walk_reads_as_source_is_never_budgeted(
+        self, tmp_path, rel, config
+    ) -> None:
+        self._tree(tmp_path, 100)
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b'{"mcpServers": {"fs": {"command": "npx"}}}\xff\xfe\x00')
+        stats = self._run(tmp_path, **config)
+        assert stats.incomplete is True
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 1
+        assert any(rel in error and "undecodable" in error for error in stats.errors)
+
+    def test_undecodable_content_in_discounted_test_code_leaves_the_scan_complete(self, tmp_path) -> None:
+        self._tree(tmp_path, 100)
+        (tmp_path / "tests" / "agent").mkdir(parents=True)
+        (tmp_path / "tests" / "agent" / ".mcp.json").write_bytes(b'{"mcpServers": {}}\xff\xfe\x00')
+        stats = self._run(tmp_path)
+        assert stats.incomplete is False
+        assert any("tests/agent/.mcp.json" in w and "read for credentials only" in w for w in stats.warnings)
+
     def test_a_directory_link_to_an_outside_tree_is_never_budgeted(self, tmp_path) -> None:
         """One link can stand for a whole service of agents and MCP servers: no budget bounds it."""
         from click.testing import CliRunner

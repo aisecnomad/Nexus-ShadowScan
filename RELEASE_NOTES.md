@@ -31,7 +31,8 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   closed with no budget: an early stop, a refused page, an expired deadline,
   a symbolic link to a directory, an unparseable manifest or agent card, an
   agent, MCP or dependency configuration file over `max_file_size`,
-  undecodable bytes outside a test or vendored path, and any sanitizer limit.
+  undecodable bytes anywhere but in test code while `include_tests` is off,
+  and any sanitizer limit.
   `strict_coverage` and `--max-coverage-gap 0` restore the previous
   behaviour exactly. Expect scans that previously exited 3 on a dangling
   symbolic link in a test fixture to exit 0 now, with the gap listed.

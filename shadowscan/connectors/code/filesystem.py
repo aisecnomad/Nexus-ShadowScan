@@ -289,7 +289,7 @@ from shadowscan.connectors.posture import (
 )
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
-from shadowscan.coverage import CoverageGap, validate_max_coverage_gap
+from shadowscan.coverage import validate_max_coverage_gap
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -3015,13 +3015,17 @@ class FilesystemConnector(BaseConnector):
                 # hidden from it: a NUL in a settings.json, an agent document
                 # or a Dockerfile. That stays fail-closed.
                 #
-                # The exception is a path that by construction holds test
-                # inputs or vendored code, where a file of deliberately
-                # invalid bytes is ordinary and no deployed agent lives. Those
-                # are charged to the budget at full weight -- never discounted
-                # the way an unreadable fixture is -- so a tree seeded with
-                # them still exhausts it.
-                incidental = CoverageGap(detail="", path=rel).relevance() == "low"
+                # The exception is test code whose evidence the walk discounts
+                # (include_tests off, as _BinaryTestFixture decides it), where
+                # a file of deliberately invalid bytes is ordinary and no
+                # deployed agent lives. A vendored directory is no exception:
+                # the walk skips those by name, case-sensitively, while
+                # default_excludes is on, so what it reads under one
+                # (Vendor/, or vendor/ with default_excludes off) is source to
+                # it. Exceptions are charged to the budget at full weight --
+                # never discounted the way an unreadable fixture is -- so a
+                # tree seeded with them still exhausts it.
+                incidental = self._discounted_test_gap(rel)
                 self._budgeted_gap(
                     rel,
                     f"code.filesystem: {rel}: {issue}",
