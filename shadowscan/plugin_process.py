@@ -543,7 +543,7 @@ def _check_statistics(raw: Any) -> None:
     for key in ("connector", "started_at"):
         if not isinstance(raw[key], str):
             raise ValueError("invalid plugin statistics string")
-    for key in ("finished_at", "skip_reason"):
+    for key in ("finished_at", "skip_reason", "name"):
         if raw[key] is not None and not isinstance(raw[key], str):
             raise ValueError("invalid plugin statistics optional string")
     for key in ("findings", "objects_examined", "declared_omissions"):

@@ -169,6 +169,9 @@ def _stats(report: dict[str, Any]) -> list[ScanStats]:
         for key in ("connector", "started_at"):
             if not isinstance(entry.get(key), str) or not entry[key].strip():
                 raise ValueError("report stats identity is malformed")
+        name = entry.get("name")
+        if name is not None and (not isinstance(name, str) or not name.strip()):
+            raise ValueError("report stats connector name is malformed")
         for key in ("errors", "warnings"):
             value = entry.get(key, [])
             if not isinstance(value, list) or any(not isinstance(item, str) for item in value):

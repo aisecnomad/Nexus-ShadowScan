@@ -844,6 +844,11 @@ class ScanStats:
     # scan complete), so a complete scan under a profile is never read as a
     # scan that read everything.
     declared_omissions: int = 0
+    #: The connector this record accounts for, as its findings name it
+    #: (``Finding.connector``). ``connector`` is the configured id, which is
+    #: the label when one is set, so only this joins findings to their
+    #: record. None for the engine's own records.
+    name: str | None = None
 
 
 @dataclass(slots=True)

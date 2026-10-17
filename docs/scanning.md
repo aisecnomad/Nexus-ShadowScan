@@ -1151,7 +1151,11 @@ did read still resolves, so a `--profile ci` gate keeps reporting resolutions.
 When the report cannot say where a connector stopped reading (a gap list cut at
 50 entries, a malformed ledger or count, a summary counting declared omissions
 that no connector record holds, or declared omissions from a connector without
-the `ci` profile), every missing finding of that connector is held back. Only
+the `ci` profile), every missing finding of that connector is held back. A
+connector record names the connector its findings carry in `stats[].name`
+(`stats[].connector` is the label when one is set), and that is how a finding
+is matched to its record's unread content; a record without a name, in an older
+report, applies to every connector's findings. Only
 the current report's unread content counts: the baseline's could only make a
 finding look new, which diff reports anyway.
 

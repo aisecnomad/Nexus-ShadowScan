@@ -676,6 +676,7 @@ def test_result_encoder_still_rejects_nan():
         ("warnings", "ok"),
         ("started_at", []),
         ("skip_reason", {}),
+        ("name", ["code.filesystem"]),
         # The coverage ledger (#254) is checked like every other statistic.
         ("coverage", "within budget"),
         ("coverage", []),

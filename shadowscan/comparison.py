@@ -448,17 +448,37 @@ def _parents(path: str) -> list[str]:
     return parents
 
 
-def _unread_content(report: dict[str, Any]) -> dict[str, _Unread]:
-    """What each connector of a complete ``report`` left unread, keyed by connector name."""
-    unread: dict[str, _Unread] = {}
+class _UnreadContent(NamedTuple):
+    """What the connectors of a complete report left unread."""
+
+    named: dict[str, _Unread]  # by the connector name a record states, which its findings carry
+    unowned: list[_Unread]  # records that state none (an older report): any finding may be theirs
+
+
+def _unread_content(report: dict[str, Any]) -> _UnreadContent:
+    """What each connector of a complete ``report`` left unread.
+
+    A record's ``connector`` is its configured id, the label when one is set,
+    while its findings carry the connector's ``name``, which the record states
+    beside it. A record without a name, from a report written before it was
+    recorded, could be any finding's; its declared omissions are located by
+    the path rule of its id, which a label has none of.
+    """
+    named: dict[str, _Unread] = {}
+    unnamed: dict[str, _Unread] = {}
     for stats in report["stats"]:
-        entry = unread.setdefault(stats["connector"], _Unread())
+        name = stats.get("name")
+        if isinstance(name, str) and name.strip():
+            entry = named.setdefault(name, _Unread())
+        else:
+            name = stats["connector"]
+            entry = unnamed.setdefault(name, _Unread())
         declared = stats.get("declared_omissions", 0)
         if type(declared) is not int or declared < 0:
             entry.located = False
         elif declared:
             entry.declared += declared
-            entry.located = entry.located and _declares_by_path(stats["connector"])
+            entry.located = entry.located and _declares_by_path(name)
         try:
             coverage = validate_coverage_summary(stats.get("coverage"))
         except ValueError:
@@ -471,7 +491,8 @@ def _unread_content(report: dict[str, Any]) -> dict[str, _Unread]:
             entry.gap_parents.update(parent for path in paths for parent in _parents(path))
             if len(coverage["details"]) != coverage["gaps"] or paths & {"", "."}:
                 entry.located = False
-    return {name: entry for name, entry in unread.items() if entry}
+    unowned = [entry for entry in unnamed.values() if entry]
+    return _UnreadContent({name: entry for name, entry in named.items() if entry}, unowned)
 
 
 class _Observed(NamedTuple):
@@ -532,8 +553,9 @@ def _unread_reasons(current: dict[str, Any], missing: list[dict[str, Any]]) -> l
     if not missing or not _complete(current):
         return []
     unread = _unread_content(current)
-    declared = sum(entry.declared for entry in unread.values())
-    gaps = sum(entry.gaps for entry in unread.values())
+    every = [*unread.named.values(), *unread.unowned]
+    declared = sum(entry.declared for entry in every)
+    gaps = sum(entry.gaps for entry in every)
     # A summary that counts omissions no connector record holds cannot say whose they are.
     counted = current["summary"].get("declared_omissions", 0)
     attributed = type(counted) is int and counted == declared
@@ -541,9 +563,10 @@ def _unread_reasons(current: dict[str, Any], missing: list[dict[str, Any]]) -> l
     for record in missing:
         connector = record.get("connector")
         if isinstance(connector, str):
-            entries = [unread[connector]] if connector in unread else []
+            own = [unread.named[connector]] if connector in unread.named else []
+            entries = own + unread.unowned
         else:
-            entries = list(unread.values())
+            entries = every
         if not attributed or any(_may_be_unread(_observed(record), entry) for entry in entries):
             hidden += 1
     if not hidden:

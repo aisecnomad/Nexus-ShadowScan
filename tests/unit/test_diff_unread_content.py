@@ -34,8 +34,8 @@ def _credential(seed: str) -> str:
     return f"SERVICE_API_KEY={hashlib.sha256(seed.encode()).hexdigest()[:32]}\n"
 
 
-def _scan(index, root: Path, **options) -> dict:
-    spec = ConnectorSpec("code.filesystem", {"path": str(root), "use_git": False, **options})
+def _scan(index, root: Path, *, label: str | None = None, **options) -> dict:
+    spec = ConnectorSpec("code.filesystem", {"path": str(root), "use_git": False, **options}, label=label)
     return Engine(ScanConfig(connectors=[spec]), index=index).run().to_dict()
 
 
@@ -161,6 +161,57 @@ def test_a_credential_removed_from_read_content_still_resolves_under_the_profile
     assert [f["metadata"]["path"] for f in comparison["resolved"]] == ["src/app/settings.py"]
 
 
+@pytest.mark.parametrize("unread", ["declared", "tolerated"])
+def test_a_labeled_connectors_unread_content_does_not_resolve_a_credential(tmp_path, index, unread):
+    # The review's labeled case: stats[].connector is the label while the
+    # finding names code.filesystem, so the lookup missed and diff printed
+    # "1 resolved", exit 0, for a key still in the file.
+    root = _repo(tmp_path / "repo")
+    if unread == "declared":
+        path, options = root / "docs" / "setup.md", {"profile": "ci"}
+        path.parent.mkdir()
+        path.write_text("# Setup\n\n" + _credential("docs"))
+    else:
+        path, options = root / "src" / "app" / "settings.py", {"max_coverage_gap": 0.5}
+        path.write_text(_credential("settings"))
+    label = "github:acme/ops-agent"
+    baseline = _scan(index, root, label=label, max_file_size=4096, **options)
+    assert baseline["summary"]["complete"] and len(_secrets(baseline)) == 1
+    with path.open("a") as handle:
+        handle.write("# padding\n" * 600)
+    current = _scan(index, root, label=label, max_file_size=4096, **options)
+    stats = current["stats"][0]
+    assert stats["connector"] == label and stats["name"] == "code.filesystem"
+    assert current["summary"]["complete"] and _secrets(current) == []
+    result = _diff(tmp_path, baseline, current)
+    assert result.exit_code == 3, result.output
+    comparison = json.loads(result.output)
+    assert comparison["resolved"] == [] and len(comparison["unknown"]) == 1
+
+
+def test_a_record_that_does_not_name_its_connector_holds_back_every_finding_it_may_own():
+    # A report from before stats[].name: the record's id may be a label, so
+    # its unread content applies to every connector's findings, and a label
+    # locates no declared omission (fail closed). A named record applies only
+    # to its own connector's findings.
+    baseline = _report(_finding("src/app/settings.py"), connectors=("github:acme/ops-agent",))
+    current = _report(connectors=("github:acme/ops-agent",))
+    stats = current["stats"][0]
+    stats["coverage"] = _coverage("src/app/settings.py")
+    del stats["name"]
+    assert _resolved(baseline, current) == []
+    stats["coverage"] = None
+    stats["declared_omissions"] = current["summary"]["declared_omissions"] = 1
+    assert _resolved(baseline, current) == []
+    stats["name"] = "code.github"
+    stats["coverage"] = _coverage("src/app/settings.py")
+    assert _resolved(baseline, current) == ["src/app/settings.py"]
+    stats["name"] = "code.filesystem"
+    assert _resolved(baseline, current) == []
+    stats["coverage"] = None
+    assert _resolved(baseline, current) == ["src/app/settings.py"]
+
+
 # ------------------------------------------------------------ the rule, on synthetic reports
 def _finding(path: str, *, connector: str = "code.filesystem", resource_type: str = "file") -> dict:
     finding = Finding(
@@ -209,7 +260,8 @@ def _coverage(*paths: str, total: int | None = None) -> dict:
 
 def _report(*findings: dict, connectors: tuple[str, ...] = ("code.filesystem",)) -> dict:
     report = ScanResult(
-        stats=[ScanStats(connector=name, started_at="2026-01-01") for name in connectors],
+        # As the engine records them: the configured id, and the name findings carry.
+        stats=[ScanStats(connector=name, started_at="2026-01-01", name=name) for name in connectors],
         collection_scope={
             "schema": "shadowscan.collection-scope/v1",
             "comparable": True,

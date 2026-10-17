@@ -30,7 +30,10 @@ under a test, documentation, example or generated path while the report counts d
 directory or any declared omission. When a connector's unread content cannot be located (a gap
 list cut at 50 entries, a malformed ledger or count, declared omissions no connector record holds,
 or declared omissions from a connector without the `ci` profile), every missing finding of that
-connector is held back. `drift_counts()` applies the same rule.
+connector is held back. A connector's unread content is joined to its findings by `stats[].name`,
+the name findings carry in `connector`, since `stats[].connector` is the label when one is set; a
+record without a name (an older report) applies to every finding, and declared omissions behind a
+label it cannot name are not located. `drift_counts()` applies the same rule.
 
 ## Drift classes
 

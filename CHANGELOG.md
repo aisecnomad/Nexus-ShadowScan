@@ -17,6 +17,7 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- Review fixes: what diff holds back under the ci profile (October 17)
 - Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
 - Review fixes: connector correctness, CI check names, benchmark framing (October 17)
 - Review fixes: credential precision, the ci profile, incomplete reasons, the ownership move and plugin environments (October 17)

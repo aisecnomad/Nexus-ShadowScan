@@ -151,6 +151,19 @@ def test_fleet_rejects_malformed_statistics(tmp_path: Path):
         merge_reports([("broken", report)])
 
 
+@pytest.mark.parametrize("value", ["", 3, ["code.filesystem"]])
+def test_fleet_keeps_a_records_connector_name_and_rejects_a_malformed_one(tmp_path: Path, value):
+    # The name joins a labeled record to its findings (shadowscan diff), so a merge keeps it.
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    assert report["stats"][0]["name"] == "code.filesystem"
+    merged = merge_reports([("laptop", report)])
+    assert [s.name for s in merged.stats if s.connector == "code.filesystem"] == ["code.filesystem"]
+    report["stats"][0]["name"] = value
+    with pytest.raises(ValueError, match="connector name"):
+        merge_reports([("broken", report)])
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [

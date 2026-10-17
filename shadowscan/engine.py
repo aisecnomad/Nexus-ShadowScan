@@ -1641,6 +1641,8 @@ class Engine:
         for number, spec in jobs:
             _, fs, st = completed[number]
             findings.extend(fs)
+            # The configured id (``st.connector``) may be a label; the name joins findings to it.
+            st.name = spec.name
             stats.append(st)
             offline |= _offline_record_ids(spec, fs)
         export_entries = exports.entries(jobs, timed_out) if dump_directory else []

@@ -13,6 +13,29 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Review fixes: what diff holds back under the ci profile (October 17)
+
+Fixes from a review of the `profile: ci` diff hold-back and project-root rule
+below. Its blocker, a result replayed by `--incremental` that published no
+declared omissions or coverage ledger so diff resolved a credential it had not
+read, no longer reproduces since the cache stores both (653d076); an
+end-to-end diff test over a replayed run now covers a declared omission and a
+tolerated gap.
+
+- **A labeled connector's unread content holds back its findings.** Findings
+  carry the connector's name (`code.filesystem`), while `stats[].connector`
+  is the configured id, the label when one is set
+  (`github:acme/ops-agent`), so diff looked up the label's unread content
+  under the name, found none and printed "1 resolved", exit 0, for a
+  credential in a file the ci profile or the coverage budget had stopped
+  reading. Each connector record now states the name its findings carry,
+  `stats[].name`, and diff joins findings to records by it, locating
+  declared omissions by that connector's path rule. A record without a name,
+  from an older report, applies to every connector's findings and locates
+  no declared omission behind a label, so it fails closed. The fleet reader
+  keeps the name and rejects a malformed one; a plugin worker's record is
+  checked for it.
+
 ### Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
 
 - The incremental cache is keyed on the coverage gap budget it was judged
