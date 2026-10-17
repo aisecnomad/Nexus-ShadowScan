@@ -1014,7 +1014,13 @@ public repositories with the tool and read the committed benchmark metrics.
   is one token of the value class and looks like a key. A literal passed to a
   call, a constructor or a throw there (`?? getSecret("<path>")`,
   `?: error("X is not set")`), a sentence and an empty or word-like fallback
-  (`|| ''`) are not, and the placeholder test judges the fallback literal
+  (`|| ''`) are not, nor is a fallback whose segments each read as a word or
+  a number: a default mode or label (`|| "anonymous-public-access"`, `??
+  "disabled-in-this-build"`), a header name (`"x-api-key-header-name"`), a
+  URL path (`process.env.API_BASE + "/oauth2/v2.0/authorize"`) or a model id
+  (`or "gpt-4o-mini-2024-07-18"`), which 90d22be reported as keys; a
+  fallback must look like a token, so a generated passphrase there is given
+  up. The placeholder test judges the fallback literal
   itself (`?? "sk-ant-api03-..."` is `example-credential` evidence). Labels
   of three or more letter words (`'request-scoped-credential'`,
   `'fc-shared-env-must-not-be-used'`) are not high-entropy keys when, read

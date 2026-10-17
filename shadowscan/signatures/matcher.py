@@ -723,10 +723,37 @@ def _fallback_literal(value: str, follower: str) -> str | None:
 
 
 def _fallback_credential(value: str, token: re.Match[str]) -> bool:
-    """Whether a string literal after a fallback operator is a key: one plain token that looks random."""
+    """Whether a string literal after a fallback operator is a key: one plain token that looks random.
+
+    A token made of words and numbers is a mode, a label, a path or a name
+    (``_worded_literal``), not a key, wherever it is a fallback.
+    """
     body = token["body"]
     plain = not _interpolated_literal(token) and _FALLBACK_TOKEN.fullmatch(body) is not None
-    return plain and _high_entropy_credential(value, literal=body)
+    return plain and not _worded_literal(body) and _high_entropy_credential(value, literal=body)
+
+
+# The separators of a fallback literal's segments, and a segment that reads
+# as a word or a number: a lower-case, Capitalized or upper-case word, digits,
+# a word with a short version ('oauth2', 'v2') or three characters or fewer
+# ('x', '4o', '07').
+_LITERAL_SEPARATOR = re.compile(r"[-_./:]")
+_WORDED_SEGMENT = re.compile(r"[a-z]+|[A-Z][a-z]*|[A-Z]+|[0-9]+|[A-Za-z]+[0-9]{1,2}|[A-Za-z0-9]{1,3}")
+
+
+def _worded_literal(literal: str) -> bool:
+    """Whether a literal is two or more segments that each read as a word or a number.
+
+    A default mode or label ('anonymous-public-access',
+    'disabled-in-this-build', 'managed-identity-fallback'), a header name
+    ('x-api-key-header-name'), a URL path ('/oauth2/v2.0/authorize') and a
+    model id ('gpt-4o-mini-2024-07-18') are; a key has a segment that mixes
+    letters and digits at random ('3f9a8b7c-...', 'R4nd0m9Qx2Vb7Lp6'). A
+    fallback is held to looking like a token, not like a passphrase: a word
+    slug there reads as a setting's default.
+    """
+    segments = [segment for segment in _LITERAL_SEPARATOR.split(literal) if segment]
+    return len(segments) >= 2 and all(_WORDED_SEGMENT.fullmatch(segment) for segment in segments)
 
 
 def _interpolated_literal(token: re.Match[str]) -> bool:
