@@ -938,15 +938,24 @@ the scope stable.
 
 Comparing replays of record exports is the alternative for any built-in
 connector: collect live with `--dump-records` (or `options.dump_records`),
-replay each export with `input`, and diff the replays. Two pitfalls apply. The
+replay each export with `input`, and diff the replays. Three pitfalls apply. The
 scope digest of an offline entry includes the absolute resolved `input` path,
 so stage every replay at the same path under the same label, or the comparison
-reports `scope differs`. And an export is published even when the live run
+reports `scope differs`. An export is published even when the live run
 behind it was incomplete (a denied listing is a warning, not an export
 failure), while the replay of that export can complete: check the export's
 `manifest.json` (`complete` for the run and `exported` for the entry) and
-replay only complete runs. A replay attests the export's contents, not the
-tenant's completeness.
+replay only complete runs. And an export is sanitized before it is written:
+a credential the live run recognized in a record, by its shape or by the name
+of the field holding it, is already redacted there, so a replay cannot observe
+it. Findings that rest on a plaintext credential in a resource's
+configuration (the `plaintext-credential` tag of a Lambda, AgentCore or
+container environment, and the evidence, confidence and risk it adds) appear
+in the live report and not in the replay of its own export, and the replay
+reports neither a warning nor incomplete coverage for the difference. Compare
+such findings between live runs, or between a live run and its replay only
+after discounting them. A replay attests the export's contents, not the
+tenant's completeness or the live run's credential evidence.
 
 ## Comparing reports
 
