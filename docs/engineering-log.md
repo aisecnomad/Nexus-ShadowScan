@@ -788,7 +788,11 @@ public repositories with the tool and read the committed benchmark metrics.
   timed out (exit 3) where 90d22be completed. `matcher._judged_finditer`
   now reads a secret pattern's matches in batches of 64, judges them between
   regex executions and charges the judge to the input's execution budget;
-  the executions together keep one pattern's allowance. A fallback, concatenation or
+  the executions together keep one pattern's allowance. A follower with no
+  quote followed by 16 characters of the value class can hold no fallback
+  literal and is not read at all (`_FALLBACK_HINT`), so such a match costs
+  one regex search, about 9 us as on 90d22be, instead of 150-440 us for a
+  512-character chain. A fallback, concatenation or
   ternary after it (`process.env.OPENAI_API_KEY || "<key>"`, `?? "<key>"`,
   `process.env.PREFIX + '<key>'`) is still reported when a string literal
   that is a direct operand of `||`, `??`, `?:`, `or`, a ternary branch or `+`
