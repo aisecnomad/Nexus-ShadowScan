@@ -160,12 +160,30 @@ class TestVerdictMessage:
         assert message is not None
         assert "tolerated" in message
 
-    def test_a_blinding_gap_says_the_amount_is_unknown(self) -> None:
+    def test_a_blinding_gap_alone_gets_no_summary(self) -> None:
+        """It was already reported as an error where it happened."""
         ledger = CoverageLedger()
         ledger.record(CoverageGap(detail="stopped", kind=BLINDING))
+        assert ledger.verdict_message(CoveragePolicy()) is None
+
+    def test_a_tolerated_gap_beside_a_blinding_one_is_still_summarised(self) -> None:
+        """Otherwise the two reasons for exit 3 would be indistinguishable."""
+        ledger = CoverageLedger()
+        ledger.add_examined(1000)
+        ledger.record(CoverageGap(detail="stopped", kind=BLINDING))
+        ledger.record(CoverageGap(detail="link", path="tests/x"))
         message = ledger.verdict_message(CoveragePolicy())
         assert message is not None
-        assert "unknown amount" in message
+        assert "within budget" in message
+        assert "another reason" in message
+
+    def test_exceeding_the_budget_is_summarised(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(10)
+        ledger.record(CoverageGap(detail="unreadable", path="src/agent.py"))
+        message = ledger.verdict_message(CoveragePolicy())
+        assert message is not None
+        assert "over the" in message and "budget" in message
 
 
 class TestValidation:

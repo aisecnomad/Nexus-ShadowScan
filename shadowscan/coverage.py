@@ -233,20 +233,31 @@ class CoverageLedger:
         return incomplete, summary
 
     def verdict_message(self, policy: CoveragePolicy) -> str | None:
-        """One line naming what was skipped, or None when nothing was."""
-        if not self.gaps:
+        """One line summarising the budget, or None when it has nothing to add.
+
+        A blinding gap is already reported as an error where it happened, so a
+        run whose only gaps are blinding gets no summary: repeating the count
+        would be noise on top of the diagnostics that named each one. The line
+        exists for what the individual diagnostics cannot say -- that partial
+        gaps were tolerated within the budget, or that together they exceeded
+        it.
+        """
+        partial = [gap for gap in self.gaps if not gap.blinding]
+        if not partial:
             return None
         incomplete, summary = self.evaluate(policy)
         lost = summary["gap_entries"]
-        if incomplete:
-            if summary["blinding_gaps"]:
-                return (
-                    f"coverage incomplete: {summary['blinding_gaps']} gap(s) left an unknown amount of "
-                    "content unread"
-                )
+        if not summary["within_budget"]:
             return (
                 f"coverage incomplete: {lost} entr(y/ies) unread, over the "
                 f"{policy.max_gap_ratio:.1%} budget for {summary['examined']} examined"
+            )
+        if incomplete:
+            # Within budget, but a blinding gap condemned the scan anyway.
+            # Say what was tolerated so the two are not confused.
+            return (
+                f"coverage gaps within budget: {lost} entr(y/ies) unread of "
+                f"{summary['examined']} examined; the scan is incomplete for another reason"
             )
         return (
             f"coverage gaps tolerated: {lost} entr(y/ies) unread of {summary['examined']} examined, "
