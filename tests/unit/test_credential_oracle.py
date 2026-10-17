@@ -4066,6 +4066,27 @@ ROWS = [
             "withheld",
         ),
     ),
+    # --- r4-review-netrc4.json: a keyword-named directory in a netrc comment's Windows path
+    *[
+        Row(f"r4n.1-{label}", "sanitize", text, mode="", head="withheld", main="shown")
+        for label, text in (
+            ("nas-user", "machine fs\n  login bob\n  # home share \\\\nas\\user\\fred\n\n  password <K>\n"),
+            ("no-quote", "machine fs\n  login bob\n  # no quote C:\\user\\new\n\n  password <K>\n"),
+            (
+                "users-default",
+                "machine fs\n  login bob\n  # Bob's home is C:\\Users\\bob\\default\\new\n\n  password <K>\n",
+            ),
+            (
+                "comment-block",
+                "machine fs\n  login bob\n  # home share \\\\nas\\user\\fred\n"
+                + "  # x\n" * 8
+                + "  password <K>\n",
+            ),
+            ("srv-account", "machine fs\n  login bob\n  # \\\\srv\\account\\new\n\n  password <K>\n"),
+            ("x-machine", "machine fs\n  login bob\n  # C:\\x\\machine\\new\n\n  password <K>\n"),
+            ("nas-login", "machine fs\n  login bob\n  # \\\\nas\\login\\tom\n\n  password <K>\n"),
+        )
+    ],
 ]
 
 
