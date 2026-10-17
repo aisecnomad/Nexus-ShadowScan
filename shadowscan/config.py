@@ -562,7 +562,9 @@ class ScanConfig:
 
     def __post_init__(self, connector_timeout: float | None) -> None:
         if connector_timeout is not None:
-            if self.connector_timeout_seconds != 120.0:
+            # Any canonical value a caller set conflicts, an explicit 120 included,
+            # as both keys do in a configuration file whatever their values.
+            if not connector_timeout_is_default(self.connector_timeout_seconds):
                 raise ConfigValidationError(
                     "specify connector_timeout_seconds or connector_timeout, not both"
                 )

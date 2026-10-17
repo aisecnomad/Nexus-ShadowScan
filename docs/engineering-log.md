@@ -47,6 +47,11 @@ Counts and figures quoted in an entry are those of its date.
   so they named no reason, and the command line explained an exit 3 from a
   timeout, even one that surrendered findings, as "a connector was skipped
   or recorded no diagnostic". It now says `timeout 1`.
+- `ScanConfig(connector_timeout=60, connector_timeout_seconds=120)` is
+  rejected as giving both, like any other pair of values and like both keys
+  in a configuration file. The constructor compared the canonical value
+  with 120, so an explicit 120, which the engine now honours unscaled, was
+  silently replaced by the deprecated alias's value.
 
 ### Review fixes: connector correctness, CI check names, benchmark framing (October 17)
 
