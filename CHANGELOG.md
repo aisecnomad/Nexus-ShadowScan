@@ -230,6 +230,16 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Collection and coverage
 
+- `FilesystemConnector` (`shadowscan/connectors/code/filesystem.py`, 5,456 lines) is now a
+  1,009-line façade over four collaborator classes in modules of their own, the split ADR-005
+  describes: `CodeOwnership` (Git history and CODEOWNERS), `TreeWalker` (the walk and its
+  fail-closed coverage accounting), `FileScanner` (the reading, redaction and analysis of one file)
+  and `ProjectFindings` (finding construction), with the records they share in `scan_records.py`. No
+  module of the split exceeds 2,000 lines. The methods moved unchanged apart from renamed calls and
+  the wiring between the parts, every name importable from `filesystem.py` still is, and tests now
+  patch the class or module that owns a name. Old and new code gave the same findings, diagnostics,
+  log messages and connector state on 1,560 direct runs of `code.filesystem` (in two orders of the
+  runs) and the same command-line output on 165 inputs, with Git 2.47. (Oct 17)
 - `KubernetesConnector.analyze` (ruff `C901` complexity 66) is now a short driver over helpers that
   each own one concern: reading records and `List` envelopes, the NetworkPolicy pre-pass, an
   object's identity and pod spec, its containers, exposure tags and the finding. Findings, ids,
