@@ -122,7 +122,13 @@ calls `self.ownership.owner_for(...)`, `owners_for_files(...)` and
 `git_info(...)`; nothing forwards the old names, and the constants the methods
 used (`MAX_ROOT_OWNERSHIP_STEPS`, the git field limits) moved with them and
 are re-exported as the defining module's objects, as rule 4 and the 2026-10-15
-status describe.
+status describe. So are the ten names `filesystem.py` imported only for those
+methods and no longer uses (`subprocess`, `link_in_path`,
+`open_confined_file`, `parse_timestamp`, `run_bounded_metadata`,
+`require_local_git_metadata`, `metadata_git_argv_prefix`, `metadata_git_env`,
+`MetadataTimeoutError` and `MetadataOutputLimitError`), which the move first
+dropped; `tests/unit/test_negative_context.py` pins them with the others.
+Patching one of them on `filesystem` changes nothing the resolver does.
 
 The test seams moved in the same change, as rule 4 asks: the eight test
 modules that called `connector._git_info`, patched

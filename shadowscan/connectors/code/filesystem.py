@@ -61,8 +61,9 @@ Precision safeguards
 from __future__ import annotations
 
 # Every name importable from this module before its helpers moved into
-# path_context, project_evidence, model_identifiers, source_text and excerpts
-# (ADR-005) stays importable: the imports marked `noqa: F401 - re-exported`
+# path_context, project_evidence, model_identifiers, source_text and excerpts,
+# and before the ownership methods moved into ownership.OwnershipResolver
+# (ADR-005), stays importable: the imports marked `noqa: F401 - re-exported`
 # carry names this module does not use itself. Patch such a name in its
 # defining module; rebinding it here does not change what the helpers use.
 import ast  # noqa: F401 - re-exported
@@ -72,6 +73,7 @@ import hashlib
 import os
 import re
 import stat
+import subprocess  # noqa: F401 - re-exported
 import time
 import tomllib  # noqa: F401 - re-exported
 from bisect import bisect_right
@@ -308,13 +310,24 @@ from shadowscan.signatures.matcher import (
     _finditer,
     language_for_path,
 )
-from shadowscan.utils.files import open_confined_directory, read_policy_text
-from shadowscan.utils.git import (
+from shadowscan.utils.files import (  # noqa: F401 - re-exported
+    link_in_path,
+    open_confined_directory,
+    open_confined_file,
+    read_policy_text,
+)
+from shadowscan.utils.git import (  # noqa: F401 - re-exported
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
     MAX_GITMODULES_BYTES,
+    MetadataOutputLimitError,
+    MetadataTimeoutError,
     declared_submodule_paths,
+    metadata_git_argv_prefix,
+    metadata_git_env,
     read_gitlink_paths,
+    require_local_git_metadata,
+    run_bounded_metadata,
 )
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import (
@@ -328,10 +341,11 @@ from shadowscan.utils.safe_yaml import (
     YAMLResourceLimitError,
     strict_bounded_safe_load,
 )
-from shadowscan.utils.text import (
+from shadowscan.utils.text import (  # noqa: F401 - re-exported
     BINARY_CONTENT_ERROR,
     line_counter,
     notebook_to_source,
+    parse_timestamp,
     read_credential_text,
     read_text,
     redact,

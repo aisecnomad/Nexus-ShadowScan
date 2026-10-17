@@ -183,10 +183,15 @@ public repositories with the tool and read the committed benchmark metrics.
   (`_git_info`, CODEOWNERS reading and matching, their caches and budgets)
   is `OwnershipResolver` in `code/ownership.py`; the connector calls
   `self.ownership`, nothing forwards the old names, and the eight test
-  modules that patched or called them address the resolver. Behaviour is
-  unchanged (same evaluation counts, identical offline demo findings apart
-  from timestamps and root-derived ids). The class is 121 methods, down
-  from 127.
+  modules that patched or called them address the resolver. Every name
+  importable from `filesystem.py` before the move still is, as the ADR's
+  2026-10-15 status requires: the moved constants, and the ten names it
+  imported only for the moved methods (`subprocess`, the bounded git
+  metadata helpers, `link_in_path`, `open_confined_file`,
+  `parse_timestamp`), are re-exported as their defining modules' objects.
+  Behaviour is unchanged (same evaluation counts, identical offline demo
+  findings apart from timestamps and root-derived ids). The class is 121
+  methods, down from 127.
 - **The changelog is a changelog again.** This file holds the detailed
   engineering log, one dated entry per change, as `CHANGELOG.md` did;
   `CHANGELOG.md` is now a summary that names each change in a line and
