@@ -614,6 +614,8 @@ def test_surrender_stops_when_its_time_budget_is_spent(monkeypatch):
     assert stats.errors == [
         "5 finding(s) completed before the deadline omitted: the 5-second budget for reporting them was spent"
     ]
+    # Counted as the deadline's consequence, which the exit-3 explanation names.
+    assert stats.incomplete_reasons == {"timeout": 1}
 
 
 def test_postprocess_reports_runtime_and_omission_errors_in_order(monkeypatch, index):

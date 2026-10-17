@@ -173,15 +173,17 @@ link, gitlink or submodule not followed), `unparsed-input` (content that did
 not parse or could not be decoded, or an input defect), `sanitization-limit` (a
 credential-redaction context that could not be established, so excerpts were
 withheld), `timeout` (a file's matching budget, a connector deadline or a job
-deadline), `access-denied`, `upstream-error` (a live API, network or
+deadline, including a connector left unstarted because timed-out calls hold
+every worker slot, and findings an overrun produced that could not be
+reported), `access-denied`, `upstream-error` (a live API, network or
 rate-limit failure),
 `analysis-limit` (a per-file budget such as `max_ast_nodes` or the model
 literal limit), `subset-scan` (a `triage` scan), `unscanned-input` and `other`.
 Counts read back from a source report (`shadowscan merge`) or a plugin worker
 keep their totals, but a key that is not one of these categories is counted as
 `other`, so the table banner and the stderr line never print a source's own
-text there. A connector that was skipped, or timed out before it recorded a
-diagnostic, has no entry; the summary's `status` still says `incomplete`.
+text there. A connector that failed or was skipped before it recorded a diagnostic has no
+entry; the summary's `status` still says `incomplete`.
 
 ### The coverage budget
 

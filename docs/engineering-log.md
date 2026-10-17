@@ -40,6 +40,13 @@ Counts and figures quoted in an entry are those of its date.
   text, so a plugin's own findings do too: about 0.5 ms each, built-in or
   plugin. The loop stops after 5 seconds per expired job; the findings left
   are omitted with a counted error and the job stays incomplete.
+- A timed-out connector now counts `timeout` in `stats[].incomplete_reasons`
+  and `summary.incomplete_reasons`, as does a connector left unstarted
+  because timed-out calls hold every worker slot and each omission of
+  findings the overrun produced. The supervisor writes these stats itself,
+  so they named no reason, and the command line explained an exit 3 from a
+  timeout, even one that surrendered findings, as "a connector was skipped
+  or recorded no diagnostic". It now says `timeout 1`.
 
 ### Review fixes: connector correctness, CI check names, benchmark framing (October 17)
 

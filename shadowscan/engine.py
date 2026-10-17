@@ -286,6 +286,16 @@ def _withhold_registry_records(
         )
 
 
+def _timeout_error(st: ScanStats, message: str) -> None:
+    """Record an error a connector deadline caused, counted as ``timeout`` like the deadline itself.
+
+    The supervisor writes these stats itself, so no connector context names the reason;
+    without it the CLI's exit-3 explanation could not say that a timeout was why.
+    """
+    st.errors.append(message)
+    st.incomplete_reasons["timeout"] = st.incomplete_reasons.get("timeout", 0) + 1
+
+
 def _surrendered_copy(finding: Finding, plugin: str | None) -> Finding | None:
     """One surrendered finding detached from its worker and prepared, or None when it cannot be read."""
     try:
@@ -325,9 +335,10 @@ def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Fin
     ends = time.monotonic() + _SURRENDER_BUDGET_SECONDS
     for number, finding in enumerate(candidates):
         if time.monotonic() >= ends:
-            st.errors.append(
+            _timeout_error(
+                st,
                 f"{len(candidates) - number} finding(s) completed before the deadline omitted: "
-                f"the {_SURRENDER_BUDGET_SECONDS:g}-second budget for reporting them was spent"
+                f"the {_SURRENDER_BUDGET_SECONDS:g}-second budget for reporting them was spent",
             )
             break
         copied = _surrendered_copy(finding, spec.name if plugin else None)
@@ -336,7 +347,7 @@ def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Fin
         else:
             surrendered.append(copied)
     if unreadable:
-        st.errors.append(f"{unreadable} finding(s) completed before the deadline omitted: not readable")
+        _timeout_error(st, f"{unreadable} finding(s) completed before the deadline omitted: not readable")
     try:
         _withhold_registry_records(state.hooks, not plugin, surrendered, st)
     except KeyboardInterrupt:
@@ -1106,6 +1117,9 @@ class _Supervisor:
             skip_reason=_TIMEOUT_MESSAGE,
             errors=[_TIMEOUT_MESSAGE],
             warnings=[_TIMEOUT_WARNING],
+            # Named here: no connector context records this diagnostic, and the
+            # exit-3 explanation reads the reasons, not the messages.
+            incomplete_reasons={"timeout": 1},
         )
         partial = _surrender(spec, state, stats)
         stats.findings = len(partial)
@@ -1146,6 +1160,9 @@ class _Supervisor:
                         skipped=True,
                         skip_reason="no worker capacity remains after connector timeouts",
                         errors=["connector not started: all worker slots remain occupied by timed-out calls"],
+                        # Other connectors' deadlines left it unstarted; raising the
+                        # deadline (or the parallelism) is what lets it run.
+                        incomplete_reasons={"timeout": 1},
                     ),
                 )
                 pending.remove(future)

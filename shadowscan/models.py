@@ -901,8 +901,9 @@ class ScanResult:
             "frameworks": dict(sorted(frameworks.items(), key=lambda kv: -kv[1])),
             "model_providers": dict(sorted(providers.items(), key=lambda kv: -kv[1])),
             "errors": sum(len(s.errors) for s in self.stats),
-            # Why an incomplete scan is incomplete, by reason category, most frequent first;
-            # a connector that was skipped or timed out before recording a diagnostic has no entry.
+            # Why an incomplete scan is incomplete, by reason category, most frequent first. A
+            # timed-out connector, and one left unstarted by timed-out workers, counts `timeout`;
+            # one that failed or was skipped before it recorded a diagnostic has no entry.
             "incomplete_reasons": dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))),
             "declared_omissions": sum(s.declared_omissions for s in self.stats),
         }
