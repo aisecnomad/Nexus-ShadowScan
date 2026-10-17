@@ -86,7 +86,7 @@ def test_strict_coverage_treats_a_noted_file_as_a_gap(tmp_path):
     report = json.loads(result.stdout)
     assert result.exit_code == 3, result.output
     assert report["summary"]["complete"] is False
-    assert any("requirements.txt" in m and "strict_coverage" in m for m in _messages(report))
+    assert any("requirements.txt" in m and "strict accounting" in m for m in _messages(report))
 
 
 def test_notes_are_one_warning_per_kind_however_many_files_carry_them(tmp_path):

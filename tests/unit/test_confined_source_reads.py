@@ -73,6 +73,9 @@ def test_source_and_ownership_reads_share_one_root_descriptor(tmp_path, index, m
 
     monkeypatch.setattr("shadowscan.connectors.code.filesystem.open_confined_directory", recording)
     monkeypatch.setattr("shadowscan.connectors.code.filesystem.read_text", reading)
+    # Ownership reads are the resolver's (ADR-005): the same seams, on its module.
+    monkeypatch.setattr("shadowscan.connectors.code.ownership.open_confined_directory", recording)
+    monkeypatch.setattr("shadowscan.connectors.code.ownership.read_text", reading)
     findings, ctx = _run(index, tmp_path)
     # The second open verifies the root's identity before ownership lookup;
     # every source and CODEOWNERS read stays on the original descriptor.

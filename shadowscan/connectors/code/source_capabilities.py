@@ -70,7 +70,7 @@ _COLLECTION_OPTIONS: dict[str, dict[str, tuple[str, ...]]] = {
 _INACTIVE_JS = frozenset({"", "null", "undefined", "false", "true", "0"})
 
 _CONSTRUCTORS = {
-    "framework.openai-agents-sdk": frozenset({"Agent"}),
+    "framework.openai-agents-sdk": frozenset({"Agent", "RealtimeAgent"}),
     "framework.crewai": frozenset({"Agent", "Crew"}),
     "framework.pydantic-ai": frozenset({"Agent"}),
     "framework.langgraph": frozenset(

@@ -39,7 +39,7 @@ hand-written lexing. Costs:
 
 - A native extension plus one grammar package per language. Each is a
   platform-specific wheel that must be hash-locked for Linux and macOS and for
-  Python 3.11–3.13. The tree-sitter organisation maintains only some of the
+  Python 3.11–3.14. The tree-sitter organisation maintains only some of the
   grammars; Swift, Dart and Kotlin come from community projects, so wheel
   availability and maintenance have to be checked when adopting them.
 - Native code parsing untrusted repositories inside the scanner process. A

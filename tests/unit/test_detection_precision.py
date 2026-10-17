@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from shadowscan.autonomy import classify
+from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud.common import scan_env
 from shadowscan.connectors.common import (
     apply_matches,
@@ -23,6 +24,7 @@ from shadowscan.connectors.common import (
     looks_like_placeholder,
     placeholder_reason,
 )
+from shadowscan.connectors.saas.generic import GenericSaaSConnector
 from shadowscan.models import Evidence, Finding, Kind, Likelihood, Surface
 from shadowscan.risk import CAPABILITY_WEIGHTS, assess
 from shadowscan.signatures import Match, Signal, Signature
@@ -98,6 +100,24 @@ def _finding(**kwargs) -> Finding:
         ("{{ secrets.OPENAI_API_KEY }}", "template"),
         ("changeme", "template"),
         ("xxxxxxxx", "template"),
+        # Translated documentation: a possessive, a separator and words is a placeholder
+        # whatever the language, and the placeholder words are recognised inside a key
+        # as whole words between separators.
+        ("sua_chave_openai", "template"),
+        ("votre-cle-api", "template"),
+        ("deine_api_schluessel", "template"),
+        ("jouw_sleutel", "template"),
+        ("anda_kunci_api", "template"),
+        # A two-letter possessive needs two words to make a template; the translated word still marks it.
+        ("tu_clave", "placeholder-word"),
+        ("SUA-CHAVE-AQUI", "template"),
+        ("sk-proj-sua-chave-aqui-" + "q7Lm3Xz9" * 4, "placeholder-word"),
+        ("sk-proj-" + "su_clave_de_ejemplo_1234567890abcd", "placeholder-word"),
+        ("sk-proj-votre_clef_ici_" + "q7Lm3Xz9" * 4, "placeholder-word"),
+        ("sk-proj-" + "la_tua_chiave_api_1234567890abcdef", "placeholder-word"),
+        ("sk-proj-anahtar_" + "q7Lm3Xz9" * 4, "placeholder-word"),
+        # BEISPIEL joined to the body is no whole word; the run of zeros still marks it.
+        ("ghp_" + "BEISPIEL" + "0" * 28, "low-entropy"),
     ],
 )
 def test_placeholder_reason_recognises_documentation_samples(value, reason):
@@ -128,6 +148,59 @@ def test_placeholder_reason_recognises_documentation_samples(value, reason):
 def test_placeholder_heuristic_keeps_real_looking_values(value):
     assert placeholder_reason(value) is None
     assert not looks_like_placeholder(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # Letters-only tokens that begin like a possessive: with no separator after it,
+        # Su, Ta, Je, Ton or Vos is the start of the token, not a word.
+        "SuQzWpLmNxVbRtYcDfGh",
+        "APP_CLIENT_SECRET=TaQzWpLmNxVbRtYcDfGh",
+        "JeQzWpLmNxVbRtYcDfGh",
+        "MY_API_KEY=TonQwKzMrTpLvBxCjHgF",
+        "VosQwKzMrTpLvBxCjHgF",
+        # A translated word inside a run of letters, or joined to the rest of the key
+        # by a case boundary, is part of the token.
+        "MY_API_KEY=Q9xW2HierzLmNpRtYvBcXz",
+        "Q9x2kunciLmNpRtYvBcXz7",
+        "sk-proj-SuaChaveAqui" + "q7Lm3Xz9" * 4,
+    ],
+)
+def test_translated_placeholder_words_and_possessives_need_separators(value):
+    assert placeholder_reason(value) is None
+
+
+@pytest.mark.parametrize("credential", ["SuQzWpLmNxVbRtYcDfGh", "TonQwKzMrTpLvBxCjHgF"])
+def test_generic_saas_learns_letters_only_credentials_that_begin_like_a_possessive(index, credential):
+    # Taken for a possessive placeholder ("su", "ton" and words), a letters-only
+    # credential was left out of the credential context and copied raw from the
+    # other columns into the report.
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    record = {"id": "app-1", "name": "Claude", "scopes": credential, "publisher": credential}
+    (finding,) = connector.analyze([{**record, "api_key": credential}])
+    assert credential not in json.dumps(finding.to_dict())
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "alphabet, length, per_ten_thousand",
+    [
+        # The shadowscan.connectors.common docstring's figures, from a million seeded
+        # samples each (0.9 and 0.5 in ten thousand), re-measured on a smaller sample.
+        # Translated words matched across case boundaries and inside runs of letters,
+        # and possessives matched without a separator, had lifted them to 2.1 and 76.
+        (string.ascii_letters + string.digits, 32, 1.5),
+        (string.ascii_letters, 20, 1.0),
+    ],
+)
+def test_placeholder_rate_of_random_keys_is_the_documented_one(alphabet, length, per_ten_thousand):
+    rng = random.Random(20261017)
+    samples = 100_000
+    flagged = sum(
+        1 for _ in range(samples) if placeholder_reason("".join(rng.choices(alphabet, k=length))) is not None
+    )
+    assert flagged < samples * per_ten_thousand / 10_000, flagged
 
 
 def test_placeholder_heuristic_does_not_suppress_random_keys():
@@ -1130,3 +1203,59 @@ def test_bundled_corpus_covers_precision_regressions():
     assert 0.6 <= rows["env-names-only-usage"]["score"] < 0.85
     assert max(f["confidence"] for f in rows["env-names-with-heuristics-agent"]["findings"]) <= 0.8
     assert report["passed"]
+
+
+# A possessive or pronoun followed by words was a template whatever the words
+# were, so a letters-only credential that begins like one was left out of the
+# credential context and its copies in other columns were reported raw, which
+# main 8c72467 withheld. A possessive template now needs words that say what
+# it stands for, two of them after a two-letter possessive, each written in
+# one case.
+_MIXED_RUN = "QzWp" + "LmNx" + "VbRt" + "YcDf" + "Gh"
+POSSESSIVE_CREDENTIALS = [
+    "je-suis-le-patron",
+    "tu-es-ma-cherie",
+    "ta_mere_en_short",
+    "su-casa-es-mi-casa",
+    "ton-chat-noir-dort",
+    "your-secret-garden",
+    "ta-" + _MIXED_RUN,
+    "Su" + _MIXED_RUN,
+]
+
+
+@pytest.mark.parametrize("credential", POSSESSIVE_CREDENTIALS)
+def test_generic_saas_withholds_copies_of_credentials_that_begin_with_a_possessive(index, credential):
+    connector = GenericSaaSConnector(ConnectorContext(index=index))
+    record = {"id": "app-1", "name": "Claude", "scopes": credential, "publisher": credential}
+    (finding,) = connector.analyze([{**record, "api_key": credential}])
+    assert credential not in json.dumps(finding.to_dict())
+
+
+@pytest.mark.parametrize("value", [v for v in POSSESSIVE_CREDENTIALS if not v.startswith("your")])
+def test_a_passphrase_that_begins_with_a_possessive_is_no_placeholder(value):
+    assert placeholder_reason(value) is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # #258's translated placeholders, a possessive alone and one with a
+        # separator after it stay templates.
+        "sua_chave_openai",
+        "sua_chave_gemini",
+        "sua_serper_api_key",
+        "votre-cle-api",
+        "your_api_key",
+        "your_client_secret",
+        "deine_api_schluessel",
+        "jouw_sleutel",
+        "anda_kunci_api",
+        "SUA_CHAVE_AQUI",
+        "su_clave_openai",
+        "sua",
+        "seu_token_",
+    ],
+)
+def test_possessive_placeholders_that_name_a_credential_stay_templates(value):
+    assert placeholder_reason(value) == "template"

@@ -21,13 +21,14 @@ options:
   min_confidence: 0.3                 # finding threshold (0.0–1.0)
   fail_on: high                       # exit 2 if any finding reaches this level
   dump_records: ./exports             # sanitized records for offline re-runs
-  connector_timeout_seconds: 120      # cooperative deadline per connector
+  # connector_timeout_seconds: 300    # fixed deadline per connector; omit it for 120 s, raised to fit a large tree
   allow_private_origin: false         # permit non-global IP addresses (every connector)
   allow_instance_credentials: false   # permit cloud instance-metadata credentials
   allow_credential_mixing: false      # permit repo + live tenant in one scan
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
   plugins: []                         # exact-name allowlist for third-party connectors
   plugin_execution: process           # or thread: in-process plugins (previous default)
+  plugin_env: []                      # credential-shaped variables a plugin worker keeps
 
 connectors:
   - name: code.github
@@ -35,6 +36,12 @@ connectors:
     token: ${GITHUB_TOKEN}
   # ... see docs/connectors.md for all connector keys
 ```
+
+`connector_timeout_seconds` is commented out on purpose. Left unset, each
+connector starts from a 120-second deadline that `code.filesystem` raises to
+fit a large tree; any value you set, 120 included, is a fixed deadline that is
+never raised (see
+[connector deadlines](../scanning.md#connector-deadlines-and-parallelism)).
 
 `workdir` is the parent directory for the private temporary checkouts that
 `code.github` and `code.gitlab` write for each live repository, in clone or API
@@ -51,8 +58,13 @@ connector in its own spawned worker that the scanner can terminate at the
 connector deadline; `plugin_execution: thread` (or `--plugin-execution thread`)
 runs plugins in the scanner process instead, where a blocked plugin cannot be
 stopped. Built-in connectors always use the thread backend. Workers keep the
-scanner's privileges and credentials: this is lifecycle isolation, not a
-sandbox. See
+scanner's privileges, and are started without the credentials it exported for
+the built-in connectors: credential-shaped environment variables (`*_TOKEN`,
+`*_SECRET`, `*_KEY`, `*_PASSWORD`, the cloud SDK credential variables) are left
+out of a worker's environment, except the names `plugin_env` lists for a
+plugin that reads its own credential from the environment. This is lifecycle
+isolation, not a sandbox: a worker runs as the scanner's user and can still
+read the scanner's own environment. See
 [third-party plugin execution](../connectors.md#third-party-plugin-execution).
 
 ## Reaching an internal destination

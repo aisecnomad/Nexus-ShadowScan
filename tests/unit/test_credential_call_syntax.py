@@ -98,11 +98,19 @@ def test_constructor_context_withholds_environment_literal_fallback(expression, 
         'get_password ("admin")',
         'requireAuth /*synthetic comment*/ ("admin")',
         'HTTPBasicAuth (("user"), ("${PASSWORD}"))',
-        f'AzureKeyCredential(str("{SYNTHETIC}"))',
     ],
 )
 def test_noncredential_calls_names_references_and_computed_arguments_are_preserved(source):
     assert sanitize_text(source) == source
+
+
+def test_a_key_inside_a_computed_argument_of_a_credential_callee_is_withheld():
+    # The call pass keeps a computed argument's shape, but an opaque literal in
+    # it is still the key the credential-named callee is given (the line-tail
+    # pass reads a callee's arguments as it reads a credential's value).
+    safe = sanitize_text(f'AzureKeyCredential(str("{SYNTHETIC}"))')
+    assert safe == f'AzureKeyCredential(str("{REDACTED}"))'
+    assert sanitize_text(safe) == safe
 
 
 def test_authentication_pair_keeps_user_and_withholds_wrapped_password():

@@ -201,7 +201,7 @@ class BoundedSafeLoader(yaml.SafeLoader):
 
 def bounded_safe_load(stream: Any) -> Any:
     """Load one bounded YAML document, retaining PyYAML's safe type semantics."""
-    return yaml.load(stream, Loader=BoundedSafeLoader)
+    return yaml.load(stream, Loader=BoundedSafeLoader)  # noqa: S506 - loader is a SafeLoader subclass with resource bounds; see shadowscan.utils.safe_yaml
 
 
 class YAMLIntegrityError(yaml.YAMLError):
@@ -294,7 +294,7 @@ def strict_bounded_safe_load(stream: Any, *, require_string_keys: bool = True) -
     Validate the fully constructed graph here so aliases receive the same rule.
     """
     loader = StrictBoundedSafeLoader if require_string_keys else StrictBoundedConfigLoader
-    value = yaml.load(stream, Loader=loader)
+    value = yaml.load(stream, Loader=loader)  # noqa: S506 - loader is a SafeLoader subclass with resource bounds; see shadowscan.utils.safe_yaml
     _validate_strict_yaml_values([value], max_depth=loader.MAX_DEPTH)
     return value
 

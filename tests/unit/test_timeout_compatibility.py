@@ -54,9 +54,13 @@ def test_legacy_constructor_alias_is_applied_only_once(value, expected):
     assert "connector_timeout" not in asdict(config)
 
 
-def test_constructor_conflicting_timeout_values_are_rejected():
+@pytest.mark.parametrize("legacy,canonical", [(5, 10), (60.0, 120.0), (60, 120), (120.0, 120.0)])
+def test_constructor_conflicting_timeout_values_are_rejected(legacy, canonical):
+    """Regression: the check compared the canonical value with 120.0, so an explicit 120 (which the
+    engine honours unscaled since it differs from the unset default) was silently replaced by the
+    deprecated alias's value instead of being rejected as both keys are in a configuration file."""
     with pytest.raises(ConfigValidationError, match="not both"):
-        ScanConfig(connector_timeout=5, connector_timeout_seconds=10)
+        ScanConfig(connector_timeout=legacy, connector_timeout_seconds=canonical)
 
 
 @pytest.mark.parametrize("flag", ["--connector-timeout", "--connector-timeout-seconds"])

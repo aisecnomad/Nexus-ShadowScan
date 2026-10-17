@@ -295,6 +295,81 @@ _OPAQUE_RUN = re.compile(r"[A-Za-z0-9]{8,}")
 _CLI_WORD = re.compile(r"[a-z][a-z_-]*")
 
 
+# A read of one environment variable by its name: 'process.env.OPENAI_API_KEY',
+# 'os.environ["OPENAI_API_KEY"]', 'os.getenv("OPENAI_API_KEY")'. The variable's
+# name is not its value and the expression has no other operand, so it holds
+# no credential and stays visible after a credential name ('apiKey = ...'),
+# where it shows how the credential is read. Only these exact forms with an
+# upper-case variable name qualify: a default argument ('os.getenv("K", "v")'),
+# a fallback ('|| "v"') or any other operand keeps the value withheld, and so
+# does a name that looks like an opaque key (see _environment_lookup).
+_ENVIRONMENT_LOOKUP = re.compile(
+    r"(?:process\.env|import\.meta\.env|Bun\.env)\.(?P<member>[A-Z_][A-Z0-9_]*+)(?![\w$.(\[])"
+    r"|(?:process\.env|os\.environ|ENV)\[[ \t]*+(?P<subscript_quote>[\"'`])(?P<subscript>[A-Z_][A-Z0-9_]*+)"
+    r"(?P=subscript_quote)[ \t]*+\]"
+    r"|(?:os\.getenv|os\.environ\.get|os\.Getenv|System\.getenv|Environment\.GetEnvironmentVariable"
+    r"|ENV\.fetch|Deno\.env\.get|getenv)\([ \t]*+(?P<argument_quote>[\"'])(?P<argument>[A-Z_][A-Z0-9_]*+)"
+    r"(?P=argument_quote)[ \t]*+\)"
+)
+# What may end an assigned value after the read and any blanks: the end of the
+# line, a statement or argument separator, or a closing bracket. An operator, a
+# comment or another token after the blanks may carry a literal of its own.
+_VALUE_END_CHARACTERS = frozenset("\r\n;,)}]")
+# An environment variable's name joins its words with '_' (OPENAI_API_KEY) or
+# is one short word (PGPASSWORD, GITHUBTOKEN). An upper-case run this long
+# without a '_' is a key pasted in the name's place, such as a base32 TOTP
+# secret, whose shortest common form has 16 characters.
+_PASTED_KEY_NAME = 16
+
+
+def pasted_key_name(name: str) -> bool:
+    """Whether an environment variable's upper-case name is a key pasted in the name's place.
+
+    An upper-case key or base32 secret pasted as the name
+    ('os.getenv("JBSWY3DPEHPK3PXP...")') is the credential itself. A name is
+    opaque when letters and digits alternate in a long run (``_opaque``), or
+    when it runs to ``_PASTED_KEY_NAME`` characters or more without a '_'
+    between its words, digits or none ('process.env.QWERTYUIOPASDFGHJKLZXCVBNM').
+    Evidence withholds such a read (``_environment_lookup``) and the
+    credential detector reports it (``shadowscan.signatures.matcher``), by
+    this one test.
+    """
+    return _opaque(name) or (len(name) >= _PASTED_KEY_NAME and "_" not in name)
+
+
+def environment_read_name(text: str, start: int = 0) -> str | None:
+    """The variable name of the environment read by name (``_ENVIRONMENT_LOOKUP``) at ``start``, or None."""
+    match = _ENVIRONMENT_LOOKUP.match(text, start)
+    if match is None:
+        return None
+    return str(match["member"] or match["subscript"] or match["argument"])
+
+
+def _environment_lookup(text: str, start: int = 0, end: int | None = None) -> bool:
+    """Whether an environment variable read starts at ``start`` and ends the value there.
+
+    With ``end`` the read must span exactly ``text[start:end]``. Otherwise
+    only spaces and tabs may follow the read before the end of the text or a
+    value end: in 'apiKey: process.env.KEY // old: <key>' or
+    'apiKey: process.env.KEY ?? "<key>"' the value goes on past the read.
+
+    The variable's name must be shaped like a name, not like an opaque key
+    (``pasted_key_name``).
+    """
+    match = _ENVIRONMENT_LOOKUP.match(text, start)
+    if match is None:
+        return False
+    name = match["member"] or match["subscript"] or match["argument"]
+    if pasted_key_name(name):
+        return False
+    if end is not None:
+        return match.end() == end
+    position = match.end()
+    while position < len(text) and text[position] in " \t":
+        position += 1
+    return position == len(text) or text[position] in _VALUE_END_CHARACTERS
+
+
 def _kept_value(value: str) -> bool:
     """Empty, already withheld, or only variable references and placeholders."""
     value = value.strip()

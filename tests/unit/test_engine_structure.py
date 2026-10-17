@@ -454,6 +454,170 @@ def test_retain_sanitizable_counts_omissions_without_losing_neighbors():
     assert retained == [safe] and omitted == 1
 
 
+# ------------------------------------------------------------- surrender
+# An expired job's findings are prepared on the supervisor thread, which enforces no other
+# job's deadline meanwhile, while the abandoned worker still holds the originals.
+
+PLUGIN = "code.acme-plugin"
+
+
+def _surrendered(findings, connector="code.filesystem"):
+    state = _JobState()
+    state.register_partial(findings)
+    stats = ScanStats(connector=connector, started_at=now_iso())
+    return engine_module._surrender(ConnectorSpec(connector), state, stats), stats
+
+
+def _worker_findings(count, connector="code.filesystem"):
+    """Findings as a worker leaves them: attributed, with derived ids, and sanitized."""
+    findings = [_finding(connector=connector, resource=f"repo/agent-{n}") for n in range(count)]
+    for finding in findings:
+        finding.reattribute(connector, derive_id=True)
+        finding.sanitize()
+    return findings
+
+
+@pytest.mark.parametrize("connector", ["code.filesystem", PLUGIN])
+def test_surrender_reuses_the_workers_sanitizer_pass(sanitizer_calls, connector):
+    """Regression: every surrendered finding went through to_dict/from_dict, which sanitized its
+    evidence and the finding again in full on the supervisor thread (about 27 ms each), though
+    the worker had already sanitized them and nothing had changed since."""
+    findings = _worker_findings(20, connector)
+    baseline = len(sanitizer_calls)
+
+    surrendered, stats = _surrendered(findings, connector)
+
+    assert len(sanitizer_calls) == baseline
+    assert surrendered == findings and not stats.errors
+    # Nothing is shared with the worker, whose later changes cannot reach the report.
+    copy, original = surrendered[0], findings[0]
+    for name in ("metadata", "evidence", "tags", "risk"):
+        assert getattr(copy, name) is not getattr(original, name)
+    assert copy.metadata["nested"] is not original.metadata["nested"]
+    assert copy.evidence[0].attributes is not original.evidence[0].attributes
+    original.metadata["nested"]["key"] = SECRET
+    original.evidence[0].attributes["label"] = SECRET
+    original.tags.append(SECRET)
+    assert SECRET not in ScanResult(findings=surrendered).to_json()
+
+
+def test_surrender_sanitizes_what_the_worker_changed_after_its_pass(sanitizer_calls):
+    changed, unchanged = _worker_findings(2)
+    changed.metadata["note"] = f"Authorization: Bearer {SECRET}"
+    baseline = len(sanitizer_calls)
+
+    surrendered, stats = _surrendered([changed, unchanged])
+
+    assert len(sanitizer_calls) == baseline + 1 and not stats.errors
+    assert SECRET not in ScanResult(findings=surrendered).to_json()
+    assert SECRET in changed.metadata["note"]  # the worker's own object is never touched
+
+
+def test_surrender_re_derives_a_plugin_id_and_sanitizes_the_restamped_copy(sanitizer_calls):
+    [forged] = _worker_findings(1, PLUGIN)
+    derived, builtin_id = forged.id, _finding(resource=forged.resource).id
+    forged.id = builtin_id
+    forged.sanitize()
+    baseline = len(sanitizer_calls)
+
+    [copy], _ = _surrendered([forged], PLUGIN)
+
+    assert copy.id == derived != builtin_id and forged.id == builtin_id
+    assert len(sanitizer_calls) == baseline + 1
+
+
+class _Recorder:
+    """A value that records every call into its own class's code."""
+
+    calls: list[str] = []
+
+    def __getattribute__(self, name):
+        _Recorder.calls.append(name)
+        return object.__getattribute__(self, name)
+
+    def __deepcopy__(self, memo):
+        _Recorder.calls.append("__deepcopy__")
+        return self
+
+    def __str__(self):
+        _Recorder.calls.append("__str__")
+        return "recorded"
+
+    __repr__ = __str__
+
+
+class _Text(str):
+    pass
+
+
+class _Mapping(dict):
+    pass
+
+
+@pytest.mark.parametrize(
+    "plant",
+    [
+        pytest.param(lambda f: f.metadata.__setitem__("value", _Recorder()), id="object"),
+        pytest.param(lambda f: f.metadata.__setitem__("value", _Text("text")), id="str-subclass"),
+        pytest.param(lambda f: setattr(f, "metadata", _Mapping(f.metadata)), id="dict-subclass"),
+        pytest.param(lambda f: f.tags.append(_Recorder()), id="list-member"),
+        pytest.param(lambda f: f.evidence[0].attributes.__setitem__(_Text("key"), 1), id="mapping-key"),
+        pytest.param(lambda f: f.evidence.append(_Recorder()), id="evidence-member"),
+    ],
+)
+def test_surrender_reads_only_plain_data_and_runs_no_code_of_the_workers_objects(plant):
+    """Regression: copying through to_dict deep-copied, and sanitizing stringified, whatever the
+    worker had put into a finding, running that object's own code on the supervisor thread."""
+    planted, plain = _worker_findings(2)
+    plant(planted)
+    _Recorder.calls.clear()
+
+    surrendered, stats = _surrendered([planted, plain])
+
+    assert surrendered == [plain]
+    assert stats.errors == ["1 finding(s) completed before the deadline omitted: not readable"]
+    assert _Recorder.calls == []
+
+
+def test_surrender_bounds_an_alias_graph_by_the_sanitizers_limit():
+    planted, plain = _worker_findings(2)
+    graph: list = ["leaf"]
+    for _ in range(60):
+        graph = [graph, graph]  # 2**60 occurrences of one leaf
+    planted.metadata["graph"] = graph
+
+    surrendered, stats = _surrendered([planted, plain])
+
+    assert surrendered == [plain] and len(stats.errors) == 1
+
+
+def test_surrender_stops_when_its_time_budget_is_spent(monkeypatch):
+    """Regression: the surrender loop had no deadline, so a job with many findings held up every
+    other job's expiry and the report for as long as preparing them took."""
+    clock = [1000.0]
+    monkeypatch.setattr(
+        engine_module, "time", type("Clock", (), {"monotonic": staticmethod(lambda: clock[0])})
+    )
+    original = Finding.sanitize
+
+    def one_second_each(self, **kwargs):
+        clock[0] += 1.0
+        return original(self, **kwargs)
+
+    findings = _worker_findings(10)
+    monkeypatch.setattr(Finding, "sanitize", one_second_each)
+
+    surrendered, stats = _surrendered(findings)
+
+    budget = engine_module._SURRENDER_BUDGET_SECONDS
+    assert budget == 5.0 and surrendered == findings[:5]
+    assert stats.errors == [
+        "5 finding(s) completed before the deadline omitted: the 5-second budget for reporting them was spent"
+    ]
+    # Counted as the deadline's consequence, which the exit-3 explanation names.
+    assert stats.incomplete_reasons == {"timeout": 1}
+
+
 def test_postprocess_reports_runtime_and_omission_errors_in_order(monkeypatch, index):
     def over_budget(findings):
         raise SanitizationLimitError("bounded failure")

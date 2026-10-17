@@ -727,10 +727,10 @@ def _retry_delay(resp: requests.Response, attempt: int) -> float:
     """
     retry_after = resp.headers.get("Retry-After")
     if retry_after and retry_after.isascii() and retry_after.isdigit():
-        delay = float(retry_after) + random.uniform(0, 1)
+        delay = float(retry_after) + random.uniform(0, 1)  # noqa: S311 - retry jitter, never a secret; token_bytes is used where randomness must be unguessable
     else:
         step = min(2**attempt, 30)
-        delay = step / 2 + random.uniform(0, step / 2)
+        delay = step / 2 + random.uniform(0, step / 2)  # noqa: S311 - retry jitter, never a secret; token_bytes is used where randomness must be unguessable
     reset = resp.headers.get("X-RateLimit-Reset")
     if resp.headers.get("X-RateLimit-Remaining") == "0" and reset and reset.isascii() and reset.isdigit():
         delay = max(delay, float(reset) - time.time() + 1)
@@ -1245,8 +1245,8 @@ class HttpClient:
         path: str,
         params: dict[str, Any] | None = None,
         items_key: str = "items",
-        token_key: str = "nextPageToken",
-        token_param: str = "pageToken",
+        token_key: str = "nextPageToken",  # noqa: S107 - names a response field, not a credential
+        token_param: str = "pageToken",  # noqa: S107 - names a request field, not a credential
         max_pages: int = 1000,
         method: str = "GET",
         body: dict[str, Any] | None = None,

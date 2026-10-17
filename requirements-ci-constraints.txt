@@ -1,4 +1,4 @@
-# Development-tool constraints for CPython 3.11 to 3.13 CI. Captured from the
+# Development-tool constraints for CPython 3.11 to 3.14 CI. Captured from the
 # Nexus ShadowScan Python 3.12 Linux validation environment and made explicit where
 # dependencies are platform-specific. Direct tools and their dependency closure
 # are listed below.

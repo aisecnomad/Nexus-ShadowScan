@@ -61,8 +61,9 @@ Precision safeguards
 from __future__ import annotations
 
 # Every name importable from this module before its helpers moved into
-# path_context, project_evidence, model_identifiers, source_text and excerpts
-# (ADR-005) stays importable: the imports marked `noqa: F401 - re-exported`
+# path_context, project_evidence, model_identifiers, source_text and excerpts,
+# and before the ownership methods moved into ownership.OwnershipResolver
+# (ADR-005), stays importable: the imports marked `noqa: F401 - re-exported`
 # carry names this module does not use itself. Patch such a name in its
 # defining module; rebinding it here does not change what the helpers use.
 import ast  # noqa: F401 - re-exported
@@ -72,7 +73,7 @@ import hashlib
 import os
 import re
 import stat
-import subprocess
+import subprocess  # noqa: F401 - re-exported
 import time
 import tomllib  # noqa: F401 - re-exported
 from bisect import bisect_right
@@ -86,7 +87,13 @@ from typing import Any, ClassVar
 import regex
 import yaml
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
+from shadowscan.connectors.base import (
+    BaseConnector,
+    ConnectorContext,
+    ConnectorError,
+    _positive_limit,
+    incomplete_reason,
+)
 from shadowscan.connectors.code.catalogs import (  # noqa: F401 - re-exported
     _PIPELINE_DIRECTORIES,
     _PIPELINE_NAMES,
@@ -147,14 +154,19 @@ from shadowscan.connectors.code.model_identifiers import (  # noqa: F401 - re-ex
     _has_model_stem,
     _model_lookalike,
 )
-from shadowscan.connectors.code.ownership import (
+from shadowscan.connectors.code.ownership import (  # noqa: F401 - re-exported
+    _MAX_GIT_AUTHOR_CHARS,
+    _MAX_GIT_EMAIL_CHARS,
+    _MAX_GIT_TIMESTAMP_CHARS,
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
+    MAX_ROOT_OWNERSHIP_STEPS,
     MAX_RULES,
     OwnershipBudget,
     OwnershipLimitError,
+    OwnershipResolver,
 )
-from shadowscan.connectors.code.ownership import (
+from shadowscan.connectors.code.ownership import (  # noqa: F401 - re-exported
     codeowners_match as _codeowners_match,
 )
 from shadowscan.connectors.code.path_context import (  # noqa: F401 - re-exported
@@ -169,6 +181,7 @@ from shadowscan.connectors.code.path_context import (  # noqa: F401 - re-exporte
     EXAMPLE_PATH_WEIGHT_SCALE,
     GENERATED_MAX_CONFIDENCE,
     GENERATED_WEIGHT_SCALE,
+    NEGATIVE_CONTEXT_TAGS,
     NegativeContext,
     _is_docs_path,
     _is_example_path,
@@ -253,7 +266,9 @@ from shadowscan.connectors.code.source_text import (  # noqa: F401 - re-exported
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     DEFAULT_MAX_WALK_ENTRIES,
+    PROJECT_ROOT_MARKERS,
     _holds_file,
+    _marks_deployable_project,
     _marks_project,
     _nearest_root,
     _project_root,
@@ -284,19 +299,27 @@ from shadowscan.connectors.posture import (
 )
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
+from shadowscan.coverage import is_vendored_path, validate_max_coverage_gap
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
 from shadowscan.signatures.matcher import (
+    MAX_SECRETS_PER_SIGNAL,
     SOURCE_EXTENSIONS,
     WALL_BUDGET_FACTOR,
     LiteralScan,
     MatchTimeoutError,
     _finditer,
     language_for_path,
+    reported_credential,
 )
-from shadowscan.utils.files import link_in_path, open_confined_directory, open_confined_file, read_policy_text
-from shadowscan.utils.git import (
+from shadowscan.utils.files import (  # noqa: F401 - re-exported
+    link_in_path,
+    open_confined_directory,
+    open_confined_file,
+    read_policy_text,
+)
+from shadowscan.utils.git import (  # noqa: F401 - re-exported
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
     MAX_GITMODULES_BYTES,
@@ -321,10 +344,12 @@ from shadowscan.utils.safe_yaml import (
     YAMLResourceLimitError,
     strict_bounded_safe_load,
 )
-from shadowscan.utils.text import (
+from shadowscan.utils.text import (  # noqa: F401 - re-exported
+    BINARY_CONTENT_ERROR,
     line_counter,
     notebook_to_source,
     parse_timestamp,
+    read_credential_text,
     read_text,
     redact,
     truncate,
@@ -357,11 +382,6 @@ _MCP_SERVER_IMPORT_RE = re.compile(
 )
 # Detection-rule pack paths listed in a project finding's metadata.
 _MAX_LISTED_RULE_FILES = 20
-
-# Git identities must not turn a small compressed commit into a large report.
-_MAX_GIT_AUTHOR_CHARS = 1024
-_MAX_GIT_EMAIL_CHARS = 1024
-_MAX_GIT_TIMESTAMP_CHARS = 64
 
 # Signal types that establish a library in a project (see _emit_project).
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
@@ -483,6 +503,11 @@ LOCK_FILES = {
 # these globs hold generated, locked or binary content that is explicitly
 # outside the scan scope, so skipping them is a warning and the scan stays
 # complete. The connector's `oversize_skip_globs` replaces the list.
+# Coverage profiles: ``default`` charges every gap to the coverage budget or, for a
+# gap it cannot bound, fails closed; ``ci`` declares the gaps a source gate accepts
+# in advance (see ``FilesystemConnector._declared_omission``) and is refused under
+# strict accounting (``coverage_profile``).
+PROFILES: tuple[str, ...] = ("default", "ci")
 DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
     "package-lock.json",
     "yarn.lock",
@@ -660,6 +685,45 @@ MCP_CONFIG_NAMES = {
 }
 
 
+# Tool credential files whose whole purpose is to hold a token or password:
+# package-registry, HTTP and cloud client configuration that a repository or
+# a home-directory checkout can commit by mistake. They have no suffix (or a
+# leading dot only), so the suffix rules below never select them; the
+# credential pass is what reads them.
+CREDENTIAL_FILE_NAMES = frozenset(
+    {
+        ".npmrc",  # npm: //registry/:_authToken=...
+        ".yarnrc",  # Yarn 1: registry tokens
+        ".netrc",  # curl, pip, git: machine/login/password
+        "_netrc",  # the same on Windows
+        ".pypirc",  # twine: repository password or token
+        ".git-credentials",  # git credential store: one URL per line with its user and token
+        ".boto",  # legacy boto: aws_access_key_id / aws_secret_access_key
+        ".s3cfg",  # s3cmd: access_key / secret_key
+    }
+)
+
+
+# Words that make an env file's name a template's (.env.example, .env.sample,
+# config/.env.template, .env.dist): its values are samples to replace.
+_ENV_TEMPLATE_WORDS = frozenset({"example", "sample", "template", "tmpl", "dist", "default", "defaults"})
+
+
+def _env_values_file(name: str) -> bool:
+    """Whether a file holds environment or tool credential values themselves, not a template of them.
+
+    A ``.env`` file (``.env``, ``.env.local``, ``prod.env``) other than a
+    template, or a tool credential file (``CREDENTIAL_FILE_NAMES``). Only
+    there is a PASSWORD value never the name of another setting.
+    """
+    lower = name.lower()
+    if lower in CREDENTIAL_FILE_NAMES:
+        return True
+    if not (lower.startswith(".env") or lower.endswith(".env")):
+        return False
+    return _ENV_TEMPLATE_WORDS.isdisjoint(re.split(r"[._-]", lower))
+
+
 def _analyzed_by_name(name: str) -> bool:
     """Whether the name alone makes a file source or configuration that the walker reads."""
     ext = Path(name).suffix.lower()
@@ -667,6 +731,7 @@ def _analyzed_by_name(name: str) -> bool:
         ext in SOURCE_EXTENSIONS
         or ext in TEXT_CONFIG_EXTENSIONS
         or name.lower().startswith(".env")
+        or name.lower() in CREDENTIAL_FILE_NAMES
         or is_manifest_name(name)
         or "." not in name
     )
@@ -712,30 +777,81 @@ _DEDICATED_MCP_CONFIG_NAMES = frozenset(
         "smithery.yaml",
     }
 )
+# Suffixes of a file whose structure can make it an MCP configuration whatever its name.
+_MCP_STRUCTURE_SUFFIXES = (".json", ".toml", ".yaml", ".yml")
 
 
-def _document_declares_mcp(document: dict[str, Any], depth: int = 0) -> bool:
-    """Whether a parsed JSON/TOML object configures MCP servers, wherever the table sits.
+def _document_declares_mcp(document: Any, depth: int = 0, *, listed: bool = False) -> bool:
+    """Whether a parsed JSON/TOML/YAML document configures MCP servers, wherever the table sits.
 
     Decided from the structure, not a text prefix: a key named ``mcpServers`` or
     ``mcp_servers`` holding a mapping, or an ``mcp`` mapping with a ``servers`` mapping,
-    at the top level or nested within a client's section. Bounded in depth and breadth so
-    a hostile document cannot make the walk expensive.
+    at the top level, nested within a client's section or in a mapping inside a list (an
+    Ansible task that writes ``~/.cursor/mcp.json`` from structured ``content``, a list of
+    client profiles). Bounded in depth (mappings and lists alike) and breadth so a hostile
+    document cannot make the walk expensive.
     """
-    if depth > 6:
+    if depth > 12:
         return False
-    # The key's presence is the signal, whatever its value: a malformed value (``mcpServers:
-    # "x"``) must still route to the server parser, which records the input defect, exactly as
-    # the former substring check did — only now it cannot be hidden behind leading padding.
-    if "mcpServers" in document or "mcp_servers" in document:
-        return True
-    mcp = document.get("mcp")
-    if isinstance(mcp, dict) and "servers" in mcp:
-        return True
-    for value in list(document.values())[:256]:
-        if isinstance(value, dict) and _document_declares_mcp(value, depth + 1):
+    if isinstance(document, list):
+        return any(_document_declares_mcp(item, depth + 1, listed=True) for item in document[:256])
+    if not isinstance(document, dict):
+        return False
+    # Outside a list the key's presence is the signal, whatever its value: a malformed value
+    # (``mcpServers: "x"``) must still route to the server parser, which records the input
+    # defect, exactly as the former substring check did — only now it cannot be hidden behind
+    # leading padding. A list holds records, and a record's ``mcp_servers`` can be a status
+    # list (a session transcript), so there only a mapping of servers declares them.
+    for key in ("mcpServers", "mcp_servers"):
+        if key in document and (not listed or isinstance(document[key], dict)):
             return True
-    return False
+    mcp = document.get("mcp")
+    if isinstance(mcp, dict) and "servers" in mcp and (not listed or isinstance(mcp["servers"], dict)):
+        return True
+    return any(
+        _document_declares_mcp(value, depth + 1, listed=listed) for value in list(document.values())[:256]
+    )
+
+
+_WORKFLOW_FILE = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
+
+
+def _yaml_declares_mcp(text: str) -> bool | None:
+    """Whether a YAML file's structure configures MCP servers; None when it cannot be read.
+
+    The text search for MCP keys also finds them inside string values: a
+    workflow step that writes an MCP configuration with a heredoc, a template
+    or a transcript. Read with the configuration loader, which accepts
+    non-string keys (a GitHub workflow's ``on:``), the structure decides. A
+    file this loader cannot read is left to the MCP parser, so its defect or
+    limit still marks coverage incomplete.
+    """
+    try:
+        data = strict_bounded_safe_load(text, require_string_keys=False)
+    except (ValueError, RecursionError, yaml.YAMLError):
+        return None
+    return _document_declares_mcp(data)
+
+
+def _mentions_mcp_keys(text: str) -> bool:
+    """Whether ``text`` names an MCP server table key anywhere: the cheap check that comes first.
+
+    Used when no parse of the file is held. Substring and anchored searches are
+    linear, so the whole (size-bounded) text is read rather than a prefix a server
+    can be pushed past. A hit is only a candidate: a YAML file's structure then
+    decides (``_yaml_declares_mcp``), and a file without a hit is never parsed for it.
+    """
+    return (
+        '"mcpServers"' in text
+        or '"mcp_servers"' in text
+        or "mcpServers:" in text
+        or "mcp_servers:" in text
+        or "[mcp_servers." in text
+        or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", text) is not None
+        or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", text) is not None
+        or ('"mcp"' in text and '"servers"' in text)
+        or ("mcp:" in text and "servers:" in text)
+    )
 
 
 # Documentation placeholders are informational: enough to be listed, never
@@ -802,6 +918,9 @@ class _ScanState:
     # Selected files the exhausted artifact budget left uninspected.
     artifacts_uninspected: int = 0
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
+    # relpath -> signature ids whose per-signal credential quota the file exceeded
+    secrets_limited: dict[str, set[str]] = field(default_factory=dict)
+    secret_project: dict[str, str] = field(default_factory=dict)  # relpath -> project root
     # relpath, parsed servers
     mcp_files: list[tuple[str, list[dict[str, Any]]]] = field(default_factory=list)
     # relpath, text, kind, project root
@@ -833,6 +952,16 @@ class _ScanState:
             | set(self.workflow_files)
             | set(self.infra_files)
         )
+
+
+@dataclass(frozen=True)
+class _BinaryTestFixture:
+    """A binary or undecodable file in discounted test code, read for credentials only.
+
+    ``on_disk`` is its name below the open scan root, as ``_read_source`` read it.
+    """
+
+    on_disk: PurePosixPath
 
 
 @dataclass
@@ -924,6 +1053,21 @@ def _exception_name(exc: Exception) -> str:
     return type(exc).__name__
 
 
+# The incomplete-reason categories of the reasons ``read_text`` and
+# ``read_credential_text`` give for not reading a file. Any other reason is
+# classified from its own fixed text, never from the file's path.
+_READ_ISSUE_REASONS = {
+    "file exceeds max_file_size": "oversize-file",
+    BINARY_CONTENT_ERROR: "unparsed-input",
+    "not a regular file": "unscanned-input",
+}
+
+
+def _read_issue_reason(issue: str) -> str:
+    """The ``INCOMPLETE_REASONS`` category of a read failure the reader described as ``issue``."""
+    return _READ_ISSUE_REASONS.get(issue) or incomplete_reason(issue)
+
+
 def _file_failure_reason(exc: Exception) -> str:
     """Describe why one file's analysis stopped without echoing hostile input.
 
@@ -988,6 +1132,22 @@ def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     return target if target == resolved_root or resolved_root in target.parents else None
 
 
+def _link_names_one_file(link: Path) -> bool:
+    """Whether a link the walk does not follow stands for one file at most: dangling, or to a regular file.
+
+    Its target is looked up, never opened. A directory, any other kind of
+    entry, or a lookup that fails for a reason other than absence can stand
+    for any number of files, inside the scan root or outside it.
+    """
+    try:
+        return stat.S_ISREG(os.stat(link).st_mode)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError as exc:
+        # A loop resolves to nothing at all, like a dangling link.
+        return exc.errno == errno.ELOOP
+
+
 def _on_disk_project(root: Path, path: Path, proj_root: str) -> Path:
     """The project directory of ``path`` under its on-disk name; ``proj_root`` is the report-safe form."""
     return root.joinpath(*path.relative_to(root).parts[: len(PurePosixPath(proj_root).parts)])
@@ -1013,9 +1173,6 @@ def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[
         return local_modules[name]
 
     return is_local_module
-
-
-MAX_ROOT_OWNERSHIP_STEPS = 20_000_000
 
 
 def scan_timeout_for_size(base: float, size: int) -> float:
@@ -1200,7 +1357,130 @@ def _scan_timeout(value: Any) -> float:
     return seconds
 
 
+def coverage_profile(
+    config: dict[str, Any], *, strict_coverage: bool, connector: str = "code.filesystem"
+) -> bool:
+    """Check the coverage ``profile`` of ``config`` and return whether its gap budget is 0.
+
+    ``config`` holds the filesystem options: ``profile``, the connector's own
+    ``max_coverage_gap`` and the scan-wide ``_max_coverage_gap`` the engine
+    injects. A budget of 0, like ``strict_coverage``, is strict accounting
+    (docs/scanning.md#coverage-budget-and-strict-accounting): every gap counts, none is
+    discounted or declared. The ``ci`` profile exists to declare gaps, so it is
+    refused with either spelling of strict accounting, as a ConnectorError
+    before anything is read.
+    """
+    profile = config.get("profile", "default")
+    if ("profile" in config and profile is None) or profile not in PROFILES:
+        raise ConnectorError(f"{connector}: profile must be default or ci")
+    raw = config.get("max_coverage_gap")
+    if raw is None:
+        raw = config.get("_max_coverage_gap")
+    try:
+        zero_budget = raw is not None and validate_max_coverage_gap(raw) == 0.0
+    except ValueError as exc:
+        raise ConnectorError(f"{connector}: {exc}") from exc
+    if profile == "ci" and (strict_coverage or zero_budget):
+        setting = "strict_coverage" if strict_coverage else "a max_coverage_gap of 0"
+        raise ConnectorError(
+            f"{connector}: profile ci declares omissions that strict accounting ({setting}) reports as "
+            "gaps; set one of them (strict_coverage and max_coverage_gap 0 are both strict accounting)"
+        )
+    return zero_budget
+
+
 class FilesystemConnector(BaseConnector):
+    #: Entries (directories and files) a probe counts before it stops, and the
+    #: seconds it may spend counting them. Bounded so the estimate costs a
+    #: fraction of a second even on a huge tree or a slow filesystem.
+    _PROBE_LIMIT = 20_000
+    _PROBE_SECONDS = 1.0
+    #: Entries the default deadline comfortably covers. Above this the budget
+    #: grows in proportion, because the walk's cost is roughly linear in
+    #: entries once signature matching dominates.
+    _ENTRIES_PER_DEFAULT_BUDGET = 12_000
+
+    def coverage_is_strict(self) -> bool:
+        # This connector's own option, parsed in __init__.
+        return self.strict_coverage
+
+    def coverage_gap_override(self) -> float | None:
+        """This connector's documented ``max_coverage_gap``, if the scan set one."""
+        raw = self.ctx.get("max_coverage_gap")
+        return None if raw is None else validate_max_coverage_gap(raw)
+
+    def _strict_accounting(self) -> bool:
+        """Whether every coverage gap counts: ``strict_coverage``, or a gap budget of 0.
+
+        The one rule (docs/scanning.md#coverage-budget-and-strict-accounting): no gap is
+        tolerated by the budget, discounted as test code (``include_tests``
+        off) or declared by the ``ci`` profile, which refuses both settings.
+        The budget is this connector's own ``max_coverage_gap``, else the
+        scan-wide one, or the policy the context holds: a nested connector
+        (``code.github``, ``code.gitlab``) is judged by its parent's. Either
+        source of a 0 makes the accounting strict. ``strict_coverage`` also
+        reports each gap as an error where it happens; a budget of 0 charges
+        the ledger instead, whose verdict is then an error naming each gap's
+        reason, so ``stats.coverage`` still lists them.
+        """
+        return self.strict_coverage or self._zero_budget or self.ctx.coverage_policy.max_gap_ratio <= 0.0
+
+    @classmethod
+    def estimate_timeout_seconds(cls, config: dict[str, Any], default: float) -> float | None:
+        """Scale the deadline to the size of the tree about to be walked.
+
+        A fixed deadline silently truncated large repositories: the walk hit
+        it mid-tree and the connector reported nothing, which reads as a clean
+        result everywhere except the exit code. The probe counts entries up to
+        ``_PROBE_LIMIT`` and stops; reaching the limit means "at least this
+        many", so the proposal saturates at ``default * _PROBE_LIMIT /
+        _ENTRIES_PER_DEFAULT_BUDGET`` (200 s at the 120 s default), below the
+        engine's own ceiling. A larger tree needs an explicit deadline; one
+        that overruns this one is still incomplete.
+        """
+        try:
+            roots = [Path(p) for p in cls.scanned_local_paths(config)]
+            extra = _validated_names(config.get("exclude"), "exclude")
+            default_excludes = config_boolean(config.get("default_excludes", True), "default_excludes")
+        except Exception:  # noqa: BLE001 - an unusable path or option is the scan's problem, not the estimate's
+            return None
+        if not roots:
+            return None
+        # The directory names the walk prunes. An exclude glob only narrows the
+        # walk further, so leaving it out can lengthen the estimate, never cut it.
+        pruned = set(DEFAULT_EXCLUDES) if default_excludes else set(VCS_METADATA_EXCLUDES)
+        pruned |= {e for e in extra if "*" not in e and "/" not in e}
+        entries = cls._probe_entry_count(roots, frozenset(pruned))
+        if entries < cls._ENTRIES_PER_DEFAULT_BUDGET:
+            return None
+        return default * (entries / cls._ENTRIES_PER_DEFAULT_BUDGET)
+
+    @classmethod
+    def _probe_entry_count(
+        cls, roots: list[Path], pruned: AbstractSet[str] = frozenset(DEFAULT_EXCLUDES)
+    ) -> int:
+        """Count directories and files under *roots*, stopping at ``_PROBE_LIMIT`` or ``_PROBE_SECONDS``.
+
+        Directory names the walk prunes (``pruned``) are pruned here too, so
+        the estimate reflects the tree that will actually be read. Every
+        directory counts, so a tree of empty directories reaches the limit
+        instead of being walked in full. A probe that runs out of time reports
+        the limit too: a tree or filesystem that slow to list needs the
+        largest deadline the estimate can propose.
+        """
+        seen = 0
+        stop = time.monotonic() + cls._PROBE_SECONDS
+        for root in roots:
+            if not root.is_dir():
+                seen += 1
+                continue
+            for _dirpath, dirnames, filenames in os.walk(root, onerror=lambda _exc: None):
+                dirnames[:] = [d for d in dirnames if d not in pruned]
+                seen += 1 + len(filenames)
+                if seen >= cls._PROBE_LIMIT or time.monotonic() >= stop:
+                    return cls._PROBE_LIMIT
+        return seen
+
     @classmethod
     def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
         # Engine hook: each repository root is an independent incremental-cache unit.
@@ -1285,14 +1565,31 @@ class FilesystemConnector(BaseConnector):
             "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ "
             "(default false)"
         ),
+        "max_coverage_gap": (
+            "share of examined entries that may be left unread before this scan reports itself "
+            "incomplete (default: the scan-wide options.max_coverage_gap, 0.02); 0 is strict "
+            "accounting, as strict_coverage is: any gap fails and none is discounted or declared. A gap "
+            "the scanner cannot bound always fails closed, whatever this allows"
+        ),
         "strict_coverage": (
-            "report coverage gaps (unread analyzable oversize files, non-regular entries named like "
-            "configuration files, symbolic links whose alias path is not covered) as errors instead of "
-            "warnings; either way the scan is incomplete (default false)"
+            "strict accounting: report every coverage gap (unread analyzable oversize files, non-regular "
+            "entries named like configuration files, symbolic links whose alias path is not covered, "
+            "unreadable test fixtures) as an error that marks the scan incomplete, with no gap budget, "
+            "test-code discount or ci declaration (default false)"
         ),
         "include_tests": (
             "let test and fixture code establish agents and credential findings at full weight "
             "(default false)"
+        ),
+        "profile": (
+            "default | ci; ci declares as omissions, with a warning that leaves the scan complete, the "
+            "coverage gaps a source gate accepts in advance: unread symbolic links, non-regular entries, "
+            "unparsed content, analysis limits and, while scan_secrets is off, oversize files under test, "
+            "fixture, documentation, example and generated paths (documentation and example directories "
+            "below the file's project root, test paths only while include_tests is false); every other gap "
+            "is judged by the coverage budget as usual, an MCP configuration, coding-agent file, agent card "
+            "or credential limit is never declared, and the report counts the omissions; refused with "
+            "strict_coverage or a max_coverage_gap of 0 (default: default)"
         ),
         "triage": (
             "fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC "
@@ -1360,6 +1657,9 @@ class FilesystemConnector(BaseConnector):
         self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
+        self.profile = ctx.get("profile", "default")
+        # A gap budget of 0 is strict accounting, as strict_coverage is (see _strict_accounting).
+        self._zero_budget = coverage_profile(ctx.config, strict_coverage=self.strict_coverage)
         self.triage = config_boolean(ctx.get("triage", False), "triage")
         self.agent_granularity = ctx.get("agent_granularity", "project")
         if ("agent_granularity" in ctx.config and ctx.config["agent_granularity"] is None) or (
@@ -1420,15 +1720,28 @@ class FilesystemConnector(BaseConnector):
         self.owner: str | None = ctx.get("owner")
         self.provider_override: str | None = ctx.get("provider")
         self.extra_metadata: dict[str, Any] = dict(ctx.get("metadata", {}) or {})
-        self._codeowners_cache: dict[Path, list[tuple[str, list[str]]]] = {}
-        self._ownership_exhausted: set[Path] = set()
-        self._ownership_steps_remaining: dict[Path, int] = {}
-        self._owner_cache: dict[tuple[Path, str], str | None] = {}
-        self._ownership_scan: _ScanState | None = None
+        # CODEOWNERS and git-history ownership (ADR-005): reads stay on the
+        # descriptor scan_tree opens, so the resolver is told the active scan.
+        self.ownership = OwnershipResolver(
+            ctx,
+            owner=self.owner,
+            use_git=self.use_git,
+            max_file_size=self.max_file_size,
+            included=self._included,
+        )
         self._symlink_warnings: set[Path] = set()
+        self._declared_link_notes: set[Path] = set()
+        self._blinding_link_notes: set[Path] = set()
+        self._configuration_link_notes: set[Path] = set()
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
         self._lockfile_governed: dict[str, bool] = {}
+        # Files of the current root's walk -> the project root it assigned them,
+        # which decides whether the ci profile declares a gap there (_declared_omission).
+        self._entry_projects: dict[str, str] = {}
+        # Project roots of the current root's walk that are not deployable projects (a template's,
+        # or one whose manifests do not parse) -> the root the ci profile judges paths in them by.
+        self._declaring_roots: dict[str, str] = {}
         # (project root, path) of settings files the walk skipped (a link gap or a non-regular entry).
         self._unread_settings: list[tuple[str, str]] = []
         # Settings files of the scanned tree that a remote API snapshot did not include (set by
@@ -1563,10 +1876,14 @@ class FilesystemConnector(BaseConnector):
 
         These are reported once per kind, after the walk (``_report_file_notes``): hundreds of legacy-encoded
         files must not fill the capped diagnostic channel and bury the reason a scan is incomplete.
-        ``strict_coverage`` treats each as a coverage gap, as the reader did before it read such files.
+        Strict accounting (``_strict_accounting``) treats each as a coverage gap, as the reader did before
+        it read such files.
         """
-        if self.strict_coverage:
-            self.ctx.error(f"code.filesystem: {rel}: {note}; strict_coverage treats this as a gap")
+        if self._strict_accounting():
+            self.ctx.error(
+                f"code.filesystem: {rel}: {note}; strict accounting treats this as a gap",
+                reason="unparsed-input",
+            )
         else:
             self._file_notes.setdefault(note, []).append(rel)
 
@@ -1612,6 +1929,173 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
+    def _declared_omission(
+        self, rel: str, *, full_weight: bool = False, unread_credentials: bool = False
+    ) -> bool:
+        """Whether a coverage gap at ``rel`` is one the ``ci`` profile declared in advance.
+
+        The profile accepts gaps in the paths whose evidence is already
+        discounted (``negative_context`` and the test-path policy): recorded
+        cassettes, fixtures, tutorials, samples and generated files. Test paths
+        count only while ``include_tests`` is false, when their evidence is
+        discounted; with it set they are source like any other.
+
+        Documentation and example directories count as ``negative_context``
+        counts them, below the file's project root: a project under ``demo/``
+        or ``examples/svc/`` holds its own manifest and is reported at full
+        weight, so its gaps are not declared either. The project root is the
+        one the walk assigned to ``rel`` (``_entry_projects``); a path the walk
+        assigned none, a project root itself among them, is not declared for
+        its directory names.
+
+        A file whose findings keep their full weight wherever it lies is never
+        declared: an MCP configuration (by a dedicated name, or by the
+        structure a caller found, ``full_weight``), a coding-agent instruction,
+        rule or settings file, an agent manifest or card
+        (``_full_weight_in_tests``). A client started under ``tests/`` or
+        ``docs/`` reads it there, so the profile cannot have accepted its gap.
+        Strict accounting declares nothing (``_strict_accounting``).
+
+        Nor is a gap that left the file's bytes unread by credential detection
+        (``unread_credentials``: a file over ``max_file_size``, a notebook's
+        saved outputs) while ``scan_secrets`` is on: credentials are never
+        declared without a read, so the gap is recorded as without the profile.
+        """
+        if self.profile != "ci" or full_weight or self._strict_accounting():
+            return False
+        if unread_credentials and self.scan_secrets:
+            return False
+        if _is_test_path(rel):
+            declared = not self.include_tests
+        else:
+            project_root = self._entry_projects.get(rel, rel)
+            project_root = self._declaring_roots.get(project_root, project_root)
+            declared = rel != project_root and negative_context(rel, project_root) is not None
+        return declared and not self._full_weight_in_tests(rel)
+
+    def _note_declaring_root(self, directory: Path, rel_dir: str, parent: str, filenames: list[str]) -> None:
+        """Record which root ``_declared_omission`` judges paths in the project root ``rel_dir`` by.
+
+        A deployable project is judged by itself. A template's directory or one
+        whose manifests do not parse is judged by ``parent``'s root, so the
+        profile still declares the gaps a template's unparsed sources leave.
+        Only the ``ci`` profile reads this, so no other scan probes a manifest.
+        """
+        if self.profile != "ci":
+            return
+        manifests = [
+            name for name in filenames if name in PROJECT_ROOT_MARKERS and self._included(f"{rel_dir}/{name}")
+        ]
+        if not _marks_deployable_project(directory, rel_dir, manifests):
+            self._declaring_roots[rel_dir] = self._declaring_roots.get(parent, parent)
+
+    def _gap(
+        self,
+        rel: str,
+        message: str,
+        *,
+        error: bool = False,
+        suffix: bool = True,
+        reason: str | None = None,
+        full_weight: bool = False,
+        unread_credentials: bool = False,
+    ) -> None:
+        """Record a coverage gap at ``rel``.
+
+        An error, or a warning that leaves the scan incomplete (``suffix``
+        appends the usual ``; coverage incomplete``), unless the ``ci`` profile
+        declared the gap: then a warning that leaves the scan complete, counted
+        in the report's ``declared_omissions``, so a profile scan is never read
+        as one that read everything.
+
+        ``reason`` is the ``INCOMPLETE_REASONS`` category it is counted under;
+        without one it is classified from ``message`` with ``rel`` left out, so
+        a file called ``http_client.py`` does not make the gap an upstream error.
+        ``full_weight`` says the file is an MCP configuration by its structure,
+        and ``unread_credentials`` that credential detection did not read its
+        bytes; the profile declares neither (``_declared_omission``).
+        """
+        reason = reason or incomplete_reason(message, path=rel)
+        if self._declared_omission(rel, full_weight=full_weight, unread_credentials=unread_credentials):
+            self.ctx.warn(
+                f"{message}; declared omission (profile ci)", incomplete=False, declared=True, path=rel
+            )
+        elif error:
+            self.ctx.error(message, reason=reason)
+        else:
+            self.ctx.warn(
+                f"{message}; coverage incomplete" if suffix else message, incomplete=True, reason=reason
+            )
+
+    def _budgeted_gap(
+        self,
+        rel: str,
+        message: str,
+        *,
+        declared: str | None = None,
+        blinding: bool = False,
+        full_weight: bool = False,
+        reason: str | None = None,
+        unread_credentials: bool = False,
+    ) -> None:
+        """Charge a gap at ``rel`` to the coverage budget, unless the ``ci`` profile declared it.
+
+        A declared omission is recorded as ``_gap`` records one (with
+        ``declared`` as its message when given) and is never also charged to
+        the budget, so a gap is counted once: in ``declared_omissions`` or in
+        ``stats.coverage``. ``reason`` and ``unread_credentials`` are passed on
+        to either.
+        """
+        if self._declared_omission(rel, unread_credentials=unread_credentials):
+            self._gap(rel, declared or message, reason=reason, unread_credentials=unread_credentials)
+            return
+        self._ledger_gap(rel, message, blinding=blinding, full_weight=full_weight, reason=reason)
+
+    def _ledger_gap(
+        self,
+        rel: str,
+        message: str,
+        *,
+        blinding: bool = False,
+        quiet: bool = False,
+        full_weight: bool = False,
+        reason: str | None = None,
+    ) -> None:
+        """Charge one entry at ``rel`` to the coverage ledger, weighed as this connector reads the path.
+
+        Every gap of this connector reaches the ledger here, so each is weighed
+        by ``_gap_relevance`` rather than by ``CoverageGap.relevance``'s own
+        segment list, which knows neither ``include_tests`` nor test file names.
+        """
+        self.ctx.coverage_gap(
+            message,
+            path=rel,
+            entries=1,
+            blinding=blinding,
+            quiet=quiet,
+            full_weight=full_weight,
+            reason=reason,
+            relevance=self._gap_relevance(rel),
+        )
+
+    def _gap_relevance(self, rel: str) -> str:
+        """``low`` when a gap at ``rel`` is weighed down in the budget, else ``high``.
+
+        Decided as the rest of the scan reads the path: a vendored directory
+        (``node_modules``, ``vendor``, ...) is low, and so is a test path as
+        ``_is_test_path`` names it (``testing/``, ``e2e/``, ``cassettes/``,
+        ``test_*.py``, ``*.test.ts``, ``conftest.py``, ...) while
+        ``include_tests`` is off and its evidence is discounted. With
+        ``include_tests`` a test path is source and its gaps weigh in full,
+        and so does a file whose findings keep their full weight under a test
+        path (``_full_weight_in_tests``: ``tests/.mcp.json``, ``tests/CLAUDE.md``):
+        the discount, the declaration and the budget read it alike
+        (``_discounted_test_path``).
+        """
+        if is_vendored_path(rel) or self._discounted_test_path(rel):
+            return "low"
+        return "high"
+
     def _lockfile_gap(self, rel: str, reason: str) -> None:
         """Report a supported lockfile that was not inventoried, scoped to that lockfile.
 
@@ -1635,7 +2119,9 @@ class FilesystemConnector(BaseConnector):
         else:
             self.ctx.error(
                 f"code.filesystem: {rel}: lockfile parsing failed ({reason}); no adjacent {manifest} "
-                "declares these dependencies, so they are unscanned"
+                "declares these dependencies, so they are unscanned",
+                # Classified from the fixed reason text alone, never the lockfile's path.
+                reason=incomplete_reason(f"lockfile parsing failed ({reason})"),
             )
 
     def _lockfile_manifest_beside(self, rel_dir: str, lockfile: str, filenames: Iterable[str]) -> bool:
@@ -1691,7 +2177,7 @@ class FilesystemConnector(BaseConnector):
         in ``skipped_oversize_test_fixtures``. With credential detection on
         (the default) every read file, prose and fixtures included, is scanned
         for credentials, so an unread copy may hide a real key and stays a gap
-        (fail closed). ``strict_coverage`` keeps the test-path case a gap too.
+        (fail closed). Strict accounting keeps the test-path case a gap too.
         A file the scanner never reads at any size is yielded and ignored, as
         before. A coding-agent settings file skipped here is still recorded as
         unread for its project's approval gate (``_iter_entries``).
@@ -1710,7 +2196,8 @@ class FilesystemConnector(BaseConnector):
             return False
         if self.scan_secrets:
             # Documentation and fixtures are read for credentials: unread,
-            # they could hide one, so the reader records the gap.
+            # they could hide one, so the reader records the gap, which the
+            # ci profile never declares (_declared_omission).
             return False
         if not self._content_bearing(rel, name):
             self._skip_oversize(
@@ -1721,7 +2208,7 @@ class FilesystemConnector(BaseConnector):
             )
             return True
         if not self.include_tests and _is_test_path(rel):
-            if self.strict_coverage:
+            if self._strict_accounting():
                 return False
             self.skipped_oversize_test_fixtures += 1
             self.ctx.warn(
@@ -1888,6 +2375,25 @@ class FilesystemConnector(BaseConnector):
             return
         self._check_submodule_paths(root, (path if rel_dir == "." else f"{rel_dir}/{path}" for path in paths))
 
+    def _single_file_entry(self, root: Path, walk: _WalkCounters) -> Iterator[tuple[str, Path, str, int]]:
+        """Yield a single-file root as ``_iter_entries`` yields a file, counted as one examined entry.
+
+        Counted like every file a directory walk reaches, so a single-file root
+        of a multi-root scan is judged against the one entry it examined, in a
+        plain run as in an incremental run of that root alone (whose only part
+        the connector run would otherwise floor at the objects it examined).
+        """
+        try:
+            size = root.stat().st_size
+        except OSError:
+            self.ctx.error(f"code.filesystem: could not inspect {root.name}")
+            return
+        self._entry_projects[root.name] = "."
+        if size > self._size_limit(root.name) and self._skipped_oversize(root.name, root.name, size):
+            return
+        if self._count_entry(walk, root):
+            yield root.name, root, ".", size
+
     def _iter_entries(self, root: Path) -> Iterator[tuple[str, Path, str, int]]:
         """Yield (relpath, path, project_root_rel, size) for every regular file to analyze.
 
@@ -1920,14 +2426,7 @@ class FilesystemConnector(BaseConnector):
         resolved_root = Path(os.path.realpath(root))
 
         if root.is_file():
-            try:
-                size = root.stat().st_size
-            except OSError:
-                self.ctx.error(f"code.filesystem: could not inspect {root.name}")
-                return
-            if size > self._size_limit(root.name) and self._skipped_oversize(root.name, root.name, size):
-                return
-            yield root.name, root, ".", size
+            yield from self._single_file_entry(root, walk)
             return
 
         def walk_error(exc: OSError) -> None:
@@ -1959,6 +2458,7 @@ class FilesystemConnector(BaseConnector):
             )
             if rel_dir != "." and _marks_project(Path(dirpath), included_names):
                 roots.append(rel_dir)
+                self._note_declaring_root(Path(dirpath), rel_dir, proj, filenames)
                 proj = rel_dir
             for fn in sorted(filenames):
                 walk.budget.check()
@@ -1967,6 +2467,7 @@ class FilesystemConnector(BaseConnector):
                 rel = shown if rel_dir == "." else f"{rel_dir}/{shown}"
                 if self._excluded_file(rel) or not self._included(rel):
                     continue
+                self._entry_projects[rel] = proj
                 p = Path(dirpath) / fn
                 if fn.lower() in LOCKFILE_NAMES:
                     self._lockfile_governed[rel] = self._lockfile_manifest_beside(rel_dir, fn, filenames)
@@ -1982,7 +2483,7 @@ class FilesystemConnector(BaseConnector):
                 except OSError as exc:
                     if exc.errno in _IGNORED_STAT_ERRNOS:
                         continue
-                    self.ctx.error(f"code.filesystem: could not inspect {rel}")
+                    self.ctx.error(f"code.filesystem: could not inspect {rel}", reason="unscanned-input")
                     continue
                 if not stat.S_ISREG(info.st_mode):
                     if self._analyzed_name(rel, fn):
@@ -2040,7 +2541,7 @@ class FilesystemConnector(BaseConnector):
                         return None
                     continue
             except OSError:
-                self.ctx.error(f"code.filesystem: could not inspect {rel}")
+                self.ctx.error(f"code.filesystem: could not inspect {rel}", reason="unscanned-input")
                 continue
             if name in MCP_CONFIG_NAMES:
                 # The walk descends into it, but no client reads a directory
@@ -2051,30 +2552,62 @@ class FilesystemConnector(BaseConnector):
             kept.append(name)
         return kept
 
+    def _walk_declared(self, root: Path, rel: str, walk: _WalkCounters) -> bool:
+        """``_declared_omission`` for an entry the walk is listing.
+
+        A file's project is recorded before the walk examines it. A directory
+        entry (a directory link, a directory named like a configuration file)
+        has none, so the walker's lookup assigns it the project of the directory
+        that lists it, and the record keeps the gap ``_gap`` then records
+        consistent with this answer.
+        """
+        if self.profile == "ci" and rel not in self._entry_projects:
+            self._entry_projects[rel] = _project_root(root, rel, walk.project_roots, budget=walk.budget)
+        return self._declared_omission(rel)
+
     def _skip_non_regular(self, walk: _WalkCounters, root: Path, rel: str, kind: str) -> None:
         """Record an entry the scanner cannot read as a file although its name says it would.
 
         Like a link, such an entry hides whatever a client would find there:
         coverage is incomplete. The first few are named; the rest are counted.
+        A FIFO, socket or device in place of configuration its name selects
+        (``.mcp.json``, ``.claude/settings.json``) is blinding, as an oversize
+        copy of it is (``_unread_configuration``); a directory of that name is
+        walked, so it costs one entry.
         """
-        walk.non_regular += 1
-        if walk.non_regular > _MAX_NON_REGULAR_NOTES + 1:
+        if self._walk_declared(root, rel, walk):
+            # Declared, counted and named in full: it does not take the gap budget below.
+            self._gap(
+                rel, f"code.filesystem: {rel}: skipped, not a regular file ({kind})", reason="unscanned-input"
+            )
             return
+        walk.non_regular += 1
+        # Only the diagnostics are bounded: past them the budget still counts
+        # every entry, via quiet ledger entries, as it does for links.
+        quiet = walk.non_regular > _MAX_NON_REGULAR_NOTES + 1
+        blinding = kind != "directory" and self._unread_configuration(rel, PurePosixPath(rel).name)
         if walk.non_regular == _MAX_NON_REGULAR_NOTES + 1:
             message = f"code.filesystem: further non-regular entries under {root} not listed"
         else:
-            message = (
-                f"code.filesystem: {rel}: skipped, not a regular file ({kind}) but named like "
-                "analyzable content"
-            )
+            named = "configuration the scanner reads" if blinding else "analyzable content"
+            message = f"code.filesystem: {rel}: skipped, not a regular file ({kind}) but named like {named}"
         if self.strict_coverage:
-            self.ctx.error(f"{message}; coverage incomplete")
+            if not quiet:
+                self.ctx.error(f"{message}; coverage incomplete", reason="unscanned-input")
         else:
-            self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+            # Otherwise one entry of known, bounded lost coverage: budgeted, not fatal.
+            suffix = "coverage incomplete" if blinding else "coverage gap"
+            self._ledger_gap(
+                rel, f"{message}; {suffix}", blinding=blinding, quiet=quiet, reason="unscanned-input"
+            )
 
     def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
         """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
         walk.examined += 1
+        # The denominator of the coverage-gap ratio: entries the walk reached,
+        # not findings, so a gap is judged against the tree it occurred in.
+        # Summed across roots, because walk counters restart at each one.
+        self.ctx.add_coverage_examined(1)
         if walk.examined > self.max_files:
             self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
             self._root_listing_incomplete = True
@@ -2105,20 +2638,61 @@ class FilesystemConnector(BaseConnector):
             # Never followed; scoped like any other lockfile that was not inventoried.
             self._lockfile_gap(rel, "symbolic link is not followed")
             return True
-        # A single representative diagnostic per root keeps hostile trees
-        # from filling the report with thousands of link names.
-        walk.link_gaps += 1
-        if root not in self._symlink_warnings:
-            self._symlink_warnings.add(root)
-            # Stays fail-closed: the target's bytes exist and other tools may
-            # read them, so an unscanned target is lost coverage a repository
-            # could hide behind — not a file-attributable input defect.
-            message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
-            if self.strict_coverage:
-                self.ctx.error(f"{message}; coverage incomplete")
+        message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
+        if self._walk_declared(root, rel, walk):
+            # One representative note per root, like the gap below, and it
+            # leaves that gap's own representative slot for an undeclared link.
+            # Every declared link is counted, as the budget counts every other.
+            if root not in self._declared_link_notes:
+                self._declared_link_notes.add(root)
+                self._gap(rel, message, reason="unresolved-link")
             else:
-                self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+                self.ctx.count_declared_omissions()
+            return True
+        # A single representative diagnostic per root keeps hostile trees
+        # from filling the report with thousands of link names. The budget
+        # still counts every one of them, via the quiet ledger entries.
+        walk.link_gaps += 1
+        # The target's bytes exist and other tools may read them, so an
+        # unscanned target is lost coverage a repository could hide behind —
+        # not a file-attributable input defect.
+        if self.strict_coverage:
+            if root not in self._symlink_warnings:
+                self._symlink_warnings.add(root)
+                self.ctx.error(f"{message}; coverage incomplete", reason="unresolved-link")
+            return True
+        self._budgeted_link_gap(root, rel, link, message)
         return True
+
+    def _budgeted_link_gap(self, root: Path, rel: str, link: Path, message: str) -> None:
+        """Charge an unscanned symbolic link at ``rel`` to the budget, or fail closed if it cannot be bounded.
+
+        A dangling link, or one to a regular file, costs one entry. A link to
+        a directory (or to a target the lookup cannot classify) can stand for
+        any number of files, a whole service outside the tree among them: the
+        scanner cannot bound what it hides, so no budget applies. Nor does one
+        to a single file named like configuration the scanner reads
+        (``.mcp.json``, ``.claude/settings.json``, ``CLAUDE.md`` pointing
+        outside the tree), which is judged as an oversize copy of that file is
+        (``_unread_configuration``). One representative diagnostic per root
+        and kind; the budget still counts every link.
+        """
+        if not _link_names_one_file(link):
+            noted = self._blinding_link_notes
+            message = (
+                f"code.filesystem: skipped symbolic link {rel} whose target may hold any number of "
+                "files and is unscanned; coverage incomplete"
+            )
+        elif self._unread_configuration(rel, link.name):
+            noted = self._configuration_link_notes
+            message = f"{message}; it is named like configuration the scanner reads; coverage incomplete"
+        else:
+            noted = self._symlink_warnings
+            message = f"{message}; coverage gap"
+        first = root not in noted
+        noted.add(root)
+        blinding = noted is not self._symlink_warnings
+        self._ledger_gap(rel, message, blinding=blinding, quiet=not first, reason="unresolved-link")
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
         """Return the share of ``budget`` a file must have left before the walk may start it.
@@ -2166,21 +2740,22 @@ class FilesystemConnector(BaseConnector):
         except ConnectorError:
             raise
         except Exception as exc:  # noqa: BLE001 - isolate hostile input and retain other findings
-            self.ctx.error(f"code.filesystem: {rel}: {analysis} incomplete ({reason(exc)})")
+            self._gap(rel, f"code.filesystem: {rel}: {analysis} incomplete ({reason(exc)})", error=True)
 
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         root = root.absolute()
         scan = _ScanState(root, self._scan_label(root))
-        previous_scan = self._ownership_scan
-        self._ownership_scan = scan
+        previous_scan = self.ownership.scan
+        self.ownership.scan = scan
         # Ownership caches belong to this opened tree, not a pathname that a
         # later scan on the same connector instance may find replaced.
-        self._codeowners_cache.pop(root, None)
-        self._ownership_exhausted.discard(root)
-        self._ownership_steps_remaining.pop(root, None)
-        self._owner_cache = {key: value for key, value in self._owner_cache.items() if key[0] != root}
+        self.ownership.forget_root(root)
         # Each root's gates read only its own listing (scan_tree walks and emits one root at a time).
         self._root_listing_incomplete = self.tree_listing_incomplete
+        # Each root's gaps are judged against its own entries, as if it were
+        # scanned alone; a code.github or code.gitlab checkout shares its
+        # parent's ledger, so each repository is its own part there too.
+        self.ctx.begin_coverage_part(scan.label)
         try:
             if self.triage:
                 # Unconditional, per scanned root: a triage result is a subset
@@ -2213,7 +2788,7 @@ class FilesystemConnector(BaseConnector):
                 yield f
         finally:
             # Closed whether or not the emit completes.
-            self._ownership_scan = previous_scan
+            self.ownership.scan = previous_scan
             self._close_root(scan)
 
     @staticmethod
@@ -2287,7 +2862,9 @@ class FilesystemConnector(BaseConnector):
                 try:
                     self._bind_source(source, resolve_import=resolver)
                 except ReexportLimitError as exc:
-                    self.ctx.error(f"code.filesystem: {file.rel}: {exc}; analysis incomplete")
+                    self.ctx.error(
+                        f"code.filesystem: {file.rel}: {exc}; analysis incomplete", reason="analysis-limit"
+                    )
                     self._bind_source(source)
         # The walk redacted every queued consumer (see _scan_file), so settling
         # only cuts the excerpts its matches asked for, reached or not.
@@ -2379,6 +2956,8 @@ class FilesystemConnector(BaseConnector):
         try:
             self._unread_settings = []
             self._lockfile_governed = {}
+            self._entry_projects = {}
+            self._declaring_roots = {}
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
             # Enumeration hit max_entries or its share of the deadline: the
@@ -2541,36 +3120,37 @@ class FilesystemConnector(BaseConnector):
             # Triage never reads plain source files; the per-root warning
             # already discloses the skipped stages.
             return
+        credential_file = path.name.lower() in CREDENTIAL_FILE_NAMES
+        if credential_file:
+            # Only the credential pass reads a tool credential file, but its name is evidence
+            # in every mode: '.codex/.netrc' configures Codex as '.codex/config.toml' does.
+            self._record_name_matches(proj, rel, file_matches)
+            if not self.scan_secrets or self.triage:
+                return
         named = by_name or self._named_by_signature(rel, file_matches)
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
+        if isinstance(loaded, _BinaryTestFixture):
+            _note_unread_settings(proj, rel)
+            self._scan_binary_test_fixture(scan, proj, proj_root, rel, path, loaded, file_matches)
+            return
         if loaded is None:
             _note_unread_settings(proj, rel)
             return
         text, raw_notebook, cells, foreign = loaded
-        if path.name.lower() in LOCKFILE_NAMES:
-            manifest = parse_manifest(rel, text)
-            if manifest is not None:
-                if manifest.lockfile_issue is not None:
-                    self._lockfile_gap(rel, manifest.lockfile_issue)
-                self._file_errors(rel, manifest.errors)
-                if manifest.lockfile is not None:
-                    self._lockfile_inventory(scan, rel, manifest.lockfile)
-            if self.scan_secrets and not self.triage:
-                # A lockfile is a read file: the credential pass covers it
-                # like any other text. A pinned registry or source URL can
-                # embed a token that the dependency inventory never retains.
-                file = _SourceFile(
-                    rel=rel,
-                    path=path,
-                    proj_root=proj_root,
-                    proj=proj,
-                    text=text,
-                    lang=lang,
-                    file_matches=file_matches,
-                )
-                file.structure, file.structure_strict = self._structure_for(rel, text)
-                file.excerpts = _ExcerptSource(rel, path, text, file.structure)
-                self._detect_secrets(scan, file)
+        if credential_file or path.name.lower() in LOCKFILE_NAMES:
+            read = _SourceFile(
+                rel=rel,
+                path=path,
+                proj_root=proj_root,
+                proj=proj,
+                text=text,
+                lang=lang,
+                file_matches=file_matches,
+            )
+            if credential_file:
+                self._scan_credential_file(scan, read)
+            else:
+                self._scan_lockfile(scan, read)
             return
         nul_text = None
         if "\x00" in text and path.suffix.lower() != ".ipynb":
@@ -2605,7 +3185,9 @@ class FilesystemConnector(BaseConnector):
                 proj.skill_audits[rel] = audit
                 if audit.incomplete:
                     self.ctx.warn(
-                        f"code.filesystem: {rel}: static instruction audit incomplete", incomplete=True
+                        f"code.filesystem: {rel}: static instruction audit incomplete",
+                        incomplete=True,
+                        reason="analysis-limit",
                     )
             if any(rel in files for files in proj.coding_agent_files.values()):
                 # Inspect the same confined snapshot as every other analysis pass.
@@ -2614,6 +3196,7 @@ class FilesystemConnector(BaseConnector):
                         f"code.filesystem: {rel}: instruction content exceeds inspection limit; "
                         "coverage incomplete",
                         incomplete=True,
+                        reason="analysis-limit",
                     )
                 else:
                     proj.instruction_hits[rel] = inspect_instruction_text(text)
@@ -2645,9 +3228,223 @@ class FilesystemConnector(BaseConnector):
                 # emit read from it afterwards is only cut from the redacted lines.
                 self._redacted_lines(file)
 
+    def _scan_lockfile(self, scan: _ScanState, file: _SourceFile) -> None:
+        """Inventory a lockfile's locked dependencies, then run the credential pass over it."""
+        manifest = parse_manifest(file.rel, file.text)
+        if manifest is not None:
+            if manifest.lockfile_issue is not None:
+                self._lockfile_gap(file.rel, manifest.lockfile_issue)
+            self._file_errors(file.rel, manifest.errors)
+            if manifest.lockfile is not None:
+                self._lockfile_inventory(scan, file.rel, manifest.lockfile)
+        if self.scan_secrets and not self.triage:
+            # A lockfile is a read file: the credential pass covers it
+            # like any other text. A pinned registry or source URL can
+            # embed a token that the dependency inventory never retains.
+            file.structure, file.structure_strict = self._structure_for(file.rel, file.text)
+            file.excerpts = _ExcerptSource(file.rel, file.path, file.text, file.structure)
+            self._detect_secrets(scan, file)
+
+    def _scan_credential_file(self, scan: _ScanState, file: _SourceFile) -> None:
+        """Run the credential pass alone over a tool credential file (``CREDENTIAL_FILE_NAMES``).
+
+        Such a file exists to hold a password or token, in a syntax the
+        sanitizer may not know: netrc writes 'machine h login u password v',
+        so an excerpt of any of its lines could show one. No other analysis
+        reads it (a provider host in a netrc entry is where a credential
+        goes, not usage of that provider), and no excerpt is cut from it: a
+        credential finding names the file and line, and its count and
+        providers, without the line.
+        """
+        # Matched as the other passes match a file (see _scan_file), without stray NUL bytes.
+        file.text = file.text.replace("\x00", "")
+        file.excerpts = _ExcerptSource(file.rel, file.path, file.text, None)
+        self._detect_secrets(scan, file)
+
+    def _discounted_test_gap(self, rel: str, *, full_weight: bool = False) -> bool:
+        """Whether a coverage gap in ``rel`` is in test code whose evidence the scan discounts.
+
+        With ``include_tests`` off, test and fixture code establishes no agent at
+        full weight, and deliberately malformed fixtures are ordinary there:
+        syntax-highlighting samples, binary attachments, invalid manifests. A gap
+        in such a file is a warning that leaves the scan complete, as an oversize
+        test fixture or test code that does not parse already is. Credentials are
+        never discounted: a fixture that cannot be decoded is still read for them
+        (``_scan_binary_test_fixture``). Strict accounting keeps every gap, and
+        so does a file whose evidence is not discounted in test code either
+        (``_full_weight_in_tests``, or ``full_weight`` from a caller that found an
+        MCP configuration by its structure).
+        """
+        return not full_weight and not self._strict_accounting() and self._discounted_test_path(rel)
+
+    def _discounted_test_path(self, rel: str) -> bool:
+        """Whether the evidence passes discount ``rel`` as test code, whatever the accounting.
+
+        ``include_tests`` off, a test path, and not a file whose findings keep
+        their full weight there (``_full_weight_in_tests``). Such a file that
+        cannot be decoded is read for credentials under every accounting
+        (``_read_source``): strict accounting decides how its gap is recorded,
+        never whether its credentials are read.
+        """
+        return not self.include_tests and _is_test_path(rel) and not self._full_weight_in_tests(rel)
+
+    def _full_weight_in_tests(self, rel: str) -> bool:
+        """Whether ``rel`` is named as a file whose findings keep their full weight under a test path.
+
+        MCP configurations, coding-agent instruction, rule and settings files
+        and agent manifests or cards are reported the same in ``tests/`` as
+        anywhere else (a client started there reads ``tests/.mcp.json``, Claude
+        Code reads ``testing/CLAUDE.md``), so a NUL byte or a syntax error that
+        hides one is a gap there too. Decided as the passes that read them
+        decide: by dedicated MCP configuration name, manifest kind, settings
+        path, instruction document name and the MCP or coding-agent file-name
+        signatures, whose file evidence ``_record`` keeps in test code. A
+        shared client name (``settings.json``, ``config.yaml``) is an MCP
+        configuration only by its content, as ``_looks_like_mcp_config``
+        decides, so it keeps the gap only when that content declares servers
+        (``_detect_mcp``, ``_scan_binary_test_fixture``).
+        """
+        name = PurePosixPath(rel).name
+        return (
+            name.lower() in _DEDICATED_MCP_CONFIG_NAMES
+            or agent_manifest_kind(rel) is not None
+            or is_agent_config_path(rel)
+            or posture_client(rel) is not None
+            or _is_coding_agent_doc(name)
+            or any(directory in rel for directory in _AGENT_DEFINITION_DIRS)
+            or any(
+                m.signal.type == "file"
+                and (m.signature.category == "coding-agent" or m.signature_id == "protocol.mcp")
+                for m in self.index.match_file(rel)
+            )
+        )
+
+    def _discounted_gap(
+        self,
+        rel: str,
+        message: str,
+        *,
+        error: bool = True,
+        suffix: bool = True,
+        full_weight: bool = False,
+        reason: str | None = None,
+        charged_in_full: bool = False,
+    ) -> None:
+        """Record ``message`` about ``rel`` as a gap (``_gap``), or charge it to the budget in test code.
+
+        A ``ci`` profile declaration takes precedence over the discount, so the
+        omission is counted in ``declared_omissions`` like every other one the
+        profile accepts; ``error``, ``suffix`` and ``reason`` are passed on to ``_gap``.
+        ``full_weight`` keeps the discount off (see ``_discounted_test_gap``).
+
+        Discounted is not dropped: the gap is a partial one in the coverage
+        budget, at the quarter weight of a test path (``_gap_relevance``), and
+        is listed in ``stats.coverage.details`` with the discount named in its
+        detail. A root tolerates such fixtures up to about 8% of its entries
+        against the default 2% budget; a tree seeded with them exhausts it.
+        ``charged_in_full`` keeps the path weighting off, for a fixture that
+        could not be decoded at all: undecodable bytes hide a definition in a
+        fixture as easily as anywhere, so they cost a whole entry, and about 2%
+        of a root's entries in them exhaust its budget.
+        """
+        if self._discounted_test_gap(rel, full_weight=full_weight) and not self._declared_omission(rel):
+            self._ledger_gap(
+                rel,
+                f"{message}; test code is discounted evidence (include_tests is false); coverage gap",
+                full_weight=charged_in_full,
+                reason=reason,
+            )
+        else:
+            self._gap(rel, message, error=error, suffix=suffix, reason=reason, full_weight=full_weight)
+
+    def _scan_binary_test_fixture(
+        self,
+        scan: _ScanState,
+        proj: _Project,
+        proj_root: str,
+        rel: str,
+        path: Path,
+        fixture: _BinaryTestFixture,
+        file_matches: list[Match],
+    ) -> None:
+        """Read a binary or undecodable test fixture for credentials, the one evidence not discounted.
+
+        Its bytes are read as Latin-1 without NUL bytes (``read_credential_text``),
+        so a key written in it is still found; nothing else is analyzed, and no
+        excerpt is cut from it. A fixture that cannot be read at all stays a gap.
+        So does one whose text reads as an MCP configuration (``tests/agent.yaml``
+        with ``mcpServers``), which is reported at full weight in test code too:
+        a JSON, TOML or YAML fixture is read for that check even when credentials
+        are not scanned, and is then charged like undecodable product content.
+        Strict accounting reads it too, and only then records its gap, as an
+        error: it never finds fewer credentials than the default accounting.
+        """
+        message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
+        analyzed = self.scan_secrets and not self.triage
+        if not analyzed and not rel.endswith(_MCP_STRUCTURE_SUFFIXES):
+            self._discounted_gap(
+                rel, f"{message}; not analyzed", reason="unparsed-input", charged_in_full=True
+            )
+            return
+        errors: list[str] = []
+        text = read_credential_text(fixture.on_disk, self._size_limit(path.name), errors, dir_fd=scan.root_fd)
+        if text is None:
+            for issue in errors:
+                self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
+            return
+        if analyzed:
+            file = _SourceFile(
+                rel=rel,
+                path=path,
+                proj_root=proj_root,
+                proj=proj,
+                text=text,
+                lang=None,
+                file_matches=file_matches,
+            )
+            # No structured context: none of a binary file's excerpts is emitted.
+            file.excerpts = _ExcerptSource(rel, path, text, None)
+            self._detect_secrets(scan, file)
+        if self._looks_like_mcp_config(rel, path.name, text):
+            self._unreadable_gap(rel, BINARY_CONTENT_ERROR)
+            return
+        self._discounted_gap(
+            rel,
+            f"{message}; {'read for credentials only' if analyzed else 'not analyzed'}",
+            reason="unparsed-input",
+            charged_in_full=True,
+        )
+
+    def _unreadable_gap(self, rel: str, issue: str) -> None:
+        """Charge content of ``rel`` that the scanner could not read or decode to the coverage budget.
+
+        Editors and runtimes tolerate bytes the scanner cannot decode, so
+        undecodable content is how a definition would be hidden from it: a NUL
+        in a settings.json, an agent document or a Dockerfile. That stays
+        fail-closed.
+
+        The exception is test code whose evidence the walk discounts
+        (include_tests off, as _BinaryTestFixture decides it), where a file of
+        deliberately invalid bytes is ordinary and no deployed agent lives. A
+        vendored directory is no exception: the walk skips those by name,
+        case-sensitively, while default_excludes is on, so what it reads under
+        one (Vendor/, or vendor/ with default_excludes off) is source to it.
+        Exceptions are charged to the budget at full weight -- never discounted
+        the way an unreadable fixture is -- so a tree seeded with them still
+        exhausts it.
+        """
+        incidental = self._discounted_test_gap(rel)
+        self._budgeted_gap(
+            rel,
+            f"code.filesystem: {rel}: {issue}",
+            blinding=not incidental,
+            full_weight=True,
+            reason=_read_issue_reason(issue),
+        )
+
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
-    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | None:
+    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | _BinaryTestFixture | None:
         """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
 
         A notebook's last element lists the cells declared another language (``_notebook_source``).
@@ -2658,7 +3455,9 @@ class FilesystemConnector(BaseConnector):
         in it. None means nothing is analyzed; the recorded diagnostics say why.
         ``named`` is False when only a directory-wide signature glob selects the
         file, so a recognised binary artifact there (an image beside coding-agent
-        rules) is skipped without a coverage gap.
+        rules) is skipped without a coverage gap. A ``_BinaryTestFixture`` means
+        the file is binary or undecodable and in discounted test code: the caller
+        reads it for credentials only (``_scan_binary_test_fixture``).
         """
         read_errors: list[str] = []
         read_notes: list[str] = []
@@ -2673,31 +3472,77 @@ class FilesystemConnector(BaseConnector):
         )
         for note in read_notes:
             self._note_file(rel, note)
+        binary_fixture = False
         for issue in read_errors:
-            if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
-                    incomplete=True,
+            if issue == BINARY_CONTENT_ERROR and self._discounted_test_path(rel):
+                # Read for credentials first, under every accounting; the
+                # fixture's gap is recorded after that read, as an error under
+                # strict accounting (_scan_binary_test_fixture).
+                binary_fixture = True
+            elif self.strict_coverage:
+                self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
+            elif issue == "file exceeds max_file_size":
+                # Other oversize content (generated source, a data export) is
+                # incidental and costs one entry (_unread_configuration).
+                selected = self._unread_configuration(rel, path.name)
+                self._budgeted_gap(
+                    rel,
+                    f"code.filesystem: {rel}: skipped, {issue}; "
+                    + ("coverage incomplete" if selected else "coverage gap"),
+                    declared=f"code.filesystem: {rel}: skipped, {issue}",
+                    blinding=selected,
+                    reason="oversize-file",
+                    unread_credentials=True,
                 )
             else:
-                # Undecodable analyzable files stay fail-closed: editors and
-                # runtimes tolerate bytes the scanner cannot decode, so a NUL
-                # in a CLAUDE.md could otherwise hide content from the scan.
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                self._unreadable_gap(rel, issue)
         if text is None:
-            return None
+            return _BinaryTestFixture(on_disk) if binary_fixture else None
         if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
             # A checkout made without git-lfs holds a pointer in place of the
             # file: its content was never read, whatever the name promises.
             message = f"code.filesystem: {rel}: Git LFS pointer file, not the content it stands for"
             if self.strict_coverage:
-                self.ctx.error(f"{message}; coverage incomplete")
+                self.ctx.error(f"{message}; coverage incomplete", reason="unscanned-input")
             else:
-                self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+                self._gap(rel, message, reason="unscanned-input")
             return None
         if path.suffix.lower() != ".ipynb":
             return text, None, (), ()
         return self._notebook_source(rel, text)
+
+    def _unread_configuration(self, rel: str, name: str) -> bool:
+        """Whether leaving ``rel`` unread hides configuration its name selects: a gap no budget bounds.
+
+        Such a file is read for what it declares, so however it goes unread --
+        padded past ``max_file_size``, a symbolic link to a file the walk does
+        not scan, a FIFO, socket or device in its place -- it hides a
+        definition as well as undecodable bytes would, and is blinding like
+        them. One rule for every way, so a link and an oversize copy of the
+        same ``.mcp.json`` are judged alike. Discounted test code is the
+        exception (``_discounted_test_gap``), which a file whose findings keep
+        their full weight there, ``tests/.mcp.json`` or ``tests/CLAUDE.md``,
+        is not; other unread content costs one entry of the budget.
+        """
+        return self._named_configuration(rel, name) and not self._discounted_test_gap(rel)
+
+    def _named_configuration(self, rel: str, name: str) -> bool:
+        """Whether ``rel`` is read as the configuration its name selects, rather than as incidental content.
+
+        MCP configuration, dependency and deployment manifests, coding-agent
+        instructions, settings and definitions, agent cards, and any file a
+        file-name signature names: the files where an agent or a server is
+        declared.
+        """
+        return (
+            name in MCP_CONFIG_NAMES
+            or is_manifest_name(name)
+            or _is_coding_agent_doc(name)
+            or is_agent_config_path(rel)
+            or agent_manifest_kind(rel) is not None
+            or any(directory in rel for directory in _AGENT_DEFINITION_DIRS)
+            or self._named_by_signature(rel, self.index.match_file(rel))
+        )
 
     def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
         """Whether a file-name signature selects ``rel`` by its name, not only by its directory.
@@ -2754,10 +3599,7 @@ class FilesystemConnector(BaseConnector):
                 "saved outputs not scanned for credentials"
             )
         if gap is not None:
-            if self.strict_coverage:
-                self.ctx.error(gap)
-            else:
-                self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
+            self._gap(rel, gap, error=self.strict_coverage, reason="oversize-file", unread_credentials=True)
         if len(text) > self.max_file_size:
             return None
         return text, raw_notebook, tuple(spans), tuple(foreign)
@@ -2800,24 +3642,37 @@ class FilesystemConnector(BaseConnector):
         # the credential-redaction context could not be established, and
         # parsers diverge on such content (duplicate keys, deep nesting), so
         # treating it as a benign input defect would open an evasion channel.
-        self.ctx.error(
-            f"code.filesystem: {rel}: structured {stage} incomplete ({type(exc).__name__}); excerpts withheld"
+        # Only discounted test code is exempt (see _discounted_test_gap): its
+        # credentials are still detected and its excerpts are still withheld.
+        failure = type(exc).__name__
+        # Content that would not parse is unparsed input; a resource or
+        # sanitizer limit is the redaction context's own limit.
+        integrity = isinstance(exc, (JSONIntegrityError, YAMLIntegrityError))
+        self._discounted_gap(
+            rel,
+            f"code.filesystem: {rel}: structured {stage} incomplete ({failure}); excerpts withheld",
+            reason="unparsed-input" if integrity else "sanitization-limit",
         )
 
-    def _input_defect(self, rel: str, issue: str) -> None:
+    def _input_defect(self, rel: str, issue: str, *, full_weight: bool = False) -> None:
         """Record a defect attributable to the file's own content.
 
         Templates and fixtures may be intentionally malformed, but the
         scanner cannot establish their content as fully analyzed. Preserve
-        valid neighboring findings and always mark coverage incomplete.
-        ``strict_coverage`` promotes the diagnostic from warning to error;
-        both forms fail closed.
+        valid neighboring findings and mark coverage incomplete, except in
+        discounted test code (see ``_discounted_test_gap``, which also takes
+        ``full_weight``). ``strict_coverage`` promotes the diagnostic from
+        warning to error; both forms fail closed.
         """
         message = f"code.filesystem: {rel}: input defect: {issue}"
-        if self.strict_coverage:
-            self.ctx.error(message)
-        else:
-            self.ctx.warn(message, incomplete=True)
+        self._discounted_gap(
+            rel,
+            message,
+            error=self.strict_coverage,
+            suffix=False,
+            full_weight=full_weight,
+            reason="unparsed-input",
+        )
 
     # Syntax/shape defects get a distinct diagnostic so operators can find
     # templates and fixtures. This taxonomy never changes completeness:
@@ -2830,18 +3685,38 @@ class FilesystemConnector(BaseConnector):
         "MCP servers must be an object or array",
     )
 
-    def _file_errors(self, rel: str, issues: Iterable[str], *, defect: bool = False) -> None:
+    def _file_errors(
+        self, rel: str, issues: Iterable[str], *, defect: bool = False, full_weight: bool = False
+    ) -> None:
         """Record parser or validator issues for ``rel``.
 
         ``defect`` routes recognized input failures through
         :meth:`_input_defect` for a distinct diagnostic. Every issue marks
-        coverage incomplete, regardless of diagnostic severity.
+        coverage incomplete, regardless of diagnostic severity, except in
+        discounted test code (see ``_discounted_test_gap``); ``full_weight``
+        says the file is an MCP configuration by its structure, which is not
+        discounted there either.
+
+        These stay errors rather than budgeted coverage gaps. A parser or
+        validator issue means a file the scanner *selected* -- a manifest, an
+        agent card, a tool catalog -- could not be read, and that is the one
+        place a definition would be hidden from it. The budget is for content
+        whose loss is incidental; this is not. Incidental unreadable content
+        is charged to the budget in :meth:`_unreadable_gap` instead.
         """
         for issue in issues:
             if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):
-                self._input_defect(rel, issue)
+                self._input_defect(rel, issue, full_weight=full_weight)
             else:
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                # The parser's own text, without the path, names the category; a
+                # defect it does not name is still content that did not parse.
+                category = incomplete_reason(issue)
+                self._discounted_gap(
+                    rel,
+                    f"code.filesystem: {rel}: {issue}",
+                    full_weight=full_weight,
+                    reason="unparsed-input" if category == "other" else category,
+                )
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
@@ -2897,6 +3772,18 @@ class FilesystemConnector(BaseConnector):
             return ""
         source.wanted.add(line_number or 1)
         return _LazyExcerpt(self._redacted_lines_of, source, line_number)
+
+    def _record_name_matches(self, proj: _Project, rel: str, file_matches: list[Match]) -> None:
+        """Record the file-name evidence of a file whose content no other pass reads.
+
+        The evidence names the file and carries no content or snippet. MCP
+        file names wait for a parsed configuration, as in ``_record_file_matches``.
+        """
+        for m in file_matches:
+            if m.signature_id == "protocol.mcp":
+                continue
+            m.extra["verified_agent"] = False
+            self._record(proj, m, rel, None)
 
     def _record_file_matches(self, file: _SourceFile) -> None:
         """Record file-name evidence; MCP file names wait for a parsed configuration."""
@@ -2980,14 +3867,29 @@ class FilesystemConnector(BaseConnector):
                     f"code.filesystem: {file.rel}: notebook excerpt sanitization incomplete; "
                     "excerpts withheld"
                 )
-        for m in self.index.match_secrets(raw, scan=file.literals):
+        # In source code an unquoted value is an expression, so a generic match on
+        # 'api_key = api_key' names a variable. A notebook's raw document is JSON
+        # with outputs and markdown, where an unquoted value is printed text.
+        code = file.lang is not None and not from_raw_notebook
+        limited: set[str] = set()
+        # Placeholders take no place in the quota and never count past it, so a
+        # .env.example of sample keys reads as complete rather than exit 3.
+        matches = self.index.match_secrets(
+            raw,
+            scan=file.literals,
+            code=code,
+            limited=limited,
+            placeholder=placeholder_reason,
+            env_file=not code and _env_values_file(file.path.name),
+        )
+        for m in matches:
             if (m.signature_id, m.value) in skip_values:
                 continue
             key = (m.signature_id, m.value, m.line)
             if key in seen_secrets:
                 continue
             seen_secrets.add(key)
-            reason = placeholder_reason(m.value)
+            reason = placeholder_reason(reported_credential(m))
             if reason:
                 self._record_example_credential(file.proj, m, file.rel, reason)
                 continue
@@ -2996,7 +3898,34 @@ class FilesystemConnector(BaseConnector):
             else:
                 snippet = self._file_excerpt(file, m.line, m.value)
             scan.secret_hits.setdefault(file.rel, []).append((m, snippet))
+            scan.secret_project.setdefault(file.rel, file.proj_root)
             self._record(file.proj, m, file.rel, None)
+        self._record_secret_limit(scan.secrets_limited, file.rel, limited)
+
+    def _record_secret_limit(self, secrets_limited: dict[str, set[str]], rel: str, limited: set[str]) -> None:
+        """Disclose that ``rel`` holds more credentials of a format than the matcher reports.
+
+        The per-signal quota (:data:`MAX_SECRETS_PER_SIGNAL`) bounds the
+        evidence one file can contribute, but a match past it is never read,
+        so the scanner cannot tell a real key there from a placeholder. A scan
+        that hid them would look complete while under-counting the one
+        finding kind whose count is read literally, so the file is recorded
+        as incomplete here and its finding carries ``secrets_limited`` (see
+        ``_secret_finding``). Each format is named once per file, however
+        many passes observe the quota.
+        """
+        new = limited - secrets_limited.get(rel, set())
+        if not new:
+            return
+        secrets_limited.setdefault(rel, set()).update(new)
+        # A credential limit is never declared, discounted or budgeted, under any
+        # profile. Its reason is given, not read from the message, whose path may
+        # hold another category's word ('src/http_client/keys.py' read as upstream).
+        self.ctx.error(
+            f"code.filesystem: {rel}: credential quota limit reached: more than {MAX_SECRETS_PER_SIGNAL} "
+            f"credentials matched {', '.join(sorted(new))}; credential evidence incomplete",
+            reason="analysis-limit",
+        )
 
     def _detect_mcp(self, file: _SourceFile) -> None:
         """Parse an MCP client/server configuration.
@@ -3005,14 +3934,17 @@ class FilesystemConnector(BaseConnector):
         is client-specific (Cline and Roo honour it, Claude Code does not) and comes
         from the repository, so honouring it here would let a repository hide a server.
         """
-        document = self._parsed_document(file, (*_JSON_SUFFIXES, ".toml"))
+        # The YAML parse decides whether a guessed file declares servers, so it is not parsed
+        # twice; the server parser itself reloads YAML with string keys required.
+        document = self._parsed_document(file, (*_JSON_SUFFIXES, ".toml", *_YAML_SUFFIXES))
         file.is_mcp = self._looks_like_mcp_config(file.rel, file.name, file.text, document) or (
             file.name.lower() == "server.json" and '"mcpServers"' in file.text
         )
         if file.is_mcp:
             mcp_errors: list[str] = []
             file.mcp_servers = _parse_mcp_servers(file.rel, file.text, mcp_errors, document)
-            self._file_errors(file.rel, dict.fromkeys(mcp_errors), defect=True)
+            # An MCP configuration is reported at full weight in test code, so its defects are gaps there.
+            self._file_errors(file.rel, dict.fromkeys(mcp_errors), defect=True, full_weight=True)
             dedicated = file.name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             if not file.mcp_servers and not mcp_errors and not dedicated:
                 # The content heuristic (an "mcp" and a "servers" key anywhere
@@ -3136,6 +4068,7 @@ class FilesystemConnector(BaseConnector):
                 scan.infra_files,
                 scan.secret_hits,
                 scan.infra_names,
+                secrets_limited=scan.secrets_limited,
                 image_scale=image_scale,
             )
 
@@ -3231,7 +4164,10 @@ class FilesystemConnector(BaseConnector):
             return False
         size = len(file.text.encode("utf-8"))
         if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
-            self.ctx.error(f"code.filesystem: {file.rel}: Python re-export source budget exceeded")
+            self.ctx.error(
+                f"code.filesystem: {file.rel}: Python re-export source budget exceeded",
+                reason="analysis-limit",
+            )
             return False
         scan.reexport_files.append(source)
         scan.reexport_bytes += size
@@ -3261,7 +4197,11 @@ class FilesystemConnector(BaseConnector):
                 )
                 ambiguous = ambiguous or nul_ambiguous
         if ambiguous:
-            self.ctx.error(f"code.filesystem: {file.rel}: incomplete source lexical analysis")
+            self._discounted_gap(
+                file.rel,
+                f"code.filesystem: {file.rel}: incomplete source lexical analysis",
+                reason="unparsed-input",
+            )
         literals = file.literals
         imports = self.index.match_imports(content_text, lang, ignore_spans=ignored, scan=literals)
         for m in imports:
@@ -3407,10 +4347,12 @@ class FilesystemConnector(BaseConnector):
             limited = limited or len(keyed) > MAX_MODEL_LITERALS_PER_FILE
             literals.extend((m.start(1), m.group(1)) for m in keyed[:MAX_MODEL_LITERALS_PER_FILE])
         if limited:
-            self.ctx.warn(
+            self._gap(
+                file.rel,
                 f"code.filesystem: {file.rel}: model identifiers read from the first "
                 f"{MAX_MODEL_LITERALS_PER_FILE} literals only; later ones were not matched",
-                incomplete=True,
+                suffix=False,
+                reason="analysis-limit",
             )
         literals.sort()
         line_at = line_counter(content_text)
@@ -3486,10 +4428,10 @@ class FilesystemConnector(BaseConnector):
                     numbers = ", ".join(str(number + 1) for number in unparsed[:10])
                     cells = "cell" if len(unparsed) == 1 else "cells"
                     verb = "does" if len(unparsed) == 1 else "do"
-                    self.ctx.warn(
+                    self._syntax_warning(
+                        file,
                         f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook "
                         f"{cells} {numbers}, which {verb} not parse; lexical evidence retained",
-                        incomplete=self._syntax_gap(file),
                     )
             bound = bound_source_matches(
                 self.index,
@@ -3511,19 +4453,19 @@ class FilesystemConnector(BaseConnector):
                 "lexical evidence retained"
             )
             if not self.include_tests and _is_test_path(file.rel):
-                self.ctx.warn(message, incomplete=self.strict_coverage)
+                self._strict_gap_warning(message, reason="analysis-limit")
             else:
-                self.ctx.error(message)
+                self.ctx.error(message, reason="analysis-limit")
             return [], whole
         except SourceNotParsed as exc:
             # Newer syntax than the interpreter knows, or invalid source: no
             # import binding. Lexical observations stay visible, but cannot
             # replace the missing proof of agent behavior or capabilities.
             file.unparsed = tuple(whole)
-            self.ctx.warn(
+            self._syntax_warning(
+                file,
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
-                incomplete=self._syntax_gap(file),
             )
             return [], whole
         if truncated:
@@ -3536,19 +4478,42 @@ class FilesystemConnector(BaseConnector):
                 f"{MAX_CALL_TEXT} characters; options after them were not read, so coverage is incomplete"
             )
             if not self.include_tests and _is_test_path(file.rel):
-                self.ctx.warn(message, incomplete=self.strict_coverage)
+                self.ctx.warn(message, incomplete=self._strict_accounting(), reason="analysis-limit")
             else:
-                self.ctx.error(message)
+                self.ctx.error(message, reason="analysis-limit")
         return bound, list(file.unparsed)
+
+    def _strict_gap_warning(self, message: str, *, reason: str) -> None:
+        """Warn about content the default accounting does not count as a gap; strict accounting does.
+
+        Under strict accounting the warning marks the scan incomplete, under
+        ``reason``, and ends in ``coverage incomplete``, so it reads as the gap
+        it is counted as rather than as a note.
+        """
+        strict = self._strict_accounting()
+        self.ctx.warn(
+            f"{message}; coverage incomplete" if strict else message, incomplete=strict, reason=reason
+        )
+
+    def _syntax_warning(self, file: _SourceFile, message: str) -> None:
+        """Record source that did not parse: a gap when ``_syntax_gap`` says so, else a plain warning.
+
+        A gap goes through ``_gap``, so the ci profile declares it under a
+        template, example or test path, and is counted as unparsed input.
+        """
+        if self._syntax_gap(file):
+            self._gap(file.rel, message, suffix=False, reason="unparsed-input")
+        else:
+            self.ctx.warn(message, incomplete=False)
 
     def _syntax_gap(self, file: _SourceFile) -> bool:
         """Whether source that does not parse leaves coverage incomplete.
 
         It does, except in a test path the scan discounts (include_tests off), where a
-        deliberately invalid fixture is common: there it only warns, unless strict_coverage
-        is set, as for a source over the binder's budget.
+        deliberately invalid fixture is common: there it only warns, unless the accounting is
+        strict (``_strict_accounting``), as for a source over the binder's budget.
         """
-        return self.strict_coverage or self.include_tests or not _is_test_path(file.rel)
+        return self._strict_accounting() or self.include_tests or not _is_test_path(file.rel)
 
     def _record_code_matches(
         self,
@@ -3723,7 +4688,9 @@ class FilesystemConnector(BaseConnector):
                 require_mcp_binding=True,
             )
         except MCPToolLimitError as exc:
-            self.ctx.error(f"code.filesystem: {file.rel}: {exc}; tool analysis incomplete")
+            self.ctx.error(
+                f"code.filesystem: {file.rel}: {exc}; tool analysis incomplete", reason="analysis-limit"
+            )
             names = exc.names
         for tool in names:
             known = tools.get(tool)
@@ -3734,7 +4701,8 @@ class FilesystemConnector(BaseConnector):
                     file.proj.mcp_tools_limited = True
                     self.ctx.error(
                         f"code.filesystem: {file.rel}: project MCP tool-name limit exceeded; "
-                        "tool analysis incomplete"
+                        "tool analysis incomplete",
+                        reason="analysis-limit",
                     )
             elif _is_test_path(known) and not _is_test_path(file.rel):
                 tools[tool] = file.rel  # prefer where deployed code registers it
@@ -3812,13 +4780,12 @@ class FilesystemConnector(BaseConnector):
         self._file_errors(rel, config_limits)
         for issue in config_errors:
             if is_agent_config_path(rel):
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                self.ctx.error(f"code.filesystem: {rel}: {issue}", reason="unparsed-input")
             else:
                 # Only the structured projection is lost; the
                 # lexical env and domain passes still read this text.
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: {issue}; structured checks skipped",
-                    incomplete=self.strict_coverage,
+                self._strict_gap_warning(
+                    f"code.filesystem: {rel}: {issue}; structured checks skipped", reason="unparsed-input"
                 )
         for m in structured:
             # A recognised configuration shape declares the product by name.
@@ -3840,7 +4807,8 @@ class FilesystemConnector(BaseConnector):
             if len(scan.card_files) >= _MAX_CARD_FILES:
                 self.ctx.error(
                     f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; "
-                    "manifest skipped"
+                    "manifest skipped",
+                    reason="analysis-limit",
                 )
             else:
                 scan.card_files.append((rel, file.text, file.card_kind, file.proj_root))
@@ -3848,7 +4816,8 @@ class FilesystemConnector(BaseConnector):
             if len(file.proj.agent_defs) >= _MAX_AGENT_DEFINITIONS:
                 self.ctx.error(
                     f"code.filesystem: {rel}: agent definition limit ({_MAX_AGENT_DEFINITIONS}) reached; "
-                    "definition skipped"
+                    "definition skipped",
+                    reason="analysis-limit",
                 )
             else:
                 file.proj.agent_defs.append(self._parse_agent_definition(rel, file.text))
@@ -3884,7 +4853,14 @@ class FilesystemConnector(BaseConnector):
                 )
         for rel, hits in scan.secret_hits.items():
             with self._isolated(rel, "credential analysis"):
-                f = self._secret_finding(label, root, rel, hits)
+                f = self._secret_finding(
+                    label,
+                    root,
+                    rel,
+                    hits,
+                    limited=scan.secrets_limited.get(rel, set()),
+                    project_root=scan.secret_project.get(rel, "."),
+                )
                 if f:
                     yield f
 
@@ -3965,6 +4941,7 @@ class FilesystemConnector(BaseConnector):
         secret_hits: dict[str, list[tuple[Match, str]]],
         infra_names: dict[str, list[str]] | None = None,
         *,
+        secrets_limited: dict[str, set[str]],
         image_scale: float = 1.0,
     ) -> None:
         """Record a manifest artifact: an image, variable, credential, IaC type, model, action or module.
@@ -3991,16 +4968,18 @@ class FilesystemConnector(BaseConnector):
                 self._record(proj, m, rel, f"{art.kind}: {art.value}")
             val = art.extra.get("value") if art.extra else None
             if val and self.scan_secrets:
-                for m in self.index.match_secrets(val):
+                limited: set[str] = set()
+                for m in self.index.match_secrets(val, limited=limited, placeholder=placeholder_reason):
                     m.line = art.line
                     # Judge the matched credential, not the whole assignment:
                     # a trailing comment must not hide a real key.
-                    reason = placeholder_reason(m.value)
+                    reason = placeholder_reason(reported_credential(m))
                     if reason:
                         self._record_example_credential(proj, m, rel, reason)
                         continue
                     secret_hits.setdefault(rel, []).append((m, f"{art.value}={redact(m.value)}"))
                     self._record(proj, m, rel, None)
+                self._record_secret_limit(secrets_limited, rel, limited)
         elif art.kind == "iac":
             for m in self.index.match_iac(art.value):
                 m.line = art.line
@@ -4076,259 +5055,30 @@ class FilesystemConnector(BaseConnector):
             )
         if lower in _DEDICATED_MCP_CONFIG_NAMES:
             return True
-        if lower in MCP_CONFIG_NAMES or rel.endswith((".json", ".toml", ".yaml", ".yml")):
-            # Decide from the parsed structure when it is held (JSON/TOML): leading
-            # padding before the keys then cannot hide a server table. A JSON object
-            # must be decided structurally; the text fallback below never sees past
-            # its truncation, so a string search of a prefix could miss the keys.
-            if isinstance(document, dict):
+        if lower in MCP_CONFIG_NAMES or rel.endswith(_MCP_STRUCTURE_SUFFIXES):
+            # Workflows keep the text search: their servers are JSON strings in step
+            # inputs, which _embedded_workflow_mcp reads.
+            workflow = _WORKFLOW_FILE.search(rel) is not None
+            # Decide from the parsed structure when it is held (JSON, TOML, and the YAML
+            # every structured file is parsed into once): leading padding before the keys
+            # then cannot hide a server table. A JSON object must be decided structurally;
+            # the text fallback below never sees past its truncation, so a string search of
+            # a prefix could miss the keys. An array declares servers only in a mapping it
+            # holds (see _document_declares_mcp), never in a transcript's "mcp_servers"
+            # status list.
+            if document is not None and not workflow:
                 return _document_declares_mcp(document)
-            # No parse is held for YAML here. Substring and anchored searches are linear,
-            # so read the whole (size-bounded) text rather than a prefix a server can be pushed past.
-            return (
-                '"mcpServers"' in text
-                or '"mcp_servers"' in text
-                or "mcpServers:" in text
-                or "mcp_servers:" in text
-                or "[mcp_servers." in text
-                or re.search(r"(?m)^[ \t]*\[mcp_servers\][ \t]*(?:#.*)?$", text) is not None
-                or re.search(r"(?m)^[ \t]*mcp_servers\.[A-Za-z0-9_-]+[ \t]*=", text) is not None
-                or ('"mcp"' in text and '"servers"' in text)
-                or ("mcp:" in text and "servers:" in text)
-            )
+            if not _mentions_mcp_keys(text):
+                return False
+            if rel.endswith(_YAML_SUFFIXES) and not workflow:
+                # No parse is held: the text search also finds the keys inside string
+                # values (a heredoc, a template), so the structure, parsed only now that the
+                # text names a key, decides; a file it cannot read goes to the MCP parser.
+                declared = _yaml_declares_mcp(text)
+                if declared is not None:
+                    return declared
+            return True
         return False
-
-    def _git_info(self, root: Path, rel_root: str) -> dict[str, Any]:
-        if not self.use_git:
-            return {}
-        marker = root / ".git"
-        if not os.path.lexists(marker):
-            return {}
-        deadline = time.monotonic() + 20
-        if self.ctx.deadline is not None:
-            deadline = min(deadline, self.ctx.deadline)
-        try:
-            require_local_git_metadata(root, timeout=deadline - time.monotonic())
-        except ValueError:
-            self.ctx.warn(
-                "code.filesystem: git metadata must be a confined local .git directory; enrichment skipped"
-            )
-            return {}
-        target = "." if rel_root == "." else rel_root
-        try:
-            out = run_bounded_metadata(
-                [
-                    *metadata_git_argv_prefix(),
-                    "-C",
-                    str(root),
-                    "log",
-                    "--no-show-signature",
-                    "--no-ext-diff",
-                    "--no-textconv",
-                    "-1",
-                    "--format=%an%x00%ae%x00%cI",
-                    "--",
-                    target,
-                ],
-                env=metadata_git_env(),
-                ctx=self.ctx,
-                timeout=deadline - time.monotonic(),
-            )
-            if out.returncode == 0 and out.stdout.strip():
-                # NUL separators: an author name may itself contain "|".
-                fields = out.stdout.strip("\r\n").split("\x00")
-                if len(fields) != 3:
-                    self.ctx.warn("code.filesystem: git metadata has invalid fields; enrichment skipped")
-                    return {}
-                an, ae, ci = fields
-                if any(
-                    len(value) > limit
-                    for value, limit in zip(
-                        fields,
-                        (_MAX_GIT_AUTHOR_CHARS, _MAX_GIT_EMAIL_CHARS, _MAX_GIT_TIMESTAMP_CHARS),
-                        strict=True,
-                    )
-                ):
-                    self.ctx.warn("code.filesystem: git metadata field limit exceeded; enrichment skipped")
-                    return {}
-                if parse_timestamp(ci) is None:
-                    self.ctx.warn(
-                        "code.filesystem: git metadata has an unparseable commit timestamp; "
-                        "enrichment skipped"
-                    )
-                    return {}
-                return {"last_author": an, "last_author_email": ae, "last_commit": ci}
-            if out.returncode == 0:
-                return {}
-        except MetadataOutputLimitError:
-            self.ctx.warn("code.filesystem: git metadata output limit exceeded; enrichment skipped")
-            return {}
-        except MetadataTimeoutError:
-            # A TimeoutError is an OSError: name the cause instead of blaming
-            # the Git version below.
-            self.ctx.warn(
-                "code.filesystem: git metadata collection reached its time limit or the connector "
-                "deadline; enrichment skipped"
-            )
-            return {}
-        except (OSError, ValueError, subprocess.SubprocessError):
-            pass
-        self.ctx.warn(
-            "code.filesystem: bounded offline git enrichment failed; Git 2.45+ and locally available history "
-            "within the metadata output limit are required"
-        )
-        return {}
-
-    @contextmanager
-    def _codeowners_directory(self, root: Path) -> Iterator[int | None]:
-        """Keep ownership reads on the same directory descriptor as source collection.
-
-        Reopening the pathname only verifies that it still names that directory;
-        candidate file reads always use the original descriptor. A replacement
-        after this verification therefore cannot redirect ownership reads.
-        """
-        scan = self._ownership_scan
-        if scan is not None:
-            if scan.root != root:
-                raise ValueError("ownership root differs from the active scan")
-            if scan.root_fd < 0 or scan.base != root:
-                # A failed root open has already been reported. Single-file
-                # scans have never consulted their parent directory's owners.
-                yield None
-                return
-            current = open_confined_directory(root)
-            try:
-                original, present = os.fstat(scan.root_fd), os.fstat(current)
-                if (original.st_dev, original.st_ino) != (present.st_dev, present.st_ino):
-                    raise ValueError("scan root changed before ownership lookup")
-            finally:
-                os.close(current)
-            yield scan.root_fd
-            return
-        # Direct internal ownership callers have no collection descriptor.
-        directory = open_confined_directory(root)
-        try:
-            yield directory
-        finally:
-            os.close(directory)
-
-    def _codeowners(self, root: Path) -> list[tuple[str, list[str]]]:
-        root = root.absolute()
-        if root in self._codeowners_cache:
-            return self._codeowners_cache[root]
-        rules: list[tuple[str, list[str]]] = []
-        try:
-            with self._codeowners_directory(root) as directory:
-                if directory is not None:
-                    rules = self._read_codeowners(root, directory)
-        except (OSError, RuntimeError, ValueError):
-            self.ctx.error("code.filesystem: could not verify scan root for CODEOWNERS; ownership incomplete")
-        self._codeowners_cache[root] = rules
-        return rules
-
-    def _read_codeowners(self, root: Path, directory: int) -> list[tuple[str, list[str]]]:
-        """Read the first selected ownership file below the already anchored root."""
-        rules: list[tuple[str, list[str]]] = []
-        for cand in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS"):
-            if not self._included(cand):
-                continue
-            try:
-                # Distinguish a missing candidate from an unreadable one without
-                # following a link, including links in its parent components.
-                with open_confined_file(PurePosixPath(cand), dir_fd=directory):
-                    pass
-            except FileNotFoundError:
-                continue
-            except NotADirectoryError:
-                # A file named like its parent (``docs``, ``.github``) leaves the
-                # candidate absent. A link there fails the same way and is not
-                # followed, so what it might name stays unread.
-                if not link_in_path(cand, dir_fd=directory):
-                    continue
-                self.ctx.error(f"code.filesystem: could not read {cand}")
-                break
-            except (OSError, RuntimeError, ValueError):
-                self.ctx.error(f"code.filesystem: could not read {cand}")
-                break
-            try:
-                errors: list[str] = []
-                read_notes: list[str] = []
-                content = read_text(
-                    PurePosixPath(cand),
-                    self.max_file_size,
-                    errors,
-                    dir_fd=directory,
-                    notes=read_notes,
-                )
-                # Ownership comes from names in this file: bytes that were replaced could change an owner.
-                errors.extend(f"{note}; ownership may be wrong" for note in read_notes)
-                for issue in errors:
-                    self.ctx.error(f"code.filesystem: {cand}: {issue}")
-                for line in (content or "").splitlines():
-                    line = line.split("#", 1)[0].strip()
-                    if not line:
-                        continue
-                    parts = line.split()
-                    if parts:
-                        if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
-                            self.ctx.error(
-                                "code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete"
-                            )
-                            rules = []
-                            self._ownership_exhausted.add(root)
-                            break
-                        rules.append((parts[0], parts[1:]))
-            except (OSError, RuntimeError, ValueError):
-                self.ctx.error(f"code.filesystem: could not read {cand}")
-            break
-        return rules
-
-    def _owner_for(self, root: Path, rel_root: str) -> str | None:
-        if self.owner:
-            return self.owner
-        root = root.absolute()
-        rules = self._codeowners(root)
-        if root in self._ownership_exhausted:
-            return None
-        key = (root, rel_root)
-        if key in self._owner_cache:
-            return self._owner_cache[key]
-        # Preserve the per-lookup cap and limit aggregate work across many
-        # unique paths. Cache hits consume no steps. Exhaustion is reported as
-        # incomplete ownership rather than assigning a potentially wrong owner.
-        root_remaining = self._ownership_steps_remaining.get(root, MAX_ROOT_OWNERSHIP_STEPS)
-        budget = OwnershipBudget(min(MAX_OWNERSHIP_STEPS, root_remaining))
-        initial = budget.remaining
-        try:
-            # Last matching rule wins, including ownerless exclusions. Stop at
-            # that rule instead of repeatedly re-evaluating overridden rules.
-            for pattern, owners in reversed(rules):
-                if _codeowners_match(pattern, rel_root, budget):
-                    self._owner_cache[key] = ", ".join(owners) if owners else None
-                    return self._owner_cache[key]
-        except OwnershipLimitError:
-            self._ownership_exhausted.add(root)
-            self.ctx.error("code.filesystem: CODEOWNERS processing budget exceeded; ownership incomplete")
-        finally:
-            remaining = max(0, root_remaining - (initial - budget.remaining))
-            self._ownership_steps_remaining[root] = remaining
-            if remaining == 0 and root not in self._ownership_exhausted:
-                self._ownership_exhausted.add(root)
-                self.ctx.error(
-                    "code.filesystem: CODEOWNERS aggregate processing budget exceeded; ownership incomplete"
-                )
-        self._owner_cache[key] = None
-        return None
-
-    def _owners_for_files(self, root: Path, files: Iterable[str]) -> tuple[str | None, dict[str, str]]:
-        paths = sorted(set(files))
-        by_file = {rel: owner for rel in paths if (owner := self._owner_for(root, rel))}
-        owners = set(by_file.values())
-        if len(owners) == 1 and len(by_file) == len(paths):
-            return owners.pop(), by_file
-        # A project finding summarizes many files. Do not name one file's owner
-        # as the owner of unrelated files if CODEOWNERS has differing rules.
-        return None, by_file
 
     # ----------------------------------------------------------------- emits
     def _base(
@@ -4800,11 +5550,11 @@ class FilesystemConnector(BaseConnector):
     ) -> None:
         """Record a project's owner, history, inventory and agent indicators."""
         matches = evidence.matches
-        git = self._git_info(root, proj.root)
+        git = self.ownership.git_info(root, proj.root)
         f.metadata.update(git)
         if git.get("last_commit"):
             f.last_seen = git["last_commit"]
-        f.owner, by_file = self._owners_for_files(root, (rel for _, rel, _ in matches))
+        f.owner, by_file = self.ownership.owners_for_files(root, (rel for _, rel, _ in matches))
         f.owner = f.owner or (git.get("last_author_email") if not by_file else None) or self.owner
         if by_file:
             f.metadata["codeowners_by_file"] = by_file
@@ -4926,7 +5676,7 @@ class FilesystemConnector(BaseConnector):
             f.metadata["agent_definitions"] = defs
             f.add_capability("multi-agent")
         f.kind = Kind.AGENT_CONFIG
-        f.owner, by_file = self._owners_for_files(root, files)
+        f.owner, by_file = self.ownership.owners_for_files(root, files)
         f.owner = f.owner or self.owner
         if by_file:
             f.metadata["codeowners_by_file"] = by_file
@@ -5145,7 +5895,7 @@ class FilesystemConnector(BaseConnector):
                 f.metadata["disabled"] = True
         f.metadata["remote_urls"] = remote_hosts
         f.metadata["client"] = _mcp_client_for(rel)
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.MCP_SERVER
         if sig:
@@ -5214,7 +5964,7 @@ class FilesystemConnector(BaseConnector):
             self._describe_langgraph_manifest(f, rel, data)
         elif kind == "crewai":
             self._describe_crewai_agents(f, rel, data)
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         if validation.incomplete:
             # Evidence of the protocol, never of an agent. Its validation
@@ -5309,7 +6059,7 @@ class FilesystemConnector(BaseConnector):
         agent_flow = any(m.extra.get("verified_agent") for m, _ in hits)
         noun = "agent workflow" if agent_flow else "AI workflow"
         f.title = f"Exported {noun} ({', '.join(sorted(names))}): {rel}"
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.AGENT if agent_flow else Kind.WORKFLOW
         f.metadata["agent_flow"] = agent_flow
@@ -5363,7 +6113,7 @@ class FilesystemConnector(BaseConnector):
         f.metadata["resources"] = resources
         if names_found:
             f.metadata["names"] = names_found
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.INFRA
         return f
@@ -5374,14 +6124,19 @@ class FilesystemConnector(BaseConnector):
         root: Path,
         rel: str,
         hits: list[tuple[Match, str]],
+        *,
+        limited: AbstractSet[str] = frozenset(),
+        project_root: str = ".",
     ) -> Finding | None:
         # A structured value (e.g. a .env assignment) and the raw text pass can
-        # both observe the same credential on the same line; count it once.
+        # both observe the same credential on the same line, one as the value
+        # and one as the whole assignment; count it once.
         # Placeholders are filtered again here so every caller shares the rule.
         unique: dict[tuple[str, str, int | None], tuple[Match, str]] = {}
         for m, snip in hits:
-            if not looks_like_placeholder(m.value):
-                unique.setdefault((m.signature_id, m.value, m.line), (m, snip))
+            credential = reported_credential(m)
+            if not looks_like_placeholder(credential):
+                unique.setdefault((m.signature_id, credential, m.line), (m, snip))
         hits = list(unique.values())
         if not hits:
             return None
@@ -5391,8 +6146,18 @@ class FilesystemConnector(BaseConnector):
         # The credential is still reported: cassettes record real traffic, and a
         # key committed under tests/ is as exposed as one anywhere else.
         test_only = not self.include_tests and _is_test_path(rel)
+        # Documentation, example and generated paths are discounted the same way
+        # project evidence is (``negative_context``): a credential-shaped value
+        # in a tutorial is more often a sample than a live key, but it is still
+        # reported, with the context named, because samples are sometimes real.
+        context = None if self.include_tests or test_only else negative_context(rel, project_root)
+        weight_scale = 1.0
+        if test_only:
+            weight_scale = 0.5
+        elif context is not None:
+            weight_scale = context.weight_scale
         for m, snip in hits:
-            apply_matches(f, [m], location=rel, snippet=snip, weight_scale=0.5 if test_only else 1.0)
+            apply_matches(f, [m], location=rel, snippet=snip, weight_scale=weight_scale)
         f.add_tag("hardcoded-credential")
         if not f.model_providers:
             # Only the generic rules matched (an assigned PASSWORD, ACCESS_TOKEN or *_API_KEY): the value
@@ -5402,10 +6167,24 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("unattributed-credential")
         if test_only:
             f.add_tag("test-code-only")
+        elif context is not None:
+            f.add_tag(NEGATIVE_CONTEXT_TAGS[context.reason])
+            f.metadata["negative_contexts"] = [context.reason]
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
         f.metadata["count"] = len(hits)
-        f.owner = self._owner_for(root, rel) or f.owner
+        if limited:
+            # The matcher stopped at its per-signal quota for these formats:
+            # ``count`` is a lower bound, and the scan is already incomplete
+            # (``_record_secret_limit``).
+            f.metadata["secrets_limited"] = sorted(limited)
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
+        if context is not None and context.confidence_cap is not None:
+            cap_confidence(f, context.confidence_cap)
+            f.metadata["confidence_cap"] = {
+                "reason": NEGATIVE_CONTEXT_TAGS[context.reason],
+                "maximum": context.confidence_cap,
+            }
         f.kind = Kind.SECRET
         return f
 
@@ -5430,7 +6209,9 @@ class FilesystemConnector(BaseConnector):
                         rel, "agent definition front matter quoted to parse (a plain value contained ': ')"
                     )
                 except (ValueError, RecursionError, yaml.YAMLError):
-                    self.ctx.error(f"code.filesystem: {rel}: invalid agent definition YAML")
+                    self.ctx.error(
+                        f"code.filesystem: {rel}: invalid agent definition YAML", reason="unparsed-input"
+                    )
                     fm = {}
             if isinstance(fm, dict):
                 fm = sanitize(fm)

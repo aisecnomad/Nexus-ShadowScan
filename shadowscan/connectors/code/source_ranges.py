@@ -386,7 +386,7 @@ def _xml_data_document(text: str) -> bool:
     if "<!ENTITY" in upper or "<!ATTLIST" in upper:
         return False
     try:
-        root = ET.fromstring(text.removeprefix("\ufeff"))
+        root = ET.fromstring(text.removeprefix("\ufeff"))  # noqa: S314 - entity declarations are refused before parsing; see the guard above
     except (ET.ParseError, RecursionError, ValueError):
         return False
     return root.tag in _XML_DATA_ROOTS

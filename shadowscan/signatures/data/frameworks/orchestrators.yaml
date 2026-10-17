@@ -505,7 +505,8 @@ signatures:
         weight: 0.97
       - type: import
         languages: [python]
-        patterns: ['^[^\S\r\n]*from\s+agents(?:\.[a-z_.]+)?\s+import\s+[^\n]*\b(?:Agent|Runner|function_tool|handoff|WebSearchTool|ComputerTool|FileSearchTool|CodeInterpreterTool|Guardrail|RunConfig|trace)\b', '^[^\S\r\n]*import\s+agents\s*$']
+        # agents.realtime exports RealtimeAgent and RealtimeRunner, which '\bAgent\b' does not match.
+        patterns: ['^[^\S\r\n]*from\s+agents(?:\.[a-z_.]+)?\s+import\s+[^\n]*\b(?:Agent|RealtimeAgent|Runner|RealtimeRunner|function_tool|handoff|WebSearchTool|ComputerTool|FileSearchTool|CodeInterpreterTool|Guardrail|RunConfig|trace)\b', '^[^\S\r\n]*import\s+agents\s*$']
         weight: 0.9
       - type: import
         languages: [javascript]

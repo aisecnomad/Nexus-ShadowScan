@@ -37,7 +37,7 @@ def _strip_comment(match: re.Match[str]) -> str:
         return token
     if token.startswith("//"):
         return ""  # the terminating newline is not part of the token
-    if token == "/*":
+    if token == "/*":  # noqa: S105 - a lexer token (an unclosed block comment), not a credential
         raise ValueError("unterminated JSON comment")
     return " " + "\n" * token.count("\n")
 

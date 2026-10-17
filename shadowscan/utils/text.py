@@ -112,6 +112,52 @@ def _skips_binary(name: str, raw: bytes, analyzable_name: bool) -> bool:
     return not analyzable_name or "." not in name
 
 
+# CPython's PEP 263 cookie pattern. The second source line carries the cookie
+# only when the first is blank or a comment, as the interpreter reads it.
+_CODING_COOKIE = re.compile(r"^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)")
+_BLANK_SOURCE_LINE = re.compile(r"^[ \t\f]*(?:[#\r\n]|$)")
+
+
+def _declared_source_cookie(raw: bytes) -> str | None:
+    """The PEP 263 cookie the first two lines declare, or None."""
+    for index, line in enumerate(raw.split(b"\n", 2)[:2]):
+        text = line.decode("latin-1")
+        match = _CODING_COOKIE.match(text)
+        if match is not None:
+            return match.group(1)
+        if index == 0 and _BLANK_SOURCE_LINE.match(text) is None:
+            return None
+    return None
+
+
+def _refused_cookie_result(raw: bytes) -> str | None:
+    """What a cookie ``tokenize.detect_encoding`` itself refused means for the caller.
+
+    The refusal set grows with the interpreter: Python 3.14 refuses
+    ``punycode`` and UTF-32 cookies that 3.13 still honors. The scanned estate
+    may run an interpreter that honors such a cookie, so a refused cookie
+    naming a slow codec or one that does not read ASCII as ASCII stays a
+    coverage gap on every interpreter, never silently analyzed with the
+    default decoding. Any other refusal (a BOM that contradicts the cookie, a
+    codec no interpreter honors as a source encoding) keeps the caller's
+    default decoding, as before.
+    """
+    cookie = _declared_source_cookie(raw)
+    if cookie is None:
+        return None
+    try:
+        codec = codecs.lookup(cookie).name
+        if codec in _SLOW_SOURCE_CODECS:
+            raise ValueError(BINARY_CONTENT_ERROR)
+        if _ASCII_SOURCE.decode(cookie) != _ASCII_SOURCE.decode("ascii"):
+            raise ValueError(BINARY_CONTENT_ERROR)
+    except LookupError:
+        return None
+    except UnicodeError:
+        raise ValueError(BINARY_CONTENT_ERROR) from None
+    return None
+
+
 def _python_source_text(raw: bytes) -> str | None:
     """Decode a Python source with the PEP 263 codec it declares; None when it declares none.
 
@@ -119,13 +165,18 @@ def _python_source_text(raw: bytes) -> str | None:
     encoding leaves the caller's default decoding in place (the interpreter
     cannot run such a file either). A text codec that cannot decode the bytes,
     that does not read ASCII as ASCII (see ``_ASCII_SOURCE``), or that is too
-    slow to run on untrusted input, is a coverage gap.
+    slow to run on untrusted input, is a coverage gap — including when the
+    running interpreter's ``detect_encoding`` refuses the cookie itself (see
+    ``_refused_cookie_result``), because the scanned estate's interpreter may
+    still honor it.
     """
     try:
         declared, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
         codec = codecs.lookup(declared).name
-    except (SyntaxError, LookupError):
+    except LookupError:
         return None
+    except SyntaxError:
+        return _refused_cookie_result(raw)  # a gap, or the default decoding
     if codec == "utf-8":
         return None
     if codec in _SLOW_SOURCE_CODECS:
@@ -273,17 +324,49 @@ def read_text(
             raise ValueError("file exceeds max_file_size")
         return _decode_text(raw, path.name, analyzable_name, notes)
     except (OSError, ValueError) as exc:
-        if errors is not None:
-            # Do not embed raw file contents or exception messages in reports.
-            if isinstance(exc, NotRegularFileError):
-                errors.append("not a regular file")
-            elif isinstance(exc, UnicodeError):
-                errors.append(BINARY_CONTENT_ERROR)
-            elif isinstance(exc, ValueError):
-                errors.append(str(exc))
-            else:
-                errors.append("file could not be read")
+        _read_failure(exc, errors)
         return None
+
+
+def _read_failure(exc: OSError | ValueError, errors: list[str] | None) -> None:
+    """Record why a bounded read failed, without raw file contents or exception messages."""
+    if errors is None:
+        return
+    if isinstance(exc, NotRegularFileError):
+        errors.append("not a regular file")
+    elif isinstance(exc, UnicodeError):
+        errors.append(BINARY_CONTENT_ERROR)
+    elif isinstance(exc, ValueError):
+        errors.append(str(exc))
+    else:
+        errors.append("file could not be read")
+
+
+def read_credential_text(
+    path: PurePath, max_bytes: int, errors: list[str] | None = None, *, dir_fd: int | None = None
+) -> str | None:
+    """A bounded regular file's bytes as Latin-1 text without NUL bytes, for a credential-only read.
+
+    For a binary or undecodable file that ``read_text`` refuses but whose other
+    evidence the caller discounts (a test fixture): credentials are ASCII, so
+    every key written in the file survives (UTF-16 text only loses its NUL
+    halves), and no decoding can fail. The file is opened as ``read_text``
+    opens it, confined and without following links; a failure is recorded in
+    ``errors`` as ``read_text`` records it.
+    """
+    try:
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        with open_confined_file(path, label="file", dir_fd=dir_fd) as (fh, info):
+            if info.st_size > max_bytes:
+                raise ValueError("file exceeds max_file_size")
+            raw = fh.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise ValueError("file exceeds max_file_size")
+    except (OSError, ValueError) as exc:
+        _read_failure(exc, errors)
+        return None
+    return raw.replace(b"\x00", b"").decode("latin-1")
 
 
 # Kernel names of Python kernels: ipykernel's (python3), xeus-python's and nb_conda_kernels'.

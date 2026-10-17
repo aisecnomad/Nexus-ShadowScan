@@ -2,7 +2,9 @@
 
 What changed for people who install, configure or operate ShadowScan, one
 section per release. [CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
-is the detailed engineering log, recorded per change, and the
+names each change in a line, the
+[engineering log](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/engineering-log.md)
+records each in detail, and the
 [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 
@@ -19,6 +21,47 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   (formerly `aisecnomad/Project-Nexus`); GitHub redirects the old URLs, and
   commit SHAs are unchanged. OCSF events name the vendor `Nexus ShadowScan` instead of
   `Project Nexus`; SARIF and CycloneDX keep the tool name `ShadowScan`.
+- Coverage gaps are budgeted. A gap the scanner can bound -- a handful of
+  unreadable entries, a dangling symbolic link or one to a single file, one
+  source or data file over `max_file_size` -- no longer marks the scan
+  incomplete on its own. Such gaps accumulate against
+  `options.max_coverage_gap` / `--max-coverage-gap`, 2% of examined entries
+  by default, and are always reported under `stats.coverage` whether or not
+  they change the exit code. A gap the scanner *cannot* bound still fails
+  closed with no budget: an early stop, a refused page, an expired deadline,
+  a symbolic link to a directory, an unparseable manifest or agent card
+  outside test code, an agent, MCP or dependency configuration file whose
+  name selects it over `max_file_size`, linked to a file the walk does not
+  scan or replaced by a FIFO or device, undecodable bytes anywhere but in
+  test code while `include_tests` is off, and any sanitizer limit. Test code
+  whose evidence is discounted (`include_tests` off) is the exception for
+  manifests and undecodable bytes: a malformed fixture is charged to the
+  budget at a quarter weight and an undecodable one, read for credentials
+  first, at a whole entry: a root tolerates malformed fixtures up to about
+  8% of its entries and undecodable ones up to about 2%, so a 200-file
+  service with four binary fixtures and a dangling certificate link exits 3. An MCP configuration, coding-agent file or
+  agent card keeps the gap in test code too. The budget is judged per scan
+  root and per repository.
+  `strict_coverage` and `--max-coverage-gap 0` (or `max_coverage_gap: 0`)
+  are both strict accounting and restore the previous accounting: every gap
+  marks the scan incomplete, and none is discounted as test code or declared
+  by `profile: ci`, which both settings refuse. An undecodable test fixture
+  is still read for credentials first under either, so strict accounting
+  never finds fewer keys than the default (see
+  [strict accounting](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md#coverage-budget-and-strict-accounting)).
+  Expect scans that previously exited 3 on a dangling
+  symbolic link in a test fixture to exit 0 now, with the gap listed.
+- Risk scores gain capability interactions. Seven capability sets -- the
+  lethal trifecta (data access, untrusted content, outbound actions),
+  browsing with code execution, autonomy with code execution, and four more
+  -- add a named `combination:` factor when the whole set is present, so a
+  pairing whose joint risk exceeds its parts is visible in the breakdown.
+  Scores rise for findings holding those sets; tune or disable them under
+  `options.risk_weights.combinations`. Rebaseline.
+- OCSF events always carry the required `time` attribute. Where no scan
+  timestamp parses, the render time is published and
+  `unmapped.time_source` is `report_render`. Events previously omitted the
+  field, which a validating pipeline rejects.
 - Rebaseline. Path context, cross-signal corroboration and new signatures
   change confidence, risk, kind and the set of findings, and live collection
   scopes are fingerprinted after collection.
@@ -34,7 +77,7 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   `mcp-not-in-approved-registry` (15) are new.
 - On CPython 3.12.0 to 3.12.3 (Ubuntu 24.04 ships 3.12.3), a file with a very
   long line no longer stalls redaction: the finding is omitted and the scan is
-  incomplete (exit 3). Run ShadowScan on 3.11, 3.12.4 or later, or 3.13.
+  incomplete (exit 3). Run ShadowScan on 3.11, or on 3.12.4 or later.
 - A tree whose directory listing alone takes more than half the connector
   deadline is now incomplete; raise `connector_timeout_seconds`. `cloud.aws`
   exports with registry records from earlier builds replay as incomplete.
@@ -83,6 +126,15 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   `scheduled` tag. Risk levels of affected low-code findings move; rebaseline.
 - Keyed incremental cache entries are authenticated with an HMAC and miss once
   after upgrading; unkeyed caches are unchanged.
+- The incremental cache entry format moves to 5, so every entry, keyed or
+  unkeyed, misses once after upgrading and the first incremental scan
+  analyses every repository root again. Entries are keyed on the scan-wide
+  `max_coverage_gap` as well, so a scan under another budget also misses
+  instead of replaying a verdict taken under the old one.
+- An explicit connector deadline is now fixed, 120 seconds included: only an
+  unset `connector_timeout_seconds` is raised to fit a large tree. Remove
+  `connector_timeout_seconds: 120` from configurations copied from earlier
+  sample configurations, or a large repository keeps exiting 3 at 120 seconds.
 
 ### What changes in scan results
 

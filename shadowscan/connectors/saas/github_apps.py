@@ -7,6 +7,13 @@ only with ``include_unrecognized_apps``, capped at possible confidence.
 Live: ``GET /orgs/{org}/installations`` (org admin), ``GET /orgs/{org}/copilot/billing`` (optional),
 ``GET /orgs/{org}/personal-access-tokens`` (fine-grained PATs approved for the org, optional).
 
+GitHub serves the fine-grained PAT inventory only to GitHub App tokens (installation or
+user access tokens with the organization "Personal access tokens" read permission); a
+classic or fine-grained personal token is refused there. One GitHub App token with the
+organization "Administration", "Personal access tokens" and "GitHub Copilot Business"
+read permissions covers every call; with an owner's personal token as ``token``, set
+``app_token`` for the PAT inventory, or that part of the scan stays incomplete.
+
 Offline export: installations JSON (``installations`` array or list).
 """
 
@@ -98,7 +105,13 @@ class GitHubAppsConnector(BaseConnector):
         "org": "organisation login (env GITHUB_ORG)",
         "token": (
             "org admin token (env GITHUB_TOKEN, which code.github also reads by default: "
-            "give each connector a variable of its own)"
+            "give each connector a variable of its own); a GitHub App token with organization "
+            "Administration, Personal access tokens and GitHub Copilot Business read permissions "
+            "covers every call"
+        ),
+        "app_token": (
+            "GitHub App installation or user access token for the fine-grained PAT inventory, "
+            "which GitHub serves only to GitHub Apps (env GITHUB_APP_TOKEN; default: token)"
         ),
         "api_url": "API base URL (default https://api.github.com, env GITHUB_API_URL)",
         "input": "offline: installations JSON",
@@ -116,11 +129,8 @@ class GitHubAppsConnector(BaseConnector):
             ctx.get("include_unrecognized_apps", False), "include_unrecognized_apps"
         )
 
-    def collect(self) -> Iterable[dict[str, Any]]:
-        token = self.ctx.get("token", env="GITHUB_TOKEN")
-        if not (self.org and token):
-            raise ConnectorError("saas.github-apps: org and token required")
-        http = HttpClient(
+    def _client(self, token: str) -> HttpClient:
+        return HttpClient(
             self.api_url,
             headers={
                 "Authorization": f"Bearer {token}",
@@ -129,6 +139,12 @@ class GitHubAppsConnector(BaseConnector):
             },
             on_warning=lambda msg: self.ctx.warn(msg, incomplete=True),
         )
+
+    def collect(self) -> Iterable[dict[str, Any]]:
+        token = self.ctx.get("token", env="GITHUB_TOKEN")
+        if not (self.org and token):
+            raise ConnectorError("saas.github-apps: org and token required")
+        http = self._client(token)
         inventory = _InstallationInventory(lambda message: self.ctx.warn(f"{self.name}: {message}"))
         try:
             for inst in http.paginate_link(
@@ -150,13 +166,21 @@ class GitHubAppsConnector(BaseConnector):
                     self.ctx.warn("saas.github-apps: invalid Copilot billing response; coverage incomplete")
         except (HttpError, RequestException, ValueError, RuntimeError) as exc:
             self._collection_warning("Copilot billing", exc)
+        # GitHub serves this inventory only to GitHub App tokens, so it may need a token of its own.
+        app_token = self.ctx.get("app_token", env="GITHUB_APP_TOKEN")
+        pat_http = self._client(app_token) if app_token else http
         try:
-            for pat in http.paginate_link(
+            for pat in pat_http.paginate_link(
                 f"/orgs/{self.org}/personal-access-tokens", params={"per_page": 100}
             ):
                 yield {**pat, "_kind": "pat"}
         except (HttpError, RequestException, ValueError, RuntimeError) as exc:
             self._collection_warning("fine-grained PAT inventory", exc)
+            if not app_token and isinstance(exc, HttpError) and exc.status in {401, 403}:
+                self.ctx.warn(
+                    "saas.github-apps: GitHub serves the fine-grained PAT inventory only to GitHub App "
+                    "tokens; set app_token to a GitHub App installation or user access token"
+                )
 
     @staticmethod
     def _is_native_offline_record(data: dict[str, Any]) -> bool:

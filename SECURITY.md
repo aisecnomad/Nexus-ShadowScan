@@ -16,7 +16,29 @@ The operator workstation or CI runner, scanner configuration and installed Pytho
 packages are trusted. Third-party connector execution requires an exact-name
 allowlist in `options.plugins` or repeatable `--allow-plugin`. Listing connectors
 does not import plugin code. The allowlist is not a sandbox: an approved plugin
-runs with scanner privileges. Built-in connector names cannot be replaced.
+runs with scanner privileges. A spawned plugin worker is started without the
+credential-shaped environment variables exported for the built-in connectors
+(`*_TOKEN`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, `*_PAT`, connection strings,
+webhook URLs and URLs that carry a password, the CI, cloud SDK and package
+tooling credential variables; the
+[plugin contract](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/connectors.md#third-party-plugin-execution)
+lists them)
+unless `options.plugin_env` names them, so they are neither in its
+environment (`os.environ`, on Linux `/proc/self/environ`) nor in that of the
+programs it starts; a thread-mode plugin shares the scanner's environment. This
+keeps credentials from a plugin that does not look for them, not from one that
+does. Process mode is lifecycle isolation, not a sandbox: the worker runs as the
+scanner's user, so a plugin can still read its parent's environment, every
+withheld variable and `SHADOWSCAN_IDENTITY_KEY` included, from
+`/proc/<ppid>/environ` on Linux (other systems have equivalents), and every file
+that user can read. Pass the built-in connectors' credentials through files
+(such as the cloud SDKs' credential files) or a secrets manager rather than
+exported variables, which keeps them out of the environment the scanner and
+every program it starts carry; a plugin running as the scanner's user can
+still read a file the scanner can. To keep a credential from an untrusted
+plugin, run that plugin under a separate user or in a separate container, in a
+scan job that does not hold the credential. Built-in connector names cannot be
+replaced.
 
 Remote responses, scanned repositories and offline exports are untrusted inputs.
 Review signature packs before installation. Built-in signature IDs are reserved
@@ -144,7 +166,7 @@ coverage, even when a response includes an empty collection field.
   pseudonyms. Key rotation invalidates cache reuse and collection comparability.
   Resource finding IDs remain stable. Old public credential digests and private
   legacy gateway binding mappings remain sensitive; see the
-  [credential evidence migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#credential-evidence-identity-migration).
+  [credential evidence migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production-migrations.md#credential-evidence-identity-migration).
 * `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
   to a 120-second cooperative completion deadline. Late connector results are
   discarded and coverage is incomplete. Legacy `connector_timeout` /
@@ -251,7 +273,46 @@ coverage, even when a response includes an empty collection field.
   sensitive name (`if token == "..."`, `!=`, `===`, `=~`);
   names such as `passphrase`, `db_pass`, `smtp_pwd`, `SECRET_KEY_BASE`, `creds` and
   npm's `_auth`, and an ODBC connection string's `Pwd=` (a braced value whole,
-  `Pwd={a;b}`);
+  `Pwd={a;b}`); the value after `password`, `passwd` and `account` in a netrc
+  entry (`machine h login u password v`, on one line or one token per line,
+  with keywords in any case as curl reads them, `default` anywhere on a line,
+  vertical tabs and form feeds as blanks, also in a string with `\n`, `\t`,
+  `\v` or `\f` escapes or PowerShell's `` `n ``, or written by `echo`),
+  whatever it looks like, including a value that is itself a keyword
+  (`login account password v` withholds both words after `account`), one
+  after a Windows domain login (`login CORP\fred`, also `CORP\\fred` in a
+  string, where an escape is read only on a line that holds a quote or an
+  escape next to a keyword, or before one with blanks between), one after a
+  token the format does not define once the entry's `machine`, `default`,
+  `login` or `user` is read, on the line of the entry's last token
+  (`machine h force yes password v`, `default force yes password v`) or on
+  a later line before a `password`, `passwd` or `account` in the entry's
+  region, which spans the eight lines from that of the entry's last token
+  and ends before at a blank line or the next entry's `machine`, `default`
+  or `macdef` (`machine h`, then `force yes`, then `password v` on the next
+  lines), one in an entry spread over adjacent string literals, which a
+  closing quote, then blanks, line breaks, a `+` or a line continuation,
+  then an opening quote join (`("machine h\n"`, then `"login u\n"` and
+  `"password v\n")` on the next lines), one after a keyword glued to a
+  closing quote, which Python's `netrc` reads as the next token
+  (`login "u"password v`, also after a quoted word glued to the name, as in
+  `login "u""v"password v`), an entry in a comment, also right after its
+  `#` (a `#` after a blank or a line-break escape starts a comment, which
+  runs to the end of its line or, in escaped text, to the next line-break
+  escape: where escapes are read and its line holds an escape next to a
+  keyword or before one with blanks between (`machine h # c\n  login u`), a
+  line-break escape before the `#`, or the same quote both before and after
+  it, so the password of `"machine h\n  # bot\npassword v"` is withheld,
+  while a netrc file's own `# Bob's share is C:\new\data` runs to the end
+  of its line), and the lines of a netrc `macdef` macro up to the empty
+  line that ends it (a word after `default password` in prose is withheld
+  as well, and so is a word after `password` or `account` that follows
+  `machine`, `default` or `login` on its line or in its region, as in
+  `the machine needs an account and a key`, `the default service account
+  of the instance`, or `machine learning tools` with
+  `create an account for each user` on the next line); Yarn 1's `.yarnrc`
+  registry credentials written `name value`
+  (`"//registry.yarnpkg.com/:_authToken" "v"`, `_auth v`);
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
   `key`/`value` attributes; Dockerfile `ENV NAME value`, `setx`, `setenv` and
@@ -263,7 +324,10 @@ coverage, even when a response includes an empty collection field.
   `cf`), `sshpass -p`, MySQL's `-pVALUE` and a literal echoed into
   `--password-stdin`; literal defaults of credentials read from the
   environment (`process.env.OPENAI_API_KEY || "..."`, `?? "..."`,
-  `or "..."`, `?: "..."`, `${OPENAI_API_KEY:-...}`); and string literals,
+  `or "..."`, `?: "..."`, `${OPENAI_API_KEY:-...}`), also after a subscript
+  or call read assigned to a credential name (`azure_api_key:
+  os.environ['K'] if PROD else '...'`, `or '...'`, and an opaque one under
+  `azureKey: process.env['K'] ?? '...'`); and string literals,
   including Python f-strings without replacement fields and backtick
   strings, passed to credential constructors and helpers such as
   `AzureKeyCredential("...")`, Rust's `AzureKeyCredential::new("...")`, C#'s
@@ -287,7 +351,40 @@ coverage, even when a response includes an empty collection field.
   value="users"/>`, `cacheKey: users-by-id`) stay. It is also withheld from a
   lone unindented line after a sensitive key such as `token:`. Variable
   references (`$VAR`, `${{ secrets.X }}`), environment variable names and
-  placeholders stay visible.
+  placeholders stay visible, and so does a value that is exactly one read of
+  an environment variable by an upper-case name (`apiKey =
+  process.env.OPENAI_API_KEY`, `api_key = os.getenv("OPENAI_API_KEY")`). Only
+  blanks and then the end of the line, `;`, `,` or a closing bracket may follow
+  the read: with a default argument, a fallback literal, any other operand or a
+  comment after it the value is withheld up to where the value lexer ends it
+  (a quote, bracket, `,` or `;` of the expression). On a line that joins a
+  credential name to a value (by `:`, `=` or a PHP or Ruby `=>`), or that
+  gives a callee whose last word names a credential its arguments
+  (`sgMail.setApiKey(...)`, a builder's `.apiKey(...)`), every string literal
+  after that name and the comment (`//`, `#`, `/* */` or an XML or HTML
+  `<!-- -->`, read to its end when it runs past the line) keep their words,
+  references and model names, but each token in them
+  that looks like an opaque key is withheld, wherever the value ended: a
+  fallback after a cut read (`azureApiKey: process.env.K?.trim() || "..."`,
+  `os.environ[ 'K' ] if PROD else '...'`, `cfg("a", "b") || "..."`), a default
+  argument (`os.getenv("K", "...")`) and a comment after the `,` or `;` that
+  ends the value (`apiKey: process.env.KEY, // old: ...`, `api_key =
+  os.environ["KEY"]; # ...`). A later line goes on with that value when it
+  starts with a fallback operator (Black's `    or "...",`) or the line before
+  ends with one, with comment lines between. Under a
+  password's name (`password`, `passwd`, `pwd`, `passphrase` or `pass` as the
+  last word) every string literal of the value up to the line's next entry is
+  withheld whole, whatever its shape (`dbPassword:
+  process.env.DB_PASSWORD?.trim() || "..."`, `db_password: os.getenv("K",
+  "...")`, a passphrase with spaces too), as the assignment form withholds
+  it; an upper-case variable name, a path, a URL, a placeholder and a literal
+  of fewer than six characters stay. A template that assembles its text from
+  expressions (`${prefix}...`) stays, as in assignments. A read is withheld
+  as well when its variable name looks like a key pasted in place of the
+  name: letters and digits
+  alternate in a long run of it, or it has 16 characters or more and no `_`
+  (an upper-case key or a base32 secret, with or without digits; a name such
+  as `HUGGINGFACEHUBAPITOKEN` is withheld with them).
 - **Structured records:** Structured name/value records that connectors
   pass to the sanitizer read their name as a setting too, in either field
   order (`{"name": "OpenAI:Secret", "value": "..."}`, and an opaque value under
@@ -363,9 +460,18 @@ coverage, even when a response includes an empty collection field.
   identifiers keep their text; a short or low-entropy secret can still pass,
   and descriptions, titles and metadata do not get this pass. Outside
   snippets, these forms can remain: an unprefixed
-  literal passed to an ordinary function or nested in another call inside a
-  credential constructor (`AzureKeyCredential(str("..."))`); a value assembled
-  by a computed expression. Recognized credential calls with mixed interpolation
+  literal passed to an ordinary function, or nested in another call inside a
+  credential constructor (`AzureKeyCredential(str("..."))`) when it does not
+  look like an opaque key (one that does is withheld, as after any credential
+  name on its line); a value assembled by a computed expression; after a read
+  the value lexer cuts, in `name: value` form or a callee's arguments, a
+  literal under a name that is no password's that does not look like an
+  opaque key (`apiKey: cfg("a", "b") || "correct-horse-battery-staple"`), and
+  under a password's name a literal of fewer than six characters or one that
+  reads as an upper-case variable name (`|| "HUNTERPASS"`); a literal on a later
+  line that the value lexer does not reach when that line does not start with
+  a fallback operator and the line before does not end with one; a key in a
+  block comment opened on a line that names no credential. Recognized credential calls with mixed interpolation
   withhold opaque static material; pure variable references remain visible. A few LLM SDK
   calls take a key positionally under a name that names no credential; the
   literal at the key's position in these is withheld: Semantic Kernel's .NET
@@ -410,8 +516,35 @@ coverage, even when a response includes an empty collection field.
   name does not end in a credential word as above (`OpenAIKey`, `key1`, a
   bare `auth` or `pass`) and holds a value that looks like no credential; a
   record outside the bounded sibling/flow rules above; a
-  value split across concatenated strings; and sensitive
-  business data.
+  value split across concatenated strings; a netrc value after a token the
+  format does not define on a later line than the entry's last token, which
+  ends the entry there as prose after `machine learning` does, when a blank
+  line, the next entry's `machine`, `default` or `macdef`, or the end of the
+  eight-line region comes before the value's `password`, `passwd` or
+  `account` (`force yes` and an empty line between `machine h` and
+  `password v`), or in an entry whose `machine` is glued to other text; a
+  commented-out netrc token that is not part of an entry in its comment, on
+  a comment line of its own that holds no `machine` or `default`
+  (`# password v` under a commented `# machine h`) or after an entry's own
+  tokens (`login u # was password v`); the escaped lines after a netrc
+  comment that those rules run to the end of its line, in escaped text
+  where no escape sits next to a keyword or before one with blanks
+  between, none breaks a line before the `#` and no quote comes both
+  before and after it (`machine h # it's\nforce password v`); a netrc
+  keyword written in quotes, which Python's `netrc` reads as the keyword,
+  and the value after it (`login u "password" v`,
+  `"machine" h login u password v`); and sensitive business data.
+- **Plural collection names are not sensitive names.** `credentials` names a
+  credential, but the list or mapping under a plural `secrets` or `tokens`
+  key keeps its values unless each one has a recognized shape or a sensitive
+  name of its own: `secrets: [prod-db-password]` lists the names a secret
+  store holds, which the Secrets Manager, Key Vault, Secret Manager and OCI
+  Vault collectors read and report as inventory, and `tokens: 12` is a count.
+  A raw credential placed under one of those keys without a recognized shape
+  therefore remains (the structural pass still removes it wherever a
+  sensitive-named field holds the same value). Keep that in mind for a
+  GitHub Actions `secrets:` block or a Kubernetes manifest an operator pastes
+  into an issue.
 
 ### Other implemented controls
 
@@ -427,7 +560,12 @@ coverage, even when a response includes an empty collection field.
   Explicit `${VAR:-default}` fallbacks remain an operator policy decision.
 * Incomplete scans exit 3 and set SARIF executionSuccessful=false. Only complete
   results qualify for incremental reuse. Comparisons infer resolution only for
-  complete scans with matching collection, detection and finding-identity schemas.
+  complete scans with matching collection, detection and finding-identity schemas,
+  and never for a finding in content the current scan declared (`--profile ci`,
+  `declared_omissions`) or tolerated (coverage budget, `stats[].coverage`) as
+  unread. A gap the default profile discounts in test code (a warning ending
+  "test code is discounted evidence") is counted in neither and does not hold a
+  missing finding back.
   Explicit unmatched connector selections and unsupported/error exports fail
   visibly. Incremental input roots and ancestor symlinks are ineligible for reuse;
   pre/post hashing is not an atomic filesystem snapshot. Keep inputs immutable

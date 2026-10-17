@@ -27,7 +27,17 @@ def test_current_idiom_cases_are_authored_and_labeled_with_explicit_selectors() 
 def test_current_idiom_corpus_passes_with_only_its_documented_gap() -> None:
     report = evaluate(CORPUS)
     assert report["passed"]
-    assert report["metrics"]["all"] | {"tp": 16, "fp": 0, "fn": 1, "tn": 11} == report["metrics"]["all"]
+    assert report["metrics"]["all"] | {"tp": 18, "fp": 0, "fn": 1, "tn": 12} == report["metrics"]["all"]
+    # Realtime agents are agents in both SDK languages; a project class that only
+    # shares the name, with no SDK import, is not.
+    realtime = {
+        row["id"]: (row["present"], row["correct"]) for row in report["cases"] if "realtime" in row["id"]
+    }
+    assert realtime == {
+        "openai-agents-typescript-realtime": (True, True),
+        "openai-agents-python-realtime": (True, True),
+        "local-realtime-agent-class": (False, True),
+    }
     # The MCP server cases pin the exact capability set: the protocol's tool-use
     # and mcp-server, nothing the arithmetic tools do not imply; the client
     # next to an HTTP server class keeps tool-use alone.

@@ -39,6 +39,17 @@ name. Such an app is never reported above possible confidence, however many
 observations it has. A generic AI-name hint (`identity-app.generic-ai-name`)
 stays separate, weak evidence, so a hint never lowers the score. Machine
 identities a connector keeps by policy are still inventoried, at that ceiling.
+
+An Okta OAuth app or a third-party Entra service principal that is only a
+sign-in client is not reported at all. That is an app whose every scope is an
+OpenID Connect Core scope (`openid`, `profile`, `email`, `address`, `phone`,
+`offline_access`), with no AI attribution or other tag, and whose display name
+either matches no name signature or matches the generic hint only on a word as
+common outside AI as `agent`, `assistant`, `copilot` or `bot` ("Insurance
+Agent Desk", "Copilot Money"). Any other generic term (LLM, GPT, GenAI, "AI
+assistant", chatbot), a product name (an ambiguous one such as Gemini
+included), any further scope, a machine grant or a retained Entra
+classification keeps the app reported, at the ceiling above.
 The bound is stored in the evidence weights, so a merge that recomputes
 confidence reproduces it.
 
@@ -50,7 +61,10 @@ are observations from that export, not authenticated publisher attestations.
 `/api/v1/apps` (+ `/grants`, `/tokens` for OIDC apps). Reports OAuth apps that
 match AI SaaS signatures or hold privileged scopes, and service apps
 (`application_type: service` / `client_credentials` / token-exchange).
-Token: SSWS API token or OAuth bearer with `okta.apps.read`. A 429 is retried
+Token: SSWS API token or OAuth bearer with `okta.apps.read` and
+`okta.appGrants.read`. App grants are their own scope: a bearer without
+`okta.appGrants.read` is refused on every `/grants` call (HTTP 403) and the scan
+is incomplete. A 429 is retried
 after the window named by Okta's `X-Rate-Limit-Reset` header (bounded to 120 s
 per wait); exhausted retries mark the scan incomplete.
 
@@ -61,6 +75,11 @@ defines, such as `Mail.ReadWrite`), tenant app registrations, managed identities
 Microsoft SPs are skipped unless they match AI signatures (Copilot).
 Permissions (application): `Application.Read.All`, `DelegatedPermissionGrant.Read.All`,
 `Directory.Read.All`. Or pass `access_token`.
+The service principal listing selects only properties of the v1.0
+`servicePrincipal` resource. `publisherName` and `createdDateTime` are beta
+properties: a live finding takes its publisher from `verifiedPublisher` and has
+no first-seen time from Graph, while offline exports that carry either field
+still use it.
 Unresolved grant or role-assignment principals make collection incomplete while
 preserving permission evidence for investigation. Such evidence cannot establish
 an approved resource identity.
@@ -186,9 +205,10 @@ and different content are reported once with `identity_unresolved`, status
 ### Entra Agent ID agent identities (opt-in)
 
 `include_agent_identities: true` lists agent identities from the Graph beta API
-(`GET https://graph.microsoft.com/beta/servicePrincipals/microsoft.graph.agentIdentity`).
-Microsoft documents agent identities in beta only, so this listing uses beta
-whatever `agent_registry_api` says. An agent identity whose id is also a listed
+(`GET https://graph.microsoft.com/beta/servicePrincipals/microsoft.graph.agentIdentity`),
+whatever `agent_registry_api` says. Microsoft now documents the listing in v1.0
+as well; it needs `AgentIdentity.Read.All` (application or delegated), which
+the base permissions above do not grant. An agent identity whose id is also a listed
 service principal enriches that finding; otherwise it is its own finding
 `entra:sp:{id}` with resource type `service-principal/AgentIdentity`. Both keep
 the identity discriminator `service-principal`, so the finding id does not
