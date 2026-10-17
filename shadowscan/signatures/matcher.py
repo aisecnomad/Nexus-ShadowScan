@@ -447,13 +447,15 @@ def _reference_value(value: str, *, code: bool, follower: str = "") -> bool:
 # How much of the text after a generic match is read for operands that follow it.
 _FOLLOWER_CHARS = 512
 # The text after a reference, read as tokens: each one is matched where the
-# last one ended, so the read is linear in the follower. Blanks with Python's
-# backslash continuation, a line end, a comment, a string literal with its
-# prefix ('f"..."', C#'s '$"..."'), a member access ('.trim', '?.trim', '?.'
-# before a call), an operator, TypeScript's non-null '!', a word, a bracket,
-# and any other single character.
+# last one ended, so the read is linear in the follower. Blanks (any white
+# space but a line end, such as U+00A0, U+2009, U+3000, '\f' and '\v', the
+# zero-width space, word joiner and byte order mark that an editor or a paste
+# leaves between tokens, and Python's backslash continuation), a line end, a
+# comment, a string literal with its prefix ('f"..."', C#'s '$"..."'), a
+# member access ('.trim', '?.trim', '?.' before a call), an operator,
+# TypeScript's non-null '!', a word, a bracket, and any other single character.
 _OPERAND_TOKEN = re.compile(
-    r"(?P<blank>(?:[ \t]|\\(?:\r\n|\r|\n))++)"
+    r"(?P<blank>(?:[^\S\r\n]|[\u200b\u2060\ufeff]|\\(?:\r\n|\r|\n))++)"
     r"|(?P<newline>\r\n|\r|\n)"
     r"|(?P<comment>(?://|#)[^\r\n]*+|/\*(?:[^*]|\*(?!/))*+\*/)"
     r"|(?P<string>(?P<prefix>[rRbBuUfF]{1,2}|[@$])?(?P<quote>[\"'`])"

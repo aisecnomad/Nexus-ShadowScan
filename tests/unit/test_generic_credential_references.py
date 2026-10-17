@@ -379,6 +379,27 @@ def test_a_literal_past_the_end_of_the_value_is_not_a_fallback(index: SignatureI
     assert _generic(index, text, code=True) == []
 
 
+# Blanks other than a space or a tab that editors and pastes leave between
+# tokens: no-break, thin and ideographic spaces, the zero-width space, the
+# byte order mark, a form feed and a vertical tab.
+_OTHER_BLANKS = [chr(code) for code in (0xA0, 0x2009, 0x3000, 0x200B, 0xFEFF, 0x0C, 0x0B)]
+
+
+@pytest.mark.parametrize("blank", _OTHER_BLANKS, ids=[f"U+{ord(blank):04X}" for blank in _OTHER_BLANKS])
+def test_a_fallback_after_any_blank_is_reported(index: SignatureIndex, blank: str):
+    js = f'const openaiApiKey = process.env.OPENAI_API_KEY{blank}|| "{RANDOM}";'
+    python = f'openai_api_key = settings.openai_api_key or{blank}"{RANDOM}"'
+    assert _generic(index, js, code=True) != []
+    assert _generic(index, python, code=True) != []
+
+
+def test_a_scan_reports_a_fallback_after_a_no_break_space(tmp_path: Path, run_connector):
+    source = f'const openaiApiKey = process.env.OPENAI_API_KEY{chr(0xA0)}|| "{RANDOM}";\n'
+    findings = _scan(tmp_path, run_connector, {"src/a.js": source})
+    [secret] = [f for f in findings if f.kind.value == "secret"]
+    assert RANDOM not in json.dumps(secret.to_dict(), default=str)
+
+
 def test_a_scan_reports_a_fallback_on_the_next_line_and_withholds_it(tmp_path: Path, run_connector):
     files = {
         "src/a.cs": f'var openaiApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "{RANDOM}";\n',
