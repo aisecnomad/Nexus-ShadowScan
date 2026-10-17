@@ -64,22 +64,27 @@ def _repo(root: Path) -> Path:
 def test_ci_profile_declared_omission_does_not_resolve_a_credential(tmp_path, index):
     # The review's case: under --profile ci a credential whose docs file grew
     # past max_file_size was "1 resolved", exit 0; the key was still in it.
+    # The profile no longer declares a file left unread for credentials: the
+    # budget charges it (tolerated here), and diff still holds the key unknown.
     root = _repo(tmp_path / "repo")
     (root / "docs").mkdir()
     (root / "docs" / "setup.md").write_text("# Setup\n\n" + _credential("docs"))
-    baseline = _scan(index, root, profile="ci", max_file_size=4096)
+    options = {"profile": "ci", "max_file_size": 4096, "max_coverage_gap": 0.5}
+    baseline = _scan(index, root, **options)
     assert baseline["summary"]["complete"] and _secrets(baseline) == ["docs/setup.md"]
     with (root / "docs" / "setup.md").open("a") as handle:
         handle.write("lorem ipsum " * 600)
-    current = _scan(index, root, profile="ci", max_file_size=4096)
-    assert current["summary"]["complete"] and current["summary"]["declared_omissions"] == 1
+    current = _scan(index, root, **options)
+    assert current["summary"]["complete"] and current["summary"]["declared_omissions"] == 0
+    assert current["summary"]["tolerated_gaps"] == 1
+    assert [gap["path"] for gap in current["stats"][0]["coverage"]["details"]] == ["docs/setup.md"]
     assert _secrets(current) == []
     result = _diff(tmp_path, baseline, current)
     assert result.exit_code == 3, result.output
     comparison = json.loads(result.output)
     assert comparison["comparable"] is False and comparison["resolved"] == []
     assert [f["metadata"]["path"] for f in comparison["unknown"]] == ["docs/setup.md"]
-    assert any(_UNREAD in reason and "1 declared omission" in reason for reason in comparison["reasons"])
+    assert any(_UNREAD in reason for reason in comparison["reasons"])
     assert drift_counts(baseline, current)["counts"]["resolved"] == 0
 
 
@@ -234,7 +239,8 @@ def test_a_credential_removed_from_read_content_still_resolves_under_the_profile
     root = _repo(tmp_path / "repo")
     (root / "src" / "app" / "settings.py").write_text(_credential("settings"))
     (root / "docs").mkdir()
-    (root / "docs" / "big.json").write_text(json.dumps({"x": "y" * 5000}))
+    # A dangling certificate link: declared, and no credential detection skipped for it.
+    (root / "docs" / "ca.pem").symlink_to(root / "missing-ca.pem")
     baseline = _scan(index, root, profile="ci", max_file_size=4096)
     assert baseline["summary"]["declared_omissions"] == 1 and _secrets(baseline) == ["src/app/settings.py"]
     (root / "src" / "app" / "settings.py").write_text("SERVICE_API_KEY = load_from_vault()\n")
@@ -503,13 +509,12 @@ def test_a_report_without_unread_content_resolves_as_before():
 )
 def test_may_be_declared_covers_every_path_the_profile_declares(run_connector, tmp_path, rel):
     # The diff rule is a superset of the connector's: whatever project root a
-    # declared path has, may_be_declared names it.
+    # declared path has, may_be_declared names it. A dangling link is declared
+    # in every such path (an oversize file is not, while credentials are read).
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("x: " + "y" * 400 + "\n")
-    _, ctx = run_connector(
-        "code.filesystem", path=str(tmp_path), use_git=False, profile="ci", max_file_size=100
-    )
+    path.symlink_to(tmp_path / "missing")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile="ci")
     assert ctx.stats.declared_omissions == 1, ctx.stats.warnings
     assert may_be_declared(rel)
     assert not may_be_declared("src/app/settings.py") and not may_be_declared("demo")

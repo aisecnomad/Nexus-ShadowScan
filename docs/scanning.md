@@ -325,10 +325,19 @@ applied in this order:
    records each as an error where it happens, while a budget of 0 charges
    each to the budget, so the gaps stay listed in `stats[].coverage` and the
    verdict that leaves the scan incomplete is one error line.
-2. **Credentials.** A credential limit is never declared, discounted or
+2. **Credentials.** No credential is declared, discounted or budgeted
+   without a read. A credential limit is never declared, discounted or
    budgeted: a file holding more matches of one credential format than the
    matcher reports (`more than 5 credentials matched`) marks the scan
-   incomplete under every profile, in test code too.
+   incomplete under every profile, in test code too. A gap that left a file's
+   bytes unread by credential detection while `scan_secrets` is on (a file
+   over `max_file_size`, a notebook's saved outputs) is never declared: it is
+   recorded as without the profile, an oversize file as one entry of the
+   budget, or blinding when its name selects it as configuration. A binary or
+   undecodable test fixture is read for credentials before its gap is
+   recorded, under every accounting. The one exception left is an
+   undecodable file under a documentation, example or generated path, which
+   `profile: ci` declares without that read.
 3. **Declared omissions.** Under `profile: ci`, a gap in a path the
    [profile](#the-ci-profile) names is declared: counted in
    `declared_omissions`, every entry of it, never charged to the budget. A
@@ -348,16 +357,23 @@ applied in this order:
 
 ### The `ci` profile
 
-A gate on a repository's source does not read its recorded cassettes, its
-fixtures over a megabyte or the certificate links in its test suite, yet by
-default each of those exits 3. `profile: ci` (`--profile ci`) declares such
-gaps in advance: an oversize file, an unread symbolic link, a non-regular
-entry, content that did not parse or an analysis limit under a test, fixture,
-documentation, example or generated path is recorded as a warning that names
-it and ends in `declared omission (profile ci)`, counted in
-`stats[].declared_omissions` and `summary.declared_omissions` and listed by
-path in `stats[].declared_paths` (the first 200 of each connector), and the
-scan stays complete. Every declared entry is counted: of a run of skipped links,
+A gate on a repository's source does not read the certificate links in its test
+suite, its malformed fixtures or its generated code, yet by default each of
+those is a coverage gap: a few are tolerated by the
+[budget](#coverage-budget-and-strict-accounting) and enough of them exit 3.
+`profile: ci` (`--profile ci`) declares such gaps in advance: an unread symbolic
+link, a non-regular entry, content that did not parse or an analysis limit under
+a test, fixture, documentation, example or generated path is recorded as a
+warning that names it and ends in `declared omission (profile ci)`, counted in
+`stats[].declared_omissions` and `summary.declared_omissions` and listed by path
+in `stats[].declared_paths` (the first 200 of each connector), and the scan
+stays complete. So is a file over `max_file_size` under a documentation, example
+or generated path, but only while `scan_secrets` is off (an oversize test
+fixture is then skipped with a warning under every profile): with credential
+detection on (the default) a recorded cassette or fixture over the limit may
+hide a key, and credentials are never declared without a read, so its gap is
+charged to the budget as without the profile. Every declared entry is counted:
+of a run of skipped links,
 one warning per root names the first and the rest are counted without one, as
 the budget counts every undeclared link. Test paths are declared only while
 `include_tests` is false, when their evidence is discounted; with it set they
@@ -375,17 +391,19 @@ root, as they do for evidence: a directory that holds its own manifest
 reported at full weight, whatever it is called, so a gap in it still marks
 the scan incomplete. That holds for any directory with a manifest, not only
 `demo/` and `examples/`: a documentation site that is its own package
-(`docs/package.json` in a Docusaurus or VitePress layout) is a project, so
-an oversize blog post, a generated search index or a binary page directly in
-it exits 3 under the profile. The `docs/` and `examples/` directories below
-such a project, and test paths anywhere, are still declared (`docs/docs/`
-in that layout); its own content is not. A template is not such a project: a directory with
-template syntax in its path (`templates/crew/{{cookiecutter.slug}}/`, a `{%`
-or `${` segment), or one none of whose JSON or TOML manifests parses (a
-templated `package.json`), is judged by the project around it, so the
-template's own unparsed manifest and sources are declared. Every other gap, in `src/`, at the repository root or in a path the profile
-does not name, still marks the scan incomplete, and so does a connector
-deadline, a `max_files` or `max_entries` limit and a triage scan. The profile
+(`docs/package.json` in a Docusaurus or VitePress layout) is a project, so an
+oversize blog post, a generated search index or a binary page directly in it
+exits 3 under the profile. The `docs/` and `examples/` directories below such a
+project, and test paths anywhere, are still declared (`docs/docs/` in that
+layout); its own content is not. A template is not such a project: a directory
+with template syntax in its path (`templates/crew/{{cookiecutter.slug}}/`, a
+`{%` or `${` segment), or one none of whose JSON or TOML manifests parses (a
+templated `package.json`), is judged by the project around it, so the template's
+own unparsed manifest and sources are declared. Every other gap, in `src/`, at
+the repository root or in a path the profile does not name, is judged as without
+the profile: charged to the budget, or marking the scan incomplete when it is
+blinding, as a connector deadline, a `max_files` or `max_entries` limit and a
+triage scan always do. The profile
 is refused under [strict accounting](#coverage-budget-and-strict-accounting)
 (`strict_coverage`, or a gap budget of 0). The report of a
 profile scan is not the report of a scan that read everything: read

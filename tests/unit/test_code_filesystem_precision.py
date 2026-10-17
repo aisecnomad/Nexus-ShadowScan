@@ -522,7 +522,27 @@ def test_oversize_file_the_scanner_never_reads_is_ignored_silently(run_connector
 # Field scans of four public repositories each exited 3 for a gap in content a
 # source gate does not read: a 1.2 MB JSON fixture, a dangling test certificate
 # link, a cassette the credential pass timed out on. The ci profile declares
-# such gaps in advance; every other gap still fails closed.
+# such gaps in advance, except where credentials went unread; every other gap
+# is judged as without the profile.
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "docs/seed-memory/graph.json",
+        "examples/sandbox/data/sample.json",
+        "lib/generated/schema.generated.json",
+    ],
+)
+def test_ci_profile_declares_oversize_files_in_discounted_paths(run_connector, tmp_path, rel):
+    # Without credential detection nothing else reads the file's bytes for a key.
+    write(tmp_path, rel, OVERSIZE)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, scan_secrets=False)
+    assert stats.incomplete and stats.incomplete_reasons == {"oversize-file": 1}
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, scan_secrets=False, profile="ci")
+    assert not stats.incomplete and not stats.errors and not stats.incomplete_reasons
+    assert stats.declared_omissions == 1
+    assert [w for w in stats.warnings if rel in w and "declared omission (profile ci)" in w]
+
+
 @pytest.mark.parametrize(
     "rel",
     [
@@ -533,14 +553,17 @@ def test_oversize_file_the_scanner_never_reads_is_ignored_silently(run_connector
         "lib/generated/schema.generated.json",
     ],
 )
-def test_ci_profile_declares_oversize_files_in_discounted_paths(run_connector, tmp_path, rel):
+def test_ci_profile_never_declares_an_oversize_file_unread_for_credentials(run_connector, tmp_path, rel):
+    # Credential detection reads every analyzable file: one over max_file_size
+    # may hide a key, so the profile cannot have accepted its gap. It is recorded
+    # as without the profile (here, one entry over this one-file tree's budget).
     write(tmp_path, rel, OVERSIZE)
-    _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert stats.incomplete and stats.incomplete_reasons == {"oversize-file": 1}
+    _, default = scan(run_connector, tmp_path, max_file_size=100)
     _, stats = scan(run_connector, tmp_path, max_file_size=100, profile="ci")
-    assert not stats.incomplete and not stats.errors and not stats.incomplete_reasons
-    assert stats.declared_omissions == 1
-    assert [w for w in stats.warnings if rel in w and "declared omission (profile ci)" in w]
+    assert stats.declared_omissions == 0
+    assert not [w for w in stats.warnings if "declared omission" in w]
+    assert stats.incomplete and stats.incomplete_reasons == default.incomplete_reasons == {"oversize-file": 1}
+    assert stats.coverage is not None and [gap["path"] for gap in stats.coverage["details"]] == [rel]
 
 
 @pytest.mark.parametrize("rel", ["src/app/config.json", "data/session.yaml", "settings.json"])
@@ -552,12 +575,13 @@ def test_ci_profile_keeps_oversize_source_a_gap(run_connector, tmp_path, rel):
 
 
 def test_ci_profile_treats_test_paths_as_source_with_include_tests(run_connector, tmp_path):
+    options = {"max_file_size": 100, "profile": "ci", "include_tests": True, "scan_secrets": False}
     write(tmp_path, "tests/fixtures/big.json", OVERSIZE)
-    _, stats = scan(run_connector, tmp_path, max_file_size=100, profile="ci", include_tests=True)
+    _, stats = scan(run_connector, tmp_path, **options)
     assert stats.incomplete and stats.declared_omissions == 0
     # Documentation stays declared: include_tests changes the test-path policy only.
     write(tmp_path, "docs/big.json", OVERSIZE)
-    _, stats = scan(run_connector, tmp_path, max_file_size=100, profile="ci", include_tests=True)
+    _, stats = scan(run_connector, tmp_path, **options)
     assert stats.incomplete_reasons == {"oversize-file": 1} and stats.declared_omissions == 1
 
 

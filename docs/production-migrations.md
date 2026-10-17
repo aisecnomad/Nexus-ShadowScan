@@ -28,6 +28,16 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   malformed or oversize MCP configuration, coding-agent instruction, rule or
   settings file, or agent card under a test, documentation or example path
   is no longer declared, so a ci scan holding one exits 3.
+- **`profile: ci` declares no file left unread for credentials.** While
+  `scan_secrets` is on (the default), a file over `max_file_size` under a
+  test, fixture, documentation, example or generated path (a recorded
+  cassette, a large JSON fixture) and a notebook whose saved outputs were not
+  read are no longer declared: `declared_omissions` falls by their number,
+  and each gap is charged to the coverage budget (listed in
+  `stats[].coverage` and counted in `summary.tolerated_gaps` when tolerated)
+  as without the profile, so a ci scan of a small repository holding one, or
+  of one holding many, now exits 3. Raise `max_file_size` for such files, or
+  set `scan_secrets: false` on a gate that does not need credential findings.
 - **A link or special file named like configuration fails closed.** A
   dangling symbolic link or one to a single file, a FIFO, socket or device
   whose own name is configuration the scanner reads (`.mcp.json`,

@@ -169,10 +169,11 @@ def _code_options(
     type=click.Choice(["default", "ci"]),
     default=None,
     help=(
-        "ci: declare oversize files, unread links and analysis limits under test, fixture, documentation, "
-        "example and generated paths as omissions (warnings the report counts) instead of gaps, so a "
-        "complete source scan exits 0; every other gap still exits 3; conflicts with --strict-coverage "
-        "and --max-coverage-gap 0"
+        "ci: declare unread links, non-regular entries, unparsed content, analysis limits and (with "
+        "credential detection off) oversize files under test, fixture, documentation, example and "
+        "generated paths as omissions (warnings the report counts) instead of gaps; every other gap is "
+        "judged by the coverage budget as usual, and agent configuration and credential limits are never "
+        "declared; conflicts with --strict-coverage and --max-coverage-gap 0"
     ),
 )
 @click.option(

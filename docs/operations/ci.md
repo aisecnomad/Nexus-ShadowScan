@@ -46,7 +46,8 @@ A repository's test cassettes, fixtures over a megabyte and dangling test
 certificate links are coverage gaps by default, because the credential pass
 would have read them: a few are tolerated within the coverage budget and counted
 in `summary.tolerated_gaps`, and enough of them exit 3. A gate on the
-repository's source can declare those gaps in advance with `--profile ci`: a gap
+repository's source can declare some of those gaps in advance with `--profile
+ci`: a dangling link, a non-regular entry, unparsed content or an analysis limit
 under a test, fixture, documentation, example or generated path becomes a
 warning that names it and is counted in `summary.declared_omissions`, and is
 never charged to the budget; a gap in `src/`, at the root or in any directory
@@ -57,11 +58,17 @@ a `pyproject.toml`, and also a documentation site with its own
 documentation and example directories below a project are still declared
 (`docs/docs/` in that layout); its own content is not. Generated files are
 recognised by name wherever they lie (`*_pb2.py`, `*.generated.*`), so one under
-`src/` is declared too. A credential limit, and a gap in an MCP configuration,
-coding-agent file or agent card, are never declared. The example workflow passes
-the flag. Leave it out when
-the gate should also establish that every fixture was read for credentials, and
-never combine it with `--strict-coverage` or `--max-coverage-gap 0`: both are
+`src/` is declared too. A file over `max_file_size` is declared only while
+credential detection is off: with it on, a cassette or fixture over the limit
+may hide a key, and credentials are never declared without a read, so its gap is
+charged to the budget as without the profile (raise `max_file_size` for a
+repository whose recorded cassettes exceed it). A credential limit, and a gap in
+an MCP configuration, coding-agent file or agent card, are never declared. The
+example workflow passes the flag. Leave it out when the gate should also
+establish that every undecodable documentation, example or generated file was
+read for credentials (the profile still declares those without a credential
+read), and never combine it with `--strict-coverage` or `--max-coverage-gap 0`:
+both are
 [strict accounting](../scanning.md#coverage-budget-and-strict-accounting), which
 counts every gap the profile declares, so the CLI refuses either pairing.
 

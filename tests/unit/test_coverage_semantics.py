@@ -274,6 +274,60 @@ def _openai_project_key(number: int) -> str:
     return "sk-" + "proj-" + body + "T3BlbkFJ" + f"{number:02d}" + tail
 
 
+def test_profile_ci_never_declares_a_fixture_left_unread_for_credentials(tmp_path, run_connector):
+    # The size cap, not the profile, stopped the read: the key in the fixture was
+    # never read, so the gap is charged as without the profile and listed.
+    recorded = '{"k": "' + _openai_project_key(1) + '", "pad": "' + "a" * 3_000 + '"}'
+    _tree(tmp_path, {"tests/fixtures/recorded.json": recorded})
+    runs = {
+        profile: run_connector(
+            "code.filesystem", path=str(tmp_path), use_git=False, profile=profile, max_file_size=1_000
+        )[1]
+        for profile in ("default", "ci")
+    }
+    ci = runs["ci"]
+    assert ci.stats.declared_omissions == 0
+    assert not [w for w in ci.stats.warnings if "declared omission" in w]
+    assert ci.stats.coverage == runs["default"].stats.coverage
+    assert [gap["path"] for gap in ci.stats.coverage["details"]] == ["tests/fixtures/recorded.json"]
+    # Without credential detection nothing reads it: skipped with a warning, as without the profile.
+    _, off = run_connector(
+        "code.filesystem",
+        path=str(tmp_path),
+        use_git=False,
+        profile="ci",
+        max_file_size=1_000,
+        scan_secrets=False,
+    )
+    assert off.stats.coverage is None and not off.stats.incomplete
+
+
+def test_profile_ci_never_declares_notebook_outputs_unread_for_credentials(tmp_path, run_connector):
+    import json
+
+    notebook = {
+        "cells": [
+            {
+                "cell_type": "code",
+                "source": ["x = 1\n"],
+                "metadata": {},
+                "outputs": [{"output_type": "stream", "name": "stdout", "text": ["y" * 3_000]}],
+                "execution_count": 1,
+            }
+        ],
+        "metadata": {},
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+    _tree(tmp_path, {"docs/walkthrough.ipynb": json.dumps(notebook)})
+    _, ci = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, profile="ci", max_file_size=1_000
+    )
+    assert ci.stats.declared_omissions == 0
+    assert ci.stats.incomplete and ci.stats.incomplete_reasons == {"oversize-file": 1}
+    assert any("saved outputs not scanned for credentials" in w for w in ci.stats.warnings)
+
+
 def test_a_credential_limit_in_test_code_is_never_declared(tmp_path, run_connector):
     keys = "".join(f'OPENAI_KEY_{n} = "{_openai_project_key(n)}"\n' for n in range(8))
     _tree(tmp_path, {"tests/keys_fixture.py": keys})

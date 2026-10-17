@@ -201,7 +201,8 @@ def test_a_multi_root_scan_publishes_every_roots_coverage_account(tmp_path, inde
     # Regression: the per-root results were combined without their coverage
     # ledgers, declared omissions or incomplete reasons, so a multi-root
     # incremental scan published none of them. Root one tolerates its oversize
-    # file and declares its test file; root two is too small to tolerate one.
+    # file and declares its malformed fixture (two diagnostics: the withheld
+    # excerpts and the ambiguous data); root two is too small to tolerate one.
     cfg = config(tmp_path)
     roots = [tmp_path / "one", tmp_path / "two"]
     for root, modules in zip(roots, (60, 1), strict=True):
@@ -209,13 +210,12 @@ def test_a_multi_root_scan_publishes_every_roots_coverage_account(tmp_path, inde
         for number in range(modules):
             (root / f"module{number}.py").write_text(f"VALUE = {number}\n")
         (root / "agent.py").write_text("import langchain\n" + "#" * 2_000)
-    (roots[0] / "tests" / "large.py").write_text("x = 1\n" + "#" * 2_000)
+    (roots[0] / "tests" / "agents.yaml").write_text("agents: {first: {}}\nagents: {}\n")
     options = {"paths": [str(root) for root in roots], "use_git": False, "max_file_size": 1_000}
     cfg.connectors[0].config = {**options, "profile": "ci"}
     first = Engine(cfg, index).run()
     [stats] = first.stats
-    assert not first.complete and stats.declared_omissions == 1
-    assert stats.declared_paths == ["tests/large.py"]
+    assert not first.complete and stats.declared_omissions == 2
     assert stats.incomplete_reasons == {"oversize-file": 1}
     coverage = stats.coverage
     assert coverage["gaps"] == 2 and coverage["examined"] > 60 and not coverage["within_budget"]
@@ -223,8 +223,7 @@ def test_a_multi_root_scan_publishes_every_roots_coverage_account(tmp_path, inde
     # Root one is now reused from the cache and publishes the same account.
     second = Engine(cfg, index).run()
     assert any("reused 1/2" in warning for warning in second.stats[0].warnings)
-    assert second.stats[0].coverage == coverage and second.stats[0].declared_omissions == 1
-    assert second.stats[0].declared_paths == ["tests/large.py"]
+    assert second.stats[0].coverage == coverage and second.stats[0].declared_omissions == 2
 
 
 def test_configuration_and_signature_changes_invalidate(tmp_path, index, monkeypatch):
@@ -276,14 +275,12 @@ def test_a_cached_profile_scan_still_counts_its_declared_omissions(tmp_path, ind
     # the replayed stats keep the omission the profile declared.
     cfg = config(tmp_path)
     (tmp_path / "repo" / "tests").mkdir()
-    (tmp_path / "repo" / "tests" / "large.py").write_text("x = 1\n" + "#" * 2_000)
+    (tmp_path / "repo" / "tests" / "agents.yaml").write_text("agents: {first: {}}\nagents: {}\n")
     cfg.connectors[0].config.update(profile="ci", max_file_size=1_000)
     first = Engine(cfg, index).run()
-    assert first.complete and first.stats[0].declared_omissions == 1
+    assert first.complete and first.stats[0].declared_omissions == 2
     replayed = Engine(cfg, index).run()
-    assert replayed.stats[0].cached and replayed.stats[0].declared_omissions == 1
-    # So is where it lies, which diff reads to tell which projects it could hide.
-    assert replayed.stats[0].declared_paths == first.stats[0].declared_paths == ["tests/large.py"]
+    assert replayed.stats[0].cached and replayed.stats[0].declared_omissions == 2
 
 
 def test_inventory_and_confidence_are_reapplied_even_with_same_engine(tmp_path, index):

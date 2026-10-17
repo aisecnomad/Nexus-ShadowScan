@@ -117,9 +117,11 @@ def test_exit_3_line_names_undecodable_source_as_unparsed_input_whatever_its_pat
 
 def test_ci_profile_turns_a_declared_omission_into_exit_0(tmp_path):
     (tmp_path / "requirements.txt").write_text("crewai==0.80.0\n")
-    (tmp_path / "tests" / "fixtures").mkdir(parents=True)
-    (tmp_path / "tests" / "fixtures" / "contract.json").write_text("x: " + "y" * 400 + "\n")
-    settings = ["-S", f"path={tmp_path}", "-S", "max_file_size=100", "--format", "json"]
+    (tmp_path / "docs").mkdir(parents=True)
+    (tmp_path / "docs" / "contract.json").write_text("x: " + "y" * 400 + "\n")
+    # Credential detection off: an oversize file it would have read is never declared.
+    settings = ["-S", f"path={tmp_path}", "-S", "max_file_size=100", "-S", "scan_secrets=false"]
+    settings += ["--format", "json"]
     gap = CliRunner().invoke(main, ["run", "code.filesystem", *settings])
     assert gap.exit_code == 3, gap.output
     declared = CliRunner().invoke(main, ["run", "code.filesystem", "-S", "profile=ci", *settings])

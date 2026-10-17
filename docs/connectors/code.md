@@ -521,11 +521,13 @@ Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_si
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
 
 `profile: ci` (`--profile ci`) declares the coverage gaps a source gate accepts
-in advance: oversize files, unread symbolic links, non-regular entries,
-unparsed content and analysis limits under test, fixture, documentation,
-example and generated paths are warnings that leave the scan complete and are
-counted in the report's `declared_omissions`; every other gap still marks the
-scan incomplete. Documentation and example directories count below the file's
+in advance: unread symbolic links, non-regular entries, unparsed content,
+analysis limits and, while `scan_secrets` is off, oversize files under test,
+fixture, documentation, example and generated paths are warnings that leave
+the scan complete and are counted in the report's `declared_omissions`; every
+other gap is judged by the coverage budget as without the profile. With
+credential detection on, an oversize file there is not declared: credentials
+are never declared without a read. Documentation and example directories count below the file's
 project root, so a project under `demo/` or `examples/svc/` with its own
 manifest keeps its gaps. A template's directory (template syntax such as
 `{{cookiecutter.slug}}`, `{%` or `${` in its path) and one none of whose JSON

@@ -64,6 +64,22 @@ strict accounting, credentials, declaration, discount, budget.
   structure, so those gaps go to the budget or fail closed as in the default
   profile. A credential limit was never declared (it is an error under
   every profile); a test pins that.
+- **No file left unread for credentials is declared.** The plan's rule that
+  no credential is declared, discounted or budgeted without a read was first
+  applied only to the credential quota. Under `--profile ci` a 3 MB
+  `tests/fixtures/recorded.json` holding an Anthropic key was still declared
+  ("unread for credentials; declared omission (profile ci)") and the scan
+  stayed complete with the key never read, where main exited 3. With
+  `scan_secrets` on, `_skipped_oversize` no longer declares such a file, and
+  the reader's oversize gap and a notebook's unread saved outputs pass
+  `unread_credentials` to `_declared_omission`, which then declares nothing:
+  the gap is recorded as without the profile, an oversize file as one entry
+  of the budget (a quarter in discounted test code, as #254 weighs any gap
+  there) or blinding when its name selects configuration. With
+  `scan_secrets` off the profile still declares an oversize documentation,
+  example or generated file. An undecodable file under those paths is still
+  declared without a credential-only read; that read belongs to the next
+  change (coverage semantics, part B).
 - **An unread configuration file is blinding however it goes unread.** An
   oversize `.mcp.json` was blinding, but `.mcp.json`, `.claude/settings.json`
   or `CLAUDE.md` linked to a file outside the tree, or a FIFO in its place,

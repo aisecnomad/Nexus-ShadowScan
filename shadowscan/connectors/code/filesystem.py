@@ -1562,12 +1562,13 @@ class FilesystemConnector(BaseConnector):
         ),
         "profile": (
             "default | ci; ci declares as omissions, with a warning that leaves the scan complete, the "
-            "coverage gaps a source gate accepts in advance: oversize files, unread symbolic links, "
-            "non-regular entries, unparsed content and analysis limits under test, fixture, documentation, "
-            "example and generated paths (documentation and example directories below the file's project "
-            "root, test paths only while include_tests is false); every other gap still marks the scan "
-            "incomplete, and the report counts the omissions; refused with strict_coverage or a "
-            "max_coverage_gap of 0 (default: default)"
+            "coverage gaps a source gate accepts in advance: unread symbolic links, non-regular entries, "
+            "unparsed content, analysis limits and, while scan_secrets is off, oversize files under test, "
+            "fixture, documentation, example and generated paths (documentation and example directories "
+            "below the file's project root, test paths only while include_tests is false); every other gap "
+            "is judged by the coverage budget as usual, an MCP configuration, coding-agent file, agent card "
+            "or credential limit is never declared, and the report counts the omissions; refused with "
+            "strict_coverage or a max_coverage_gap of 0 (default: default)"
         ),
         "triage": (
             "fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC "
@@ -1907,7 +1908,9 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
-    def _declared_omission(self, rel: str, *, full_weight: bool = False) -> bool:
+    def _declared_omission(
+        self, rel: str, *, full_weight: bool = False, unread_credentials: bool = False
+    ) -> bool:
         """Whether a coverage gap at ``rel`` is one the ``ci`` profile declared in advance.
 
         The profile accepts gaps in the paths whose evidence is already
@@ -1931,8 +1934,15 @@ class FilesystemConnector(BaseConnector):
         (``_full_weight_in_tests``). A client started under ``tests/`` or
         ``docs/`` reads it there, so the profile cannot have accepted its gap.
         Strict accounting declares nothing (``_strict_accounting``).
+
+        Nor is a gap that left the file's bytes unread by credential detection
+        (``unread_credentials``: a file over ``max_file_size``, a notebook's
+        saved outputs) while ``scan_secrets`` is on: credentials are never
+        declared without a read, so the gap is recorded as without the profile.
         """
         if self.profile != "ci" or full_weight or self._strict_accounting():
+            return False
+        if unread_credentials and self.scan_secrets:
             return False
         if _is_test_path(rel):
             declared = not self.include_tests
@@ -1967,6 +1977,7 @@ class FilesystemConnector(BaseConnector):
         suffix: bool = True,
         reason: str | None = None,
         full_weight: bool = False,
+        unread_credentials: bool = False,
     ) -> None:
         """Record a coverage gap at ``rel``.
 
@@ -1980,10 +1991,11 @@ class FilesystemConnector(BaseConnector):
         without one it is classified from ``message`` with ``rel`` left out, so
         a file called ``http_client.py`` does not make the gap an upstream error.
         ``full_weight`` says the file is an MCP configuration by its structure,
-        which the profile never declares (``_declared_omission``).
+        and ``unread_credentials`` that credential detection did not read its
+        bytes; the profile declares neither (``_declared_omission``).
         """
         reason = reason or incomplete_reason(message, path=rel)
-        if self._declared_omission(rel, full_weight=full_weight):
+        if self._declared_omission(rel, full_weight=full_weight, unread_credentials=unread_credentials):
             self.ctx.warn(
                 f"{message}; declared omission (profile ci)", incomplete=False, declared=True, path=rel
             )
@@ -2003,16 +2015,18 @@ class FilesystemConnector(BaseConnector):
         blinding: bool = False,
         full_weight: bool = False,
         reason: str | None = None,
+        unread_credentials: bool = False,
     ) -> None:
         """Charge a gap at ``rel`` to the coverage budget, unless the ``ci`` profile declared it.
 
         A declared omission is recorded as ``_gap`` records one (with
         ``declared`` as its message when given) and is never also charged to
         the budget, so a gap is counted once: in ``declared_omissions`` or in
-        ``stats.coverage``. ``reason`` is passed on to either.
+        ``stats.coverage``. ``reason`` and ``unread_credentials`` are passed on
+        to either.
         """
-        if self._declared_omission(rel):
-            self._gap(rel, declared or message, reason=reason)
+        if self._declared_omission(rel, unread_credentials=unread_credentials):
+            self._gap(rel, declared or message, reason=reason, unread_credentials=unread_credentials)
             return
         self._ledger_gap(rel, message, blinding=blinding, full_weight=full_weight, reason=reason)
 
@@ -2101,16 +2115,12 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
-    def _skip_oversize(
-        self, rel: str, size: int, reason: str | None = None, *, declared: bool = False
-    ) -> None:
+    def _skip_oversize(self, rel: str, size: int, reason: str | None = None) -> None:
         reason = reason or "generated or binary content is never analyzed"
         self.ctx.warn(
             f"code.filesystem: {rel}: skipped {size} byte file over max_file_size ({self.max_file_size}); "
             f"{reason}",
             incomplete=False,
-            declared=declared,
-            path=rel,
         )
 
     def _content_bearing(self, rel: str, name: str) -> bool:
@@ -2165,13 +2175,8 @@ class FilesystemConnector(BaseConnector):
             return False
         if self.scan_secrets:
             # Documentation and fixtures are read for credentials: unread,
-            # they could hide one, so the reader records the gap, unless the
-            # ci profile declared such a gap in a discounted path in advance.
-            if self._declared_omission(rel):
-                self._skip_oversize(
-                    rel, size, "unread for credentials; declared omission (profile ci)", declared=True
-                )
-                return True
+            # they could hide one, so the reader records the gap, which the
+            # ci profile never declares (_declared_omission).
             return False
         if not self._content_bearing(rel, name):
             self._skip_oversize(
@@ -3454,6 +3459,7 @@ class FilesystemConnector(BaseConnector):
                     declared=f"code.filesystem: {rel}: skipped, {issue}",
                     blinding=selected,
                     reason="oversize-file",
+                    unread_credentials=True,
                 )
             else:
                 self._unreadable_gap(rel, issue)
@@ -3560,7 +3566,7 @@ class FilesystemConnector(BaseConnector):
                 "saved outputs not scanned for credentials"
             )
         if gap is not None:
-            self._gap(rel, gap, error=self.strict_coverage, reason="oversize-file")
+            self._gap(rel, gap, error=self.strict_coverage, reason="oversize-file", unread_credentials=True)
         if len(text) > self.max_file_size:
             return None
         return text, raw_notebook, tuple(spans), tuple(foreign)
