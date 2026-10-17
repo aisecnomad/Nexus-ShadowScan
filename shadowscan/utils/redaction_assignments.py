@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import bisect
 import re
+from typing import NamedTuple
 
 from shadowscan.utils.redaction_rules import (
     _CALLEE_WORD,
@@ -1379,8 +1380,10 @@ _LINE_NAME = re.compile(r"(?<![\w$.-])(?P<name>[A-Za-z_$][\w$.-]*+)[\"']?[ \t]*+
 # word names a credential takes it as an argument.
 _LINE_CALLEE = re.compile(r"(?<![\w$])(?P<name>[A-Za-z_$][\w$]*+)\(")
 # The next entry of a mapping or an object on the line ('{ dbPassword: ..., model: ...'),
-# which ends the value before it.
+# which ends the value before it at its own depth (see ``_password_values``).
 _NEXT_ENTRY = re.compile(r"[,{;][ \t]*+[\"']?[A-Za-z_$][\w$.-]*+[\"']?[ \t]*+(?::(?!:)|=(?![=~]))")
+_BRACKET = re.compile(r"[()\[\]{}]")
+_BRACKET_CLOSERS = {"(": ")", "[": "]", "{": "}"}
 # A line that goes on with the value of the line before it: it starts with a
 # fallback operator, as Black and styles that break before an operator write
 # ('    or "<key>",', '  || "<key>"'), or the line before ends with one
@@ -1451,27 +1454,35 @@ def _line_regions(line: str) -> tuple[list[tuple[int, int]], int | None]:
     return literals, None
 
 
-def _credential_assignment_end(line: str, end: int) -> tuple[int, str] | None:
-    """Where the first credential name on a line before ``end`` is joined to its value, and the name, or None.
+class _Join(NamedTuple):
+    """A credential's name joined to its value: where the value starts, the name, if a callee names it."""
+
+    start: int
+    name: str
+    callee: bool
+
+
+def _credential_joins(line: str, end: int) -> list[_Join]:
+    """Every place on a line before ``end`` where a credential's name is joined to its value, in line order.
 
     A name joined by ':', '=' or '=>' names a credential as the assignment
     passes read it (``_sensitive_assignment_key``, or ``_credential_name``:
     its last word names one); a callee does when its last word names one
-    ('setApiKey(', 'apiKey(').
+    ('setApiKey(', 'apiKey('). Each of them is read, not only the first: a
+    password's entry after an 'apiKey:' entry or a 'setApiKey(...)' call on
+    the same line is a password's value too.
     """
-    found: list[tuple[int, int, str]] = []
-    for match in _LINE_NAME.finditer(line, 0, end):
-        if _sensitive_assignment_key(match["name"]) or _credential_name(match["name"]):
-            found.append((match.start(), match.end(), match["name"]))
-            break
-    for match in _LINE_CALLEE.finditer(line, 0, end):
-        if _credential_name(match["name"]):
-            found.append((match.start(), match.end(), match["name"]))
-            break
-    if not found:
-        return None
-    _, joined, name = min(found)
-    return joined, name
+    joins = [
+        _Join(match.end(), match["name"], False)
+        for match in _LINE_NAME.finditer(line, 0, end)
+        if _sensitive_assignment_key(match["name"]) or _credential_name(match["name"])
+    ]
+    joins.extend(
+        _Join(match.end(), match["name"], True)
+        for match in _LINE_CALLEE.finditer(line, 0, end)
+        if _credential_name(match["name"])
+    )
+    return sorted(joins)
 
 
 def _password_name(name: str) -> bool:
@@ -1494,15 +1505,95 @@ def _password_literal(value: str) -> bool:
     return not (_FILE_PATH.fullmatch(value) or _placeholder(value))
 
 
-def _value_end(line: str, start: int, literals: list[tuple[int, int]]) -> int:
-    """Where a value that starts at ``start`` ends on its line: at the next entry's name outside a literal."""
+def _inside(starts: list[int], literals: list[tuple[int, int]], position: int) -> bool:
+    """Whether ``position`` is inside one of a line's string literals (in line order, not overlapping)."""
+    inside = bisect.bisect_right(starts, position) - 1
+    return inside >= 0 and position < literals[inside][1]
+
+
+class _LineDepths:
+    """The bracket depth of a line's code outside its string literals, read once.
+
+    A closer that closes no opener on the line, or one of another kind
+    ('{ password: "[REDACTED]"), ...'), is unmatched: the assignment passes
+    withheld its opener with the value it started ('password:
+    env("DB_PASSWORD", default_value="<password>")' reaches this pass as
+    'password: "[REDACTED]", default_value="<password>")'), or it was opened
+    on a line before.
+    """
+
+    def __init__(self, line: str, end: int, literals: list[tuple[int, int]]) -> None:
+        starts = [left for left, _ in literals]
+        self.positions: list[int] = []
+        self.depths: list[int] = []
+        self.unmatched: list[int] = []
+        stack: list[str] = []
+        for bracket in _BRACKET.finditer(line, 0, end):
+            position, mark = bracket.start(), bracket.group()
+            if _inside(starts, literals, position):
+                continue
+            if mark in _BRACKET_CLOSERS:
+                stack.append(_BRACKET_CLOSERS[mark])
+            elif stack and stack[-1] == mark:
+                stack.pop()
+            else:
+                self.unmatched.append(position)
+            self.positions.append(position)
+            self.depths.append(len(stack))
+
+    def depth(self, position: int) -> int:
+        """The depth after every bracket before ``position``."""
+        before = bisect.bisect_left(self.positions, position) - 1
+        return self.depths[before] if before >= 0 else 0
+
+    def entry_depth(self, separator: int) -> int:
+        """The depth of an entry whose separator is at ``separator``, counting each unmatched closer after it.
+
+        Each unmatched closer stands for an opener withheld at the start of
+        the value it closes, so an entry before it lies inside that value.
+        """
+        later = len(self.unmatched) - bisect.bisect_right(self.unmatched, separator)
+        return self.depth(separator + 1) + later
+
+
+def _password_values(
+    line: str, end: int, literals: list[tuple[int, int]], joins: list[_Join]
+) -> list[tuple[int, int]]:
+    """The spans of the values of the password names ``joins`` on a line, before ``end``.
+
+    A value runs to the next entry of its own mapping, object or argument list
+    (``_NEXT_ENTRY`` outside a literal, at its depth or below), so a keyword
+    argument of its read ('cfg.get("db", "password", fallback="<password>")',
+    'env("P", default_value=...)', '{ fallback: ... }') is part of it, and to
+    the end of the code when no entry ends it. A callee's value is its
+    arguments. Each entry is read once for all the joins.
+    """
+    shape = _LineDepths(line, end, literals)
     starts = [left for left, _ in literals]
-    for match in _NEXT_ENTRY.finditer(line, start):
-        # The literals are in line order and do not overlap.
-        inside = bisect.bisect_right(starts, match.start()) - 1
-        if inside < 0 or match.start() >= literals[inside][1]:
-            return match.start()
-    return len(line)
+    entries = [
+        (match.start(), shape.entry_depth(match.start()))
+        for match in _NEXT_ENTRY.finditer(line, joins[0].start, end)
+        if not _inside(starts, literals, match.start())
+    ]
+    regions: list[tuple[int, int, int]] = []
+    following = 0
+    for join in joins:
+        depth = shape.depth(join.start) - join.callee
+        nested = bool(regions) and join.start < regions[-1][1]
+        if nested and depth >= regions[-1][2]:
+            continue  # its value ends inside the value it is part of
+        if not nested:
+            while following < len(entries) and entries[following][0] < join.start:
+                following += 1
+        # In a value it is nested in, every entry before that value's end is deeper than this one.
+        while following < len(entries) and entries[following][1] > depth:
+            following += 1
+        value_end = entries[following][0] if following < len(entries) else end
+        if nested:
+            regions[-1] = (regions[-1][0], value_end, depth)
+        else:
+            regions.append((join.start, value_end, depth))
+    return [(start, stop) for start, stop, _ in regions]
 
 
 def _comment_closer(line: str, comment: int) -> str | None:
@@ -1548,8 +1639,8 @@ def _line_tail(
     """
     literals, comment = _line_regions(line)
     code_end = len(line) if comment is None else comment
-    joined = _credential_assignment_end(line, code_end)
-    if joined is None:
+    joins = _credential_joins(line, code_end)
+    if not joins:
         name = _carried_name(line, carried)
         if name is None:
             return [], None, None
@@ -1557,19 +1648,24 @@ def _line_tail(
             # A comment line between the operator and its operand keeps the value going.
             closer = None if comment is None else _comment_closer(line, comment)
             return _token_spans(line, offset, 0, len(line), _COMMENT_TOKEN), carried, closer
-        joined = (0, name)
-    named, name = joined
+        joins = [_Join(0, name, False)]
     spans: list[tuple[int, int]] = []
     for start, end in literals:
-        if start >= named:
+        if start >= joins[0].start:
             spans.extend(_token_spans(line, offset, start, end, _LITERAL_TOKEN))
-    if _password_name(name):
-        value_end = _value_end(line, named, literals)
-        spans.extend(
-            (offset + start, offset + end)
-            for start, end in literals
-            if start >= named and end <= value_end and _password_literal(line[start:end])
-        )
+    # The next line goes on with the value of the last name, or of a password whose value runs to the end.
+    name = joins[-1].name
+    passwords = [join for join in joins if _password_name(join.name)]
+    if passwords:
+        values = _password_values(line, code_end, literals, passwords)
+        cursor = 0
+        for start, end in literals:
+            while cursor < len(values) and values[cursor][1] < end:
+                cursor += 1
+            if cursor < len(values) and values[cursor][0] <= start and _password_literal(line[start:end]):
+                spans.append((offset + start, offset + end))
+        if values[-1][1] == code_end:
+            name = next(join.name for join in reversed(passwords) if join.start >= values[-1][0])
     closer = None
     if comment is not None:
         spans.extend(_token_spans(line, offset, comment, len(line), _COMMENT_TOKEN))
@@ -1594,10 +1690,13 @@ def _redact_line_tails(text: str) -> str:
     arguments ('sgMail.setApiKey(process.env.K?.trim() ?? "<key>")'), each
     token of a string literal after that name, and of the comment, that
     ``_credential_literal`` takes for an opaque key is withheld; words,
-    references, model names and placeholders stay. A password's value
-    (``_password_name``) is withheld whole up to the next entry on the line,
-    whatever its shape ('dbPassword: process.env.P?.trim() || "<password>"',
-    as 'db_password = os.getenv("P", "<password>")' is), unless it is a
+    references, model names and placeholders stay. The value of each
+    password's name on the line (``_password_name``), not only the first
+    credential name's, is withheld whole up to the next entry of its own
+    mapping, object or argument list (``_password_values``: a keyword
+    argument of its read, 'fallback="<password>"', is part of it), whatever
+    its shape ('dbPassword: process.env.P?.trim() || "<password>"', as
+    'db_password = os.getenv("P", "<password>")' is), unless it is a
     variable's name, a path, a URL, a placeholder or shorter than
     ``_PASSWORD_LITERAL``. The next line goes on with the value when it
     starts with a fallback operator (Black's '    or "<key>",') or the line

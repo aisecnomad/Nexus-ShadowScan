@@ -1310,6 +1310,58 @@ def test_other_literals_beside_a_password_value_keep_their_text(line: str, kept:
     assert kept in sanitize_text(line)
 
 
+# The password rule read only the first credential name on a line, so a
+# password's entry after an 'apiKey:', 'token:' or 'secret:' entry, or after a
+# credential-named callee, kept only the opaque-token rule; and a keyword
+# argument of the read ('fallback=', 'default_value=', '{ fallback: ... }')
+# was taken for the line's next entry, which ended the value before the
+# password. Main 8c72467 showed all of them too.
+@pytest.mark.parametrize("password", TAIL_PASSWORDS)
+@pytest.mark.parametrize(
+    "line",
+    [
+        "const cfg = { apiKey: process.env.API_KEY, password: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        "const cfg = { token: process.env.T, dbPassword: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        "const cfg = { secret: env.SECRET, password: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        "connect({ apiKey: k, password: process.env.DB_PASSWORD?.trim() || '<P>' })",
+        "client.setApiKey(k); const pw = { password: process.env.DB_PASSWORD?.trim() || '<P>' }",
+        "'PASSWORD': cfg.get('db', 'password', fallback='<P>'),",
+        "password: env('DB_PASSWORD', default_value='<P>')",
+        "'PASSWORD': get_secret('db', fallback='<P>')",
+        "{ anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? 'x', "
+        "password: cfg.get('db','password', { fallback: '<P>' }) }",
+        "CONF = {'OPENAI_API_KEY': '<K>', 'PASSWORD': cfg.get('db', 'password', fallback='<P>')}",
+    ],
+)
+def test_every_password_entry_on_a_line_is_withheld_whole(line: str, password: str):
+    text = line.replace("<K>", TAIL_KEY).replace("<P>", password)
+    safe = sanitize_text(text)
+    assert password not in safe and TAIL_KEY not in safe and REDACTED in safe
+    # Read again (as a report excerpt is), the line shows nothing more. The
+    # Python pass reads 'password: "[REDACTED]", default_value=...' as an
+    # annotated assignment the second time, so the text may still change.
+    again = sanitize_text(safe)
+    assert password not in again and TAIL_KEY not in again
+
+
+@pytest.mark.parametrize(
+    ("line", "kept"),
+    [
+        # A sibling entry after the read's own arguments still ends the value.
+        (
+            "{ password: cfg.get('db', { fallback: process.env.P }), label: 'Primary database' }",
+            "'Primary database'",
+        ),
+        (
+            "{ apiKey: process.env.K, password: process.env.P, model: 'gpt-4o-mini-2024-07-18' }",
+            "'gpt-4o-mini-2024-07-18'",
+        ),
+    ],
+)
+def test_an_entry_after_the_password_read_keeps_its_text(line: str, kept: str):
+    assert kept in sanitize_text(line)
+
+
 @pytest.mark.parametrize(
     "line",
     [
