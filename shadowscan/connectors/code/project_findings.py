@@ -25,7 +25,7 @@ from shadowscan.connectors.code.catalogs import (
     project_catalog_files,
     references_could_change,
 )
-from shadowscan.connectors.code.file_scan import _MCP_TRANSPORTS, FileScanner, FindingBase, _Project
+from shadowscan.connectors.code.file_scan import FileScanner
 from shadowscan.connectors.code.mcp_config import _mcp_client_for
 from shadowscan.connectors.code.mcp_tools import mcp_tool_capabilities
 from shadowscan.connectors.code.model_identifiers import (
@@ -48,6 +48,7 @@ from shadowscan.connectors.code.project_evidence import (
     _uncorroborated_signatures,
     _weak_mention_signatures,
 )
+from shadowscan.connectors.code.scan_records import _MCP_TRANSPORTS, FindingBase, _Project
 from shadowscan.connectors.code.semantic_config import (
     a2a_card_metadata,
     a2a_card_tags,

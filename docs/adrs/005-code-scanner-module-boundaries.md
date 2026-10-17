@@ -112,13 +112,14 @@ and the class itself is unchanged.
 
 ## Status (2026-10-17)
 
-Accepted and implemented step by step, one commit per group in the order
-ownership, walk, file scan, findings, moving code without changing it apart
-from renaming the methods other classes now call; the collaborators are classes
-the façade constructs and wires, not mixins. The line ranges above are those of
-2026-10-01; the groups were derived again from the current call graph, and a
-method that served two groups went where it needed the fewest calls across
-them.
+Accepted and implemented step by step: one commit per group in the order
+ownership, walk, file scan, findings, then a fifth that moved the records the
+collaborators share out of `file_scan.py`, each moving code without changing it
+apart from renaming the methods other classes now call; the collaborators are
+classes the façade constructs and wires, not mixins. The line ranges above are
+those of 2026-10-01; the groups were derived again from the current call graph,
+and a method that served two groups went where it needed the fewest calls
+across them.
 
 1. **Ownership** moved into `ownership.CodeOwnership`: `git_info` (was
    `_git_info`), `owner_for` (`_owner_for`), `owners_for_files`
@@ -155,6 +156,16 @@ them.
    coding-agent, MCP, agent-manifest, workflow, IaC and credential finding
    builder. Like the file scan it receives `_base`, and like the walker
    `_root_prefix`.
+5. **Shared records** moved out of `file_scan.py` (2,136 lines after step 3)
+   into the new `scan_records.py`, so that no module of the split exceeds 2,000
+   lines: the `_Project`, `_SourceFile` and `_MatchedSource` records,
+   `FindingBase`, `_MCP_TRANSPORTS` (read by the file scan and the findings
+   collaborator) and the file scan's helpers that need no scanner state,
+   `_document_declares_mcp` with `_DEDICATED_MCP_CONFIG_NAMES`,
+   `_bundled_signature` with `_BUNDLED_PACKS` and `_local_module_predicate`
+   with `_on_disk_project`. The module imports none of the collaborators, so
+   `walk.py` imports `_Project` from it rather than from `filesystem.py` under
+   `TYPE_CHECKING`.
 
 `FilesystemConnector` is the façade: configuration and its validation, the
 engine hooks, `collect()`/`analyze()`/`load_offline()`, `scan_tree` with the

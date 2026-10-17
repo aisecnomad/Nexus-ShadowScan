@@ -113,9 +113,7 @@ from shadowscan.connectors.code.excerpts import _ExcerptSource as _ExcerptSource
 from shadowscan.connectors.code.excerpts import _LazyExcerpt as _LazyExcerpt
 from shadowscan.connectors.code.excerpts import _Snippet as _Snippet
 from shadowscan.connectors.code.file_scan import _ANY_FILE_NAME as _ANY_FILE_NAME
-from shadowscan.connectors.code.file_scan import _BUNDLED_PACKS as _BUNDLED_PACKS
 from shadowscan.connectors.code.file_scan import _COLOCATED_SIGNATURES as _COLOCATED_SIGNATURES
-from shadowscan.connectors.code.file_scan import _DEDICATED_MCP_CONFIG_NAMES as _DEDICATED_MCP_CONFIG_NAMES
 from shadowscan.connectors.code.file_scan import _IAC_EXTENSIONS as _IAC_EXTENSIONS
 from shadowscan.connectors.code.file_scan import _IAC_MODEL_RE as _IAC_MODEL_RE
 from shadowscan.connectors.code.file_scan import _IAM_WILDCARD_RE as _IAM_WILDCARD_RE
@@ -131,20 +129,14 @@ from shadowscan.connectors.code.file_scan import (
 from shadowscan.connectors.code.file_scan import _MAX_MCP_TOOLS as _MAX_MCP_TOOLS
 from shadowscan.connectors.code.file_scan import _MCP_REGISTRATION_RE as _MCP_REGISTRATION_RE
 from shadowscan.connectors.code.file_scan import _MCP_SERVER_IMPORT_RE as _MCP_SERVER_IMPORT_RE
-from shadowscan.connectors.code.file_scan import _MCP_TRANSPORTS as _MCP_TRANSPORTS
 from shadowscan.connectors.code.file_scan import _WORKFLOW_EXTENSIONS as _WORKFLOW_EXTENSIONS
 from shadowscan.connectors.code.file_scan import _XML_EXTENSIONS as _XML_EXTENSIONS
 from shadowscan.connectors.code.file_scan import CI_IMAGE_WEIGHT_SCALE as CI_IMAGE_WEIGHT_SCALE
 from shadowscan.connectors.code.file_scan import MAX_INSTRUCTION_TEXT_BYTES as MAX_INSTRUCTION_TEXT_BYTES
 from shadowscan.connectors.code.file_scan import AbstractSet as AbstractSet
-from shadowscan.connectors.code.file_scan import FileScanner, _MatchedSource, _Project
-from shadowscan.connectors.code.file_scan import _bundled_signature as _bundled_signature
+from shadowscan.connectors.code.file_scan import FileScanner
 from shadowscan.connectors.code.file_scan import _clip as _clip
-from shadowscan.connectors.code.file_scan import _document_declares_mcp as _document_declares_mcp
 from shadowscan.connectors.code.file_scan import _load_json_lenient as _load_json_lenient
-from shadowscan.connectors.code.file_scan import _local_module_predicate as _local_module_predicate
-from shadowscan.connectors.code.file_scan import _on_disk_project as _on_disk_project
-from shadowscan.connectors.code.file_scan import _SourceFile as _SourceFile
 from shadowscan.connectors.code.file_scan import assess_posture as assess_posture
 from shadowscan.connectors.code.file_scan import posture_parseable as posture_parseable
 from shadowscan.connectors.code.go_semantics import langchaingo_agent_matches as langchaingo_agent_matches
@@ -252,6 +244,15 @@ from shadowscan.connectors.code.python_reexports import ReexportLimitError as Re
 from shadowscan.connectors.code.python_reexports import has_local_import as has_local_import
 from shadowscan.connectors.code.python_reexports import project_path as project_path
 from shadowscan.connectors.code.rule_packs import detection_rule_format as detection_rule_format
+from shadowscan.connectors.code.scan_records import _BUNDLED_PACKS as _BUNDLED_PACKS
+from shadowscan.connectors.code.scan_records import _DEDICATED_MCP_CONFIG_NAMES as _DEDICATED_MCP_CONFIG_NAMES
+from shadowscan.connectors.code.scan_records import _MCP_TRANSPORTS as _MCP_TRANSPORTS
+from shadowscan.connectors.code.scan_records import _bundled_signature as _bundled_signature
+from shadowscan.connectors.code.scan_records import _document_declares_mcp as _document_declares_mcp
+from shadowscan.connectors.code.scan_records import _local_module_predicate as _local_module_predicate
+from shadowscan.connectors.code.scan_records import _MatchedSource, _Project
+from shadowscan.connectors.code.scan_records import _on_disk_project as _on_disk_project
+from shadowscan.connectors.code.scan_records import _SourceFile as _SourceFile
 from shadowscan.connectors.code.semantic_config import (  # noqa: F401 - re-exported
     a2a_card_metadata,
     a2a_card_tags,

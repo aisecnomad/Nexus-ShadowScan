@@ -28,6 +28,7 @@ from shadowscan.connectors.code.lockfiles import LOCKFILE_NAMES
 from shadowscan.connectors.code.manifests import is_manifest_name
 from shadowscan.connectors.code.model_artifacts import ARTIFACT_SUFFIXES
 from shadowscan.connectors.code.path_context import _is_test_path
+from shadowscan.connectors.code.scan_records import _Project
 from shadowscan.connectors.code.semantic_config import is_agent_config_path
 from shadowscan.connectors.posture import (
     CLIENT_SIGNATURES,
@@ -41,7 +42,7 @@ from shadowscan.utils.git import MAX_GITMODULES_BYTES, declared_submodule_paths,
 from shadowscan.utils.redaction import sanitize_text
 
 if TYPE_CHECKING:  # filesystem imports this module
-    from shadowscan.connectors.code.filesystem import _Project, _ScanState
+    from shadowscan.connectors.code.filesystem import _ScanState
 
 DEFAULT_MAX_WALK_ENTRIES = 1_000_000
 
