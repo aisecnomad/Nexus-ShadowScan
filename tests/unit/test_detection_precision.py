@@ -108,8 +108,8 @@ def _finding(**kwargs) -> Finding:
         ("deine_api_schluessel", "template"),
         ("jouw_sleutel", "template"),
         ("anda_kunci_api", "template"),
-        # A two-letter possessive needs two words to make a template; the translated word still marks it.
-        ("tu_clave", "placeholder-word"),
+        # A two-letter possessive and one template word make a template too.
+        ("tu_clave", "template"),
         ("SUA-CHAVE-AQUI", "template"),
         ("sk-proj-sua-chave-aqui-" + "q7Lm3Xz9" * 4, "placeholder-word"),
         ("sk-proj-" + "su_clave_de_ejemplo_1234567890abcd", "placeholder-word"),
@@ -1222,6 +1222,29 @@ POSSESSIVE_CREDENTIALS = [
     "ta-" + _MIXED_RUN,
     "Su" + _MIXED_RUN,
 ]
+# A credential noun or placeholder word first or last made a template of
+# these, so their copies in other columns were reported raw and scans dropped
+# them, where main 8c72467 withheld and reported them. Every word after the
+# possessive must be template vocabulary now. The Dutch and German for 'your
+# secret garden' show that a possessive is no placeholder word on its own.
+POSSESSIVE_PASSPHRASES = [
+    "ton-jardin-secret",
+    "votre-jardin-secret",
+    "ton-secret-jardin",
+    "votre-secret-favori",
+    "su-token-de-casa",
+    "tu-token-azul-grande",
+    "vos-secrets-bien-gardes",
+    "sua-senha-forte-azul",
+    "tu-clave-secreta-roja",
+    "ta-key-lime-pie",
+    "ton-pass-navigo",
+    "ta-cle-de-sol",
+    "su-clave-de-sol",
+    "jouw-geheime-tuin",
+    "dein-geheimer-garten",
+]
+POSSESSIVE_CREDENTIALS += POSSESSIVE_PASSPHRASES
 
 
 @pytest.mark.parametrize("credential", POSSESSIVE_CREDENTIALS)
@@ -1259,3 +1282,50 @@ def test_a_passphrase_that_begins_with_a_possessive_is_no_placeholder(value):
 )
 def test_possessive_placeholders_that_name_a_credential_stay_templates(value):
     assert placeholder_reason(value) == "template"
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        # In a phrase of words a translated noun is a word of the phrase: it
+        # marks a placeholder only when every word is template vocabulary.
+        ("minha-senha-forte-azul", None),
+        ("chave-do-carro-azul", None),
+        ("chave_api", "placeholder-word"),
+        ("senha-da-api", "placeholder-word"),
+        # Inside a key it still marks one.
+        ("sk-proj-anahtar_" + "q7Lm3Xz9" * 4, "placeholder-word"),
+    ],
+)
+def test_a_translated_noun_in_a_phrase_of_words_needs_template_words(value, reason):
+    assert placeholder_reason(value) == reason
+
+
+# What the generic pattern reads: sixteen characters or more.
+_SCANNED_PASSPHRASES = [value for value in POSSESSIVE_PASSPHRASES if len(value) >= 16]
+
+
+def test_a_scan_reports_possessive_passphrases_and_withholds_them(tmp_path: Path, run_connector):
+    (tmp_path / ".env").write_text("".join(f"DB_PASSWORD={value}\n" for value in _SCANNED_PASSPHRASES[:5]))
+    (tmp_path / "app").mkdir()
+    settings = "".join(f'DB_PASSWORD = "{value.replace("-", "_")}"\n' for value in _SCANNED_PASSPHRASES[5:10])
+    (tmp_path / "app" / "settings.py").write_text(settings)
+    findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    located = {e.location for f in findings if f.kind.value == "secret" for e in f.evidence}
+    assert {".env:1", ".env:2", ".env:3", ".env:4", ".env:5"} <= located
+    assert {"app/settings.py:1", "app/settings.py:2", "app/settings.py:3"} <= located
+    dumped = json.dumps([f.to_dict() for f in findings], default=str)
+    assert not any(value in dumped or value.replace("-", "_") in dumped for value in _SCANNED_PASSPHRASES)
+
+
+@pytest.mark.parametrize("value", [*_SCANNED_PASSPHRASES, "sua_chave_openai_api", "votre-cle-api-openai"])
+def test_the_judge_reads_a_possessive_phrase_as_the_placeholder_test_does(index, value):
+    # One test decides both: a template is a label to the judge and a
+    # placeholder to placeholder_reason; a passphrase is a password to both.
+    reported = [
+        m
+        for m in index.match_secrets(f"DB_PASSWORD={value}", env_file=True)
+        if m.signature_id == "heuristic.inline-credential"
+    ]
+    assert bool(reported) is (placeholder_reason(value) is None)

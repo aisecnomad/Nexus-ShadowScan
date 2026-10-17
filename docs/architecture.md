@@ -346,6 +346,7 @@ splitting the connector class itself.
 | `shadowscan/utils/jwks.py` | bounded, origin-pinned JWKS fetching and analysis-only JWT and JWS verification |
 | `shadowscan/utils/safe_json.py`, `safe_yaml.py`, `jsonc.py`, `jcs.py` | unambiguous JSON, bounded YAML and lenient JSONC parsing of untrusted input; RFC 8785 canonical JSON |
 | `shadowscan/utils/credential_identity.py`, `identity.py` | secret-keyed credential pseudonyms; identity scope checks shared by discovery and registry approval |
+| `shadowscan/utils/placeholders.py` | the placeholder vocabulary and the possessive-template test that the placeholder test and the credential judge share |
 | `shadowscan/utils/deadline.py`, `digest.py`, `platform.py`, `text.py` | the CLI job deadline; content digests of the scanner's own source; supported platforms for path confinement; small text helpers |
 
 ## Engine hooks

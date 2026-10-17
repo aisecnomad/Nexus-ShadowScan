@@ -152,6 +152,25 @@ R4_SENTENCES = (
     "snout-at-the-bloom",
     "these-only-thump-bloom",
 )
+# Round 4's possessive passphrases: the placeholder test, saas.generic's copies
+# of the value in other columns, and the matcher in an env file and in code.
+R4_POSSESSIVES = (
+    "ton-jardin-secret",
+    "votre-jardin-secret",
+    "ton-secret-jardin",
+    "votre-secret-favori",
+    "su-token-de-casa",
+    "tu-token-azul-grande",
+    "vos-secrets-bien-gardes",
+    "sua-senha-forte-azul",
+    "tu-clave-secreta-roja",
+    "ta-key-lime-pie",
+    "ton-pass-navigo",
+    "ta-cle-de-sol",
+    "su-clave-de-sol",
+    "jouw-geheime-tuin",
+    "dein-geheimer-garten",
+)
 R4_SENTENCE_PLACES = (
     ("env", "DB_PASSWORD={v}", "env"),
     ("compose", "POSTGRES_PASSWORD: {v}", "text"),
@@ -3853,6 +3872,28 @@ ROWS = [
         head=((".env:1", "app/settings.py:1", "docker-compose.yml:4"), "complete", "withheld"),
         main=((".env:1", "app/settings.py:1", "docker-compose.yml:4"), "complete", "withheld"),
     ),
+    # --- r4-review-creds4.json: possessive passphrases read as templates
+    *[
+        Row(f"r4.4-placeholder-{value}", "placeholder", value, mode="", head="credential", main="credential")
+        for value in R4_POSSESSIVES
+    ],
+    *[
+        Row(f"r4.4-saas-{value}", "saas", value, mode="", head="withheld", main="withheld")
+        for value in R4_POSSESSIVES
+    ],
+    *[
+        Row(
+            f"r4.4-{mode}-{value}",
+            "match",
+            template.format(v=value),
+            mode=mode,
+            head="reported",
+            main="reported",
+        )
+        for value in R4_POSSESSIVES
+        if len(value) >= 16
+        for mode, template in (("env", "DB_PASSWORD={v}"), ("code", 'DB_PASSWORD = "{v}"'))
+    ],
 ]
 
 
