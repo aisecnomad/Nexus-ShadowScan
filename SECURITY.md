@@ -333,9 +333,10 @@ coverage, even when a response includes an empty collection field.
   references (`$VAR`, `${{ secrets.X }}`), environment variable names and
   placeholders stay visible, and so does a value that is exactly one read of
   an environment variable by an upper-case name (`apiKey =
-  process.env.OPENAI_API_KEY`, `api_key = os.getenv("OPENAI_API_KEY")`); with a
-  default argument, a fallback literal or any other operand the whole value is
-  withheld.
+  process.env.OPENAI_API_KEY`, `api_key = os.getenv("OPENAI_API_KEY")`). Only
+  blanks and then the end of the line, `;`, `,` or a closing bracket may follow
+  the read: with a default argument, a fallback literal, any other operand or a
+  comment after it the whole value is withheld.
 - **Structured records:** Structured name/value records that connectors
   pass to the sanitizer read their name as a setting too, in either field
   order (`{"name": "OpenAI:Secret", "value": "..."}`, and an opaque value under

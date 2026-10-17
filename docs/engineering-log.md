@@ -967,9 +967,12 @@ public repositories with the tool and read the committed benchmark metrics.
   `os.environ["X"]`, `os.getenv("X")`, `os.environ.get("X")`,
   `System.getenv("X")`, `Environment.GetEnvironmentVariable("X")`,
   `os.Getenv("X")`, `ENV["X"]`, `ENV.fetch("X")`, `Deno.env.get("X")`,
-  `getenv("X")`) is now kept. A default argument, a fallback (`|| "v"`,
-  `or "v"`, `?? "v"`), concatenation, a computed name or a method on the value
-  keeps the whole value withheld, as does any other identifier or call.
+  `getenv("X")`) is now kept. Only blanks and then the end of the line, `;`,
+  `,`, `)`, `}` or `]` may follow the read. A default argument, a fallback
+  (`|| "v"`, `or "v"`, `?? "v"`, also chained in a `key: value` entry),
+  concatenation, a computed name, a method on the value or a comment after the
+  read (`apiKey: process.env.X // old: <key>`) keeps the whole value withheld,
+  as does any other identifier, call or token.
 - **Fewer spurious incomplete scans.** Exit 3 was the common case on ordinary
   repositories, so a CI gate on a nonzero exit failed on them for good:
   - A JSON or YAML document whose structure declares no MCP servers (a
