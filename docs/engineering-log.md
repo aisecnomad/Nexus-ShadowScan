@@ -53,6 +53,10 @@ Counts and figures quoted in an entry are those of its date.
   endpoint catalog's local runtimes and AI command-line tools.
   Regression-tested with each runtime and with Slack, Chrome, Zoom and Make
   rows that stay filtered.
+- These three connector changes alter which findings a scan reports, and
+  `gateway.otel` findings from nested exports get new ids; the
+  [connector correctness migration note](production-migrations.md#october-17-connector-correctness-migration-unreleased)
+  says what moves and to rebuild comparison baselines.
 - The CI coverage leg is selected by a job-level environment expression
   instead of a matrix `include` key, so its check reports as `test (3.11)` —
   the name the branch rulesets require — rather than `test (3.11, true)`,

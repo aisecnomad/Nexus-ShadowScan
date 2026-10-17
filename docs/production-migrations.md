@@ -7,6 +7,43 @@ revision; at release time they fold into the release notes. The
 [candidate change history](history/production-change-history.md) keeps the
 full dated log.
 
+## October 17 connector correctness migration (Unreleased)
+
+Three offline connectors change which findings they report, and
+`gateway.otel` changes the ids of the findings it keeps. Keep earlier reports
+as historical observations and rebuild comparison baselines (the reports
+`shadowscan diff` and `dashboard --baseline` compare against, and any
+`--baseline-sha256` pin) from a scan at the reviewed revision; a comparison
+across this change reports findings as resolved or new that are neither.
+
+- **`gateway.otel` splits nested OTLP callers by service.** A nested OTLP
+  export (`resourceSpans`, `scopeSpans`, `spans`) used to lose its resource
+  attributes, so every caller was reported under `service:unknown-service`,
+  and callers without a `gen_ai.agent.name` merged into one finding per
+  provider, `service:unknown-service/agent:unknown-service`. Each
+  `service.name` is now its own finding, `service:<service>/agent:<agent>`,
+  where the agent defaults to the service. The finding id hashes the
+  resource, so these findings have new ids: carry triage decisions and
+  suppressions over to them. Flat span records that carry
+  `resource.attributes` themselves keep their ids.
+- **`endpoint.host` reports only rows tied to AI.** A row is reported when its
+  name or path matches an AI product signature or its `type`/`category` names
+  an AI category (`ai`, `agent`, `assistant`, `copilot`, `llm`, `mcp`,
+  `model`). Other rows of a general software inventory, which used to become
+  0.7-confidence findings, are dropped with one informational note that does
+  not mark the scan incomplete, and show as resolved against an earlier
+  baseline. Check that the runtimes you expect are still reported; if your
+  collector exports them without a recognized name, have it set an AI
+  `type` or `category`.
+- **`endpoint.ebpf` reads native exports and fails closed on unknown shapes.**
+  Tetragon, Falco, Tracee and Hubble events, which the connector did not read
+  before, now report the connections they carry, so their findings appear as
+  new. A record that matches none of those shapes or the flat record shape is
+  no longer skipped silently: the connector records one warning and the scan
+  is incomplete (exit 3). Fix the export or the collector rather than
+  accepting the exit code; see
+  [eBPF event formats](connectors/endpoint.md#ebpf-event-formats).
+
 ## October 17 precision and completeness migration (Unreleased)
 
 - **Fewer credential findings.** The generic assigned-credential rule no longer

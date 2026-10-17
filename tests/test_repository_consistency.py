@@ -40,6 +40,7 @@ from shadowscan.connectors import ConnectorContext, builtin_connector_names, get
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.common import MAX_PAGES
+from shadowscan.connectors.endpoint.runtime import OtelConnector
 from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
 from shadowscan.engine import DEFAULT_CONNECTOR_TIMEOUT, Engine
 from shadowscan.models import ScanStats
@@ -1482,6 +1483,52 @@ def test_documented_gcp_pagination_caps_match_the_connector(index) -> None:
     help_text = " ".join(GcpConnector.config_keys["max_pages"].split())
     assert f"capped at {MAX_PAGES}" in help_text and f"default {pages['default']}" in help_text
     assert caps in help_text
+
+
+# --- Migration notes ------------------------------------------------------------
+
+
+def _markdown_section(text: str, heading: str) -> str:
+    """The body under one heading line, up to the next heading of the same or a higher level."""
+    assert f"\n{heading}\n" in text, f"no {heading!r} heading"
+    level = len(heading) - len(heading.lstrip("#"))
+    start = text.index(f"\n{heading}\n") + len(heading) + 2
+    end = re.compile(rf"^#{{1,{level}}} ", re.MULTILINE).search(text, start)
+    return text[start : end.start() if end else len(text)]
+
+
+def test_connector_finding_churn_has_a_migration_note() -> None:
+    """Regression: #256 changed three offline connectors' findings with no rebaseline guidance.
+
+    Nested OTLP exports reached gateway.otel without their resource attributes, so callers merged
+    into one ``unknown-service`` finding; each service is now its own finding under a new id.
+    endpoint.host stopped reporting rows nothing ties to AI, and endpoint.ebpf now reads native
+    exports and marks a scan with unrecognized records incomplete. A comparison with an older
+    baseline shows findings as resolved or new that are neither, and finding-identity changes
+    need a migration note (AGENTS.md).
+    """
+    # A nested span without a service.name still gets the resource every nested caller used to get.
+    span = {"attributes": [{"key": "gen_ai.system", "value": {"stringValue": "openai"}}]}
+    nested = {"resourceSpans": [{"resource": {"attributes": []}, "scopeSpans": [{"spans": [span]}]}]}
+    [former] = [finding.resource for finding in OtelConnector(ConnectorContext()).analyze([nested])]
+    heading = "## October 17 connector correctness migration (Unreleased)"
+    note = " ".join(_markdown_section(_read(ROOT / "docs" / "production-migrations.md"), heading).split())
+    for named in (
+        "`gateway.otel`",
+        "`endpoint.host`",
+        "`endpoint.ebpf`",
+        f"`{former}`",
+        "incomplete (exit 3)",
+    ):
+        assert named in note, f"the connector migration note should name {named}"
+    assert "baseline" in note, "the connector migration note should say to rebuild comparison baselines"
+    entry = _markdown_section(
+        _read(ROOT / "docs" / "engineering-log.md"),
+        "### Review fixes: connector correctness, CI check names, benchmark framing (October 17)",
+    )
+    assert "(production-migrations.md#october-17-connector-correctness-migration-unreleased)" in entry, (
+        "the #256 engineering-log entry should link its migration note"
+    )
 
 
 # --- Documented report and transport behaviour matches the code --------------
