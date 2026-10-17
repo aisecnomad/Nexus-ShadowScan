@@ -19,7 +19,12 @@ from requests import RequestException
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
 from shadowscan.connectors.common import config_boolean, failure_summary, finalize
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    assess_app,
+    identity_kind_for,
+    only_ai_name_hint,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Surface
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.http import HttpClient, HttpError
@@ -201,6 +206,16 @@ class OktaConnector(BaseConnector):
             # bookmark / SWA apps without AI signals are noise
             return None
         if not f.frameworks and not machine and not scopes:
+            return None
+        # Suppress apps whose only AI signal is a generic name hint (e.g. a
+        # word like "agent" or "copilot" in the display name) and whose scopes
+        # are entirely standard OIDC housekeeping values.  Without a real
+        # product match or a substantive permission signal these are almost
+        # always false positives — an insurance-agent portal, a CI build-agent
+        # admin console, or a Minecraft Bedrock panel, for example.
+        # Machine (service-app) clients are always surfaced regardless: a service
+        # app with no scopes is an incomplete record, not a false positive.
+        if not machine and only_ai_name_hint(f, scopes):
             return None
         f.metadata.update(
             {
