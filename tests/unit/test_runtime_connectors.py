@@ -14,6 +14,7 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud import kubernetes as kubernetes_module
+from shadowscan.connectors.cloud.gcp import AI_SERVICES as GCP_AI_SERVICES
 from shadowscan.connectors.cloud.kubernetes import KubernetesConnector, OpenShiftConnector
 from shadowscan.connectors.endpoint import runtime as endpoint_runtime
 from shadowscan.connectors.endpoint.catalog import (
@@ -960,6 +961,48 @@ def test_ai_host_pattern_matches_every_google_ai_api_host_the_signatures_name() 
     for host in hosts:
         assert endpoint_runtime._HOST.search(host), host
         assert index.match_domain(host), host
+    assert hosts <= set(GCP_AI_SERVICES)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "aiplatform.mtls.googleapis.com",
+        "us-central1-aiplatform.mtls.googleapis.com",
+        "generativelanguage.mtls.googleapis.com",
+        "documentai.googleapis.com",
+        "eu-documentai.googleapis.com",
+        "contactcenteraiplatform.googleapis.com",
+        "speech.googleapis.com",
+        "eu-speech.googleapis.com",
+    ],
+)
+def test_ebpf_google_mtls_and_other_ai_service_names_are_egress(name) -> None:
+    """Regression: narrowing the AI host pattern to four Google APIs dropped the
+    mutual-TLS endpoints Google client libraries use with a client certificate
+    (``aiplatform.mtls.googleapis.com``) and the Document AI, Contact Center AI and
+    Speech hosts that the GCP connector's AI_SERVICES treats as AI services, all of
+    which were tagged ``llm-egress`` before."""
+    connector = _ebpf_connector()
+    [finding] = connector.analyze([_google_front_end_flow(["www.google.com", name])])
+    assert "llm-egress" in finding.tags
+
+
+def test_ai_host_pattern_matches_every_gcp_ai_service_host() -> None:
+    """The Google hosts the pattern takes are the GCP connector's AI services, each also
+    with a regional prefix and as its mutual-TLS endpoint; a non-AI googleapis host is
+    not one in either form."""
+    for host in GCP_AI_SERVICES:
+        service = host.removesuffix(".googleapis.com")
+        for name in (
+            host,
+            f"us-central1-{host}",
+            f"{service}.mtls.googleapis.com",
+            f"eu-{service}.mtls.googleapis.com",
+        ):
+            assert endpoint_runtime._HOST.fullmatch(name), name
+    for name in ("storage.mtls.googleapis.com", "fonts.googleapis.com", "aiplatform.mtls.example.com"):
+        assert not endpoint_runtime._HOST.search(name), name
 
 
 def test_ebpf_unrecognized_records_warn_once_and_mark_incomplete() -> None:

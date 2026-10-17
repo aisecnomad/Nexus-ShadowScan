@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 from urllib.parse import urlsplit
 
 from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError
+from shadowscan.connectors.cloud.gcp import AI_SERVICES as GCP_AI_SERVICES
 from shadowscan.connectors.code.instruction_content import inspect_instruction_text
 from shadowscan.connectors.code.semantic_config import (
     a2a_card_metadata,
@@ -60,14 +61,23 @@ _POISONING = re.compile(
 # word joiner and invisible operators, isolates, BOM and tag characters.
 _ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\U000e0000-\U000e007f]")
 _TOOL_REF = re.compile(r"\b(?:use|call|invoke)\s+the\s+[`\"']?([A-Za-z][\w.-]{0,63})", re.IGNORECASE)
-# A model provider API host: any OpenAI or Anthropic host, and the Google AI APIs the
-# bundled signatures name (provider.google-gemini, provider.google-vertex-ai,
-# cloud.gcp-vertex-agent-engine), regional prefixes included. Other googleapis.com
-# hosts (fonts, storage, www, ...) are not AI services, and Google front-end
-# addresses carry many of them, so a flow's destination names must not match them.
+# A model provider API host: any OpenAI or Anthropic host, and the Google AI services
+# the GCP connector counts as AI (gcp.AI_SERVICES: Vertex AI, the Gemini API,
+# Dialogflow, Discovery Engine, Document AI, Speech, Contact Center AI, ...), which
+# include every googleapis.com host the bundled signatures name. Each is matched with
+# its regional prefix (``us-central1-aiplatform``, ``eu-documentai``) and as the
+# mutual-TLS endpoint Google client libraries use with a client certificate
+# (``aiplatform.mtls.googleapis.com``). Other googleapis.com hosts (fonts, storage,
+# www, ...) are not AI services, and Google front-end addresses carry many of them,
+# so a flow's destination names must not match them. A Google host is matched from
+# the start of its label only, so a hostile run of hyphenated words is scanned once,
+# not once per word against every service name.
+_GOOGLE_AI_SERVICES = "|".join(
+    sorted(re.escape(host.removesuffix(".googleapis.com")) for host in GCP_AI_SERVICES)
+)
 _HOST = re.compile(
     r"(?:https?://)?(?:[a-z0-9-]{1,63}\.(?:openai\.com|anthropic\.com)"
-    r"|\b(?:[a-z0-9-]{1,63}-)?(?:generativelanguage|aiplatform|discoveryengine|dialogflow)\.googleapis\.com)\b",
+    rf"|(?<![\w-])(?:[a-z0-9-]{{1,63}}-)?(?:{_GOOGLE_AI_SERVICES})(?:\.mtls)?\.googleapis\.com)\b",
     re.IGNORECASE,
 )
 

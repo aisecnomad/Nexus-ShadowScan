@@ -228,7 +228,18 @@ tolerated gap.
   tool-poisoning host rule, which therefore no longer counts other
   `googleapis.com` names as a model provider host (a URL in a description
   still raises the tag). Regression-tested with non-AI
-  Google flows that stay untagged and AI API names that stay egress.
+  Google flows that stay untagged and AI API names that stay egress. A
+  further review found the narrowed pattern too narrow: it missed the
+  mutual-TLS endpoints Google client libraries use with a client
+  certificate (`aiplatform.mtls.googleapis.com`,
+  `us-central1-aiplatform.mtls.googleapis.com`,
+  `generativelanguage.mtls.googleapis.com`) and the Document AI, Contact
+  Center AI and Speech hosts the GCP connector's `AI_SERVICES` counts as
+  AI, all tagged `llm-egress` before. The Google hosts are now derived
+  from `AI_SERVICES`, each with a regional prefix and as its `mtls`
+  endpoint, and matched from the start of a label, which also keeps a
+  64 KiB hostile MCP description cheaper than before. Regression-tested
+  with each missed host; the guide is checked to name every service.
 - `endpoint.host` reports a host inventory row only when its name or path
   matches an AI product signature, its whole name is a known AI product or
   local model runtime, or its `type`/`category` names an AI category;

@@ -40,6 +40,7 @@ import yaml
 
 from shadowscan.config import ScanConfig
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
+from shadowscan.connectors.cloud.gcp import AI_SERVICES as GCP_AI_SERVICES
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.common import MAX_PAGES
@@ -1640,6 +1641,15 @@ def test_documented_gcp_pagination_caps_match_the_connector(index) -> None:
     help_text = " ".join(GcpConnector.config_keys["max_pages"].split())
     assert f"capped at {MAX_PAGES}" in help_text and f"default {pages['default']}" in help_text
     assert caps in help_text
+
+
+def test_endpoint_guide_names_every_google_ai_service_the_ebpf_host_rule_takes() -> None:
+    """endpoint.ebpf's AI host rule takes the GCP connector's AI services; the guide lists
+    them, so a service added there must be named in the guide too."""
+    text = " ".join(_read(ROOT / "docs" / "connectors" / "endpoint.md").split())
+    for host in GCP_AI_SERVICES:
+        assert f"`{host.removesuffix('.googleapis.com')}`" in text, host
+    assert "`aiplatform.mtls.googleapis.com`" in text
 
 
 # --- Migration notes ------------------------------------------------------------
