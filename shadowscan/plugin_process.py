@@ -56,15 +56,24 @@ _MAX_DESCRIPTOR_LIMIT = 1 << 20
 # for the built-in connectors: a variable whose name ends in one of these words
 # (after ``_``, or the whole name; a version after the word, as in
 # ``CI_JOB_JWT_V2``, is ignored, a bare number is not: Git's
-# ``GIT_CONFIG_KEY_0`` names a setting), starts with one of the prefixes, or is
-# one of the CI and cloud SDK variables that carry a credential, the file
-# holding one or a session without such a word at the end of their names. A
-# ``*_URL``, ``*_URI`` or ``*_DSN`` variable is withheld when its value carries
-# a user or password (``redis://:password@host``, ``https://token@host``).
-# Configuration selectors (``AWS_PROFILE``, ``KUBECONFIG``, ``CLOUDSDK_CONFIG``)
-# and endpoints (``IDENTITY_ENDPOINT``) stay, as does everything else a program
-# needs: PATH, HOME, locale, temporary directory, proxy and CA settings.
-# ``SESSION`` is not a suffix: it would also take the desktop's DESKTOP_SESSION.
+# ``GIT_CONFIG_KEY_0`` names a setting), starts with one of the prefixes (a
+# token or connection string whose name ends in a host or connection name:
+# Terraform's ``TF_TOKEN_<host>``, npm's ``npm_config__auth*``, .NET's
+# ``ConnectionStrings__<name>``, Azure App Service's ``<type>CONNSTR_<name>``),
+# is a Bundler host credential (``BUNDLE_<HOST>__COM``: any ``BUNDLE_`` name
+# with ``__``, which also takes the gem-scoped ``BUNDLE_BUILD__<gem>`` and
+# ``BUNDLE_LOCAL__<gem>``), or is one of the CI and cloud SDK variables that
+# carry a credential, the file holding one or a session without such a word at
+# the end of their names. A ``*_URL``, ``*_URI`` or ``*_DSN`` variable is
+# withheld when its value carries a user or password
+# (``redis://:password@host``, ``https://token@host``); a webhook URL
+# (``*_WEBHOOK``, ``*_WEBHOOK_URL``) carries its secret in the path and is
+# always withheld. Configuration selectors (``AWS_PROFILE``, ``KUBECONFIG``,
+# ``CLOUDSDK_CONFIG``, ``DOCKER_CONFIG``, ``BUNDLE_GEMFILE``) and endpoints
+# (``IDENTITY_ENDPOINT``, ``NPM_CONFIG_REGISTRY``) stay, as does everything
+# else a program needs: PATH, HOME, locale, temporary directory, proxy and CA
+# settings. ``SESSION`` is not a suffix: it would also take the desktop's
+# DESKTOP_SESSION.
 CREDENTIAL_NAME_SUFFIXES: tuple[str, ...] = (
     "TOKEN",
     "ACCESSTOKEN",
@@ -79,8 +88,28 @@ CREDENTIAL_NAME_SUFFIXES: tuple[str, ...] = (
     "PAT",
     "JWT",
     "CONNECTION_STRING",
+    "AUTHTOKEN",
+    "WEBHOOK",
+    "WEBHOOK_URL",
 )
-CREDENTIAL_NAME_PREFIXES: tuple[str, ...] = ("OP_SESSION_",)
+CREDENTIAL_NAME_PREFIXES: tuple[str, ...] = (
+    "OP_SESSION_",
+    "TF_TOKEN_",
+    "NPM_CONFIG__AUTH",
+    "CONNECTIONSTRINGS__",
+    # Azure App Service connection strings, one prefix per connection type.
+    "CUSTOMCONNSTR_",
+    "SQLAZURECONNSTR_",
+    "SQLCONNSTR_",
+    "MYSQLCONNSTR_",
+    "POSTGRESQLCONNSTR_",
+    "APIHUBCONNSTR_",
+    "DOCDBCONNSTR_",
+    "EVENTHUBCONNSTR_",
+    "NOTIFICATIONHUBCONNSTR_",
+    "REDISCACHECONNSTR_",
+    "SERVICEBUSCONNSTR_",
+)
 CREDENTIAL_NAMES: frozenset[str] = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
@@ -91,6 +120,8 @@ CREDENTIAL_NAMES: frozenset[str] = frozenset(
         "BW_SESSION",
         "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE",
         "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
+        "COMPOSER_AUTH",
+        "DOCKER_AUTH_CONFIG",
         "GOOGLE_APPLICATION_CREDENTIALS",
         "GOOGLE_GHA_CREDS_PATH",
         "IDENTITY_HEADER",
@@ -103,6 +134,8 @@ CREDENTIAL_NAMES: frozenset[str] = frozenset(
 )
 CREDENTIAL_URL_SUFFIXES: tuple[str, ...] = ("URL", "URI", "DSN")
 _NAME_VERSION = re.compile(r"_V[0-9]+$")
+# Bundler reads a host's credentials from BUNDLE_ and the host, ``.`` written ``__``.
+_BUNDLER_HOST = re.compile(r"BUNDLE_.+__")
 
 
 def _ends_in(upper: str, suffixes: tuple[str, ...]) -> bool:
@@ -112,7 +145,7 @@ def _ends_in(upper: str, suffixes: tuple[str, ...]) -> bool:
 def is_credential_name(name: str) -> bool:
     """Whether an environment variable named ``name`` is withheld from a plugin worker, whatever its value."""
     upper = name.upper()
-    if upper in CREDENTIAL_NAMES or upper.startswith(CREDENTIAL_NAME_PREFIXES):
+    if upper in CREDENTIAL_NAMES or upper.startswith(CREDENTIAL_NAME_PREFIXES) or _BUNDLER_HOST.match(upper):
         return True
     return _ends_in(_NAME_VERSION.sub("", upper), CREDENTIAL_NAME_SUFFIXES)
 

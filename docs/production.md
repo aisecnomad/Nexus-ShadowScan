@@ -267,8 +267,9 @@ transport limit make the scan incomplete. There is no automatic thread fallback.
 Process mode is lifecycle isolation, not a security sandbox. Workers inherit the
 scanner's privileges. They are started without the credential-shaped environment
 variables the operator exported for the built-in connectors (`*_TOKEN`,
-`*_SECRET`, `*_KEY`, `*_PASSWORD`, `*_PAT`, connection strings and URLs that
-carry a password, the CI and cloud SDK credential variables;
+`*_SECRET`, `*_KEY`, `*_PASSWORD`, `*_PAT`, connection strings, webhook URLs
+and URLs that carry a password, the CI, cloud SDK and package tooling
+credential variables;
 `options.plugin_env` names the ones a plugin keeps), but a worker runs as the
 scanner's user, so a plugin that looks for them can still read its parent's
 environment, every withheld variable and `SHADOWSCAN_IDENTITY_KEY` included,

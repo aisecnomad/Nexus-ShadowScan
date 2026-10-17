@@ -402,8 +402,8 @@ public repositories with the tool and read the committed benchmark metrics.
   identity key, and recommend passing credentials through files or a
   secrets manager (out of the environment, though not out of a same-user
   plugin's reach) and running an untrusted plugin under a separate user or
-  container in a job that does not hold the credential. The same review found the first list
-  missed common CI and cloud credentials: `SYSTEM_ACCESSTOKEN` (the Azure
+  container in a job that does not hold the credential. The same review
+  found the first list missed common CI and cloud credentials: `SYSTEM_ACCESSTOKEN` (the Azure
   Pipelines job token), `AZURE_DEVOPS_EXT_PAT`, `SENDGRID_APIKEY`, Azure
   connection strings, GitLab's `CI_JOB_JWT_V2`, the Azure managed-identity
   `IDENTITY_HEADER`, the credential-file variables google-github-actions/auth
@@ -413,6 +413,21 @@ public repositories with the tool and read the committed benchmark metrics.
   `SESSION` is not a suffix (it would withhold the desktop's
   `DESKTOP_SESSION`), and a bare number after a word does not count, since
   `GIT_CONFIG_KEY_0` names the Git setting `GIT_CONFIG_COUNT` requires.
+  A further review found tooling credentials whose credential word is a
+  prefix, has no underscore before it, or is missing from the name:
+  Terraform's `TF_TOKEN_<host>`, npm's `npm_config__authToken`,
+  `NPM_CONFIG__AUTH` and per-registry `:_authToken`, `NGROK_AUTHTOKEN`,
+  GitLab's `DOCKER_AUTH_CONFIG`, `COMPOSER_AUTH`, Bundler's
+  `BUNDLE_<HOST>__COM`, Azure App Service's `CUSTOMCONNSTR_*`,
+  `SQLAZURECONNSTR_*`, `SQLCONNSTR_*`, `MYSQLCONNSTR_*`,
+  `POSTGRESQLCONNSTR_*` and the other connection-string types, .NET's
+  `ConnectionStrings__*`, and webhook URLs (`SLACK_WEBHOOK_URL`), which
+  carry their secret in the path. Names ending in `AUTHTOKEN`, `WEBHOOK` or
+  `WEBHOOK_URL`, those prefixes, any `BUNDLE_` name with `__` (which also
+  takes the gem-scoped `BUNDLE_BUILD__<gem>` and `BUNDLE_LOCAL__<gem>`) and
+  the two exact names are now withheld; `PATH`, `HOME`, `LANG`, `SHELL`,
+  `TMPDIR`, `DOCKER_CONFIG`, `DOCKER_HOST`, `NPM_CONFIG_REGISTRY`,
+  `BUNDLE_GEMFILE`, `BUNDLE_PATH`, `TF_LOG` and `COMPOSER_HOME` stay.
 - **Not carried: redaction patterns on the `regex` module.** The review
   suggested giving the credential redaction patterns a match timeout
   through the `regex` module, as the code connectors' patterns have, so a

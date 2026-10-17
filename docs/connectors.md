@@ -135,21 +135,35 @@ scanner's operating-system privileges and can read what the scanner can. It
 is started without the credentials the operator exported for the built-in
 connectors, and removes them from its own environment again before the plugin
 is imported: every variable whose name ends in `TOKEN`, `ACCESSTOKEN`,
-`SECRET`, `KEY`, `APIKEY`, `PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIALS`,
-`CREDENTIAL`, `PAT`, `JWT` or `CONNECTION_STRING` (after an underscore, or as
-the whole name, and ignoring a version after it, as in `CI_JOB_JWT_V2`),
-every `OP_SESSION_*` variable, the CI and cloud SDK variables that carry a
-credential, the file holding one or a session (`AWS_ACCESS_KEY_ID`,
-`AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`,
-`AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_FEDERATED_TOKEN_FILE`, `BW_SESSION`,
-`CLOUDSDK_AUTH_ACCESS_TOKEN_FILE`, `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`,
-`GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_GHA_CREDS_PATH`, `IDENTITY_HEADER`,
-`OCI_CLI_KEY_FILE`, `OCI_CLI_KEY_CONTENT`, `OCI_CLI_SECURITY_TOKEN_FILE`,
-`DATABASE_URL`, `DATABASE_DSN`), and every `*_URL`, `*_URI` or `*_DSN`
-variable whose value carries a user or password (an `@` after `://`, as in
-`redis://:password@host` or `https://token@host`); configuration selectors such
-as `AWS_PROFILE` and `KUBECONFIG`, endpoints such as `IDENTITY_ENDPOINT`,
-`PATH`, `HOME`, locale, temporary-directory, proxy and CA settings stay. A
+`AUTHTOKEN`, `SECRET`, `KEY`, `APIKEY`, `PASSWORD`, `PASSWD`, `PASSPHRASE`,
+`CREDENTIALS`, `CREDENTIAL`, `PAT`, `JWT`, `CONNECTION_STRING`, `WEBHOOK` or
+`WEBHOOK_URL` (after an underscore, or as the whole name, and ignoring a
+version after it, as in `CI_JOB_JWT_V2`; npm's per-registry
+`npm_config_//<registry>/:_authToken` ends in `_AUTHTOKEN`), every variable
+whose name starts with `OP_SESSION_`, Terraform's `TF_TOKEN_` (`TF_TOKEN_<host>`),
+npm's `NPM_CONFIG__AUTH` (`npm_config__authToken`, `npm_config__auth`),
+.NET's `ConnectionStrings__` or one of Azure App Service's connection-string
+prefixes (`CUSTOMCONNSTR_`, `SQLAZURECONNSTR_`, `SQLCONNSTR_`,
+`MYSQLCONNSTR_`, `POSTGRESQLCONNSTR_`, `APIHUBCONNSTR_`, `DOCDBCONNSTR_`,
+`EVENTHUBCONNSTR_`, `NOTIFICATIONHUBCONNSTR_`, `REDISCACHECONNSTR_`,
+`SERVICEBUSCONNSTR_`), every Bundler host credential (a `BUNDLE_` name with
+`__`, as in `BUNDLE_GITHUB__COM`; this also withholds the gem-scoped
+`BUNDLE_BUILD__<gem>` and `BUNDLE_LOCAL__<gem>`, which a plugin that needs them
+names in `options.plugin_env`), the CI, cloud SDK and package tooling variables
+that carry a credential, the file holding one or a session
+(`AWS_ACCESS_KEY_ID`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`,
+`AWS_WEB_IDENTITY_TOKEN_FILE`, `AZURE_CLIENT_CERTIFICATE_PATH`,
+`AZURE_FEDERATED_TOKEN_FILE`, `BW_SESSION`, `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE`,
+`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, `COMPOSER_AUTH`,
+`DOCKER_AUTH_CONFIG`, `GOOGLE_APPLICATION_CREDENTIALS`,
+`GOOGLE_GHA_CREDS_PATH`, `IDENTITY_HEADER`, `OCI_CLI_KEY_FILE`,
+`OCI_CLI_KEY_CONTENT`, `OCI_CLI_SECURITY_TOKEN_FILE`, `DATABASE_URL`,
+`DATABASE_DSN`), and every `*_URL`, `*_URI` or `*_DSN` variable whose value
+carries a user or password (an `@` after `://`, as in `redis://:password@host`
+or `https://token@host`); configuration selectors such as `AWS_PROFILE`,
+`KUBECONFIG`, `DOCKER_CONFIG` and `BUNDLE_GEMFILE`, endpoints such as
+`IDENTITY_ENDPOINT` and `NPM_CONFIG_REGISTRY`, `PATH`, `HOME`, `SHELL`, locale,
+temporary-directory, proxy and CA settings stay. A
 plugin that reads its own credential from the
 environment names it in `options.plugin_env` (exact names, at most 64), and the
 worker keeps those; a value the configuration interpolates with `${VAR}` is

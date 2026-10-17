@@ -959,6 +959,28 @@ def test_plugin_env_option_is_validated(value):
         ("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", True),
         ("BW_SESSION", True),
         ("OP_SESSION_my", True),
+        # Tooling credentials the second list missed (#258 review): the credential word is a
+        # prefix, has no underscore before it, or the name says nothing about a credential.
+        ("TF_TOKEN_app_terraform_io", True),  # Terraform's TF_TOKEN_<host>
+        ("npm_config__authToken", True),
+        ("NPM_CONFIG__AUTH", True),
+        ("npm_config_//registry.example/:_authToken", True),  # npm's per-registry token
+        ("NGROK_AUTHTOKEN", True),
+        ("DOCKER_AUTH_CONFIG", True),  # GitLab's registry credentials
+        ("COMPOSER_AUTH", True),
+        ("BUNDLE_GITHUB__COM", True),  # Bundler's credentials for github.com
+        ("BUNDLE_GEMS__CONTRIBSYS__COM", True),
+        ("CUSTOMCONNSTR_db", True),  # Azure App Service connection strings
+        ("SQLAZURECONNSTR_db", True),
+        ("SQLCONNSTR_db", True),
+        ("MYSQLCONNSTR_db", True),
+        ("POSTGRESQLCONNSTR_db", True),
+        ("SERVICEBUSCONNSTR_bus", True),
+        ("ConnectionStrings__Default", True),  # .NET configuration
+        ("SLACK_WEBHOOK_URL", True),  # the secret is in the URL path
+        ("SLACK_WEBHOOK_URL_V2", True),
+        ("DISCORD_WEBHOOK", True),
+        ("WEBHOOK_URL", True),
         ("PATH", False),
         ("HOME", False),
         ("LANG", False),
@@ -979,6 +1001,27 @@ def test_plugin_env_option_is_validated(value):
         ("MAX_TOKENS", False),
         ("TURKEY", False),
         ("PYTHONHASHSEED", False),
+        # Neighbours of the tooling credentials, which programs in a plugin need.
+        ("TF_LOG", False),
+        ("TF_CLI_ARGS", False),
+        ("TF_TOKENS_DIR", False),
+        ("NPM_CONFIG_REGISTRY", False),
+        ("npm_config_cache", False),
+        ("NPM_CONFIG_USERCONFIG", False),
+        ("NGROK_REGION", False),
+        ("DOCKER_CONFIG", False),
+        ("DOCKER_HOST", False),
+        ("COMPOSER_HOME", False),
+        ("COMPOSER_AUTHOR", False),
+        ("BUNDLE_GEMFILE", False),
+        ("BUNDLE_PATH", False),
+        ("BUNDLE_WITHOUT", False),
+        ("CONNSTR", False),
+        ("MY_CONNECTION_STRINGS_DIR", False),
+        ("WEBHOOK_EVENTS", False),
+        ("XDG_CONFIG_HOME", False),
+        ("TMPDIR", False),
+        ("SHELL", False),
     ],
 )
 def test_credential_environment_names(name, withheld):
