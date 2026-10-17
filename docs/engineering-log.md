@@ -428,6 +428,13 @@ file_matches)`, now serves every gap site.
   while `scan_secrets` is on (unreadable files already did). Reading oversize
   content for credentials alone stays out of scope; SECURITY.md ("What can
   remain") and scanning.md record the trade-off and its remedies.
+- **A blinding gap leads its root's published details.** The combined
+  summary listed the parts that left the scan incomplete first, but within a
+  part `details` kept the first 50 gaps in walk order, so in a tree of 1,000
+  files with 60 dangling certificate links a `zz/.mcp.json` link (blinding)
+  was cut while 50 tolerated links were listed. `_LedgerPart.evaluate` now
+  lists a part's blinding gaps first, each kind in the order recorded; an
+  over-budget part's partial gaps are the ones that condemned it already.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 

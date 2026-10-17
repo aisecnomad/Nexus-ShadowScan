@@ -421,8 +421,12 @@ class _LedgerPart:
         allowance = policy.allowance(self.examined)
         over_budget = bool(self.gaps) and weighted > allowance
         # A hostile tree can plant thousands of gaps. Every one is counted
-        # against the budget; only the published list is bounded.
-        details = [gap.to_dict() for gap in self.gaps[:MAX_PUBLISHED_GAPS]]
+        # against the budget; only the published list is bounded, and the
+        # blinding gaps lead it, so the gap that condemned the part is never
+        # cut by tolerated ones recorded before it. The sort is stable: each
+        # kind keeps the order it was recorded in.
+        ordered = sorted(self.gaps, key=lambda gap: not gap.blinding)
+        details = [gap.to_dict() for gap in ordered[:MAX_PUBLISHED_GAPS]]
         summary: dict[str, Any] = {
             "examined": self.examined,
             "gaps": len(self.gaps),
