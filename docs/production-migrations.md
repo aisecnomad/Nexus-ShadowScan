@@ -43,6 +43,10 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   verdict line names the root or repository. `stats[].coverage` covers the
   roots that recorded a gap, so its `examined` no longer counts clean roots,
   and its `allowance` is the sum of theirs. Cached and uncached runs agree.
+- **`summary.tolerated_gaps`.** Reports gain this count of unread entries
+  the coverage budget tolerated; the table banner and the exit-3 line show it.
+  Consumers that pin the summary's keys must accept it; older reports
+  without it still merge and compare.
 
 ## October 17 engine review migration (Unreleased)
 

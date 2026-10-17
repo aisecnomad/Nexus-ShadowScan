@@ -179,6 +179,8 @@ def _incomplete_explanation(result: ScanResult) -> str:
     note = f"scan incomplete (exit 3): {detail}; see the report's warnings, errors and stats"
     if summary["declared_omissions"]:
         note += f"; {summary['declared_omissions']} declared omission(s) did not count"
+    if summary["tolerated_gaps"]:
+        note += f"; {summary['tolerated_gaps']} coverage gap(s) within budget did not count"
     return note
 
 

@@ -1074,3 +1074,30 @@ def test_spawned_plugin_scrubs_identity_key_from_worker_environment(installed_pr
     assert result.findings[0].metadata["env_has_identity_key"] is False
     assert result.findings[0].metadata["ctx_has_identity_key"] is False
     _assert_reaped(installed_probe)
+
+
+def _worker_ledger(gaps: int) -> dict:
+    ledger = CoverageLedger()
+    ledger.add_examined(40)
+    for number in range(gaps):
+        ledger.record(
+            CoverageGap(detail=f"code.filesystem: tests/{number}.bin: unreadable", path=f"tests/{number}.bin")
+        )
+    return ledger.evaluate(CoveragePolicy())[1]
+
+
+def test_result_stats_refuse_a_ledger_within_budget_that_lost_more_than_it_was_allowed():
+    summary = {**_worker_ledger(1), "weighted_gap_entries": 9.0}
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": summary}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    with pytest.raises(ValueError):
+        _decode_result(payload, 1, ConnectorSpec(ENTRY))
+
+
+def test_result_stats_over_budget_are_incomplete_whatever_the_worker_says():
+    summary = _worker_ledger(10)
+    assert summary["within_budget"] is False
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": summary, "incomplete": False}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.incomplete

@@ -200,6 +200,10 @@ def validate_coverage_summary(value: object) -> dict[str, Any] | None:
             raise ValueError(message)
     if type(value["within_budget"]) is not bool:
         raise ValueError(message)
+    # Within budget means no part lost more than it was allowed, so neither
+    # can the parts together: a summary claiming otherwise was not computed here.
+    if value["within_budget"] and value["weighted_gap_entries"] > value["allowance"]:
+        raise ValueError(message)
     truncated = value.get("details_truncated", 0)
     if type(truncated) is not int or truncated < 0:
         raise ValueError(message)
@@ -221,6 +225,23 @@ def validate_coverage_summary(value: object) -> dict[str, Any] | None:
         ):
             raise ValueError(message)
     return value
+
+
+def coverage_incomplete(summary: dict[str, Any] | None) -> bool:
+    """Whether a validated ledger summary says its run is incomplete: over budget or blinded.
+
+    For statistics read back from a report or a plugin worker, whose
+    ``incomplete`` flag must not claim a complete run its own ledger refutes.
+    """
+    return summary is not None and (not summary["within_budget"] or summary["blinding_gaps"] > 0)
+
+
+def tolerated_gap_entries(summary: Any) -> int:
+    """Unread entries a run's budget tolerated: a within-budget summary's ``gap_entries``, else 0."""
+    if not isinstance(summary, dict) or summary.get("within_budget") is not True:
+        return 0
+    entries = summary.get("gap_entries")
+    return entries if type(entries) is int and entries > 0 else 0
 
 
 def combine_coverage_summaries(summaries: Iterable[dict[str, Any] | None]) -> dict[str, Any] | None:

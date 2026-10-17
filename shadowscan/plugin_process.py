@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import known_incomplete_reasons
-from shadowscan.coverage import validate_coverage_summary
+from shadowscan.coverage import coverage_incomplete, validate_coverage_summary
 from shadowscan.models import Finding, ScanStats, now_iso
 from shadowscan.signatures import Signature, SignatureIndex
 from shadowscan.utils.redaction import sanitize
@@ -578,7 +578,10 @@ def _decode_result(
     stats.connector = spec.id
     # Reason keys are the plugin process's own text, bound for the banner and the exit-3 line.
     stats.incomplete_reasons = known_incomplete_reasons(stats.incomplete_reasons)
-    stats.incomplete = stats.incomplete or stats.skipped or bool(stats.errors)
+    # A ledger over budget or blinded is an incomplete run, whatever the flag says.
+    stats.incomplete = (
+        stats.incomplete or stats.skipped or bool(stats.errors) or coverage_incomplete(stats.coverage)
+    )
     findings = [Finding.from_dict(item) for item in data["findings"]]
     if any(finding.connector != spec.name for finding in findings) or stats.findings != len(findings):
         raise ValueError("invalid plugin finding attribution or count")

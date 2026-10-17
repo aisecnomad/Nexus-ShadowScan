@@ -62,6 +62,8 @@ def _header(result: ScanResult) -> Text:
     header.append(f"{s['total']} findings", style="bold")
     if s["declared_omissions"]:
         header.append(f"  •  {s['declared_omissions']} declared omissions", style="yellow")
+    if s["tolerated_gaps"]:
+        header.append(f"  •  {s['tolerated_gaps']} tolerated coverage gaps", style="yellow")
     if has_inventory(result):
         header.append(f"  •  {s['shadow']} shadow", style="bold red")
         header.append(f" (inventory: {result.inventory_size} registered agents)", style="dim")

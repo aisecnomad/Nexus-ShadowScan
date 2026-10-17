@@ -101,6 +101,20 @@ strict accounting, credentials, declaration, discount, budget.
   semantics: a multi-root scan is complete only if every root would be
   complete scanned alone. The provider connectors keep handing their policy
   to the nested connector, which now reads it (strict accounting above).
+- **Tolerated gaps reach the summary.** Both the budget and the ci profile
+  let a scan with unread content exit 0, but only `declared_omissions`
+  reached `summary`, the table banner and the exit-3 line; a default-profile
+  scan that tolerated a dangling `tests/certs` link looked as if it had read
+  everything. `summary.tolerated_gaps` is the sum of `gap_entries` over the
+  runs within budget, shown in the banner and the exit-3 line beside the
+  declared omissions. Fleet merge recomputes it from the stats and reads a
+  source whose summary disagrees as inconsistent completion evidence; a report
+  without the field loads as before. `validate_coverage_summary` (used by
+  fleet merge, dashboard, diff and the plugin result checks) refuses a
+  summary within budget whose weighted gaps exceed its allowance, and the
+  fleet reader and the plugin decoder mark stats incomplete when their
+  ledger is over budget or blinded, so a source cannot present tolerated
+  gaps its own arithmetic refutes.
 
 ### Review fixes: what diff holds back under the ci profile (October 17)
 

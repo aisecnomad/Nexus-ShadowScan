@@ -566,3 +566,52 @@ def test_merge_drops_advisory_llm_triage_from_sources(tmp_path: Path):
     merged = merge_reports([("aaa-attacker.json", forged), ("laptop-a.json", report)])
     assert merged.findings
     assert all("llm_triage" not in f.metadata for f in merged.findings)
+
+
+def _tolerating_report(tmp_path: Path) -> dict:
+    """A complete scan report whose coverage budget tolerated one dangling test link."""
+    repo = tmp_path / "laptop"
+    (repo / "tests" / "certs").mkdir(parents=True)
+    for number in range(60):
+        (repo / f"mod{number}.py").write_text(f"VALUE = {number}\n")
+    (repo / ".mcp.json").write_text(MCP)
+    (repo / "tests" / "certs" / "ca.pem").symlink_to(repo / "missing.pem")
+    report = json.loads(_scan(repo, tmp_path / "laptop.json").read_text())
+    assert report["summary"]["tolerated_gaps"] == 1
+    return report
+
+
+def test_fleet_carries_tolerated_gaps_and_loads_reports_without_the_field(tmp_path: Path):
+    report = _tolerating_report(tmp_path)
+    merged = merge_reports([("laptop", report)])
+    assert merged.complete and merged.summary()["tolerated_gaps"] == 1
+    # A report written before the field existed still merges, and still counts them.
+    del report["summary"]["tolerated_gaps"]
+    merged = merge_reports([("laptop", report)])
+    assert merged.complete and merged.summary()["tolerated_gaps"] == 1
+
+
+@pytest.mark.parametrize("value", [5, -1, "1", None])
+def test_fleet_treats_a_summary_whose_tolerated_gaps_its_stats_do_not_hold_as_inconsistent(
+    tmp_path: Path, value
+):
+    report = _tolerating_report(tmp_path)
+    report["summary"]["tolerated_gaps"] = value
+    merged = merge_reports([("laptop", report)])
+    assert not merged.complete
+    assert any("inconsistent completion evidence" in e for s in merged.stats for e in s.errors)
+
+
+def test_fleet_refuses_a_ledger_within_budget_that_lost_more_than_it_was_allowed(tmp_path: Path):
+    report = _tolerating_report(tmp_path)
+    report["stats"][0]["coverage"]["weighted_gap_entries"] = 50.0
+    with pytest.raises(ValueError, match="coverage"):
+        merge_reports([("laptop", report)])
+
+
+def test_fleet_reads_a_ledger_over_budget_as_incomplete_whatever_the_flag_says(tmp_path: Path):
+    report = _tolerating_report(tmp_path)
+    report["stats"][0]["coverage"]["within_budget"] = False
+    merged = merge_reports([("laptop", report)])
+    assert not merged.complete
+    assert merged.summary()["tolerated_gaps"] == 0

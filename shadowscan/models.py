@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from shadowscan.coverage import tolerated_gap_entries
 from shadowscan.utils.redaction import (
     SanitizationLimitError,
     _check_sanitization_structure,
@@ -916,6 +917,9 @@ class ScanResult:
             # one that failed or was skipped before it recorded a diagnostic has no entry.
             "incomplete_reasons": dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))),
             "declared_omissions": sum(s.declared_omissions for s in self.stats),
+            # Entries left unread that a run's coverage budget tolerated: a complete
+            # scan that skipped content says so, as a profile scan's omissions do.
+            "tolerated_gaps": sum(tolerated_gap_entries(s.coverage) for s in self.stats),
         }
 
     def to_dict(self) -> dict[str, Any]:

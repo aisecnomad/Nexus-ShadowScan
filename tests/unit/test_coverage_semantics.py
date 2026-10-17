@@ -312,3 +312,39 @@ def test_a_few_discounted_fixtures_are_listed_and_tolerated(tmp_path, run_connec
     [binary] = by_path["tests/fixtures/attachment.txt"]
     assert binary["full_weight"] is True
     assert not any(gap["full_weight"] for gap in by_path["tests/fixtures/agents.yaml"])
+
+
+# ------------------------------------------------------------ tolerated gaps
+# A complete scan whose budget tolerated unread entries says so in its summary,
+# the table banner and the exit-3 line, as a profile scan's declared omissions do.
+def test_the_summary_counts_the_gaps_a_budget_tolerated(tmp_path, run_connector):
+    from shadowscan.models import ScanResult
+    from shadowscan.reporters.table import _header
+
+    _tree(tmp_path, links=["tests/certs/ca.pem"])
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    result = ScanResult(stats=[ctx.stats])
+    summary = result.summary()
+    assert summary["complete"] is True
+    assert summary["tolerated_gaps"] == 1 and summary["declared_omissions"] == 0
+    assert "1 tolerated coverage gaps" in _header(result).plain
+
+
+def test_an_over_budget_run_tolerated_nothing(tmp_path, run_connector):
+    from shadowscan.models import ScanResult
+
+    _tree(tmp_path, links=[f"src/link{i}.py" for i in range(10)])
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert ScanResult(stats=[ctx.stats]).summary()["tolerated_gaps"] == 0
+
+
+def test_the_exit_3_line_counts_tolerated_gaps_beside_declared_omissions(tmp_path):
+    import json
+
+    good, bad = _tree(tmp_path / "good", links=["tests/certs/ca.pem"]), tmp_path / "bad"
+    _tree(bad, {"src/agent.py": b"import os\x00\n"})
+    result = CliRunner().invoke(main, ["code", str(good), str(bad), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    assert json.loads(result.stdout)["summary"]["tolerated_gaps"] == 1
+    assert "1 coverage gap(s) within budget did not count" in result.stderr

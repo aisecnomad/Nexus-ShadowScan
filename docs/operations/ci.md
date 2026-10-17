@@ -38,6 +38,9 @@ report counts the same categories in `summary.incomplete_reasons`; the named
 diagnostics are in the report's `stats`. The categories name no path or value,
 so the stderr line can stay in a public job log that the private report should
 not reach. See [coverage policy](../scanning.md#coverage-policy) for the list.
+A complete scan can still have left entries unread within its coverage
+budget: `summary.tolerated_gaps` counts them, as `summary.declared_omissions`
+counts what `--profile ci` declared, and the table banner shows both.
 
 A repository's test cassettes, fixtures over a megabyte and dangling test
 certificate links each exit 3 by default, because the credential pass would
