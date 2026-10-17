@@ -514,6 +514,37 @@ def test_ebpf_reads_native_hubble_flows() -> None:
     assert "local-llm-traffic" in bare[0].tags
 
 
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["static.example.com", "api.openai.com"],
+        ["static.example.com", "cdn.example.net", "api.anthropic.com"],
+        ["x" * 600 + ".example.com", "api.openai.com"],
+    ],
+)
+def test_ebpf_hubble_scores_every_destination_name(names) -> None:
+    """Regression: only the first ``destination_names`` entry was read, so a
+    CDN-shared address whose AI host name came second gave no finding on a
+    scan that stayed complete."""
+    connector = EbpfConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.ebpf", started_at="2026-01-01T00:00:00Z")
+    flow = {
+        "flow": {
+            "IP": {"source": "10.8.0.14", "destination": "162.159.140.245"},
+            "l4": {"TCP": {"destination_port": 443}},
+            "source": {"namespace": "ai", "pod_name": "agent-0"},
+            "destination_names": names,
+        }
+    }
+    findings = list(connector.analyze([flow]))
+    assert [finding.resource for finding in findings] == ["ai/agent-0/runtime-process"]
+    assert "llm-egress" in findings[0].tags
+    assert not connector.ctx.stats.incomplete
+
+    unrelated = {"flow": {**flow["flow"], "destination_names": ["static.example.com", "cdn.example.net"]}}
+    assert list(connector.analyze([unrelated])) == []
+
+
 def test_ebpf_unrecognized_records_warn_once_and_mark_incomplete() -> None:
     """An export full of unread events must not look like a clean scan."""
     connector = EbpfConnector(ConnectorContext())

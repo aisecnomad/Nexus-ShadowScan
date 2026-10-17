@@ -195,7 +195,7 @@ ports:
 | Tetragon | `tetra getevents -o json` events (`process_exec`, `process_kprobe`, …) | `process.binary`, `process.pod.namespace`/`name`, and the first `sock_arg` (`daddr`, `dport`) or `sockaddr_arg` (`addr`, `port`) kprobe argument; snake_case and lowerCamelCase keys are both read |
 | Falco | JSON alerts (`json_output: true`) | `output_fields`: `proc.name`, `fd.sip.name`/`fd.rip.name`/`fd.sip`/`fd.rip`, `fd.sport`/`fd.rport`, `k8s.ns.name`, `k8s.pod.name` |
 | Tracee | JSON events | `processName`, `kubernetes.podName`/`podNamespace`, and the first sockaddr map in `args` (`sin_addr`/`sin6_addr`, `sin_port`/`sin6_port`) |
-| Hubble | `hubble observe -o json` flows, wrapped under `flow` or bare | `destination_names` (preferred) or `IP.destination`, the `l4` TCP/UDP `destination_port`, and the client workload from `source.namespace`/`pod_name` |
+| Hubble | `hubble observe -o json` flows, wrapped under `flow` or bare | every `destination_names` entry (a CDN-shared address resolves from several names, and the AI host need not come first), or `IP.destination` when there are none, the `l4` TCP/UDP `destination_port`, and the client workload from `source.namespace`/`pod_name` |
 | Flat | Records exported by other collectors | `process_name`/`binary` or a `process` object, `destination`/`remote_addr`/`hostname`/`server.address`/`url`, `port`/`destination_port`, `namespace`, `pod`/`pod_name` |
 
 Kernel-level events usually carry numeric destination addresses, so Tetragon

@@ -885,6 +885,8 @@ _EBPF_FLAT_KEYS = frozenset(
         "destination_port",
     }
 )
+# The flat fields that name where an event connected, scored for AI hosts.
+_EBPF_DESTINATION_KEYS = ("destination", "remote_addr", "hostname", "server.address", "url")
 # Tetragon wraps each event under its type (``tetra getevents -o json``).
 _TETRAGON_EVENT_KEYS = (
     "process_kprobe",
@@ -1044,13 +1046,16 @@ def _hubble_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, 
     names = _ebpf_list(flow, "destination_names", defects)
     if not all(isinstance(name, str) for name in names):
         defects.add("malformed")
-    destination = next((name for name in names if isinstance(name, str) and name), address)
+    # Every name the destination address was resolved from: a CDN-fronted
+    # address carries several, and the AI host need not come first. A tuple,
+    # which no JSON or YAML export holds, has ``analyze`` read each name.
+    destinations = tuple(name for name in names if isinstance(name, str) and name)
     l4 = _ebpf_field(flow, ("l4",), dict, defects) or {}
     entry = _ebpf_field(l4, ("TCP", "UDP", "tcp", "udp", "SCTP"), dict, defects) or {}
     source = _ebpf_field(flow, ("source",), dict, defects) or {}
     return {
         "process_name": "",
-        "destination": destination,
+        "destination": destinations or address,
         "destination_port": _ebpf_field(entry, ("destination_port",), _EBPF_PORT, defects),
         "namespace": _ebpf_field(source, ("namespace",), str, defects),
         "pod": _ebpf_field(source, ("pod_name",), str, defects),
@@ -1096,6 +1101,18 @@ class EbpfConnector(_EndpointConnector):
                 self._reported_defects |= {(producer, defect)}
                 self.ctx.warn(_EBPF_DEFECT_WARNINGS[defect].format(producer=producer))
 
+    def _destination_text(self, record: dict[str, Any]) -> str:
+        """The record's destination fields as one text to score, each value cut to 512 characters.
+
+        A reader passes several destination names as a tuple (Hubble's
+        ``destination_names``); each is read on its own, so none is cut off by those before it.
+        """
+        values: list[Any] = []
+        for key in _EBPF_DESTINATION_KEYS:
+            value = record.get(key)
+            values.extend(value if isinstance(value, tuple) else (value,))
+        return " ".join(self._text(value, 512) for value in values)
+
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for raw in records:
             normalized = _normalize_ebpf_record(raw)
@@ -1112,10 +1129,7 @@ class EbpfConnector(_EndpointConnector):
             producer, record, defects = normalized
             # The event is still scored on what was read.
             self._report_defects(producer, defects)
-            serialized = " ".join(
-                self._text(record.get(key), 512)
-                for key in ("destination", "remote_addr", "hostname", "server.address", "url")
-            )
+            serialized = self._destination_text(record)
             process = record.get("process")
             if isinstance(process, dict):
                 serialized += " " + self._text(process.get("binary") or process.get("name"))

@@ -33,7 +33,12 @@ Counts and figures quoted in an entry are those of its date.
   reader now notes the fields it could not read, and the connector records
   one fixed-text warning per producer for malformed fields and one for the
   list limit, either of which marks the scan incomplete; the event is still
-  scored on what was read. Negative tests cover each producer.
+  scored on what was read. Negative tests cover each producer. The Hubble
+  reader also scored only the first `destination_names` entry, so a
+  CDN-shared address listed as `static.example.com` before
+  `api.openai.com` gave no finding; every name (up to the list limit) is
+  now scored on its own. Regression-tested with the AI host second and
+  third.
 - `endpoint.host` reports a host inventory row only when its name or path
   matches an AI product signature, its whole name is a known AI product or
   local model runtime, or its `type`/`category` names an AI category;
