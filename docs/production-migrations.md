@@ -66,18 +66,21 @@ across this change reports findings as resolved or new that are neither.
   names a known AI product or runtime, or an AI category: its name or path
   matches an AI product signature; its whole `name`, `path` file name or
   `process` is a known AI product or local model runtime (Ollama, LM Studio,
-  GPT4All, llama.cpp, vLLM, LocalAI, Jan, Msty, the runtimes whose model stores
-  the endpoint catalog lists, ...), compared without an `.app` or `.exe` suffix
-  or a trailing version; or its `type`/`category` contains an AI category word
+  GPT4All, llama.cpp, vLLM, LocalAI, Jan, Msty, self-hosted AI platforms such
+  as Open WebUI, AnythingLLM and LiteLLM, ...), compared without an `.app` or
+  `.exe` suffix or a trailing version, where a name that is also an ordinary
+  word or tool (`goose`, `jan`, `lms`) counts only beside its product's own
+  directory or bundle; its path is a model store the endpoint catalog lists
+  (`~/.ollama/models`, `~/.cache/lm-studio/models`); or its `type`/`category`
+  contains an AI category word
   (`ai`, `agent`, `assistant`, `copilot`, `llm`, `mcp`, `model`, so
   `monitoring agent` counts). osquery `apps`/`programs` and MDM rows such as
   `Ollama`, `LM Studio.app` or `Ollama version 0.5.7` are therefore still
   reported and keep their ids. Other rows of a general software inventory,
   which used to become 0.7-confidence findings, are dropped with one
   informational note that does not mark the scan incomplete, and show as
-  resolved against an earlier baseline. So are a row whose name only contains
-  a runtime name and a row that names only a model-store directory
-  (`~/.ollama/models`). Check that the runtimes you expect are still reported;
+  resolved against an earlier baseline. So is a row whose name only contains
+  a runtime name. Check that the runtimes you expect are still reported;
   if your collector exports them under another name, have it set an AI `type`
   or `category`. See
   [host inventory rows](connectors/endpoint.md#host-inventory-rows).
