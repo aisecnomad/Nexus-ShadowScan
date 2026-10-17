@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 
 from shadowscan.cli import main
@@ -30,7 +31,8 @@ from shadowscan.models import ScanResult, ScanStats, Surface
 from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = ROOT / "tests" / "fixtures"
 RUNTIME_CASES = [
     pytest.param(HostConnector, {}, {"name": "local-agent"}, id="host"),
     pytest.param(
@@ -581,6 +583,45 @@ def test_ebpf_reads_camel_case_tetragon_and_sockaddr_arguments() -> None:
     )
     assert [finding.resource for finding in findings] == ["ai/agent-1/python3"]
     assert "local-llm-traffic" in findings[0].tags
+
+
+def test_ebpf_reads_every_socket_argument_of_the_example_tetragon_policy() -> None:
+    """Regression: only the first ``sock_arg``/``sockaddr_arg`` was read. The example
+    TracingPolicy hooks ``tcp_v4_connect`` with ``[sock, sockaddr]``, and at kprobe
+    entry the socket has no destination yet, so the address and port in the
+    ``sockaddr_arg`` were never read and the scan stayed complete with no finding."""
+    policy = yaml.safe_load((ROOT / "examples/ebpf/tetragon-tracingpolicy.yaml").read_text(encoding="utf-8"))
+    [hook] = [kprobe for kprobe in policy["spec"]["kprobes"] if kprobe["call"] == "tcp_v4_connect"]
+    arg_types = [arg["type"] for arg in sorted(hook["args"], key=lambda arg: arg["index"])]
+    assert arg_types == ["sock", "sockaddr"]
+    fixture = FIXTURES / "ebpf/tetragon-tcp-v4-connect.jsonl"
+    for line in fixture.read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)["process_kprobe"]
+        # The fixture carries the arguments that hook emits, in its order.
+        assert event["function_name"] == "tcp_v4_connect"
+        assert [next(iter(arg)) for arg in event["args"]] == [f"{kind}_arg" for kind in arg_types]
+
+    connector = EbpfConnector(ConnectorContext(config={"input": str(fixture)}))
+    findings = connector.run()
+    assert [finding.resource for finding in findings] == ["ai/agent-0//usr/bin/python3"]
+    assert "local-llm-traffic" in findings[0].tags
+    assert connector.ctx.stats is None or not connector.ctx.stats.incomplete
+
+
+def test_ebpf_reads_every_tracee_sockaddr_argument() -> None:
+    connector = _ebpf_connector()
+    event = {
+        "eventName": "security_socket_connect",
+        "processName": "uvicorn",
+        "args": [
+            {"name": "local_addr", "value": {"sin_addr": "10.8.0.14", "sin_port": "53"}},
+            {"name": "remote_addr", "value": {"sin_addr": "10.8.0.21", "sin_port": "11434"}},
+        ],
+    }
+    findings = list(connector.analyze([event]))
+    assert [finding.resource for finding in findings] == ["uvicorn"]
+    assert "local-llm-traffic" in findings[0].tags
+    assert connector.ctx.stats.warnings == []
 
 
 def test_ebpf_reads_native_falco_alerts() -> None:

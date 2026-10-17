@@ -975,6 +975,8 @@ _TETRAGON_EVENT_KEYS = (
 _EBPF_ARG_LIMIT = 100
 # A port is a number or, in Tracee's sockaddr maps, its decimal text.
 _EBPF_PORT = (int, str)
+# Default ports of local model servers (Ollama, LM Studio, llama.cpp, vLLM), as text.
+_LOCAL_MODEL_PORTS = frozenset({"11434", "1234", "8080", "8000"})
 # What a reader could not read in a record it recognized: a field of the wrong
 # type ("malformed"), or the entries of a list past _EBPF_ARG_LIMIT ("limit").
 # Each is reported once per producer, the flat record shape included, and
@@ -1025,35 +1027,54 @@ def _tetragon_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str
         return None
     process = _ebpf_field(event, ("process",), dict, defects) or {}
     pod = _ebpf_field(process, ("pod",), dict, defects) or {}
-    destination, port = _tetragon_socket(_ebpf_list(event, "args", defects), defects)
+    destinations, ports = _tetragon_socket(_ebpf_list(event, "args", defects), defects)
     return {
         "process_name": _ebpf_field(process, ("binary",), str, defects) or "",
-        "destination": destination,
-        "destination_port": port,
+        "destination": destinations,
+        "destination_port": ports,
         "namespace": _ebpf_field(pod, ("namespace",), str, defects) or "",
         "pod": _ebpf_field(pod, ("name",), str, defects) or "",
     }
 
 
-def _tetragon_socket(args: list[Any], defects: set[str]) -> tuple[str, Any]:
-    """Destination address and port of the first ``sock_arg`` or ``sockaddr_arg`` argument."""
+# Tetragon's socket argument maps, and the destination address and port each carries.
+_TETRAGON_SOCKETS = (
+    (("sock_arg", "sockArg"), "daddr", "dport"),
+    (("sockaddr_arg", "sockaddrArg"), "addr", "port"),
+)
+
+
+def _tetragon_socket(args: list[Any], defects: set[str]) -> tuple[tuple[str, ...], tuple[Any, ...]]:
+    """Destination addresses and ports of every ``sock_arg`` and ``sockaddr_arg`` argument.
+
+    A hook can take several, and the first need not hold the destination: the example
+    TracingPolicy hooks ``tcp_v4_connect`` with ``[sock, sockaddr]``, and at kprobe entry
+    the socket has no ``daddr`` or ``dport`` yet, while the ``sockaddr`` names the address
+    being connected to.
+    """
+    addresses: list[str] = []
+    ports: list[Any] = []
     for arg in args:
         if not isinstance(arg, dict):
             defects.add("malformed")
             continue
-        sock = _ebpf_field(arg, ("sock_arg", "sockArg"), dict, defects)
-        if sock is not None:
-            return (
-                _ebpf_field(sock, ("daddr",), str, defects) or "",
-                _ebpf_field(sock, ("dport",), _EBPF_PORT, defects),
-            )
-        sockaddr = _ebpf_field(arg, ("sockaddr_arg", "sockaddrArg"), dict, defects)
-        if sockaddr is not None:
-            return (
-                _ebpf_field(sockaddr, ("addr",), str, defects) or "",
-                _ebpf_field(sockaddr, ("port",), _EBPF_PORT, defects),
-            )
-    return "", None
+        for keys, address, port in _TETRAGON_SOCKETS:
+            socket = _ebpf_field(arg, keys, dict, defects)
+            if socket is not None:
+                addresses.append(_ebpf_field(socket, (address,), str, defects))
+                ports.append(_ebpf_field(socket, (port,), _EBPF_PORT, defects))
+    return _present(addresses), _present(ports)
+
+
+def _present(values: Iterable[Any]) -> tuple[Any, ...]:
+    """The values that carry something (a reader's None and empty text drop out)."""
+    return tuple(value for value in values if value)
+
+
+def _each(value: Any) -> tuple[Any, ...]:
+    """A reader's destination or port as the values to score: a reader passes several as a
+    tuple, which no JSON or YAML export holds."""
+    return value if isinstance(value, tuple) else (value,)
 
 
 def _falco_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any] | None:
@@ -1077,11 +1098,11 @@ def _tracee_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, 
     if "processName" not in record and "args" not in record:
         return None
     kubernetes = _ebpf_field(record, ("kubernetes",), dict, defects) or {}
-    destination, port = _tracee_socket(_ebpf_list(record, "args", defects), defects)
+    destinations, ports = _tracee_socket(_ebpf_list(record, "args", defects), defects)
     return {
         "process_name": _ebpf_field(record, ("processName",), str, defects),
-        "destination": destination,
-        "destination_port": port,
+        "destination": destinations,
+        "destination_port": ports,
         "namespace": _ebpf_field(kubernetes, ("podNamespace",), str, defects)
         or _ebpf_field(record, ("podNamespace",), str, defects),
         "pod": _ebpf_field(kubernetes, ("podName",), str, defects)
@@ -1089,19 +1110,19 @@ def _tracee_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, 
     }
 
 
-def _tracee_socket(args: list[Any], defects: set[str]) -> tuple[str, Any]:
-    """Destination address and port of the first sockaddr map among the event's arguments."""
+def _tracee_socket(args: list[Any], defects: set[str]) -> tuple[tuple[str, ...], tuple[Any, ...]]:
+    """Destination addresses and ports of every sockaddr map among the event's arguments."""
+    addresses: list[str] = []
+    ports: list[Any] = []
     for arg in args:
         if not isinstance(arg, dict):
             defects.add("malformed")
             continue
         value = _tracee_sockaddr(arg, defects)
         if isinstance(value, dict) and ("sin_addr" in value or "sin6_addr" in value):
-            return (
-                _ebpf_field(value, ("sin_addr", "sin6_addr"), str, defects) or "",
-                _ebpf_field(value, ("sin_port", "sin6_port"), _EBPF_PORT, defects),
-            )
-    return "", None
+            addresses.append(_ebpf_field(value, ("sin_addr", "sin6_addr"), str, defects))
+            ports.append(_ebpf_field(value, ("sin_port", "sin6_port"), _EBPF_PORT, defects))
+    return _present(addresses), _present(ports)
 
 
 def _tracee_sockaddr(arg: dict[str, Any], defects: set[str]) -> Any:
@@ -1217,8 +1238,7 @@ class EbpfConnector(_EndpointConnector):
         flat record's destination fields); each is read on its own, so none is cut off by
         those before it.
         """
-        value = record.get("destination")
-        return " ".join(self._text(item, 512) for item in (value if isinstance(value, tuple) else (value,)))
+        return " ".join(self._text(item, 512) for item in _each(record.get("destination")))
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for raw in records:
@@ -1239,11 +1259,11 @@ class EbpfConnector(_EndpointConnector):
             binary = self._text(record.get("process_name"))
             serialized = self._destination_text(record) + " " + binary
             lower = serialized.lower()
-            port = str(record.get("destination_port") or "")
+            ports = {str(port) for port in _each(record.get("destination_port")) if port}
             tags = []
             if _HOST.search(serialized) or any(host in lower for host in ("openai", "anthropic", "ollama")):
                 tags.append("llm-egress")
-            if port in {"11434", "1234", "8080", "8000"}:
+            if not _LOCAL_MODEL_PORTS.isdisjoint(ports):
                 tags.append("local-llm-traffic")
             if not tags:
                 self.ctx.examined()

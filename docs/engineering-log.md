@@ -125,7 +125,14 @@ Counts and figures quoted in an entry are those of its date.
   separate `malformed process` warning; a JSON boolean is no longer read
   as a port (`bool` subclasses `int`), and a Tracee `remote_addr` or
   `struct sockaddr*` argument whose value is not a map is malformed
-  instead of skipped. Regression-tested per field. The Hubble
+  instead of skipped. Regression-tested per field. The Tetragon and Tracee
+  readers also read only the first socket argument, so events from the
+  repository's own example TracingPolicy, which hooks `tcp_v4_connect`
+  with `[sock, sockaddr]`, lost their destination: at kprobe entry the
+  socket has no `daddr` or `dport`, and the `sockaddr_arg` holding the
+  address and port was never read. Every socket argument (up to the list
+  limit) is now read and scored; a fixture in the example policy's shape
+  is checked against the policy file. The Hubble
   reader also scored only the first `destination_names` entry, so a
   CDN-shared address listed as `static.example.com` before
   `api.openai.com` gave no finding; every name (up to the list limit) is
