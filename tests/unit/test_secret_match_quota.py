@@ -77,9 +77,18 @@ def test_file_past_the_quota_marks_the_scan_incomplete_and_the_finding(tmp_path,
     assert secret.metadata["secrets_limited"] == ["provider.openai"]
     assert ctx.stats.incomplete
     assert [error for error in ctx.stats.errors if "credential evidence incomplete" in error] == [
-        f"code.filesystem: settings.py: more than {MAX_SECRETS_PER_SIGNAL} credentials matched "
-        "provider.openai; credential evidence incomplete"
+        f"code.filesystem: settings.py: credential quota limit reached: more than {MAX_SECRETS_PER_SIGNAL} "
+        "credentials matched provider.openai; credential evidence incomplete"
     ]
+
+
+def test_the_quota_disclosure_is_an_analysis_limit_wherever_the_file_is(tmp_path, index):
+    # The reason is passed, not read from the message, whose path may hold a
+    # word of another category ('http' is an upstream error).
+    text = _assignments(MAX_SECRETS_PER_SIGNAL + 3)
+    for rel in ("keys.py", "src/http_client/keys.py"):
+        _, ctx = _scan(index, tmp_path / rel.replace("/", "-"), {rel: text})
+        assert ctx.stats.incomplete_reasons == {"analysis-limit": 1}, rel
 
 
 def test_file_at_the_quota_stays_complete(tmp_path, index):
