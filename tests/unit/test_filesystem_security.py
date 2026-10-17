@@ -277,9 +277,10 @@ def test_source_symlink_is_skipped_and_marks_scan_incomplete(tmp_path, run_conne
     assert any("framework.langgraph" in finding.frameworks for finding in findings)
     assert not any("private business notes" in str(finding.to_dict()) for finding in findings)
     # The link is never followed; a skipped external target leaves coverage
-    # incomplete regardless of the chosen diagnostic severity.
+    # incomplete regardless of the chosen diagnostic severity. A directory can
+    # hold any number of files, so its link is an error in either mode.
     assert ctx.stats.incomplete
-    diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
+    diagnostics = ctx.stats.errors if strict or kind == "directory" else ctx.stats.warnings
     assert any("symbolic link" in issue for issue in diagnostics)
 
 
@@ -375,9 +376,9 @@ def test_in_root_directory_alias_keeps_findings_but_marks_incomplete(tmp_path, r
 
     findings, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, strict_coverage=strict)
     assert any("framework.crewai" in finding.frameworks for finding in findings)
+    # Every path below the alias is unassessed: an error, never a budgeted gap.
     assert ctx.stats.incomplete
-    diagnostics = ctx.stats.errors if strict else ctx.stats.warnings
-    assert any("symbolic link agents" in issue for issue in diagnostics)
+    assert any("symbolic link agents" in issue for issue in ctx.stats.errors)
 
 
 @pytest.mark.parametrize("kind", ["root", "ancestor", "dotdot"])

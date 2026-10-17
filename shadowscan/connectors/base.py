@@ -373,7 +373,9 @@ class ConnectorContext:
         ``quiet`` records the gap against the budget without a second
         diagnostic line, for a caller that already emitted one representative
         message for a run of identical gaps. The budget still sees every entry,
-        so a tree planted with thousands of them is not tolerated.
+        so a tree planted with thousands of them is not tolerated. A quiet
+        blinding gap still marks the scan incomplete and is counted under its
+        reason, as the representative error was.
 
         ``full_weight`` keeps the path discount off, for a gap that is as
         dangerous in a fixture directory as in a deployed one.
@@ -388,7 +390,12 @@ class ConnectorContext:
         self._coverage.record(gap)
         if gap.blinding:
             # Fail closed immediately; no budget applies to an unbounded gap.
-            self.error(msg)
+            if not quiet:
+                self.error(msg)
+            elif self.stats is not None:
+                self.stats.incomplete = True
+                key = incomplete_reason(gap.detail)
+                self.stats.incomplete_reasons[key] = self.stats.incomplete_reasons.get(key, 0) + 1
             return
         if quiet:
             return

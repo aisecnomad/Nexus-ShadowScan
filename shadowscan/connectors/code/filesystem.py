@@ -1041,6 +1041,22 @@ def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     return target if target == resolved_root or resolved_root in target.parents else None
 
 
+def _link_names_one_file(link: Path) -> bool:
+    """Whether a link the walk does not follow stands for one file at most: dangling, or to a regular file.
+
+    Its target is looked up, never opened. A directory, any other kind of
+    entry, or a lookup that fails for a reason other than absence can stand
+    for any number of files, inside the scan root or outside it.
+    """
+    try:
+        return stat.S_ISREG(os.stat(link).st_mode)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError as exc:
+        # A loop resolves to nothing at all, like a dangling link.
+        return exc.errno == errno.ELOOP
+
+
 def _on_disk_project(root: Path, path: Path, proj_root: str) -> Path:
     """The project directory of ``path`` under its on-disk name; ``proj_root`` is the report-safe form."""
     return root.joinpath(*path.relative_to(root).parts[: len(PurePosixPath(proj_root).parts)])
@@ -1558,6 +1574,7 @@ class FilesystemConnector(BaseConnector):
         )
         self._symlink_warnings: set[Path] = set()
         self._declared_link_notes: set[Path] = set()
+        self._blinding_link_notes: set[Path] = set()
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
         self._lockfile_governed: dict[str, bool] = {}
@@ -2319,16 +2336,32 @@ class FilesystemConnector(BaseConnector):
         # from filling the report with thousands of link names. The budget
         # still counts every one of them, via the quiet ledger entries.
         walk.link_gaps += 1
-        first = root not in self._symlink_warnings
-        self._symlink_warnings.add(root)
         # The target's bytes exist and other tools may read them, so an
         # unscanned target is lost coverage a repository could hide behind —
         # not a file-attributable input defect.
         if self.strict_coverage:
-            if first:
+            if root not in self._symlink_warnings:
+                self._symlink_warnings.add(root)
                 self.ctx.error(f"{message}; coverage incomplete")
             return True
-        self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1, quiet=not first)
+        # A dangling link, or one to a regular file, costs one entry. A link
+        # to a directory (or to a target the lookup cannot classify) can stand
+        # for any number of files, a whole service outside the tree among
+        # them: the scanner cannot bound what it hides, so no budget applies.
+        bounded = _link_names_one_file(link)
+        noted = self._symlink_warnings if bounded else self._blinding_link_notes
+        first = root not in noted
+        noted.add(root)
+        if bounded:
+            self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1, quiet=not first)
+        else:
+            self.ctx.coverage_gap(
+                f"code.filesystem: skipped symbolic link {rel} whose target may hold any number of "
+                "files and is unscanned; coverage incomplete",
+                path=rel,
+                blinding=True,
+                quiet=not first,
+            )
         return True
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:

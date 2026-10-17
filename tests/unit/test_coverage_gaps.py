@@ -269,6 +269,59 @@ class TestEndToEnd:
         assert stats.coverage is not None
         assert stats.coverage["within_budget"] is False
 
+    def test_a_directory_link_to_an_outside_tree_is_never_budgeted(self, tmp_path) -> None:
+        """One link can stand for a whole service of agents and MCP servers: no budget bounds it."""
+        from click.testing import CliRunner
+
+        from shadowscan.cli import main
+
+        repo, outside = tmp_path / "repo", tmp_path / "outside_agents"
+        repo.mkdir()
+        self._tree(repo, 200)
+        outside.mkdir()
+        (outside / ".mcp.json").write_text(
+            '{"mcpServers": {"fs": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem"]}}}',
+            encoding="utf-8",
+        )
+        for i in range(50):
+            (outside / f"agent{i}.py").write_text(
+                "from langchain.agents import AgentExecutor\nAgentExecutor(agent=a, tools=t)\n",
+                encoding="utf-8",
+            )
+        os.symlink(outside, repo / "services")
+        stats = self._run(repo)
+        assert stats.incomplete is True
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 1
+        assert any("symbolic link services" in error for error in stats.errors)
+        assert stats.incomplete_reasons == {"unresolved-link": 1}
+        result = CliRunner().invoke(main, ["code", str(repo), "--format", "json"])
+        assert result.exit_code == 3, result.output
+
+    def test_every_directory_link_is_recorded_and_one_per_root_is_named(self, tmp_path) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._tree(repo, 200)
+        for i in range(5):
+            (tmp_path / f"outside{i}").mkdir()
+            os.symlink(tmp_path / f"outside{i}", repo / f"svc{i}")
+        stats = self._run(repo)
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 5
+        assert len([error for error in stats.errors if "symbolic link" in error]) == 1
+        assert stats.incomplete_reasons == {"unresolved-link": 5}
+
+    def test_a_link_to_one_file_outside_the_tree_is_budgeted(self, tmp_path) -> None:
+        repo, outside = tmp_path / "repo", tmp_path / "outside"
+        repo.mkdir()
+        self._tree(repo, 200)
+        outside.mkdir()
+        (outside / "ca.pem").write_text("certificate\n", encoding="utf-8")
+        (repo / "tests" / "certs").mkdir(parents=True)
+        os.symlink(outside / "ca.pem", repo / "tests" / "certs" / "ca.pem")
+        stats = self._run(repo)
+        assert stats.incomplete is False
+        assert stats.coverage is not None
+        assert stats.coverage["gaps"] == 1 and stats.coverage["blinding_gaps"] == 0
+
     def test_a_gap_in_deployable_code_is_weighed_in_full(self, tmp_path) -> None:
         self._tree(tmp_path, 30)
         self._dangling_link(tmp_path, "services/agent/link.py")
