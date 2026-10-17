@@ -587,6 +587,52 @@ def test_a_fallback_after_a_subscript_or_call_read_is_withheld(line: str):
     assert sanitize_text(safe) == safe
 
 
+# A mixed-case random key, derived so no key sits in the source.
+TAIL_KEY = "".join(
+    c for c in base64.b64encode(hashlib.sha256(b"line-tail").digest()).decode() if c.isalnum()
+)[:32]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # The value lexer cuts these reads at a quote, a bracket or a comma: a
+        # spaced subscript, an optional-chain call, a call with two arguments,
+        # a default argument. The literal after the cut is shown no more.
+        'azureApiKey: process.env.<K>?.trim() || "<K>",',
+        "azureApiKey: process.env[ '<K>' ] || \"<K>\",",
+        "azure_api_key: os.environ[ '<K>' ] if PROD else '<K>'",
+        'azureApiKey: cfg("a", "b") || "<K>",',
+        "azureApiKey: get(process.env, '<K>') || \"<K>\",",
+        'azure_api_key: os.getenv("<K>", "<K>")',
+        'azure_api_key: os.getenv("OPENAI_API_KEY", "<K>")',
+        'const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY?.trim() || "<K>" });',
+        "azureApiKey: cfg.get('a', { d: 1 }) ?? `<K>`,",
+        "azure_api_key: os.environ.get('OPENAI_API_KEY', '<K>')",
+    ],
+)
+def test_a_literal_after_a_credential_name_on_its_line_is_withheld(line: str):
+    text = line.replace("<K>", TAIL_KEY)
+    safe = sanitize_text(text)
+    assert TAIL_KEY not in safe and REDACTED in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Words, model names, references and templates after the name stay.
+        "{ apiKey: os.environ['OPENAI_API_KEY'], model: 'gpt-4o-mini-2024-07-18' }",
+        "const openaiKey = `${prefix}<K>`;",
+        # A literal before the credential's name is no value of it.
+        "log('<K>'); apiKey: process.env.OPENAI_API_KEY",
+    ],
+)
+def test_other_literals_on_a_credential_line_keep_their_text(line: str):
+    text = line.replace("<K>", TAIL_KEY)
+    assert sanitize_text(text) == text
+
+
 @pytest.mark.parametrize(
     "line",
     [

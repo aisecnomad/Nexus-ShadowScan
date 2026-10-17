@@ -1221,13 +1221,18 @@ def _redact_fallback_defaults(text: str, *, extended: bool = False) -> str:
 
 
 _TEXT_LINE = re.compile(r"[^\r\n]++")
-# What a scan for a line's comment stops at: a quote, which opens a string
-# literal, and the comment markers.
+# What a scan of a line's string literals and comment stops at: a quote, which
+# opens a string literal, and the comment markers.
 _LINE_PIECE = re.compile(r"[\"'`]|//|/\*|#")
 # A name joined to a value on a line ('apiKey:', 'api_key =', '"token":').
 _LINE_NAME = re.compile(r"(?<![\w$.-])(?P<name>[A-Za-z_$][\w$.-]*+)[\"']?[ \t]*+(?::(?!:)|=(?![=>~]))")
 # A run of a comment that could be key material: the base64 and URL-safe alphabet.
 _COMMENT_TOKEN = re.compile(r"[A-Za-z0-9+/_.~=-]{8,}+")
+# The same in a string literal, where '=' joins a name to its value
+# ('"sid=<key>"') unless it pads a base64 key's end.
+_LITERAL_TOKEN = re.compile(r"[A-Za-z0-9+/_.~-]{8,}+={0,2}")
+# What may come before a string literal's quote and make it a template.
+_LITERAL_PREFIX = re.compile(r"(?:[rRbBuUfF]{1,2}|[@$]{1,2})\Z")
 
 
 def _closing_quote(line: str, quote: str, start: int) -> int | None:
@@ -1245,53 +1250,80 @@ def _closing_quote(line: str, quote: str, start: int) -> int | None:
     return None
 
 
-def _comment_start(line: str) -> int | None:
-    """Where a comment starts on a line, outside string literals, or None.
+def _line_regions(line: str) -> tuple[list[tuple[int, int]], int | None]:
+    """The spans of a line's string literal bodies, and where its comment starts, or None.
 
-    A '//' or '#' starts one at the line's start or after a blank, ',' or ';'
-    ('https://h/#x' and 'this.#k' hold none); a '/*' starts one anywhere. A
-    string literal that does not close on the line leaves the rest unread.
+    A '//' or '#' starts a comment at the line's start or after a blank, ','
+    or ';' ('https://h/#x' and 'this.#k' hold none); a '/*' starts one
+    anywhere. A string literal that does not close on the line runs to its
+    end, and no comment follows it. A template that assembles its text from
+    expressions ('f"{x}..."', '`${prefix}...`') is left out, as the
+    assignment passes leave it.
     """
+    literals: list[tuple[int, int]] = []
     position = 0
     while (piece := _LINE_PIECE.search(line, position)) is not None:
         mark, start = piece.group(), piece.start()
         if mark in "\"'`":
             close = _closing_quote(line, mark, piece.end())
+            end = len(line) if close is None else close
+            prefix = _LITERAL_PREFIX.search(line, max(0, start - 2), start)
+            if not _interpolated(prefix.group() if prefix else "", mark, line[piece.end() : end]):
+                literals.append((piece.end(), end))
             if close is None:
-                return None
+                return literals, None
             position = close + 1
         elif mark == "/*" or start == 0 or line[start - 1] in " \t,;":
-            return start
+            return literals, start
         else:
             position = piece.end()
+    return literals, None
+
+
+def _credential_assignment_end(line: str, end: int) -> int | None:
+    """Where the first credential name on a line before ``end`` is joined to its value, or None."""
+    for match in _LINE_NAME.finditer(line, 0, end):
+        if _sensitive_assignment_key(match["name"]) or _credential_name(match["name"]):
+            return match.end()
     return None
 
 
-def _redact_trailing_comments(text: str) -> str:
-    """Withhold key material in a comment at the end of a line that assigns a credential name.
+def _redact_line_tails(text: str) -> str:
+    """Withhold key material after a credential's name on its line: in later string literals and the comment.
 
-    The assignment passes withhold a value to its end (',', ';', a blank), so
-    a comment after that end kept its text: 'apiKey: process.env.KEY, // old:
-    <key>' and 'api_key = os.environ["KEY"]; # <key>' showed the old key. On
-    a line where a name the assignment passes read as a credential's
-    (``_sensitive_assignment_key``, or ``_credential_name``: its last word
-    names one) is assigned before a comment, each token of the comment that
+    The assignment passes withhold a value to its end (',', ';', a blank, a
+    closing bracket or quote), so text after that end kept its literals and
+    its comment: 'apiKey: process.env.KEY, // old: <key>' and 'api_key =
+    os.environ["KEY"]; # <key>' showed the old key, and a fallback after a
+    read the value lexer cut at a quote or bracket ('azureApiKey:
+    process.env.K?.trim() || "<key>"', "os.environ[ 'K' ] if PROD else
+    '<key>'", 'os.getenv("K", "<key>")', 'cfg("a", "b") || "<key>"') was
+    shown in 'name: value' form. On a line where a name the assignment passes
+    read as a credential's (``_sensitive_assignment_key``, or
+    ``_credential_name``: its last word names one) is joined to a value, each
+    token of a string literal after that name, and of the comment, that
     ``_credential_literal`` takes for an opaque key is withheld; words,
-    references and placeholders stay. A line is read once.
+    references, model names and placeholders stay. A line is read once.
     """
-    if "//" not in text and "#" not in text and "/*" not in text:
+    if not any(mark in text for mark in "\"'`#/"):
         return text
     spans: list[tuple[int, int]] = []
     for line in _TEXT_LINE.finditer(text):
-        comment = _comment_start(line.group())
-        if comment is None:
+        body = line.group()
+        literals, comment = _line_regions(body)
+        if not literals and comment is None:
             continue
-        names = (match["name"] for match in _LINE_NAME.finditer(line.group(), 0, comment))
-        if not any(_sensitive_assignment_key(name) or _credential_name(name) for name in names):
+        named = _credential_assignment_end(body, len(body) if comment is None else comment)
+        if named is None:
             continue
-        for token in _COMMENT_TOKEN.finditer(line.group(), comment):
-            if _credential_literal(token.group(), positional=False):
-                spans.append((line.start() + token.start(), line.start() + token.end()))
+        regions = [(start, end) for start, end in literals if start >= named]
+        if comment is not None:
+            regions.append((comment, len(body)))
+        for start, end in regions:
+            tokens = _COMMENT_TOKEN if start == comment else _LITERAL_TOKEN
+            for token in tokens.finditer(body, start, end):
+                if _credential_literal(token.group(), positional=False):
+                    spans.append((line.start() + token.start(), line.start() + token.end()))
     return _withhold_spans(text, spans)
 
 
