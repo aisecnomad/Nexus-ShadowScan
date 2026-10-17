@@ -64,8 +64,8 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   still costs one entry, so a monorepo that links `apps/web/.env` or a
   `Dockerfile` to a shared copy stays complete; an image or video beside
   agent rules (`.cursor/rules/demo.mp4`) over `max_file_size` costs one
-  entry too. An oversize `.env` or tool credential file (`.npmrc`,
-  `.netrc`) exits 3 while `scan_secrets` is on, and so does an oversize JSON,
+  entry too. An oversize `.env` file exits 3 while `scan_secrets` is on,
+  and so does an oversize JSON,
   TOML or YAML file whose bytes name an MCP server table key anywhere in its
   first 128 MiB (or that is larger), as an oversize `.mcp.json` does; an
   oversize data export that names none still costs one entry.

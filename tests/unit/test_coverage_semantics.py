@@ -431,10 +431,11 @@ def test_a_special_file_named_like_a_manifest_or_build_file_is_an_ordinary_gap(t
     assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 0
 
 
-def test_an_oversize_credential_store_is_blinding_while_credentials_are_scanned(tmp_path, run_connector):
-    # A dotenv or tool credential file exists to hold a key: unread, it hides
-    # one, so its size is no budgeted gap. A link of that name hides no byte of
-    # the tree and stays one entry.
+def test_an_oversize_dotenv_file_is_blinding_while_credentials_are_scanned(tmp_path, run_connector):
+    # A dotenv file exists to hold a key: unread, it hides one, so its size is
+    # no budgeted gap. A link of that name hides no byte of the tree and stays
+    # one entry, and so does an oversize tool credential file, which main never
+    # read at all.
     _tree(tmp_path, {".env": "LOG_LEVEL=debug\n" + "#\n" * 1_000})
     _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=1_000)
     assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
@@ -442,6 +443,12 @@ def test_an_oversize_credential_store_is_blinding_while_credentials_are_scanned(
         "code.filesystem", path=str(tmp_path), use_git=False, max_file_size=1_000, scan_secrets=False
     )
     assert not off.stats.incomplete and off.stats.coverage["blinding_gaps"] == 0
+    (tmp_path / ".env").unlink()
+    (tmp_path / ".npmrc").write_text("registry=https://registry.npmjs.org/\n" + "#\n" * 1_000)
+    _, npmrc = run_connector("code.filesystem", path=str(tmp_path), use_git=False, max_file_size=1_000)
+    assert not npmrc.stats.incomplete
+    [gap] = npmrc.stats.coverage["details"]
+    assert (gap["path"], gap["kind"], gap["full_weight"]) == (".npmrc", "partial", True)
 
 
 # ------------------------------------------------------------ directory links

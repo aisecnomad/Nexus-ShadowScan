@@ -64,8 +64,8 @@ that are never silent:
   (`mcpServers`, `mcp_servers`, an `mcp` key however quoted, spaced or
   escaped, read behind any padding up to 128 MiB, and taken to name one past
   that), for an MCP registry `server.json`, and, while `scan_secrets` is on,
-  for a dotenv or tool credential file (`.env`, `.npmrc`, `.netrc`), which
-  exists to hold a credential. Known generated, binary and
+  for a dotenv file (`.env`, `.env.production`), which exists to hold a
+  credential (a tool credential file such as `.npmrc` costs one entry). Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
@@ -299,7 +299,7 @@ walk stopped early (`max_files`, `max_entries`, a deadline), a page was
 refused, a symbolic link names a directory the walk does not scan whole
 inside the root or an agent's configuration directory, undecodable bytes, padding past
 `max_file_size`, a link or a FIFO, socket or device hide agent configuration
-(padding also hides a dotenv or tool credential file), or a sanitizer limit
+(padding also hides a dotenv file), or a sanitizer limit
 was hit. A blinding gap marks the scan
 incomplete at once. A *partial* gap costs a known number of entries: any other
 dangling link or link to a single file, any other non-regular entry, an
@@ -399,7 +399,7 @@ applied in this order:
    opened or read) is recorded as without the
    profile, an oversize file as one whole entry of the budget wherever it
    lies (never a quarter under a test path), or blinding when it is agent
-   configuration or a dotenv or tool credential file. Oversize content is not
+   configuration or a dotenv file. Oversize content is not
    read for credentials at all: a key in an oversize fixture is missed while
    the budget tolerates the entry, the trade-off
    [SECURITY.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain)

@@ -46,10 +46,11 @@ file_matches)`, now serves every gap site.
   when the file is text the scanner reads or a signature names it, and a file
   whose content a caller found to declare servers. Generic manifests, build
   files and shared client names are not: linked or replaced by a FIFO they
-  cost one entry. An oversize dotenv or tool credential file (`.env`,
-  `.npmrc`, `.netrc`) stays blinding while `scan_secrets` is on, as it was:
+  cost one entry. An oversize dotenv file (`.env`, `.env.production`)
+  stays blinding while `scan_secrets` is on, as it was and as main had it:
   it exists to hold a key, and unread it hides one, while a link of that name
-  hides no byte of the tree. The oversize reader, `_skip_link`,
+  hides no byte of the tree. A tool credential file (`.npmrc`, `.netrc`),
+  which main never read, stays one entry when oversize, as it was. The oversize reader, `_skip_link`,
   `_skip_non_regular`, `_declared_omission`, `_discounted_test_path` (and
   through it the discount and the gap weight) read the one predicate, so a
   link and an oversize copy of one file are judged alike.

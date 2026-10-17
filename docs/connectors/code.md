@@ -610,8 +610,8 @@ padding, up to 128 MiB); `strict_coverage` promotes their diagnostics to errors.
 manifest or build file (`Dockerfile`, `package.json`, `requirements.txt`,
 `.env`) or a shared client name (`config.json`, `settings.json`) linked or
 replaced by a FIFO costs one entry, as an asset beside agent rules
-(`.cursor/rules/demo.mp4`) over `max_file_size` does; an oversize dotenv or
-tool credential file is blinding while `scan_secrets` is on. Declared
+(`.cursor/rules/demo.mp4`) over `max_file_size` does; an oversize dotenv
+file is blinding while `scan_secrets` is on. Declared
 oversize skip globs remain visible omissions, and directories skipped by the
 default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
 root that does not affect completeness. Incomplete coverage is reserved for

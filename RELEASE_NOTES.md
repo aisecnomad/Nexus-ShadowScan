@@ -35,7 +35,7 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   signatures such as `.roo/rules/` included) over `max_file_size`, linked to
   a file the walk does not scan or replaced by a FIFO or device, a JSON, TOML
   or YAML file over `max_file_size` whose content names an MCP server table,
-  an oversize `.env` or tool credential file, undecodable bytes anywhere but in
+  an oversize `.env` file, undecodable bytes anywhere but in
   test code while `include_tests` is off, and any sanitizer limit. Test code
   whose evidence is discounted (`include_tests` off) is the exception for
   manifests and undecodable bytes: each gap a malformed fixture records
