@@ -13,6 +13,102 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Credential review fixes, round 5: every password entry, closed label vocabularies, settings defaults, password fallbacks, repeated lines and netrc paths (October 17)
+
+Fixes from round 4's credential and netrc reviews, judged on the same
+oracle (`tests/unit/test_credential_oracle.py`), which now holds 554 inputs
+with the outcome on this branch and on main 8c72467. Evidence redaction
+fails closed: under a password's or secret's name the whole value span is
+withheld, and over-redaction is accepted where a shown credential is not
+(under other credential names a token that looks opaque is). A label,
+possessive or instruction heuristic drops a value only when every word of
+it is in a closed vocabulary. A row worse than main still needs a one-line
+reason (152 of the 554 have one: 148 "not a credential", four quota
+disclosures); of round 4's rows only `DevPasswordLocal` under
+`DB_PASSWORD` is worse than main, every word of it label vocabulary or the
+name's own.
+
+- **Every password entry on a line is withheld.** The line-tail pass read
+  the password rule from the first credential name on a line only, so a
+  `password:` after an `apiKey:` entry or a credential-named callee kept
+  only the opaque-token rule and a punctuated password or a passphrase was
+  shown; a keyword argument of the read (`fallback=`, `default_value=`, `{
+  fallback: ... }`) also ended the value before the literal. Each password
+  name on the line now withholds its value to the next entry of its own
+  mapping, object or argument list (`_credential_joins`,
+  `_password_values`), in one linear pass. Main showed both.
+- **Overlapping spans are withheld to their union.** A password whose
+  start reads as an opaque token was withheld only up to that token
+  (`"[REDACTED]&<tail>"`), because `_withhold_spans` kept the shorter of two
+  overlapping spans. It now withholds their union.
+- **A secret's fallback is withheld whole.** The matcher reports a
+  fallback of any shape under a password's, passphrase's or secret's name,
+  but the line-tail pass withheld every literal only under a password's
+  last word, so `azureClientSecret: process.env.AZURE_CLIENT_SECRET?.trim()
+  || "<punctuated>"` was reported and shown in its own finding's excerpt,
+  and so was a run-together `dbpassword:` (main showed both). `secret`
+  joins the password words, and a last word ending in `password`,
+  `passphrase`, `passwd` or `secret` names one.
+- **A sentence is a label only with an instruction word.** Two function
+  words made an instruction label, so a sentence a person picks as a
+  passphrase (`fly-me-to-the-moon`, `may-the-force-be-with-you`) was
+  dropped, which main reported. A sentence is now a label only with an
+  instruction word or a label word and with every word in the closed
+  vocabulary (function, instruction and instruction-context words, label
+  vocabulary, the name's words).
+- **A possessive phrase is a template only when every word is one.**
+  `ton-jardin-secret`, `su-token-de-casa` and similar passphrases were
+  templates by a credential noun first or last, so `saas.generic` copied
+  them raw from other columns and the matcher dropped them; main withheld
+  and reported them. `shadowscan/utils/placeholders.py` now holds the
+  template vocabulary that the placeholder test and the credential judge
+  share, and a possessive phrase is a template only when every word after
+  the possessive is in it.
+- **Env-file passwords of account and sentence words are passwords.** In
+  an env or credential file `admin`, `user`, `strong`, `internal` and
+  `commit` no longer label a value, and a sentence without an instruction
+  word is a password (`MyStrongPassword`, `my_secret_password`,
+  `InternalUserPassword`), as on main; labels and closed instructions
+  (`KeycloakAdminPassword` under its name,
+  `change_me_to_a_strong_password`) stay labels.
+- **A settings read's default argument is a fallback.**
+  `GetValue<string>("OpenAI:ApiKey", "<key>")`,
+  `configService.get('OPENAI_API_KEY', '<key>')`, `System.getProperty`,
+  `dict.get`, `Optional...orElse` and `requireNonNullElse` lost the key,
+  which main reported; `_DEFAULT_READS` names the reads and the position
+  (or keyword) of their default.
+- **A password fallback of any shape is reported.** Under a name ending in
+  `password`, `passphrase` or `secret`, a fallback or default is the
+  credential unless the redactor's own `password_literal` test keeps it (a
+  variable's name, a path, a URL, a placeholder, fewer than six
+  characters) or it is a label, as main reported.
+- **A repeated credential's lines are listed again.** Counting a repeated
+  credential once also dropped its later lines from the evidence; the
+  judge now returns up to five of its locations without counting them, and
+  every credential finding's `count`, the `.env` provider-key finding's
+  included (which counted each match), is the number of distinct
+  credentials.
+- **A pasted name counts toward the quota only when it looks like a key.**
+  Seven ordinary underscore-free names (`process.env.SVC1OPENAIAPIKEYPROD`)
+  made a file incomplete where main completed; such a name is still
+  reported, at most five per signature, but counts toward the quota only
+  when it passes `opaque_key`.
+- **netrc lines.** `_NetrcLines` keeps line starts in a dict instead of a
+  sorted list it inserted into, so the reverse-order reads of the netrc
+  pass are linear (160,000 lines in 4.7 s instead of 9 s against 1.2 s at
+  40,000). A netrc comment holding a Windows path whose directory is a
+  netrc keyword (`\\nas\user\fred`, `C:\Users\bob\default\new`) runs to the
+  end of its line, so the entry goes on and its password is withheld.
+- **Docs.** docs/connectors/code.md, docs/signatures.md, docs/scanning.md,
+  docs/production.md, SECURITY.md and the migration notes describe the
+  pasted-name scope (member reads and `GetEnvironmentVariable` are
+  reported; `os.getenv("<KEY>")` and subscripts are withheld but not), the
+  count semantics, the label rules and what can remain; the entry below is
+  corrected on the pasted-name forms.
+
+The evaluation corpora give the same per-case results and tp/fp/fn/tn as
+8fd7299; the complexity gate reports no function worse than its baseline.
+
 ### Credential review fixes: env-file passwords, typed reads, pasted names, repeated credentials, labels and cut-read evidence (October 17)
 
 Fixes from two reviews of the credential pipeline (round 3, rebased as
@@ -63,9 +159,14 @@ lines, reported once.
   alternating, or 16 characters or more without `_`), but the detector read
   it as a reference and reported nothing, which main reported. One test,
   `redaction_rules.pasted_key_name`, now decides both: the matcher reports
-  the name as the credential of a read by name (`process.env`,
-  `import.meta.env`, `Bun.env`, the call and subscript forms the redactor
-  reads, and `os.environ.<NAME>`).
+  the name as the credential of a member read by name (`process.env`,
+  `import.meta.env`, `Bun.env` and `os.environ.<NAME>`) and of
+  `Environment.GetEnvironmentVariable("<NAME>")`. (Corrected: this entry
+  first said the call and subscript forms the redactor reads were reported
+  too. The generic rule gives no match for `os.getenv("<NAME>")`,
+  `process.env["<NAME>"]`, `ENV["<NAME>"]` or `System.getenv("<NAME>")`, on
+  this branch or on main, so those are withheld from evidence and not
+  reported.)
 - **One credential repeated counts once.** One password in each of six
   compose services, or one key in each of six manifest documents, counted
   six toward the five-per-format quota, so the scan exited 3 with "more than

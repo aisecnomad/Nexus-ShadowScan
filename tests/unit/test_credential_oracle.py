@@ -1,13 +1,14 @@
 """One oracle for the credential pipeline: every concrete input of its reviews, judged against main.
 
 The reviews of the credential detection and redaction rounds (the leak and
-precision reviews of rounds 1 and 3, review-cred255, review-x-credentials
-and the possessive-placeholder findings of review-misc) each showed their
-problems with concrete inputs: sanitizer lines, matcher lines with their
-mode, small file trees, ``saas.generic`` records and placeholder values.
-Fixing one finding kept breaking another's evidence, because each fix was
-judged on its newest example alone. This table holds all 368 of them, so
-every heuristic change is judged on the same fixed set.
+precision reviews of rounds 1 and 3, round 4's credential and netrc
+reviews, review-cred255, review-x-credentials and the possessive-placeholder
+findings of review-misc) each showed their problems with concrete inputs:
+sanitizer lines, matcher lines with their mode, small file trees,
+``saas.generic`` records and placeholder values. Fixing one finding kept
+breaking another's evidence, because each fix was judged on its newest
+example alone. This table holds all 554 of them, with the fixes' own cases,
+so every heuristic change is judged on the same fixed set.
 
 Each row gives the outcome on this branch (``head``), which the test
 asserts, and the outcome on main 8c72467 (``main``), which is data: it was
