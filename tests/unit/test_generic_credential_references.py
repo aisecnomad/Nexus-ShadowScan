@@ -1185,6 +1185,57 @@ def test_an_env_example_of_instruction_labels_stays_complete(tmp_path: Path, run
     assert [f.metadata["path"] for f in findings if f.kind.value == "secret"] == []
 
 
+# Two function words made a label, and the function words are most of a
+# sentence a person picks as a passphrase, so these were dropped where main
+# 8c72467 reported them. A sentence is an instruction label only with an
+# instruction or label word and every word in the closed vocabulary.
+SENTENCE_PASSPHRASES = [
+    "may-the-force-be-with-you",
+    "my-dog-is-named-rex",
+    "now-is-the-winter-of-discontent",
+    "bring-me-the-horizon",
+    "meet-me-at-midnight",
+    "dance-with-me-tonight",
+    "winter-is-coming-to-town",
+    "hello-from-the-other-side",
+    "walk-on-the-wild-side",
+    "fly-me-to-the-moon",
+    "stairway-to-heaven-now",
+    "in-the-air-tonight",
+    "gravel-by-the-sea",
+    "snout-at-the-bloom",
+    "these-only-thump-bloom",
+    # An instruction word with words outside the vocabulary is a sentence too.
+    "use-the-force-luke",
+    "set-me-free-at-dawn",
+]
+
+
+@pytest.mark.parametrize("passphrase", SENTENCE_PASSPHRASES)
+def test_a_sentence_passphrase_is_a_credential(index: SignatureIndex, passphrase: str):
+    assert _generic(index, f"DB_PASSWORD={passphrase}", code=False, env_file=True) != []
+    assert _generic(index, f"POSTGRES_PASSWORD: {passphrase}", code=False) != []
+    assert _generic(index, f'DB_PASSWORD = "{passphrase.replace("-", "_")}"', code=True) != []
+
+
+def test_function_words_alone_make_no_label(index: SignatureIndex):
+    # Only negations, modals and pronouns, with no instruction or label word.
+    assert _generic(index, "DB_PASSWORD=dont-do-it-now-or-never", code=False) != []
+
+
+def test_a_scan_reports_sentence_passphrases(tmp_path: Path, run_connector):
+    files = {
+        ".env": "DB_PASSWORD=my-dog-is-named-rex\n",
+        "docker-compose.yml": "services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: fly-me-to-the-moon\n",
+        "app/settings.py": 'REDIS_PASSWORD = "may_the_force_be_with_you"\n',
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    secrets = sorted(f.metadata["path"] for f in findings if f.kind.value == "secret")
+    assert secrets == [".env", "app/settings.py", "docker-compose.yml"]
+    dumped = json.dumps([f.to_dict() for f in findings], default=str)
+    assert "named-rex" not in dumped and "to-the-moon" not in dumped and "be_with_you" not in dumped
+
+
 # In an env or credential file a PASSWORD value was dropped as a label when
 # one of its words was any label word or a word of the name, so ordinary
 # passwords with a year and generated passphrases with one common word went

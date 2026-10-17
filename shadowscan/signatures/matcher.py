@@ -450,9 +450,12 @@ _COMMON_LABEL_WORDS = frozenset(
     }
 )
 # Words that join a sentence, which generated passphrases leave out but labels
-# written as instructions need ('dont-use-this-in-prod', 'for-local-dev-use-only',
-# 'change-me-please', 'must-be-set-at-runtime', 'not-configured-yet'): two of
-# them, or one with a word of the label vocabulary, make a slug an instruction.
+# written as instructions need ('dont-use-this-in-prod', 'change-me-please',
+# 'must-be-set-at-runtime', 'not-configured-yet'). They are also most of a
+# sentence a person picks as a passphrase ('fly-me-to-the-moon',
+# 'my-dog-is-named-rex'), so they make an instruction only with an instruction
+# word (``_INSTRUCTION_WORDS``) or a word of the label vocabulary, and only
+# when every word of the slug is in the closed vocabulary (see ``_label_slug``).
 _FUNCTION_WORDS = frozenset(
     {
         "a",
@@ -497,6 +500,98 @@ _FUNCTION_WORDS = frozenset(
         "yet",
     }
 )
+# What an instruction asks of whoever deploys the value: the verbs, read with a
+# plural, past or '-ing' ending taken off ('deploying', 'configured',
+# 'overridden'), the words for a value not given yet ('must-not-be-empty') and
+# the placeholder words. A sentence label needs one of them or a word of the
+# label vocabulary.
+_INSTRUCTION_WORDS = frozenset(
+    {
+        "blank",
+        "change",
+        "come",
+        "commit",
+        "configure",
+        "define",
+        "deploy",
+        "dummy",
+        "edit",
+        "empty",
+        "example",
+        "fill",
+        "generate",
+        "inject",
+        "insert",
+        "missing",
+        "override",
+        "overridden",
+        "overwrite",
+        "placeholder",
+        "provide",
+        "regenerate",
+        "replace",
+        "required",
+        "reset",
+        "rotate",
+        "set",
+        "supply",
+        "unset",
+        "update",
+        "use",
+    }
+)
+# The other words an instruction is written with ('must-be-set-at-runtime',
+# 'not-set-in-this-repo', 'must-come-from-vault', 'never-commit-real-ones',
+# 'must-not-be-empty', 'change-me-asap-please'): with the function words, the
+# instruction words, the label vocabulary and the words of the value's name
+# they are the closed vocabulary a sentence label is written in. A slug with
+# any other word is a sentence a person chose ('walk-on-the-wild-side').
+_INSTRUCTION_CONTEXT_WORDS = frozenset(
+    {
+        "asap",
+        "ci",
+        "config",
+        "configuration",
+        "first",
+        "later",
+        "new",
+        "one",
+        "ones",
+        "own",
+        "real",
+        "repo",
+        "repository",
+        "runtime",
+        "startup",
+        "time",
+        "var",
+        "variable",
+        "vault",
+        "xyz",
+        "yourself",
+    }
+)
+
+
+def _word_stems(word: str) -> set[str]:
+    """A lower-case word with a plural, past or '-ing' ending taken off ('changed', 'setting', 'deploys')."""
+    stems = {word, word[:-1] if word.endswith("s") else word}
+    if word.endswith("ed"):
+        stems.update((word[:-1], word[:-2]))  # 'changed' is change, 'tested' is test
+    if word.endswith("ing") and len(word) > 5:
+        stem = word[:-3]
+        stems.update((stem, stem + "e", stem[:-1] if stem[-1] == stem[-2] else stem))
+    return stems
+
+
+def _instruction_word(word: str) -> bool:
+    """Whether a lower-case word is an instruction word of ``_INSTRUCTION_WORDS``, in any of its forms."""
+    return not _word_stems(word).isdisjoint(_INSTRUCTION_WORDS)
+
+
+def _instruction_vocabulary(word: str) -> bool:
+    """Whether a lower-case word is a function, instruction or instruction-context word."""
+    return word in _FUNCTION_WORDS or word in _INSTRUCTION_CONTEXT_WORDS or _instruction_word(word)
 
 
 def _label_strength(word: str) -> int:
@@ -869,11 +964,15 @@ def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
     word lists leave out ('request-scoped-credential',
     'fc-shared-env-must-not-be-used', 'local-development-only',
     'lorem-ipsum-dolor-sit-amet'), two are vocabulary that is also a common
-    word ('unsafe-dev-only-default', 'defaults-were-replaced'), one such word
-    comes with a function word that joins a sentence
-    ('this-should-be-changed', 'change-me-please'), two function words make
-    it an instruction ('do-not-commit-this', 'must-be-set-at-runtime',
-    'not-configured-yet'), see ``_label_strength``, or a word has three
+    word ('unsafe-dev-only-default', 'defaults-were-replaced'), see
+    ``_label_strength``, or it is an instruction: one such word with a
+    function word that joins a sentence ('this-should-be-changed',
+    'change-me-please'), or two function words with an instruction word
+    ('do-not-commit-this', 'must-be-set-at-runtime', 'not-configured-yet'),
+    each of its words in the closed vocabulary of instructions
+    (``_instruction_vocabulary``). Function words alone never make a label,
+    nor does a sentence with any other word ('fly-me-to-the-moon',
+    'use-the-force-luke'). Otherwise a label has a word of three
     letters or more of the name it is assigned to
     ('OPENAI_API_KEY=sua_chave_openai'). A two-letter word of the name ('pg'
     in 'PG_PASSWORD', 'db', 'mq', 'ai') counts as a common word: with another
@@ -891,8 +990,18 @@ def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
         return True
     strengths = [1 if word in name else _label_strength(word) for word in words]
     common = strengths.count(1)
+    if 2 in strengths or common >= 2:
+        return True
     function = sum(word in _FUNCTION_WORDS for word in words)
-    return 2 in strengths or common >= 2 or (common == 1 and function > 0) or function >= 2
+    if function < 2 and not (common and function):
+        return False
+    # A sentence: an instruction only with an instruction or label word, and
+    # only when each of its words is in the closed vocabulary.
+    instruction = common > 0 or any(_instruction_word(word) for word in words)
+    closed = all(
+        strength or _instruction_vocabulary(word) for word, strength in zip(words, strengths, strict=True)
+    )
+    return instruction and closed
 
 
 def _name_shaped(candidate: str) -> bool:

@@ -133,6 +133,31 @@ class Row(NamedTuple):
 
 ACCEPTED_KINDS = ("not a credential: ", "disclosed: ", "repeated: ")
 
+# Round 4's sentence passphrases, each judged in an env file, a compose file
+# and a settings module (joined by '_' there), as the review scanned them.
+R4_SENTENCES = (
+    "may-the-force-be-with-you",
+    "my-dog-is-named-rex",
+    "now-is-the-winter-of-discontent",
+    "bring-me-the-horizon",
+    "meet-me-at-midnight",
+    "dance-with-me-tonight",
+    "winter-is-coming-to-town",
+    "hello-from-the-other-side",
+    "walk-on-the-wild-side",
+    "fly-me-to-the-moon",
+    "stairway-to-heaven-now",
+    "in-the-air-tonight",
+    "gravel-by-the-sea",
+    "snout-at-the-bloom",
+    "these-only-thump-bloom",
+)
+R4_SENTENCE_PLACES = (
+    ("env", "DB_PASSWORD={v}", "env"),
+    ("compose", "POSTGRES_PASSWORD: {v}", "text"),
+    ("settings", 'DB_PASSWORD = "{u}"', "code"),
+)
+
 ROWS = [
     # --- creds-rereview-leak.json (round 3)
     Row(
@@ -3802,6 +3827,31 @@ ROWS = [
         mode="",
         head=(("src/a.ts:1", "src/a.ts:2"), "complete", "withheld"),
         main=(("src/a.ts:1", "src/a.ts:2"), "complete", "shown"),
+    ),
+    # --- r4-review-creds4.json: sentence passphrases that two function words made labels
+    *[
+        Row(
+            f"r4.3-{place}-{sentence}",
+            "match",
+            template.format(v=sentence, u=sentence.replace("-", "_")),
+            mode=mode,
+            head="reported",
+            main="reported",
+        )
+        for sentence in R4_SENTENCES
+        for place, template, mode in R4_SENTENCE_PLACES
+    ],
+    Row(
+        "r4.3-scan-three-places",
+        "scan",
+        {
+            ".env": "DB_PASSWORD=<=my-dog-is-named-rex>\n",
+            "docker-compose.yml": "services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: <=fly-me-to-the-moon>\n",
+            "app/settings.py": 'REDIS_PASSWORD = "<=may_the_force_be_with_you>"\n',
+        },
+        mode="",
+        head=((".env:1", "app/settings.py:1", "docker-compose.yml:4"), "complete", "withheld"),
+        main=((".env:1", "app/settings.py:1", "docker-compose.yml:4"), "complete", "withheld"),
     ),
 ]
 
