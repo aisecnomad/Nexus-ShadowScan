@@ -77,7 +77,7 @@ AGENT_IDENTITIES = f"{GRAPH_BETA}/servicePrincipals/microsoft.graph.agentIdentit
 AGENT_365 = "microsoft-agent-365"
 DEPRECATED_REGISTRY = "entra-agent-registry"
 AUTH_MODES = ("app-only", "delegated")
-DEFAULT_DELEGATED_TOKEN_ENV = "GRAPH_DELEGATED_TOKEN"
+DEFAULT_DELEGATED_TOKEN_ENV = "GRAPH_DELEGATED_TOKEN"  # noqa: S105 - names an environment variable or a redaction pattern, not a credential
 MAX_DELEGATED_TOKEN_CHARS = 16 * 1024
 # The audiences of a Microsoft Graph access token: v1 tokens name the resource URI, v2 tokens its appId.
 GRAPH_AUDIENCES = frozenset(

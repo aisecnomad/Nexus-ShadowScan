@@ -216,10 +216,19 @@ def test_null_valued_keys_are_omitted():
     assert "finished_at" not in document["scan"]
 
 
-def test_unparseable_timestamps_are_omitted_not_invented():
+def test_an_unparseable_scan_timestamp_still_yields_a_required_event_time():
+    """``time`` is required, so omitting it makes a validator reject the event.
+
+    The scan block still omits the unparseable values rather than inventing a
+    scan window: only the event's own required attribute is substituted, and
+    ``unmapped.time_source`` says it was.
+    """
     document = _render(_finding(), started_at="not a timestamp", finished_at="")
     (event,) = document["events"]
-    assert "time" not in event and "time_dt" not in event
+    assert isinstance(event["time"], int)
+    assert event["time"] > 0
+    assert event["time_dt"].endswith("Z")
+    assert event["unmapped"]["time_source"] == "report_render"
     assert "started_at" not in document["scan"] and "finished_at" not in document["scan"]
     assert _nulls(document) == []
 

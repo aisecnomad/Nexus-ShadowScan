@@ -24,6 +24,10 @@ import pytest
 from shadowscan.utils import redaction
 from shadowscan.utils.redaction import REDACTED, sanitize, sanitize_text
 
+# Slow by nature: times glued-run redaction against a large synthetic input.
+# `make test-fast` skips these; CI runs them.
+pytestmark = pytest.mark.slow
+
 ROOT = Path(__file__).resolve().parents[2]
 # Synthetic and built at runtime, like every credential-shaped test value here.
 SECRET = "Zq8" + "Lm2Xw9Rt4Yu7Io1Pa5Sd3Fg6Hj0Kl"

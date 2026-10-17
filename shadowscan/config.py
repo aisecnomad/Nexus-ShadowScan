@@ -72,6 +72,7 @@ from typing import Any
 
 import yaml
 
+from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO, validate_max_coverage_gap
 from shadowscan.errors import SetupError, yaml_error_position
 from shadowscan.mcp_registry import MAX_MCP_REGISTRIES, McpRegistrySource
 from shadowscan.registries import (
@@ -121,6 +122,7 @@ _OPTION_FIELDS = {
     "allow_credential_mixing",
     "connector_timeout_seconds",
     "connector_timeout",
+    "max_coverage_gap",
     "risk_basis",
     "risk_weights",
     "job_deadline_seconds",
@@ -515,6 +517,11 @@ class ScanConfig:
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
     connector_timeout_seconds: float = 120.0
+    # Share of examined entries a connector may leave unread before its scan is
+    # reported incomplete. Zero restores strict accounting. A gap the scanner
+    # cannot bound (an early stop, a refused page) ignores this and always
+    # fails closed. See :mod:`shadowscan.coverage`.
+    max_coverage_gap: float = DEFAULT_MAX_GAP_RATIO
     job_deadline_seconds: float | None = None  # CLI process deadline; embedding callers own supervision
     risk_basis: str = "combined"
     risk_weights: dict[str, Any] | None = field(default_factory=dict)
@@ -560,6 +567,10 @@ class ScanConfig:
             self.allow_credential_mixing, "allow_credential_mixing"
         )
         self.connector_timeout_seconds = validate_connector_timeout_seconds(self.connector_timeout_seconds)
+        try:
+            self.max_coverage_gap = validate_max_coverage_gap(self.max_coverage_gap)
+        except ValueError as exc:
+            raise ConfigValidationError(str(exc)) from None
         self.job_deadline_seconds = validate_job_deadline_seconds(self.job_deadline_seconds)
         self.incremental = _boolean_option(self.incremental, "incremental")
         if self.fail_on is not None and (
@@ -722,6 +733,7 @@ class ScanConfig:
                 opts.get("allow_credential_mixing", False), "allow_credential_mixing"
             ),
             connector_timeout_seconds=validate_connector_timeout(timeout),
+            max_coverage_gap=_coverage_gap_option(opts.get("max_coverage_gap", DEFAULT_MAX_GAP_RATIO)),
             job_deadline_seconds=validate_job_deadline_seconds(opts.get("job_deadline_seconds")),
             risk_basis=opts.get("risk_basis", "combined"),
             risk_weights=opts.get("risk_weights", {}),
@@ -752,7 +764,7 @@ class ScanConfig:
                 " text file of at most 8 MiB"
             ) from None
         try:
-            data = yaml.load(text, Loader=_ConfigLoader)
+            data = yaml.load(text, Loader=_ConfigLoader)  # noqa: S506 - loader is a SafeLoader subclass with resource bounds; see shadowscan.utils.safe_yaml
         except ConfigValidationError:
             raise
         except (ValueError, yaml.YAMLError) as exc:
@@ -1045,6 +1057,14 @@ def _connector_enabled(value: Any) -> bool:
         if normalized in {"no", "off", "0"}:
             return False
     return _strict_boolean(value, "connector enabled")
+
+
+def _coverage_gap_option(value: Any) -> float:
+    """``options.max_coverage_gap`` as a ratio, with the configuration error type."""
+    try:
+        return validate_max_coverage_gap(value)
+    except ValueError as exc:
+        raise ConfigValidationError(f"options.{exc}") from None
 
 
 def validate_connector_timeout_seconds(value: Any) -> float:

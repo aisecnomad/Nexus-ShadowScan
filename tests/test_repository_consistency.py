@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import functools
 import importlib.util
+import inspect
 import itertools
 import json
 import os
@@ -37,6 +38,7 @@ from shadowscan.config import ScanConfig
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.common import MAX_PAGES
+from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
 from shadowscan.engine import Engine
 from shadowscan.models import ScanStats
 from shadowscan.reporters.csv_ import _safe_cell
@@ -1062,16 +1064,30 @@ def test_pre_commit_hooks_select_files_with_types_or() -> None:
             assert len(types) <= 1, f"hook {hook['id']} lists {types} under `types`; use `types_or`"
 
 
-def test_blind_except_suppressions_give_a_reason() -> None:
-    """Every suppressed broad `except` (ruff BLE001) states why it is intentional."""
-    bare = [
-        f"{path.relative_to(ROOT)}:{number}"
-        for directory in ("shadowscan", "tools", "tests")
-        for path in sorted((ROOT / directory).rglob("*.py"))
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
-        if re.search(r"#\s*noqa:\s*BLE001(?!\s+-\s+\S)", line)
-    ]
-    assert not bare, f"write `# noqa: BLE001 - <reason>`: {bare}"
+#: A suppression and its reason. One line can break two rules at once -- a
+#: broad `except ... : pass` in a teardown path is both BLE001 and S110 -- so
+#: the codes are a list, and the reason follows all of them.
+_SUPPRESSION = re.compile(r"#\s*noqa:\s*(?P<codes>[A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*)(?:\s*-\s*(?P<reason>.*))?$")
+#: Rules whose suppression must say why. Both mark a deliberately swallowed
+#: failure, which is exactly the kind a reader needs the reason for.
+_REASONED_RULES = ("BLE001", "S110", "S112")
+
+
+def test_suppressions_of_swallowed_failures_give_a_reason() -> None:
+    """Every suppressed broad `except` or silent pass states why it is intentional."""
+    bare = []
+    for directory in ("shadowscan", "tools", "tests"):
+        for path in sorted((ROOT / directory).rglob("*.py")):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                match = _SUPPRESSION.search(line)
+                if match is None:
+                    continue
+                codes = {code.strip() for code in match.group("codes").split(",")}
+                if not codes & set(_REASONED_RULES):
+                    continue
+                if not (match.group("reason") or "").strip():
+                    bare.append(f"{path.relative_to(ROOT)}:{number}")
+    assert not bare, f"write `# noqa: <CODES> - <reason>`: {bare}"
 
 
 def test_dev_extra_is_fully_pinned_for_ci() -> None:
@@ -1419,6 +1435,99 @@ def test_documented_fixture_connector_count_matches_the_demo_configuration() -> 
     for path, match in claims:
         claimed = (int(match.group(1)), int(match.group(2)))
         assert claimed == actual, f"{_relative(path)} claims {claimed}, the demo configures {actual}"
+
+
+_GAP_BUDGET_CLAIM = re.compile(r"(\d+(?:\.\d+)?)% coverage budget")
+
+
+def test_documented_coverage_budget_matches_the_default() -> None:
+    """The README states the gap budget; the code sets it.
+
+    Every other count in this README is pinned to the code. The fail-closed
+    wording describes behaviour an operator relies on for a CI gate, so it is
+    pinned too rather than left to drift the way it did when the budget was
+    introduced.
+    """
+    actual = DEFAULT_MAX_GAP_RATIO * 100
+    claims = [(path, m) for path in _current_docs() for m in _GAP_BUDGET_CLAIM.finditer(_read(path))]
+    assert claims, "the README should state the coverage-gap budget"
+    for path, match in claims:
+        claimed = float(match.group(1))
+        assert claimed == actual, (
+            f"{_relative(path)} claims a {claimed}% budget; DEFAULT_MAX_GAP_RATIO is {actual}%"
+        )
+
+
+def test_ci_never_deselects_the_slow_timed_sweeps() -> None:
+    """``make test-fast`` is a local convenience; CI must still run everything.
+
+    The slow marker covers the ReDoS sweeps, which are the tests most worth
+    keeping and the most tempting to skip when a pipeline is over time.
+    """
+    for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        text = _read(workflow)
+        assert "not slow" not in text, (
+            f"{_relative(workflow)} deselects the slow tests; they are the ReDoS and "
+            "linearity sweeps and CI is the one place that must run them"
+        )
+
+
+def test_the_fail_closed_summary_names_the_coverage_budget() -> None:
+    """The one line an operator reads before wiring exit 3 into a CI gate.
+
+    Deliberately checks two known claims rather than scanning prose for
+    "limit" near "exit 3": that search matched a byte cap on a config read
+    and a lineage tracing bound, neither of which has anything to do with
+    coverage. A checker with false positives gets suppressed, and then it
+    guards nothing -- the same failure this budget exists to prevent.
+    """
+    readme = _read(ROOT / "README.md")
+    summary = next(
+        (line for line in readme.splitlines() if line.startswith("| **Fail-closed design**")),
+        None,
+    )
+    assert summary is not None, "the README should keep its fail-closed capability row"
+    assert "budget" in summary.lower(), (
+        "the fail-closed row must say that bounded gaps are budgeted, not that every "
+        f"limit produces exit 3: {summary}"
+    )
+    assert "report" in summary.lower(), "it must also say a tolerated gap is still reported"
+
+    pipeline = next((para for para in re.split(r"\n\s*\n", readme) if "fail closed:" in para), None)
+    assert pipeline is not None, "the README should keep its fail-closed pipeline paragraph"
+    assert "budget" in pipeline, "the pipeline paragraph must name the coverage budget"
+    assert "strict_coverage" in pipeline, "and the option that restores strict accounting"
+
+
+_LIVE_CLAIM = re.compile(r"(\d+) of the (\d+) connectors collect from a live API")
+
+
+def test_documented_live_connector_count_matches_the_declared_capability() -> None:
+    """The README says how many connectors reach a live API; the classes declare it.
+
+    "Live and offline modes" alone let a reader assume every connector does
+    both. Ten read an export something else produced and have no API to call,
+    so the split is published -- and pinned here, because a disclosure that
+    silently goes stale is worse than none.
+    """
+    names = builtin_connector_names()
+    live = sum(1 for name in names if get_connector_class(name).live_collection)
+    actual = (live, len(names))
+    claims = [(path, match) for path in _current_docs() for match in _LIVE_CLAIM.finditer(_read(path))]
+    assert claims, "the README should state how many connectors collect from a live API"
+    for path, match in claims:
+        claimed = (int(match.group(1)), int(match.group(2)))
+        assert claimed == actual, f"{_relative(path)} claims {claimed}, the classes declare {actual}"
+
+
+def test_every_offline_only_connector_actually_refuses_to_collect() -> None:
+    """``live_collection = False`` must describe the code, not merely annotate it."""
+    for name in builtin_connector_names():
+        cls = get_connector_class(name)
+        if cls.live_collection:
+            continue
+        source = inspect.getsource(cls.collect)
+        assert "raise" in source, f"{name} declares no live collection but its collect() does not refuse"
 
 
 _DEMO_COMMAND = "$ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows "

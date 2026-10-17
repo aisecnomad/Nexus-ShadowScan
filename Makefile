@@ -49,8 +49,8 @@ test: ## Run test suite with coverage
 	python -m pytest -q --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
 
 .PHONY: test-fast
-test-fast: ## Run tests without coverage (faster iteration)
-	python -m pytest -q -x
+test-fast: ## Run tests without coverage or the slow timed sweeps (faster iteration)
+	python -m pytest -q -x -m "not slow"
 
 .PHONY: test-parallel
 test-parallel: ## Run tests in parallel with pytest-xdist

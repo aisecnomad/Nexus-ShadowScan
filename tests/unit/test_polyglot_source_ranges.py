@@ -1,4 +1,7 @@
 """Examples and literal text in supported source languages are not agent code."""
+# Timing guards here measure CPU time, not wall time: they bound algorithmic
+# cost, and wall time additionally measures whatever else the machine is doing,
+# which failed honest code under a parallel run. See tests/perf.py.
 
 from __future__ import annotations
 
@@ -278,12 +281,12 @@ def test_php_echo_expression_is_executable(tmp_path: Path, run_connector):
 def test_ruby_block_comments_scan_in_linear_time():
     block = "=begin\nnote\n=end\nx = 1\n"
     small, large = block * 2_000, block * 32_000
-    started = time.perf_counter()
+    started = time.process_time()
     noncode_ranges(small, "ruby")
-    small_time = time.perf_counter() - started
-    started = time.perf_counter()
+    small_time = time.process_time() - started
+    started = time.process_time()
     noncode_ranges(large, "ruby")
-    large_time = time.perf_counter() - started
+    large_time = time.process_time() - started
     # Sixteen times the input must not cost more than 64 times the time (a
     # quadratic scan would cost 256 times); no absolute bound, since coverage
     # tracing on CI runners slows the loop by an interpreter-dependent factor.
@@ -399,12 +402,12 @@ def test_php_code_after_a_closing_tag_in_a_comment_is_scanned(tmp_path: Path, ru
 def test_php_comments_ended_by_closing_tags_scan_in_linear_time():
     block = "<?php // note ?> "
     small, large = block * 2_000, block * 32_000
-    started = time.perf_counter()
+    started = time.process_time()
     noncode_ranges(small, "php", ".php")
-    small_time = time.perf_counter() - started
-    started = time.perf_counter()
+    small_time = time.process_time() - started
+    started = time.process_time()
     noncode_ranges(large, "php", ".php")
-    large_time = time.perf_counter() - started
+    large_time = time.process_time() - started
     assert large_time < max(small_time, 0.005) * 64
 
 
@@ -414,12 +417,12 @@ def test_java_comments_ended_by_escapes_scan_in_linear_time():
     # file for each comment (quadratic).
     block = "// \\u000a "
     small, large = block * 2_000, block * 32_000
-    started = time.perf_counter()
+    started = time.process_time()
     noncode_ranges(small, "java", ".java")
-    small_time = time.perf_counter() - started
-    started = time.perf_counter()
+    small_time = time.process_time() - started
+    started = time.process_time()
     ignored, _ = noncode_ranges(large, "java", ".java")
-    large_time = time.perf_counter() - started
+    large_time = time.process_time() - started
     assert len(ignored) == 32_000
     # Sixteen times the input must not cost more than 64 times the time (quadratic costs 256 times).
     assert large_time < max(small_time, 0.005) * 64
@@ -537,12 +540,12 @@ def test_long_run_of_hashes_in_swift_costs_little_more_than_ordinary_text():
     # a run: tens of seconds for a megabyte. Compare against text of the same size, since an absolute
     # bound would depend on how slowly the interpreter runs under coverage tracing.
     size = 200_000
-    started = time.perf_counter()
+    started = time.process_time()
     noncode_ranges("a" * size, "swift", ".swift")
-    ordinary = time.perf_counter() - started
-    started = time.perf_counter()
+    ordinary = time.process_time() - started
+    started = time.process_time()
     noncode_ranges("#" * size, "swift", ".swift")
-    hashes = time.perf_counter() - started
+    hashes = time.process_time() - started
     assert hashes < max(ordinary, 0.01) * 8
 
 

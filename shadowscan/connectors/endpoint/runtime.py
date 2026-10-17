@@ -167,6 +167,8 @@ def _records(
 
 
 class _EndpointConnector(BaseConnector):
+    # No live API: reads an endpoint inventory collected on the host.
+    live_collection: ClassVar[bool] = False
     surface: ClassVar[Surface] = Surface.ENDPOINT
     offline_formats: ClassVar[str] = "JSON / JSONL / YAML export"
     # Whether a value past the sanitizer's limits was withheld (see ``_text``).
@@ -252,6 +254,9 @@ class HostConnector(_EndpointConnector):
 
 
 class MCPInventoryConnector(_EndpointConnector):
+    # Unlike its siblings this one does reach the network, probing the Agent
+    # Card URLs it is given; without them it falls back to the inventory.
+    live_collection: ClassVar[bool] = True
     name = "endpoint.mcp"
     provider = "mcp"
     description = (

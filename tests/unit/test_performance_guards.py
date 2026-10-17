@@ -311,10 +311,13 @@ def test_oversize_source_file_marks_coverage_incomplete_by_default(tmp_path, ind
     (tmp_path / "big.py").write_text("x" * 200)
     result = Engine(_engine_config(tmp_path), index).run()
     assert not result.complete and result.findings
-    assert not result.stats[0].errors
+    # The file is named in a warning; the error is the budget verdict, since
+    # one unread file of two examined is half the tree.
     assert any(
         "big.py: skipped, file exceeds max_file_size" in warning for warning in result.stats[0].warnings
     )
+    assert all("big.py" not in error for error in result.stats[0].errors)
+    assert any("over the" in error and "budget" in error for error in result.stats[0].errors)
     # Strict coverage keeps the error severity for callers that use it.
     strict = Engine(_engine_config(tmp_path, strict_coverage=True), index).run()
     assert not strict.complete and strict.findings
@@ -337,7 +340,10 @@ def test_oversize_skip_globs_is_configurable_and_validated(tmp_path, index, run_
     _, ctx = run_connector(
         "code.filesystem", path=str(tmp_path), use_git=False, max_file_size=100, oversize_skip_globs=[]
     )
-    assert ctx.stats.incomplete and not ctx.stats.errors and len(ctx.stats.warnings) == 2
+    # Both files are named in warnings; the single error is the budget verdict.
+    assert ctx.stats.incomplete
+    assert len([w for w in ctx.stats.warnings if "max_file_size" in w]) == 2
+    assert all("over the" in error and "budget" in error for error in ctx.stats.errors)
     _, ctx = run_connector(
         "code.filesystem",
         path=str(tmp_path),
@@ -365,7 +371,7 @@ def test_only_oversize_agent_source_does_not_yield_a_clean_empty_result(tmp_path
     assert not result.complete and result.findings == []
     assert result.stats[0].incomplete
     assert any(
-        "agent.py: skipped, file exceeds max_file_size; coverage incomplete" in warning
+        "agent.py: skipped, file exceeds max_file_size; coverage gap" in warning
         for warning in result.stats[0].warnings
     )
 

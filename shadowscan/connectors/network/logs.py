@@ -398,6 +398,8 @@ class _TLSIdentity:
 
 
 class NetworkLogConnector(BaseConnector, _NoDump):
+    # No live API: reads exported network logs.
+    live_collection: ClassVar[bool] = False
     name: ClassVar[str] = "network.logs"
     surface: ClassVar[Surface] = Surface.NETWORK
     provider: ClassVar[str | None] = "network"

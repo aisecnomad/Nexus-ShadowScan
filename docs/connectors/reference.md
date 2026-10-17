@@ -35,6 +35,7 @@ Offline input: n/a (path is the input).
 | `inspect_model_artifacts` | opt in to bounded GGUF/safetensors/ONNX header and PyInstaller footer inventory; never executes or loads tensor payloads (default false) |
 | `model_metadata_bytes` | maximum bytes read per selected binary/model artifact (128..1048576; default 65536) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
+| `max_coverage_gap` | share of examined entries that may be left unread before this scan reports itself incomplete (default: the scan-wide options.max\_coverage\_gap, 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 | `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |
 | `include_tests` | let test and fixture code establish agents and credential findings at full weight (default false) |
 | `triage` | fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC only; source analysis, credential detection and content sweeps are skipped and the scan is always reported incomplete so a triage result is never mistaken for a full scan (default false) |

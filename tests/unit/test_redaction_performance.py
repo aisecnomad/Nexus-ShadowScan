@@ -10,6 +10,10 @@ import pytest
 
 from shadowscan.utils.redaction import REDACTED, sanitize_text
 
+# Slow by nature: times the redaction patterns against hostile inputs.
+# `make test-fast` skips these; CI runs them.
+pytestmark = pytest.mark.slow
+
 ROOT = Path(__file__).resolve().parents[2]
 SECRET = "opaque-value-with-no-provider-prefix"
 
