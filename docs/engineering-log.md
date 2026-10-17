@@ -1017,13 +1017,20 @@ public repositories with the tool and read the committed benchmark metrics.
   (`|| ''`) are not, and the placeholder test judges the fallback literal
   itself (`?? "sk-ant-api03-..."` is `example-credential` evidence). Labels
   of three or more letter words (`'request-scoped-credential'`,
-  `'fc-shared-env-must-not-be-used'`) are not high-entropy keys when a word,
-  read without a plural `-s` or past `-ed`, is credential, test, instruction,
-  development-default or filler vocabulary (`this-should-be-changed`,
-  `local-development-only`, `foo-bar-baz-qux-quux`,
-  `lorem-ipsum-dolor-sit-amet`) or repeats a word of three letters or more of
-  the assigned name, or when the slug is CONSTANT_CASE (upper case joined by
-  `_`); other word slugs, joined by `-` or `_` and in any case, are
+  `'fc-shared-env-must-not-be-used'`) are not high-entropy keys when, read
+  without a plural `-s` or past `-ed`, one word is credential, placeholder,
+  development or filler vocabulary that passphrase word lists leave out
+  (`local-development-only`, `foo-bar-baz-qux-quux`,
+  `lorem-ipsum-dolor-sit-amet`, `rotate-these-tokens`), two words are such
+  vocabulary that is also a common word (`unsafe-dev-only-default`,
+  `defaults-were-replaced`), or one such common word comes with a function
+  word (`this-should-be-changed`, `dont-use-this-in-prod`); or when a word
+  repeats a word of three letters or more of the assigned name, or the slug
+  is CONSTANT_CASE (upper case joined by `_`). A single common word does not
+  make a label: with one vocabulary list and stemming, `passed`, `valued`,
+  `keyed`, `devs`, `locals`, `unsafe`, `default` or `lorem` in a generated
+  passphrase (`snout-passed-thump-bloom-gravel`) hid it, which 90d22be and
+  main reported. Other word slugs, joined by `-` or `_` and in any case, are
   generated passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`,
   `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are still reported, even without
   digits or mixed case. Words joined by `.` are a passphrase

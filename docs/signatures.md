@@ -428,13 +428,15 @@ and tests, which call and test the products they detect.
   passed to a call there (`?? getSecret("<path>")`, `?: error("X is not set")`) is not a fallback operand.
   Three or more letter words joined by `-` or `_`, or by `.` as a password in an env or credential file
   (a dotted slug's words each lower case, Capitalized or upper case; elsewhere a dotted string of words names
-  a package, a key or a namespace, such as `net.openid.appauth.state`), are a label, not a high-entropy key, when one of them, without a plural `-s` or past `-ed`,
-  is credential, test, instruction, development-default or filler vocabulary
-  (`'request-scoped-credential'`, `'fc-shared-env-must-not-be-used'`, `'this-should-be-changed'`,
-  `'local-development-only'`, `'lorem-ipsum-dolor-sit-amet'`) or a word of three letters or more of the
-  assigned name, or when the slug is CONSTANT_CASE (upper case joined by `_`); other word slugs are generated
-  passphrases (`snout-fiber-thump-bloom-gravel`, `snout.fiber.thump.bloom.gravel`,
-  `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are reported. Matches are filtered before the five-per-signal cap.
+  a package, a key or a namespace, such as `net.openid.appauth.state`), are a label, not a high-entropy key,
+  when, without a plural `-s` or past `-ed`, one of them is credential, placeholder, development or filler
+  vocabulary that word lists leave out (`'request-scoped-credential'`, `'local-development-only'`,
+  `'lorem-ipsum-dolor-sit-amet'`), two are such vocabulary that is also a common word
+  (`'unsafe-dev-only-default'`), one common one comes with a function word (`'this-should-be-changed'`), or
+  one is a word of three letters or more of the assigned name (one common word alone, as in
+  `snout-passed-thump-bloom-gravel`, labels nothing), or when the slug is CONSTANT_CASE (upper case joined
+  by `_`); other word slugs are generated passphrases (`snout-fiber-thump-bloom-gravel`,
+  `snout.fiber.thump.bloom.gravel` in an env file, `SNOUT-FIBER-THUMP-BLOOM-GRAVEL`) and are reported. Matches are filtered before the five-per-signal cap.
 * `name` patterns for products whose name is also a dictionary word or a first name (Otter, Devin, Jasper,
   Drift...) are context-guarded: the vendor form (`otter\.ai`) matches on its own; the bare word only when it is
   the whole display name (`^[^\S\r\n]*otter[^\S\r\n]*$`, an app called just "Otter") or with product context on
