@@ -812,7 +812,7 @@ public repositories with the tool and read the committed benchmark metrics.
   as does any other identifier, call or token. When `,` or `;` ends the value
   before the comment (`apiKey: process.env.X, // old: <key>`, `api_key =
   os.environ["X"]; # <key>`), the read stays visible and the comment keeps
-  its words, but `redaction_assignments._redact_trailing_comments` withholds
+  its words, but `redaction_assignments._redact_line_tails` withholds
   each opaque token in a comment on a line that assigns a credential name,
   after any value (main showed those tokens too). In `key: value` form the
   value lexer stops at the quote of a subscript or call argument, so the
@@ -820,7 +820,18 @@ public repositories with the tool and read the committed benchmark metrics.
   '<key>'`, `or`, `??`, `||`) was shown, on main as well; the mapping pass
   now reads past the bracket the withheld read left open, and a fallback
   after a read assigned to a conditionally named setting (`azureKey:
-  process.env['K'] ?? '<key>'`) takes that setting's name. The variable name must not look
+  process.env['K'] ?? '<key>'`) takes that setting's name. That covered one
+  unspaced subscript or call with one argument only: a spaced subscript
+  (`process.env[ 'K' ] || '<key>'`), an optional-chain call
+  (`process.env.K?.trim() || "<key>"`), a call with two arguments
+  (`cfg("a", "b") || "<key>"`) and a default argument (`os.getenv("K",
+  "<key>")`) still showed the literal, on main too. `_redact_line_tails` now
+  reads every string literal after the credential name on its line, not
+  only the comment, and withholds each token in it that
+  `_credential_literal` takes for an opaque key (`name=` inside a literal is
+  not part of the token; a template with a replacement field is left alone,
+  as the assignment passes leave it). Words, references, model names and
+  placeholders on the line stay. The variable name must not look
   like an opaque key (`redaction_rules._opaque`: letters and digits alternating
   in a long run) and must not run to 16 characters or more without a `_`
   (`_PASTED_KEY_NAME`), so an upper-case key or base32 secret pasted as the
