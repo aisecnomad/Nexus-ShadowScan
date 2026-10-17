@@ -269,7 +269,7 @@ def test_oversize_test_fixtures_are_counted(run_connector, tmp_path, index):
     )
     connector = FilesystemConnector(ctx)
     findings = connector.run()
-    assert connector.skipped_oversize_test_fixtures == 2
+    assert connector.walker.skipped_oversize_test_fixtures == 2
     # The count reaches the report as one summary warning per root.
     assert [w for w in ctx.stats.warnings if "2 oversize test fixture(s) skipped unread" in w]
     assert not ctx.stats.incomplete

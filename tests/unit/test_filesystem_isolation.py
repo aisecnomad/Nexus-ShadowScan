@@ -146,7 +146,7 @@ def test_cancellation_stops_the_tree_walk(tmp_path, index):
     ctx = ConnectorContext(config={"path": str(tmp_path)}, index=index, cancelled=cancelled)
     connector = FilesystemConnector(ctx)
     walked = 0
-    original = connector._iter_entries
+    original = connector.walker._iter_entries
 
     def counting(root):
         nonlocal walked
@@ -156,7 +156,7 @@ def test_cancellation_stops_the_tree_walk(tmp_path, index):
                 cancelled.set()
             yield item
 
-    connector._iter_entries = counting  # type: ignore[method-assign]
+    connector.walker._iter_entries = counting  # type: ignore[method-assign]
     assert connector.run() == []
     assert walked == 10 and ctx.stats is not None and ctx.stats.skipped
     assert len(ctx.stats.errors) == 1 and "deadline" in ctx.stats.errors[0]
@@ -224,17 +224,17 @@ def test_project_isolation_error_names_the_project(tmp_path, index, monkeypatch)
 def test_the_scan_root_descriptor_is_closed_after_emit_even_when_emit_fails(tmp_path, index, monkeypatch):
     import os
 
-    from shadowscan.connectors.code import filesystem as filesystem_module
+    from shadowscan.connectors.code import walk as walk_module
 
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     opened: list[int] = []
-    original = filesystem_module.open_confined_directory
+    original = walk_module.open_confined_directory
 
     def recording(base):
         opened.append(fd := original(base))
         return fd
 
-    monkeypatch.setattr(filesystem_module, "open_confined_directory", recording)
+    monkeypatch.setattr(walk_module, "open_confined_directory", recording)
 
     def boom(self, *args, **kwargs):
         raise RuntimeError("synthetic")

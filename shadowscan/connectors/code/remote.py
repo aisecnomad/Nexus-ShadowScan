@@ -484,7 +484,7 @@ class RemoteRepositoryConnector(BaseConnector):
         if isinstance(snapshot, dict) and snapshot.get("capture_method") == "git-clone":
             # Cloning already authorizes Git. Inspect gitlinks even without a
             # .gitmodules declaration; never fetch their remote contents.
-            fs.check_gitlink_coverage(Path(local))
+            fs.walker.check_gitlink_coverage(Path(local))
         for f in fs.analyze([{"path": local}]):
             f.connector = self.name
             f.provider = self.provider
@@ -579,7 +579,7 @@ class RemoteRepositoryConnector(BaseConnector):
 
         The clone runs no LFS smudge filter, so such a file is a short pointer text that the scan would
         read as if it were the content, and the scan would look complete. Submodules are reported by the
-        filesystem scan of the checkout (``check_gitlink_coverage``).
+        filesystem scan of the checkout (``TreeWalker.check_gitlink_coverage``).
         """
         if not os.path.isdir(dest):
             return  # nothing was checked out; the scan of the missing path reports that itself

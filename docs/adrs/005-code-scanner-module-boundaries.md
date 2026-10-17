@@ -127,8 +127,24 @@ them.
    (`MAX_ROOT_OWNERSHIP_STEPS`) and git identity limits. `scan_tree` brackets
    every root with `begin_scan` and `end_scan`; CODEOWNERS is still read
    through the scan root descriptor the walk opened.
+2. **Walk** moved into `walk.TreeWalker`: everything from `_excluded` to
+   `_walk_entries` (root opening, exclusions and `include`, links, oversize and
+   non-regular entries, submodules, deadline scheduling and the fail-closed
+   coverage accounting), with the module-level limits, name tables and helpers
+   it uses (the other groups import those they share from `walk.py`).
+   `walk(scan, scan_file, unread_settings)` replaces `_walk`; the walker calls
+   `scan_file` for each file it schedules. `included`, `model_artifact_name`,
+   `size_limit`, `note_file`, `lockfile_gap`, `check_gitlink_coverage`,
+   `root_listing_incomplete` and `skipped_oversize_test_fixtures` are its
+   interface to the other collaborators and to `remote.py`. Failure isolation
+   (`isolated`) became a function of `walk.py`, the lowest collaborator module.
+   `_root_prefix`, which names the root in a diagnostic when the connector
+   scans several, reads the connector's configuration, so it stays on the
+   façade (configuration reads outside the connector class cannot be attributed
+   to its `config_keys`, `tests/unit/test_connector_config_keys.py`); the
+   walker receives the bound method.
 
-The walk, file scan and findings groups (steps 2 to 4) are still methods of the
+The file scan and findings groups (steps 3 and 4) are still methods of the
 class.
 
 `filesystem.py` still re-exports every name that was importable from it before
@@ -154,10 +170,15 @@ ignored are those that differed between two runs of the unchanged code: start
 and finish times, the evaluation reports' timings and their digest of the
 scanner's own source, and the connector-run window in `endpoint.inventory`
 lifecycle metadata (the demo's console lines, logged by connectors running in
-parallel, were compared regardless of order). The 13,245 tests of the 197 test
-modules that touch the code scanner, with the repository policy tests, pass as
-on main, apart from wall-clock budget tests that fail intermittently under load
-on main too. Not verified: the public repositories of the 2026-10-01 field scan
+parallel, were compared regardless of order). Compared token by token with
+main, the moved definitions differ only in the renamed calls and parameters
+listed above (and one pair of redundant parentheses `ruff format` dropped). The
+13,334 tests of the 199 test modules that touch the code scanner or scan its
+sources, with the repository policy tests, pass as on main, apart from
+wall-clock budget tests that fail intermittently under load on main too.
+Together the inputs and those tests execute 93.1% (ownership) and 93.5% (walk)
+of the moved statements; most of the rest are deadline, race and Git 2.45+
+paths. Not verified: the public repositories of the 2026-10-01 field scan
 (nothing was cloned), live clone and API modes of `code.github` and
 `code.gitlab`, Git 2.45+ metadata (the runner had Git 2.43, so `use_git` and
 `diff_base` took their failure paths) and permission-denied reads (the runner

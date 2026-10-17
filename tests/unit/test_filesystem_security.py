@@ -19,8 +19,10 @@ from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code import filesystem as filesystem_module
 from shadowscan.connectors.code import lockfiles, manifests
+from shadowscan.connectors.code import walk as walk_module
 from shadowscan.connectors.code.filesystem import FilesystemConnector, _excerpt
 from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
+from shadowscan.connectors.code.walk import TreeWalker
 from shadowscan.models import Kind
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.text import BINARY_CONTENT_ERROR, read_text
@@ -1228,13 +1230,13 @@ def test_symbolic_link_checks_stop_at_the_listing_deadline(tmp_path, index, monk
         links.mkdir()
         for number in range(300):
             os.symlink("../pkg", links / f"alias{number}")
-    original = FilesystemConnector._link_target_is_scanned
+    original = TreeWalker._link_target_is_scanned
 
     def slow(self, rel, target, root, walk=None):
         time.sleep(0.01)
         return original(self, rel, target, root, walk)
 
-    monkeypatch.setattr(FilesystemConnector, "_link_target_is_scanned", slow)
+    monkeypatch.setattr(TreeWalker, "_link_target_is_scanned", slow)
     ctx = ConnectorContext(
         config={"path": str(tmp_path), "use_git": False, "scan_timeout": 0.5},
         index=index,
@@ -1415,13 +1417,13 @@ def test_unread_settings_path_outside_the_root_drives_no_lookup_outside_it(tmp_p
     (repo / ".claude").mkdir(parents=True)
     (repo / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"defaultMode": "default"}}))
     looked_up: list[str] = []
-    real = filesystem_module._project_root
+    real = walk_module._project_root
 
     def recording(root, path, *args, **kwargs):
         looked_up.append(path)
         return real(root, path, *args, **kwargs)
 
-    monkeypatch.setattr(filesystem_module, "_project_root", recording)
+    monkeypatch.setattr(walk_module, "_project_root", recording)
     ctx = ConnectorContext(config={"path": str(repo), "label": "repo", "use_git": False}, index=index)
     connector = FilesystemConnector(ctx)
     connector.unread_settings = [rel, ".claude/settings.local.json"]
@@ -1956,7 +1958,7 @@ def test_remote_code_connectors_forward_artifact_options(provider):
 
 def test_large_artifact_reserves_metadata_scan_time():
     connector = FilesystemConnector(ConnectorContext(config={"inspect_model_artifacts": True}))
-    assert connector._reserved_budget("model.gguf", Path("model.gguf"), 2**40, 10.0) == 2.0
+    assert connector.walker._reserved_budget("model.gguf", Path("model.gguf"), 2**40, 10.0) == 2.0
 
 
 _AGENT_SCRIPT = (
