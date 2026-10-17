@@ -46,6 +46,15 @@ summarizes each release for people who install and operate ShadowScan.
   `cloud.azure` and `cloud.oci` replay `--dump-records` exports, not a
   provider's native log, so a CloudTrail file explains itself instead of
   producing an incomplete scan with a cryptic warning.
+- Python 3.14 is supported: `requires-python` allows it, CI tests it on
+  Linux and macOS, and the hash locks already resolve on it. A PEP 263
+  cookie that Python 3.14's own `detect_encoding` refuses (`punycode`,
+  UTF-32) stays a coverage gap when it names a slow codec or one that does
+  not read ASCII as ASCII — the scanned estate's interpreter may still
+  honor it — instead of falling into the keep-default branch and being
+  silently analyzed; a bare `utf-16`/`utf-32` cookie is now a gap on every
+  interpreter for the same reason. Regression tests force the refusal path
+  so the pre-3.14 CI legs exercise it too.
 
 ### October 1 – 16 (condensed; the journal has every change)
 

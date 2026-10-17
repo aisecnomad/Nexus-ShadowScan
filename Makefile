@@ -23,7 +23,7 @@ install-hooks: install-dev ## Install pinned pre-commit hooks
 # requires-python).
 .PHONY: ensure-python
 ensure-python:
-	@python -c 'import sys; sys.exit(None if (3, 11) <= sys.version_info[:2] < (3, 14) else "ShadowScan development needs CPython 3.11 to 3.13; this python is " + sys.version.split()[0] + ". Create a virtual environment with a supported interpreter, for example: python3.12 -m venv .venv")'
+	@python -c 'import sys; sys.exit(None if (3, 11) <= sys.version_info[:2] < (3, 15) else "ShadowScan development needs CPython 3.11 to 3.14; this python is " + sys.version.split()[0] + ". Create a virtual environment with a supported interpreter, for example: python3.12 -m venv .venv")'
 install install-dev: ensure-python
 
 # --- Quality ---------------------------------------------------------------
