@@ -599,8 +599,7 @@ class _ConnectorRunner:
         state.deadline += scaled - DEFAULT_CONNECTOR_TIMEOUT
         self._engine._report_progress(
             spec.id,
-            f"input is large; deadline raised to {scaled:.0f}s "
-            f"(set --connector-timeout-seconds to override)",
+            f"input is large; deadline raised to {scaled:.0f}s (set --connector-timeout-seconds to override)",
         )
 
     def _connector_config(
