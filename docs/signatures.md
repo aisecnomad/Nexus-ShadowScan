@@ -422,7 +422,8 @@ and tests, which call and test the products they detect.
   line (after comment lines or a backslash continuation too, with empty or comment lines between an operator
   and its operand, and with any blanks between tokens, a no-break or zero-width space as well), the match is
   kept if a string literal that is a direct operand of `||`, `??`, `?:`, `or`, a ternary branch or `+` is
-  one token of the value class and looks like a key: the pattern's value stops
+  one token of the value class and looks like a key, not like words and numbers (`"anonymous-public-access"`,
+  `"/oauth2/v2.0/authorize"` and `"gpt-4o-mini-2024-07-18"` are a mode, a path and a model id): the pattern's value stops
   at the first blank, so `apiKey = process.env.OPENAI_API_KEY || "<key>"` matches only the read and the
   fallback is the credential (`Match.extra["credential"]`, which the placeholder test judges). A literal
   passed to a call there (`?? getSecret("<path>")`, `?: error("X is not set")`) is not a fallback operand.
