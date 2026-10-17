@@ -41,6 +41,9 @@ SLACK_APP_TOKEN = (
 )
 RUNNER_TOKEN = "glrt" + "-" + _random(string.ascii_letters + string.digits + "_-", 20)
 AZURE = "https://contoso.openai.azure.com/"
+# A person's password: punctuation parts it into runs too short to read as an opaque token.
+_WORD_ALPHABET = string.ascii_letters + string.digits
+PUNCTUATED = _random(_WORD_ALPHABET, 6) + "#" + _random(_WORD_ALPHABET, 5) + "$!" + _random(_WORD_ALPHABET, 6)
 
 CASES = {
     "csharp-credential-source-trivia": (
@@ -402,6 +405,25 @@ CASES = {
         "push.sh",
         (f"echo {BASE62} | docker login contoso.azurecr.io -u svc --password-stdin && curl {AZURE}openai\n"),
         BASE62,
+    ),
+    # A password entry after another credential's entry, and a password given
+    # as a keyword argument of its read (main 8c72467 showed both).
+    "password-entry-after-a-key-entry": (
+        "src/db.ts",
+        (
+            'import OpenAI from "openai";\n'
+            f'export const cfg = {{ endpoint: "{AZURE}", apiKey: process.env.AZURE_OPENAI_KEY, '
+            f"password: process.env.DB_PASSWORD?.trim() || '{PUNCTUATED}' }};\n"
+        ),
+        PUNCTUATED,
+    ),
+    "password-keyword-argument-of-its-read": (
+        "app/settings.py",
+        (
+            "import openai\n"
+            f"CONF = {{'endpoint': '{AZURE}', 'PASSWORD': cfg.get('db', 'password', fallback='{PUNCTUATED}')}}\n"
+        ),
+        PUNCTUATED,
     ),
 }
 # A marker followed by another ']' (escaped or not): a corrupted marker.

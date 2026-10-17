@@ -3653,6 +3653,102 @@ ROWS = [
         ),
         accepted="repeated: each key's second line repeats a counted credential",
     ),
+    # --- r4-review-creds4.json (round 4): a password entry after another credential's name
+    Row(
+        "r4.1-password-after-api-key-entry",
+        "sanitize",
+        "const cfg = { apiKey: process.env.API_KEY, password: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-db-password-after-token-entry",
+        "sanitize",
+        "const cfg = { token: process.env.T, dbPassword: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-after-secret-entry",
+        "sanitize",
+        "const cfg = { secret: env.SECRET, password: process.env.DB_PASSWORD?.trim() || '<P>' };",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-after-api-key-argument",
+        "sanitize",
+        "connect({ apiKey: k, password: process.env.DB_PASSWORD?.trim() || '<P>' })",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-after-credential-callee",
+        "sanitize",
+        "client.setApiKey(k); const pw = { password: process.env.DB_PASSWORD?.trim() || '<P>' }",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-passphrase-after-api-key-entry",
+        "sanitize",
+        "const cfg = { apiKey: process.env.API_KEY, "
+        "password: process.env.DB_PASSWORD?.trim() || '<=correct horse battery staple>' };",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-keyword-fallback",
+        "sanitize",
+        "'PASSWORD': cfg.get('db', 'password', fallback='<PW2>'),",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-password-default-value-argument",
+        "sanitize",
+        "password: env('DB_PASSWORD', default_value='<P>')",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-passphrase-keyword-fallback",
+        "sanitize",
+        "'PASSWORD': get_secret('db', fallback='<=correct horse battery staple>')",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-passphrase-fallback-object",
+        "sanitize",
+        "{ anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '<K>', "
+        "password: cfg.get('db','password', { fallback: '<=correct horse battery staple>' }) }",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.1-report-excerpts",
+        "scan",
+        {
+            "src/a.ts": "export const cfg = { apiKey: \"<OAI1>\", password: process.env.DB_PASSWORD?.trim() || '<P>' };\n"
+            "export const c3 = { anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '<K>', "
+            "password: cfg.get('db','password', { fallback: '<=correct horse battery staple>' }) };\n",
+            "app/s.py": "CONF = {'OPENAI_API_KEY': '<OAI2>', 'PASSWORD': cfg.get('db', 'password', fallback='<PW2>-Prod')}\n",
+        },
+        mode="",
+        head=(("app/s.py:1", "src/a.ts:1", "src/a.ts:2"), "complete", "withheld"),
+        main=(("app/s.py:1", "src/a.ts:1", "src/a.ts:2"), "complete", "shown"),
+    ),
 ]
 
 
