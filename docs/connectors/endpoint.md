@@ -190,13 +190,21 @@ the GPT4All and Jan model directories) is reported too. A name that only
 contains one of them is not enough. A product name that is also a common
 word, a given name or another program's name — Make (also GNU make), Goose
 (Homebrew's `goose` is the pressly/goose database migration tool), Jan,
-`lms`, Continue, Replicate, Cohere and Rivet — counts only in context: as an
-`.app` or `.exe` application (`Jan.app`, `Jan.exe`, `Goose.app`), or on a path
-inside an application bundle or dot-directory named after a product
-(`/Applications/Goose.app/Contents/MacOS/goose`, `~/.lmstudio/bin/lms`,
-`~/.continue`). Other directories on a path, such as a home directory's user
-name or Homebrew's `Cellar/goose`, are no context, so ordinary software stays
-filtered.
+`lms`, Continue, Replicate, Cohere and Rivet — counts only in its own
+product's context: an application bundle or executable that product installs,
+or a directory it keeps, as the endpoint catalog lists them (`Jan.app`,
+`Jan.exe`, `Goose.app`, `~/.config/goose`, LM Studio's `LM Studio.app` and
+`~/.lmstudio` for `lms`, `~/.continue`), anywhere on the path
+(`/Applications/Goose.app/Contents/MacOS/goose`, `~/.lmstudio/bin/lms`). An
+`.app` or `.exe` suffix or a dot-directory alone is no context: Make
+(Integromat), Replicate and Cohere have no desktop application, so `make.exe`
+(GNU make under Chocolatey, MSYS2 or GnuWin32), `Make.app`, `~/.make`,
+`Cohere.exe` and `Replicate.app` stay filtered, and so does a Windows
+`goose.exe`, which pressly/goose also builds. Other directories on a path, such
+as a home directory's user name or Homebrew's `Cellar/goose`, are no context
+either, so ordinary software stays filtered. A path inside an application
+bundle or dot-directory named after any other known product
+(`/Applications/Ollama.app/...`, `~/.ollama/...`) is reported.
 
 ### eBPF event formats
 

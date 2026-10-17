@@ -15,7 +15,7 @@ from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud import kubernetes as kubernetes_module
 from shadowscan.connectors.cloud.kubernetes import KubernetesConnector, OpenShiftConnector
 from shadowscan.connectors.endpoint import runtime as endpoint_runtime
-from shadowscan.connectors.endpoint.catalog import AMBIGUOUS_PRODUCT_NAMES
+from shadowscan.connectors.endpoint.catalog import AMBIGUOUS_PRODUCT_CONTEXTS, AMBIGUOUS_PRODUCT_NAMES
 from shadowscan.connectors.endpoint.runtime import (
     EbpfConnector,
     HostConnector,
@@ -523,12 +523,79 @@ def test_endpoint_host_ambiguous_names_need_context(row) -> None:
     ],
 )
 def test_endpoint_host_ambiguous_names_in_context_are_reported(row) -> None:
-    """An ambiguous product name counts as an ``.app``/``.exe`` application, or on a
-    path inside an application bundle or dot-directory named after a product."""
+    """An ambiguous product name counts with its own product's context: an application
+    bundle or executable the product installs, or a directory it keeps, as the catalog
+    lists them, on a path inside an application bundle or dot-directory named after a
+    product."""
     connector = HostConnector(ConnectorContext())
     connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
     assert len(list(connector.analyze([row]))) == 1
     assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"process": "make.exe"},
+        {"name": "make.exe", "path": "C:\\ProgramData\\chocolatey\\bin\\make.exe"},
+        {"name": "Make", "path": "C:\\msys64\\usr\\bin\\make.exe"},
+        {"path": "C:\\Program Files\\GnuWin32\\bin\\make.exe"},
+        {"name": "Make.app"},
+        {"name": "make", "path": "/home/u/.make/bin/make"},
+        {"name": "Cohere.exe"},
+        {"path": "/Applications/Cohere.app"},
+        {"name": "Replicate.app"},
+        {"process": "replicate.exe"},
+        {"name": "Continue.app"},
+        {"path": "C:/Users/u/go/bin/goose.exe"},
+    ],
+)
+def test_endpoint_host_ambiguous_names_need_their_own_products_context(row) -> None:
+    """Regression: any ``.app``/``.exe`` name or dot-directory named after an ambiguous
+    product counted as context, so GNU make on Windows (``make.exe`` as a process or
+    under Chocolatey, MSYS2 or GnuWin32), ``Make.app``, a ``.make`` directory,
+    ``Cohere.exe`` and ``Replicate.app`` were reported as AI runtimes. Make (Integromat),
+    Cohere and Replicate have no desktop application, and pressly/goose builds a
+    ``goose.exe`` too: only a bundle, executable or directory the catalog lists for the
+    product is context."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert list(connector.analyze([row])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "Ollama.exe"},
+        {"process": "ollama.exe"},
+        {"path": "C:/Users/u/AppData/Local/Programs/Ollama/ollama app.exe"},
+        {"name": "LM Studio.exe", "path": "C:/Users/u/AppData/Local/Programs/LM Studio/LM Studio.exe"},
+        {"name": "Open WebUI.app"},
+        {"name": "AnythingLLM.exe"},
+        {"path": "/Applications/Ollama.app/Contents/Resources/ollama"},
+    ],
+)
+def test_endpoint_host_unambiguous_products_stay_reported_under_any_suffix(row) -> None:
+    """Narrowing the ambiguous names' context leaves the other products' whole-name rule
+    alone: Ollama, LM Studio, Open WebUI and AnythingLLM count as an application or
+    executable of any platform, and inside their own bundles."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert len(list(connector.analyze([row]))) == 1
+    assert connector.ctx.stats.warnings == []
+
+
+def test_endpoint_host_ambiguous_contexts_belong_to_their_products() -> None:
+    """Each ambiguous name the catalog lists has an entry, possibly empty, and none of
+    its contexts is a bare suffix or an unrelated dot-directory."""
+    assert set(AMBIGUOUS_PRODUCT_CONTEXTS) == set(AMBIGUOUS_PRODUCT_NAMES)
+    for name in ("Make", "Replicate", "Cohere"):
+        assert AMBIGUOUS_PRODUCT_CONTEXTS[name] == (), name
+    for contexts in AMBIGUOUS_PRODUCT_CONTEXTS.values():
+        for context in contexts:
+            assert context.casefold() not in {".app", ".exe"}, context
+            assert all(component for component in context.split("/")), context
 
 
 def test_endpoint_host_ambiguous_product_names_are_left_out_by_name() -> None:

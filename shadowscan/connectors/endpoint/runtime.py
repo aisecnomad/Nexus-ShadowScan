@@ -29,6 +29,7 @@ from shadowscan.connectors.code.skill_audit import MAX_TEXT_BYTES, audit_skill_t
 from shadowscan.connectors.common import apply_matches, failure_summary, finalize, name_matches
 from shadowscan.connectors.endpoint import a2a
 from shadowscan.connectors.endpoint.catalog import (
+    AMBIGUOUS_PRODUCT_CONTEXTS,
     AMBIGUOUS_PRODUCT_NAMES,
     LOCAL_RUNTIME_NAMES,
     MODEL_STORES,
@@ -265,8 +266,8 @@ def _ai_category(category: str) -> bool:
 # (Ollama, LM Studio, vLLM, llama.cpp, LocalAI), coding agents, and platforms
 # (self-hosted chat UIs such as Open WebUI and AnythingLLM, LiteLLM, Dify,
 # Flowise). A product name that is also a common word or another program's
-# name needs context, by name, not by category (catalog.AMBIGUOUS_PRODUCT_NAMES):
-# "Make (Integromat)" is also GNU make.
+# name needs its own product's context, by name, not by category
+# (catalog.AMBIGUOUS_PRODUCT_CONTEXTS): "Make (Integromat)" is also GNU make.
 _HOST_PRODUCT_CATEGORIES = frozenset({"provider", "coding-agent", "platform"})
 # The products a signature groups, listed in its display name:
 # "Self-hosted chat UIs (Open WebUI, LibreChat, AnythingLLM, ...)".
@@ -281,6 +282,14 @@ _PATH_SEPARATOR = re.compile(r"[\\/]")
 _MAX_HOST_PATH = 1024
 # The catalog's model stores as case-folded path components (``~/.ollama/models``).
 _MODEL_STORE_ROOTS = tuple(tuple(store.root.casefold().split("/")) for store in MODEL_STORES)
+# The catalog's contexts for its ambiguous product names as case-folded path
+# component runs (``goose.app``, ``.config/goose``), and the lengths of those runs.
+_AMBIGUOUS_CONTEXTS = frozenset(
+    tuple(context.casefold().split("/"))
+    for contexts in AMBIGUOUS_PRODUCT_CONTEXTS.values()
+    for context in contexts
+)
+_AMBIGUOUS_CONTEXT_LENGTHS = frozenset(map(len, _AMBIGUOUS_CONTEXTS))
 
 
 def _product_key(text: str) -> str:
@@ -332,26 +341,46 @@ def _ambiguous_product_keys() -> frozenset[str]:
     return frozenset(_product_key(name) for name in AMBIGUOUS_PRODUCT_NAMES)
 
 
-def _in_context(part: str, products: frozenset[str]) -> bool:
-    """Whether the path component ``part`` is an ``.app``/``.exe`` application or a
-    dot-directory named after one of ``products``: ``Jan.app``, ``~/.lmstudio``."""
-    return bool(_APP_SUFFIX.search(part) or part.startswith(".")) and _product_key(part) in products
+def _names_bundle(part: str, keys: frozenset[str]) -> bool:
+    """Whether the directory ``part`` is an application bundle or a dot-directory named
+    after a product in ``keys``: ``Ollama.app``, ``~/.lmstudio``."""
+    return bool(_APP_SUFFIX.search(part) or part.startswith(".")) and _product_key(part) in keys
 
 
-def _names_product(text: str, keys: frozenset[str], ambiguous: frozenset[str]) -> bool:
+def _in_ambiguous_context(parts: list[str]) -> bool:
+    """Whether the path components ``parts`` hold, as a run and ignoring case, one of the
+    contexts the catalog lists for an ambiguous product name (``Jan.exe``, ``Goose.app``,
+    ``.continue``)."""
+    folded = [part.casefold() for part in parts]
+    return any(
+        tuple(folded[start : start + length]) in _AMBIGUOUS_CONTEXTS
+        for length in _AMBIGUOUS_CONTEXT_LENGTHS
+        for start in range(len(folded) - length + 1)
+    )
+
+
+def _names_product(text: str, keys: frozenset[str]) -> bool:
     """Whether the name or path ``text`` names a known AI product as a whole.
 
-    Its last component qualifies when it is a product name in ``keys``, or any product
-    name in context (``Jan.exe``, ``Goose.app``). A directory on the path qualifies only
-    in context, as an application bundle or dot-directory named after a product
-    (``/Applications/Goose.app/Contents/MacOS/goose``, ``~/.lmstudio/bin/lms``): a plain
-    directory such as a home directory's user name or ``Cellar/goose`` names nothing.
+    Its last component qualifies when it is a product name in ``keys`` (``ollama``,
+    ``LM Studio.app``, ``Ollama version 0.5.7``), and a directory on the path when it is an
+    application bundle or dot-directory named after one (``/Applications/Ollama.app/...``,
+    ``~/.lmstudio/bin/lms``). A name the catalog lists as ambiguous is not in ``keys``: it
+    qualifies only with its own product's context, a bundle, executable or directory the
+    catalog lists for that product (``Jan.exe``, ``/Applications/Goose.app/Contents/MacOS/goose``,
+    ``~/.continue``). An ``.app`` or ``.exe`` suffix or a dot-directory alone is no context
+    (``make.exe``, ``Cohere.exe``, ``~/.make``), and a plain directory such as a home
+    directory's user name or ``Cellar/goose`` names nothing.
     """
-    *parents, base = [part for part in _PATH_SEPARATOR.split(text) if part] or [""]
-    products = keys | ambiguous
-    if _product_key(base) in keys or _in_context(base, products):
-        return True
-    return any(_in_context(part, products) for part in parents)
+    parts = [part for part in _PATH_SEPARATOR.split(text) if part]
+    if not parts:
+        return False
+    *parents, base = parts
+    return (
+        _product_key(base) in keys
+        or any(_names_bundle(part, keys) for part in parents)
+        or _in_ambiguous_context(parts)
+    )
 
 
 def _in_model_store(text: str) -> bool:
@@ -395,9 +424,9 @@ class HostConnector(_EndpointConnector):
         """
         if self._product_keys is None:
             self._product_keys = _host_product_keys(self.index)
-        keys, ambiguous = self._product_keys, _ambiguous_product_keys()
+        keys = self._product_keys
         values = [self._text(record.get(key), _MAX_HOST_PATH) for key in ("name", "path", "process")]
-        return any(_names_product(value, keys, ambiguous) or _in_model_store(value) for value in values)
+        return any(_names_product(value, keys) or _in_model_store(value) for value in values)
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:

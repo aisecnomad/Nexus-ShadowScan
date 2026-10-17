@@ -252,18 +252,26 @@ LOCAL_RUNTIME_NAMES: tuple[str, ...] = (
 # unrelated software: a host inventory row named "Make" is GNU make far more
 # often than Make (Integromat), and Homebrew's "goose" is the pressly/goose
 # database migration tool, not Block's agent. endpoint.host takes one of these
-# as a row's whole name only with context: an ``.app``/``.exe`` application
-# (``Jan.app``, ``Jan.exe``), or a path inside an application bundle or a
-# dot-directory named after a product (``/Applications/Goose.app/...``,
-# ``~/.lmstudio/bin/lms``, ``~/.continue``).
-AMBIGUOUS_PRODUCT_NAMES: tuple[str, ...] = (
-    "Make",
-    "Rivet",
-    "Goose",  # pressly/goose, a database migration tool
-    "Jan",  # a given name and a month
-    "lms",  # LM Studio's CLI, and the usual abbreviation of a learning management system
+# as a row's whole name only in its own product's context, listed here: an
+# application bundle or executable the product installs, or a directory the
+# product keeps, each a run of whole path components anywhere on the row's path,
+# ignoring case (``Jan.exe``,
+# ``/Applications/Goose.app/Contents/MacOS/goose``, ``~/.lmstudio/bin/lms``,
+# ``~/.continue``). An ``.app`` or ``.exe`` suffix or a dot-directory is no
+# context by itself: Make (Integromat), Replicate and Cohere are hosted services
+# without a desktop application or a directory of their own, so their names never
+# count, and ``make.exe`` under Chocolatey or MSYS2 stays GNU make. Goose's
+# Windows executable is left out because pressly/goose builds a ``goose.exe`` too.
+AMBIGUOUS_PRODUCT_CONTEXTS: dict[str, tuple[str, ...]] = {
+    "Make": (),
+    "Rivet": ("Rivet.app",),
+    "Goose": ("Goose.app", ".config/goose", "Block/goose"),  # Block's desktop app and configuration
+    "Jan": ("Jan.app", "Jan.exe"),  # a given name and a month
+    # LM Studio's CLI, and the usual abbreviation of a learning management system.
+    "lms": ("LM Studio.app", ".lmstudio"),
     # Common words.
-    "Continue",
-    "Replicate",
-    "Cohere",
-)
+    "Continue": (".continue",),
+    "Replicate": (),
+    "Cohere": (),
+}
+AMBIGUOUS_PRODUCT_NAMES: tuple[str, ...] = tuple(AMBIGUOUS_PRODUCT_CONTEXTS)

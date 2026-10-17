@@ -262,7 +262,18 @@ tolerated gap.
   bundle or dot-directory named after a product
   (`/Applications/Goose.app/...`, `~/.lmstudio/bin/lms`). A plain
   directory, such as a user named `claude`, is no context.
-  Regression-tested both ways.
+  Regression-tested both ways. A third review found that this context
+  took any `.app` or `.exe` name or dot-directory named after an ambiguous
+  product, so GNU make on Windows (`make.exe` as a process or under
+  Chocolatey, MSYS2 or GnuWin32), `Make.app`, a `.make` directory,
+  `Cohere.exe` and `Replicate.app` were reported again. The catalog now
+  lists each ambiguous name's own context, the bundles, executables and
+  directories of its product (`Jan.exe`, `Goose.app`, `.continue`, ...),
+  and none for Make (Integromat), Replicate and Cohere, which have no
+  desktop application; a Windows `goose.exe` is left out because
+  pressly/goose builds one too. Regression-tested with each of those rows
+  and with Ollama, LM Studio, Open WebUI and AnythingLLM applications and
+  executables that stay reported.
 - These three connector changes alter which findings a scan reports, and
   `gateway.otel` findings from nested exports get new ids; the
   [connector correctness migration note](production-migrations.md#october-17-connector-correctness-migration-unreleased)
