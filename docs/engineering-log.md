@@ -380,14 +380,24 @@ public repositories with the tool and read the committed benchmark metrics.
   a token's shape: a value without digits must mix cases evenly, a value
   with digits must not be identifier-shaped (separated by `_` or `.` into
   identifier segments, letters all one case, few digits). A snake_case
-  password with a year in it is given up for that in source code. Outside
-  source code (an env or credential file, documentation, YAML) a PASSWORD
-  or CREDENTIAL value cannot name another variable, so these shape rules,
-  and the CONSTANT_CASE label rule, apply there only to token names
-  (`API_KEY`, `ACCESS_TOKEN`, `CLIENT_SECRET`):
-  `POSTGRES_PASSWORD=TrustNoOneEverAgain` and
-  `DB_PASSWORD=summer_vacation_beach_2024` in `.env` are reported, while
-  labels and placeholders stay unreported under any name. Vendor-prefixed hex
+  password with a year in it is given up for that in source code. In an
+  env or credential file (`.env`, `.env.local`, `prod.env`, `.netrc` and the
+  other tool credential files, but not a template such as `.env.example`,
+  `.env.sample`, `.env.template` or `.env.dist`) a PASSWORD or CREDENTIAL
+  value cannot name another variable, so these shape rules, and the
+  CONSTANT_CASE label rule, apply there only to token names (`API_KEY`,
+  `ACCESS_TOKEN`, `CLIENT_SECRET`): `POSTGRES_PASSWORD=TrustNoOneEverAgain`
+  and `DB_PASSWORD=summer_vacation_beach_2024` in `.env` are reported. A
+  value built like a name whose words are label vocabulary or the name's
+  (`KEYCLOAK_ADMIN_PASSWORD=KeycloakAdminPassword`,
+  `svc1_local_dev_password`) is a label there, and placeholders stay
+  unreported. The first version of this rule applied to every text that is
+  not source code, so env templates, Helm values, compose files, workflows,
+  `.properties` files and Markdown reported setting names and placeholders
+  in a password's place (`adminPassword: useExistingSecretKey`,
+  `spring.datasource.password=springDatasourcePassword`), and a
+  `.env.example` of eight development labels exited 3; 90d22be reported
+  none of them, and neither does this branch now. Vendor-prefixed hex
   tokens keep their digit density and still match. Placeholder recognition
   covers the languages documentation is translated into (a possessive
   followed by words, and the placeholder words of four letters or more in

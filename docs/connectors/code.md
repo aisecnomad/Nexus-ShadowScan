@@ -495,11 +495,16 @@ generated path it keeps that context's weight and confidence cap and the
 assigned-credential rule (`heuristic.inline-credential`) never reports a value
 shaped like the name of another variable (`self.api_key = resolved_api_key`,
 `include_tracing_api_key=include_tracing_api_key`, `BuildConfig.OPENAI_API_KEY`)
-or a translated placeholder (`sua_chave_openai`). Outside source code the
-name test applies to token names only (`API_KEY`, `ACCESS_TOKEN`,
-`CLIENT_SECRET`): a PASSWORD or CREDENTIAL value in an env or credential
-file (`POSTGRES_PASSWORD=TrustNoOneEverAgain`) cannot name a variable and is
-reported unless it is a label or a placeholder; see
+or a translated placeholder (`sua_chave_openai`). In an env or credential
+file (`.env`, `.env.local`, `.netrc`; not a template such as `.env.example`
+or `.env.sample`) the name test applies to token names only (`API_KEY`,
+`ACCESS_TOKEN`, `CLIENT_SECRET`): a PASSWORD or CREDENTIAL value there
+(`POSTGRES_PASSWORD=TrustNoOneEverAgain`) cannot name a variable and is
+reported unless it is a label (its words are label vocabulary or the
+name's, as in `KeycloakAdminPassword`) or a placeholder. In other
+configuration, documentation and templates a password's value may name a
+setting or a secret (`adminPassword: useExistingSecretKey`) and is read as
+in source code; see
 [scanning](../scanning.md#test-and-fixture-code).
 
 An `image:` line in a CI pipeline (`.github/workflows/`, `.gitlab-ci.yml`,
