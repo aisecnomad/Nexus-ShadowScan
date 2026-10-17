@@ -99,13 +99,14 @@ that are never silent:
   notebooks) that is not text in a supported encoding makes the scan incomplete
   with `binary or undecodable content in analyzable file`; the rules above say
   which invalid UTF-8 and NUL-bearing files are read instead. Under a test or
-  fixture path, with `include_tests` false and the accounting not strict, such a
-  file (a syntax-highlighting sample, a PNG attachment saved as `.txt`) is read
-  for credentials only, its bytes as Latin-1 without NUL bytes and without
-  excerpts, and is then charged to the
-  [coverage budget](#coverage-budget-and-strict-accounting) as one whole entry:
-  its other evidence would be discounted, and credentials never are. A few
-  such fixtures leave the scan complete; a tree seeded with them does not. That exception
+  fixture path, with `include_tests` false, such a file (a syntax-highlighting
+  sample, a PNG attachment saved as `.txt`) is read for credentials only, its
+  bytes as Latin-1 without NUL bytes and without excerpts, and is then charged
+  to the [coverage budget](#coverage-budget-and-strict-accounting) as one whole
+  entry: its other evidence would be discounted, and credentials never are.
+  [Strict accounting](#coverage-budget-and-strict-accounting) reads it for
+  credentials all the same and then reports its gap as an error, so it never
+  finds fewer keys than the default accounting. That exception
   does not cover a file whose findings keep their full weight under a test
   path: an MCP configuration (by a dedicated name such as `.mcp.json`, or a
   JSON, TOML or YAML file, `settings.json` included, whose text declares

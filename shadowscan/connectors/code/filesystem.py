@@ -3215,13 +3215,18 @@ class FilesystemConnector(BaseConnector):
         (``_full_weight_in_tests``, or ``full_weight`` from a caller that found an
         MCP configuration by its structure).
         """
-        return (
-            not full_weight
-            and not self.include_tests
-            and not self._strict_accounting()
-            and _is_test_path(rel)
-            and not self._full_weight_in_tests(rel)
-        )
+        return not full_weight and not self._strict_accounting() and self._discounted_test_path(rel)
+
+    def _discounted_test_path(self, rel: str) -> bool:
+        """Whether the evidence passes discount ``rel`` as test code, whatever the accounting.
+
+        ``include_tests`` off, a test path, and not a file whose findings keep
+        their full weight there (``_full_weight_in_tests``). Such a file that
+        cannot be decoded is read for credentials under every accounting
+        (``_read_source``): strict accounting decides how its gap is recorded,
+        never whether its credentials are read.
+        """
+        return not self.include_tests and _is_test_path(rel) and not self._full_weight_in_tests(rel)
 
     def _full_weight_in_tests(self, rel: str) -> bool:
         """Whether ``rel`` is named as a file whose findings keep their full weight under a test path.
@@ -3310,6 +3315,8 @@ class FilesystemConnector(BaseConnector):
         with ``mcpServers``), which is reported at full weight in test code too:
         a JSON, TOML or YAML fixture is read for that check even when credentials
         are not scanned, and is then charged like undecodable product content.
+        Strict accounting reads it too, and only then records its gap, as an
+        error: it never finds fewer credentials than the default accounting.
         """
         message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
         analyzed = self.scan_secrets and not self.triage
@@ -3406,7 +3413,12 @@ class FilesystemConnector(BaseConnector):
             self._note_file(rel, note)
         binary_fixture = False
         for issue in read_errors:
-            if self.strict_coverage:
+            if issue == BINARY_CONTENT_ERROR and self._discounted_test_path(rel):
+                # Read for credentials first, under every accounting; the
+                # fixture's gap is recorded after that read, as an error under
+                # strict accounting (_scan_binary_test_fixture).
+                binary_fixture = True
+            elif self.strict_coverage:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             elif issue == "file exceeds max_file_size":
                 # Configuration its name selects is read for what it declares:
@@ -3423,8 +3435,6 @@ class FilesystemConnector(BaseConnector):
                     blinding=selected,
                     reason="oversize-file",
                 )
-            elif issue == BINARY_CONTENT_ERROR and self._discounted_test_gap(rel):
-                binary_fixture = True
             else:
                 self._unreadable_gap(rel, issue)
         if text is None:

@@ -82,13 +82,35 @@ def test_a_zero_budget_counts_test_code_gaps_as_strict_coverage_does(tmp_path, r
     assert zero.stats.incomplete_reasons
 
 
-@pytest.mark.parametrize(
-    "setting",
-    [
-        pytest.param({"strict_coverage": True}, id="strict-coverage"),
-        *ZERO_BUDGETS,
-    ],
-)
+STRICT_SETTINGS = [pytest.param({"strict_coverage": True}, id="strict-coverage"), *ZERO_BUDGETS]
+# A value the CUSTOM_API_KEY credential rule reports, assembled at run time.
+FIXTURE_KEY = "R4nd0m9Qx2" + "Vb7Lp6"
+
+
+@pytest.mark.parametrize("setting", STRICT_SETTINGS)
+def test_strict_accounting_reads_an_undecodable_test_fixture_for_credentials(
+    tmp_path, run_connector, setting
+):
+    # Strict accounting decides how the fixture's gap is recorded, never whether
+    # its credentials are read: it must not find fewer than the default does.
+    fixture = BINARY + f'\nCUSTOM_API_KEY = "{FIXTURE_KEY}"\n'.encode() + b"\x00\xff"
+    _tree(tmp_path, {"tests/fixtures/dump.txt": fixture})
+    found, default = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert not default.stats.incomplete
+    assert [f.metadata.get("path") for f in found if f.kind.value == "secret"] == ["tests/fixtures/dump.txt"]
+    found, strict = run_connector("code.filesystem", path=str(tmp_path), use_git=False, **setting)
+    assert [f.metadata.get("path") for f in found if f.kind.value == "secret"] == ["tests/fixtures/dump.txt"]
+    assert FIXTURE_KEY not in repr([f.to_dict() for f in found])
+    # Read first, then counted: the gap is an error naming the read it got.
+    assert strict.stats.incomplete
+    assert strict.stats.incomplete_reasons == {"unparsed-input": 1}
+    assert [e for e in strict.stats.errors if "tests/fixtures/dump.txt" in e] == [
+        "code.filesystem: tests/fixtures/dump.txt: binary or undecodable content in analyzable file; "
+        "read for credentials only"
+    ]
+
+
+@pytest.mark.parametrize("setting", STRICT_SETTINGS)
 def test_profile_ci_is_refused_under_either_spelling_of_strict_accounting(tmp_path, run_connector, setting):
     _tree(tmp_path)
     with pytest.raises(ConnectorError, match="strict accounting"):

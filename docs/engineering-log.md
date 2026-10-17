@@ -39,7 +39,15 @@ strict accounting, credentials, declaration, discount, budget.
   anything is fetched, and by `shadowscan code` as a usage error. The two
   settings differ only in where a gap is reported: `strict_coverage` as an
   error where it happens, a budget of 0 through the ledger, whose verdict is
-  an error and counts each gap by its reason.
+  an error and counts each gap by its reason. Strict accounting turns off the
+  discount, not the credential-only read: the reader had decided both with
+  one predicate, so a zero-budget scan of 61 product files and a binary
+  `tests/fixtures/dump.txt` holding a GitHub token reported the gap and lost
+  the key a default scan found, and `strict_coverage` had always done the
+  same. `_read_source` now hands an undecodable file under a discounted test
+  path to the credential-only read under every accounting
+  (`_discounted_test_path`), which then records the gap: charged to the
+  budget by default, an error under strict accounting.
 - **Declared omissions count every entry and never a full-weight file.**
   `profile: ci` recorded one declared note per root for skipped links and
   returned early for the rest, so 40 dangling links under `tests/certs/`

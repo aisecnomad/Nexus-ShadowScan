@@ -43,7 +43,9 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   `strict_coverage` and `--max-coverage-gap 0` (or `max_coverage_gap: 0`)
   are both strict accounting and restore the previous accounting: every gap
   marks the scan incomplete, and none is discounted as test code or declared
-  by `profile: ci`, which both settings refuse (see
+  by `profile: ci`, which both settings refuse. An undecodable test fixture
+  is still read for credentials first under either, so strict accounting
+  never finds fewer keys than the default (see
   [strict accounting](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md#coverage-budget-and-strict-accounting)).
   Expect scans that previously exited 3 on a dangling
   symbolic link in a test fixture to exit 0 now, with the gap listed.
