@@ -976,9 +976,12 @@ public repositories with the tool and read the committed benchmark metrics.
   `configService.getX() ??`) and a TypeScript cast (`as string ||`), through
   parentheses around an operand (`|| ("<key>")`) and a Python triple-quoted
   literal (`or """<key>"""`), all of which 90d22be and main reported, and
-  through operators, which may end a line or
-  start the next one (also after a comment or a backslash continuation); a
-  blank line, `;`, `,`, a closing bracket or any other token ends it. Any
+  through operators, which may end a line or start a later one (after
+  comment lines or a backslash continuation too). An empty line before an
+  operator, `;`, `,`, a closing bracket or any other token ends it; empty and
+  comment lines between an operator and its operand do not, since the
+  operator needs one (`||\n  // dev fallback\n  "<key>"`, which main
+  reported, had ended at the second line break). Any
   white space but a line end separates tokens, as do the zero-width space,
   word joiner and byte order mark (a no-break space before `||` had ended the
   value, which 90d22be and main reported). The
