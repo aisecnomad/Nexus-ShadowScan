@@ -501,9 +501,15 @@ or a translated placeholder (`sua_chave_openai`). In an env or credential
 file (`.env`, `.env.local`, `.netrc`; not a template such as `.env.example`
 or `.env.sample`) the name test applies to token names only (`API_KEY`,
 `ACCESS_TOKEN`, `CLIENT_SECRET`): a PASSWORD or CREDENTIAL value there
-(`POSTGRES_PASSWORD=TrustNoOneEverAgain`) cannot name a variable and is
-reported unless it is a label (its words are label vocabulary or the
-name's, as in `KeycloakAdminPassword`) or a placeholder. In other
+(`POSTGRES_PASSWORD=TrustNoOneEverAgain`, `POSTGRES_PASSWORD =
+PostgresProd2024Secure`) cannot name a variable and is reported unless it is
+a placeholder or a label: every word of it is label vocabulary, a function
+word or a word of the name, and every number is the name's
+(`KeycloakAdminPassword`, `svc1_local_dev_password` under
+`SVC1_DB_PASSWORD`); a year or any other word (`LocalAdmin2024Strong`,
+`snout_dev_thump_bloom`) makes it a password. A key pasted in place of an
+environment variable's name (`process.env.<KEY>`) is reported as a
+credential, by the same test that withholds it from evidence. In other
 configuration, documentation and templates a password's value may name a
 setting or a secret (`adminPassword: useExistingSecretKey`) and is read as
 in source code; see
@@ -647,8 +653,11 @@ A file whose name selects no analysis (`*.jsonl`, `*.bak`,
 `*.j2`, binary and media suffixes) is never opened, so it is neither scanned
 for credentials nor counted as a coverage gap; name such files in a file-name
 signature pack to read them. A file's credential finding carries at most
-five matches per credential format (`metadata.count` counts them, one per
-credential however many patterns match it). A reference to a credential
+five credentials per credential format (`metadata.count` counts them, one per
+credential however many patterns or lines match it: a credential repeated on
+another line, such as one password in each service of a compose file or one
+key in each document of a manifest, is reported once, at its first line, and
+counts once). A reference to a credential
 (`api_key = settings.API_KEY`), a documentation placeholder
 (`OPENAI_API_KEY=sk-your-key-here-1a2b`, which becomes example evidence) and
 a short `sk-` value that does not look random take no place in that quota,

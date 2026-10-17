@@ -328,7 +328,6 @@ def test_a_token_shaped_fallback_with_separators_is_still_reported(index: Signat
 @pytest.mark.parametrize(
     "fallback",
     [
-        "sk-ant-api03-...",
         "your-api-key-here-Abc123XyZ",
         "PLACEHOLDER-a1B2c3D4e5F6g7H8",
         "changeme-Abc123Def456Ghi789",
@@ -1351,3 +1350,27 @@ def test_a_key_after_a_cut_read_in_other_shapes_is_withheld(line: str):
 )
 def test_text_after_a_credential_line_keeps_its_text(text: str):
     assert sanitize_text(text) == text
+
+
+@pytest.mark.parametrize(
+    "fallback",
+    [
+        "your-api-key-here-Abc123XyZ",
+        "PLACEHOLDER-a1B2c3D4e5F6g7H8",
+        "changeme-Abc123Def456Ghi789",
+        "fake_A1b2C3d4E5f6G7h8I9j0",
+    ],
+)
+def test_a_token_shaped_placeholder_fallback_is_example_evidence(index: SignatureIndex, fallback: str):
+    # The placeholder test judges the fallback literal, so a sample is kept
+    # for example evidence and nothing is reported.
+    line = f'anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "{fallback}",'
+    [sample] = index.match_secrets(line, code=True, placeholder=placeholder_reason)
+    assert sample.extra["credential"] == fallback and placeholder_reason(fallback) is not None
+
+
+def test_a_worded_placeholder_fallback_is_neither_reported_nor_evidence(index: SignatureIndex):
+    # 'sk-ant-api03-...' reads as words and an ellipsis, so no fallback
+    # credential is read at all: not even example evidence is recorded.
+    line = 'anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "sk-ant-api03-...",'
+    assert index.match_secrets(line, code=True, placeholder=placeholder_reason) == []
