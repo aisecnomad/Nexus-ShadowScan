@@ -1,37 +1,51 @@
 # Threat and control mappings
 
-The mappings module maps ShadowScan findings to external threat and control references from
-NIST AI RMF, ISO/IEC 42001, the EU AI Act and AIUC-1. These references appear in the JSON
-report under `metadata.threats` and `metadata.controls`, and are the inputs to the
-`shadowscan controls` cross-reference view.
+The mappings package relates each finding to entries of packaged, edition-qualified
+catalogs. Threat references (the OWASP Top 10 for LLM Applications and for Agentic
+Applications, MITRE ATLAS and the CSA MAESTRO layers) are exported as
+`metadata.threats`, and control references (NIST AI RMF, ISO/IEC 42001, the EU AI Act
+and AIUC-1) as `metadata.controls`. Each is a sorted list, left out when empty. The
+[threat and control mappings](../concepts/mappings.md) guide lists the catalogs, the
+rule format and where each output shows the references.
 
-## How mappings work
+## How references are derived
 
-Mappings are **derived at reporting time** from a finding's surface, kind, frameworks,
-capabilities, tags, risk level and declared governance. They are never stored in the JSON
-report as static fields; `metadata.threats` and `metadata.controls` are in
-`DERIVED_METADATA_KEYS` and are recomputed from the rest of the finding on each serialization.
+A rule's `when` condition reads the finding's tags, capabilities, kind, surface,
+shadow status and owner, its autonomy floor and oversight (`metadata.autonomy`), its
+registry reconciliation status and the EU AI Act risk class its registering
+Capability Card declares. Every key must hold, and a list matches when it shares any
+value with the finding. An unknown shadow status (no inventory supplied) matches
+neither `shadow: true` nor `shadow: false`, and malformed metadata counts as absent.
+For example, the `declared-high-risk` rule (`declared_risk_class_any: [high]`)
+references EU AI Act Articles 12, 14 and 26 only for a registered finding whose card
+declares the `high` class: ShadowScan cannot tell whether a system is high-risk and
+does not verify the declaration.
 
-This design means:
+`Finding.to_dict` derives both keys from the finding's own state on every export and
+drops any value the finding carried; `Finding.from_dict` discards them, together with
+the removed `metadata.compliance` key (`DERIVED_METADATA_KEYS`). References therefore
+never feed identity, risk, diff state, merging or the incremental cache, and a report
+that is read back and exported again gets the references of the installed catalogs,
+not those it was written with.
 
-- Mappings update automatically when the packaged catalogs change without needing a re-scan.
-- The same finding can reference different controls depending on its declared EU AI Act risk
-  class (set in the Capability Card).
-- A finding's control references reflect its actual observed properties, not a manual
-  classification.
+## Edition-qualified references
 
-## Edition qualifiers
+A reference is `<prefix>:<entry>`, and a catalog's prefix must be
+`<framework>-<edition>`, for example `owasp-llm-2026:LLM03` or `eu-ai-act-2024:Art.14`.
+Entry numbers change between editions, so a new edition gets a new prefix and a
+reference cannot outlive the edition it was written for.
 
-Some mappings are **edition-qualified**: they only apply to findings at or above a certain
-autonomy tier, risk level or shadow status. For example, a control that applies only to
-high-risk EU AI Act systems is gated on `eu_ai_act_risk_class: high`.
+## Validation and limits
 
-## Limitations
+`load_mappings` validates the packaged catalogs and rules once per process and raises
+`MappingCatalogError` listing every problem; `python -m shadowscan.mappings.validate`
+runs the same checks and exits 1 on a problem. The scanner reads only the packaged
+data.
 
-Mappings are authored heuristics. They establish that a finding is **evidence relevant to** a
-control, not that the control applies, is satisfied or has been tested. The
-[`controls`](controls.md) module makes this explicit with its completeness and "evidence
-reference, not compliance determination" language.
+The rules are author mappings and have not been independently reviewed. A reference
+says a finding is evidence relevant to an entry, not that a control applies or is
+met; [`shadowscan.controls`](controls.md) groups the control references per control
+for `shadowscan controls`.
 
 ::: shadowscan.mappings
     options:

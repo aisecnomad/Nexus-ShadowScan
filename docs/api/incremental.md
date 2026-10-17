@@ -1,38 +1,71 @@
 # Incremental cache
 
-The incremental cache avoids re-running connectors whose inputs have not changed since the last
-scan. It is a **conservative, content-addressed** cache: a connector's results are reused only
-when ShadowScan can prove — by checking the content hash of its inputs — that the same analysis
-would produce the same findings.
+With `--incremental` (or `options.incremental: true`), the incremental cache reuses a
+completed connector result when the fingerprint of its static inputs is unchanged. It
+is conservative: an input it cannot fingerprint, or an entry it cannot read or verify,
+means the connector runs in full. The [incremental scans](../scanning.md#incremental-scans)
+guide covers the options and limits.
 
-## What can be cached
+```yaml
+options:
+  incremental: true
+  state_dir: ../private-scan-state
+connectors:
+  - name: code.filesystem
+    paths: [./repo-a, ./repo-b]
+```
 
-Only **static-input connectors** are eligible for caching:
+## Eligible connectors
 
-- Local code checkouts (`code.filesystem`, `code.github` with `--offline`)
-- Exported cloud or API inventories (any connector with `input:` pointing to a local file)
-- Connectors that declare `incremental_by_root: True`
+- `code.filesystem`, except a scan with `diff_base` or `include`. Each root of a
+  multi-root `paths` scan is cached separately.
+- `code.github`, `code.gitlab`, `cloud.aws`, `cloud.azure`, `cloud.gcp` and `cloud.oci`
+  with an offline `input`.
 
-**Live API connectors are never cached.** The API's remote inventory may have changed even if
-the connector configuration has not.
+Live APIs and every other connector, including a plugin that replaces a built-in
+connector, are collected on every run: an unchanged configuration cannot establish
+that remote state is unchanged. `--dump-records` disables the cache, because a cached
+result has no records to export.
 
-## Cache semantics
+## Fingerprint and reuse
 
-- Findings are stored **before** reconciliation, scoring and correlation. Those stages always
-  run again on the cached results so that a registry change, policy update or new baseline
-  affects the current report without requiring a re-scan.
-- The cache key combines the connector name, its configuration hash and the SHA-256 of each
-  input file.
-- Cache state is local to the scanning user's account and must be stored **outside all scan
-  inputs** to prevent an attacker from planting a stale cache entry alongside a malicious
-  checkout.
+The fingerprint is a SHA-256 digest over the cache format, the ShadowScan version, a
+digest of the scanner's source, the signature index, the connector's name, id and
+configuration, a commitment to `SHADOWSCAN_IDENTITY_KEY` when it is set, and each input
+root: the content of every file below it, apart from directories a code scan excludes by
+name, plus the mode, times, device and inode of every file and directory and each
+file's size. A code file over
+`max_file_size` contributes only its metadata. Hashing is bounded (512 MiB, 200,000
+entries and 30 seconds per snapshot, 64 MiB per file); exceeding a bound, or meeting a
+symbolic link or special file, falls back to a full run.
 
-## Security properties
+The input is fingerprinted again before a cached result is used, and a fresh collection
+follows when it changed. After a fresh collection it is fingerprinted once more; a
+change marks the connector incomplete with the error "static input changed during the
+scan; rerun required", so the scan exits 3.
 
-- Cache entries are stored with restricted permissions (`0o600`).
-- An entry whose HMAC does not verify is rejected and the connector runs again.
-- A cache hit never suppresses a warning about the connector: coverage flags from the cached
-  run are replayed in the current `ScanStats`.
+Findings are stored before reconciliation, scoring and correlation, and those stages
+always run again. Only a result without errors that was neither skipped nor incomplete
+is stored. Its warnings are stored with it and replayed on every hit, and the
+connector's statistics report `cached: true` with zero objects examined. A result that
+carries credential pseudonyms is stored only when `SHADOWSCAN_IDENTITY_KEY` supplies a
+stable key.
+
+## State directory
+
+State lives in `options.state_dir` (`--state-dir`), by default
+`$XDG_STATE_HOME/shadowscan`, or `~/.local/state/shadowscan` when `XDG_STATE_HOME` is
+unset, empty or relative. It must be a private (0700) directory owned by the scanning
+user, reached without symbolic links and outside every scan input; otherwise the cache
+is disabled with a warning and every connector runs in full. Entries are 0600 JSON
+files written atomically. An entry that another user owns, that group or others can
+access, or that exceeds 64 MiB is ignored. Entries unused for 30 days expire, and the
+cache keeps at most 256 entries and 512 MiB, removing the least recently used first.
+
+With `SHADOWSCAN_IDENTITY_KEY` set, an entry carries an HMAC-SHA256 that binds its
+format, slot, fingerprint and payload; without it, only a SHA-256 checksum of the
+payload, which detects corruption but not a writer who controls the scanner account.
+An entry that does not verify is a cache miss.
 
 ::: shadowscan.incremental
     options:
