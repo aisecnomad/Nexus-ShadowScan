@@ -202,16 +202,25 @@ documents every command and option; `shadowscan <command> --help` prints them fo
 
 ### Output formats
 
-`table` (default) · `json` · `sarif` · `csv` · `markdown` · `html` · `cyclonedx` (AI-BOM) · `ocsf` (SIEM)
+| Format | Flag | Description |
+|---|---|---|
+| **Table** | `--format table` | Rich terminal table (default); writes JSON when `-o` is used |
+| **JSON** | `--format json` | Full ShadowScan finding schema with evidence and metadata |
+| **SARIF** | `--format sarif` | Static Analysis Results Interchange Format for GitHub Code Scanning |
+| **CSV** | `--format csv` | Spreadsheet-compatible with formula injection protection |
+| **Markdown** | `--format markdown` | Markdown table for documentation or reports |
+| **HTML** | `--format html` | Standalone HTML report |
+| **CycloneDX** | `--format cyclonedx` | CycloneDX 1.6 AI-BOM (Software Bill of Materials) |
+| **OCSF** | `--format ocsf` | OCSF 1.1.0 Detection Finding for SIEM integration |
 
 ### Exit codes
 
 | Exit | Meaning |
 |---|---|
 | **0** | Scan completed and passed |
-| **1** | Invalid option, path, configuration, or setup/output error |
-| **2** | Reached `--fail-on` threshold; `diff` with `--fail-on-new` / `--fail-on-drift` |
-| **3** | Incomplete scan (API error, timeout, limit, malformed export); `diff` when reports are not comparable |
+| **1** | No scan result: invalid option, value, path or configuration, or a setup or output error |
+| **2** | Scan completed but reached `--fail-on`; `diff` returns 2 with `--fail-on-new` or `--fail-on-drift` |
+| **3** | Scan incomplete (API error, timeout, denied access, limit, malformed export); `diff` returns 3 when reports are not comparable |
 
 Gate CI on any non-zero exit: exit 1 means nothing was scanned, and an
 incomplete scan never reads as clean. On exit 3 the CLI names the reason
@@ -332,9 +341,42 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
  CRITICAL  91  SHADOW  endpoint  agent-config OpenClaw configured on dev-laptop-07 (~dana)
 ```
 
-SARIF output (`--format sarif`) integrates with GitHub Code Scanning; results carry heuristic risk levels, not CVSS scores
-([example](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/reference/cli.md#sarif-output)).
-See [severity](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/severity.md).
+<details>
+<summary><strong>SARIF output example</strong> (for GitHub Code Scanning)</summary>
+
+The same scan as SARIF for GitHub code scanning (`--format sarif`), first result
+abridged:
+
+```json
+{
+  "ruleId": "shadowscan/agent-config/coding-agent.claude-code",
+  "level": "warning",
+  "message": {
+    "text": "Claude Code configured in repository root — risk critical (100), confidence 1.00 — SHADOW (not in inventory). Risk factors: agent-config finding; not present in the sanctioned agent inventory; can execute code or shell commands; …"
+  },
+  "partialFingerprints": {"shadowscan/finding": "ss-8711bc4c2a646794"},
+  "properties": {
+    "surface": "code",
+    "kind": "agent-config",
+    "shadow": true,
+    "risk_level": "critical",
+    "risk_score": 100,
+    "confidence": 1.0,
+    "frameworks": ["coding-agent.claude-code"],
+    "capabilities": ["code-exec", "tool-use", "autonomous", "multi-agent"],
+    "tags": ["posture-permissions-bypassed", "posture-unrestricted-shell"],
+    "threats": ["maestro-2025:L3", "mitre-atlas-2026.09:AML.T0050"]
+  },
+  "locations": [
+    {"physicalLocation": {"artifactLocation": {"uri": ".claude/settings.json", "uriBaseId": "%SRCROOT%"}}}
+  ]
+}
+```
+
+SARIF results are warnings or notes carrying the heuristic risk level, never a
+CVSS score; see [severity](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/severity.md).
+
+</details>
 
 ---
 
@@ -426,7 +468,11 @@ endpoint and runtime connectors are in [Surfaces & connectors](#surfaces--connec
 
 ## Benchmarks
 
-Author-written regression benchmarks (not independent review or production precision/recall):
+Offline results from this repository's own benchmarks. The maintainer wrote
+ShadowScan, both corpora, their labels and the harnesses, with AI coding
+assistants (Claude, Codex, Grok, Google Antigravity and others), so these numbers are
+regression evidence about the listed inputs. They are **not** independent review
+and **not** measured production precision or recall.
 
 | Track (run, version) | Inputs | ShadowScan result | Limits |
 |---|---|---|---|
@@ -450,10 +496,25 @@ on any single surface. The
 lists every benchmark with its protocol and limits.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool benchmark comparison" width="95%">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-shadowbench-cases.svg" alt="Estate and in-scope recall per tool in the 2026-10-11 ShadowBench nine-surface cases run" width="95%">
 </p>
 
-See the [benchmark index](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md) for methodology, limits, cross-tool comparisons, and reproduction steps.
+The chart is generated from the committed
+[ShadowBench cases run of 2026-10-11](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/shadowbench/cases/results/2026-10-11/REPORT.md):
+738 authored entities across nine surfaces. Estate recall charges each tool for
+the surfaces it does not cover, so it mostly measures coverage; compare the
+in-scope bars, and read the report's precision and decoy specificity before
+drawing any conclusion. ShadowScan marked 27 of its 326 scans incomplete there.
+The same authorship caveat applies: the maintainer wrote the corpus, the
+rubrics, the scorer and every tool's adapter.
+
+### Cross-benchmark summary
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/aisecnomad/Nexus-ShadowScan/main/docs/assets/benchmarks-cross-tool.webp" alt="Cross-tool benchmark comparison — ShadowBench estate recall and Shadow AI Discovery value-level F1" width="95%">
+</p>
+
+<p align="center"><em>Left: estate recall on ShadowBench Cases (346 cases, 9 surfaces — unsupported surfaces count as misses). Right: value-level F1 on Shadow AI Discovery (87 repositories, code surface). Benchmarks are author-written and in-sample. See the <a href="https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/benchmarks/README.md">benchmark index</a> for methodology, limits, and reproduction steps.</em></p>
 
 ---
 
@@ -509,10 +570,24 @@ never parsed) and `runtime.processes` reads `/proc` on Linux.
 }
 ```
 
-For field definitions (confidence, risk, shadow, autonomy, threats, controls) see the
+<details>
+<summary><strong>Field reference</strong></summary>
+
+* **confidence** combines grouped evidence weights with noisy-OR. It is a heuristic evidence score, not a calibrated probability or proof that an agent executed.
+* **risk** is additive and explainable: the listed factors always add up to `score`. **danger_score** is the same model without the governance factors (registration and ownership); `options.risk_basis: danger` bases `level` and `--fail-on` on it.
+* **shadow** is `true` unless exactly one inventory entry matches an explicit resource pattern and its scope restrictions; a name match only suggests an entry for review.
+* **autonomy** (`metadata.autonomy`) places the finding on the L0 Chatbot to L5 Fully Autonomous scale as an interval: the `floor` the evidence proves and the `ceiling` it has not ruled out.
+* **related** links findings across surfaces only through an exact shared identifier; name similarity goes to `related_candidates` as a review hint.
+* **threats** and **controls** are edition-qualified references to OWASP, MITRE ATLAS, MAESTRO, NIST AI RMF, ISO/IEC 42001, EU AI Act and AIUC-1 entries: author mappings, not compliance determinations.
+
+For the full finding schema, risk model, and output format details, see the
 [risk scoring](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/concepts/risk.md),
 [autonomy tiers](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/concepts/autonomy.md) and
 [mappings](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/concepts/mappings.md) documentation.
+
+CSV output inserts a literal `'` at the start of a value, and after each `,`, `;`, tab, `|` or line break inside it, when the following text begins with `=`, `+`, `-` or `@` (also after whitespace or quotes), a tab or a carriage return; values beginning with a line feed are also marked. Strip markers for programmatic use or use `json`; see [output and inventory migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/production-change-history.md#output-and-inventory-migration).
+
+</details>
 
 ## Frameworks & products recognized
 
@@ -580,7 +655,36 @@ make install          # hash-locked runtime, cloud, dev and docs toolchain
 make check            # lint, format, types, signatures, mappings, secrets, audit, coverage, connector floor, evaluation
 ```
 
-Run `make help` or see the [Makefile](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/Makefile) for the full target list (install, lint, format, typecheck, test, coverage-gate, signatures, mappings, secrets, audit, evaluate, docs, build, docker, clean).
+<details>
+<summary><strong>Make targets reference</strong></summary>
+
+| Target | Description |
+|---|---|
+| `make install` | Editable install with dev + cloud + docs extras from hash-locked requirements |
+| `make install-dev` | Dev extras only (no cloud SDKs) |
+| `make lint` | Run ruff linter |
+| `make format` | Run ruff formatter |
+| `make typecheck` | Run mypy type checker |
+| `make test` | Test suite with coverage (80% floor) |
+| `make test-fast` | Tests without coverage, stop at first failure |
+| `make test-parallel` | Tests in parallel with pytest-xdist |
+| `make coverage-gate` | Per-connector 75% coverage floor |
+| `make signatures` | Validate all signature schemas |
+| `make mappings` | Validate mapping catalogs |
+| `make secrets` | Hardcoded credential gate |
+| `make audit` | pip-audit on environment and all lock files |
+| `make evaluate` | Run bundled regression corpora |
+| `make check` | All quality gates combined |
+| `make demo` | Run bundled offline demo |
+| `make docs` | Build MkDocs documentation site |
+| `make connector-reference` | Regenerate connector reference page |
+| `make readme-matrix` | Regenerate README detection matrix |
+| `make readme-visuals` | Regenerate banner and architecture SVGs |
+| `make build` | Build sdist and wheel |
+| `make docker` | Build container image |
+| `make clean` | Remove build artifacts and caches |
+
+</details>
 
 See [CONTRIBUTING.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#getting-started)
 to get started and its [repository map](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CONTRIBUTING.md#find-your-way-around)
