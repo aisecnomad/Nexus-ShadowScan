@@ -32,6 +32,7 @@ from shadowscan.connectors.endpoint.catalog import (
     AMBIGUOUS_PRODUCT_CONTEXTS,
     AMBIGUOUS_PRODUCT_NAMES,
     LOCAL_RUNTIME_NAMES,
+    MODEL_FILE_SUFFIXES,
     MODEL_STORES,
     SHELL_TOOLS,
 )
@@ -280,8 +281,17 @@ _NON_ALNUM = re.compile(r"[^0-9a-z]+")
 _PATH_SEPARATOR = re.compile(r"[\\/]")
 # Host inventory paths are read this far, so a long path keeps its file name.
 _MAX_HOST_PATH = 1024
-# The catalog's model stores as case-folded path components (``~/.ollama/models``).
-_MODEL_STORE_ROOTS = tuple(tuple(store.root.casefold().split("/")) for store in MODEL_STORES)
+# The catalog's model stores as case-folded path components below a home directory
+# (``.ollama/models``), each with its layout.
+_MODEL_STORE_ROOTS = tuple((tuple(store.root.casefold().split("/")), store.layout) for store in MODEL_STORES)
+# A home directory as the case-folded components a path starts with, after any
+# Windows drive: ``~`` (or ``~user``), a home variable or ``/root``, one component;
+# ``/home/<user>``, ``/Users/<user>`` (``C:\Users\<user>``) and macOS's ``/var/root``, two.
+_HOME_COMPONENTS = frozenset({"$home", "${home}", "%userprofile%", "root"})
+_HOME_PARENTS = frozenset({"home", "users"})
+_WINDOWS_DRIVE = re.compile(r"[a-z]:")
+# The directories an Ollama store keeps its models in.
+_OLLAMA_STORE_DIRECTORIES = frozenset({"manifests", "blobs"})
 # The catalog's contexts for its ambiguous product names as case-folded path
 # component runs (``goose.app``, ``.config/goose``), and the lengths of those runs.
 _AMBIGUOUS_CONTEXTS = frozenset(
@@ -383,14 +393,55 @@ def _names_product(text: str, keys: frozenset[str]) -> bool:
     )
 
 
+def _below_home(parts: list[str]) -> list[str] | None:
+    """The case-folded path components ``parts`` below the home directory they start
+    at (see _HOME_COMPONENTS), or None when they start at none."""
+    if parts and _WINDOWS_DRIVE.fullmatch(parts[0]):
+        parts = parts[1:]
+    if not parts:
+        return None
+    if parts[0].startswith("~") or parts[0] in _HOME_COMPONENTS:
+        return parts[1:]
+    if (parts[0] in _HOME_PARENTS and len(parts) > 1) or parts[:2] == ["var", "root"]:
+        return parts[2:]
+    return None
+
+
+def _holds_store_layout(parts: list[str], root: tuple[str, ...], layout: str) -> bool:
+    """Whether the case-folded path components ``parts`` hold the model store directory
+    ``root`` with that store's own layout below it: Ollama's ``manifests`` or ``blobs``, a
+    Hugging Face hub ``models--<org>--<name>`` directory, or for any other store a model
+    file (MODEL_FILE_SUFFIXES)."""
+    length, run = len(root), list(root)
+    starts = [start for start in range(len(parts) - length + 1) if parts[start : start + length] == run]
+    if not starts:
+        return False
+    if layout == "files":
+        # Whatever lies below a later run of ``root`` lies below the first one too.
+        return any(part.endswith(MODEL_FILE_SUFFIXES) for part in parts[starts[0] + length :])
+    following = {parts[start + length] for start in starts if start + length < len(parts)}
+    if layout == "ollama":
+        return not _OLLAMA_STORE_DIRECTORIES.isdisjoint(following)
+    return any(name.startswith("models--") for name in following)
+
+
 def _in_model_store(text: str) -> bool:
-    """Whether the path ``text`` is, or lies in, one of the catalog's model stores
-    (``~/.ollama/models``, ``/Users/u/.cache/lm-studio/models/...``), ignoring case."""
-    parts = tuple(part for part in _PATH_SEPARATOR.split(text.casefold()) if part)
+    """Whether the path ``text`` is, or lies in, one of the catalog's model stores,
+    ignoring case.
+
+    A store counts at the place the catalog lists it, below a home directory
+    (``~/.ollama/models``, ``/Users/u/.cache/lm-studio/models/...``,
+    ``C:\\Users\\u\\.cache\\huggingface\\hub``, ``/home/u/jan/models``). Elsewhere on a
+    path its directory counts only with the store's own layout below it
+    (``/usr/share/ollama/.ollama/models/blobs/...``, a ``.gguf`` file in a ``jan/models``
+    directory): an application's ``jan/models`` directory, or a user named jan with a
+    ``models`` directory, is not a model store.
+    """
+    parts = [part for part in _PATH_SEPARATOR.split(text.casefold()) if part]
+    below_home = _below_home(parts) or []
     return any(
-        parts[start : start + len(root)] == root
-        for root in _MODEL_STORE_ROOTS
-        for start in range(len(parts) - len(root) + 1)
+        tuple(below_home[: len(root)]) == root or _holds_store_layout(parts, root, layout)
+        for root, layout in _MODEL_STORE_ROOTS
     )
 
 

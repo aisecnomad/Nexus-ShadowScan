@@ -279,6 +279,16 @@ tolerated gap.
   although the catalog lists `.cache/lm-studio` as LM Studio's directory.
   `lms` now counts in every directory the catalog lists for LM Studio;
   regression-tested, with a check that ties that context to the catalog.
+  Model stores had the same weakness as product names: a store matched as
+  any run of path components, and the Jan store is the plain `jan/models`,
+  so `/srv/app/jan/models/user.rb` and a user jan's `/home/jan/models`
+  were reported as local model stores. A store now counts below a home
+  directory (`~`, `$HOME`, `/home/<user>`, `/Users/<user>`,
+  `C:\Users\<user>`, `/root`), where the catalog lists it, and elsewhere
+  only with its own layout below it (Ollama `manifests` or `blobs`, a
+  Hugging Face `models--` directory, a model file), so a service account's
+  or shared volume's store is still reported. Regression-tested both ways,
+  with every catalog store below each kind of home directory.
 - These three connector changes alter which findings a scan reports, and
   `gateway.otel` findings from nested exports get new ids; the
   [connector correctness migration note](production-migrations.md#october-17-connector-correctness-migration-unreleased)

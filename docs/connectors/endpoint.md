@@ -184,9 +184,15 @@ vLLM, llama.cpp, LocalAI, SGLang, Aider, LiteLLM, Dify, Flowise, and the
 self-hosted chat UIs Open WebUI, LibreChat and AnythingLLM, ...) and the local
 model runtimes and AI command-line tools the endpoint inventory catalog lists
 (GPT4All, Msty, `llama-server`, `opencode`, ...). A path that is, or lies in,
-one of the catalog's local model stores (`~/.ollama/models`,
-`~/.lmstudio/models`, `~/.cache/lm-studio/models`, `~/.cache/huggingface/hub`,
-the GPT4All and Jan model directories) is reported too. A name that only
+one of the catalog's local model stores below a home directory (`~`, `$HOME`,
+`/home/<user>`, `/Users/<user>`, `C:\Users\<user>`, `/root`) is reported too:
+`~/.ollama/models`, `~/.lmstudio/models`, `~/.cache/lm-studio/models`,
+`~/.cache/huggingface/hub`, the GPT4All directories and `~/jan/models`.
+Elsewhere a store's directory counts only with the store's own layout below
+it: Ollama's `manifests` or `blobs`, a Hugging Face `models--<org>--<name>`
+directory, or a model file (`.gguf`, `.safetensors`, ...). An application's
+`jan/models` directory, or a user named jan with a `models` directory, is no
+model store. A name that only
 contains one of them is not enough. A product name that is also a common
 word, a given name or another program's name — Make (also GNU make), Goose
 (Homebrew's `goose` is the pressly/goose database migration tool), Jan,

@@ -70,8 +70,10 @@ across this change reports findings as resolved or new that are neither.
   as Open WebUI, AnythingLLM and LiteLLM, ...), compared without an `.app` or
   `.exe` suffix or a trailing version, where a name that is also an ordinary
   word or tool (`goose`, `jan`, `lms`) counts only beside its product's own
-  directory or bundle; its path is a model store the endpoint catalog lists
-  (`~/.ollama/models`, `~/.cache/lm-studio/models`); or its `type`/`category`
+  directory or bundle; its path is, below a home directory, a model store the
+  endpoint catalog lists (`~/.ollama/models`, `~/.cache/lm-studio/models`), or
+  elsewhere holds that store's own layout (Ollama `blobs`, a model file); or
+  its `type`/`category`
   contains an AI category word
   (`ai`, `agent`, `assistant`, `copilot`, `llm`, `mcp`, `model`, so
   `monitoring agent` counts). osquery `apps`/`programs` and MDM rows such as

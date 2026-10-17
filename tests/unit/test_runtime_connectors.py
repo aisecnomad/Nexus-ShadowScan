@@ -486,6 +486,58 @@ def test_endpoint_host_reports_self_hosted_platforms_and_model_store_paths(row) 
 @pytest.mark.parametrize(
     "row",
     [
+        {"path": "/srv/app/jan/models/user.rb"},
+        {"path": "/home/jan/models/resnet50.pth"},
+        {"path": "/Users/jan/models"},
+        {"path": "/opt/jan/models"},
+        {"name": "jan/models"},
+        {"path": "/data/.cache/huggingface/hub"},
+    ],
+)
+def test_endpoint_host_model_store_names_elsewhere_are_not_stores(row) -> None:
+    """Regression: a model store matched as any run of path components, and the Jan
+    store is the plain ``jan/models``, so an application's ``jan/models`` directory and
+    a user named jan with a ``models`` directory were reported as local model stores.
+    A store counts below a home directory, where the catalog lists it, and elsewhere
+    only with its own layout below it."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert list(connector.analyze([row])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize("home", ["~", "/home/u", "/Users/u", "C:\\Users\\u", "/root", "$HOME"])
+def test_endpoint_host_every_catalog_model_store_below_a_home_is_reported(home) -> None:
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    separator = "\\" if "\\" in home else "/"
+    rows = [{"path": separator.join([home, *store.root.split("/")])} for store in MODEL_STORES]
+    assert len(list(connector.analyze(rows))) == len(MODEL_STORES)
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"path": "/usr/share/ollama/.ollama/models/manifests/registry.ollama.ai"},
+        {"path": "/srv/models/.ollama/models/blobs/sha256-0123"},
+        {"path": "/data/.cache/huggingface/hub/models--org--model"},
+        {"path": "/srv/app/jan/models/llama3/model.gguf"},
+        {"path": "D:\\models\\.cache\\lm-studio\\models\\org\\model.safetensors"},
+    ],
+)
+def test_endpoint_host_model_store_elsewhere_with_its_layout_is_reported(row) -> None:
+    """A store outside a home directory (a service account's, a shared volume) still
+    counts with the store's own layout below it."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert len(list(connector.analyze([row]))) == 1
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
         {"name": "goose", "path": "/opt/homebrew/bin/goose"},
         {"name": "goose"},
         {"path": "/opt/homebrew/Cellar/goose/3.24.1/bin/goose"},
