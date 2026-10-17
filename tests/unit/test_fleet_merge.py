@@ -622,12 +622,18 @@ def test_fleet_refuses_a_ledger_within_budget_that_lost_more_than_it_was_allowed
         merge_reports([("laptop", report)])
 
 
-def test_fleet_reads_a_ledger_over_budget_as_incomplete_whatever_the_flag_says(tmp_path: Path):
+@pytest.mark.parametrize("forged", [{"within_budget": False}, {"blinding_gaps": 1}])
+def test_fleet_reads_a_ledger_over_budget_as_incomplete_whatever_the_flag_says(tmp_path: Path, forged):
+    # A report from before summary.tolerated_gaps existed, so the summary
+    # consistency check has nothing to compare: only the ledger itself says the
+    # run was incomplete, and its stats flag still claims it was complete.
     report = _tolerating_report(tmp_path)
-    report["stats"][0]["coverage"]["within_budget"] = False
+    report["stats"][0]["coverage"].update(forged)
+    del report["summary"]["tolerated_gaps"]
+    assert report["stats"][0]["incomplete"] is False
     merged = merge_reports([("laptop", report)])
     assert not merged.complete
-    assert merged.summary()["tolerated_gaps"] == 0
+    assert merged.stats[0].incomplete
 
 
 def test_fleet_counts_what_a_root_within_budget_tolerated_beside_one_over_it(tmp_path: Path):
