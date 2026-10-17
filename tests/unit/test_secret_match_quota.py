@@ -11,6 +11,8 @@ and marks the finding.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import random
 import string
@@ -326,3 +328,36 @@ def test_the_judge_keeps_digests_not_credentials(index):
     assert all(isinstance(digest, bytes) and _REPEATED.encode() not in digest for digest in judge._seen)
     # Keyed per judge: the same credential gives another digest in another text's judge.
     assert judge._seen.isdisjoint(other._seen)
+
+
+# Six or more distinct long names without separators read through the
+# environment ('process.env.SVC1OPENAIAPIKEYPROD') are pasted-key reads by
+# their length, and each counted as a distinct credential, so seven of them
+# made the scan incomplete (exit 3) where main 8c72467 completed. Only a name
+# that looks like an opaque key (the redactor's test) counts toward the quota;
+# the others are still reported.
+def test_long_names_without_separators_leave_the_scan_complete(tmp_path, index):
+    source = "".join(f"export const svc{n}ApiKey = process.env.SVC{n}OPENAIAPIKEYPROD;\n" for n in range(7))
+    limited: set[str] = set()
+    assert len(index.match_secrets(source, code=True, limited=limited)) == MAX_SECRETS_PER_SIGNAL
+    assert limited == set()
+    findings, ctx = _scan(index, tmp_path, {"src/config.ts": source})
+    secret = _secret_finding(findings)
+    assert "secrets_limited" not in secret.metadata
+    assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+def _base32_name(number: int) -> str:
+    """A distinct base32 secret with letters and digits mixed, derived at run time."""
+    digest = hashlib.sha256(f"pasted-{number}".encode()).digest()
+    return base64.b32encode(digest).decode().rstrip("=")[:32]
+
+
+def test_six_opaque_pasted_names_still_disclose_the_quota(tmp_path, index):
+    source = "".join(f"export const svc{n}ApiKey = process.env.{_base32_name(n)};\n" for n in range(6))
+    findings, ctx = _scan(index, tmp_path, {"src/config.ts": source})
+    secret = _secret_finding(findings)
+    assert secret.metadata["secrets_limited"] == ["heuristic.inline-credential"]
+    assert ctx.stats.incomplete
+    dumped = json.dumps(secret.to_dict(), default=str)
+    assert not any(_base32_name(n) in dumped for n in range(6))
