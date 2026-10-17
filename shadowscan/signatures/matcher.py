@@ -485,26 +485,35 @@ _FALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_./+=-]{16,256}")
 class _OperandToken(NamedTuple):
     kind: str
     token: re.Match[str]
-    # Whether blanks, a comment or a line end came before the token, and how many line ends.
+    # Whether blanks, a comment or a line end came before the token, how many
+    # line ends, and whether a line between was empty: no token, no comment.
     spaced: bool
     lines: int
+    gap: bool
 
 
 def _operand_tokens(follower: str) -> Iterator[_OperandToken]:
     """The tokens of ``follower`` other than blanks, comments and line ends, which they annotate."""
     position = 0
-    spaced, lines = False, 0
+    spaced, lines, gap = False, 0, False
+    # Whether the current line holds a token or a comment; the follower's
+    # first line is the match's own.
+    filled = True
     while position < len(follower):
         token = _OPERAND_TOKEN.match(follower, position)
         if token is None:  # pragma: no cover - the last alternative matches any character
             return
         position = token.end()
         kind = token.lastgroup or "other"
-        if kind in {"blank", "comment", "newline"}:
-            spaced, lines = True, lines + (kind == "newline")
-            continue
-        yield _OperandToken(kind, token, spaced, lines)
-        spaced, lines = False, 0
+        if kind == "blank":
+            spaced = True
+        elif kind == "comment":
+            spaced = filled = True
+        elif kind == "newline":
+            spaced, lines, gap, filled = True, lines + 1, gap or not filled, False
+        else:
+            yield _OperandToken(kind, token, spaced, lines, gap)
+            spaced, lines, gap, filled = False, 0, False, True
 
 
 def _closed_group(tokens: Iterator[_OperandToken], opener: str) -> bool:
@@ -514,11 +523,11 @@ def _closed_group(tokens: Iterator[_OperandToken], opener: str) -> bool:
     within the follower.
     """
     expected = [_CLOSERS[opener]]
-    for kind, token, _, _ in tokens:
-        if kind == "open":
-            expected.append(_CLOSERS[token.group()])
-        elif kind == "close":
-            if token.group() != expected.pop():
+    for item in tokens:
+        if item.kind == "open":
+            expected.append(_CLOSERS[item.token.group()])
+        elif item.kind == "close":
+            if item.token.group() != expected.pop():
                 return False
             if not expected:
                 return True
@@ -550,9 +559,11 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     ('as string ||'), and bracketed groups. Parentheses around an operand
     ('|| ("<key>")', '|| (a || "<key>")') are read through, so the operand
     inside is direct.
-    An operator may end a line or start the next one, after a comment or a
-    backslash continuation; a blank line, a value end (';', ',', a closing
-    bracket) or any other token ends the value. A string literal right after
+    An operator may end a line or start a later one, after comment lines or
+    a backslash continuation; an empty line before an operator, a value end
+    (';', ',', a closing bracket) or any other token ends the value. After an
+    operator its operand must follow, so empty and comment lines may come
+    between them ('||\n  // dev fallback\n  "<key>"'). A string literal right after
     a fallback operator is a hard-coded credential when it is one token of the
     value class (``_FALLBACK_TOKEN``) that looks like a key
     (``_high_entropy_credential``). A literal inside a call
@@ -567,7 +578,7 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     grouping = 0
     for item in tokens:
         kind, token = item.kind, item.token
-        if item.lines > 1:
+        if item.gap and not operand:
             return None
         if operand:
             if kind == "open" and token.group() == "(":

@@ -380,6 +380,30 @@ def test_a_literal_past_the_end_of_the_value_is_not_a_fallback(index: SignatureI
 
 
 @pytest.mark.parametrize(
+    "text",
+    [
+        # An operator needs an operand, so whole comment lines and empty lines
+        # may come between it and the literal; comment lines may also come
+        # between the reference and an operator that starts a later line.
+        f'const openaiApiKey = process.env.OPENAI_API_KEY ||\n  // dev fallback\n  "{RANDOM}";',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY ||\n\n  "{RANDOM}";',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY ||\n  // a\n\n  /* b */\n  "{RANDOM}";',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY // a\n  // b\n  || "{RANDOM}";',
+        f'client = OpenAI(\n    openai_api_key=settings.OPENAI_API_KEY\n    # dev fallback\n    or "{RANDOM}"\n)',
+    ],
+)
+def test_a_fallback_after_comment_or_empty_lines_is_reported(index: SignatureIndex, text: str):
+    assert _generic(index, text, code=True) != []
+
+
+def test_a_scan_reports_a_fallback_after_a_comment_line(tmp_path: Path, run_connector):
+    source = f'const openaiApiKey = process.env.OPENAI_API_KEY ||\n  // dev fallback\n  "{RANDOM}";\n'
+    findings = _scan(tmp_path, run_connector, {"src/a.js": source})
+    [secret] = [f for f in findings if f.kind.value == "secret"]
+    assert RANDOM not in json.dumps(secret.to_dict(), default=str)
+
+
+@pytest.mark.parametrize(
     "line",
     [
         # A parenthesised literal, a Python triple-quoted literal and a
