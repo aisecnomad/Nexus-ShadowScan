@@ -291,6 +291,8 @@ _REPOSITORY_LINK = re.compile(
 # responses. Released changelog entries are history too; the Unreleased section is not.
 _FORMER_NAME_RECORDS = (
     "archive/",
+    # Released changelog entries, relocated verbatim out of CHANGELOG.md.
+    "docs/history/changelog-journal.md",
     "benchmarks/",
     "tools/benchmark/",
     "tools/benchmark_realworld/",
@@ -1165,11 +1167,20 @@ _RELEASED_HEADING = re.compile(r"^## \d+\.\d+", re.MULTILINE)
 
 
 def _current_docs() -> list[Path]:
-    """Documents that describe the current tree; dated review logs may quote old numbers."""
+    """Documents that describe the current tree; dated review logs may quote old numbers.
+
+    ``docs/history/`` holds relocated dated logs (the changelog journal and the
+    production candidate change history), which record numbers and defaults as
+    they were at each change, so they are history for these checks too. Their
+    links, whitespace and former-name hygiene are still checked by the walkers
+    that enumerate documents themselves.
+    """
     return [
         path
         for path in [*(ROOT / name for name in _CURRENT_ROOT_DOCS), *sorted((ROOT / "docs").rglob("*.md"))]
-        if "hardening-logs" not in path.parts and not re.search(r"review-\d{4}-\d{2}-\d{2}", path.name)
+        if "hardening-logs" not in path.parts
+        and "history" not in path.parts
+        and not re.search(r"review-\d{4}-\d{2}-\d{2}", path.name)
     ]
 
 
