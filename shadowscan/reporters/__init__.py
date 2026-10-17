@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from shadowscan.models import ScanResult
 from shadowscan.reporters.csv_ import render_csv
@@ -15,20 +15,17 @@ from shadowscan.reporters.sarif import render_sarif
 from shadowscan.signatures import SignatureIndex
 
 
-@runtime_checkable
 class Renderer(Protocol):
-    """Structural contract every reporter satisfies.
+    """The contract every entry of :data:`RENDERERS` satisfies.
 
-    A renderer turns a :class:`~shadowscan.models.ScanResult` into a string
-    (JSON, SARIF, CSV, Markdown, HTML, CycloneDX, OCSF, …).
-
-    Most renderers need only ``result``; CycloneDX additionally accepts a
-    :class:`~shadowscan.signatures.SignatureIndex` so it can name custom-pack
-    signatures in the BOM.  The protocol allows *any* extra keyword arguments
-    so new optional context can be added without touching the contract.
+    A renderer turns a :class:`~shadowscan.models.ScanResult` into the text of
+    one output format (JSON, SARIF, CSV, Markdown, HTML, CycloneDX, OCSF). The
+    result is its only required argument, passed positionally, so a renderer
+    may name it as it likes; CycloneDX's optional signature index, which names
+    custom-pack signatures in the BOM, is passed only by :func:`render`.
     """
 
-    def __call__(self, result: ScanResult, **kwargs: object) -> str: ...
+    def __call__(self, result: ScanResult, /) -> str: ...
 
 
 RENDERERS: dict[str, Renderer] = {
@@ -38,7 +35,7 @@ RENDERERS: dict[str, Renderer] = {
     "markdown": render_markdown,
     "md": render_markdown,
     "html": render_html,
-    "cyclonedx": render_cyclonedx,  # type: ignore[dict-item]  # accepts extra `index` kwarg
+    "cyclonedx": render_cyclonedx,
     "ocsf": render_ocsf,
 }
 
