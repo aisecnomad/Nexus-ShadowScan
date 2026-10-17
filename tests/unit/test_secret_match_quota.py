@@ -105,3 +105,52 @@ def test_quota_is_disclosed_once_per_file_and_format(tmp_path, index):
     findings, ctx = _scan(index, tmp_path, {"train.ipynb": json.dumps(notebook)})
     assert _secret_finding(findings).metadata["secrets_limited"] == ["provider.openai"]
     assert sum("credential evidence incomplete" in error for error in ctx.stats.errors) == 1
+
+
+# Only credentials count toward the quota. #255 read 25 raw candidates per
+# signal before filtering, so a settings module of environment reads hid every
+# key after the 25th; #257 counted raw matches, so one token two patterns of
+# the generic signal both match counted twice. Both now count accepted,
+# distinct credentials only.
+def _environment_reads(count: int) -> str:
+    return "".join(
+        f"export const PROVIDER{n}_API_KEY = process.env.PROVIDER{n}_API_KEY;\n" for n in range(count)
+    )
+
+
+def _github_token(number: int) -> str:
+    body = "".join(_RANDOM.choice(_ALPHABET) for _ in range(34))
+    return "ghp" + "_" + body + f"{number:02d}"
+
+
+def test_references_never_hide_the_keys_after_them(index):
+    aws_key = "AKIA" + "QSXMKVTWPLRNHGDJ"  # a digit-free body, as about one AWS key id in 28 has
+    text = _environment_reads(40) + (
+        'export const LEGACY_API_KEY = "R4nd0m9Qx2Vb7Lp6Zz";\n'
+        'export const ADMIN_PASSWORD = "R4nd0m9Qx2Vb7Lp6Yy";\n'
+        f'const deployToken = "{_github_token(1)}";\n'
+        f'const awsId = "{aws_key}";\n'
+    )
+    limited: set[str] = set()
+    values = [m.value for m in index.match_secrets(text, code=True, limited=limited)]
+    assert any("R4nd0m9Qx2Vb7Lp6Zz" in value for value in values)
+    assert any("R4nd0m9Qx2Vb7Lp6Yy" in value for value in values)
+    assert any(value.startswith("ghp_") for value in values)
+    assert aws_key in values
+    assert limited == set()
+
+
+def test_a_settings_module_of_references_stays_complete(tmp_path, index):
+    findings, ctx = _scan(index, tmp_path, {"config.ts": _environment_reads(60)})
+    assert not [f for f in findings if f.kind == Kind.SECRET]
+    assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+def test_a_token_two_patterns_match_counts_once(tmp_path, index):
+    tokens = "".join(f"{name}_GITHUB_ACCESS_TOKEN={_github_token(n)}\n" for n, name in enumerate("ABC"))
+    limited: set[str] = set()
+    index.match_secrets(tokens, limited=limited)
+    assert limited == set()
+    findings, ctx = _scan(index, tmp_path, {".env": tokens})
+    assert _secret_finding(findings).metadata["count"] == 3
+    assert not ctx.stats.incomplete, ctx.stats.errors

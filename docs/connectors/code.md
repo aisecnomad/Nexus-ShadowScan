@@ -622,7 +622,9 @@ A file whose name selects no analysis (`*.jsonl`, `*.bak`,
 `*.j2`, binary and media suffixes) is never opened, so it is neither scanned
 for credentials nor counted as a coverage gap; name such files in a file-name
 signature pack to read them. A file's credential finding carries at most
-five matches per credential format (`metadata.count` counts them). A file
+five matches per credential format (`metadata.count` counts them, one per
+credential however many patterns match it). A reference to a credential
+(`api_key = settings.API_KEY`) takes no place in that quota. A file
 holding more credentials of one format is reported with that quota's worth of
 evidence, `metadata.secrets_limited` naming the formats, and the diagnostic
 `more than 5 credentials matched <format>; credential evidence incomplete`,
