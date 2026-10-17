@@ -304,7 +304,6 @@ def test_a_literal_that_is_no_direct_fallback_operand_is_not_reported(index: Sig
         # header name, a URL path or a model id, not a key.
         'const openaiApiKey = process.env.OPENAI_API_KEY || "anonymous-public-access";',
         'const openaiApiKey = process.env.OPENAI_API_KEY ?? "disabled-in-this-build";',
-        'const azureClientSecret = process.env.AZURE_CLIENT_SECRET || "managed-identity-fallback";',
         'this.serviceApiKey = config.serviceApiKey ?? "x-api-key-header-name";',
         'const authApiKey = process.env.API_BASE + "/oauth2/v2.0/authorize";',
         'self.openai_api_key = self.openai_api_key or "gpt-4o-mini-2024-07-18"',
@@ -312,6 +311,72 @@ def test_a_literal_that_is_no_direct_fallback_operand_is_not_reported(index: Sig
 )
 def test_a_fallback_of_words_and_numbers_is_not_a_credential(index: SignatureIndex, line: str):
     assert _generic(index, line, code=True) == []
+
+
+# Under a password's, passphrase's or secret's name a fallback was reported
+# only when it looked like a token, so a punctuated password, a passphrase or
+# a CamelCase password as the fallback was missed, while the same value
+# assigned directly, and main 8c72467, reported it. The redactor withholds any
+# such literal as the password (password_literal); the detector reports it.
+PASSWORD_FALLBACKS = [
+    "Xk9#mQ2$" + "vL!pR7@wZ4%",
+    "S3cr3t!" + "P@ssw0rd",
+    "Kj8sLm2Q" + "p9Xz&mypass",
+    "snout-fiber-thump-bloom-gravel",
+    "correct horse battery staple",
+    "TrustNoOne" + "EverAgain",
+    "snout_fiber_thump_bloom",
+    "PostgresProd" + "2024Secure",
+]
+
+
+@pytest.mark.parametrize("password", PASSWORD_FALLBACKS)
+@pytest.mark.parametrize(
+    "line",
+    [
+        'const dbPassword = process.env.DB_PASSWORD || "<P>";',
+        "export const dbPassword = process.env.DB_PASSWORD ?? '<P>';",
+        "export const cfg = { dbPassword: process.env.DB_PASSWORD || '<P>' };",
+        'var dbPassword = Environment.GetEnvironmentVariable("DB_PASSWORD") ?? "<P>";',
+        'const azureClientSecret = process.env.AZURE_CLIENT_SECRET || "<P>";',
+    ],
+)
+def test_a_password_fallback_of_any_shape_is_reported(index: SignatureIndex, line: str, password: str):
+    [match] = [
+        m
+        for m in index.match_secrets(line.replace("<P>", password), code=True, placeholder=placeholder_reason)
+        if m.signature_id == GENERIC
+    ]
+    assert match.extra["credential"] == password
+
+
+@pytest.mark.parametrize(
+    "fallback",
+    [
+        # Not the password: a variable's name, a path, a URL, a placeholder, a
+        # short argument and an instruction label.
+        "PGPASSWORD",
+        "/run/secrets/db_password.txt",
+        "https://vault.internal/db",
+        "changeme",
+        "utf8",
+        "change-me-in-production",
+    ],
+)
+def test_other_password_fallbacks_are_not_reported(index: SignatureIndex, fallback: str):
+    assert _generic(index, f'const dbPassword = process.env.DB_PASSWORD || "{fallback}";', code=True) == []
+
+
+def test_a_scan_reports_password_fallbacks_and_withholds_them(tmp_path: Path, run_connector):
+    files = {
+        "src/db.js": f'const dbPassword = process.env.DB_PASSWORD || "{PASSWORD_FALLBACKS[0]}";\n',
+        "src/A.cs": f'var dbPassword = Environment.GetEnvironmentVariable("DB_PASSWORD") ?? "{PASSWORD_FALLBACKS[4]}";\n',
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    secrets = [f for f in findings if f.kind.value == "secret"]
+    assert sorted(f.metadata["path"] for f in secrets) == ["src/A.cs", "src/db.js"]
+    dumped = json.dumps([f.to_dict() for f in findings], default=str)
+    assert PASSWORD_FALLBACKS[0] not in dumped and PASSWORD_FALLBACKS[4] not in dumped
 
 
 # A base64 key with '/' in it and a UUID, derived so no key sits in the source.

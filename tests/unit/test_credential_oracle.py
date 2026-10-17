@@ -222,6 +222,27 @@ R4_DEFAULT_READS = (
         "const openaiApiKey = this.configService.get <string>('OPENAI_API_KEY') ?? '<K>';\n",
     ),
 )
+# Round 4's password fallbacks after an environment read, in four forms.
+R4_PASSWORD_FALLBACK_FORMS = (
+    ("js-or", "src/db.js", 'const dbPassword = process.env.DB_PASSWORD || "{v}";\n'),
+    ("ts-nullish", "src/db.ts", "export const dbPassword = process.env.DB_PASSWORD ?? '{v}';\n"),
+    ("ts-entry", "src/db.ts", "export const cfg = { dbPassword: process.env.DB_PASSWORD || '{v}' };\n"),
+    (
+        "cs-nullish",
+        "src/A.cs",
+        'var dbPassword = Environment.GetEnvironmentVariable("DB_PASSWORD") ?? "{v}";\n',
+    ),
+)
+R4_PASSWORD_FALLBACKS = (
+    ("punctuated", "<P>"),
+    ("leet", "<PW2>"),
+    ("token-start", "<KS>&<=mypass>"),
+    ("passphrase", "<=snout-fiber-thump-bloom-gravel>"),
+    ("spaced", "<=correct horse battery staple>"),
+    ("camel", "<=TrustNoOneEverAgain>"),
+    ("snake", "<=snout_fiber_thump_bloom>"),
+    ("camel-year", "<=PostgresProd2024Secure>"),
+)
 R4_SENTENCE_PLACES = (
     ("env", "DB_PASSWORD={v}", "env"),
     ("compose", "POSTGRES_PASSWORD: {v}", "text"),
@@ -2739,9 +2760,8 @@ ROWS = [
         "match",
         'const azureClientSecret = process.env.AZURE_CLIENT_SECRET || "managed-identity-fallback";',
         mode="code",
-        head="unreported",
+        head="reported",
         main="reported",
-        accepted="not a credential: a mode, header name, URL path or model id as a fallback",
     ),
     Row(
         "r1p.5-header-name",
@@ -3969,6 +3989,19 @@ ROWS = [
             main=((f"{rel}:1",), "complete", "withheld"),
         )
         for label, rel, line in R4_DEFAULT_READS
+    ],
+    # --- r4-review-creds4.json: a worded or punctuated password fallback after a read
+    *[
+        Row(
+            f"r4.7-{form}-{label}",
+            "scan",
+            {rel: template.replace("{v}", value)},
+            mode="",
+            head=((f"{rel}:1",), "complete", "withheld"),
+            main=((f"{rel}:1",), "complete", "withheld"),
+        )
+        for form, rel, template in R4_PASSWORD_FALLBACK_FORMS
+        for label, value in R4_PASSWORD_FALLBACKS
     ],
 ]
 

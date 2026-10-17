@@ -30,11 +30,10 @@ from shadowscan.utils.redaction_rules import (
     _interpolated,
     _kept_value,
     _name_before,
-    _placeholder,
     _redact_value,
     _sensitive_assignment_key,
     _withhold_spans,
-    pasted_key_name,
+    password_literal,
 )
 
 # A key must be consumed in full: truncating it to a fixed number of characters
@@ -1396,10 +1395,6 @@ _COMMENT_CLOSERS = {"/*": "*/", "<!--": "-->"}
 # The last words of a password's name, whose value a person chose: any literal
 # of it is withheld, not only one that looks like an opaque key.
 _PASSWORD_WORDS = frozenset({"pass", "passphrase", "passwd", "password", "pwd"})
-# A literal shorter than this in a password's value is an argument or a flag ('a', 'utf8').
-_PASSWORD_LITERAL = 6
-# An upper-case variable name, as an environment read names one.
-_VARIABLE_NAME = re.compile(r"[A-Z_][A-Z0-9_]*+")
 # A run of a comment that could be key material: the base64 and URL-safe alphabet.
 _COMMENT_TOKEN = re.compile(r"[A-Za-z0-9+/_.~=-]{8,}+")
 # The same in a string literal, where '=' joins a name to its value
@@ -1489,20 +1484,6 @@ def _password_name(name: str) -> bool:
     """Whether a credential's name names a password ('dbPassword', 'DB_PASS', 'smtp.passwd')."""
     words = _CALLEE_WORD.findall(name.rsplit(".", 1)[-1])
     return bool(words) and words[-1].lower() in _PASSWORD_WORDS
-
-
-def _password_literal(value: str) -> bool:
-    """Whether a literal in a password's value may be the password: not a name, path, URL or placeholder.
-
-    A password need not look like an opaque key ('Xk9#mQ2$vL!pR7@wZ4%',
-    'correct horse battery staple'), so its shape is not tested.
-    """
-    value = value.strip()
-    if len(value) < _PASSWORD_LITERAL or _kept_value(value) or "://" in value:
-        return False
-    if _VARIABLE_NAME.fullmatch(value) and not pasted_key_name(value):
-        return False  # the variable a read names ('PGPASSWORD', 'DB_PASSWORD')
-    return not (_FILE_PATH.fullmatch(value) or _placeholder(value))
 
 
 def _inside(starts: list[int], literals: list[tuple[int, int]], position: int) -> bool:
@@ -1662,7 +1643,7 @@ def _line_tail(
         for start, end in literals:
             while cursor < len(values) and values[cursor][1] < end:
                 cursor += 1
-            if cursor < len(values) and values[cursor][0] <= start and _password_literal(line[start:end]):
+            if cursor < len(values) and values[cursor][0] <= start and password_literal(line[start:end]):
                 spans.append((offset + start, offset + end))
         if values[-1][1] == code_end:
             name = next(join.name for join in reversed(passwords) if join.start >= values[-1][0])
@@ -1697,8 +1678,9 @@ def _redact_line_tails(text: str) -> str:
     argument of its read, 'fallback="<password>"', is part of it), whatever
     its shape ('dbPassword: process.env.P?.trim() || "<password>"', as
     'db_password = os.getenv("P", "<password>")' is), unless it is a
-    variable's name, a path, a URL, a placeholder or shorter than
-    ``_PASSWORD_LITERAL``. The next line goes on with the value when it
+    variable's name, a path, a URL, a placeholder or shorter than six
+    characters (``password_literal``, which the credential detector shares).
+    The next line goes on with the value when it
     starts with a fallback operator (Black's '    or "<key>",') or the line
     before ends with one, through comment lines, and a block comment a
     credential's line leaves open ('<!--', '/*') is read to its end. A line
