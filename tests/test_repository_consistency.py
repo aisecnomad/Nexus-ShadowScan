@@ -37,9 +37,10 @@ import yaml
 from shadowscan.config import ScanConfig
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.cloud.gcp import GcpConnector
+from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.common import MAX_PAGES
 from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
-from shadowscan.engine import Engine
+from shadowscan.engine import DEFAULT_CONNECTOR_TIMEOUT, Engine
 from shadowscan.models import ScanStats
 from shadowscan.reporters.csv_ import _safe_cell
 from shadowscan.utils import http
@@ -1441,6 +1442,25 @@ def test_documented_http_read_deadline_matches_the_client() -> None:
     for path, match in claims:
         claimed = (_READ_DEADLINE_FACTORS.get(match.group(1)), int(match.group(2)))
         assert claimed == expected, f"{_relative(path)} says {match.group(0)!r}; the client uses {expected}"
+
+
+def test_documented_automatic_deadline_ceiling_matches_the_probe() -> None:
+    """The engineering log states the most the filesystem probe can propose, not the engine's cap.
+
+    Regression: the entry said the deadline scales "capped at 30 minutes", the
+    engine's ceiling, which a probe that stops counting at 20,000 entries never
+    reaches: the proposal saturates at 200 seconds.
+    """
+    probe = FilesystemConnector
+    ceiling = DEFAULT_CONNECTOR_TIMEOUT * probe._PROBE_LIMIT / probe._ENTRIES_PER_DEFAULT_BUDGET
+    claim = (
+        f"counts up to {probe._PROBE_LIMIT:,} entries",
+        f"at most {ceiling:.0f} seconds at the {DEFAULT_CONNECTOR_TIMEOUT:.0f}-second default",
+    )
+    log = ROOT / "docs" / "engineering-log.md"
+    assert any(all(part in paragraph for part in claim) for paragraph in _paragraphs(log)), (
+        f"{_relative(log)} must say that code.filesystem {claim[0]} and proposes {claim[1]}"
+    )
 
 
 _PLUGIN_EXECUTION_ROW = re.compile(r"^\| `plugin_execution` \| `(\w+)` \|", re.MULTILINE)

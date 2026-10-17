@@ -325,9 +325,14 @@ public repositories with the tool and read the committed benchmark metrics.
   on every surface except the exit code. `langchain-ai/langchain` produced
   zero findings at the default. A new `estimate_timeout_seconds` engine hook
   lets a connector propose a budget from a cheap bounded probe of its own
-  input; `code.filesystem` counts entries up to 20,000 and scales in
-  proportion, capped at 30 minutes. An explicit `--connector-timeout-seconds`
-  is honoured unchanged. The same scan now completes with 51 findings.
+  input, and the engine caps any proposal at 30 minutes. `code.filesystem`
+  counts up to 20,000 entries (directories and files, pruned as the walk
+  prunes them, for at most a second) and scales the deadline in proportion
+  above 12,000, so it proposes at most 200 seconds at the 120-second default.
+  A larger tree needs an explicit `--connector-timeout-seconds`; without one
+  an overrun still marks the scan incomplete. An explicit
+  `--connector-timeout-seconds` is honoured unchanged. The same scan now
+  completes with 51 findings.
 - A connector that still overruns surrenders the findings it had already
   produced and sanitized, instead of having them discarded. The scan is
   marked incomplete either way; dropping them turned an overrun into an empty

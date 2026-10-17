@@ -1294,7 +1294,10 @@ class FilesystemConnector(BaseConnector):
         it mid-tree and the connector reported nothing, which reads as a clean
         result everywhere except the exit code. The probe counts entries up to
         ``_PROBE_LIMIT`` and stops; reaching the limit means "at least this
-        many", which is all the estimate needs.
+        many", so the proposal saturates at ``default * _PROBE_LIMIT /
+        _ENTRIES_PER_DEFAULT_BUDGET`` (200 s at the 120 s default), below the
+        engine's own ceiling. A larger tree needs an explicit deadline; one
+        that overruns this one is still incomplete.
         """
         try:
             roots = [Path(p) for p in cls.scanned_local_paths(config)]

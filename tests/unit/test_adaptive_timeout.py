@@ -108,6 +108,21 @@ class TestEstimate:
         finally:
             FilesystemConnector._PROBE_LIMIT = original
 
+    def test_the_proposal_saturates_where_the_probe_stops(self, tmp_path, monkeypatch) -> None:
+        """The probe cannot count past its limit, so the proposal cannot grow past it either.
+
+        That ceiling sits below the engine's own: a larger tree needs an explicit
+        deadline, which the engineering log says (test_repository_consistency).
+        """
+        probe = FilesystemConnector
+        monkeypatch.setattr(
+            probe, "_probe_entry_count", classmethod(lambda cls, roots, pruned: cls._PROBE_LIMIT)
+        )
+        proposed = probe.estimate_timeout_seconds({"paths": [str(tmp_path)]}, DEFAULT_CONNECTOR_TIMEOUT)
+        ceiling = DEFAULT_CONNECTOR_TIMEOUT * probe._PROBE_LIMIT / probe._ENTRIES_PER_DEFAULT_BUDGET
+        assert proposed == pytest.approx(ceiling)
+        assert ceiling < MAX_AUTO_TIMEOUT
+
     def test_a_missing_path_is_not_an_error(self) -> None:
         assert FilesystemConnector.estimate_timeout_seconds({"paths": ["/nonexistent/xyz"]}, 120.0) is None
 
