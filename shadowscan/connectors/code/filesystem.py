@@ -704,6 +704,26 @@ CREDENTIAL_FILE_NAMES = frozenset(
 )
 
 
+# Words that make an env file's name a template's (.env.example, .env.sample,
+# config/.env.template, .env.dist): its values are samples to replace.
+_ENV_TEMPLATE_WORDS = frozenset({"example", "sample", "template", "tmpl", "dist", "default", "defaults"})
+
+
+def _env_values_file(name: str) -> bool:
+    """Whether a file holds environment or tool credential values themselves, not a template of them.
+
+    A ``.env`` file (``.env``, ``.env.local``, ``prod.env``) other than a
+    template, or a tool credential file (``CREDENTIAL_FILE_NAMES``). Only
+    there is a PASSWORD value never the name of another setting.
+    """
+    lower = name.lower()
+    if lower in CREDENTIAL_FILE_NAMES:
+        return True
+    if not (lower.startswith(".env") or lower.endswith(".env")):
+        return False
+    return _ENV_TEMPLATE_WORDS.isdisjoint(re.split(r"[._-]", lower))
+
+
 def _analyzed_by_name(name: str) -> bool:
     """Whether the name alone makes a file source or configuration that the walker reads."""
     ext = Path(name).suffix.lower()
@@ -3855,7 +3875,12 @@ class FilesystemConnector(BaseConnector):
         # Placeholders take no place in the quota and never count past it, so a
         # .env.example of sample keys reads as complete rather than exit 3.
         matches = self.index.match_secrets(
-            raw, scan=file.literals, code=code, limited=limited, placeholder=placeholder_reason
+            raw,
+            scan=file.literals,
+            code=code,
+            limited=limited,
+            placeholder=placeholder_reason,
+            env_file=not code and _env_values_file(file.path.name),
         )
         for m in matches:
             if (m.signature_id, m.value) in skip_values:
