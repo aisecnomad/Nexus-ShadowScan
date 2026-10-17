@@ -1147,7 +1147,12 @@ def test_a_two_letter_word_of_the_name_with_an_account_word_is_a_label(
 ):
     assert _generic(index, f"{name}={label}", code=False) == []
     assert _generic(index, f"{name.lower()} = '{label}'", code=True) == []
-    assert _generic(index, f"{name}={label}", code=False, env_file=True) == []
+    if "user" in label or "admin" in label:
+        # In an env or credential file a password names no account: there
+        # 'user' and 'admin' are a person's words, as main 8c72467 read them.
+        assert _generic(index, f"{name}={label}", code=False, env_file=True) != []
+    else:
+        assert _generic(index, f"{name}={label}", code=False, env_file=True) == []
 
 
 @pytest.mark.parametrize(
@@ -1261,6 +1266,70 @@ def test_a_scan_reports_sentence_passphrases(tmp_path: Path, run_connector):
 )
 def test_a_password_with_any_word_of_its_own_is_reported_in_an_env_file(index: SignatureIndex, line: str):
     assert _generic(index, line, code=False, env_file=True) != []
+
+
+# The enlarged label vocabulary (the account and quality words admin, user,
+# strong, internal and commit, and function words such as my, the, at) made
+# pure label phrases of a person's passwords in env files, where main
+# 8c72467 reported them. There those words label nothing, and a sentence is
+# a label only with an instruction word.
+ENV_PASSWORDS_OF_COMMON_WORDS = [
+    "MyStrongPassword",
+    "InternalUserPassword",
+    "TheAdminUserPassword",
+    "StrongInternalAdminUser",
+    "CommitStrongAdminUser",
+    "admin_user_strong_internal",
+    "user_admin_internal",
+    "strong_admin_at_home",
+    "my_user_is_admin",
+    "yet_another_admin_user",
+    "super_strong_user_pass",
+    "the_secret_admin_key",
+    "my_secret_password",
+    "AdminPasswordStrong",
+]
+
+
+@pytest.mark.parametrize("password", ENV_PASSWORDS_OF_COMMON_WORDS)
+def test_a_password_of_account_and_sentence_words_is_reported_in_an_env_file(
+    index: SignatureIndex, password: str
+):
+    assert _generic(index, f"DB_PASSWORD={password}", code=False, env_file=True) != []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Labels by their own name, the label vocabulary and its qualifiers,
+        # and instructions, stay labels in an env file.
+        "KEYCLOAK_ADMIN_PASSWORD=KeycloakAdminPassword",
+        "SVC1_DB_PASSWORD=svc1_local_dev_password",
+        "DB_PASSWORD=LocalDevelopmentOnly",
+        "DB_PASSWORD=local-development-only",
+        "DB_PASSWORD=insecure-default-for-dev",
+        "POSTGRES_PASSWORD=change_me_to_a_strong_password",
+        "DB_PASSWORD=DoNotCommitThisOne",
+        "DB_PASSWORD=do-not-commit-this",
+    ],
+)
+def test_labels_and_instructions_stay_labels_in_an_env_file(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=False, env_file=True) == []
+
+
+def test_a_sentence_of_label_words_and_other_words_is_a_credential_anywhere(index: SignatureIndex):
+    # A function word that asks nothing, with a word outside the vocabulary.
+    assert _generic(index, 'DB_PASSWORD = "my-secret-garden-gate"', code=True) != []
+    assert _generic(index, "DB_PASSWORD: the-password-garden-gate", code=False) != []
+
+
+def test_a_scan_reports_env_passwords_of_common_words(tmp_path: Path, run_connector):
+    env = "".join(f"SVC{n}_PASSWORD={value}\n" for n, value in enumerate(ENV_PASSWORDS_OF_COMMON_WORDS[:5]))
+    findings = _scan(tmp_path, run_connector, {".env": env})
+    [secret] = [f for f in findings if f.kind.value == "secret"]
+    assert sorted(e.location for e in secret.evidence) == [f".env:{n}" for n in range(1, 6)]
+    dumped = json.dumps(secret.to_dict(), default=str)
+    assert not any(value in dumped for value in ENV_PASSWORDS_OF_COMMON_WORDS[:5])
 
 
 # python-dotenv and Node's dotenv read blanks around '=': the name kept them,

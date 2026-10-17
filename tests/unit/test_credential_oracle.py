@@ -171,6 +171,27 @@ R4_POSSESSIVES = (
     "jouw-geheime-tuin",
     "dein-geheimer-garten",
 )
+# Round 4's env-file passwords of the enlarged label vocabulary, read as
+# '.env' 'DB_PASSWORD=<value>' lines.
+R4_ENV_PASSWORDS = (
+    "MyStrongPassword",
+    "InternalUserPassword",
+    "TheAdminUserPassword",
+    "StrongInternalAdminUser",
+    "CommitStrongAdminUser",
+    "admin_user_strong_internal",
+    "user_admin_internal",
+    "strong_admin_at_home",
+    "my_user_is_admin",
+    "yet_another_admin_user",
+    "super_strong_user_pass",
+    "the_secret_admin_key",
+    "my_secret_password",
+    "AdminPasswordStrong",
+    "StrongAdminPassword2024",
+    "LocalAdmin2024Strong",
+    "WelcomeToTheJungle",
+)
 R4_SENTENCE_PLACES = (
     ("env", "DB_PASSWORD={v}", "env"),
     ("compose", "POSTGRES_PASSWORD: {v}", "text"),
@@ -1387,9 +1408,8 @@ ROWS = [
         "match",
         "PG_PASSWORD=pg-replica-sync-user",
         mode="env",
-        head="unreported",
+        head="reported",
         main="reported",
-        accepted="not a credential: an instruction or development label",
     ),
     Row(
         "r3p.1-db-readonly-reporting-user-text",
@@ -1414,9 +1434,8 @@ ROWS = [
         "match",
         "DB_PASSWORD=db-readonly-reporting-user",
         mode="env",
-        head="unreported",
+        head="reported",
         main="reported",
-        accepted="not a credential: an instruction or development label",
     ),
     Row(
         "r3p.1-ai-gateway-internal-route-text",
@@ -1468,9 +1487,8 @@ ROWS = [
         "match",
         "MQ_PASSWORD=mq-broker-admin-user",
         mode="env",
-        head="unreported",
+        head="reported",
         main="reported",
-        accepted="not a credential: an instruction or development label",
     ),
     Row(
         "r3p.1a-env-example-six-labels",
@@ -3894,6 +3912,22 @@ ROWS = [
         if len(value) >= 16
         for mode, template in (("env", "DB_PASSWORD={v}"), ("code", 'DB_PASSWORD = "{v}"'))
     ],
+    # --- r4-review-creds4.json: env-file passwords of the enlarged label vocabulary
+    *[
+        Row(
+            f"r4.5-env-{value}", "match", f"DB_PASSWORD={value}", mode="env", head="reported", main="reported"
+        )
+        for value in R4_ENV_PASSWORDS
+    ],
+    Row(
+        "r4.5-env-DevPasswordLocal",
+        "match",
+        "DB_PASSWORD=DevPasswordLocal",
+        mode="env",
+        head="unreported",
+        main="reported",
+        accepted="not a credential: every word is label vocabulary or the name's own (dev, password, local)",
+    ),
 ]
 
 
