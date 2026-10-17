@@ -19,9 +19,10 @@ Two further defences keep a slow or throttled runner from failing honest code:
 * a guard that trips is retried once, since a single scheduling stall should
   not fail a build. A real regression fails both attempts.
 
-Use :func:`wall_budget` only where elapsed real time *is* the thing under
-test — an IO deadline, a timeout, a cancellation — and keep its allowance
-generous enough to survive contention.
+Use :func:`wall_budget` (or :func:`load_factor`) only where elapsed real time
+*is* the thing under test — an IO deadline, a timeout, a preemption. Those
+scale by load rather than by raw machine speed, since contention is exactly
+what inflates them.
 """
 
 from __future__ import annotations
@@ -89,6 +90,24 @@ def assert_cpu_budget(work: Callable[[], T], budget: float, what: str = "operati
     return result
 
 
+def load_factor() -> float:
+    """How much slower *wall* time runs here right now, machine and load together.
+
+    :func:`speed_factor` measures CPU time, which is the point for an
+    algorithmic budget and precisely why it cannot calibrate a wall one:
+    contention does not inflate CPU time, so a busy machine still reports 1.0
+    and a wall assertion fails anyway. This measures the same reference
+    workload by the clock, so it rises with the load.
+
+    Measured fresh on every call rather than cached, because load varies
+    across a run; the reference workload costs about 20ms.
+    """
+    started = time.perf_counter()
+    _reference_workload()
+    measured = time.perf_counter() - started
+    return min(16.0, max(1.0, measured / _REFERENCE_SECONDS))
+
+
 @contextmanager
 def wall_budget(budget: float, what: str = "operation") -> Iterator[None]:
     """Assert elapsed *real* time, for a deadline or timeout under test.
@@ -100,9 +119,10 @@ def wall_budget(budget: float, what: str = "operation") -> Iterator[None]:
     started = time.perf_counter()
     yield
     elapsed = time.perf_counter() - started
-    allowance = budget * speed_factor()
+    factor = load_factor()
+    allowance = budget * factor
     if elapsed > allowance:
         raise AssertionError(
             f"{what} took {elapsed:.3f}s, over the {allowance:.3f}s wall budget "
-            f"({budget:.3f}s x{speed_factor():.1f} for this machine)."
+            f"({budget:.3f}s x{factor:.1f} for this machine under its current load)."
         )

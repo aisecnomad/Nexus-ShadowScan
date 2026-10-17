@@ -84,7 +84,27 @@ class TestEstimate:
         assert FilesystemConnector.estimate_timeout_seconds({}, 120.0) is None
 
 
-class TestResolvedTimeout:
+class TestDeadlineExtension:
+    """The deadline grows where the class resolved for the job proposes it.
+
+    Done against the already-resolved class rather than a fresh lookup: a
+    second ``get_connector_class`` would run outside the job's origin-policy
+    scope, which ``test_approval_boundaries`` pins.
+    """
+
+    @staticmethod
+    def _state(timeout: float) -> _JobState:
+        state = _JobState()
+        state.deadline = time.monotonic() + timeout
+        return state
+
+    def _extend(self, cfg: ScanConfig, spec: ConnectorSpec, state: _JobState) -> float:
+        before = state.deadline
+        assert before is not None
+        _runner(cfg)._extend_deadline_for_large_input(spec, FilesystemConnector, state)
+        assert state.deadline is not None
+        return state.deadline - before
+
     def test_an_explicit_timeout_is_never_scaled(self, tmp_path) -> None:
         _tree(tmp_path, 100)
         cfg = ScanConfig(connectors=[], connector_timeout_seconds=7.0)
@@ -92,45 +112,55 @@ class TestResolvedTimeout:
         original = FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET
         FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = 25
         try:
-            assert _runner(cfg)._resolved_timeout(spec) == 7.0
+            assert self._extend(cfg, spec, self._state(7.0)) == 0
         finally:
             FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
 
-    def test_the_default_is_scaled_for_a_large_tree(self, tmp_path) -> None:
+    def test_the_default_is_extended_for_a_large_tree(self, tmp_path) -> None:
         _tree(tmp_path, 100)
         cfg = ScanConfig(connectors=[])
         spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
         original = FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET
         FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = 25
         try:
-            assert _runner(cfg)._resolved_timeout(spec) > DEFAULT_CONNECTOR_TIMEOUT
+            assert self._extend(cfg, spec, self._state(DEFAULT_CONNECTOR_TIMEOUT)) > 0
         finally:
             FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
 
-    def test_scaling_is_capped(self, tmp_path) -> None:
+    def test_a_small_tree_leaves_the_deadline_alone(self, tmp_path) -> None:
+        _tree(tmp_path, 10)
+        cfg = ScanConfig(connectors=[])
+        spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
+        assert self._extend(cfg, spec, self._state(DEFAULT_CONNECTOR_TIMEOUT)) == 0
+
+    def test_the_extension_is_capped(self, tmp_path) -> None:
         _tree(tmp_path, 200)
         cfg = ScanConfig(connectors=[])
         spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
         original = FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET
         FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = 1
         try:
-            assert _runner(cfg)._resolved_timeout(spec) == MAX_AUTO_TIMEOUT
+            grew = self._extend(cfg, spec, self._state(DEFAULT_CONNECTOR_TIMEOUT))
         finally:
             FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
+        assert grew == pytest.approx(MAX_AUTO_TIMEOUT - DEFAULT_CONNECTOR_TIMEOUT)
 
-    def test_an_estimate_that_raises_falls_back_to_the_default(self, tmp_path, monkeypatch) -> None:
+    def test_an_estimate_that_raises_leaves_the_deadline_alone(self, tmp_path, monkeypatch) -> None:
         def boom(cls, config, default):
             raise RuntimeError("probe exploded")
 
         monkeypatch.setattr(FilesystemConnector, "estimate_timeout_seconds", classmethod(boom))
         cfg = ScanConfig(connectors=[])
         spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
-        assert _runner(cfg)._resolved_timeout(spec) == DEFAULT_CONNECTOR_TIMEOUT
+        assert self._extend(cfg, spec, self._state(DEFAULT_CONNECTOR_TIMEOUT)) == 0
 
-    def test_an_unknown_connector_falls_back_to_the_default(self) -> None:
+    def test_a_connector_that_proposes_nothing_is_unaffected(self, tmp_path) -> None:
         cfg = ScanConfig(connectors=[])
-        spec = ConnectorSpec(name="does.not.exist", config={})
-        assert _runner(cfg)._resolved_timeout(spec) == DEFAULT_CONNECTOR_TIMEOUT
+        spec = ConnectorSpec(name="probe", config={})
+        state = self._state(DEFAULT_CONNECTOR_TIMEOUT)
+        before = state.deadline
+        _runner(cfg)._extend_deadline_for_large_input(spec, BaseConnector, state)
+        assert state.deadline == before
 
 
 class TestPartialFindings:

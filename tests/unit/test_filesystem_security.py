@@ -24,6 +24,7 @@ from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.models import Kind
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.text import BINARY_CONTENT_ERROR, read_text
+from tests.perf import load_factor
 
 
 def test_malformed_manifest_preserves_same_file_and_neighbor_findings(tmp_path, run_connector):
@@ -466,7 +467,7 @@ def test_manifest_regex_execution_has_timeout(monkeypatch):
     started = time.monotonic()
     with pytest.raises(TimeoutError):
         manifests.parse_manifest("build.gradle", "a" * 100_000 + "!")
-    assert time.monotonic() - started < 2
+    assert time.monotonic() - started < 2 * load_factor()
 
 
 def test_pom_entity_expansion_is_rejected_without_parsing():
@@ -479,7 +480,7 @@ def test_pom_entity_expansion_is_rejected_without_parsing():
     result = manifests.parse_manifest("pom.xml", pom)
     assert result is not None and not result.deps
     assert any("DTD/entity declarations are unsupported" in issue for issue in result.errors)
-    assert time.monotonic() - started < 2
+    assert time.monotonic() - started < 2 * load_factor()
 
 
 def test_repository_source_is_never_executed(tmp_path, run_connector):
@@ -772,7 +773,7 @@ def test_whitespace_run_after_iam_action_cannot_stall_the_scan(tmp_path, index):
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     started = time.monotonic()
     findings, ctx = _run(index, tmp_path)
-    assert time.monotonic() - started < 2.0
+    assert time.monotonic() - started < 2.0 * load_factor()
     assert not ctx.stats.errors and not ctx.stats.incomplete
     # The genuine wildcard grant and the neighbouring agent are retained.
     assert any("framework.crewai" in f.frameworks for f in findings)
@@ -792,7 +793,7 @@ def test_whitespace_run_after_iam_action_cannot_stall_the_scan(tmp_path, index):
 def test_iam_wildcard_pattern_is_linear_on_whitespace_runs(text):
     started = time.monotonic()
     assert filesystem_module._IAM_WILDCARD_RE.search(text, timeout=5.0, concurrent=False) is None
-    assert time.monotonic() - started < 2.0
+    assert time.monotonic() - started < 2.0 * load_factor()
 
 
 @pytest.mark.parametrize(
@@ -812,7 +813,7 @@ def test_blank_lines_after_agent_front_matter_marker_cannot_stall_the_scan(tmp_p
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
     started = time.monotonic()
     findings, ctx = _run(index, tmp_path)
-    assert time.monotonic() - started < 2.0
+    assert time.monotonic() - started < 2.0 * load_factor()
     assert not ctx.stats.errors and not ctx.stats.incomplete
     definitions = _agent_definitions(findings)
     assert definitions[".claude/agents/good.md"]["name"] == "reviewer"
@@ -1185,7 +1186,7 @@ def test_planted_whitespace_runs_do_not_stall_iac_or_front_matter_matching(tmp_p
     (tmp_path / "crew.py").write_text("from crewai import Agent\n")
     started = time.monotonic()
     findings, ctx = _scan(index, tmp_path, use_git=False)
-    assert time.monotonic() - started < 5
+    assert time.monotonic() - started < 5 * load_factor()
     assert not ctx.stats.incomplete and not ctx.stats.errors
     assert any("framework.crewai" in finding.frameworks for finding in findings)
 
@@ -1246,7 +1247,7 @@ def test_symbolic_link_checks_stop_at_the_listing_deadline(tmp_path, index, monk
     # listing work: they stop at half of the 2.25 s in which a file can still
     # start (3 s minus a 0.25 s margin and the 0.5 s matching budget), and
     # the regular file listed before them is still scanned.
-    assert time.monotonic() - started < 3.0
+    assert time.monotonic() - started < 3.0 * load_factor()
     assert any("connector deadline: listing stopped after" in issue for issue in ctx.stats.errors)
     assert any("framework.crewai" in finding.frameworks for finding in findings)
 

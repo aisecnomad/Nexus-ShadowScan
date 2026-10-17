@@ -405,8 +405,7 @@ class _ConnectorRunner:
 
     def run(self, number: int, spec: ConnectorSpec, state: _JobState) -> _JobResult:
         state.started_at = now_iso()
-        timeout = self._resolved_timeout(spec)
-        state.deadline = time.monotonic() + timeout
+        state.deadline = time.monotonic() + self._config.connector_timeout_seconds
         try:
             if state.isolated_process:
                 from shadowscan.plugin_process import run_plugin_process
@@ -434,32 +433,6 @@ class _ConnectorRunner:
             # Include sanitization, cache writes and callbacks in the
             # measured runtime, even if completion precedes the next poll.
             state.completed_at = time.monotonic()
-
-    def _resolved_timeout(self, spec: ConnectorSpec) -> float:
-        """This connector's deadline, scaled to its input when the default applies.
-
-        A fixed 120 seconds is ample for an API page and far too little for a
-        large monorepo, where it produced an empty report that looked clean.
-        When the operator left the default in place, the connector class may
-        propose a larger budget from a cheap look at its own input; an explicit
-        ``--connector-timeout-seconds`` is always honoured unchanged.
-        """
-        configured = self._config.connector_timeout_seconds
-        if configured != DEFAULT_CONNECTOR_TIMEOUT:
-            return configured
-        try:
-            cls = get_connector_class(spec.name)
-            proposed = cls.estimate_timeout_seconds(dict(spec.config), configured)
-        except Exception:  # noqa: BLE001 - an estimate must never fail a scan
-            return configured
-        if proposed is None or proposed <= configured:
-            return configured
-        scaled = min(float(proposed), MAX_AUTO_TIMEOUT)
-        self._engine._report_progress(
-            spec.id,
-            f"input is large; deadline raised to {scaled:.0f}s (set --connector-timeout-seconds to override)",
-        )
-        return scaled
 
     def _allow_private_origin(self, spec: ConnectorSpec) -> bool:
         """This connector's private-origin policy: its own grant, else the scan's.
@@ -598,6 +571,38 @@ class _ConnectorRunner:
             )
         return spec, combined, stats
 
+    def _extend_deadline_for_large_input(
+        self, spec: ConnectorSpec, hooks: type[BaseConnector], state: _JobState
+    ) -> None:
+        """Grow this job's deadline to match its input, when the default applies.
+
+        A fixed 120 seconds is ample for an API page and far too little for a
+        large monorepo, where the walk hit the deadline mid-tree and the
+        connector reported nothing -- which reads as a clean result everywhere
+        except the exit code. The connector class proposes a budget from a
+        cheap look at its own input; an explicit ``--connector-timeout-seconds``
+        is always honoured unchanged.
+
+        Done here rather than before the job starts, so it reuses the class
+        the runner has already resolved: a second lookup would happen outside
+        the job's origin-policy scope.
+        """
+        if self._config.connector_timeout_seconds != DEFAULT_CONNECTOR_TIMEOUT:
+            return
+        try:
+            proposed = hooks.estimate_timeout_seconds(dict(spec.config), DEFAULT_CONNECTOR_TIMEOUT)
+        except Exception:  # noqa: BLE001 - an estimate must never fail a scan
+            return
+        if proposed is None or proposed <= DEFAULT_CONNECTOR_TIMEOUT or state.deadline is None:
+            return
+        scaled = min(float(proposed), MAX_AUTO_TIMEOUT)
+        state.deadline += scaled - DEFAULT_CONNECTOR_TIMEOUT
+        self._engine._report_progress(
+            spec.id,
+            f"input is large; deadline raised to {scaled:.0f}s "
+            f"(set --connector-timeout-seconds to override)",
+        )
+
     def _connector_config(
         self, spec: ConnectorSpec, inherits_approval: bool, dump_key: str
     ) -> dict[str, Any]:
@@ -634,6 +639,7 @@ class _ConnectorRunner:
             resolved = _hook_failure(spec.name, "inherits_instance_credentials_approval()", exc)
             hooks, inherits_approval = _hooks(resolved), True
         cfg = self._connector_config(spec, inherits_approval, dump_key)
+        self._extend_deadline_for_large_input(spec, hooks, state)
         identity_key = self._run_identity_key if hooks.uses_run_identity_key else None
         ctx = ConnectorContext(
             config=cfg,

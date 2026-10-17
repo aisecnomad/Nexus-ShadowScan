@@ -869,6 +869,11 @@ class _VertexApis(_GoogleApis):
 
 def _gcp_run(index, monkeypatch, apis: _GoogleApis, **config: Any) -> dict[str, Any]:
     monkeypatch.setattr(GcpConnector, "_auth", lambda self: setattr(self, "http", apis))
+    # An unset `locations` is now a coverage gap, because resources in
+    # unqueried locations are never counted. These tests are about project
+    # scope, so they accept the built-in location scope explicitly; a test
+    # that wants the gap sets `locations` itself.
+    config.setdefault("locations", ["default"])
     spec = ConnectorSpec("cloud.gcp", {"access_token": GCP_TOKEN, **config})
     return Engine(ScanConfig(connectors=[spec]), index=index).run().to_dict()
 
