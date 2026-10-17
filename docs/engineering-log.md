@@ -116,11 +116,20 @@ public repositories with the tool and read the committed benchmark metrics.
   covers the languages documentation is translated into (a possessive
   followed by words, and the placeholder words of four letters or more in
   Portuguese, Spanish, French, German, Italian, Dutch, Indonesian and
-  Turkish). A credential under a documentation, example or generated path
-  is reported with that context's weight, confidence cap and `docs-only`,
-  `example-code-only` or `generated-code-only` tag, as project evidence
-  found there already was. Regression tests carry the field-scan lines;
-  the evaluation corpora are unchanged. The committed 2026-10-11 ShadowBench
+  Turkish). The possessive needs a separator and another word after it, and a
+  translated word counts only as a whole word between separators. Without the
+  separator, every letters-only token beginning `Su`, `Ta`, `Je`, `Ton` or
+  `Vos` was a placeholder, which `saas.generic` then did not learn as a
+  credential and copied raw from other columns into its findings; matched
+  across case boundaries and inside runs of letters, the short words (`hier`,
+  `aqui`, `kunci`) more than doubled how often a random key was taken for
+  one. The rate is back to that of the English rules alone, about one in
+  eleven thousand random 32-character base62 keys in a seeded simulation. A
+  credential under a documentation, example or generated path is reported
+  with that context's weight, confidence cap and `docs-only`,
+  `example-code-only` or `generated-code-only` tag, as project evidence found
+  there already was. Regression tests carry the field-scan lines; the
+  evaluation corpora are unchanged. The committed 2026-10-11 ShadowBench
   cases run (in-scope precision 77.9%, decoy specificity 63.0%) was not
   re-run: a later run on it is in-sample, as the README's Benchmarks section
   says.

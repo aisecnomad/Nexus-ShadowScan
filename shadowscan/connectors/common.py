@@ -9,16 +9,20 @@ Placeholder credentials
 A credential-looking value is treated as a documentation placeholder, not a
 live secret, when :func:`placeholder_reason` finds one of:
 
-* a template marker anywhere in the value (``<...>``, ``${...}``, ``{{...}}``);
+* a template marker anywhere in the value (``<...>``, ``${...}``, ``{{...}}``),
+  or a value that is only a possessive (``your``, ``sua``, ``votre``, ``dein``,
+  ``jouw``, ``anda``, ...) followed by a separator and words, whatever the
+  words are (``sua_chave_openai``, ``votre-cle-api``);
 * a placeholder word such as REPLACE, REPLACE_ME, YOUR, EXAMPLE, SAMPLE,
-  DUMMY, FAKE, TEST, PLACEHOLDER, CHANGEME, INSERT, PASTE, HERE or TODO, or
-  its Portuguese, Spanish, French, German, Italian, Dutch, Indonesian or
+  DUMMY, FAKE, TEST, PLACEHOLDER, CHANGEME, INSERT, PASTE, HERE or TODO,
+  case-insensitive, delimited by ``_ - .`` or by a case boundary; a fill run
+  such as ``xxxx`` or an ellipsis (``sk-ant-api03-...``) counts as a word;
+* its Portuguese, Spanish, French, German, Italian, Dutch, Indonesian or
   Turkish equivalent of four letters or more (CHAVE, CLAVE, CLEF, SCHLUESSEL,
   CHIAVE, SLEUTEL, KUNCI, ANAHTAR, EXEMPLO, BEISPIEL, ...), case-insensitive,
-  delimited by ``_ - .`` or by a case boundary; a fill run such as ``xxxx``
-  or an ellipsis (``sk-ant-api03-...``) counts as a word, and a value that is
-  only a possessive (``your``, ``sua``, ``votre``, ``dein``, ``jouw``,
-  ``anda``, ...) followed by words is a placeholder whatever the words are;
+  only as a whole word between separators (``sk-proj-sua-chave-aqui-...``):
+  across a case boundary or inside a run of letters, a short one such as
+  ``hier`` or ``aqui`` is too often part of a random key;
 * a low-entropy body: after the provider prefix the value is one or two
   repeated characters, or at least half of its characters continue a run of
   the same or adjacent characters (``0000``, ``1234567890``, ``abcdef``).
@@ -28,8 +32,12 @@ When a context-bound pattern captured an assignment (``NAME=value``,
 ``TEST_API_KEY`` never marks a real key as a placeholder; an empty value is a
 template.
 
-Randomly generated keys practically never satisfy these rules (fewer than one
-in ten thousand in simulation), and connectors report a placeholder as
+Randomly generated keys rarely satisfy these rules. In a seeded simulation of
+a million values of each shape, about one in eleven thousand random
+32-character base62 keys (more for longer ones: one in 7,500 at 48
+characters) and one in twenty thousand random 20-letter mixed-case passwords
+were taken for placeholders; ``tests/unit/test_detection_precision.py``
+re-measures both on a smaller sample. Connectors report a placeholder as
 low-weight ``example-credential`` evidence rather than dropping it silently,
 so a rare misclassification remains visible to analysts.
 """
@@ -374,22 +382,20 @@ def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterab
 
 # A value that is only a possessive and words (``your_api_key``, ``sua_chave_openai``,
 # ``votre-cle-api``) is a placeholder in any of the languages documentation is
-# written in; a token carries digits, which the word tail excludes.
+# written in; a token carries digits, which the word tail excludes. A separator
+# must follow the possessive: without one, every letters-only token that begins
+# with ``Su``, ``Ta``, ``Je`` or ``Ton`` would read as a possessive and a word.
 _POSSESSIVES = (
     "your|sua|seu|suas|seus|su|tu|tus|votre|vos|ton|ta|dein|deine|ihr|ihre|jouw|uw|je"
     "|tua|tuo|tuoi|vostra|vostro|anda|senin|sizin"
 )
 _PLACEHOLDER = re.compile(
-    rf"^(?:x{{3,}}|\*{{3,}}|<[^>]+>|\$\{{[^}}]+\}}|(?:{_POSSESSIVES})[_-]?[a-z_-]*"
+    rf"^(?:x{{3,}}|\*{{3,}}|<[^>]+>|\$\{{[^}}]+\}}|(?:{_POSSESSIVES})(?:[_-][a-z]+)+"
     r"|changeme|redacted|placeholder|todo|null|none)$",
     re.IGNORECASE,
 )
 _TEMPLATE_MARKER = re.compile(r"<[^<>\s]+>|\$\{[^{}]*\}|\{\{[^{}]*\}\}")
-# Lowercase words that documentation uses where a real key would go, in the
-# languages documentation is commonly translated into. Every word has at least
-# four letters: a shorter one (``su``, ``clé``, ``qui``) is too easily an alpha
-# run inside a real token, and the digits-free possessive forms are matched as
-# whole values by ``_PLACEHOLDER`` instead.
+# Lowercase words that documentation uses where a real key would go.
 _PLACEHOLDER_WORDS: tuple[str, ...] = (
     "replaceme",
     "replace",
@@ -408,46 +414,58 @@ _PLACEHOLDER_WORDS: tuple[str, ...] = (
     "redacted",
     "mock",
     "demo",
-    # Portuguese
-    "chave",
-    "senha",
-    "exemplo",
-    "substitua",
-    "insira",
-    "aqui",
-    # Spanish
-    "clave",
-    "ejemplo",
-    "reemplazar",
-    "reemplace",
-    "inserte",
-    # French
-    "votre",
-    "clef",
-    "exemple",
-    "remplacer",
-    "remplacez",
-    # German
-    "dein",
-    "deine",
-    "ihre",
-    "schluessel",
-    "beispiel",
-    "ersetzen",
-    "hier",
-    # Italian
-    "chiave",
-    "esempio",
-    "sostituire",
-    # Dutch
-    "jouw",
-    "sleutel",
-    "voorbeeld",
-    # Indonesian and Turkish
-    "kunci",
-    "contoh",
-    "anahtar",
-    "ornek",
+)
+# The same words in the languages documentation is commonly translated into.
+# Every word has at least four letters, and each counts only as a whole word
+# between separators (``sua_chave_aqui``, ``votre-clef``), never across a case
+# boundary or as the start or end of a longer run of letters as the English
+# words do: random keys hold short runs such as ``hier``, ``aqui`` or ``kunci``
+# often enough that matching them there doubled how often a real key was taken
+# for a placeholder. The possessives (``su``, ``ta``, ``ton``) are matched as
+# whole values by ``_PLACEHOLDER`` instead.
+_TRANSLATED_PLACEHOLDER_WORDS: frozenset[str] = frozenset(
+    {
+        # Portuguese
+        "chave",
+        "senha",
+        "exemplo",
+        "substitua",
+        "insira",
+        "aqui",
+        # Spanish
+        "clave",
+        "ejemplo",
+        "reemplazar",
+        "reemplace",
+        "inserte",
+        # French
+        "votre",
+        "clef",
+        "exemple",
+        "remplacer",
+        "remplacez",
+        # German
+        "dein",
+        "deine",
+        "ihre",
+        "schluessel",
+        "beispiel",
+        "ersetzen",
+        "hier",
+        # Italian
+        "chiave",
+        "esempio",
+        "sostituire",
+        # Dutch
+        "jouw",
+        "sleutel",
+        "voorbeeld",
+        # Indonesian and Turkish
+        "kunci",
+        "contoh",
+        "anahtar",
+        "ornek",
+    }
 )
 # An ellipsis stands for the rest of a key in documentation ('sk-ant-api03-...');
 # no key alphabet has a run of dots.
@@ -478,6 +496,8 @@ def _case_delimited(value: str, start: int, end: int) -> bool:
 
 
 def _placeholder_word(value: str) -> bool:
+    if any(segment.lower() in _TRANSLATED_PLACEHOLDER_WORDS for segment in _NON_ALNUM.split(value)):
+        return True
     for run in _ALPHA_RUN.finditer(value):
         word = run.group(0).lower()
         if word in _PLACEHOLDER_WORDS:
