@@ -143,6 +143,43 @@ By default, incomplete coverage is recorded as a warning and exits 3.
 error; it does not change the exit code. Raise `max_file_size`, explicitly
 exclude known data, or review `oversize_skip_globs` for the intended scope.
 
+Every diagnostic that leaves a scan incomplete is also counted by reason in
+`stats[].incomplete_reasons` and, summed over the connectors, in
+`summary.incomplete_reasons`; the CLI names the counts on stderr when it exits 3
+(`scan incomplete (exit 3): oversize-file 2, unresolved-link 1`). A connector
+names the reason when it records the diagnostic; one recorded without a reason
+is classified from its text, which is the connectors' own message vocabulary
+and never a path or a value. The categories are `oversize-file` (a file over
+`max_file_size` or `max_notebook_size`), `unresolved-link` (a symbolic link,
+gitlink or submodule not followed), `unparsed-input` (content that did not
+parse or an input defect), `sanitization-limit` (a credential-redaction
+context that could not be established, so excerpts were withheld), `timeout`
+(a file's matching budget, a connector deadline or a job deadline),
+`access-denied`, `upstream-error` (a live API, network or rate-limit failure),
+`analysis-limit` (a per-file budget such as `max_ast_nodes` or the model
+literal limit), `subset-scan` (a `triage` scan), `unscanned-input` and `other`.
+A connector that was skipped, or timed out before it recorded a diagnostic,
+has no entry; the summary's `status` still says `incomplete`.
+
+### The `ci` profile
+
+A gate on a repository's source does not read its recorded cassettes, its
+fixtures over a megabyte or the certificate links in its test suite, yet by
+default each of those exits 3. `profile: ci` (`--profile ci`) declares such
+gaps in advance: an oversize file, an unread symbolic link, a non-regular
+entry, content that did not parse or an analysis limit under a test, fixture,
+documentation, example or generated path is recorded as a warning that names
+it and ends in `declared omission (profile ci)`, counted in
+`stats[].declared_omissions` and `summary.declared_omissions`, and the scan
+stays complete. Test paths are declared only while `include_tests` is false,
+when their evidence is discounted; with it set they are source like any other.
+Every other gap, in `src/`, at the repository root or in a path the profile
+does not name, still marks the scan incomplete, and so does a connector
+deadline, a `max_files` or `max_entries` limit and a triage scan. The profile
+and `strict_coverage` conflict and are rejected together. The report of a
+profile scan is not the report of a scan that read everything: read
+`declared_omissions` before treating its exit 0 as full coverage.
+
 Analysis limits are reported with their reason, for example
 `file analysis incomplete (MatchTimeoutError: source binding call limit exceeded)`.
 The import binder only counts calls into modules that a signature describes,

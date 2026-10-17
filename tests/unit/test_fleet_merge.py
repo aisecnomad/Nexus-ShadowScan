@@ -151,6 +151,40 @@ def test_fleet_rejects_malformed_statistics(tmp_path: Path):
         merge_reports([("broken", report)])
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("incomplete_reasons", ["oversize-file"]),
+        ("incomplete_reasons", {"oversize-file": "1"}),
+        ("incomplete_reasons", {"oversize-file": -1}),
+        ("incomplete_reasons", {3: 1}),
+        ("declared_omissions", "1"),
+        ("declared_omissions", -1),
+    ],
+)
+def test_fleet_rejects_malformed_incomplete_reasons_and_omission_counts(tmp_path: Path, key, value):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    report["stats"][0][key] = value
+    with pytest.raises(ValueError, match="incomplete reasons|counts"):
+        merge_reports([("broken", report)])
+
+
+def test_fleet_carries_incomplete_reasons_and_declared_omissions(tmp_path: Path):
+    path = _report(tmp_path, "laptop", {".mcp.json": MCP})
+    report = json.loads(path.read_text())
+    report["stats"][0]["declared_omissions"] = 2
+    merged = merge_reports([("laptop", report)])
+    assert merged.summary()["declared_omissions"] == 2
+    broken = json.loads(path.read_text())
+    broken["stats"][0]["incomplete"] = True
+    broken["stats"][0]["incomplete_reasons"] = {"timeout": 1, "oversize-file": 3}
+    broken["stats"][0]["warnings"] = ["connector timed out"]
+    broken["summary"]["complete"] = False
+    merged = merge_reports([("laptop", broken)])
+    assert merged.summary()["incomplete_reasons"] == {"oversize-file": 3, "timeout": 1}
+
+
 def test_merge_refuses_a_reused_id_for_another_identity(tmp_path: Path):
     # Report ids are untrusted: a copy that keeps the ids but names other
     # resources must not fold the original findings into its own.

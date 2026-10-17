@@ -34,6 +34,11 @@ def _level(f: Finding) -> Text:
     )
 
 
+def incomplete_reasons_text(reasons: dict[str, int]) -> str:
+    """``oversize-file 2, timeout 1``: the summary's reason counts, most frequent first."""
+    return ", ".join(f"{reason} {count}" for reason, count in reasons.items())
+
+
 def _stat_state(st: dict[str, Any]) -> str:
     """The totals-line suffix for one publication-sanitized connector statistics record."""
     if st["skipped"]:
@@ -48,8 +53,13 @@ def _header(result: ScanResult) -> Text:
     s = result.summary()
     header = Text()
     if not result.complete:
-        header.append("INCOMPLETE SCAN  •  ", style="bold red")
+        header.append("INCOMPLETE SCAN", style="bold red")
+        if s["incomplete_reasons"]:
+            header.append(f" ({incomplete_reasons_text(s['incomplete_reasons'])})", style="red")
+        header.append("  •  ", style="bold red")
     header.append(f"{s['total']} findings", style="bold")
+    if s["declared_omissions"]:
+        header.append(f"  •  {s['declared_omissions']} declared omissions", style="yellow")
     if has_inventory(result):
         header.append(f"  •  {s['shadow']} shadow", style="bold red")
         header.append(f" (inventory: {result.inventory_size} registered agents)", style="dim")

@@ -32,6 +32,23 @@ the policy passed. An incomplete scan may omit findings above the threshold and
 cannot establish that the policy passed either. Use the code only to choose the
 follow-up: 2 needs finding triage, 1 and 3 need the scan fixed and rerun.
 
+When the scan exits 3 the CLI says why on stderr, by reason category
+(`scan incomplete (exit 3): oversize-file 2, unresolved-link 1`), and the
+report counts the same categories in `summary.incomplete_reasons`; the named
+diagnostics are in the report's `stats`. The categories name no path or value,
+so the stderr line can stay in a public job log that the private report should
+not reach. See [coverage policy](../scanning.md#coverage-policy) for the list.
+
+A repository's test cassettes, fixtures over a megabyte and dangling test
+certificate links each exit 3 by default, because the credential pass would
+have read them. A gate on the repository's source can declare those gaps in
+advance with `--profile ci`: a gap under a test, fixture, documentation, example
+or generated path becomes a warning that names it and is counted in
+`summary.declared_omissions`, and the scan stays complete; a gap in `src/` or at
+the root still exits 3. The example workflow passes the flag. Leave it out when
+the gate should also establish that every fixture was read for credentials, and
+never combine it with `--strict-coverage`.
+
 To gate on drift between two reports, `shadowscan diff baseline.json current.json
 --fail-on-new` exits 2 when the current report has new findings or findings
 whose risk level rose, and 3 when the comparison is incomplete (differing scope

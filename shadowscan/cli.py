@@ -84,7 +84,7 @@ from shadowscan.registry import Inventory, card_stub_for
 from shadowscan.reporters import FORMATS, render
 from shadowscan.reporters.controls import CONTROL_FORMATS, render_controls
 from shadowscan.reporters.dashboard import render_dashboard
-from shadowscan.reporters.table import print_table
+from shadowscan.reporters.table import incomplete_reasons_text, print_table
 from shadowscan.signatures import Match, SignatureIndex, get_index
 from shadowscan.signatures.loader import VALID_CATEGORIES
 from shadowscan.utils.deadline import JobDeadline, arm_job_deadline
@@ -192,6 +192,24 @@ def _exit_code(result: ScanResult, fail_on: str | None) -> int:
     threshold = LEVELS.index(fail_on)
     worst = min((LEVELS.index(f.risk.level.value) for f in result.findings), default=len(LEVELS))
     return 2 if worst <= threshold else 0
+
+
+def _explain_incomplete(result: ScanResult) -> None:
+    """Say on stderr why the scan exits 3, by reason category; the diagnostics themselves stay in the report.
+
+    The categories come from the connectors' own message vocabulary and name no path or value,
+    so they can go to a terminal or a CI log that the private report does not reach.
+    """
+    summary = result.summary()
+    reasons = summary["incomplete_reasons"]
+    if reasons:
+        detail = incomplete_reasons_text(reasons)
+    else:
+        detail = "a connector was skipped or recorded no diagnostic"
+    note = f"scan incomplete (exit 3): {detail}; see the report's warnings, errors and stats"
+    if summary["declared_omissions"]:
+        note += f"; {summary['declared_omissions']} declared omission(s) did not count"
+    err_console.print(Text(terminal_text(note), style="yellow"))
 
 
 def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
@@ -317,6 +335,8 @@ def _run_and_emit_with_deadline(
                 )
             raise
         code = _exit_code(result, cfg.fail_on)
+        if code == 3:
+            _explain_incomplete(result)
         if engine.abandoned_workers:
             # A timed-out connector's thread may still be blocked in an SDK call.
             # Python joins worker threads at interpreter exit, which would hold the
@@ -773,6 +793,16 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
     help="fast subset scan (manifests, MCP/agent configs, flows, IaC); always exits incomplete",
 )
 @click.option(
+    "--profile",
+    type=click.Choice(["default", "ci"]),
+    default=None,
+    help=(
+        "ci: declare oversize files, unread links and analysis limits under test, fixture, documentation, "
+        "example and generated paths as omissions (warnings the report counts) instead of gaps, so a "
+        "complete source scan exits 0; every other gap still exits 3"
+    ),
+)
+@click.option(
     "--diff-base",
     default=None,
     help=(
@@ -793,6 +823,7 @@ def code(
     strict_coverage: bool,
     include_tests: bool,
     triage: bool,
+    profile: str | None,
     diff_base: str | None,
     opts: ScanOptions,
 ) -> None:
@@ -808,6 +839,10 @@ def code(
         common["include_tests"] = True
     if triage:
         common["triage"] = True
+    if profile:
+        if strict_coverage and profile == "ci":
+            raise click.UsageError("--profile ci and --strict-coverage conflict; pass one of them")
+        common["profile"] = profile
     if diff_base and not paths:
         raise click.UsageError("--diff-base applies only to local PATHS")
     if mode and not (github_org or github_repo or gitlab_group):

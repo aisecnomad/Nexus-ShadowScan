@@ -1199,7 +1199,15 @@ bytes or invalid bytes in otherwise valid text do not count) make the scan
 incomplete (exit 3) by default, with a warning naming the omission.
 `strict_coverage: true` (`--strict-coverage`) records those
 conditions as errors; explicit `oversize_skip_globs` remain declared omissions
-in both modes. Raise `max_file_size` or add `exclude` patterns for known data files.
+in both modes. Raise `max_file_size` or add `exclude` patterns for known data files,
+or declare the gaps a source gate accepts with `profile: ci` (`--profile ci`):
+under it an oversize file, an unread link, a non-regular entry, unparsed content
+or an analysis limit under a test, fixture, documentation, example or generated
+path is a warning that leaves the scan complete and is counted in the report's
+`declared_omissions`, while every other gap still exits 3 (see
+[the `ci` profile](scanning.md#the-ci-profile)). Every diagnostic that leaves a
+scan incomplete is counted by reason category in `summary.incomplete_reasons`
+and named on stderr with the exit 3.
 A non-empty `bin`, `build`, `dist`, `out`, `target`, `obj`, `coverage`, `vendor`,
 `third_party`, `thirdparty` or `external` directory that the walk skips by default
 is listed in one warning per scan root (the scan stays complete); set
@@ -1209,10 +1217,13 @@ agent unless `include_tests: true` (`--include-tests`) is set, and a project
 finding whose evidence is already reported by an MCP configuration, agent
 manifest, exported workflow, IaC or credential finding is not emitted again.
 Recognisable placeholder credentials (repeated characters, marker words such as
-`EXAMPLE`, very low character diversity) are no longer reported. A
-real-format credential in a test, fixture or `cassettes/` path is still a
-`secret` finding, at half weight and tagged `test-code-only` unless
-`include_tests: true` is set. Risk factors
+`EXAMPLE` or its translation, very low character diversity) are no longer
+reported, and neither is an assigned value shaped like the name of another
+variable (`api_key = resolved_api_key`). A real-format credential in a test,
+fixture or `cassettes/` path is still a `secret` finding, at half weight and
+tagged `test-code-only` unless `include_tests: true` is set; one under a
+documentation, example or generated path carries that context's tag and
+confidence cap. Risk factors
 always sum to the reported score; `risk.danger_score` excludes the governance
 factors and `options.risk_basis: danger` bases `level` and `--fail-on` on it.
 Review [scan state and runtime correlation](scanning.md) and the changelog

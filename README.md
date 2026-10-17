@@ -202,6 +202,7 @@ shadowscan code . --inventory ./inventory --fail-on high   # with inventory reco
 | `--no-secrets` | Skip credential detection |
 | `--strict-coverage` | Record incomplete file/symlink coverage as errors |
 | `--include-tests` | Let test/fixture code establish agents at full weight |
+| `--profile ci` | Declare oversize files, unread links and analysis limits under test, fixture, documentation, example and generated paths as counted omissions instead of gaps, so a complete source scan exits 0 (conflicts with `--strict-coverage`) |
 | `--triage` | Fast subset scan (manifests, MCP/agent configs, flows, IaC only) |
 
 </details>
@@ -516,8 +517,12 @@ The global `-v`/`-vv` (info/debug) and `-q` (errors only) flags go before the co
 | **3** | Scan incomplete (API error, timeout, denied access, limit, malformed export); `diff` returns 3 when reports are not comparable |
 
 Gate CI on any non-zero exit: exit 1 means nothing was scanned, and an
-incomplete scan never reads as clean. Exit 0 from a complete static scan does
-not prove that no agent runs; see
+incomplete scan never reads as clean. On exit 3 the CLI names the reason
+categories on stderr (`scan incomplete (exit 3): oversize-file 2`) and the
+report counts them in `summary.incomplete_reasons`; `shadowscan code --profile ci`
+declares the gaps a source gate accepts (fixtures, cassettes, documentation) in
+advance and counts them in `summary.declared_omissions`. Exit 0 from a complete
+static scan does not prove that no agent runs; see
 [scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md).
 
 ---

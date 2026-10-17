@@ -122,6 +122,68 @@ class _ExportReplayLimitError(ValueError):
     """A credential-free export limit diagnostic; analysis can still use the original record."""
 
 
+# Why a diagnostic leaves a scan incomplete, as ``ScanStats.incomplete_reasons``
+# counts it. A connector names the reason when it records the diagnostic; one
+# recorded without a reason is classified from its text by ``incomplete_reason``,
+# which reads the connectors' own message vocabulary (never a path or a value).
+# The categories separate what an operator can act on: a coverage gap in the
+# input (a file too large, a link not followed, content that did not parse), a
+# limit the scanner hit on it, and a failure to reach or read a live source.
+INCOMPLETE_REASONS: tuple[str, ...] = (
+    "oversize-file",
+    "unresolved-link",
+    "unparsed-input",
+    "sanitization-limit",
+    "timeout",
+    "access-denied",
+    "upstream-error",
+    "analysis-limit",
+    "subset-scan",
+    "unscanned-input",
+    "other",
+)
+# Ordered: the first category whose phrase occurs wins, so "rate limit" is an
+# upstream error before "limit" is an analysis limit, and a withheld excerpt is
+# a sanitization limit before it is unscanned input.
+_INCOMPLETE_REASON_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("oversize-file", ("max_file_size", "max_notebook_size", "oversize", "byte limit", "too large")),
+    ("unresolved-link", ("symbolic link", "symlink", "gitlink", "submodule")),
+    ("sanitization-limit", ("sanitization", "sanitizationlimiterror", "redaction")),
+    ("timeout", ("matchtimeouterror", "timed out", "timeout", "deadline", "time budget")),
+    ("access-denied", ("denied", "forbidden", "unauthorized", "unauthorised", "401", "403", "permission")),
+    (
+        "upstream-error",
+        (
+            "rate limit",
+            "http",
+            "api error",
+            "status code",
+            "connection",
+            "unreachable",
+            "network",
+            "tls",
+            "dns",
+        ),
+    ),
+    (
+        "unparsed-input",
+        ("does not parse", "invalid", "malformed", "input defect", "not strict json", "syntax"),
+    ),
+    ("analysis-limit", ("limit", "budget", "exhausted", "literals only", "not matched", "partially")),
+    ("subset-scan", ("triage scan", "subset")),
+    ("unscanned-input", ("not scanned", "skipped", "unread", "withheld", "omitted", "not inspected")),
+)
+
+
+def incomplete_reason(message: str) -> str:
+    """The ``INCOMPLETE_REASONS`` category of a diagnostic, read from the connectors' message vocabulary."""
+    lowered = message.lower()
+    for reason, phrases in _INCOMPLETE_REASON_PHRASES:
+        if any(phrase in lowered for phrase in phrases):
+            return reason
+    return "other"
+
+
 class ConnectorContext:
     """Runtime context handed to a connector."""
 
@@ -244,15 +306,24 @@ class ConnectorContext:
                 self.stats.incomplete = True
             return f"diagnostic omitted: sanitization safety limit exceeded {REDACTED}"
 
-    def warn(self, msg: str, incomplete: bool = True) -> None:
+    def warn(
+        self, msg: str, incomplete: bool = True, *, reason: str | None = None, declared: bool = False
+    ) -> None:
+        """Record a warning; an incomplete one is counted under ``reason``, classified from ``msg`` when None.
+
+        ``declared`` marks a coverage omission a profile declared in advance: the
+        warning leaves the scan complete and is counted in ``declared_omissions``.
+        """
         if self.stats is not None:
             self.stats.incomplete = self.stats.incomplete or incomplete
-        self._diagnostic(msg, warning=True)
+            if declared:
+                self.stats.declared_omissions += 1
+        self._diagnostic(msg, warning=True, incomplete=incomplete, reason=reason)
 
-    def error(self, msg: str) -> None:
+    def error(self, msg: str, *, reason: str | None = None) -> None:
         if self.stats is not None:
             self.stats.incomplete = True
-        self._diagnostic(msg, warning=False)
+        self._diagnostic(msg, warning=False, incomplete=True, reason=reason)
 
     def diagnostics_recorded(self) -> int:
         """Warnings and errors recorded so far, including those past the report's diagnostic limit.
@@ -261,10 +332,14 @@ class ConnectorContext:
         """
         return sum(self._diagnostic_counts.values())
 
-    def _diagnostic(self, msg: str, *, warning: bool) -> None:
+    def _diagnostic(self, msg: str, *, warning: bool, incomplete: bool, reason: str | None) -> None:
         channel = "warnings" if warning else "errors"
         count = self._diagnostic_counts.get(channel, 0) + 1
         self._diagnostic_counts[channel] = count
+        if incomplete and self.stats is not None:
+            # Counted before the diagnostic limit: the reasons stay complete when the messages do not.
+            key = reason if reason in INCOMPLETE_REASONS else incomplete_reason(msg)
+            self.stats.incomplete_reasons[key] = self.stats.incomplete_reasons.get(key, 0) + 1
         if count > self._MAX_DIAGNOSTICS + 1:
             return
         if count == self._MAX_DIAGNOSTICS + 1:

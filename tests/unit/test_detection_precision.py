@@ -106,10 +106,10 @@ def _finding(**kwargs) -> Finding:
         ("jouw_sleutel", "template"),
         ("anda_kunci_api", "template"),
         ("sk-proj-SuaChaveAqui" + "q7Lm3Xz9" * 4, "placeholder-word"),
-        ("sk-proj-su_clave_de_ejemplo_1234567890abcd", "placeholder-word"),
+        ("sk-proj-" + "su_clave_de_ejemplo_1234567890abcd", "placeholder-word"),
         ("sk-proj-VotreClefIci" + "q7Lm3Xz9" * 4, "placeholder-word"),
-        ("ghp_BEISPIEL0000000000000000000000000000", "placeholder-word"),
-        ("sk-proj-la_tua_chiave_api_1234567890abcdef", "placeholder-word"),
+        ("ghp_" + "BEISPIEL" + "0" * 28, "placeholder-word"),
+        ("sk-proj-" + "la_tua_chiave_api_1234567890abcdef", "placeholder-word"),
         ("sk-proj-anahtar_" + "q7Lm3Xz9" * 4, "placeholder-word"),
     ],
 )
