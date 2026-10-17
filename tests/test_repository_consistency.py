@@ -14,6 +14,7 @@ Run both modules with ``make policy``.
 
 from __future__ import annotations
 
+import ast
 import functools
 import importlib.util
 import inspect
@@ -677,10 +678,25 @@ def _comment_header(path: Path) -> str:
     return " ".join(" ".join(line.lstrip("#").split()) for line in lines)
 
 
+def _package_strings(path: Path) -> str:
+    """The string literals a package module holds (messages, help text, docstrings), one per paragraph."""
+    tree = ast.parse(_read(path), filename=str(path))
+    strings = (
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    )
+    return "\n\n".join(strings)
+
+
 def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
-    """``(document, span, about_macos)`` for every interpreter span a current document states."""
+    """``(document, span, about_macos)`` for every interpreter span a current document or package
+    string states."""
     texts = [(_relative(path), _current_text(path)) for path in _current_docs()]
     texts += [(name, _comment_header(ROOT / name)) for name in _LOCK_HEADERS]
+    texts += [
+        (_relative(path), _package_strings(path)) for path in sorted((ROOT / "shadowscan").rglob("*.py"))
+    ]
     for name, text in texts:
         for paragraph in re.split(r"\n[ \t]*\n", text):
             paragraph = " ".join(paragraph.split())
@@ -694,7 +710,8 @@ def test_documented_interpreter_ranges_match_the_classifiers_and_ci() -> None:
     A span right after "macOS" describes the macOS job's matrix. Any other span describes what is
     supported and what the Linux job tests, which the matrix test above keeps equal to the
     classifiers. Adding 3.14 to pyproject and CI left the rollout guide, the testing guide and the
-    lock headers promising 3.11 to 3.13 and macOS 3.11/3.13.
+    lock headers promising 3.11 to 3.13 and macOS 3.11/3.13, and the Windows refusal message
+    still names 3.11-3.13; package string literals are read as well as documents.
     """
     expected = {False: _classified_minors(), True: _ci_matrix_minors("test-macos")}
     claims = list(_interpreter_claims())
@@ -706,7 +723,13 @@ def test_documented_interpreter_ranges_match_the_classifiers_and_ci() -> None:
     ]
     assert not stale, "interpreter ranges disagree with pyproject.toml and ci.yml:\n" + "\n".join(stale)
     stating = {name for name, _, _ in claims}
-    required = {"README.md", "docs/testing.md", "docs/production.md", *_LOCK_HEADERS[:2]}
+    required = {
+        "README.md",
+        "docs/testing.md",
+        "docs/production.md",
+        *_LOCK_HEADERS[:2],
+        "shadowscan/utils/platform.py",
+    }
     assert required <= stating, f"{sorted(required - stating)} no longer state the interpreters they cover"
     assert any(macos for _, _, macos in claims), "a document should state the macOS CI interpreters"
     unused = set(_DATED_INTERPRETER_SPANS) - {(name, span) for name, span, _ in claims}
