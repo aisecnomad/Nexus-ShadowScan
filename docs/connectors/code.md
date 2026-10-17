@@ -602,7 +602,8 @@ inside the root (which costs one entry), a link to or named like a directory an
 agent reads its configuration from (`.claude`, `.cursor`, `.vscode`), which
 `profile: ci` never declares, and agent configuration (an MCP configuration
 by a dedicated name in any letter case, a coding-agent instruction, rule or
-settings file, a file a coding-agent or MCP file signature selects with a
+settings file, a client's own settings file under a shared name
+(`.vscode/settings.json`), a file a coding-agent or MCP file signature selects with a
 directory-wide glob such as `.roo/**`, an agent manifest or card) that is over
 `max_file_size`, a link to a file the walk does not scan, or a FIFO, socket or
 device, make the scan incomplete at once, under a test path too, whatever the
@@ -610,8 +611,8 @@ budget allows, and so does a JSON, TOML or YAML file over `max_file_size`
 whose bytes name an MCP server table key (read for that check only, behind any
 padding, up to 128 MiB); `strict_coverage` promotes their diagnostics to errors. A
 manifest or build file (`Dockerfile`, `package.json`, `requirements.txt`,
-`.env`) or a shared client name (`config.json`, `settings.json`) linked or
-replaced by a FIFO costs one entry, as an asset beside agent rules
+`.env`) or a shared client name outside its client's directory
+(`config.json`, `settings.json`) linked or replaced by a FIFO costs one entry, as an asset beside agent rules
 (`.cursor/rules/demo.mp4`) over `max_file_size` does; an oversize dotenv
 file is blinding while `scan_secrets` is on. Declared
 oversize skip globs remain visible omissions, and directories skipped by the
