@@ -205,3 +205,85 @@ def test_a_token_two_patterns_match_counts_once(tmp_path, index):
     findings, ctx = _scan(index, tmp_path, {".env": tokens})
     assert _secret_finding(findings).metadata["count"] == 3
     assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+# One credential repeated on many lines (one password in each service of a
+# compose file, one key in each document of a manifest) is one credential: it
+# counted once per line, so six repeats made the scan incomplete with "more
+# than 5 credentials" (exit 3) where main 8c72467 completed.
+_REPEATED = "".join(random.Random(2817).choices(_ALPHABET, k=28))
+
+
+def _distinct_key(number: int) -> str:
+    """A distinct synthetic generic key, derived from ``number`` at run time."""
+    return "".join(random.Random(number).choices(_ALPHABET, k=28))
+
+
+def test_one_credential_repeated_in_six_compose_services_counts_once(tmp_path, index):
+    compose = "services:\n" + "".join(
+        f"  svc{n}:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: {_REPEATED}\n"
+        for n in range(6)
+    )
+    findings, ctx = _scan(index, tmp_path, {"docker-compose.yml": compose})
+    secret = _secret_finding(findings)
+    assert secret.metadata["count"] == 1 and "secrets_limited" not in secret.metadata
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    assert _REPEATED not in json.dumps(secret.to_dict(), default=str)
+
+
+def test_one_key_repeated_in_six_manifest_documents_counts_once(tmp_path, index):
+    manifest = "---\n".join(
+        f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: s{n}\nstringData:\n  OPENAI_API_KEY: {_REPEATED}\n"
+        for n in range(6)
+    )
+    findings, ctx = _scan(index, tmp_path, {"k8s/deploy.yaml": manifest})
+    assert _secret_finding(findings).metadata["count"] == 1
+    assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+def test_one_key_assigned_to_six_names_counts_once(tmp_path, index):
+    source = "".join(f'SVC{n}_OPENAI_API_KEY = "{_REPEATED}"\n' for n in range(6))
+    limited: set[str] = set()
+    assert len(index.match_secrets(source, code=True, limited=limited)) == 1
+    assert limited == set()
+    findings, ctx = _scan(index, tmp_path, {"src/a.py": source})
+    assert _secret_finding(findings).metadata["count"] == 1
+    assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+def test_six_distinct_keys_still_disclose_the_quota(tmp_path, index):
+    source = "".join(f'SVC{n}_OPENAI_API_KEY = "{_distinct_key(n)}"\n' for n in range(6))
+    findings, ctx = _scan(index, tmp_path, {"src/a.py": source})
+    secret = _secret_finding(findings)
+    assert secret.metadata["count"] == MAX_SECRETS_PER_SIGNAL
+    assert secret.metadata["secrets_limited"] == ["heuristic.inline-credential"]
+    assert ctx.stats.incomplete
+
+
+def test_repeats_beside_distinct_keys_count_toward_nothing(tmp_path, index):
+    # Five distinct keys, each assigned twice: five credentials, the quota's worth, complete.
+    source = "".join(
+        f'SVC{n}_OPENAI_API_KEY = "{_distinct_key(n)}"\nSVC{n}_BACKUP_API_KEY = "{_distinct_key(n)}"\n'
+        for n in range(MAX_SECRETS_PER_SIGNAL)
+    )
+    findings, ctx = _scan(index, tmp_path, {"src/a.py": source})
+    assert _secret_finding(findings).metadata["count"] == MAX_SECRETS_PER_SIGNAL
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    # A sixth distinct key after the repeats is still found and disclosed.
+    source += f'SVC9_OPENAI_API_KEY = "{_distinct_key(9)}"\n'
+    findings, ctx = _scan(index, tmp_path / "more", {"src/a.py": source})
+    assert _secret_finding(findings).metadata["secrets_limited"] == ["heuristic.inline-credential"]
+    assert ctx.stats.incomplete
+
+
+def test_the_judge_keeps_digests_not_credentials(index):
+    from shadowscan.signatures.matcher import _CredentialJudge
+
+    source = "".join(f'SVC{n}_OPENAI_API_KEY = "{_REPEATED}"\n' for n in range(6))
+    judge = _CredentialJudge(source, True)
+    other = _CredentialJudge(source, True)
+    index._match_regex_signals("secret", source, None, max_per_signal=MAX_SECRETS_PER_SIGNAL, accept=judge)
+    index._match_regex_signals("secret", source, None, max_per_signal=MAX_SECRETS_PER_SIGNAL, accept=other)
+    assert all(isinstance(digest, bytes) and _REPEATED.encode() not in digest for digest in judge._seen)
+    # Keyed per judge: the same credential gives another digest in another text's judge.
+    assert judge._seen.isdisjoint(other._seen)
