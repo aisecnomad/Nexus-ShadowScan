@@ -89,6 +89,25 @@ file_matches)`, now serves every gap site.
   (`_agent_directory_names`, derived from the loaded signatures), is blinding
   and never declared, an alias of a scanned directory included; a link to a
   single file under such a directory is judged by its own name.
+- **An undecodable test fixture that declares servers is blinding.** In a
+  tree of 61 entries, a guessed `tests/fixtures/agent.yaml` holding
+  `mcpServers` with a NUL byte was a tolerated one-entry gap, and under
+  `--profile ci` a declared omission: `_scan_binary_test_fixture` found the
+  MCP structure but `_unreadable_gap` judged the path with
+  `_discounted_test_gap(rel)`, which is true for a fixture found by its
+  content, and `_budgeted_gap` declared it. The earlier tests passed only
+  because each held one file, over any budget. The structure check was also
+  text-only for files with no parse held (`_mentions_mcp_keys`), so a quoted
+  (`'mcpServers':`), spaced or explicit YAML key, a unicode-escaped JSON key,
+  a TOML inline table or literal key were discounted. `_binary_declares_mcp`
+  now parses the NUL-stripped text with the reader's bounded loader
+  (`_structured_context`) and lets the structure decide, as for a readable
+  copy; text that does not parse to a mapping or a list is read for any
+  spelling of a key (`_may_declare_mcp`). Such a fixture is blinding under
+  both profiles (`_unreadable_gap(by_content=True)`, passed to the
+  declaration as `full_weight`), and the servers its text declares are
+  reported. The parametrized full-weight tests now run in a 61-entry tree
+  under both profiles, with these spellings added.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 
