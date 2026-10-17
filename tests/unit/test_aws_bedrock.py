@@ -210,12 +210,19 @@ def test_denied_bedrock_tags_keep_the_agent_and_mark_coverage_incomplete(index):
 def test_malformed_bedrock_tags_response_is_reported_and_ignored(index):
     ctx = context(index)
     connector = AwsConnector(ctx)
-    agent = _collect_one_agent(connector, _bedrock_agent_client({"tags": [{"Key": "owner", "Value": "x"}]}))
+    client = _bedrock_agent_client({"tags": [{"Key": "owner", "Value": "x"}]})
+    # Collected under the bedrock listing scope, as collect() does, so the call's outcome is attested.
+    collect = connector._collect_bedrock
+    connector._collect_bedrock = lambda region: connector._scoped("bedrock", region, collect(region))
+    agent = _collect_one_agent(connector, client)
     assert agent["tags"] == {} and connector._h_bedrock_agent(agent).owner is None
     assert ctx.stats.incomplete
     assert ctx.stats.warnings == [
         "cloud.aws: invalid list_tags_for_resource response; owner coverage incomplete"
     ]
+    # Regression: the call returned, so it was recorded as ok although its data was rejected.
+    details = ctx.scope_record([])["details"]
+    assert {"service": "bedrock", "operation": "list_tags_for_resource", "outcome": "failed"} in details
 
 
 def test_bedrock_agent_without_an_arn_looks_up_no_tags(index):

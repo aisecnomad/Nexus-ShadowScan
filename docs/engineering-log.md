@@ -243,7 +243,11 @@ public repositories with the tool and read the committed benchmark metrics.
   `ListTagsForResource` (covered by the documented `bedrock:List*` and
   `bedrock-agentcore:List*` grants); a denied or malformed listing marks the
   scan incomplete and leaves the resource without an owner. AgentCore
-  runtime findings gain `owner` from the `owner`/`Owner` tag.
+  runtime findings gain `owner` from the `owner`/`Owner` tag. As first
+  integrated, a response whose `tags` was not a string map was recorded as
+  `ok` in the live-scope details, since the call itself had returned; it is
+  now recorded as `failed` before the warning, as `_paginate` records a
+  malformed page.
 - Risk: `_weighted_factors` deduplicated capabilities but not tags or
   providers, so a finding listing `hardcoded-credential` three times scored
   100 where one scored 65. Each tag and provider now counts once, and

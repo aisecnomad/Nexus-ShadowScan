@@ -801,6 +801,8 @@ class AwsConnector(BaseConnector):
         if not isinstance(tags, dict) or any(
             not isinstance(key, str) or not isinstance(value, str) for key, value in tags.items()
         ):
+            # The call returned, so _safe recorded it as ok; its data was rejected (as in _paginate).
+            self._attest_call("list_tags_for_resource", "failed")
             self.ctx.warn("cloud.aws: invalid list_tags_for_resource response; owner coverage incomplete")
             return {}
         return tags

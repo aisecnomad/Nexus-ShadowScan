@@ -55,7 +55,8 @@ A Bedrock agent's and an AgentCore runtime's `owner` is its `owner` or `Owner`
 tag, read through `ListTagsForResource` (`GetAgent` and `GetAgentRuntime`
 return no tags; the documented `bedrock:List*` and `bedrock-agentcore:List*`
 grants cover the call). A denied or malformed tag listing marks the scan
-incomplete and leaves the resource recorded without an owner.
+incomplete and leaves the resource recorded without an owner; the live-scope
+details record the call as `denied` or `failed`.
 Opt-in: AWS Agent Registry and AgentCore registry records
 ([below](#aws-agent-registry-and-agentcore-registry-records)).
 Options: `profile`, `role_arn`, `regions` (`all`), `services` (default: every
