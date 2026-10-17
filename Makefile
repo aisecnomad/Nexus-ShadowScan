@@ -72,6 +72,14 @@ signatures: ## Validate all signature schemas and regexes
 mappings: ## Validate the threat and control mapping catalogs
 	python -m shadowscan.mappings.validate
 
+.PHONY: ocsf-schema
+ocsf-schema: ## Check the vendored OCSF requirements match the reporter's version, as CI does
+	python -m tools.ocsf_schema --check
+
+.PHONY: complexity
+complexity: ## Fail on a function new above complexity 15 or above its baseline allowance, as CI does
+	python -m tools.complexity_gate
+
 .PHONY: secrets
 secrets: ## Fail on hardcoded credentials in tracked files, as CI does
 	set -o pipefail; git ls-files -z | xargs -0 python tools/check_secrets.py
@@ -102,7 +110,7 @@ evaluate: ## Run the bundled detection regression corpora (reports go to a tempo
 
 .PHONY: check
 .NOTPARALLEL: check
-check: lint format-check typecheck signatures mappings secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
+check: lint format-check typecheck signatures mappings ocsf-schema complexity secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 .PHONY: policy
@@ -110,7 +118,7 @@ policy: ## Check repository policy: action pins, permissions, links, anchors, Ma
 	python -m pytest -q tests/test_repository_policy.py tests/test_repository_consistency.py
 
 .PHONY: check-fast
-check-fast: lint format-check typecheck signatures mappings secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
+check-fast: lint format-check typecheck signatures mappings ocsf-schema complexity secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
 
 # --- Build -----------------------------------------------------------------
 

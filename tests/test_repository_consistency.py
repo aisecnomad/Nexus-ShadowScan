@@ -880,6 +880,24 @@ def test_make_secrets_runs_the_ci_credential_check_and_is_part_of_make_check() -
     assert check is not None and "secrets" in check.group(1).split()
 
 
+@pytest.mark.parametrize(
+    ("target", "command"),
+    [
+        ("complexity", "python -m tools.complexity_gate"),
+        ("ocsf-schema", "python -m tools.ocsf_schema --check"),
+    ],
+)
+def test_make_check_runs_the_tool_gates_ci_runs(target: str, command: str) -> None:
+    """CI runs these before ruff and pytest, so a local `make check` that skipped them passed a red build."""
+    assert command in _ci_run_lines()
+    makefile = _read(ROOT / "Makefile")
+    recipe = makefile.split(f"\n{target}:", 1)[1].split("\n.PHONY", 1)[0]
+    assert f"\t{command}\n" in recipe
+    for gate in ("check", "check-fast"):
+        prerequisites = re.search(rf"^{gate}:(.*?)##", makefile, re.M)
+        assert prerequisites is not None and target in prerequisites.group(1).split(), gate
+
+
 def test_pre_commit_hooks_are_immutable_and_match_ci_versions() -> None:
     config_text = _read(ROOT / ".pre-commit-config.yaml")
     revisions = {

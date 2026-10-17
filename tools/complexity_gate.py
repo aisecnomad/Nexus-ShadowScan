@@ -17,6 +17,13 @@ target or above its allowance. Recording such an increase takes
 ``--allow-increase`` as well, and the raised allowance shows in the baseline's
 diff for review.
 
+Allowances are keyed ``path::qualified name``: a method by its class
+(``Connector.analyze``) and a nested function by the function that encloses it
+(``scan.visit``). Two methods that share a name in one file therefore have an
+allowance each, so a new ``analyze`` cannot grow to the allowance of another
+class's. Should two definitions share a qualified name too, as a property's
+getter and setter do, the later ones are numbered (``Connector.size#2``).
+
 Usage::
 
     python -m tools.complexity_gate                            # check against the baseline
@@ -27,9 +34,11 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 #: The complexity every function should eventually meet.
@@ -40,7 +49,7 @@ PACKAGE = "shadowscan"
 
 
 def measure(package: str = PACKAGE) -> dict[str, int]:
-    """Map ``path::function`` to its complexity, for everything above :data:`TARGET`."""
+    """Map ``path::qualified name`` to its complexity, for every function above :data:`TARGET`."""
     result = subprocess.run(
         [
             sys.executable,
@@ -63,17 +72,45 @@ def measure(package: str = PACKAGE) -> dict[str, int]:
     if result.returncode not in (0, 1):
         raise RuntimeError(f"ruff failed: {result.stderr.strip()}")
     found: dict[str, int] = {}
+    qualified: dict[str, dict[tuple[int, str], str]] = {}
     for item in json.loads(result.stdout or "[]"):
         message = item.get("message", "")
         # "`name` is too complex (23 > 15)"
         name = message.split("`")[1] if "`" in message else "?"
         score = int(message.rsplit("(", 1)[1].split(">")[0].strip())
         path = Path(item["filename"]).resolve().relative_to(ROOT).as_posix()
-        key = f"{path}::{name}"
-        # A name can repeat within a file (an overridden method in two classes);
-        # keep the worst, which is what the ceiling has to allow.
-        found[key] = max(found.get(key, 0), score)
+        if path not in qualified:
+            qualified[path] = qualified_names(ROOT / path)
+        row = item["location"]["row"]
+        if (row, name) not in qualified[path]:
+            raise RuntimeError(f"no definition of {name} at {path}:{row} to qualify")
+        key = f"{path}::{qualified[path][row, name]}"
+        if key in found:
+            raise RuntimeError(f"{key} measured twice")
+        found[key] = score
     return found
+
+
+def qualified_names(path: Path) -> dict[tuple[int, str], str]:
+    """Map each function's ``(line, name)`` in *path* to its name qualified as the module docstring says."""
+    names: dict[tuple[int, str], str] = {}
+    seen: Counter[str] = Counter()
+
+    def visit(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+                qualified = f"{prefix}.{child.name}" if prefix else child.name
+                if not isinstance(child, ast.ClassDef):
+                    seen[qualified] += 1
+                    if seen[qualified] > 1:
+                        qualified = f"{qualified}#{seen[qualified]}"
+                    names[child.lineno, child.name] = qualified
+                visit(child, qualified)
+            else:
+                visit(child, prefix)
+
+    visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)), "")
+    return names
 
 
 def load_baseline() -> dict[str, int]:
@@ -86,7 +123,8 @@ def load_baseline() -> dict[str, int]:
 def write_baseline(current: dict[str, int]) -> None:
     document = {
         "_comment": (
-            f"Cyclomatic complexity above {TARGET} that predates the C901 gate. "
+            f"Cyclomatic complexity above {TARGET} that predates the C901 gate, keyed by file and "
+            "qualified name (Class.method; a nested function under the function enclosing it). "
             "Entries may fall and be re-recorded with `python -m tools.complexity_gate --update`; "
             "they rise, and a function not listed here exceeds the target, only through a reviewed "
             "`--update --allow-increase`. "

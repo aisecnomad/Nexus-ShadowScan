@@ -119,7 +119,7 @@ changes only that module.
 Existing Make targets provide the next steps:
 
 ```bash
-make check-fast      # lint, format, types, validators, secrets and policy; no tests
+make check-fast      # lint, format, types, validators, OCSF, complexity, secrets and policy; no tests
 make test-fast       # full test suite without coverage, stop at first failure
 make test            # full suite with line and branch coverage and the overall floor
 make coverage-gate   # connector coverage; run after make test
@@ -169,6 +169,8 @@ exact supported Python matrix and dependency pins.
 | Connectors | `make coverage-gate` (after tests) | ≥ 75% for every module under `shadowscan/connectors/`, statements and branches |
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Mappings | `python -m shadowscan.mappings.validate` | All valid |
+| OCSF schema | `python -m tools.ocsf_schema --check` | The vendored OCSF requirements match the version the reporter emits |
+| Complexity | `python -m tools.complexity_gate` | No function new above cyclomatic complexity 15, none above its allowance in `tools/complexity_baseline.json` |
 | Secrets | `make secrets` | Every tracked file is scanned; only exact reviewed synthetic-value approvals are accepted |
 | Audit | `make audit` | No known vulnerabilities in the environment or any hash lock |
 | Repository policy | `make policy` | Action pins, permissions, links, anchors, Makefile and hook parity with CI |
@@ -187,12 +189,24 @@ or name no codes (PGH004). Suppress an intentional broad `except` with
 (`disallow_untyped_defs`) and reports unused `type: ignore` comments.
 `pyproject.toml` holds the complete rule sets.
 
+The complexity gate (`make complexity`) measures ruff's C901 against a target
+of 15 and compares the result with `tools/complexity_baseline.json`, which
+records the debt that predates the gate. Each allowance is keyed by the file
+and the function's qualified name (`path::Class.method`, a nested function
+under the function that encloses it), so a method never inherits the allowance
+of another one with its name. A function the gate reports is to be split.
+`python -m tools.complexity_gate --update` records only decreases and
+removals; an increase takes `--update --allow-increase` and shows in the
+baseline's diff for review.
+
 The same gates as individual commands:
 
 ```bash
 make install
 python -m shadowscan.signatures.validate
 python -m shadowscan.mappings.validate
+python -m tools.ocsf_schema --check
+python -m tools.complexity_gate
 make secrets
 ruff check shadowscan tests tools benchmarks
 ruff format --check shadowscan tests tools benchmarks

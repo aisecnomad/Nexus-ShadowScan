@@ -99,3 +99,55 @@ def test_the_check_names_the_flag_that_records_an_increase(
 def test_the_recorded_comment_says_how_an_entry_rises(baseline: Path) -> None:
     comment = json.loads(baseline.read_text(encoding="utf-8"))["_comment"]
     assert "--allow-increase" in comment
+
+
+def _branches(count: int) -> str:
+    """A method body of *count* ``if`` statements, so of cyclomatic complexity ``count + 1``."""
+    return (
+        "".join(f"        if x == {i}:\n            return {i}\n" for i in range(count))
+        + "        return -1\n"
+    )
+
+
+#: Two classes' ``analyze``, a property's getter and setter, and a nested function, all above 15.
+_SHARED_NAMES = (
+    "class A:\n    def analyze(self, x):\n" + _branches(16) + "\n\n"
+    "class B:\n    def analyze(self, x):\n" + _branches(15) + "\n\n"
+    "class C:\n    @property\n    def size(self):\n        x = self\n" + _branches(15) + "\n"
+    "    @size.setter\n    def size(self, x):\n" + _branches(16) + "\n\n"
+    "def outer():\n    def inner(x):\n" + _branches(15) + "    return inner\n"
+)
+
+
+@pytest.fixture
+def shared_names(baseline: Path) -> Path:
+    """A package under the temporary root whose module reuses function names."""
+    module = baseline.parents[1] / "pkg" / "shared.py"
+    module.parent.mkdir()
+    module.write_text(_SHARED_NAMES, encoding="utf-8")
+    return module
+
+
+def test_functions_are_keyed_by_their_qualified_names(shared_names: Path) -> None:
+    """A repeated name is not folded into one key that takes the worst score."""
+    assert complexity_gate.measure("pkg") == {
+        "pkg/shared.py::A.analyze": 17,
+        "pkg/shared.py::B.analyze": 16,
+        "pkg/shared.py::C.size": 16,
+        "pkg/shared.py::C.size#2": 17,
+        # mccabe counts a nested function's branches in its encloser as well.
+        "pkg/shared.py::outer": 17,
+        "pkg/shared.py::outer.inner": 16,
+    }
+
+
+def test_a_method_does_not_inherit_the_allowance_of_another_with_its_name(
+    shared_names: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B.analyze is new above the target, whatever A.analyze is allowed."""
+    current = complexity_gate.measure("pkg")
+    _measured(monkeypatch, current)
+    complexity_gate.write_baseline({key: score for key, score in current.items() if "::B." not in key})
+    assert main([]) == 1
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == ["new function over the complexity target: pkg/shared.py::B.analyze is 16 (target 15)"]

@@ -555,7 +555,14 @@ public repositories with the tool and read the committed benchmark metrics.
   with `tools/complexity_baseline.json`: existing debt stays buildable, a new
   or worsened function fails CI, and `--update` records only decreases and
   removals. Recording an increase takes `--allow-increase` as well, so it
-  shows in the baseline's diff for review.
+  shows in the baseline's diff for review. Allowances are keyed by file and
+  qualified name (`Class.method`, `outer.inner`). Keyed by bare name, with
+  the worst score kept, every `analyze` in `endpoint/runtime.py` shared
+  `MCPInventoryConnector.analyze`'s 30, so any of the other five could grow to
+  30 unnoticed; the migrated baseline gives each entry its old allowance and
+  splits the one pair above the target, `source_ranges.py`'s two `_code`, at
+  34 and 26. `make check` and `make check-fast` run the gate and
+  `tools.ocsf_schema --check`, as CI does.
 - 62 timing guards measured wall time for what is an algorithmic, CPU-bound
   question, so a parallel run failed linear code. They measure CPU time now,
   with inline `time.process_time()` bounds that contention cannot inflate;
