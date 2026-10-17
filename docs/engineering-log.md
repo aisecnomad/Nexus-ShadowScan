@@ -1086,6 +1086,30 @@ public repositories with the tool and read the committed benchmark metrics.
   does, and an opening quote right before a token is skipped alone, so a
   comment between two literals ends nothing either. Every earlier round of
   the netrc rule showed these passwords; main had no netrc rule.
+- Redaction: a netrc `default` entry with no login reads past a token the
+  format does not define as a `machine` entry does. SECURITY.md said the
+  value after such a token on the line of the entry's last token was
+  withheld, but the reader did so only after `machine`, `login` or `user`,
+  so `default force yes password v` and `default port 443 force yes
+  password v`, which curl reads as it skips unknown tokens, kept their
+  password. The region rule above applies to such an entry as well. The
+  value after a quoted word glued to a quoted name (`login "u""v"password
+  v`, `\"u\"\"v\"` in a JSON string) is withheld too: such a word now ends at
+  its closing quote, as a quoted name does. An escape before a keyword with
+  blanks between marks escaped text, so an indented comment in unquoted
+  escaped text (`NETRC=machine h\n  # note\n  login u\n  password v`) no
+  longer hides the escaped lines after it; every earlier round and main
+  showed that password. A keyword in quotes (`"password" v`), which
+  Python's `netrc` reads as the keyword, is listed as what can remain.
+  Prose pays most for `default`, a common word: a word after `account` or
+  `password` on the line of a prose `default` or in its region is withheld
+  (`the default service account [REDACTED] the instance`). Over 23,360
+  repository and installed-package files the pass changes 33, against 12
+  before these three changes: one more from the region rule after
+  `machine`, six from a prose `default` on the line of an `account` or
+  `password`, and fourteen from the region of a prose `default`, mostly
+  docstrings. The region search tries only the words that can start a
+  match, so the pass takes 20 s of CPU over those files against 18 s.
 - `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
   `GetAgent` and `ListAgents` return no tags and the collector never called
   `ListTagsForResource`, so no live scan could attribute a Bedrock agent to
