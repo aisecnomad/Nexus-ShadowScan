@@ -730,6 +730,14 @@ def test_local_make_targets_enforce_the_same_coverage_floors_as_ci() -> None:
     assert re.search(r"^\s+python -m tools\.coverage_gate\b", makefile, re.M)
 
 
+def test_make_test_parallel_is_the_run_of_the_traced_ci_leg() -> None:
+    """`make test-parallel` says it runs the suite as CI does, so it cannot drift from the workflow."""
+    steps = _load(GITHUB / "workflows" / "ci.yml")["jobs"]["test"]["steps"]
+    (traced,) = [step for step in steps if "--cov=shadowscan" in step.get("run", "")]
+    assert "-n auto --dist worksteal" in traced["run"]
+    assert _make_recipe("test-parallel").strip() == traced["run"].strip()
+
+
 def test_container_build_is_digest_pinned_hash_locked_and_non_root() -> None:
     assert not _violations(ROOT / "Dockerfile")
     assert not _violations(ROOT / ".dockerignore")
@@ -1183,14 +1191,19 @@ def test_one_linux_leg_enforces_both_coverage_floors_and_every_leg_runs_the_suit
     traced = [step for step in pytest_steps if "--cov=shadowscan" in step["run"]]
     assert [step.get("if") for step in traced] == ["${{ env.COVERAGE_LEG == 'true' }}"]
     assert "--cov-fail-under=80" in traced[0]["run"]
+    # The suite is spread over pytest-xdist workers, one per CPU: the same tests, with no selection flag.
+    # pytest-cov combines the workers' data before it checks the floor, so the gate reads it all.
+    assert _without_junit_report(traced[0]["run"]) == (
+        "python -m pytest -q -n auto --dist worksteal --cov=shadowscan --cov-report=term-missing --cov-fail-under=80"
+    )
     gate = [step for step in steps if "python -m tools.coverage_gate" in step.get("run", "")]
     assert [step.get("if") for step in gate] == ["${{ env.COVERAGE_LEG == 'true' }}"]
     assert steps.index(gate[0]) > steps.index(traced[0])
-    # Every other leg, and macOS, still runs the whole suite (no selection flags;
+    # Every other leg, and macOS, still runs the whole suite (workers, but no selection flags;
     # a JUnit report for the failure annotations selects nothing).
     untraced = [step for step in pytest_steps if step not in traced]
     assert [(step.get("if"), _without_junit_report(step["run"])) for step in untraced] == [
-        ("${{ env.COVERAGE_LEG != 'true' }}", "python -m pytest -q")
+        ("${{ env.COVERAGE_LEG != 'true' }}", "python -m pytest -q -n auto --dist worksteal")
     ]
     # macOS runs the whole suite through the console entry point, which must
     # import the checkout-only tools packages without a caller-supplied PYTHONPATH.

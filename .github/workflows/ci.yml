@@ -87,8 +87,9 @@ jobs:
         run: python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml
   test:
     runs-on: ubuntu-latest
-    # The coverage-traced 3.11 leg runs the full suite serially and takes about
-    # 40 minutes; the untraced legs finish in about 20.
+    # The suite runs on one pytest-xdist worker per CPU. Run serially, the
+    # coverage-traced 3.11 leg took about 40 minutes and the untraced legs about
+    # 20. The limit stays at an hour until the parallel timings are known.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -179,10 +180,12 @@ jobs:
           done
       - name: Run the test suite
         if: ${{ env.COVERAGE_LEG != 'true' }}
-        run: python -m pytest -q --junitxml="$RUNNER_TEMP/junit-suite.xml"
+        run: python -m pytest -q -n auto --dist worksteal --junitxml="$RUNNER_TEMP/junit-suite.xml"
       - name: Run the test suite with line and branch coverage
         if: ${{ env.COVERAGE_LEG == 'true' }}
-        run: python -m pytest -q --junitxml="$RUNNER_TEMP/junit-suite.xml" --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+        # pytest-cov measures in every worker and combines their data before it
+        # checks the floor, so the report and coverage_gate below see the whole suite.
+        run: python -m pytest -q -n auto --dist worksteal --junitxml="$RUNNER_TEMP/junit-suite.xml" --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
       - name: Name the failing tests
         if: failure()
         run: python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml
