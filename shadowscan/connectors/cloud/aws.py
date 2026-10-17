@@ -247,7 +247,21 @@ _REGISTRY_INPUT_KINDS = _BOUND_TYPES | {
     DISCOVERABLE_RECORD_KIND,
     COVERAGE_KIND,
 }
-_DENIED_CODES = frozenset({"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"})
+# Permission denials. AWS is not consistent about the spelling: IAM and most
+# services use AccessDenied / AccessDeniedException, EC2 uses
+# UnauthorizedOperation, and Organizations and SNS use AuthorizationError. A
+# denial recorded under an unlisted name still marks the scan incomplete, but
+# its diagnostic reads as an unexplained failure rather than naming a missing
+# permission, which is the one thing the operator can act on.
+_DENIED_CODES = frozenset(
+    {
+        "AccessDenied",
+        "AccessDeniedError",
+        "AccessDeniedException",
+        "AuthorizationError",
+        "UnauthorizedOperation",
+    }
+)
 # Error codes botocore's standard retry mode treats as throttling, raised once its attempts ran out.
 _THROTTLING_CODES = frozenset(
     {

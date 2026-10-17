@@ -19,6 +19,33 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   (formerly `aisecnomad/Project-Nexus`); GitHub redirects the old URLs, and
   commit SHAs are unchanged. OCSF events name the vendor `Nexus ShadowScan` instead of
   `Project Nexus`; SARIF and CycloneDX keep the tool name `ShadowScan`.
+- Coverage gaps are budgeted. A gap the scanner can bound -- a handful of
+  unreadable entries, an unresolvable symbolic link, one file over
+  `max_file_size` -- no longer marks the scan incomplete on its own. Such
+  gaps accumulate against `options.max_coverage_gap` / `--max-coverage-gap`,
+  2% of examined entries by default, and are always reported under
+  `stats.coverage` whether or not they change the exit code. A gap the
+  scanner *cannot* bound still fails closed with no budget: an early stop, a
+  refused page, an expired deadline, an unparseable manifest or agent card,
+  undecodable bytes outside a test or vendored path, and any sanitizer limit.
+  `strict_coverage` and `--max-coverage-gap 0` restore the previous
+  behaviour exactly. Expect scans that previously exited 3 on a dangling
+  symbolic link in a test fixture to exit 0 now, with the gap listed.
+- Risk scores gain capability interactions. Seven capability sets -- the
+  lethal trifecta (data access, untrusted content, outbound actions),
+  browsing with code execution, autonomy with code execution, and four more
+  -- add a named `combination:` factor when the whole set is present, so a
+  pairing whose joint risk exceeds its parts is visible in the breakdown.
+  Scores rise for findings holding those sets; tune or disable them under
+  `options.risk_weights.combinations`. Rebaseline.
+- GCP scans that never set `locations` now report a coverage gap and exit 3,
+  because resources in unqueried locations were never counted. Set
+  `locations` to the list to scan, or to `default` to accept the built-in
+  scope knowingly.
+- OCSF events always carry the required `time` attribute. Where no scan
+  timestamp parses, the render time is published and
+  `unmapped.time_source` is `report_render`. Events previously omitted the
+  field, which a validating pipeline rejects.
 - Rebaseline. Path context, cross-signal corroboration and new signatures
   change confidence, risk, kind and the set of findings, and live collection
   scopes are fingerprinted after collection.

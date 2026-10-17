@@ -88,9 +88,13 @@ JSON reports ── diff · merge (fleet) · dashboard · controls · inventory 
 
 Detection knowledge lives in YAML signature packs and threat and control
 references in YAML mapping catalogs, so adding a product is a data change, not
-a code change. Collection and analysis fail closed: an API error, a timeout, a
-limit or a malformed export marks the scan incomplete (exit 3) rather than
-producing a smaller report that looks clean. Only the opt-in LLM triage is
+a code change. Collection and analysis fail closed: an API error, a timeout,
+a refused page, an unparseable manifest or a malformed export marks the scan
+incomplete (exit 3) rather than producing a smaller report that looks clean.
+A gap the scanner can bound — a handful of unreadable entries in a large tree
+— is instead charged against a 2% coverage budget (`--max-coverage-gap`,
+`strict_coverage` to disable), reported in full under `coverage_gaps`
+whether or not it changes the exit code. Only the opt-in LLM triage is
 advisory; its failures are warnings and it never changes scores. See
 [architecture](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/architecture.md)
 for the pipeline, the package layout and the connector contract.
@@ -101,7 +105,7 @@ for the pipeline, the package layout and the connector contract.
 |---|---|
 | **38 connectors** across 9 surfaces | Code, Identity, Gateway, Low-code, SaaS, Cloud, Endpoint, Network, Runtime |
 | **233 signatures / 1133 signals** | Orchestrators, protocols, coding agents, platforms, model providers, AI SaaS apps, permission policies |
-| **Live and offline modes** | Scan live APIs with credentials or replay offline JSON/CSV/log exports |
+| **Live and offline modes** | 28 of the 38 connectors collect from a live API with credentials; all 38 replay offline JSON/CSV/log exports. The other 10 are replay-only by nature (Kubernetes/OpenShift manifest dumps, gateway and network logs, OTel traces, endpoint inventories, generic SaaS exports) — they read an export something else produced |
 | **8 output formats** | `table` · `json` · `sarif` · `csv` · `markdown` · `html` · `cyclonedx` · `ocsf` |
 | **Risk scoring** | Additive, explainable 0-100 score with per-factor breakdown |
 | **Autonomy classification** | L0 (Chatbot) through L5 (Fully Autonomous) interval |
@@ -109,7 +113,7 @@ for the pipeline, the package layout and the connector contract.
 | **Threat & control mappings** | OWASP ASI, OWASP LLM, MITRE ATLAS, MAESTRO, NIST AI RMF, ISO/IEC 42001, EU AI Act, AIUC-1 |
 | **Fleet operations** | Merge reports, dashboard, diff for drift detection, control evidence |
 | **CI/CD integration** | GitHub Actions SARIF upload, deterministic exit codes, drift gating |
-| **Fail-closed design** | Errors, timeouts and limits produce exit 3 (incomplete), never a smaller clean report |
+| **Fail-closed design** | Errors, timeouts and unbounded gaps produce exit 3 (incomplete), never a smaller clean report. Bounded gaps are budgeted (2% of entries by default) and always reported |
 | **Credential safety** | Known credential formats redacted before persistence; secret stores read for names only |
 
 ---
@@ -158,10 +162,12 @@ shadowscan jwt --file tokens.txt --jwks-url https://login.example.com/.well-know
 
 `agent-card.yaml`, `examples/` and the sample exports under `tests/fixtures/`
 come from a repository checkout; the wheel does not ship them. Scanning the
-ShadowScan checkout itself reports an incomplete scan (exit 3), because some
-redaction tests and benchmark files deliberately exceed the scanner's limits
-and it fails closed rather than skip them; in a checkout,
-`shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
+ShadowScan checkout itself reports an incomplete scan (exit 3): a few
+redaction test files are built to exceed the sanitizer's own safety limits,
+and a finding the sanitizer cannot bound is withheld rather than published
+unredacted — that is unbounded, so no budget applies to it. Its handful of
+unreadable entries, by contrast, stay within the coverage budget. In a
+checkout, `shadowscan code tests/fixtures/sample_repo --inventory agent-card.yaml`
 completes in seconds.
 
 See the [quick start guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/getting-started/quickstart.md)
@@ -664,11 +670,11 @@ $ shadowscan scan -c examples/shadowscan.offline.yaml --max-rows 5
 │ 132 findings  •  128 shadow (inventory: 4 registered agents)               │
 │ critical 16  high 62  medium 54  •  cloud 30 identity 19 endpoint 18 …     │
 ╰────────────────────────────────────────────────────────────────────────────╯
+ CRITICAL 100  SHADOW  code      agent-config Claude Code configured in repository root
  CRITICAL 100  SHADOW  code      mcp-server   MCP configuration: .mcp.json
  CRITICAL 100  SHADOW  saas      bot-app      GitHub App installed: claude
- CRITICAL  98  SHADOW  code      agent-config Claude Code configured in repository root
+ CRITICAL  94  SHADOW  lowcode   agent        ServiceNow AI agent: Incident Triage Agent
  CRITICAL  91  SHADOW  endpoint  agent-config OpenClaw configured on dev-laptop-07 (~dana)
- CRITICAL  90  SHADOW  code      secret       LLM provider credential in services/research-agent/app/config.py
 ```
 
 <details>
@@ -679,26 +685,26 @@ abridged:
 
 ```json
 {
-  "ruleId": "shadowscan/mcp-server/protocol.mcp",
+  "ruleId": "shadowscan/agent-config/coding-agent.claude-code",
   "level": "warning",
   "message": {
-    "text": "MCP configuration: .mcp.json — risk critical (100), confidence 1.00 — SHADOW (not in inventory). Risk factors: mcp-server finding; not present in the sanctioned agent inventory; calls tools / functions; …"
+    "text": "Claude Code configured in repository root — risk critical (100), confidence 1.00 — SHADOW (not in inventory). Risk factors: agent-config finding; not present in the sanctioned agent inventory; can execute code or shell commands; …"
   },
-  "partialFingerprints": {"shadowscan/finding": "ss-c6e27e38faabb2a6"},
+  "partialFingerprints": {"shadowscan/finding": "ss-8711bc4c2a646794"},
   "properties": {
     "surface": "code",
-    "kind": "mcp-server",
+    "kind": "agent-config",
     "shadow": true,
     "risk_level": "critical",
     "risk_score": 100,
-    "confidence": 0.999,
-    "frameworks": ["protocol.mcp", "platform.zapier"],
-    "capabilities": ["tool-use", "saas-actions", "code-exec"],
-    "tags": ["inline-secrets", "mcp-unpinned-package"],
-    "threats": ["owasp-asi-2026:ASI02", "owasp-llm-2026:LLM03", "mitre-atlas-2026.09:AML.T0050"]
+    "confidence": 1.0,
+    "frameworks": ["coding-agent.claude-code"],
+    "capabilities": ["code-exec", "tool-use", "autonomous", "multi-agent"],
+    "tags": ["posture-permissions-bypassed", "posture-unrestricted-shell"],
+    "threats": ["maestro-2025:L3", "mitre-atlas-2026.09:AML.T0050"]
   },
   "locations": [
-    {"physicalLocation": {"artifactLocation": {"uri": ".mcp.json", "uriBaseId": "%SRCROOT%"}, "region": {"startLine": 1}}}
+    {"physicalLocation": {"artifactLocation": {"uri": ".claude/settings.json", "uriBaseId": "%SRCROOT%"}}}
   ]
 }
 ```

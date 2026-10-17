@@ -284,7 +284,7 @@ from shadowscan.connectors.posture import (
 )
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
-from shadowscan.coverage import validate_max_coverage_gap
+from shadowscan.coverage import CoverageGap, validate_max_coverage_gap
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -2752,18 +2752,22 @@ class FilesystemConnector(BaseConnector):
                 )
             else:
                 # Editors and runtimes tolerate bytes the scanner cannot
-                # decode, so undecodable content could hide a definition. In a
-                # file the scanner specifically looks for — a coding-agent
-                # instruction document — that is exactly the place to hide one,
-                # so it stays fail-closed. Anywhere else it is one file's worth
-                # of lost coverage: charged at full weight, never discounted as
-                # a test fixture, so a tree seeded with them still fails.
-                critical = _is_coding_agent_doc(PurePosixPath(rel).name)
+                # decode, so undecodable content is how a definition would be
+                # hidden from it: a NUL in a settings.json, an agent document
+                # or a Dockerfile. That stays fail-closed.
+                #
+                # The exception is a path that by construction holds test
+                # inputs or vendored code, where a file of deliberately
+                # invalid bytes is ordinary and no deployed agent lives. Those
+                # are charged to the budget at full weight -- never discounted
+                # the way an unreadable fixture is -- so a tree seeded with
+                # them still exhausts it.
+                incidental = CoverageGap(detail="", path=rel).relevance() == "low"
                 self.ctx.coverage_gap(
                     f"code.filesystem: {rel}: {issue}",
                     path=rel,
                     entries=1,
-                    blinding=critical,
+                    blinding=not incidental,
                     full_weight=True,
                 )
         if text is None:
@@ -2916,19 +2920,21 @@ class FilesystemConnector(BaseConnector):
         """Record parser or validator issues for ``rel``.
 
         ``defect`` routes recognized input failures through
-        :meth:`_input_defect` for a distinct diagnostic. Every issue is a
-        coverage gap; one file's worth of unread content is bounded, so it is
-        charged to the gap budget rather than condemning the scan on its own.
-        A repository full of unreadable files still exhausts that budget, and
-        ``strict_coverage`` restores the unconditional error.
+        :meth:`_input_defect` for a distinct diagnostic. Every issue marks
+        coverage incomplete, regardless of diagnostic severity.
+
+        These stay errors rather than budgeted coverage gaps. A parser or
+        validator issue means a file the scanner *selected* -- a manifest, an
+        agent card, a tool catalog -- could not be read, and that is the one
+        place a definition would be hidden from it. The budget is for content
+        whose loss is incidental; this is not. Incidental unreadable content
+        is charged to the budget in :meth:`_read_source` instead.
         """
         for issue in issues:
             if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):
                 self._input_defect(rel, issue)
-            elif self.strict_coverage:
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
             else:
-                self.ctx.coverage_gap(f"code.filesystem: {rel}: {issue}", path=rel, entries=1)
+                self.ctx.error(f"code.filesystem: {rel}: {issue}")
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""

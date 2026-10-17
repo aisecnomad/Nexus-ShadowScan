@@ -530,6 +530,13 @@ class BaseConnector(ABC):
     # credential. Third-party connectors are never attested, whatever they declare.
     attests_live_scope: ClassVar[bool] = False
     scope_options: ClassVar[frozenset[str]] = frozenset()
+    # Whether this connector can collect from a live API at all. False for one
+    # that only replays an export someone else produced: a Kubernetes manifest
+    # dump, a gateway log, an endpoint inventory. Declared rather than inferred
+    # from whether ``collect`` raises, so the published count of live
+    # connectors is a fact the connector states and a test can pin, not a
+    # guess from an exception message. ``collect`` must still raise.
+    live_collection: ClassVar[bool] = True
 
     @classmethod
     def estimate_timeout_seconds(cls, config: dict[str, Any], default: float) -> float | None:

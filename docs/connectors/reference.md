@@ -35,6 +35,7 @@ Offline input: n/a (path is the input).
 | `inspect_model_artifacts` | opt in to bounded GGUF/safetensors/ONNX header and PyInstaller footer inventory; never executes or loads tensor payloads (default false) |
 | `model_metadata_bytes` | maximum bytes read per selected binary/model artifact (128..1048576; default 65536) |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
+| `max_coverage_gap` | share of examined entries that may be left unread before this scan reports itself incomplete (default: the scan-wide options.max\_coverage\_gap, 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 | `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |
 | `include_tests` | let test and fixture code establish agents and credential findings at full weight (default false) |
 | `triage` | fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC only; source analysis, credential detection and content sweeps are skipped and the scan is always reported incomplete so a triage result is never mistaken for a full scan (default false) |
@@ -143,7 +144,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -171,7 +171,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -192,7 +191,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -213,7 +211,6 @@ Offline input: text (one JWT per line) / JSON.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -234,7 +231,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -260,7 +256,6 @@ Offline input: JSONL / JSON / CSV / text access logs.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`.
 
@@ -276,7 +271,6 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -299,7 +293,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -318,7 +311,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -339,7 +331,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -361,7 +352,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -382,7 +372,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -401,7 +390,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -419,7 +407,6 @@ Offline input: CSV / JSON export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -441,7 +428,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -460,7 +446,6 @@ Offline input: CSV / JSON.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -480,7 +465,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -502,7 +486,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -520,7 +503,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -538,7 +520,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -558,7 +539,6 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -587,7 +567,6 @@ Requires: `boto3`. Offline input: JSONL dump of records.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -608,7 +587,6 @@ Offline input: JSONL dump of records.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -621,7 +599,7 @@ Offline input: JSONL dump of records.
 | Key | Description |
 | --- | --- |
 | `projects` | list of project ids (default: all projects visible to the credentials) |
-| `locations` | Vertex/Dialogflow locations (default \['us-central1', 'us-east4', 'us-west1', 'europe-west1', 'europe-west4', 'asia-southeast1', 'asia-northeast1'\]) |
+| `locations` | Vertex/Dialogflow locations to query (default \['us-central1', 'us-east4', 'us-west1', 'europe-west1', 'europe-west4', 'asia-southeast1', 'asia-northeast1'\]). Leaving this unset records a coverage gap, because resources in unqueried locations are neither scanned nor counted; set the list, or 'default' to accept the built-in scope |
 | `access_token` | OAuth token (env GOOGLE\_OAUTH\_ACCESS\_TOKEN); otherwise Application Default Credentials via google-auth |
 | `credentials_file` | explicit Google credentials file (env GOOGLE\_APPLICATION\_CREDENTIALS); otherwise local gcloud ADC |
 | `allow_instance_credentials` | allow metadata-based Application Default Credentials (default false; inherited from options) |
@@ -637,7 +615,6 @@ Offline input: JSONL dump of records.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -654,7 +631,6 @@ Offline input: kubectl get -o json List envelope / JSONL / YAML export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -679,7 +655,6 @@ Requires: `oci`. Offline input: JSONL dump of records.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -696,7 +671,6 @@ Offline input: kubectl get -o json List envelope / JSONL / YAML export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -714,7 +688,6 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -730,7 +703,6 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -751,7 +723,6 @@ Offline input: JSON / JSONL (exported endpoint records or osquery results).
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`.
 
@@ -771,7 +742,6 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -787,7 +757,6 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -803,7 +772,6 @@ Offline input: JSON / JSONL / YAML export.
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`, `label`.
 
@@ -826,7 +794,6 @@ Offline input: Zeek TSV / JSON, Route 53 Resolver JSON, VPC Flow Logs text, JSON
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`.
 
@@ -855,6 +822,5 @@ Offline input: JSON / JSONL / CSV process inventories (osquery, Defender, CrowdS
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
-| `max_coverage_gap` | share of examined entries that may be left unread before this connector reports itself incomplete (default 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 
 Also accepted: `allow_private_origin`.
