@@ -190,3 +190,26 @@ def test_credential_files_are_not_read_without_the_credential_pass(tmp_path, ind
     assert not [f for f in findings if f.kind == Kind.SECRET]
     _, ctx = _scan(index, tmp_path / "on", files, max_file_size=1024)
     assert ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "config",
+    [{}, {"scan_secrets": False}, {"triage": True}],
+    ids=["default", "no-secrets", "triage"],
+)
+def test_a_credential_file_in_a_coding_agent_directory_still_configures_the_agent(tmp_path, index, config):
+    # A file name carries no content: '.codex/.netrc' establishes Codex as any
+    # file under '.codex/' does, in every mode, while its lines stay unread.
+    passwords = [_password(), _password()]
+    files = {
+        ".codex/.netrc": f"machine example.com login u password {passwords[0]}\n",
+        ".gemini/.npmrc": "registry=https://registry.example.com/\n",
+        ".claude/hooks/.netrc": f"machine example.org login u password {passwords[1]}\n",
+    }
+    findings, _ = _scan(index, tmp_path, files, **config)
+    agents = {f.title.split(" configured")[0]: f for f in findings if f.kind == Kind.AGENT_CONFIG}
+    assert sorted(agents) == ["Claude Code", "Gemini CLI / Jules", "OpenAI Codex (CLI / cloud agent)"]
+    assert agents["OpenAI Codex (CLI / cloud agent)"].metadata["files"] == [".codex/.netrc"]
+    assert agents["Claude Code"].metadata["files"] == [".claude/hooks/.netrc"]
+    assert all(not evidence.snippet for finding in findings for evidence in finding.evidence)
+    assert not any(password in repr(findings) for password in passwords)

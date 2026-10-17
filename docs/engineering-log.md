@@ -379,7 +379,13 @@ public repositories with the tool and read the committed benchmark metrics.
   Their credential findings, counts and formats are unchanged, with empty
   snippets; a netrc host is no longer LLM-usage evidence; and with
   `scan_secrets: false` or `--triage` the files are not opened, so an
-  oversize one is no gap there.
+  oversize one is no gap there. Their file-name evidence, which carries no
+  content, is still recorded in every mode: as first changed, the credential
+  pass never recorded it and the `--no-secrets`/`--triage` return came first,
+  so a repository holding only `.codex/.netrc`, `.gemini/.npmrc` and
+  `.claude/hooks/.netrc` lost the OpenAI Codex, Gemini CLI and Claude Code
+  agent-config findings that the directory-wide coding-agent globs gave
+  before.
 - Redaction: wherever their syntax appears (a Dockerfile or CI script that
   writes a `.netrc`, a JSON string), `sanitize_text` withholds the value after
   netrc's `password`, `passwd` and `account` (one line or one token per line,

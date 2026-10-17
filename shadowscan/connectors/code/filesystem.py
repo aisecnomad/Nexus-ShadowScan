@@ -2917,9 +2917,12 @@ class FilesystemConnector(BaseConnector):
             # already discloses the skipped stages.
             return
         credential_file = path.name.lower() in CREDENTIAL_FILE_NAMES
-        if credential_file and (not self.scan_secrets or self.triage):
-            # Only the credential pass reads a tool credential file.
-            return
+        if credential_file:
+            # Only the credential pass reads a tool credential file, but its name is evidence
+            # in every mode: '.codex/.netrc' configures Codex as '.codex/config.toml' does.
+            self._record_name_matches(proj, rel, file_matches)
+            if not self.scan_secrets or self.triage:
+                return
         named = by_name or self._named_by_signature(rel, file_matches)
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
         if isinstance(loaded, _BinaryTestFixture):
@@ -3502,6 +3505,18 @@ class FilesystemConnector(BaseConnector):
             return ""
         source.wanted.add(line_number or 1)
         return _LazyExcerpt(self._redacted_lines_of, source, line_number)
+
+    def _record_name_matches(self, proj: _Project, rel: str, file_matches: list[Match]) -> None:
+        """Record the file-name evidence of a file whose content no other pass reads.
+
+        The evidence names the file and carries no content or snippet. MCP
+        file names wait for a parsed configuration, as in ``_record_file_matches``.
+        """
+        for m in file_matches:
+            if m.signature_id == "protocol.mcp":
+                continue
+            m.extra["verified_agent"] = False
+            self._record(proj, m, rel, None)
 
     def _record_file_matches(self, file: _SourceFile) -> None:
         """Record file-name evidence; MCP file names wait for a parsed configuration."""

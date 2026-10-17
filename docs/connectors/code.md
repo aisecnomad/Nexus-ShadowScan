@@ -601,7 +601,10 @@ with an empty snippet. A credential in one is reported where a credential
 rule recognizes it, as in any other file (a provider key, an assignment such
 as `aws_secret_access_key = …`); a netrc password or a registry token that no
 rule recognizes is not reported, so the findings do not inventory the file.
-With `scan_secrets: false` or `--triage` these files are not opened.
+With `scan_secrets: false` or `--triage` these files are not opened. Their
+names are evidence in every mode, as any file name is: `.codex/.netrc` or
+`.claude/hooks/.netrc` establishes the coding agent whose directory holds it,
+with no content or snippet from the file.
 Wherever their syntax appears in report text (a Dockerfile that writes a
 `.netrc`, a CI script, a PowerShell `Set-Content` with `` `n `` escapes), the
 passwords, accounts and macros of netrc entries, with keywords in any case
