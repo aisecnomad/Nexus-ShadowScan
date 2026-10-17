@@ -3596,7 +3596,10 @@ class FilesystemConnector(BaseConnector):
         the way an unreadable fixture is -- so a tree seeded with them still
         exhausts it. ``by_content`` says the caller found the file to declare
         MCP servers: agent configuration, which is no exception there and is
-        never declared (``_agent_configuration``).
+        never declared (``_agent_configuration``). Content that reaches this
+        gap was not read for credentials (a file that could not be opened or
+        read, or undecodable bytes left to no credential-only read), so the
+        ``ci`` profile does not declare it either (``unread_credentials``).
         """
         incidental = self._discounted_test_gap(rel, full_weight=by_content)
         self._budgeted_gap(
@@ -3606,6 +3609,7 @@ class FilesystemConnector(BaseConnector):
             full_weight=True,
             reason=_read_issue_reason(issue),
             configuration=by_content,
+            unread_credentials=True,
         )
 
     def _read_source(

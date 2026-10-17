@@ -408,6 +408,16 @@ file_matches)`, now serves every gap site.
   records the declared gap after it, naming the read. `_is_generated_path`
   still matches by file name anywhere, so `src/*.generated.*` and `*_pb2.py`
   are declared; ci.md already says so, and such a file is now read first.
+- **Profile ci never declares a file it could not read.** The previous
+  change passed `unread_credentials` from the oversize reader and from
+  notebook outputs only, so under `--profile ci` a test fixture the scanner
+  could not open or read (EACCES, `file could not be read`) was still
+  declared, the scan complete with none of its bytes read for credentials.
+  `_unreadable_gap` now passes `unread_credentials`, so `_declared_omission`
+  declares such a file only while `scan_secrets` is off; with it on, the gap
+  is charged as without the profile, one whole entry. With this and the
+  credential-only read of declared undecodable files, the README's claim
+  that the profile never declares a file left unread for credentials holds.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 
