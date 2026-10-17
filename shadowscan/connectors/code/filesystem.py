@@ -2636,6 +2636,8 @@ class FilesystemConnector(BaseConnector):
         if self.strict_coverage:
             if not quiet:
                 self.ctx.error(f"{message}; coverage incomplete", reason="unscanned-input")
+            else:
+                self.ctx.count_incomplete("unscanned-input")
         else:
             # Otherwise one entry of known, bounded lost coverage: budgeted, not fatal.
             suffix = "coverage incomplete" if blinding else "coverage gap"
@@ -2700,9 +2702,12 @@ class FilesystemConnector(BaseConnector):
         # unscanned target is lost coverage a repository could hide behind —
         # not a file-attributable input defect.
         if self.strict_coverage:
+            # One named error per root; every further link is counted under its reason.
             if root not in self._symlink_warnings:
                 self._symlink_warnings.add(root)
                 self.ctx.error(f"{message}; coverage incomplete", reason="unresolved-link")
+            else:
+                self.ctx.count_incomplete("unresolved-link")
             return True
         alias = target is not None and self._alias_of_scanned_directory(rel, target, resolved_root)
         self._budgeted_link_gap(root, rel, link, message, agent=agent, alias=alias)

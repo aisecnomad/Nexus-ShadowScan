@@ -135,6 +135,21 @@ def test_a_zero_budget_says_which_diagnostics_are_gaps(tmp_path, run_connector, 
     assert zero.stats.incomplete_reasons["unparsed-input"] >= 2
 
 
+def test_strict_coverage_and_a_zero_budget_count_every_link_and_special_file_alike(tmp_path, run_connector):
+    # strict_coverage named one link per root and counted only that one, so the
+    # same tree published other incomplete_reasons than under a budget of 0.
+    _tree(tmp_path, links=[f"lib/l{i}.py" for i in range(50)])
+    (tmp_path / "cfg").mkdir()
+    for i in range(15):
+        os.mkfifo(tmp_path / "cfg" / f"f{i}.yaml")
+    reasons = {}
+    for label, setting in (("strict", {"strict_coverage": True}), ("zero", {"max_coverage_gap": 0})):
+        _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, **setting)
+        assert ctx.stats.incomplete
+        reasons[label] = ctx.stats.incomplete_reasons
+    assert reasons["strict"] == reasons["zero"] == {"unresolved-link": 50, "unscanned-input": 15}
+
+
 @pytest.mark.parametrize("setting", STRICT_SETTINGS)
 def test_profile_ci_is_refused_under_either_spelling_of_strict_accounting(tmp_path, run_connector, setting):
     _tree(tmp_path)

@@ -377,10 +377,12 @@ applied in this order:
    `--profile ci --strict-coverage` or `--profile ci --max-coverage-gap 0`.
    The two settings differ only in where a gap the budget would charge (a
    link, a non-regular entry, an incidental oversize file) is reported:
-   `strict_coverage` records each as an error where it happens, while a
+   `strict_coverage` records each as an error where it happens (one named
+   error per root for its skipped links, and for its non-regular entries past
+   the first ten, every further one counted under its reason), while a
    budget of 0 charges each to the budget, so those gaps stay listed in
    `stats[].coverage` and the verdict that leaves the scan incomplete is one
-   error line. Every other gap is a diagnostic at the file under either
+   error line. Both count every such gap in `incomplete_reasons`. Every other gap is a diagnostic at the file under either
    setting, counted under its reason and absent from `stats[].coverage`: a
    test-code gap the default accounting discounts (a malformed fixture, or a
    binary one after its credential-only read) is an error, and content the
