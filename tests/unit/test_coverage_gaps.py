@@ -291,14 +291,27 @@ class TestEndToEnd:
         assert stats.incomplete_reasons == {"oversize-file": 1}
 
     def test_oversize_configuration_in_discounted_test_code_is_budgeted(self, tmp_path) -> None:
-        """As undecodable bytes there are: test code establishes no agent while include_tests is off."""
+        """As undecodable bytes there are: test code establishes no agent while include_tests is off.
+
+        settings.json is a shared client name, an MCP configuration only by its
+        content, so a fixture of that name is discounted test code. A dedicated
+        MCP name is not: tests/.mcp.json is read at full weight there too.
+        """
         self._tree(tmp_path, 100)
         (tmp_path / "tests" / "fixtures").mkdir(parents=True)
-        (tmp_path / "tests" / "fixtures" / ".mcp.json").write_text("{}" + " " * 1_100_000, encoding="utf-8")
+        (tmp_path / "tests" / "fixtures" / "settings.json").write_text("{}" + " " * 1_100_000, encoding="utf-8")
         stats = self._run(tmp_path)
         assert stats.incomplete is False
         assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 0
         stats = self._run(tmp_path, include_tests=True)
+        assert stats.incomplete is True
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 1
+
+    def test_oversize_mcp_configuration_under_a_test_path_is_never_budgeted(self, tmp_path) -> None:
+        self._tree(tmp_path, 100)
+        (tmp_path / "tests" / "fixtures").mkdir(parents=True)
+        (tmp_path / "tests" / "fixtures" / ".mcp.json").write_text("{}" + " " * 1_100_000, encoding="utf-8")
+        stats = self._run(tmp_path)
         assert stats.incomplete is True
         assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 1
 
@@ -338,10 +351,20 @@ class TestEndToEnd:
     def test_undecodable_content_in_discounted_test_code_leaves_the_scan_complete(self, tmp_path) -> None:
         self._tree(tmp_path, 100)
         (tmp_path / "tests" / "agent").mkdir(parents=True)
-        (tmp_path / "tests" / "agent" / ".mcp.json").write_bytes(b'{"mcpServers": {}}\xff\xfe\x00')
+        (tmp_path / "tests" / "agent" / "settings.json").write_bytes(b'{"editor.tabSize": 2}\xff\xfe\x00')
         stats = self._run(tmp_path)
         assert stats.incomplete is False
-        assert any("tests/agent/.mcp.json" in w and "read for credentials only" in w for w in stats.warnings)
+        assert any("tests/agent/settings.json" in w and "read for credentials only" in w for w in stats.warnings)
+
+    def test_undecodable_mcp_configuration_under_a_test_path_is_never_budgeted(self, tmp_path) -> None:
+        # A NUL hides a dedicated MCP configuration under tests/ as well as anywhere: in a tree
+        # large enough for a 2% budget the gap is still blinding, not tolerated.
+        self._tree(tmp_path, 100)
+        (tmp_path / "tests" / "agent").mkdir(parents=True)
+        (tmp_path / "tests" / "agent" / ".mcp.json").write_bytes(b'{"mcpServers": {}}\xff\xfe\x00')
+        stats = self._run(tmp_path)
+        assert stats.incomplete is True
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 1
 
     def test_a_directory_link_to_an_outside_tree_is_never_budgeted(self, tmp_path) -> None:
         """One link can stand for a whole service of agents and MCP servers: no budget bounds it."""
