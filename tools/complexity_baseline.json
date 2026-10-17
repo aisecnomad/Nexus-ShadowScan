@@ -1,5 +1,5 @@
 {
-  "_comment": "Cyclomatic complexity above 15 that predates the C901 gate. Entries may fall and be re-recorded with `python -m tools.complexity_gate --update`; they may never rise, and a function not listed here may not exceed the target. Removing an entry entirely is the goal.",
+  "_comment": "Cyclomatic complexity above 15 that predates the C901 gate. Entries may fall and be re-recorded with `python -m tools.complexity_gate --update`; they rise, and a function not listed here exceeds the target, only through a reviewed `--update --allow-increase`. Removing an entry entirely is the goal.",
   "target": 15,
   "allowances": {
     "shadowscan/cli/_diff.py::diff": 17,

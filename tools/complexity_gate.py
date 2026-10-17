@@ -11,13 +11,17 @@ This gate takes the third path. It measures against the real target and
 compares the result with a committed baseline: the build fails when a function
 gets more complex than its recorded allowance, or when a new function appears
 above the target, while existing functions stay buildable at their current
-size. Lowering an entry is always accepted and rewrites the baseline, so the
-ceiling can only move one way.
+size. ``--update`` records only decreases and removals, so the ceiling moves
+one way: it refuses, and writes nothing, while any function is new above the
+target or above its allowance. Recording such an increase takes
+``--allow-increase`` as well, and the raised allowance shows in the baseline's
+diff for review.
 
 Usage::
 
-    python -m tools.complexity_gate            # check against the baseline
-    python -m tools.complexity_gate --update   # record improvements
+    python -m tools.complexity_gate                            # check against the baseline
+    python -m tools.complexity_gate --update                   # record decreases and removals
+    python -m tools.complexity_gate --update --allow-increase  # also record an accepted increase
 """
 
 from __future__ import annotations
@@ -84,7 +88,8 @@ def write_baseline(current: dict[str, int]) -> None:
         "_comment": (
             f"Cyclomatic complexity above {TARGET} that predates the C901 gate. "
             "Entries may fall and be re-recorded with `python -m tools.complexity_gate --update`; "
-            "they may never rise, and a function not listed here may not exceed the target. "
+            "they rise, and a function not listed here exceeds the target, only through a reviewed "
+            "`--update --allow-increase`. "
             "Removing an entry entirely is the goal."
         ),
         "target": TARGET,
@@ -93,28 +98,32 @@ def write_baseline(current: dict[str, int]) -> None:
     BASELINE.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
-def check() -> int:
-    current = measure()
-    baseline = load_baseline()
-    regressions = []
+def worsened(current: dict[str, int], baseline: dict[str, int]) -> list[str]:
+    """One line for each function new above the target, then for each above its allowance."""
     additions = []
+    regressions = []
     for key, score in sorted(current.items()):
         allowed = baseline.get(key)
         if allowed is None:
-            additions.append((key, score))
+            additions.append(f"new function over the complexity target: {key} is {score} (target {TARGET})")
         elif score > allowed:
-            regressions.append((key, score, allowed))
+            regressions.append(f"complexity rose: {key} is {score}, baseline allows {allowed}")
+    return additions + regressions
+
+
+def check() -> int:
+    current = measure()
+    baseline = load_baseline()
     improvements = {k: v for k, v in current.items() if k in baseline and v < baseline[k]}
     resolved = sorted(set(baseline) - set(current))
 
-    for key, score in additions:
-        print(f"new function over the complexity target: {key} is {score} (target {TARGET})")
-    for key, score, allowed in regressions:
-        print(f"complexity rose: {key} is {score}, baseline allows {allowed}")
-    if additions or regressions:
+    worse = worsened(current, baseline)
+    for line in worse:
+        print(line)
+    if worse:
         print(
-            "\nSplit the function, or justify the change and re-record with "
-            "`python -m tools.complexity_gate --update`.",
+            "\nSplit the function. An increase that review accepts is recorded with "
+            "`python -m tools.complexity_gate --update --allow-increase`.",
             file=sys.stderr,
         )
         return 1
@@ -127,15 +136,37 @@ def check() -> int:
     return 0
 
 
+def update(*, allow_increase: bool = False) -> int:
+    """Record the current measurements if none is worse than the baseline, or if *allow_increase*."""
+    current = measure()
+    worse = worsened(current, load_baseline())
+    for line in worse:
+        print(line)
+    if worse and not allow_increase:
+        print(
+            "\nNothing recorded: --update only lowers the baseline. Split the function, or pass "
+            "--allow-increase as well to record an increase that review accepts.",
+            file=sys.stderr,
+        )
+        return 1
+    write_baseline(current)
+    print(f"recorded {len(current)} allowance(s) in {BASELINE.relative_to(ROOT)}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--update", action="store_true", help="record the current measurements")
+    parser.add_argument("--update", action="store_true", help="record decreases and removals in the baseline")
+    parser.add_argument(
+        "--allow-increase",
+        action="store_true",
+        help="with --update, also record functions that are new above the target or above their allowance",
+    )
     args = parser.parse_args(argv)
+    if args.allow_increase and not args.update:
+        parser.error("--allow-increase applies only with --update")
     if args.update:
-        current = measure()
-        write_baseline(current)
-        print(f"recorded {len(current)} allowance(s) in {BASELINE.relative_to(ROOT)}")
-        return 0
+        return update(allow_increase=args.allow_increase)
     return check()
 
 

@@ -371,7 +371,9 @@ public repositories with the tool and read the committed benchmark metrics.
 - `C901` was never enabled and 119 functions exceed complexity 15, the worst
   at 127. `tools/complexity_gate.py` measures against that target and compares
   with `tools/complexity_baseline.json`: existing debt stays buildable, a new
-  or worsened function fails CI, and improvements can only ratchet down.
+  or worsened function fails CI, and `--update` records only decreases and
+  removals. Recording an increase takes `--allow-increase` as well, so it
+  shows in the baseline's diff for review.
 - 62 timing guards measured wall time for what is an algorithmic, CPU-bound
   question, so a parallel run failed linear code. They measure CPU time now,
   which contention cannot inflate; `tests/perf.py` carries a calibrated
