@@ -18,9 +18,10 @@ place of this branch's ``code``/``env_file`` modes and
 A row may be worse than main (shows a credential main withheld, misses a
 line main reported, or leaves a scan incomplete that main completed) only
 with an ``accepted`` reason, and only one of these: the value is no
-credential (a reference, a label, a placeholder, a name), the scan
-discloses more than five distinct credentials of one format (#257's quota),
-or the missed lines repeat a credential the finding already reports.
+credential (a reference, a label, a placeholder, a name), or the scan
+discloses more than five distinct credentials of one format (#257's quota).
+A credential repeated on several lines counts once but is listed at up to
+five of them, as main listed it, so missed repeats are no reason.
 
 Outcomes: ``sanitize`` and ``saas`` rows are ``withheld`` or ``shown`` (no
 secret of the row in the output); ``match`` rows are ``reported`` or
@@ -131,7 +132,7 @@ class Row(NamedTuple):
     accepted: str = ""
 
 
-ACCEPTED_KINDS = ("not a credential: ", "disclosed: ", "repeated: ")
+ACCEPTED_KINDS = ("not a credential: ", "disclosed: ")
 
 # Round 4's sentence passphrases, each judged in an env file, a compose file
 # and a settings module (joined by '_' there), as the review scanned them.
@@ -827,7 +828,17 @@ ROWS = [
             "docker-compose.yml": "services:\n  svc1:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc2:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc3:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc4:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc5:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n  svc6:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: <K>\n"
         },
         mode="",
-        head=(("docker-compose.yml:5",), "complete", "withheld"),
+        head=(
+            (
+                "docker-compose.yml:13",
+                "docker-compose.yml:17",
+                "docker-compose.yml:21",
+                "docker-compose.yml:5",
+                "docker-compose.yml:9",
+            ),
+            "complete",
+            "withheld",
+        ),
         main=(
             (
                 "docker-compose.yml:13",
@@ -839,7 +850,6 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: one credential on several lines, reported once at its first line",
     ),
     Row(
         "r3l.6-k8s-six-secrets",
@@ -848,7 +858,17 @@ ROWS = [
             "k8s/deploy.yaml": "apiVersion: v1\nkind: Secret\nmetadata:\n  name: s1\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s2\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s3\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s4\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s5\nstringData:\n  OPENAI_API_KEY: <K>\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: s6\nstringData:\n  OPENAI_API_KEY: <K>\n"
         },
         mode="",
-        head=(("k8s/deploy.yaml:6",), "complete", "withheld"),
+        head=(
+            (
+                "k8s/deploy.yaml:13",
+                "k8s/deploy.yaml:20",
+                "k8s/deploy.yaml:27",
+                "k8s/deploy.yaml:34",
+                "k8s/deploy.yaml:6",
+            ),
+            "complete",
+            "withheld",
+        ),
         main=(
             (
                 "k8s/deploy.yaml:13",
@@ -860,7 +880,6 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: one credential on several lines, reported once at its first line",
     ),
     Row(
         "r3l.6-py-six-lines",
@@ -869,7 +888,7 @@ ROWS = [
             "src/a.py": 'SVC1_OPENAI_API_KEY = "<K>"\nSVC2_OPENAI_API_KEY = "<K>"\nSVC3_OPENAI_API_KEY = "<K>"\nSVC4_OPENAI_API_KEY = "<K>"\nSVC5_OPENAI_API_KEY = "<K>"\nSVC6_OPENAI_API_KEY = "<K>"\n'
         },
         mode="",
-        head=(("src/a.py:1",), "complete", "withheld"),
+        head=(("src/a.py:1", "src/a.py:2", "src/a.py:3", "src/a.py:4", "src/a.py:5"), "complete", "withheld"),
         main=(
             (
                 "src/a.py:1",
@@ -881,7 +900,6 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: one credential on several lines, reported once at its first line",
     ),
     Row(
         "r3l.6-py-five-lines",
@@ -890,7 +908,7 @@ ROWS = [
             "src/a.py": 'SVC1_OPENAI_API_KEY = "<K>"\nSVC2_OPENAI_API_KEY = "<K>"\nSVC3_OPENAI_API_KEY = "<K>"\nSVC4_OPENAI_API_KEY = "<K>"\nSVC5_OPENAI_API_KEY = "<K>"\n'
         },
         mode="",
-        head=(("src/a.py:1",), "complete", "withheld"),
+        head=(("src/a.py:1", "src/a.py:2", "src/a.py:3", "src/a.py:4", "src/a.py:5"), "complete", "withheld"),
         main=(
             (
                 "src/a.py:1",
@@ -902,7 +920,6 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: one credential on several lines, reported once at its first line",
     ),
     Row(
         "r3l.7-must-be-overridden",
@@ -3746,9 +3763,14 @@ ROWS = [
         head=(
             (
                 "src/a.py:1",
+                "src/a.py:10",
+                "src/a.py:2",
                 "src/a.py:3",
+                "src/a.py:4",
                 "src/a.py:5",
+                "src/a.py:6",
                 "src/a.py:7",
+                "src/a.py:8",
                 "src/a.py:9",
             ),
             "complete",
@@ -3765,7 +3787,6 @@ ROWS = [
             "complete",
             "withheld",
         ),
-        accepted="repeated: each key's second line repeats a counted credential",
     ),
     # --- r4-review-creds4.json (round 4): a password entry after another credential's name
     Row(
@@ -4003,6 +4024,31 @@ ROWS = [
         for form, rel, template in R4_PASSWORD_FALLBACK_FORMS
         for label, value in R4_PASSWORD_FALLBACKS
     ],
+    # --- r4-review-creds4.json: a repeated credential's locations
+    Row(
+        "r4.8-py-six-names-one-provider-key",
+        "scan",
+        _numbered("app/k.py", 'SVC{n}_OPENAI_API_KEY = "<OAI5>"\n', 6),
+        mode="",
+        head=(("app/k.py:1", "app/k.py:2", "app/k.py:3", "app/k.py:4", "app/k.py:5"), "complete", "withheld"),
+        main=(("app/k.py:1", "app/k.py:2", "app/k.py:3", "app/k.py:4", "app/k.py:5"), "complete", "withheld"),
+    ),
+    Row(
+        "r4.8-env-six-names-one-provider-key",
+        "scan",
+        _numbered(".env", "SVC{n}_OPENAI_API_KEY=<OAI6>\n", 6),
+        mode="",
+        head=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5", ".env:6"), "complete", "withheld"),
+        main=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5", ".env:6"), "complete", "withheld"),
+    ),
+    Row(
+        "r4.8-env-six-names-one-password",
+        "scan",
+        _numbered(".env", "SVC{n}_DB_PASSWORD=<K2>\n", 6),
+        mode="",
+        head=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5"), "complete", "withheld"),
+        main=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5"), "complete", "withheld"),
+    ),
 ]
 
 
