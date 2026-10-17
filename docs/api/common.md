@@ -17,10 +17,11 @@ Attaches matches to a finding as `Evidence` and returns the number of agent-indi
 matches. A match takes one of these paths:
 
 - **Established**: a match that is not an ambiguous name (with the default `establish=True`)
-  adds its signature to `frameworks` or `model_providers`, or as a tag for a `policy`
-  signature, together with the signature's tags and capabilities. The generic AI-name
-  signature (`identity-app.generic-ai-name`, which matches words such as "Copilot") adds the
-  tag `ai-name-hint` instead of a technology.
+  adds the signature's tags and capabilities. A technology signature also joins `frameworks`,
+  a `provider` signature joins `model_providers` and a `policy` signature becomes a tag; a
+  `heuristic` signature adds nothing more. The generic AI-name signature
+  (`identity-app.generic-ai-name`, which matches words such as "Copilot") adds the tag
+  `ai-name-hint` instead of a technology.
 - **Ambiguous name**: a name signal marked `ambiguous` (for example "Gemini", which is also a
   cryptocurrency exchange) never establishes anything. Its weight is capped at 0.2, the finding
   is tagged `ai-name-hint`, and the signature is listed under `metadata.potential_frameworks`
@@ -29,9 +30,9 @@ matches. A match takes one of these paths:
   finding, a later ambiguous name keeps its full weight. It adds no tag, capability or second
   agent indicator.
 - **Evidence only**: with `establish=False` (a code pattern without the library's import or
-  dependency, or a mention too weak to establish), matches keep their weight but add no
-  technology, tag, capability or agent indicator. A technology or provider signature is
-  listed as potential until an establishing match removes it.
+  dependency, or a mention too weak to establish), a match that is not an ambiguous name keeps
+  its weight but adds no technology, tag, capability or agent indicator. A technology or
+  provider signature is listed as potential until an establishing match removes it.
 
 At most `max_evidence_per_signature` (default 12) evidence items are kept per signature and
 signal type, and credential values are redacted.
@@ -59,7 +60,8 @@ See [unattributed applications](../connectors/identity.md#unattributed-applicati
 credential-looking value that is a documentation placeholder, and None otherwise. The value
 is a placeholder when it has a template marker (`<...>`, `${...}`, `{{...}}`), a placeholder
 word (REPLACE, YOUR, EXAMPLE, … and equivalents in several languages) or a fill run such as
-`xxxx` or an ellipsis, or a low-entropy body (`0000`, `1234567890`). For an assignment
+`xxxx` or an ellipsis, or a low-entropy body of at least eight characters after the provider
+prefix (`00000000`, `1234567890`). For an assignment
 (`NAME=value`) only the value is judged. A placeholder never becomes a `secret` finding:
 `blob_matches()` drops placeholder credential matches, and the `code.filesystem` connector
 reports them as low-weight `example-credential` evidence with the value redacted.

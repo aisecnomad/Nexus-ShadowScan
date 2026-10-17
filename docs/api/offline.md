@@ -14,6 +14,9 @@ directory path. `BaseConnector` keeps thin methods (`load_offline`, `_unwrap`,
 | `.yaml` / `.yml` | One YAML document, parsed with a bounded safe loader |
 | `.csv` | A header row of unique, nonempty column names, then one record per row |
 
+The suffix picks the parser. A file named directly by `input:` is read whatever its suffix,
+and a suffix not in the table is parsed as `.json`.
+
 ## Security limits
 
 All reads are bounded:
@@ -45,7 +48,8 @@ records are still kept.
 
 `offline_files()` never follows symbolic links. An `input:` path that is, or sits under, a
 symlink is an error. Inside a directory, symlinks and special files are skipped, and so are
-files without a supported suffix. Each skip is reported and marks the scan incomplete.
+files without a supported suffix. The skips are reported (unsupported files in one warning
+that names up to five) and mark the scan incomplete.
 
 ::: shadowscan.connectors.offline
     options:

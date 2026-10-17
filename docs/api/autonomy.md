@@ -27,7 +27,9 @@ the scanner can prove a capability exists but rarely prove one is absent:
   `delegated-identity` or `data-access` proves L4. A `schedule` or `event` initiation raises
   the floor to L5 only on top of those two.
 - **`ceiling`** falls only on positive restriction evidence: `metadata.approval_gate.scope`
-  `every-action`, with no approval-bypass evidence, caps it at L2.
+  `every-action`, with no approval-bypass evidence, caps it at L2. When the floor rules prove
+  more (kind `workflow` or capability `multi-agent`), the ceiling becomes the floor instead,
+  with the rule `conflicting-evidence`.
 - **Unknown never counts as low**: without restriction evidence the ceiling stays at 5.
 
 The block also carries `oversight` (`bypassed`, `gated` or `unknown`), `initiation`

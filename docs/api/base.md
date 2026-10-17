@@ -45,10 +45,11 @@ record.
 
 ## Offline input
 
-`load_offline()` reads the `input:` path through the shared [offline reader](offline.md). It
-discovers files by suffix (`.json`, `.jsonl`, `.ndjson`, `.yaml`, `.yml`, `.csv`), applies
-the `max_input_files`, `max_input_file_bytes` and `max_input_bytes` limits declared in
-`shared_config_keys`, unwraps collection envelopes and yields the valid records.
+`load_offline()` reads the `input:` path through the shared [offline reader](offline.md). A
+file named directly is read whatever its suffix; in a directory only `.json`, `.jsonl`,
+`.ndjson`, `.yaml`, `.yml` and `.csv` files are read. It applies the `max_input_files`,
+`max_input_file_bytes` and `max_input_bytes` limits declared in `shared_config_keys`, unwraps
+collection envelopes and yields the valid records.
 
 ::: shadowscan.connectors.base
     options:
