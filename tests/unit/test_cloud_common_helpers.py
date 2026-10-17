@@ -58,7 +58,14 @@ def test_record_dispatch_counts_every_record_and_rejects_unknown_kinds(index):
     assert kinds == ["audit-event", "reasoning-engine", None, None, None, None]
     stats = scanner.ctx.stats
     assert stats.objects_examined == 6
-    assert stats.warnings == ["cloud.gcp: record has missing, invalid, or unsupported _kind"] * 4
+    assert (
+        stats.warnings
+        == [
+            "cloud.gcp: record has missing, invalid, or unsupported _kind; "
+            "offline input replays a --dump-records export, not a provider's native log"
+        ]
+        * 4
+    )
     assert stats.incomplete
     dispatch.invalid("agent fields")
     assert stats.warnings[-1] == "cloud.gcp: record has invalid agent fields"

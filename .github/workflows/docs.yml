@@ -72,7 +72,15 @@ jobs:
           path: site/
 
   deploy:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    # Publication is a maintainer decision in two settings: configure GitHub
+    # Pages to deploy from GitHub Actions, then either dispatch this workflow
+    # with publish=true for a one-off publish, or set the repository variable
+    # DOCS_PUBLISH to "true" so every docs push to main republishes the site.
+    # Until both are set, pushes only build, so this job cannot fail CI red.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_dispatch' && inputs.publish) ||
+       (github.event_name == 'push' && vars.DOCS_PUBLISH == 'true'))
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10

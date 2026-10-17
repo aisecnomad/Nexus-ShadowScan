@@ -2124,13 +2124,17 @@ def test_pages_requires_explicit_manual_publication_from_main() -> None:
     publish = triggers["workflow_dispatch"]["inputs"]["publish"]
     assert publish["type"] == "boolean" and publish["default"] is False
     deploy = workflow["jobs"]["deploy"]
-    expression = deploy.get("if", "").strip().removeprefix("${{").removesuffix("}}").strip()
-    clauses = {re.sub(r"\s+", " ", clause.strip()).replace('"', "'") for clause in expression.split("&&")}
-    assert clauses == {
-        "github.event_name == 'workflow_dispatch'",
-        "inputs.publish",
-        "github.ref == 'refs/heads/main'",
-    }, "Pages deployment must require a manual dispatch, publish=true, and the main branch"
+    expression = re.sub(r"\s+", " ", deploy.get("if", "")).strip()
+    expression = expression.removeprefix("${{").removesuffix("}}").strip().replace('"', "'")
+    # Publication stays an explicit maintainer choice, from main only: a
+    # one-off manual dispatch with publish=true, or the maintainer-set
+    # repository variable DOCS_PUBLISH for continuous publication of pushes.
+    # A pull request can never deploy.
+    assert expression == (
+        "github.ref == 'refs/heads/main' && "
+        "((github.event_name == 'workflow_dispatch' && inputs.publish) || "
+        "(github.event_name == 'push' && vars.DOCS_PUBLISH == 'true'))"
+    ), "Pages deployment must require main plus an explicit publish dispatch or the DOCS_PUBLISH variable"
     assert "build" in ([deploy["needs"]] if isinstance(deploy["needs"], str) else deploy["needs"])
 
 
