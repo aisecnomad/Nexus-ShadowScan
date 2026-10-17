@@ -24,6 +24,7 @@ from typing import Any, NamedTuple
 import regex
 
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
+from shadowscan.utils.placeholders import possessive_phrase
 from shadowscan.utils.redaction import sanitize_text
 from shadowscan.utils.redaction_rules import environment_read_name, pasted_key_name
 
@@ -980,10 +981,18 @@ def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
     ('db-fiber-thump-bloom-gravel'). One common word alone does not make a
     label either: a passphrase may hold 'passed', 'keyed', 'default' or
     'lorem'. With ``names``, an upper-case slug joined by '_' only is
-    CONSTANT_CASE, an environment variable's name.
+    CONSTANT_CASE, an environment variable's name. A possessive and words
+    ('sua_chave_openai', 'ton-jardin-secret') is a label only when it is a
+    possessive template (``possessive_phrase``, the placeholder test's own),
+    whatever other label words it holds.
     """
     if names and candidate.isupper() and "-" not in candidate and "." not in candidate:
         return True
+    template = possessive_phrase(candidate)
+    if template is not None:
+        # A possessive and words: a template only when each word is template
+        # vocabulary, as the placeholder test reads it ('ton-jardin-secret' is none).
+        return template
     words = [word.lower() for word in _SLUG_SEPARATOR.split(candidate)]
     name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if word.isalpha()}
     if any(word in name and len(word) >= 3 for word in words):
