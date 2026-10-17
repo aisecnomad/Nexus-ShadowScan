@@ -1101,6 +1101,8 @@ _EBPF_DEFECT_WARNINGS = {
     "malformed": "endpoint.ebpf: malformed {producer} event fields were not analyzed",
     "limit": "endpoint.ebpf: {producer} event list limit reached; entries past it were not analyzed",
 }
+# The incomplete_reasons category of each, named rather than read from the text.
+_EBPF_DEFECT_REASONS = {"malformed": "unparsed-input", "limit": "analysis-limit"}
 
 
 def _ebpf_field(
@@ -1390,7 +1392,10 @@ class EbpfConnector(_EndpointConnector):
         for defect in sorted(defects):
             if (producer, defect) not in self._reported_defects:
                 self._reported_defects |= {(producer, defect)}
-                self.ctx.warn(_EBPF_DEFECT_WARNINGS[defect].format(producer=producer))
+                self.ctx.warn(
+                    _EBPF_DEFECT_WARNINGS[defect].format(producer=producer),
+                    reason=_EBPF_DEFECT_REASONS[defect],
+                )
 
     def _destination_text(self, record: dict[str, Any]) -> str:
         """The record's destinations as one text to score, each value cut to 512 characters.
@@ -1411,7 +1416,8 @@ class EbpfConnector(_EndpointConnector):
                     self._unrecognized_records = True
                     self.ctx.warn(
                         "endpoint.ebpf: unrecognized event records were not analyzed; supported "
-                        "exports are Tetragon, Falco, Tracee, Hubble and the flat record shape"
+                        "exports are Tetragon, Falco, Tracee, Hubble and the flat record shape",
+                        reason="unparsed-input",
                     )
                 continue
             record, readings = normalized

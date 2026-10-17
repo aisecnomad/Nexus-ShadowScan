@@ -115,6 +115,22 @@ strict accounting, credentials, declaration, discount, budget.
   fleet reader and the plugin decoder mark stats incomplete when their
   ledger is over budget or blinded, so a source cannot present tolerated
   gaps its own arithmetic refutes.
+- **Every condition the PRs added has its own reason.** #257's credential
+  quota was recorded without a reason and classified from its text, path
+  included: `other` in `src/keys.py`, `upstream-error` in `src/http/keys.py`
+  and `access-denied` in `src/permissions/keys.py`. #256's unrecognized eBPF
+  records were `other`, and a structured fixture whose duplicate keys made
+  `code.filesystem` withhold its excerpts was `unscanned-input`. The quota is
+  now `analysis-limit`, the eBPF unrecognized-record and malformed-field
+  warnings `unparsed-input` and its list limit `analysis-limit`, a Git LFS
+  pointer `unscanned-input`, a structured parse that failed on integrity
+  `unparsed-input` (a resource or sanitizer limit stays
+  `sanitization-limit`), lexical ambiguity and parser and validator issues
+  `unparsed-input` unless their own text names a category, and the
+  agent-manifest, agent-definition, MCP tool and re-export limits
+  `analysis-limit`; a lockfile gap is classified from its fixed reason text
+  alone. A refused PEP 263 cookie was already `unparsed-input` through the
+  undecodable-content path; a test pins it.
 
 ### Review fixes: what diff holds back under the ci profile (October 17)
 

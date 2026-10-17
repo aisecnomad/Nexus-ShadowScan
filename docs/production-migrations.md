@@ -47,6 +47,11 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   the coverage budget tolerated; the table banner and the exit-3 line show it.
   Consumers that pin the summary's keys must accept it; older reports
   without it still merge and compare.
+- **Incomplete reasons.** The credential quota is counted as
+  `analysis-limit` (it was `other`, or whatever its path suggested), eBPF
+  records no reader recognized as `unparsed-input`, and a structured
+  fixture that did not parse as `unparsed-input`, so a gate that matches
+  `summary.incomplete_reasons` sees these categories instead.
 
 ## October 17 engine review migration (Unreleased)
 

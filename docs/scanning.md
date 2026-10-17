@@ -162,7 +162,10 @@ Every diagnostic that leaves a scan incomplete is also counted by reason in
 `summary.incomplete_reasons`; the CLI names the counts on stderr when it exits 3
 (`scan incomplete (exit 3): oversize-file 2, unresolved-link 1`). A connector
 names the reason when it records the diagnostic, as `code.filesystem` does for
-its oversize, undecodable, link, non-regular and analysis-limit gaps; one
+its oversize, undecodable, link, non-regular, Git LFS pointer, parser and
+analysis-limit gaps and for its credential limit (`more than 5 credentials
+matched` is `analysis-limit`), and `endpoint.ebpf` for records it could not
+read (`unparsed-input`) or cut at its list limit (`analysis-limit`); one
 recorded without a reason is classified from its text, the connectors' own
 message vocabulary, with the path the diagnostic names left out where the
 connector passes it (`code.filesystem` does for every coverage gap), so a file
@@ -172,12 +175,14 @@ recorded with, and when the coverage budget leaves the scan incomplete each
 partial gap is counted under it. The categories are `oversize-file` (a file
 over `max_file_size` or `max_notebook_size`), `unresolved-link` (a symbolic
 link, gitlink or submodule not followed), `unparsed-input` (content that did
-not parse or could not be decoded, or an input defect), `sanitization-limit` (a
-credential-redaction context that could not be established, so excerpts were
-withheld), `timeout` (a file's matching budget, a connector deadline or a job
-deadline, including a connector left unstarted because timed-out calls hold
-every worker slot, and findings an overrun produced that could not be
-reported), `access-denied`, `upstream-error` (a live API, network or
+not parse or could not be decoded, or an input defect, including a structured
+document whose excerpts were withheld because it did not parse),
+`sanitization-limit` (a sanitizer or parser resource limit that left the
+credential-redaction context unestablished, so excerpts were withheld),
+`timeout` (a file's matching budget, a connector deadline or a job deadline,
+including a connector left unstarted because timed-out calls hold every worker
+slot, and findings an overrun produced that could not be reported),
+`access-denied`, `upstream-error` (a live API, network or
 rate-limit failure),
 `analysis-limit` (a per-file budget such as `max_ast_nodes` or the model
 literal limit), `subset-scan` (a `triage` scan), `unscanned-input` and `other`.

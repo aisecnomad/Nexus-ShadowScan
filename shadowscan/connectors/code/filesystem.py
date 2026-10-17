@@ -2077,7 +2077,9 @@ class FilesystemConnector(BaseConnector):
         else:
             self.ctx.error(
                 f"code.filesystem: {rel}: lockfile parsing failed ({reason}); no adjacent {manifest} "
-                "declares these dependencies, so they are unscanned"
+                "declares these dependencies, so they are unscanned",
+                # Classified from the fixed reason text alone, never the lockfile's path.
+                reason=incomplete_reason(f"lockfile parsing failed ({reason})"),
             )
 
     def _lockfile_manifest_beside(self, rel_dir: str, lockfile: str, filenames: Iterable[str]) -> bool:
@@ -2437,7 +2439,7 @@ class FilesystemConnector(BaseConnector):
                 except OSError as exc:
                     if exc.errno in _IGNORED_STAT_ERRNOS:
                         continue
-                    self.ctx.error(f"code.filesystem: could not inspect {rel}")
+                    self.ctx.error(f"code.filesystem: could not inspect {rel}", reason="unscanned-input")
                     continue
                 if not stat.S_ISREG(info.st_mode):
                     if self._analyzed_name(rel, fn):
@@ -2495,7 +2497,7 @@ class FilesystemConnector(BaseConnector):
                         return None
                     continue
             except OSError:
-                self.ctx.error(f"code.filesystem: could not inspect {rel}")
+                self.ctx.error(f"code.filesystem: could not inspect {rel}", reason="unscanned-input")
                 continue
             if name in MCP_CONFIG_NAMES:
                 # The walk descends into it, but no client reads a directory
@@ -2798,7 +2800,9 @@ class FilesystemConnector(BaseConnector):
                 try:
                     self._bind_source(source, resolve_import=resolver)
                 except ReexportLimitError as exc:
-                    self.ctx.error(f"code.filesystem: {file.rel}: {exc}; analysis incomplete")
+                    self.ctx.error(
+                        f"code.filesystem: {file.rel}: {exc}; analysis incomplete", reason="analysis-limit"
+                    )
                     self._bind_source(source)
         # The walk redacted every queued consumer (see _scan_file), so settling
         # only cuts the excerpts its matches asked for, reached or not.
@@ -3119,7 +3123,9 @@ class FilesystemConnector(BaseConnector):
                 proj.skill_audits[rel] = audit
                 if audit.incomplete:
                     self.ctx.warn(
-                        f"code.filesystem: {rel}: static instruction audit incomplete", incomplete=True
+                        f"code.filesystem: {rel}: static instruction audit incomplete",
+                        incomplete=True,
+                        reason="analysis-limit",
                     )
             if any(rel in files for files in proj.coding_agent_files.values()):
                 # Inspect the same confined snapshot as every other analysis pass.
@@ -3128,6 +3134,7 @@ class FilesystemConnector(BaseConnector):
                         f"code.filesystem: {rel}: instruction content exceeds inspection limit; "
                         "coverage incomplete",
                         incomplete=True,
+                        reason="analysis-limit",
                     )
                 else:
                     proj.instruction_hits[rel] = inspect_instruction_text(text)
@@ -3425,9 +3432,9 @@ class FilesystemConnector(BaseConnector):
             # file: its content was never read, whatever the name promises.
             message = f"code.filesystem: {rel}: Git LFS pointer file, not the content it stands for"
             if self.strict_coverage:
-                self.ctx.error(f"{message}; coverage incomplete")
+                self.ctx.error(f"{message}; coverage incomplete", reason="unscanned-input")
             else:
-                self._gap(rel, message)
+                self._gap(rel, message, reason="unscanned-input")
             return None
         if path.suffix.lower() != ".ipynb":
             return text, None, (), ()
@@ -3552,8 +3559,13 @@ class FilesystemConnector(BaseConnector):
         # Only discounted test code is exempt (see _discounted_test_gap): its
         # credentials are still detected and its excerpts are still withheld.
         failure = type(exc).__name__
+        # Content that would not parse is unparsed input; a resource or
+        # sanitizer limit is the redaction context's own limit.
+        integrity = isinstance(exc, (JSONIntegrityError, YAMLIntegrityError))
         self._discounted_gap(
-            rel, f"code.filesystem: {rel}: structured {stage} incomplete ({failure}); excerpts withheld"
+            rel,
+            f"code.filesystem: {rel}: structured {stage} incomplete ({failure}); excerpts withheld",
+            reason="unparsed-input" if integrity else "sanitization-limit",
         )
 
     def _input_defect(self, rel: str, issue: str, *, full_weight: bool = False) -> None:
@@ -3567,7 +3579,14 @@ class FilesystemConnector(BaseConnector):
         warning to error; both forms fail closed.
         """
         message = f"code.filesystem: {rel}: input defect: {issue}"
-        self._discounted_gap(rel, message, error=self.strict_coverage, suffix=False, full_weight=full_weight)
+        self._discounted_gap(
+            rel,
+            message,
+            error=self.strict_coverage,
+            suffix=False,
+            full_weight=full_weight,
+            reason="unparsed-input",
+        )
 
     # Syntax/shape defects get a distinct diagnostic so operators can find
     # templates and fixtures. This taxonomy never changes completeness:
@@ -3603,7 +3622,15 @@ class FilesystemConnector(BaseConnector):
             if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):
                 self._input_defect(rel, issue, full_weight=full_weight)
             else:
-                self._discounted_gap(rel, f"code.filesystem: {rel}: {issue}", full_weight=full_weight)
+                # The parser's own text, without the path, names the category; a
+                # defect it does not name is still content that did not parse.
+                category = incomplete_reason(issue)
+                self._discounted_gap(
+                    rel,
+                    f"code.filesystem: {rel}: {issue}",
+                    full_weight=full_weight,
+                    reason="unparsed-input" if category == "other" else category,
+                )
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
@@ -3795,9 +3822,12 @@ class FilesystemConnector(BaseConnector):
         if not new:
             return
         secrets_limited.setdefault(rel, set()).update(new)
+        # A credential limit is never declared, discounted or budgeted, under any
+        # profile; its reason is fixed, so neither the path nor the format picks it.
         self.ctx.error(
             f"code.filesystem: {rel}: more than {MAX_SECRETS_PER_SIGNAL} credentials matched "
-            f"{', '.join(sorted(new))}; credential evidence incomplete"
+            f"{', '.join(sorted(new))}; credential evidence incomplete",
+            reason="analysis-limit",
         )
 
     def _detect_mcp(self, file: _SourceFile) -> None:
@@ -4070,7 +4100,11 @@ class FilesystemConnector(BaseConnector):
                 )
                 ambiguous = ambiguous or nul_ambiguous
         if ambiguous:
-            self._discounted_gap(file.rel, f"code.filesystem: {file.rel}: incomplete source lexical analysis")
+            self._discounted_gap(
+                file.rel,
+                f"code.filesystem: {file.rel}: incomplete source lexical analysis",
+                reason="unparsed-input",
+            )
         literals = file.literals
         imports = self.index.match_imports(content_text, lang, ignore_spans=ignored, scan=literals)
         for m in imports:
@@ -4545,7 +4579,9 @@ class FilesystemConnector(BaseConnector):
                 require_mcp_binding=True,
             )
         except MCPToolLimitError as exc:
-            self.ctx.error(f"code.filesystem: {file.rel}: {exc}; tool analysis incomplete")
+            self.ctx.error(
+                f"code.filesystem: {file.rel}: {exc}; tool analysis incomplete", reason="analysis-limit"
+            )
             names = exc.names
         for tool in names:
             known = tools.get(tool)
@@ -4556,7 +4592,8 @@ class FilesystemConnector(BaseConnector):
                     file.proj.mcp_tools_limited = True
                     self.ctx.error(
                         f"code.filesystem: {file.rel}: project MCP tool-name limit exceeded; "
-                        "tool analysis incomplete"
+                        "tool analysis incomplete",
+                        reason="analysis-limit",
                     )
             elif _is_test_path(known) and not _is_test_path(file.rel):
                 tools[tool] = file.rel  # prefer where deployed code registers it
@@ -4634,7 +4671,7 @@ class FilesystemConnector(BaseConnector):
         self._file_errors(rel, config_limits)
         for issue in config_errors:
             if is_agent_config_path(rel):
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                self.ctx.error(f"code.filesystem: {rel}: {issue}", reason="unparsed-input")
             else:
                 # Only the structured projection is lost; the
                 # lexical env and domain passes still read this text.
@@ -4663,7 +4700,8 @@ class FilesystemConnector(BaseConnector):
             if len(scan.card_files) >= _MAX_CARD_FILES:
                 self.ctx.error(
                     f"code.filesystem: {rel}: agent manifest limit ({_MAX_CARD_FILES}) reached; "
-                    "manifest skipped"
+                    "manifest skipped",
+                    reason="analysis-limit",
                 )
             else:
                 scan.card_files.append((rel, file.text, file.card_kind, file.proj_root))
@@ -4671,7 +4709,8 @@ class FilesystemConnector(BaseConnector):
             if len(file.proj.agent_defs) >= _MAX_AGENT_DEFINITIONS:
                 self.ctx.error(
                     f"code.filesystem: {rel}: agent definition limit ({_MAX_AGENT_DEFINITIONS}) reached; "
-                    "definition skipped"
+                    "definition skipped",
+                    reason="analysis-limit",
                 )
             else:
                 file.proj.agent_defs.append(self._parse_agent_definition(rel, file.text))
@@ -6061,7 +6100,9 @@ class FilesystemConnector(BaseConnector):
                         rel, "agent definition front matter quoted to parse (a plain value contained ': ')"
                     )
                 except (ValueError, RecursionError, yaml.YAMLError):
-                    self.ctx.error(f"code.filesystem: {rel}: invalid agent definition YAML")
+                    self.ctx.error(
+                        f"code.filesystem: {rel}: invalid agent definition YAML", reason="unparsed-input"
+                    )
                     fm = {}
             if isinstance(fm, dict):
                 fm = sanitize(fm)

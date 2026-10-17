@@ -348,3 +348,46 @@ def test_the_exit_3_line_counts_tolerated_gaps_beside_declared_omissions(tmp_pat
     assert result.exit_code == 3, result.output
     assert json.loads(result.stdout)["summary"]["tolerated_gaps"] == 1
     assert "1 coverage gap(s) within budget did not count" in result.stderr
+
+
+# --------------------------------------------------------------------- reasons
+# The conditions #254, #256 and #257 added carry their own reason, so neither the
+# category "other" nor a scanned path (src/http/, permissions/, tls_config/)
+# describes them in summary.incomplete_reasons and on the exit-3 line.
+@pytest.mark.parametrize("rel", ["src/keys.py", "src/http/keys.py", "src/permissions/keys.py"])
+def test_a_credential_limit_is_an_analysis_limit_wherever_it_lies(tmp_path, run_connector, rel):
+    keys = "".join(f'OPENAI_KEY_{n} = "{_openai_project_key(n)}"\n' for n in range(8))
+    _tree(tmp_path, {rel: keys})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete_reasons == {"analysis-limit": 1}
+
+
+@pytest.mark.parametrize("rel", ["src/agent_cookie.py", "src/tls_config/http_agent.py"])
+def test_a_refused_coding_cookie_is_unparsed_input(tmp_path, run_connector, rel):
+    _tree(tmp_path, {rel: "# -*- coding: utf-16 -*-\nimport os\n"})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert ctx.stats.incomplete_reasons == {"unparsed-input": 1}
+
+
+def test_withheld_excerpts_of_a_document_that_did_not_parse_are_unparsed_input(tmp_path, run_connector):
+    _tree(tmp_path, {"tests/fixtures/agents.yaml": MALFORMED_YAML})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, strict_coverage=True)
+    assert set(ctx.stats.incomplete_reasons) == {"unparsed-input"}
+
+
+def test_a_git_lfs_pointer_is_unscanned_input(tmp_path, run_connector):
+    pointer = "version https://git-lfs.github.com/spec/v1\noid sha256:" + "a" * 64 + "\nsize 12345\n"
+    _tree(tmp_path, {"src/http/model_config.json": pointer})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete_reasons == {"unscanned-input": 1}
+
+
+def test_ebpf_records_it_could_not_read_are_unparsed_input(tmp_path, run_connector):
+    import json
+
+    export = tmp_path / "http_permissions_events.jsonl"
+    export.write_text(json.dumps({"kind": "unknown", "payload": {"x": 1}}) + "\n")
+    _, ctx = run_connector("endpoint.ebpf", input=str(export))
+    assert ctx.stats.incomplete
+    assert ctx.stats.incomplete_reasons == {"unparsed-input": 1}
