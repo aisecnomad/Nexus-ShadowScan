@@ -565,7 +565,10 @@ def test_ci_profile_declares_unresolved_links_under_tests_only(run_connector, tm
     _, stats = scan(run_connector, tmp_path, profile="ci")
     assert stats.incomplete and stats.incomplete_reasons == {"unresolved-link": 1}
     assert stats.declared_omissions == 1
-    assert [w for w in stats.warnings if "src/config.json" in w and "coverage incomplete" in w]
+    # The undeclared link keeps its own representative diagnostic, a budgeted coverage gap
+    # (#254) that the budget verdict of this one-entry tree turns into exit 3.
+    assert [w for w in stats.warnings if "src/config.json" in w and "coverage gap" in w]
+    assert [e for e in stats.errors if "over the" in e and "budget" in e]
 
 
 def test_ci_profile_declares_analysis_failures_in_fixtures_only(run_connector, tmp_path, monkeypatch):
