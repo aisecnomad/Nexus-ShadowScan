@@ -408,7 +408,9 @@ and tests, which call and test the products they detect.
   subscript, `;`, `,`, `)` or `}`) or that starts at `process.env.`, `import.meta.env.`, `os.environ.`,
   `self.` or `this.`. A quoted value is always a literal, a value that does not read as words is never a
   name, and an unquoted value in configuration (`DB_PASSWORD=Summer.Vacation2024` in an env file) stays a
-  candidate. When operators follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, a blank
+  candidate. Outside source code the name-shape rules apply only to token names (`API_KEY`, `ACCESS_TOKEN`,
+  `CLIENT_SECRET`); a PASSWORD or CREDENTIAL value there (`POSTGRES_PASSWORD=TrustNoOneEverAgain`) cannot
+  name a variable. When operators follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, a blank
   line), past any call, subscript, optional or non-null chain on it (`GetEnvironmentVariable("X") ??`,
   `process.env.X?.trim() ||`) and on the same or the next line (after a comment or a backslash
   continuation too), the match is kept if a string literal that is a direct operand of `||`, `??`, `?:`, `or`,

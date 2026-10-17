@@ -631,7 +631,7 @@ def _assigned_name(value: str) -> str:
     return value[: min(positions)] if positions else ""
 
 
-def _label_slug(value: str, candidate: str) -> bool:
+def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
     """Whether a word slug assigned in ``value`` is a label rather than a generated passphrase.
 
     Password managers generate passphrases as random words joined by '-', '_'
@@ -644,10 +644,10 @@ def _label_slug(value: str, candidate: str) -> bool:
     'local-development-only', 'lorem-ipsum-dolor-sit-amet') or a word of three
     letters or more of the name it is assigned to
     ('OPENAI_API_KEY=sua_chave_openai'; 'db' in 'DB_PASSWORD' is too short to
-    tell). An upper-case slug joined by '_' only is CONSTANT_CASE, an
-    environment variable's name.
+    tell). With ``names``, an upper-case slug joined by '_' only is
+    CONSTANT_CASE, an environment variable's name.
     """
-    if candidate.isupper() and "-" not in candidate and "." not in candidate:
+    if names and candidate.isupper() and "-" not in candidate and "." not in candidate:
         return True
     words = {word.lower() for word in _SLUG_SEPARATOR.split(candidate)}
     name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if len(word) >= 3}
@@ -666,20 +666,37 @@ def _name_shaped(candidate: str) -> bool:
     )
 
 
-def _high_entropy_credential(value: str, *, literal: str | None = None) -> bool:
+def _program_name(candidate: str, body: str, *, passphrase: bool) -> bool:
+    """Whether a value is built like another variable's name rather than a token (#258's shape rules).
+
+    A name-shaped value with no digit (``_name_shaped``) that does not mix
+    cases evenly is one, unless it is a passphrase of words; a value with
+    digits is one when it is a single-case identifier
+    (``_single_case_identifier``).
+    """
+    if any(char.isdigit() for char in body):
+        return _single_case_identifier(candidate)
+    letters = [char for char in body if char.isalpha()]
+    if passphrase or not letters or not _name_shaped(candidate):
+        return False
+    upper_share = sum(char.isupper() for char in letters) / len(letters)
+    low, high = _RANDOM_UPPER_SHARE
+    return upper_share < low or upper_share > high
+
+
+def _high_entropy_credential(value: str, *, literal: str | None = None, names: bool = True) -> bool:
     """Require a generic assigned credential to be long, diverse and shaped like a token, not a name.
 
     Shannon entropy alone does not separate the two: ordinary identifiers
-    clear 3 bits per character. A name-shaped value with no digit
-    (``_name_shaped``) must mix cases evenly, unless it is a passphrase of
-    words (``_label_slug``); a value with digits must not be a single-case
-    identifier (``_single_case_identifier``). ``literal`` is the value to
-    judge when it is not the one ``value`` assigns (a fallback after a
-    reference); ``value`` still names it.
+    clear 3 bits per character. With ``names`` the value may be another
+    variable's name, so one built like a name is none (``_program_name``)
+    and a CONSTANT_CASE word slug is a label (``_label_slug``). ``literal``
+    is the value to judge when it is not the one ``value`` assigns (a
+    fallback after a reference); ``value`` still names it.
     """
     candidate = _assigned_value(value) if literal is None else literal
     passphrase = _WORD_SLUG.fullmatch(candidate) is not None
-    if len(candidate) < 16 or (passphrase and _label_slug(value, candidate)):
+    if len(candidate) < 16 or (passphrase and _label_slug(value, candidate, names=names)):
         return False
     body = re.sub(r"[^A-Za-z0-9]", "", candidate)
     if len(body) < 2 or len(set(body)) <= 2:
@@ -687,15 +704,7 @@ def _high_entropy_credential(value: str, *, literal: str | None = None) -> bool:
     adjacent = sum(abs(ord(left) - ord(right)) <= 1 for left, right in zip(body, body[1:], strict=False))
     if adjacent / (len(body) - 1) >= 0.5:
         return False
-    if not any(char.isdigit() for char in body):
-        letters = [char for char in body if char.isalpha()]
-        if not letters:
-            return False
-        upper_share = sum(char.isupper() for char in letters) / len(letters)
-        low, high = _RANDOM_UPPER_SHARE
-        if not passphrase and _name_shaped(candidate) and (upper_share < low or upper_share > high):
-            return False
-    elif _single_case_identifier(candidate):
+    if names and _program_name(candidate, body, passphrase=passphrase):
         return False
     counts = Counter(candidate)
     entropy = -sum((count / len(candidate)) * math.log2(count / len(candidate)) for count in counts.values())
@@ -734,7 +743,16 @@ def _generic_literal(value: str, *, code: bool, follower: str) -> str | None:
     """
     if _reference_value(value, code=code, follower=follower):
         return _fallback_literal(value, follower)
-    return _assigned_value(value) if _high_entropy_credential(value) else None
+    # Outside source code a password's value is never another variable's
+    # name: an env file has no variables to name, only values.
+    names = code or not _assigned_name(value).lower().endswith(_PASSWORD_NAMES)
+    return _assigned_value(value) if _high_entropy_credential(value, names=names) else None
+
+
+# The generic patterns' names whose value a person chose (DB_PASSWORD,
+# SERVICE_CREDENTIAL), as opposed to the tokens a service issues (API_KEY,
+# ACCESS_TOKEN, CLIENT_SECRET).
+_PASSWORD_NAMES = ("password", "credential")
 
 
 def reported_credential(match: Match) -> str:
