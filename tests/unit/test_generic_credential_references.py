@@ -161,10 +161,37 @@ def test_a_scan_still_reports_a_literal_key_and_withholds_it(tmp_path: Path, run
         'apiKey := os.Getenv("OPENAI_API_KEY")',
         'api_key = ENV["OPENAI_API_KEY"]',
         "apiKey: process.env.OPENAI_API_KEY,",
+        # Blanks may come between the read and the end of its value.
+        "apiKey: process.env.OPENAI_API_KEY ,",
+        "new OpenAI({ apiKey: process.env.OPENAI_API_KEY })",
+        "  apiKey: process.env.OPENAI_API_KEY \n  model: 'gpt-4o',",
     ],
 )
 def test_an_environment_read_stays_visible_after_a_credential_name(line: str):
     assert sanitize_text(line) == line
+
+
+AZURE_KEY = "3f9a8b7c6d5e4f30a1b2c3d4e5f60718"  # an Azure OpenAI-style 32-hex key
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Text after the read and a blank is part of the value, not its end:
+        # a comment, a chained fallback, a concatenation or another token.
+        f"  apiKey: process.env.AZURE_OPENAI_API_KEY // old: {AZURE_KEY}",
+        f"  apiKey: process.env.AZURE_OPENAI_API_KEY /* {AZURE_KEY} */,",
+        f"  apiKey: process.env.AZURE_OPENAI_API_KEY ?? process.env.AZURE_KEY_FALLBACK ?? '{AZURE_KEY}',",
+        f"  apiKey: process.env.AZURE_OPENAI_API_KEY || defaults.azure || '{AZURE_KEY}',",
+        f"  apiKey: process.env.AZURE_OPENAI_API_KEY + '{AZURE_KEY}',",
+        f"api-key: process.env.AZURE_OPENAI_API_KEY {AZURE_KEY}",
+        f"api_key = os.environ['AZURE_OPENAI_API_KEY'] # {AZURE_KEY}",
+    ],
+)
+def test_text_after_an_environment_read_keeps_the_value_withheld(line: str):
+    safe = sanitize_text(line)
+    assert AZURE_KEY not in safe and REDACTED in safe
+    assert sanitize_text(safe) == safe
 
 
 HEX = "a8f3c91d7e2b4f6a9d0c"

@@ -310,22 +310,29 @@ _ENVIRONMENT_LOOKUP = re.compile(
     r"|ENV\.fetch|Deno\.env\.get|getenv)\([ \t]*+(?P<argument_quote>[\"'])[A-Z_][A-Z0-9_]*+"
     r"(?P=argument_quote)[ \t]*+\)"
 )
-# What may end an assigned value: the end of the text or line, a statement or
-# argument separator, a closing bracket, or blanks before an operator or comment.
-_VALUE_END_CHARACTERS = frozenset(" \t\r\n;,)}]")
+# What may end an assigned value after the read and any blanks: the end of the
+# line, a statement or argument separator, or a closing bracket. An operator, a
+# comment or another token after the blanks may carry a literal of its own.
+_VALUE_END_CHARACTERS = frozenset("\r\n;,)}]")
 
 
 def _environment_lookup(text: str, start: int = 0, end: int | None = None) -> bool:
     """Whether an environment variable read starts at ``start`` and ends the value there.
 
-    With ``end`` the read must span exactly ``text[start:end]``.
+    With ``end`` the read must span exactly ``text[start:end]``. Otherwise
+    only spaces and tabs may follow the read before the end of the text or a
+    value end: in 'apiKey: process.env.KEY // old: <key>' or
+    'apiKey: process.env.KEY ?? "<key>"' the value goes on past the read.
     """
     match = _ENVIRONMENT_LOOKUP.match(text, start)
     if match is None:
         return False
     if end is not None:
         return match.end() == end
-    return match.end() == len(text) or text[match.end()] in _VALUE_END_CHARACTERS
+    position = match.end()
+    while position < len(text) and text[position] in " \t":
+        position += 1
+    return position == len(text) or text[position] in _VALUE_END_CHARACTERS
 
 
 def _kept_value(value: str) -> bool:
