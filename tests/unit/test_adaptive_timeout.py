@@ -114,17 +114,30 @@ class TestEstimate:
     def test_the_proposal_saturates_where_the_probe_stops(self, tmp_path, monkeypatch) -> None:
         """The probe cannot count past its limit, so the proposal cannot grow past it either.
 
-        That ceiling sits below the engine's own: a larger tree needs an explicit
-        deadline, which the engineering log says (test_repository_consistency).
+        Measured on real trees: below the limit a larger tree gets a longer
+        deadline, past it a tree ten times larger gets the same one. With the
+        shipped limits, a probe that cannot finish proposes the most the
+        estimate can, which sits below the engine's own ceiling: a larger tree
+        needs an explicit deadline, which the engineering log says
+        (test_repository_consistency).
         """
-        probe = FilesystemConnector
-        monkeypatch.setattr(
-            probe, "_probe_entry_count", classmethod(lambda cls, roots, pruned: cls._PROBE_LIMIT)
+        monkeypatch.setattr(FilesystemConnector, "_PROBE_LIMIT", 40)
+        monkeypatch.setattr(FilesystemConnector, "_ENTRIES_PER_DEFAULT_BUDGET", 10)
+        proposals = []
+        for files in (20, 40, 400):
+            _tree(tmp_path / f"t{files}", files)
+            config = {"paths": [str(tmp_path / f"t{files}")]}
+            proposals.append(FilesystemConnector.estimate_timeout_seconds(config, DEFAULT_CONNECTOR_TIMEOUT))
+        below, at_limit, past_limit = proposals
+        assert below is not None and at_limit is not None
+        assert DEFAULT_CONNECTOR_TIMEOUT < below < at_limit
+        assert past_limit == at_limit
+        monkeypatch.undo()
+        monkeypatch.setattr(FilesystemConnector, "_PROBE_SECONDS", 0.0)
+        largest = FilesystemConnector.estimate_timeout_seconds(
+            {"paths": [str(tmp_path / "t400")]}, DEFAULT_CONNECTOR_TIMEOUT
         )
-        proposed = probe.estimate_timeout_seconds({"paths": [str(tmp_path)]}, DEFAULT_CONNECTOR_TIMEOUT)
-        ceiling = DEFAULT_CONNECTOR_TIMEOUT * probe._PROBE_LIMIT / probe._ENTRIES_PER_DEFAULT_BUDGET
-        assert proposed == pytest.approx(ceiling)
-        assert ceiling < MAX_AUTO_TIMEOUT
+        assert largest is not None and DEFAULT_CONNECTOR_TIMEOUT < largest < MAX_AUTO_TIMEOUT
 
     def test_a_missing_path_is_not_an_error(self) -> None:
         assert FilesystemConnector.estimate_timeout_seconds({"paths": ["/nonexistent/xyz"]}, 120.0) is None
