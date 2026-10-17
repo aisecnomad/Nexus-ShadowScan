@@ -35,7 +35,7 @@ from shadowscan.config import PATH_KEYS, ConnectorSpec, ScanConfig
 from shadowscan.connectors import _BUILTIN, get_connector_class
 from shadowscan.connectors.base import LIVE_SCOPE_SCHEMA
 from shadowscan.connectors.code.path_context import may_be_declared
-from shadowscan.coverage import validate_coverage_summary
+from shadowscan.coverage import coverage_incomplete, validate_coverage_summary
 from shadowscan.models import FINDING_IDENTITY_SCHEMA, Finding
 from shadowscan.registries import RECONCILIATION_KEY, RECONCILIATION_STATUSES
 from shadowscan.risk import MITIGATING_TAGS
@@ -376,9 +376,25 @@ def _complete(report: dict[str, Any]) -> bool:
             and not s["errors"]
             and s.get("skipped") is False
             and s.get("incomplete") is False
+            and not _ledger_refutes(s)
             for s in stats
         )
     )
+
+
+def _ledger_refutes(stats: dict[str, Any]) -> bool:
+    """Whether a connector's own coverage ledger says its run was incomplete, whatever its flag says.
+
+    The rule ``shadowscan merge`` and the plugin result check apply: a ledger
+    over its budget or blinded is an incomplete run. A ledger that is not one
+    the scanner writes is left to the unread-content check
+    (``_unread_content``), which then cannot locate what the report left
+    unread and holds back every missing finding of that connector.
+    """
+    try:
+        return coverage_incomplete(validate_coverage_summary(stats.get("coverage")))
+    except ValueError:
+        return False
 
 
 def _summary_matches_findings(report: dict[str, Any]) -> bool:
