@@ -38,10 +38,12 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   an oversize `.env` or tool credential file, undecodable bytes anywhere but in
   test code while `include_tests` is off, and any sanitizer limit. Test code
   whose evidence is discounted (`include_tests` off) is the exception for
-  manifests and undecodable bytes: a malformed fixture is charged to the
-  budget at a quarter weight and an undecodable one, read for credentials
-  first, at a whole entry: a root tolerates malformed fixtures up to about
-  8% of its entries and undecodable ones up to about 2%, so a 200-file
+  manifests and undecodable bytes: each gap a malformed fixture records
+  (one to three) is charged to the budget at a quarter weight and an
+  undecodable fixture, read for credentials first, at a whole entry: a root
+  tolerates malformed fixtures up to about 8% of its entries when each
+  records one gap (4% for a structured file with duplicate keys, which
+  records two) and undecodable ones up to about 2%, so a 200-file
   service with four binary fixtures and a dangling certificate link exits 3. An MCP configuration, coding-agent file or
   agent card keeps the gap in test code too. The budget is judged per scan
   root and per repository.

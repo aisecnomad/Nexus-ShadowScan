@@ -3464,8 +3464,12 @@ class FilesystemConnector(BaseConnector):
         Discounted is not dropped: the gap is a partial one in the coverage
         budget, at the quarter weight of a test path (``_gap_relevance``), and
         is listed in ``stats.coverage.details`` with the discount named in its
-        detail. A root tolerates such fixtures up to about 8% of its entries
-        against the default 2% budget; a tree seeded with them exhausts it.
+        detail. A fixture records one such gap per defect: invalid XML one,
+        a structured file that fails the integrity checks two (its excerpts
+        withheld, then its ambiguous data), such a dependency manifest three.
+        Against the default 2% budget a root therefore tolerates them up to
+        about 8% of its entries when each records one, 4% when each records
+        two; a tree seeded with them exhausts it.
         ``charged_in_full`` keeps the path weighting off, for a fixture that
         could not be decoded at all: undecodable bytes hide a definition in a
         fixture as easily as anywhere, so they cost a whole entry, and about 2%

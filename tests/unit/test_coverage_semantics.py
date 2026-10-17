@@ -940,6 +940,30 @@ def test_binary_fixtures_cost_a_whole_entry_so_about_two_percent_exhaust_the_bud
     assert not ctx.stats.incomplete
 
 
+@pytest.mark.parametrize(
+    ("rel", "content", "gaps"),
+    [
+        pytest.param("tests/fixtures/e/pom.xml", "<project><dependencies>", 1, id="invalid-xml"),
+        pytest.param("tests/fixtures/agents.yaml", MALFORMED_YAML, 2, id="duplicate-keys"),
+        pytest.param("tests/fixtures/nan.json", '{"a": NaN, "b": Infinity}', 2, id="non-finite"),
+        pytest.param(
+            "tests/fixtures/f/package.json",
+            '{"name": "x", "dependencies": {"a": 1, "a": 2}}',
+            3,
+            id="duplicate-key-manifest",
+        ),
+    ],
+)
+def test_a_malformed_fixture_costs_a_quarter_per_gap_it_records(tmp_path, run_connector, rel, content, gaps):
+    # The tolerance the docs state (about 8%, 4% and under 3% of a root's
+    # entries) follows from these counts at a quarter each.
+    _tree(tmp_path, {rel: content})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    coverage = ctx.stats.coverage
+    assert [gap["path"] for gap in coverage["details"]] == [rel] * gaps
+    assert coverage["weighted_gap_entries"] == pytest.approx(0.25 * gaps)
+
+
 def test_a_few_discounted_fixtures_are_listed_and_tolerated(tmp_path, run_connector):
     # 160 entries allow 3.2 weighted entries; these gaps weigh 1.75.
     _tree(
