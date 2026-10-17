@@ -477,6 +477,26 @@ def test_a_tree_seeded_with_discounted_fixtures_exhausts_the_budget(tmp_path, ru
     assert ctx.stats.coverage["gaps"] >= 200
 
 
+def test_binary_fixtures_cost_a_whole_entry_so_about_two_percent_exhaust_the_budget(tmp_path, run_connector):
+    # The tolerance scanning.md and the release notes state: 200 product files
+    # and four binary fixtures weigh 4.0 of 4.08 allowed; one dangling
+    # certificate link more (4.25 of 4.1) exits 3, where the same tree with
+    # malformed fixtures instead (a quarter per gap) stays complete.
+    product = {f"lib/part{i}.py": f"y = {i}\n" for i in range(139)}
+    fixtures = {f"tests/fixtures/attachment{i}.txt": BINARY for i in range(4)}
+    _tree(tmp_path / "binary", {**product, **fixtures})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path / "binary"), use_git=False)
+    assert not ctx.stats.incomplete
+    assert ctx.stats.coverage["weighted_gap_entries"] == pytest.approx(4.0)
+    _tree(tmp_path / "binary", links=["tests/certs/ca.pem"])
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path / "binary"), use_git=False)
+    assert ctx.stats.incomplete and ctx.stats.coverage["within_budget"] is False
+    malformed = {f"tests/fixtures/agents{i}.yaml": MALFORMED_YAML for i in range(4)}
+    _tree(tmp_path / "malformed", {**product, **malformed}, links=["tests/certs/ca.pem"])
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path / "malformed"), use_git=False)
+    assert not ctx.stats.incomplete
+
+
 def test_a_few_discounted_fixtures_are_listed_and_tolerated(tmp_path, run_connector):
     # 160 entries allow 3.2 weighted entries; these gaps weigh 1.75.
     _tree(

@@ -60,9 +60,12 @@ Expect these exit-code changes against the earlier October 17 behaviour:
 - **Discounted test-code gaps are budgeted.** A malformed or binary fixture
   under a test path (with `include_tests` off) is charged to the coverage
   budget and listed in `stats[].coverage.details`, instead of a warning
-  nothing counted. A handful still leave the scan complete; a tree where they
-  are a large share of the entries exits 3, and a tiny tree (a lone fixture)
-  exits 3 on one, as it does for any other gap.
+  nothing counted. A malformed fixture costs a quarter of an entry and a
+  binary one a whole entry, so a root tolerates malformed fixtures up to
+  about 8% of its entries but binary ones only up to about 2%: a 200-file
+  service with four binary fixtures and one dangling certificate link,
+  complete before, exits 3, and a tiny tree (a lone fixture) exits 3 on one,
+  as it does for any other gap.
 - **The budget is judged per root and per repository.** A `code.filesystem`
   scan of several `paths`, and a `code.github` or `code.gitlab` scan of
   several repositories, is incomplete when any root or repository is over its

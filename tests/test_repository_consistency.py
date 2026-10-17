@@ -2644,11 +2644,25 @@ _STALE_COVERAGE_CLAIMS = (
     "fails closed on every gap",
     "dangling test certificate links each exit 3 by default",
     "it conflicts with `strict_coverage`",
+    # The ci profile's other gaps are judged by the budget, not exit 3 on their own.
+    "every other gap still exits 3",
+    "every other gap still marks the scan incomplete",
+    # An incidental oversize file is one budgeted entry.
+    "still exits 3 under the default settings",
+    "any other oversize analyzable file makes coverage incomplete",
+    # Binary fixtures cost a whole entry each: about 2% of a root exhaust it.
+    "seeded with hundreds",
+    # A file left unread for credentials is never declared.
+    "unread for credentials; declared omission",
 )
 
 
 def test_coverage_docs_state_the_unified_semantics() -> None:
-    sources = [*_current_docs(), ROOT / "shadowscan" / "connectors" / "code" / "filesystem.py"]
+    sources = [
+        *_current_docs(),
+        ROOT / "shadowscan" / "connectors" / "code" / "filesystem.py",
+        ROOT / "shadowscan" / "cli" / "_scan.py",
+    ]
     for path in sources:
         text = (
             " ".join(_current_text(path).split()).lower()

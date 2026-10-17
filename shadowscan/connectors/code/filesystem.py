@@ -3319,11 +3319,12 @@ class FilesystemConnector(BaseConnector):
         Discounted is not dropped: the gap is a partial one in the coverage
         budget, at the quarter weight of a test path (``_gap_relevance``), and
         is listed in ``stats.coverage.details`` with the discount named in its
-        detail. A few deliberately malformed fixtures leave the scan complete;
-        a tree seeded with hundreds of them exhausts the budget.
+        detail. A root tolerates such fixtures up to about 8% of its entries
+        against the default 2% budget; a tree seeded with them exhausts it.
         ``charged_in_full`` keeps the path weighting off, for a fixture that
         could not be decoded at all: undecodable bytes hide a definition in a
-        fixture as easily as anywhere, so they cost a whole entry.
+        fixture as easily as anywhere, so they cost a whole entry, and about 2%
+        of a root's entries in them exhaust its budget.
         """
         if self._discounted_test_gap(rel, full_weight=full_weight) and not self._declared_omission(rel):
             self._ledger_gap(

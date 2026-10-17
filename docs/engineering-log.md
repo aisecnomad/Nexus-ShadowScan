@@ -128,9 +128,15 @@ strict accounting, credentials, declaration, discount, budget.
   ledger as a partial gap at a quarter weight, its detail naming the
   discount, and a binary or undecodable fixture at a whole entry after the
   credential-only read. A few fixtures leave the scan complete and are
-  listed; a seeded tree exhausts the budget. Unparsed test source and a
-  test file over the binder's budget stay warnings, as before #255, and an
-  oversize fixture with `scan_secrets` off stays a counted warning.
+  listed; a seeded tree exhausts the budget. "A few" is about 8% of a
+  root's entries for malformed fixtures but only about 2% for binary ones,
+  which cost a whole entry each as the plan's full-weight clause requires:
+  a 200-file service with four binary fixtures and one dangling certificate
+  link, complete before, exits 3. The docs first said hundreds were needed;
+  they now give both shares, and a test pins the binary case. Unparsed test
+  source and a test file over the binder's budget stay warnings, as before
+  #255, and an oversize fixture with `scan_secrets` off stays a counted
+  warning.
 - **The budget is judged per root and per repository.** The ledger summed a
   run: `code.github` and `code.gitlab` charged every checkout to one budget,
   and `code.filesystem` every root of `paths`. A repository of 20 files with

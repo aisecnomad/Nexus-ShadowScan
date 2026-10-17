@@ -37,8 +37,9 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   whose evidence is discounted (`include_tests` off) is the exception for
   manifests and undecodable bytes: a malformed fixture is charged to the
   budget at a quarter weight and an undecodable one, read for credentials
-  first, at a whole entry, so a few leave the scan complete and a tree
-  seeded with them does not. An MCP configuration, coding-agent file or
+  first, at a whole entry: a root tolerates malformed fixtures up to about
+  8% of its entries and undecodable ones up to about 2%, so a 200-file
+  service with four binary fixtures and a dangling certificate link exits 3. An MCP configuration, coding-agent file or
   agent card keeps the gap in test code too. The budget is judged per scan
   root and per repository.
   `strict_coverage` and `--max-coverage-gap 0` (or `max_coverage_gap: 0`)

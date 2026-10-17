@@ -447,11 +447,15 @@ file (`.md`, `.txt`, a `CHANGELOG.md` included) and, without `include_tests`,
 an oversize file under a test or fixture path (a recorded cassette) are skipped
 with a warning; with credential detection on (the default) they are read for
 credentials below the limit and stay a coverage gap above it, so no planted key
-is lost to an exit 0. A repository with a change log over `max_file_size`
-therefore still exits 3 under the default settings; raise `max_file_size`, or
-review the file and list its path in `oversize_skip_globs` (the setting
-replaces the default list, so keep the defaults beside it). `strict_coverage`
-keeps every skip outside the globs a gap. See the [coverage policy](scanning.md#large-and-generated-files).
+is lost unrecorded. A change log over `max_file_size` is therefore one entry of
+the [coverage budget](scanning.md#coverage-budget-and-strict-accounting): a
+repository with a few hundred files tolerates it and lists it in
+`stats[].coverage` and `summary.tolerated_gaps`, while a small repository, or
+one with other gaps, exits 3. To read it, raise `max_file_size`; to stop
+counting it, review the file and list its path in `oversize_skip_globs` (the
+setting replaces the default list, so keep the defaults beside it). Strict
+accounting keeps every skip outside the globs a gap that marks the scan
+incomplete. See the [coverage policy](scanning.md#large-and-generated-files).
 
 The code scanner's IaC wildcard-action and agent front-matter patterns run on
 the bounded regex engine under the same per-input matching budget as the

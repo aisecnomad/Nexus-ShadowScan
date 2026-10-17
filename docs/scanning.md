@@ -368,8 +368,11 @@ applied in this order:
    settle) is charged to the budget as a partial gap at a quarter weight, and
    a binary or undecodable fixture, read for credentials first, at a whole
    entry. Its warning and its `stats[].coverage.details` entry say `test code
-   is discounted evidence`. A few leave the scan complete; a tree seeded with
-   hundreds exhausts the budget (see [test and fixture code](#test-and-fixture-code)).
+   is discounted evidence`. Against the default 2% budget a root therefore
+   tolerates malformed fixtures up to about 8% of its entries, but binary
+   ones only up to about 2%, fewer beside other gaps: a 200-file service with
+   four binary fixtures and one dangling certificate link exits 3 (see
+   [test and fixture code](#test-and-fixture-code)).
 5. **Budget.** Every other partial gap is charged to the budget; a blinding
    one marks the scan incomplete.
 
@@ -682,8 +685,9 @@ incomplete depends on what the file could hide:
   that does not parse, YAML that fails the integrity checks, source the lexer
   cannot settle, a parser input defect) is a warning ending `test code is
   discounted evidence (include_tests is false)`, charged to the coverage
-  budget at a quarter weight: a few leave the scan complete, a tree seeded
-  with them does not. Its credentials were scanned on the text as read. The
+  budget at a quarter weight, so a root tolerates such files up to about 8%
+  of its entries (2% at a quarter each), fewer beside other gaps. Its
+  credentials were scanned on the text as read. The
   same file outside a test path is a gap, and `include_tests: true` or
   [strict accounting](#coverage-budget-and-strict-accounting) keeps it one.
   An MCP configuration (by a dedicated name or by the structure that
