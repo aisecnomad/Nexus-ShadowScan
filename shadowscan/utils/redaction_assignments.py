@@ -734,7 +734,10 @@ def _redact_connection_passwords(text: str) -> str:
 # 'password', 'passwd' or 'account' after it is withheld ('machine h force
 # yes password v'). On a later line it ends no entry either while such a
 # keyword follows it in the entry's region (``_NETRC_AHEAD``); past that, it
-# ends the entry, as prose after 'machine learning' does. A '#' after a
+# ends the entry, as prose after 'machine learning' does. Adjacent string
+# literals are one string ('"machine h\n" +', then '"login u\n"' on the next
+# line): a closing quote, then blanks, line breaks or a '+', then an opening
+# quote part tokens as a blank does (``_NETRC_JOIN``). A '#' after a
 # blank, or after a line-break escape, starts a comment, which ends where its
 # line does: at the end of a line of plain text, and at the next line-break
 # escape where the comment is in an escaped string (``_NetrcLines.in_string``:
@@ -807,6 +810,11 @@ _NETRC_TOKEN = re.compile(
 # string's, where an escape ends it; and the tokens after which one ends no entry.
 _NETRC_UNKNOWN = (re.compile(r"\S++"), re.compile(rf"{_NETRC_LEAD}++"))
 _NETRC_KNOWN = frozenset({"machine", "login", "user"})
+# Where two adjacent string literals meet: a closing quote, then blanks, line
+# breaks, a '+' or a line continuation, then an opening quote; and the quotes
+# that open a literal.
+_NETRC_JOIN = re.compile(r"[\"'](?:[ \t\r\n\v\f+]|\\(?=[\r\n]))*+[\"']")
+_NETRC_OPENING = ('"', "'")
 # What follows a token the format does not define on a later line than the
 # entry's last token: a 'password', 'passwd' or 'account' keyword, before
 # which it ends no entry, or the next head, where the entry's region ends.
@@ -1015,10 +1023,11 @@ class _NetrcReader:
     def _gap(self, position: int) -> tuple[int, list[tuple[int, int, bool | None]]]:
         """Where the blanks, escapes and comments from ``position`` end, and the comments not yet queued.
 
-        Escapes are read only on a line that is an escaped string. The
-        pieces of a gap share its list of comments, which an entry that reads
-        past the gap queues and empties, so a gap read again from one of its
-        pieces gives only those no entry has queued.
+        Escapes, and where two adjacent string literals meet, are read only
+        on a line that is an escaped string. The pieces of a gap share its
+        list of comments, which an entry that reads past the gap queues and
+        empties, so a gap read again from one of its pieces gives only those
+        no entry has queued.
         """
         text, end = self.text, self.end
         pieces: list[int] = []
@@ -1039,6 +1048,8 @@ class _NetrcReader:
                     position = comment
             elif escapes and text.startswith(_NETRC_ESCAPES, position, end):
                 position += 2
+            elif escapes and (join := _NETRC_JOIN.match(text, position, end)) is not None:
+                position = join.end()
             else:
                 pieces.pop()
                 break
@@ -1071,7 +1082,9 @@ class _NetrcReader:
         prose as often as it interrupts an entry, and skipped there, 'machine
         learning' withheld the word after each 'account' of a document. A
         head inside the token ('force "machine h') starts an entry of its
-        own, which the entry ends before.
+        own, which the entry ends before. An opening quote right before a
+        token is skipped alone, as where a comment parts two string literals
+        ('"machine h\\n"  # c', then '"login u\\n"').
         """
         if line < 0 or position >= self.end:
             return None
@@ -1083,7 +1096,8 @@ class _NetrcReader:
         for word in _NETRC_HEAD_WORD.finditer(self.text, position, end):
             if _NETRC_HEAD.match(self.text, word.start(), self.end) is not None:
                 return None
-        return end
+        opening = escapes and self.text.startswith(_NETRC_OPENING, position)
+        return position + 1 if opening and self._token(position + 1) is not None else end
 
     def _secret_ahead(self, position: int, line: int) -> bool:
         """Whether a 'password', 'passwd' or 'account' follows ``position`` in the entry's region.

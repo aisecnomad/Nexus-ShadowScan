@@ -288,7 +288,10 @@ coverage, even when a response includes an empty collection field.
   entry's region, which spans the eight lines from that of the entry's last
   token and ends before at a blank line or the next entry's `machine`,
   `default` or `macdef` (`machine h`, then `force yes`, then `password v`
-  on the next lines), one after a
+  on the next lines), one in an entry spread over adjacent string
+  literals, which a closing quote, then blanks, line breaks, a `+` or a
+  line continuation, then an opening quote join (`("machine h\n"`, then
+  `"login u\n"` and `"password v\n")` on the next lines), one after a
   keyword glued to a closing quote, which Python's `netrc` reads as the
   next token (`login "u"password v`), an entry in a comment, also right
   after its `#` (a `#` after a blank or a line-break escape starts a

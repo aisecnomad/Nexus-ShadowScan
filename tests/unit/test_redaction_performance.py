@@ -356,6 +356,7 @@ shapes = [
     'machine h\\n' + "  # Bob's share is C:\\\\new\\\\data\\n" * (n // 32) + 'password x',
     'machine h\\n' + 'force yes\\n' * (n // 10) + 'password x', 'machine h\\nforce\\n' * (n // 16),
     'machine h\\n' + 'x ' * (n // 2) + '\\npassword x', 'machine h\\n' + 'x account\\n' * (n // 10),
+    'x = ("machine h\\\\n"' + '\\n  "login u\\\\n"' * (n // 14) + ')', 'machine h "' + ' +' * (n // 2),
 ]
 for shape in shapes:
     try:
@@ -416,6 +417,12 @@ def _best_cpu(work, repeats: int = 3) -> float:
         lambda n: "machine h\n" + "x machine\n" * n,
         lambda n: ("machine h " + "a" * 50 + "\n") * n,
         lambda n: "machine h\r\n" + "x\r\n" * n,
+        lambda n: 'x = ("machine h\\n"' + '\n  "login u\\n"' * n + ")",
+        lambda n: 'x = "machine h\\n" +' + '\n  "login u\\n" +' * n + ' "password v"',
+        lambda n: 'machine h "' + " +" * n,
+        lambda n: "machine h " + ('"' + " " * 20 + "x ") * n,
+        lambda n: "machine h\n" + ' "login u' * n,
+        lambda n: 'machine h "' + '" "' * n,
     ],
     ids=[
         "names",
@@ -453,6 +460,12 @@ def _best_cpu(work, repeats: int = 3) -> float:
         "heads-ahead",
         "long-line-regions",
         "crlf-regions",
+        "adjacent-literals",
+        "plus-literals",
+        "unclosed-joins",
+        "join-blank-runs",
+        "opening-quotes",
+        "quote-runs",
     ],
 )
 def test_netrc_redaction_scales_linearly(shape):
