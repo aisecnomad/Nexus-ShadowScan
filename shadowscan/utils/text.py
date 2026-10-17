@@ -273,17 +273,49 @@ def read_text(
             raise ValueError("file exceeds max_file_size")
         return _decode_text(raw, path.name, analyzable_name, notes)
     except (OSError, ValueError) as exc:
-        if errors is not None:
-            # Do not embed raw file contents or exception messages in reports.
-            if isinstance(exc, NotRegularFileError):
-                errors.append("not a regular file")
-            elif isinstance(exc, UnicodeError):
-                errors.append(BINARY_CONTENT_ERROR)
-            elif isinstance(exc, ValueError):
-                errors.append(str(exc))
-            else:
-                errors.append("file could not be read")
+        _read_failure(exc, errors)
         return None
+
+
+def _read_failure(exc: OSError | ValueError, errors: list[str] | None) -> None:
+    """Record why a bounded read failed, without raw file contents or exception messages."""
+    if errors is None:
+        return
+    if isinstance(exc, NotRegularFileError):
+        errors.append("not a regular file")
+    elif isinstance(exc, UnicodeError):
+        errors.append(BINARY_CONTENT_ERROR)
+    elif isinstance(exc, ValueError):
+        errors.append(str(exc))
+    else:
+        errors.append("file could not be read")
+
+
+def read_credential_text(
+    path: PurePath, max_bytes: int, errors: list[str] | None = None, *, dir_fd: int | None = None
+) -> str | None:
+    """A bounded regular file's bytes as Latin-1 text without NUL bytes, for a credential-only read.
+
+    For a binary or undecodable file that ``read_text`` refuses but whose other
+    evidence the caller discounts (a test fixture): credentials are ASCII, so
+    every key written in the file survives (UTF-16 text only loses its NUL
+    halves), and no decoding can fail. The file is opened as ``read_text``
+    opens it, confined and without following links; a failure is recorded in
+    ``errors`` as ``read_text`` records it.
+    """
+    try:
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        with open_confined_file(path, label="file", dir_fd=dir_fd) as (fh, info):
+            if info.st_size > max_bytes:
+                raise ValueError("file exceeds max_file_size")
+            raw = fh.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise ValueError("file exceeds max_file_size")
+    except (OSError, ValueError) as exc:
+        _read_failure(exc, errors)
+        return None
+    return raw.replace(b"\x00", b"").decode("latin-1")
 
 
 # Kernel names of Python kernels: ipykernel's (python3), xeus-python's and nb_conda_kernels'.

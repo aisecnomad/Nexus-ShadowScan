@@ -322,9 +322,11 @@ from shadowscan.utils.safe_yaml import (
     strict_bounded_safe_load,
 )
 from shadowscan.utils.text import (
+    BINARY_CONTENT_ERROR,
     line_counter,
     notebook_to_source,
     parse_timestamp,
+    read_credential_text,
     read_text,
     redact,
     truncate,
@@ -738,6 +740,26 @@ def _document_declares_mcp(document: dict[str, Any], depth: int = 0) -> bool:
     return False
 
 
+_WORKFLOW_FILE = re.compile(r"(?:^|/)\.github/workflows/[^/]+\.ya?ml$")
+
+
+def _yaml_declares_mcp(text: str) -> bool | None:
+    """Whether a YAML file's structure configures MCP servers; None when it cannot be read.
+
+    The text search for MCP keys also finds them inside string values: a
+    workflow step that writes an MCP configuration with a heredoc, a template
+    or a transcript. Read with the configuration loader, which accepts
+    non-string keys (a GitHub workflow's ``on:``), the structure decides. A
+    file this loader cannot read is left to the MCP parser, so its defect or
+    limit still marks coverage incomplete.
+    """
+    try:
+        data = strict_bounded_safe_load(text, require_string_keys=False)
+    except (ValueError, RecursionError, yaml.YAMLError):
+        return None
+    return isinstance(data, dict) and _document_declares_mcp(data)
+
+
 # Documentation placeholders are informational: enough to be listed, never
 # enough to establish a technology or raise risk.
 EXAMPLE_CREDENTIAL_WEIGHT = 0.1
@@ -833,6 +855,16 @@ class _ScanState:
             | set(self.workflow_files)
             | set(self.infra_files)
         )
+
+
+@dataclass(frozen=True)
+class _BinaryTestFixture:
+    """A binary or undecodable file in discounted test code, read for credentials only.
+
+    ``on_disk`` is its name below the open scan root, as ``_read_source`` read it.
+    """
+
+    on_disk: PurePosixPath
 
 
 @dataclass
@@ -2543,6 +2575,10 @@ class FilesystemConnector(BaseConnector):
             return
         named = by_name or self._named_by_signature(rel, file_matches)
         loaded = self._read_source(rel, path, scan.root_fd, scan.base, named=named)
+        if isinstance(loaded, _BinaryTestFixture):
+            _note_unread_settings(proj, rel)
+            self._scan_binary_test_fixture(scan, proj, proj_root, rel, path, loaded, file_matches)
+            return
         if loaded is None:
             _note_unread_settings(proj, rel)
             return
@@ -2645,9 +2681,71 @@ class FilesystemConnector(BaseConnector):
                 # emit read from it afterwards is only cut from the redacted lines.
                 self._redacted_lines(file)
 
+    def _discounted_test_gap(self, rel: str) -> bool:
+        """Whether a coverage gap in ``rel`` is in test code whose evidence the scan discounts.
+
+        With ``include_tests`` off, test and fixture code establishes no agent at
+        full weight, and deliberately malformed fixtures are ordinary there:
+        syntax-highlighting samples, binary attachments, invalid manifests. A gap
+        in such a file is a warning that leaves the scan complete, as an oversize
+        test fixture or test code that does not parse already is. Credentials are
+        never discounted: a fixture that cannot be decoded is still read for them
+        (``_scan_binary_test_fixture``). ``strict_coverage`` keeps every gap.
+        """
+        return not self.include_tests and not self.strict_coverage and _is_test_path(rel)
+
+    def _discounted_gap(self, rel: str, message: str) -> None:
+        """Record ``message`` about ``rel`` as a gap, or as a warning in discounted test code."""
+        if self._discounted_test_gap(rel):
+            self.ctx.warn(
+                f"{message}; test code is discounted evidence (include_tests is false)", incomplete=False
+            )
+        else:
+            self.ctx.error(message)
+
+    def _scan_binary_test_fixture(
+        self,
+        scan: _ScanState,
+        proj: _Project,
+        proj_root: str,
+        rel: str,
+        path: Path,
+        fixture: _BinaryTestFixture,
+        file_matches: list[Match],
+    ) -> None:
+        """Read a binary or undecodable test fixture for credentials, the one evidence not discounted.
+
+        Its bytes are read as Latin-1 without NUL bytes (``read_credential_text``),
+        so a key written in it is still found; nothing else is analyzed, and no
+        excerpt is cut from it. A fixture that cannot be read at all stays a gap.
+        """
+        message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
+        if not self.scan_secrets or self.triage:
+            self._discounted_gap(rel, f"{message}; not analyzed")
+            return
+        errors: list[str] = []
+        text = read_credential_text(fixture.on_disk, self._size_limit(path.name), errors, dir_fd=scan.root_fd)
+        if text is None:
+            for issue in errors:
+                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+            return
+        file = _SourceFile(
+            rel=rel,
+            path=path,
+            proj_root=proj_root,
+            proj=proj,
+            text=text,
+            lang=None,
+            file_matches=file_matches,
+        )
+        # No structured context: none of a binary file's excerpts is emitted.
+        file.excerpts = _ExcerptSource(rel, path, text, None)
+        self._detect_secrets(scan, file)
+        self._discounted_gap(rel, f"{message}; read for credentials only")
+
     def _read_source(
         self, rel: str, path: Path, root_fd: int, base: Path | None = None, *, named: bool = True
-    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | None:
+    ) -> tuple[str, str | None, _CellSpans, _CellSpans] | _BinaryTestFixture | None:
         """Read a file for analysis: its text and, for a notebook, the raw document and cell spans.
 
         A notebook's last element lists the cells declared another language (``_notebook_source``).
@@ -2658,7 +2756,9 @@ class FilesystemConnector(BaseConnector):
         in it. None means nothing is analyzed; the recorded diagnostics say why.
         ``named`` is False when only a directory-wide signature glob selects the
         file, so a recognised binary artifact there (an image beside coding-agent
-        rules) is skipped without a coverage gap.
+        rules) is skipped without a coverage gap. A ``_BinaryTestFixture`` means
+        the file is binary or undecodable and in discounted test code: the caller
+        reads it for credentials only (``_scan_binary_test_fixture``).
         """
         read_errors: list[str] = []
         read_notes: list[str] = []
@@ -2673,19 +2773,22 @@ class FilesystemConnector(BaseConnector):
         )
         for note in read_notes:
             self._note_file(rel, note)
+        binary_fixture = False
         for issue in read_errors:
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
                 self.ctx.warn(
                     f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
                     incomplete=True,
                 )
+            elif issue == BINARY_CONTENT_ERROR and self._discounted_test_gap(rel):
+                binary_fixture = True
             else:
                 # Undecodable analyzable files stay fail-closed: editors and
                 # runtimes tolerate bytes the scanner cannot decode, so a NUL
                 # in a CLAUDE.md could otherwise hide content from the scan.
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
         if text is None:
-            return None
+            return _BinaryTestFixture(on_disk) if binary_fixture else None
         if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
             # A checkout made without git-lfs holds a pointer in place of the
             # file: its content was never read, whatever the name promises.
@@ -2800,8 +2903,11 @@ class FilesystemConnector(BaseConnector):
         # the credential-redaction context could not be established, and
         # parsers diverge on such content (duplicate keys, deep nesting), so
         # treating it as a benign input defect would open an evasion channel.
-        self.ctx.error(
-            f"code.filesystem: {rel}: structured {stage} incomplete ({type(exc).__name__}); excerpts withheld"
+        # Only discounted test code is exempt (see _discounted_test_gap): its
+        # credentials are still detected and its excerpts are still withheld.
+        failure = type(exc).__name__
+        self._discounted_gap(
+            rel, f"code.filesystem: {rel}: structured {stage} incomplete ({failure}); excerpts withheld"
         )
 
     def _input_defect(self, rel: str, issue: str) -> None:
@@ -2809,13 +2915,18 @@ class FilesystemConnector(BaseConnector):
 
         Templates and fixtures may be intentionally malformed, but the
         scanner cannot establish their content as fully analyzed. Preserve
-        valid neighboring findings and always mark coverage incomplete.
+        valid neighboring findings and mark coverage incomplete, except in
+        discounted test code (see ``_discounted_test_gap``).
         ``strict_coverage`` promotes the diagnostic from warning to error;
         both forms fail closed.
         """
         message = f"code.filesystem: {rel}: input defect: {issue}"
         if self.strict_coverage:
             self.ctx.error(message)
+        elif self._discounted_test_gap(rel):
+            self.ctx.warn(
+                f"{message}; test code is discounted evidence (include_tests is false)", incomplete=False
+            )
         else:
             self.ctx.warn(message, incomplete=True)
 
@@ -2835,13 +2946,14 @@ class FilesystemConnector(BaseConnector):
 
         ``defect`` routes recognized input failures through
         :meth:`_input_defect` for a distinct diagnostic. Every issue marks
-        coverage incomplete, regardless of diagnostic severity.
+        coverage incomplete, regardless of diagnostic severity, except in
+        discounted test code (see ``_discounted_test_gap``).
         """
         for issue in issues:
             if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):
                 self._input_defect(rel, issue)
             else:
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                self._discounted_gap(rel, f"code.filesystem: {rel}: {issue}")
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
@@ -3265,7 +3377,7 @@ class FilesystemConnector(BaseConnector):
                 )
                 ambiguous = ambiguous or nul_ambiguous
         if ambiguous:
-            self.ctx.error(f"code.filesystem: {file.rel}: incomplete source lexical analysis")
+            self._discounted_gap(file.rel, f"code.filesystem: {file.rel}: incomplete source lexical analysis")
         literals = file.literals
         imports = self.index.match_imports(content_text, lang, ignore_spans=ignored, scan=literals)
         for m in imports:
@@ -4087,8 +4199,19 @@ class FilesystemConnector(BaseConnector):
             # its truncation, so a string search of a prefix could miss the keys.
             if isinstance(document, dict):
                 return _document_declares_mcp(document)
-            # No parse is held for YAML here. Substring and anchored searches are linear,
-            # so read the whole (size-bounded) text rather than a prefix a server can be pushed past.
+            if document is not None:
+                # A parsed array or scalar configures no client: the keys the text
+                # search would find are in its values (a transcript listing "mcp_servers").
+                return False
+            if rel.endswith((".yaml", ".yml")) and not _WORKFLOW_FILE.search(rel):
+                # Workflows keep the text search: their servers are JSON strings in step
+                # inputs, which _embedded_workflow_mcp reads.
+                declared = _yaml_declares_mcp(text)
+                if declared is not None:
+                    return declared
+            # No parse is held here (YAML, or a document that did not parse). Substring and
+            # anchored searches are linear, so read the whole (size-bounded) text rather than
+            # a prefix a server can be pushed past.
             return (
                 '"mcpServers"' in text
                 or '"mcp_servers"' in text
