@@ -383,8 +383,27 @@ def _best_cpu(work, repeats: int = 3) -> float:
         lambda n: "machine h password\\n" + "{{a\\npassword\\n}}" * n,
         lambda n: "machine h\n" + "# machine h\n" * n,
         lambda n: "machine a # " + "machine k # " * n + "\nx",
+        lambda n: 'x = "MACHINE\\n' + "LOGIN\\nu\\n" * n + '"',
+        lambda n: '"machine`n' + "login`nu`n" * n + '"',
+        lambda n: "machine h " + 'login "machine h login u" ' * n,
+        lambda n: "machine a login u" + " # machine k password q\nlogin u" * n,
+        lambda n: "machine h " + "password password " * n,
     ],
-    ids=["names", "machines", "mixed", "ended-entries", "quotes", "references", "comments", "comment-line"],
+    ids=[
+        "names",
+        "machines",
+        "mixed",
+        "ended-entries",
+        "quotes",
+        "references",
+        "comments",
+        "comment-line",
+        "any-case",
+        "powershell",
+        "quoted-names",
+        "inner-comments",
+        "keyword-values",
+    ],
 )
 def test_netrc_redaction_scales_linearly(shape):
     # Four times the input must not cost more than ten times the time (a

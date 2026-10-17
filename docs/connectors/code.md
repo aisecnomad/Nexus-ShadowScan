@@ -603,9 +603,13 @@ as `aws_secret_access_key = …`); a netrc password or a registry token that no
 rule recognizes is not reported, so the findings do not inventory the file.
 With `scan_secrets: false` or `--triage` these files are not opened.
 Wherever their syntax appears in report text (a Dockerfile that writes a
-`.netrc`, a CI script), the passwords, accounts and macros of netrc entries
-and Yarn 1's `name value` registry credentials are withheld (see
-[what is redacted](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-is-redacted)).
+`.netrc`, a CI script, a PowerShell `Set-Content` with `` `n `` escapes), the
+passwords, accounts and macros of netrc entries, with keywords in any case
+as curl reads them, and Yarn 1's `name value` registry credentials are
+withheld (see
+[what is redacted](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-is-redacted),
+and [what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain)
+for the netrc forms it does not read).
 A file whose name selects no analysis (`*.jsonl`, `*.bak`,
 `*.j2`, binary and media suffixes) is never opened, so it is neither scanned
 for credentials nor counted as a coverage gap; name such files in a file-name

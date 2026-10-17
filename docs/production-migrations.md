@@ -131,8 +131,10 @@ across this change reports findings as resolved or new that are neither.
   the hosts its entries name, so a comparison shows a framework-usage finding
   that only a netrc entry established as resolved. Report text withholds
   netrc passwords, accounts and macros and Yarn 1 registry credentials
-  wherever they appear, so excerpts that showed them change; finding ids do
-  not.
+  wherever their syntax appears (netrc keywords in any case, `` `n ``
+  escapes, `default` anywhere on a line; SECURITY.md lists the forms that
+  can remain), so excerpts that showed them change, and so does a prose word
+  after `default password`; finding ids do not.
 - **Realtime agents.** A project that builds OpenAI Agents SDK realtime
   agents (`RealtimeAgent`, `RealtimeSession`, `RealtimeRunner`) is now an
   `agent` finding with its tool and handoff capabilities and a higher

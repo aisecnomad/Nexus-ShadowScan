@@ -63,6 +63,32 @@ EMBEDDED_FORMS = [
     f"printf 'machine h\\nlogin u\\npassword {SECRET}\\n' > ~/.netrc",
     f'{{"netrc": "machine a login u password {OTHER}\\nmachine b login v password {SECRET}"}}',
 ]
+# Forms that curl, PowerShell and other netrc readers accept, which the rule
+# first missed: keywords in any case, PowerShell '`n' escapes, a 'default'
+# entry that is not first on its line, vertical-tab and form-feed blanks, a
+# login named 'account' or 'password', a quoted name followed by an escape,
+# a comment between escaped lines or in the middle of an entry, a name whose
+# quote never closes, and a macro whose name line holds more.
+CLIENT_FORMS = [
+    f"MACHINE api.openai.com LOGIN deploy PASSWORD {SECRET}\n",
+    f"machine h login u PASSWORD {SECRET}\n",
+    f'RUN echo "MACHINE api.openai.com LOGIN x PASSWORD {SECRET}" > /root/.netrc',
+    f"printf 'MACHINE api.openai.com LOGIN x PASSWORD {SECRET}\\n' > ~/.netrc",
+    f"echo machine api.openai.com login x Password {SECRET} >> ~/.netrc",
+    f"echo default login x password {SECRET} >> ~/.netrc # api.openai.com",
+    f'Set-Content $HOME\\_netrc "machine api.openai.com`nlogin u`npassword {SECRET}"',
+    f"echo 'machine api.openai.com login account password {SECRET}' > ~/.netrc",
+    f"machine h login password password {SECRET}\n",
+    f"machine h\vlogin u\vpassword\v{SECRET}\n",
+    f"machine h\flogin u\fpassword {SECRET}\n",
+    f'printf "machine h\\vlogin u\\fpassword {SECRET}" > ~/.netrc',
+    f'x = "machine h\\nlogin \\"u\\"\\npassword {SECRET}"',
+    f'x = "machine h\\n# the deploy user\\npassword {SECRET}"',
+    f"machine a login u\n# machine b login v password {SECRET}\npassword {OTHER}\n",
+    f'machine h login "u password {SECRET}\n',
+    f"MACDEF init\nuser deploy {SECRET}\n\n",
+    f"machine h login u password {OTHER} macdef init now\nuser deploy {SECRET}\n\n",
+]
 # A macro's lines are withheld up to the empty line that ends it.
 MACRO_FORMS = [
     f"machine h login u password {OTHER}\nmacdef init\ncd /pub\nuser deploy {SECRET}\n\n",
@@ -92,7 +118,7 @@ OWN_SYNTAX_FORMS = [
 
 
 @pytest.mark.parametrize(
-    "source", NETRC_FORMS + EMBEDDED_FORMS + MACRO_FORMS + YARNRC_FORMS + OWN_SYNTAX_FORMS
+    "source", NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + MACRO_FORMS + YARNRC_FORMS + OWN_SYNTAX_FORMS
 )
 def test_a_credential_file_value_is_withheld_in_its_own_syntax(source):
     safe = sanitize_text(source)
@@ -114,7 +140,7 @@ def _only_adds_markers(before: str, after: str) -> bool:
     return after.endswith(REDACTED) or before.endswith(after.split(REDACTED)[-1])
 
 
-@pytest.mark.parametrize("source", NETRC_FORMS + EMBEDDED_FORMS + MACRO_FORMS + YARNRC_FORMS)
+@pytest.mark.parametrize("source", NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + MACRO_FORMS + YARNRC_FORMS)
 def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(source):
     # Every form reached them intact: no earlier rule withheld its secret.
     # They run last and only add markers, so they hide no name another rule reads.
@@ -143,6 +169,20 @@ def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(so
             f"macdef init\n{REDACTED}\n{REDACTED}\n\nmachine h\n",
         ),
         ('"//registry.yarnpkg.com/:_authToken" "VALUE"', f'"//registry.yarnpkg.com/:_authToken" {REDACTED}'),
+        (
+            "MACHINE api.openai.com LOGIN deploy PASSWORD VALUE\n",
+            f"MACHINE api.openai.com LOGIN deploy PASSWORD {REDACTED}\n",
+        ),
+        (
+            'Set-Content $HOME\\_netrc "machine h`nlogin u`npassword VALUE"',
+            f'Set-Content $HOME\\_netrc "machine h`nlogin u`npassword {REDACTED}"',
+        ),
+        # Clients read the login 'account'; read as a missing login, 'password' is its value.
+        ("machine h login account password VALUE\n", f"machine h login account {REDACTED} {REDACTED}\n"),
+        (
+            "echo default login x password VALUE >> ~/.netrc",
+            f"echo default login x password {REDACTED} >> ~/.netrc",
+        ),
     ],
 )
 def test_names_hosts_and_layout_stay_visible(source, expected):
@@ -166,8 +206,9 @@ def test_a_reference_in_place_of_the_value_stays_visible(source):
 @pytest.mark.parametrize(
     "source",
     [
-        "Change the default password before deploying",
+        "Change the default password.",
         "The default login is admin",
+        "MACHINE LEARNING needs a LOGIN",
         "machine learning models need a login and password",
         "machine = Machine()\nmachine.login(user)",
         "my machine has no login password set",
@@ -177,3 +218,18 @@ def test_a_reference_in_place_of_the_value_stays_visible(source):
 )
 def test_prose_and_code_that_merely_use_the_words_stay(source):
     assert sanitize_text(source) == source
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        # 'default' starts an entry anywhere a word starts, as 'machine' does, and
+        # keywords are read in any case, so a prose word after 'default password'
+        # is withheld rather than a password shown ('echo default login x
+        # password v >> ~/.netrc').
+        ("Change the default password before deploying", f"Change the default password {REDACTED} deploying"),
+        ("Default Password Policy", f"Default Password {REDACTED}"),
+    ],
+)
+def test_a_prose_word_after_a_netrc_keyword_is_withheld(source, expected):
+    assert sanitize_text(source) == expected

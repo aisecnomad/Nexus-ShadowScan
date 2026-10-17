@@ -407,6 +407,26 @@ public repositories with the tool and read the committed benchmark metrics.
   more than 64 characters glued after it past an escape is withheld without
   being read; `tests/unit/test_redaction_performance.py` times these shapes
   at two sizes.
+- Redaction: the netrc pass reads the forms real clients accept that it first
+  missed, each of which put the password into every report format from a
+  Dockerfile, script or notebook that writes one: keywords in any case
+  (`MACHINE h LOGIN u PASSWORD v`, which curl reads), PowerShell's `` `n ``
+  escapes (`Set-Content $HOME\_netrc "machine h`nlogin u`npassword v"`),
+  `default` anywhere a word starts (`echo default login x password v >>
+  ~/.netrc`), vertical-tab and form-feed blanks and `\v`/`\f` escapes, and a
+  login named `account` or `password` (`login account password v`, whose
+  snippet read `login account [REDACTED] v`): a value that is itself a
+  keyword is withheld and read again as that keyword. A quoted name now ends
+  at its closing quote and an unclosed one at the next blank, so neither
+  hides a token after it (`login "u"\npassword v` in a JSON string); a
+  comment after a `\n` escape runs to the next one; an entry in a comment
+  between two tokens is read on its own, as one after an entry's last token
+  was; a quoted name is read on its own as well; a macro's name may be a
+  keyword (`MACDEF init`); and the rest of a macro's name line is withheld
+  along with its body. Failing closed, a prose word after `default password`
+  is withheld (`Change the default password [REDACTED] deploying`). The
+  connector guide, SECURITY.md and the migration note no longer claim more
+  than this, and SECURITY.md lists the commented-out token that remains.
 - `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
   `GetAgent` and `ListAgents` return no tags and the collector never called
   `ListTagsForResource`, so no live scan could attribute a Bedrock agent to

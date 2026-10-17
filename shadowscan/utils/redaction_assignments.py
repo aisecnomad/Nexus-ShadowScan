@@ -697,92 +697,141 @@ def _redact_connection_passwords(text: str) -> str:
 # 'machine <host>' or 'default', then tokens separated by any blanks and line
 # breaks, all on one line or one per line: 'login <name>' ('user' too),
 # 'password <string>' ('passwd' too) and 'account <string>', and the 'port'
-# and 'protocol' that the netrc credential helper of Git reads. The value after
-# 'password', 'passwd' or 'account' is a secret whatever it looks like, so it
-# is withheld unless it is only a reference ('password $NETRC_TOKEN'); a name
-# is never read as one of those words, so a missing login cannot hide the
-# password after it. A quoted value (curl) runs to its closing quote, or to
-# the end of its line when it never closes. JSON and shell '\n', '\r' and '\t'
-# escapes separate tokens as well ('"machine h\nlogin u\npassword v"'), but a
-# value is withheld up to the next blank all the same, so a backslash in it
-# never shows its tail. 'macdef <name>' starts a macro, whose lines up to the
-# empty line that ends it are withheld whole (see ``_netrc_macro``). An entry
-# starts at 'machine' anywhere a word starts, and at 'default' or 'macdef'
-# only first on a line or after a quote, and 'macdef' only when its name ends
-# that line: those are also ordinary words.
-_NETRC_BREAK = r"(?:[ \t\r\n]|\\[nrt])"
-_NETRC_END = r"(?=[ \t\r\n]|\\[nrt]|\Z)"
-_NETRC_WORDS = r"(?:login|user|port|protocol|machine|macdef|default|password|passwd|account)"
-# A value: quoted ('"v"', '\"v\"' inside a JSON string) up to the next blank, or
-# unquoted up to the next blank or '\n', '\r' or '\t' escape, where the next
-# token can start.
-_NETRC_VALUE = (
-    r"\"(?:[^\"\\\r\n]|\\.)*+(?:\"\S*+|[^\r\n]*+)"
-    r"|\\\"(?:[^\\\r\n]|\\(?!\"))*+(?:\\\"\S*+|[^\r\n]*+)"
-    r"|(?:[^\s\\]|\\(?![nrt]))++"
+# and 'protocol' that the netrc credential helper of Git reads. curl reads
+# the keywords in any case ('MACHINE h LOGIN u PASSWORD v'), and so does this
+# rule. The value after 'password', 'passwd' or 'account' is a secret
+# whatever it looks like, so it is withheld unless it is only a reference
+# ('password $NETRC_TOKEN'); a name is never read as one of those words, so
+# a missing login cannot hide the password after it, and a value that is one
+# ('login account password v', where clients read the login 'account') is
+# withheld and read again as the token it names. A quoted value (curl) runs
+# to its closing quote, or to the end of its line when it never closes.
+# Blanks include the vertical tab and form feed, and JSON and shell '\n',
+# '\r', '\t', '\v' and '\f' escapes and PowerShell's '`n' ones separate
+# tokens as well ('"machine h\nlogin u\npassword v"'), but a value is
+# withheld up to the next blank all the same, so a backslash in it never
+# shows its tail. A '#' after a blank starts a comment up to the end of its
+# line, and one after a line-break escape up to the next such escape; a
+# comment, like a quoted name, is also read on its own, so an entry
+# commented out in it is withheld. 'macdef <name>' starts a macro, whose
+# lines up to the empty line that ends it, and the rest of its name's line,
+# are withheld whole (see ``_netrc_macro``). An entry starts at 'machine' or
+# 'default' anywhere a word starts, and at 'macdef' only first on a line or
+# after a quote, when its name ends that line: that is also an ordinary
+# word. 'default' is one as well ('the default password is ...'), and the
+# word after it is withheld then: a prose word is withheld rather than a
+# password shown.
+_NETRC_SPACE = r"[ \t\r\n\v\f]"
+_NETRC_ESCAPE = r"[\\`][nrtvf]"
+_NETRC_BREAK = rf"(?:{_NETRC_SPACE}|{_NETRC_ESCAPE})"
+_NETRC_END = rf"(?={_NETRC_BREAK}|\Z)"
+_NETRC_WORDS = r"(?ai:login|user|port|protocol|machine|macdef|default|password|passwd|account)"
+_NETRC_WORD = re.compile(_NETRC_WORDS)
+# The characters of an unquoted value, up to the next blank or escape.
+_NETRC_LEAD = r"(?:[^\s\\`]|[\\`](?![nrtvf]))"
+# A value: quoted ('"v"', '\"v\"' inside a JSON string), with what is glued to
+# its closing quote, or unquoted, up to the next blank or escape, where the
+# next token can start. A secret whose quote never closes runs to the end of
+# its line; a name, to the next blank, so that it hides no token after it.
+_NETRC_QUOTED = (
+    rf"\"(?:[^\"\\\r\n]|\\.)*+(?:\"{_NETRC_LEAD}*+{{unclosed}})"
+    rf"|\\\"(?:[^\\\r\n]|\\(?!\"))*+(?:\\\"{_NETRC_LEAD}*+{{unclosed}})"
 )
+_NETRC_VALUE = _NETRC_QUOTED.format(unclosed=r"|[^\r\n]*+") + rf"|{_NETRC_LEAD}++"
 # The optional name after 'login', 'machine' and the like, never one of the words.
-_NETRC_NAME = rf"(?:{_NETRC_BREAK}++(?!{_NETRC_WORDS}{_NETRC_END})(?:{_NETRC_VALUE}))?"
+_NETRC_NAME = (
+    rf"(?:{_NETRC_BREAK}++(?!{_NETRC_WORDS}{_NETRC_END})"
+    rf"(?P<name>{_NETRC_QUOTED.format(unclosed='')}|{_NETRC_LEAD}++))?"
+)
+# A macro's name, which may be one of the words.
+_NETRC_MACRO_NAME = rf"(?:{_NETRC_QUOTED.format(unclosed='')}|{_NETRC_LEAD}++)"
 _NETRC_HEAD = re.compile(
-    rf"(?:(?<![^\s\"'`(=])|(?<=\\[nrt]))(?P<machine>machine){_NETRC_BREAK}"
-    rf"|(?:\A|(?<=[\r\n\"'`])|(?<=\\[nrt]))[ \t]*+(?P<word>default{_NETRC_END}"
-    r"|macdef(?=[ \t]++(?:[^\s\\]|\\(?![nrt]))++(?:[ \t]*+(?:\r?\n|\Z)|\\[nrt])))"
+    rf"(?:(?<![^\s\"'`(=])|(?<={_NETRC_ESCAPE}))(?P<machine>(?ai:machine){_NETRC_BREAK}|(?ai:default){_NETRC_END})"
+    rf"|(?:\A|(?<=[\r\n\"'`])|(?<={_NETRC_ESCAPE}))[ \t\v\f]*+(?P<word>(?ai:macdef)"
+    rf"(?=[ \t\v\f]++(?:[^\s\\]|\\(?![nrtvf]))++(?:[ \t\v\f]*+(?:\r?\n|\Z)|{_NETRC_ESCAPE})))"
 )
-# Before a token: blanks, '\n', '\r' and '\t' escapes, and a '#' comment after a blank.
-_NETRC_BLANKS = re.compile(r"[ \t\r\n]++")
-_NETRC_ESCAPES = ("\\n", "\\r", "\\t")
+# Before a token: blanks, escapes, and a '#' comment after a blank or a line-break escape.
+_NETRC_BLANKS = re.compile(r"[ \t\r\n\v\f]++")
+_NETRC_ESCAPES = tuple(escape + letter for escape in "\\`" for letter in "nrtvf")
+_NETRC_LINE_BREAKS = ("\\n", "\\r", "`n", "`r")
+_NETRC_QUOTES = ('"', '\\"')
 _NETRC_TOKEN = re.compile(
-    rf"(?P<secret>password|passwd|account){_NETRC_BREAK}++(?P<value>{_NETRC_VALUE})"
-    rf"|(?P<keyword>login|user|port|protocol|machine|macdef){_NETRC_END}{_NETRC_NAME}"
-    rf"|default{_NETRC_END}"
+    rf"(?P<secret>(?ai:password|passwd|account)){_NETRC_BREAK}++(?P<value>{_NETRC_VALUE})"
+    rf"|(?P<keyword>(?ai:login|user|port|protocol|machine)){_NETRC_END}{_NETRC_NAME}"
+    rf"|(?P<macdef>(?ai:macdef)){_NETRC_END}(?:{_NETRC_BREAK}++{_NETRC_MACRO_NAME})?"
+    rf"|(?ai:default){_NETRC_END}"
 )
-# The rest of a run of non-blank characters, or of a line.
+# The rest of a run of non-blank characters, and of a comment: after a blank, its
+# line; after a line-break escape, up to the next one ('"machine h\n# c\npassword v"').
 _NETRC_RUN = re.compile(r"\S*+")
-_NETRC_LINE = re.compile(r"[^\r\n]*+")
+_NETRC_LINES = (re.compile(r"[^\r\n]*+"), re.compile(r"(?:[^\r\n\\`]|[\\`](?![nr]))*+"))
 # How much of its run past an escape a value may have and still be read as a
 # reference ('password $NETRC_TOKEN\n'); a value with more is withheld.
 _NETRC_TAIL = 64
+_NETRC_HINTS = ("machine", "default", "macdef")
 
 
 def _redact_netrc_entries(text: str) -> str:
     """Withhold the passwords, accounts and macros of netrc entries (see ``_NETRC_TOKEN``)."""
-    if "machine" not in text and "default" not in text and "macdef" not in text:
-        return text
-    return _withhold_spans(text, _NetrcReader(text).read())
+    if not any(hint in text for hint in _NETRC_HINTS):
+        lowered = text.lower()  # the keywords in any case
+        if not any(hint in lowered for hint in _NETRC_HINTS):
+            return text
+    spans: list[tuple[int, int]] = []
+    ranges = [(0, len(text))]
+    while ranges:
+        start, end = ranges.pop()
+        _NetrcReader(text, end, spans, ranges).read(start)
+    return _withhold_spans(text, _union(spans))
+
+
+def _union(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The spans that ``spans`` cover, overlapping ones merged."""
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start < merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 class _NetrcReader:
-    """Collect the spans of the secrets of a text's netrc entries.
+    """Collect in ``spans`` the secrets of the netrc entries that start in ``text[start:end]``.
 
     Each character is read a bounded number of times, so a text is read in
     linear time. An entry's tokens are read once from its head, and a head
     inside an entry already read is skipped. Where an entry ends at a token
     the format does not define, the next head is searched for from its last
-    token, so an entry commented out after it is read; the blanks and
-    comments between two tokens are read once whichever entry reaches them
-    (``gaps``), a token that is not one is read once (``dead``), and so are
-    the run of a value, which the values in it share, and the line of a
-    comment.
+    token, so an entry commented out after it is read; a comment between two
+    tokens of an entry is queued in ``comments`` and read on its own, up to
+    its end. The blanks and comments between two tokens are read once
+    whichever entry reaches them (``gaps``), a token that is not one is read
+    once (``dead``), and so are the run of a value, which the values in it
+    share, and the line of a comment.
     """
 
-    def __init__(self, text: str) -> None:
+    def __init__(
+        self, text: str, end: int, spans: list[tuple[int, int]], comments: list[tuple[int, int]]
+    ) -> None:
         self.text = text
-        self.spans: list[tuple[int, int]] = []
+        self.end = end
+        self.spans = spans
+        self.comments = comments
         self.withheld = 0  # where the last value withheld ends
         self.gaps: dict[int, int] = {}  # where a gap read from each of its pieces ends
         self.dead: set[int] = set()  # where no token starts after a gap
         self.run = (-1, -1)  # the run read last, from the end of its first value
         self.quotes: dict[str, int] = {}  # the last of each quote in that run
-        self.line = (-1, -1)  # the line read last, from its first comment
+        self.lines = [(-1, -1), (-1, -1)]  # the comment of each kind read last, from its first piece
 
-    def read(self) -> list[tuple[int, int]]:
-        position = 0
-        while (head := _NETRC_HEAD.search(self.text, position)) is not None:
-            start = head.start("machine") if head.group("machine") else head.start("word")
+    def read(self, start: int) -> None:
+        position = start
+        while (head := _NETRC_HEAD.search(self.text, position, self.end)) is not None:
+            entry = head.start("machine") if head.group("machine") else head.start("word")
             before = self.text[head.start() - 1] if head.start() else ""
             quote = before if before in "\"'`" else ""
-            position = max(self._entry(start, quote), head.end())
-        return self.spans
+            position = max(self._entry(entry, quote), head.end())
 
     def _entry(self, start: int, quote: str) -> int:
         """Collect the secrets of the netrc tokens read from ``start``; return where they end.
@@ -793,53 +842,71 @@ class _NetrcReader:
         """
         position = start
         while True:
-            token = self._token(self._gap(position))
+            gap, comments = self._gap(position)
+            token = self._token(gap)
             if token is None:
                 return position
+            self.comments.extend(comments)
             if token.group("secret"):
-                self._secret(token.start("value"), token.end("value"), quote)
-                position = token.end()
-            elif token.group("keyword") == "macdef":
-                position = _netrc_macro(self.text, token.end(), self.spans)
+                value = token.start("value")
+                self._secret(value, token.end("value"), quote)
+                # A keyword as the value is a name to clients ('login account password v'):
+                # the value is withheld and read again as that keyword.
+                keyword = _NETRC_WORD.fullmatch(self.text, value, token.end("value"))
+                position = value if keyword is not None else token.end()
+            elif token.group("macdef"):
+                position = _netrc_macro(self.text, token.end(), self.end, self.spans)
             else:
+                if self.text.startswith(_NETRC_QUOTES, token.start("name")):
+                    # A quoted name can hold what reads as an entry: it is read on its own too.
+                    self.comments.append((token.start("name") + 1, token.end("name")))
                 position = token.end()
 
-    def _gap(self, position: int) -> int:
-        """Where the blanks, escapes and comments from ``position`` end."""
-        text = self.text
-        pieces = []
-        while (known := self.gaps.get(position)) is None:
-            blanks = _NETRC_BLANKS.match(text, position)
-            if blanks is not None:
-                pieces.append(position)
-                position = blanks.end()
-                if text.startswith("#", position):
-                    position = self._line_end(position)
-            elif text.startswith(_NETRC_ESCAPES, position):
-                pieces.append(position)
+    def _gap(self, position: int) -> tuple[int, list[tuple[int, int]]]:
+        """Where the blanks, escapes and comments from ``position`` end, and the comments.
+
+        A gap read again from one of its pieces gives no comments: they were
+        queued when it was first read, if a token followed it.
+        """
+        text, end = self.text, self.end
+        pieces: list[int] = []
+        comments: list[tuple[int, int]] = []
+        known: int | None = None
+        while position < end and (known := self.gaps.get(position)) is None:
+            pieces.append(position)
+            blanks = _NETRC_BLANKS.match(text, position, end)
+            escaped = blanks is None and text.startswith(_NETRC_LINE_BREAKS, position, end)
+            if blanks is not None or escaped:
+                position = blanks.end() if blanks is not None else position + 2
+                if text.startswith("#", position, end):
+                    comment = self._comment_end(position, escaped)
+                    comments.append((position + 1, comment))
+                    position = comment
+            elif text.startswith(_NETRC_ESCAPES, position, end):
                 position += 2
             else:
-                known = position
+                pieces.pop()
                 break
+        stop = known if known is not None else position
         for piece in pieces:
-            self.gaps[piece] = known
-        return known
+            self.gaps[piece] = stop
+        return stop, comments
 
     def _token(self, position: int) -> re.Match[str] | None:
         if position in self.dead:
             return None
-        token = _NETRC_TOKEN.match(self.text, position)
+        token = _NETRC_TOKEN.match(self.text, position, self.end)
         if token is None:
             self.dead.add(position)
         return token
 
-    def _line_end(self, position: int) -> int:
-        """Where the line of the comment at ``position`` ends, each line read once."""
-        first, last = self.line
+    def _comment_end(self, position: int, escaped: bool) -> int:
+        """Where the comment at ``position`` ends (see ``_NETRC_LINES``), each comment read once."""
+        first, last = self.lines[escaped]
         if not first <= position <= last:
-            line = _NETRC_LINE.match(self.text, position)
-            self.line = (position, line.end() if line is not None else position)
-        return self.line[1]
+            line = _NETRC_LINES[escaped].match(self.text, position, self.end)
+            self.lines[escaped] = (position, line.end() if line is not None else position)
+        return self.lines[escaped][1]
 
     def _secret(self, start: int, end: int, quote: str) -> None:
         """Withhold the value ``text[start:end]`` up to the end of its run, unless it is a reference."""
@@ -857,7 +924,7 @@ class _NetrcReader:
         """Where the run of non-blank characters at ``position`` ends, each run read once."""
         first, last = self.run
         if not first <= position <= last:
-            run = _NETRC_RUN.match(self.text, position)
+            run = _NETRC_RUN.match(self.text, position, self.end)
             self.run = (position, run.end() if run is not None else position)
             self.quotes = {}
         return self.run[1]
@@ -871,31 +938,33 @@ class _NetrcReader:
         return found if found >= end else self.text.rfind(quote, start, end)
 
 
-def _netrc_macro(text: str, start: int, spans: list[tuple[int, int]]) -> int:
+def _netrc_macro(text: str, start: int, end: int, spans: list[tuple[int, int]]) -> int:
     """Withhold the lines of the macro whose name ends at ``start``; return where the macro ends.
 
     Its lines follow the line of its name, up to the first empty line (a
-    line of blanks does not end it). A macro written on the line of its name
-    (in a string with '\\n' escapes) is that line's rest. Line breaks stay,
-    so excerpt lines keep their numbers.
+    line of blanks does not end it) or ``end``, and the rest of that line is
+    withheld as well. A macro written on the line of its name (in a string
+    with '\\n' escapes) is that line's rest. Line breaks stay, so excerpt
+    lines keep their numbers.
     """
-    line_end = text.find("\n", start)
-    end = len(text) if line_end < 0 else line_end
-    rest = text[start:end].rstrip()
+    line_end = text.find("\n", start, end)
+    stop = end if line_end < 0 else line_end
+    rest = text[start:stop].rstrip()
     if rest.strip():
         spans.append((start + len(rest) - len(rest.lstrip()), start + len(rest)))
-        return end
-    position = end + 1
-    while position < len(text):
-        line_end = text.find("\n", position)
-        end = len(text) if line_end < 0 else line_end
-        line = text[position:end]
+        if any(escape in rest for escape in _NETRC_LINE_BREAKS):
+            return stop
+    position = stop + 1
+    while position < end:
+        line_end = text.find("\n", position, end)
+        stop = end if line_end < 0 else line_end
+        line = text[position:stop]
         if not line.rstrip("\r"):
             return position
         if line.strip():
             spans.append((position + len(line) - len(line.lstrip()), position + len(line.rstrip())))
-        position = end + 1
-    return len(text)
+        position = stop + 1
+    return end
 
 
 # Yarn 1's .yarnrc writes a setting as 'name value', either one optionally
