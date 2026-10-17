@@ -31,7 +31,7 @@ audit, validator and secrets gates below in one command.
 - [ ] `make docs` passes (when `docs/`, `mkdocs.yml` or a document the site includes changed)
 - [ ] Every commit carries a `Signed-off-by` trailer (`git commit -s`; see the DCO in `CONTRIBUTING.md`)
 - [ ] No raw credentials, JWTs, or unsanitized configuration in logs or reports
-- [ ] `CHANGELOG.md` updated under Unreleased (if user-facing)
+- [ ] `CHANGELOG.md` has one short bullet under Unreleased, under its theme heading (if user-facing)
 
 ### Required for connector changes
 

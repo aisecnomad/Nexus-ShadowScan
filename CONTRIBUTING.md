@@ -92,7 +92,7 @@ Dependabot and the tests read them from there:
 | `mkdocs.yml` | Documentation site configuration and navigation |
 | `Dockerfile`, `.dockerignore` | The worker image and its build-context allow-list |
 | `agent-card.yaml` | Sample Agent Capability Card used by the offline demo, the quick start and the image |
-| `CHANGELOG.md`, `RELEASE_NOTES.md` | Engineering change log, and the operator summary of what changes on upgrade |
+| `CHANGELOG.md`, `RELEASE_NOTES.md` | Summary of every change by version and theme (the earlier per-change engineering log is kept in [`archive/changelog/`](archive/changelog/README.md)), and the operator summary of what changes on upgrade |
 | `AGENTS.md` | Rules for coding agents working in this repository |
 | `CITATION.cff`, `NOTICE`, `LICENSE`, `CODEOWNERS` | Citation metadata, attribution, licence and review ownership |
 
@@ -257,7 +257,12 @@ repository contains no secrets.
 - Pin GitHub Actions by full commit SHA. Do not leave `persist-credentials`
   enabled on checkouts that do not need to push.
 - Update `CHANGELOG.md` under Unreleased and `docs/production.md` when a change
-  affects rollout, finding identity, or credential policy.
+  affects rollout, finding identity, or credential policy. A changelog entry is
+  one short bullet (at most 1,000 characters, tested) under the matching theme
+  heading, newest first, flagged **(behaviour change)**, **(breaking)** or
+  **(rebaseline needed)** when an operator has to act. The reasoning, test
+  notes and rejected alternatives belong in the pull request or the page for
+  the feature.
 - Include regression tests for bug fixes.
 - Use the PR template checklist; it covers the main gates. `make check` runs
   every local gate; CI also builds the documentation, audits each lock file and

@@ -294,9 +294,9 @@ What changed and how to read it:
   smolagents, LiteLLM in Roo Code, Roo Code's `mcp.json` locale files, and
   one CDK Bedrock construct.
 * Timings are not comparable with the 2026-10-08 table: the ShadowScan re-run
-  used two workers, the earlier run six on four CPUs. Single-worker
-  measurements of the performance changes, with identical findings, are in the
-  CHANGELOG.
+  used two workers, the earlier run six on four CPUs. The performance changes
+  between the runs leave findings unchanged (see the changelog), but no
+  single-worker timings of them are recorded.
 
 ## Results: run of 2026-10-08 (before the changes)
 
