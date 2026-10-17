@@ -546,7 +546,14 @@ def _observed(record: dict[str, Any]) -> _Observed:
     if isinstance(subject, str):
         files.add(subject.replace("\\", "/"))
     files.discard("")
-    project = subject if record.get("resource_type") == "project" and isinstance(subject, str) else None
+    # Normalized as the files and the published gap and declared paths are, so
+    # a project whose report-safe name holds a backslash (a literal one, or the
+    # \xNN escape of an undecodable byte) still meets unread content inside it.
+    project = (
+        subject.replace("\\", "/")
+        if record.get("resource_type") == "project" and isinstance(subject, str)
+        else None
+    )
     return _Observed(files, written - files, project)
 
 

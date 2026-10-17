@@ -14,6 +14,8 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -146,6 +148,50 @@ def test_a_result_reused_by_incremental_keeps_unread_content_from_resolving(tmp_
 
 
 _AGENT = "from openai import OpenAI\n\nclient = OpenAI()\nclient.chat.completions.create(model='gpt-4o', messages=[])\n"
+
+
+# A project directory is reported as its report-safe name, which keeps a
+# literal backslash and writes undecodable bytes as \xNN escapes. Unread
+# content inside it must hold the removed project back whatever its name.
+_PROJECT_NAMES = [
+    pytest.param(b"bot", id="plain"),
+    pytest.param(
+        b"b\\ot", id="backslash", marks=pytest.mark.skipif(sys.platform == "win32", reason="POSIX name")
+    ),
+    pytest.param(
+        b"b\xffot", id="undecodable", marks=pytest.mark.skipif(sys.platform != "linux", reason="raw bytes")
+    ),
+]
+
+
+@pytest.mark.parametrize("name", _PROJECT_NAMES)
+@pytest.mark.parametrize("unread", ["declared", "tolerated"])
+def test_unread_content_inside_a_project_holds_it_back_whatever_its_name(tmp_path, index, name, unread):
+    root = _repo(tmp_path / "repo")
+    project = os.path.join(os.fsencode(root), name)
+    os.mkdir(project)
+    with open(os.path.join(project, b"pyproject.toml"), "w") as handle:
+        handle.write('[project]\nname = "bot"\nversion = "0.1"\n')
+    with open(os.path.join(project, b"agent.py"), "w") as handle:
+        handle.write(_AGENT)
+    options = {"profile": "ci"} if unread == "declared" else {"max_coverage_gap": 0.5}
+    baseline = _scan(index, root, max_file_size=4096, **options)
+    projects = [f for f in baseline["findings"] if f.get("resource_type") == "project"]
+    assert len({f["metadata"]["path"] for f in projects if f["metadata"]["path"] != "."}) == 1
+    # The agent's code moves into a file the scan no longer reads.
+    os.unlink(os.path.join(project, b"agent.py"))
+    hidden = os.path.join(project, b"examples") if unread == "declared" else project
+    os.makedirs(hidden, exist_ok=True)
+    with open(os.path.join(hidden, b"agent.py" if unread == "declared" else b"tools.py"), "w") as handle:
+        handle.write(_AGENT + "#" * 5000 + "\n")
+    current = _scan(index, root, max_file_size=4096, **options)
+    assert current["summary"]["complete"]
+    result = _diff(tmp_path, baseline, current)
+    assert result.exit_code == 3, result.output
+    comparison = json.loads(result.output)
+    assert comparison["comparable"] is False
+    unknown = {f["metadata"].get("path") for f in comparison["unknown"]}
+    assert {f["metadata"]["path"] for f in projects if f["metadata"]["path"] != "."} <= unknown
 
 
 @pytest.mark.parametrize("cassettes", ["tests/cassettes", "src/bot/tests/cassettes"])
