@@ -793,9 +793,11 @@ public repositories with the tool and read the committed benchmark metrics.
   read (`apiKey: process.env.X // old: <key>`) keeps the whole value withheld,
   as does any other identifier, call or token. The variable name must not look
   like an opaque key (`redaction_rules._opaque`: letters and digits alternating
-  in a long run), so an upper-case key or base32 secret pasted as the name
-  (`os.getenv("<KEY>")`) stays withheld while `OPENAI_API_KEY`, `PGPASSWORD` and
-  `K8S_TOKEN` are shown.
+  in a long run) and must not run to 16 characters or more without a `_`
+  (`_PASTED_KEY_NAME`), so an upper-case key or base32 secret pasted as the
+  name (`os.getenv("<KEY>")`, a digit-free TOTP secret in
+  `process.env.<KEY>`) stays withheld while `OPENAI_API_KEY`, `PGPASSWORD`,
+  `GITHUBTOKEN` and `K8S_TOKEN` are shown.
 - **Fewer spurious incomplete scans.** Exit 3 was the common case on ordinary
   repositories, so a CI gate on a nonzero exit failed on them for good:
   - A JSON or YAML document whose structure declares no MCP servers (a
