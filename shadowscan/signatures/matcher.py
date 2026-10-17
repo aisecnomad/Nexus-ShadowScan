@@ -534,6 +534,10 @@ _OTHER_OPERATORS = frozenset({"&&", "==", "===", "!=", "!==", "and", "if", "as",
 # A fallback literal is one token of the generic value class, as an assigned
 # value is: a sentence ('"OPENAI_API_KEY is not set"') is a message.
 _FALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_./+=-]{16,256}")
+# What any such literal starts with: a quote and 16 characters of the class.
+# A follower without one holds no fallback literal, and the operand reader,
+# Python at several microseconds a token, is not run (``_fallback_literal``).
+_FALLBACK_HINT = re.compile(r"[\"'`][A-Za-z0-9_./+=-]{16}")
 
 
 class _OperandToken(NamedTuple):
@@ -624,8 +628,11 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     ('?? getSecret("<path>")', '?: error("X is not set")') is no fallback,
     nor is an empty, word-like or interpolated one ('|| ""', '|| f"{x}"').
     Whether the literal is a placeholder is the caller's test, on the literal
-    itself (see ``reported_credential``).
+    itself (see ``reported_credential``). A follower without the start of
+    such a literal anywhere (``_FALLBACK_HINT``) is not read at all.
     """
+    if _FALLBACK_HINT.search(follower) is None:
+        return None
     tokens = _operand_tokens(follower)
     operand = fallback = False
     # Parentheses opened where an operand belongs and not closed yet.
