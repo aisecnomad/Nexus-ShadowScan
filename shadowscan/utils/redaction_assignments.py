@@ -876,15 +876,24 @@ def _union(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
 
 
 class _NetrcLines:
-    """The physical lines of a text, each searched once by whichever reader of it asks first."""
+    """The physical lines of a text, each searched once by whichever reader of it asks first.
+
+    The readers ask in text order (the reader of the whole text) and in
+    reverse (the queued ranges, read last first, each on one line), so the
+    line asked about last answers most questions, and a line asked about
+    again is found by where it starts. Nothing is kept in order: a sorted
+    list of line starts took each new line at its front in the reverse
+    order, which cost quadratic time.
+    """
 
     def __init__(self, text: str) -> None:
         self.text = text
-        self.starts: list[int] = []
         # By where each line starts: where it ends, where its first line-break
         # escape starts, whether it holds an escape next to a keyword, and
         # where its first and last quote of each kind are.
         self.lines: dict[int, tuple[int, int, bool, tuple[tuple[int, int], ...]]] = {}
+        # The line asked about last: where it starts and what ``lines`` holds for it.
+        self.last: tuple[int, tuple[int, int, bool, tuple[tuple[int, int], ...]] | None] = (0, None)
 
     def in_string(self, position: int) -> bool:
         """Whether the comment at ``position``, on an escaped string's line, is in that string.
@@ -902,24 +911,22 @@ class _NetrcLines:
         return keyed or escape < position or any(first < position < last for first, last in quotes)
 
     def _line(self, position: int) -> tuple[int, int, bool, tuple[tuple[int, int], ...]]:
-        index = bisect.bisect_right(self.starts, position)
-        floor = 0
-        if index:
-            known = self.lines[self.starts[index - 1]]
-            if position < known[0]:
-                return known
-            floor = known[0]
+        start, known = self.last
+        if known is not None and start <= position < known[0]:
+            return known
         text = self.text
-        newline = text.rfind("\n", floor, position)
-        start = max(newline, text.rfind("\r", max(newline, floor), position)) + 1
-        line_end = _NETRC_LINE_END.search(text, position)
-        end = line_end.start() if line_end is not None else len(text)
-        found = [at for at in (text.find(escape, start, end) for escape in _NETRC_LINE_BREAKS) if at >= 0]
-        quotes = tuple((text.find(quote, start, end), text.rfind(quote, start, end)) for quote in "\"'`")
-        keyed = _NETRC_KEYED.search(text, start, end) is not None
-        line = (end, min(found, default=end), keyed, quotes)
-        self.starts.insert(index, start)
-        self.lines[start] = line
+        newline = text.rfind("\n", 0, position)
+        start = max(newline, text.rfind("\r", max(newline, 0), position)) + 1
+        line = self.lines.get(start)
+        if line is None:
+            line_end = _NETRC_LINE_END.search(text, position)
+            end = line_end.start() if line_end is not None else len(text)
+            found = [at for at in (text.find(escape, start, end) for escape in _NETRC_LINE_BREAKS) if at >= 0]
+            quotes = tuple((text.find(quote, start, end), text.rfind(quote, start, end)) for quote in "\"'`")
+            keyed = _NETRC_KEYED.search(text, start, end) is not None
+            line = (end, min(found, default=end), keyed, quotes)
+            self.lines[start] = line
+        self.last = (start, line)
         return line
 
 
