@@ -818,6 +818,11 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Release, CI and supply chain
 
+- The test jobs run the suite on one pytest-xdist worker per CPU (`-n auto --dist worksteal`),
+  including the coverage-traced Python 3.11 leg that took about 40 minutes run serially;
+  `make test-parallel` uses the same options. pytest-cov combines the workers' data before the
+  floors are checked. The 60-minute job limit is unchanged because CI timings with parallel workers
+  are not yet known. (Oct 17)
 - The release workflow names its two attested bundles `provenance.sigstore.json` and
   `sbom.sigstore.json` (they were `provenance.json` and `sbom.json`), the suffix that
   release-signature checks such as OpenSSF Scorecard's Signed-Releases look for among a GitHub

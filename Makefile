@@ -57,8 +57,8 @@ test-fast: ## Run tests without coverage (faster iteration)
 	python -m pytest -q -x
 
 .PHONY: test-parallel
-test-parallel: ## Run tests in parallel with pytest-xdist
-	python -m pytest -q -n auto --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
+test-parallel: ## Run tests in parallel with pytest-xdist, as the CI jobs do
+	python -m pytest -q -n auto --dist worksteal --cov=shadowscan --cov-report=term-missing --cov-fail-under=80
 
 .PHONY: coverage-gate
 coverage-gate: ## Enforce per-connector coverage floor

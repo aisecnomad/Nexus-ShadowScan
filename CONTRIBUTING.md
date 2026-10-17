@@ -123,13 +123,14 @@ Existing Make targets provide the next steps:
 make check-fast      # lint, format, types, validators, secrets and policy; no tests
 make test-fast       # full test suite without coverage, stop at first failure
 make test            # full suite with line and branch coverage and the overall floor
-make coverage-gate   # connector coverage; run after make test
+make test-parallel   # the same coverage run on pytest-xdist workers, as CI runs it
+make coverage-gate   # connector coverage; run after make test or make test-parallel
 make check           # all local quality gates
 ```
 
-On CI runners the full suite takes about 15 minutes untraced and about 20 with
-coverage; `make check-fast` takes a minute or two. `make audit`, and therefore
-`make check`, needs network access for pip-audit.
+Run in one process the full suite takes tens of minutes, so CI spreads it over
+one pytest-xdist worker per CPU; `make check-fast` takes a minute or two.
+`make audit`, and therefore `make check`, needs network access for pip-audit.
 
 For detailed testing guidance, environment setup troubleshooting, and advanced patterns,
 see [Testing Guide](docs/testing.md).
