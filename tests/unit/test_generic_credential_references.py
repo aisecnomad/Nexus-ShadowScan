@@ -458,6 +458,43 @@ def test_a_key_in_place_of_the_variable_name_is_withheld(line: str, secret: str)
     assert secret not in safe and REDACTED in safe
 
 
+# Upper-case keys whose letters and digits do not alternate: a base32 secret
+# with no digit, one with a single run of digits, and a 16-character one.
+_BASE32_LETTERS = "".join(
+    c for c in base64.b32encode(hashlib.sha256(b"no-digit").digest()).decode() if c.isalpha()
+)
+LETTERS_ONLY_KEY = _BASE32_LETTERS[:30]
+ONE_DIGIT_RUN_KEY = _BASE32_LETTERS[:16] + "2" + _BASE32_LETTERS[16:26]
+SHORT_TOTP_KEY = _BASE32_LETTERS[-16:]
+
+
+@pytest.mark.parametrize(
+    ("line", "secret"),
+    [
+        (f'secret = os.getenv("{LETTERS_ONLY_KEY}")', LETTERS_ONLY_KEY),
+        (f"password: process.env.{LETTERS_ONLY_KEY[:26]}", LETTERS_ONLY_KEY[:26]),
+        (f'token = ENV["{ONE_DIGIT_RUN_KEY}"]', ONE_DIGIT_RUN_KEY),
+        (f"otp_secret = os.environ['{SHORT_TOTP_KEY}']", SHORT_TOTP_KEY),
+    ],
+)
+def test_a_long_name_without_separators_is_withheld_as_a_pasted_key(line: str, secret: str):
+    safe = sanitize_text(line)
+    assert secret not in safe and REDACTED in safe
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'api_key = os.getenv("OPENAI_API_KEY")',
+        "token = process.env.GITHUBTOKEN",
+        'api_key = os.getenv("ANTHROPICAPIKEY")',
+        "secret = process.env.AZURE_OPENAI_API_KEY_SECONDARY",
+    ],
+)
+def test_names_with_separators_or_short_names_stay_visible(line: str):
+    assert sanitize_text(line) == line
+
+
 HEX = "a8f3c91d7e2b4f6a9d0c"
 
 

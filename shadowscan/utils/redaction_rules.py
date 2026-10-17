@@ -315,6 +315,11 @@ _ENVIRONMENT_LOOKUP = re.compile(
 # line, a statement or argument separator, or a closing bracket. An operator, a
 # comment or another token after the blanks may carry a literal of its own.
 _VALUE_END_CHARACTERS = frozenset("\r\n;,)}]")
+# An environment variable's name joins its words with '_' (OPENAI_API_KEY) or
+# is one short word (PGPASSWORD, GITHUBTOKEN). An upper-case run this long
+# without a '_' is a key pasted in the name's place, such as a base32 TOTP
+# secret, whose shortest common form has 16 characters.
+_PASTED_KEY_NAME = 16
 
 
 def _environment_lookup(text: str, start: int = 0, end: int | None = None) -> bool:
@@ -325,12 +330,18 @@ def _environment_lookup(text: str, start: int = 0, end: int | None = None) -> bo
     value end: in 'apiKey: process.env.KEY // old: <key>' or
     'apiKey: process.env.KEY ?? "<key>"' the value goes on past the read.
 
-    The variable's name must be shaped like a name, not like an opaque key
-    (``_opaque``): an upper-case key or base32 secret pasted in its place
-    ('os.getenv("JBSWY3DPEHPK3PXP...")') is the credential itself.
+    The variable's name must be shaped like a name, not like an opaque key:
+    an upper-case key or base32 secret pasted in its place
+    ('os.getenv("JBSWY3DPEHPK3PXP...")') is the credential itself. A name is
+    opaque when letters and digits alternate in a long run (``_opaque``), or
+    when it runs to ``_PASTED_KEY_NAME`` characters or more without a '_'
+    between its words, digits or none ('process.env.QWERTYUIOPASDFGHJKLZXCVBNM').
     """
     match = _ENVIRONMENT_LOOKUP.match(text, start)
-    if match is None or _opaque(match["member"] or match["subscript"] or match["argument"]):
+    if match is None:
+        return False
+    name = match["member"] or match["subscript"] or match["argument"]
+    if _opaque(name) or (len(name) >= _PASTED_KEY_NAME and "_" not in name):
         return False
     if end is not None:
         return match.end() == end

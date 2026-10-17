@@ -337,8 +337,10 @@ coverage, even when a response includes an empty collection field.
   blanks and then the end of the line, `;`, `,` or a closing bracket may follow
   the read: with a default argument, a fallback literal, any other operand or a
   comment after it the whole value is withheld. So is a read whose variable
-  name looks like an opaque key, such as an upper-case key or a base32 secret
-  pasted in place of the name.
+  name looks like a key pasted in place of the name: letters and digits
+  alternate in a long run of it, or it has 16 characters or more and no `_`
+  (an upper-case key or a base32 secret, with or without digits; a name such
+  as `HUGGINGFACEHUBAPITOKEN` is withheld with them).
 - **Structured records:** Structured name/value records that connectors
   pass to the sanitizer read their name as a setting too, in either field
   order (`{"name": "OpenAI:Secret", "value": "..."}`, and an opaque value under
