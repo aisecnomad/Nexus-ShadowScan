@@ -44,6 +44,7 @@ from shadowscan.connectors.cloud.gcp import AI_SERVICES as GCP_AI_SERVICES
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.common import MAX_PAGES
+from shadowscan.connectors.endpoint.catalog import MODEL_STORES
 from shadowscan.connectors.endpoint.runtime import EbpfConnector, HostConnector, OtelConnector
 from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
 from shadowscan.engine import DEFAULT_CONNECTOR_TIMEOUT, Engine
@@ -648,23 +649,38 @@ def test_requires_python_admits_exactly_the_classified_versions() -> None:
 
 
 # Two or more CPython minor versions written as one list or range, however it is spelled:
-# "3.11, 3.12 and 3.13", "3.11 to 3.14", "3.11 - 3.14", "3.11 up to Python 3.14", "`3.11`–`3.14`",
-# ">=3.11,<3.15", "3.11+ (tested through 3.14)", "macOS 3.11/3.14". A patch release such as 3.12.4
-# is not a minor version and ends the span, so "3.12.0 to 3.12.3" is not an interpreter claim; nor
-# is a possessive ("3.11, or Python 3.14's syntax"), and an open "3.12+" with no upper bound
-# describes behavior rather than a supported set.
-_MINOR_VERSION = r"`?(?<![\d.])3\.\d+(?!\.?\d|['’]s)`?"
-_LIST_SEPARATOR = r" ?, ?(?:(?:and|or|&) )?| (?:and|or|&|plus) | ?/ ?"
-_UPPER_BOUND = r"(?:[A-Za-z-]+ ){0,3}?(?:to|through|thru|up to) "
+# "3.11, 3.12 and 3.13", "3.11; 3.12; 3.13", "3.11 to 3.14", "3.11 up to and including 3.14",
+# "3.11 - 3.14", "3.11 -- 3.14" (any dash or hyphen), "3.11...3.14", "3.11 up to Python 3.14",
+# "python3.11–python3.14", "`3.11`–`3.14`", ">=3.11,<3.15", "≥3.11, <3.15", "<3.15,>=3.11",
+# "3.11+ (tested through 3.14)", "3.11+ (tested on 3.14)", "macOS 3.11/3.14". A patch release such
+# as 3.12.4 is not a minor version and ends the span, so "3.12.0 to 3.12.3" is not an interpreter
+# claim; nor is a list whose last version is a possessive ("3.11, or Python 3.14's syntax" names
+# what each interpreter does), although a range is ("3.11–3.13's standard library" still names
+# 3.11 to 3.13); and an open "3.12+" with no upper bound describes behavior rather than a set.
+_MINOR_VERSION = r"`?(?<![\d.])3\.\d+(?!\.?\d)`?"
+# A later version of a span, which may also follow an ellipsis.
+_LATER_MINOR_VERSION = r"`?(?:(?<![\d.])|(?<=\.\.))3\.\d+(?!\.?\d)`?"
+_LIST_SEPARATOR = r" ?, ?(?:(?:and|or|&) )?| ?; ?| (?:and|or|&|plus) | ?/ ?"
+_UPPER_BOUND = (
+    r"(?:[A-Za-z-]+ ){0,3}?"
+    r"(?:to|through|thru|up to|(?:tested|validated|verified|checked) (?:on|with|against)) "
+)
+_DASHES = "-‐‑‒–—―−"
 _RANGE_SEPARATOR = (
-    r" ?[-–—] ?| (?:to|through|thru|until|up to) "
+    rf" ?(?:--|[{_DASHES}]) ?| ?(?:\.\.\.?|…) ?| (?:to|through|thru|until|up to)(?: and including)? "
     rf"|\+? (?:and|or) (?:later|newer|above),? \(?{_UPPER_BOUND}|\+ ?[(,]? ?{_UPPER_BOUND}"
 )
-_SPECIFIER = r">= ?`?3\.\d+`? ?, ?<=? ?`?3\.\d+`?"
-_INTERPRETER_SPAN = re.compile(
-    rf"{_SPECIFIER}|{_MINOR_VERSION}(?:(?:{_LIST_SEPARATOR}|{_RANGE_SEPARATOR})(?:C?Python )?{_MINOR_VERSION})+"
+_SPECIFIER = (
+    r"(?:>=|≥) ?`?3\.\d+`? ?, ?(?:<=?|≤) ?`?3\.\d+`?"
+    r"|(?:<=?|≤) ?`?3\.\d+`? ?, ?(?:>=|≥) ?`?3\.\d+`?"
 )
-_RANGE_WORDS = re.compile(r"[-–—+]|\b(?:to|through|thru|until|later|newer|above)\b")
+_INTERPRETER_SPAN = re.compile(
+    rf"{_SPECIFIER}|{_MINOR_VERSION}"
+    rf"(?:(?:{_LIST_SEPARATOR}|{_RANGE_SEPARATOR})(?:C?[Pp]ython ?)?{_LATER_MINOR_VERSION})+"
+)
+_SPECIFIER_BOUND = re.compile(r"([<>]=?|[≤≥]) ?`?3\.(\d+)")
+_RANGE_WORDS = re.compile(rf"[{_DASHES}+…]|\.\.|\b(?:to|through|thru|until|later|newer|above)\b")
+_POSSESSIVE = re.compile(r"['’]s\b")
 # A span describes the macOS CI matrix only when macOS alone is the platform its clause names last
 # before it ("macOS 3.11/3.14", "on macOS for 3.11 and 3.14") and the clause is about CI. "Linux and
 # macOS 3.11-3.14" or "on macOS, ShadowScan supports 3.11 to 3.14" state the supported set.
@@ -681,11 +697,21 @@ _DATED_INTERPRETER_SPANS = {
 _LOCK_HEADERS = ("requirements.lock", "requirements-ci.lock", "requirements-ci-constraints.txt")
 
 
+def _is_specifier(span: str) -> bool:
+    return span[0] in "<>≤≥"
+
+
 def _span_minors(span: str) -> set[int]:
+    if _is_specifier(span):
+        lower = upper = 0
+        for operator, minor in _SPECIFIER_BOUND.findall(span):
+            if operator in (">=", "≥"):
+                lower = int(minor)
+            else:
+                upper = int(minor) + (operator != "<")
+        return set(range(lower, upper))
     parts = re.split(r"3\.(\d+)", span)
     minors = [int(part) for part in parts[1::2]]
-    if span.startswith(">="):
-        return set(range(minors[0], minors[1] + ("<=" in span)))
     covered = {minors[0]}
     for previous, separator, current in zip(minors[:-1], parts[2:-1:2], minors[1:], strict=True):
         covered.update(range(previous, current + 1) if _RANGE_WORDS.search(separator) else {current})
@@ -703,11 +729,23 @@ def _describes_macos_ci(paragraph: str, match: re.Match[str]) -> bool:
     return _CI_WORDS.search(before + after) is not None
 
 
+def _lists_possessives(paragraph: str, match: re.Match[str]) -> bool:
+    """Whether the span ``match`` is a list whose last version is a possessive ("3.11, or
+    Python 3.14's syntax"): it names what each interpreter does, not a supported set. A
+    range whose upper bound is a possessive ("3.11–3.13's standard library") is not one."""
+    span = match.group(0)
+    if _is_specifier(span) or not _POSSESSIVE.match(paragraph, match.end()):
+        return False
+    last_separator = re.split(r"3\.\d+", span)[-2]
+    return not _RANGE_WORDS.search(last_separator)
+
+
 def _interpreter_spans(paragraph: str) -> list[tuple[str, bool]]:
     """``(span, about_macos_ci)`` for every interpreter span in one whitespace-normalized paragraph."""
     return [
         (match.group(0), _describes_macos_ci(paragraph, match))
         for match in _INTERPRETER_SPAN.finditer(paragraph)
+        if not _lists_possessives(paragraph, match)
     ]
 
 
@@ -794,6 +832,25 @@ def test_documented_interpreter_ranges_match_the_classifiers_and_ci() -> None:
         ("Python 3.11 and later (tested through 3.13)", [({11, 12, 13}, False)]),
         ("Python 3.11+ (tested through 3.13)", [({11, 12, 13}, False)]),
         ("Python 3.11+, validated up to 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11+ (tested on 3.13)", [({11, 12, 13}, False)]),
+        ("Python 3.11+ (tested with 3.13)", [({11, 12, 13}, False)]),
+        ("Python 3.11; 3.12; 3.13", [({11, 12, 13}, False)]),
+        ("from Python 3.11 up to and including 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11 -- 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11 ‐ 3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11−3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11...3.13", [({11, 12, 13}, False)]),
+        ("Python 3.11…3.13", [({11, 12, 13}, False)]),
+        ("python3.11–python3.13", [({11, 12, 13}, False)]),
+        ("Python ≥3.11, <3.14", [({11, 12, 13}, False)]),
+        ("Python ≥ 3.11, ≤ 3.13", [({11, 12, 13}, False)]),
+        ("Python <3.14,>=3.11", [({11, 12, 13}, False)]),
+        ("Python <=3.13, >=3.11", [({11, 12, 13}, False)]),
+        ("Python 3.11–3.13's standard library", [({11, 12, 13}, False)]),
+        ("Python 3.11–3.13’s standard library", [({11, 12, 13}, False)]),
+        ("Python 3.11 through 3.13's tokenizer", [({11, 12, 13}, False)]),
+        ("Python 3.11, 3.12 and 3.13's tokenizers", []),
+        ("Python 3.11's tokenizer and 3.13's", []),
         ("macOS runners use Python 3.11 – 3.13", [({11, 12, 13}, True)]),
         ("CI runs on macOS for 3.11 and 3.14", [({11, 14}, True)]),
         ("The macOS 3.11 and 3.14 CI jobs install the locks", [({11, 14}, True)]),
@@ -1678,19 +1735,28 @@ def test_connector_migration_note_describes_the_connectors_as_they_behave() -> N
     heading = "## October 17 connector correctness migration (Unreleased)"
     note = " ".join(_markdown_section(_read(ROOT / "docs" / "production-migrations.md"), heading).split())
 
-    # endpoint.host: a bare row naming a local runtime is reported; a model-store directory is not.
+    # endpoint.host: a bare row naming a local runtime is reported, and so is every model store the
+    # catalog lists below a home directory (the GPT4All and Jan stores among them, which a check
+    # of ~/.ollama/models alone left unchecked); a directory merely named like one elsewhere is not.
     for row in ({"name": "Ollama"}, {"name": "LM Studio.app", "path": "/Applications/LM Studio.app"}):
         assert _connector_stats(HostConnector(ConnectorContext()), [row])[0], row
-    store_findings, _ = _connector_stats(HostConnector(ConnectorContext()), [{"path": "~/.ollama/models"}])
+    stores = [{"path": f"~/{store.root}"} for store in MODEL_STORES]
+    reported = [bool(_connector_stats(HostConnector(ConnectorContext()), [row])[0]) for row in stores]
+    assert len(set(reported)) == 1, f"the catalog's model stores are not reported alike: {stores}, {reported}"
+    elsewhere = {"path": "/srv/app/jan/models/user.rb"}
+    assert not _connector_stats(HostConnector(ConnectorContext()), [elsewhere])[0]
     for phrase in (
         "names a known AI product or runtime, or an AI category",
         "known AI product or local model runtime",
         "Ollama",
         "LM Studio",
+        "GPT4All",
         "`process`",
     ):
         assert phrase in note, f"the endpoint.host note should say {phrase!r}"
-    assert ("model-store directory" in note) is not bool(store_findings), (
+    store_claim = "below a home directory, a model store the endpoint catalog lists"
+    assert (store_claim in note) is reported[0], "the endpoint.host note should say model stores are reported"
+    assert ("model-store directory" in note) is not reported[0], (
         "the endpoint.host note should say whether a row naming only a model-store directory is reported"
     )
     assert "name or path matches an AI product signature or" not in note
@@ -1718,12 +1784,25 @@ def test_connector_migration_note_describes_the_connectors_as_they_behave() -> N
     for phrase in ("resource attributes", "span attributes", "`unknown`", "new findings"):
         assert phrase in note, f"the gateway.otel note should say {phrase!r}"
 
-    # endpoint.ebpf: a recognized event with a wrong-typed field marks the scan incomplete.
+    # endpoint.ebpf: a recognized event with a wrong-typed field marks the scan incomplete, and
+    # the list limit, like malformed fields, is warned once per producer, not once per scan.
     tracee = {"eventName": "security_socket_connect", "processName": "uvicorn", "args": "remote_addr"}
     _, stats = _connector_stats(EbpfConnector(ConnectorContext()), [tracee, tracee])
     assert stats.incomplete
     assert len(stats.warnings) == 1
-    for phrase in ("wrong type", "100 entries", "one warning per producer"):
+    long_tracee = {**tracee, "args": [{"name": "fd", "value": 3}] * 101}
+    long_hubble = {
+        "flow": {"destination_names": ["a.example"] * 101, "l4": {"TCP": {"destination_port": 443}}}
+    }
+    _, stats = _connector_stats(EbpfConnector(ConnectorContext()), [long_tracee, long_hubble, long_hubble])
+    assert stats.incomplete
+    assert len(stats.warnings) == 2 and all("list limit" in warning for warning in stats.warnings)
+    for phrase in (
+        "wrong type",
+        "100 entries",
+        "one warning per producer",
+        "one per producer for the list limit",
+    ):
         assert phrase in note, f"the endpoint.ebpf note should say {phrase!r}"
 
 

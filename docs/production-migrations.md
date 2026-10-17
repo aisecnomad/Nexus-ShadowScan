@@ -95,7 +95,8 @@ across this change reports findings as resolved or new that are neither.
   read, and a field of the wrong type (a `process` given as text, `args` that
   is not a list, ...) or an `args` or `destination_names` list over 100
   entries also marks the scan incomplete, with one warning per producer for
-  malformed fields and one for the list limit. Fix the export or the
+  malformed fields and one per producer for the list limit, so an export
+  that mixes producers can carry several of each. Fix the export or the
   collector rather than accepting the exit code; see
   [eBPF event formats](connectors/endpoint.md#ebpf-event-formats).
 
