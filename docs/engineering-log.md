@@ -371,12 +371,29 @@ public repositories with the tool and read the committed benchmark metrics.
   alone left every withheld value in the environment the worker was started
   with, which `del os.environ[...]` does not change: a plugin read them from
   `/proc/self/environ`. The spawn now leaves them, and the identity key even
-  when `plugin_env` names it, out of the environment it hands on
-  (`os.unsetenv` for the duration of the spawn, under the lock that already
-  sets `PYTHONSAFEPATH`, then put back from `os.environ`, which is never
-  changed, so connectors on other threads keep reading their credentials);
-  the worker's own removal stays as a second line. A worker still runs as
-  the scanner's user and can read the scanner's environment from
+  when `plugin_env` names it, out of the environment it hands on; the
+  worker's own removal stays as a second line. A first version did this
+  with `os.unsetenv` for the duration of `Process.start()` (0.9 to 1.8
+  seconds with the built-in signatures, while the pickled configuration is
+  written to the child), which changed the whole scanner's environment: a
+  program another thread started meanwhile with the inherited environment
+  (botocore's `credential_process` helpers such as aws-vault or 1Password
+  `op`, a thread-mode plugin's helper) started without the credentials it
+  needed, and with `PYTHONSAFEPATH=1`. The worker is now launched through
+  its own spawn launcher (`_WorkerPopen`, CPython 3.13's
+  `popen_spawn_posix` launch with `subprocess.Popen(env=...)` in place of
+  `spawnv_passfds`), which hands it an explicit environment, built from a
+  copy of `os.environ` without the withheld variables and with
+  `PYTHONSAFEPATH=1`; nothing in the scanner's environment changes at any
+  point, so there is no window and no lock. The worker no longer receives a
+  descriptor of the scanner's multiprocessing resource tracker, which would
+  have been started with the scanner's environment and working directory;
+  a plugin that creates multiprocessing semaphores starts its own.
+  `test_program_another_thread_starts_during_a_plugin_spawn_keeps_its_environment`
+  starts a program on another thread while the spawn pickles the worker,
+  inside `Process.start()`: before, it saw no token, no identity key and
+  `PYTHONSAFEPATH=1`; now it sees the scanner's environment. A worker
+  still runs as the scanner's user and can read the scanner's environment from
   `/proc/<scanner pid>/environ`: withholding keeps credentials from a plugin
   that does not look for them, not from one that does, and SECURITY.md, the
   production guide and the plugin contract now say so instead of saying a

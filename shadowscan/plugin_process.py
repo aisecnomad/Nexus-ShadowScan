@@ -9,18 +9,22 @@ a ProcessPoolExecutor future cannot stop a running worker.
 
 from __future__ import annotations
 
+import io
 import json
 import multiprocessing
 import multiprocessing.connection
+import multiprocessing.context
+import multiprocessing.util
 import os
 import re
 import socket
+import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterable, Iterator, Mapping, MutableMapping
-from contextlib import contextmanager
+from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import asdict, replace
+from multiprocessing import popen_spawn_posix, reduction, spawn
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -48,8 +52,6 @@ _WORKER_GRACE_SECONDS = 2.0
 # Without a descriptor listing, descriptors up to the open-file limit are
 # visited, but never more than this many.
 _MAX_DESCRIPTOR_LIMIT = 1 << 20
-# Serializes the brief environment window around a spawn (see _worker_spawn_environment).
-_SPAWN_ENVIRONMENT = threading.Lock()
 # A process-mode worker does not inherit the credentials the operator exported
 # for the built-in connectors: a variable whose name ends in one of these words
 # (after ``_``, or the whole name; a version after the word, as in
@@ -145,7 +147,7 @@ def scrub_credential_environment(environ: MutableMapping[str, str], keep: Iterab
     thread-mode plugins, which share the scanner's process, are unaffected.
     ``keep`` is ``options.plugin_env``: the variables an approved plugin reads
     itself, by exact name. The worker was already started without these
-    variables (see _worker_spawn_environment); this is the second line.
+    variables (see _worker_environment); this is the second line.
     """
     removed = _withheld_names(environ, keep)
     for name in removed:
@@ -153,45 +155,114 @@ def scrub_credential_environment(environ: MutableMapping[str, str], keep: Iterab
     return removed
 
 
-@contextmanager
-def _worker_spawn_environment(keep: Iterable[str]) -> Iterator[None]:
-    """Start an interpreter in this block with PYTHONSAFEPATH=1 and without the withheld credentials.
+def _worker_environment(environ: Mapping[str, str], keep: Iterable[str]) -> dict[str, str]:
+    """The environment a worker starts with: ``environ`` without the withheld credentials.
 
-    The spawned child runs ``python -c``, which would put the working directory (possibly an
-    untrusted checkout) first on sys.path before its first ``import multiprocessing``.
-    multiprocessing has no per-child environment, so the variable is set only for the
-    duration of the spawn, under a lock so concurrent spawns cannot restore it early, and
-    the previous value (or its absence) is put back: the scanner's and an embedder's own
-    later children must not inherit it.
-
-    The credential-shaped variables (except ``keep``) and the identity key are taken out of
-    the environment the new program receives for the same window, so the worker starts
-    without them: removing a variable inside the worker would not change the environment it
-    was started with, which it can still read (``/proc/self/environ`` on Linux). Only the
-    process environment changes (``os.unsetenv``), never ``os.environ``: connectors running
-    on the scanner's other threads read ``os.environ``, and the scanner's own subprocesses
-    receive an environment built from it, so neither loses a credential meanwhile. Each
-    variable is put back from ``os.environ`` afterwards.
+    The credential-shaped variables (except ``keep``) and the identity key, even when ``keep``
+    names it, are left out, so the worker never holds them: removing a variable inside the
+    worker would not change the environment it was started with, which it can still read
+    (``/proc/self/environ`` on Linux). PYTHONSAFEPATH=1 keeps the working directory (possibly
+    an untrusted checkout) off the worker's sys.path before its first ``import
+    multiprocessing``, since spawn runs ``python -c``.
     """
     from shadowscan.comparison import IDENTITY_KEY_ENV
 
-    with _SPAWN_ENVIRONMENT:
-        previous = os.environ.get("PYTHONSAFEPATH")
-        withheld = sorted({IDENTITY_KEY_ENV, *_withheld_names(os.environ, keep)} & set(os.environ))
-        os.environ["PYTHONSAFEPATH"] = "1"
+    snapshot = {name: value for name in list(environ) if (value := environ.get(name)) is not None}
+    withheld = {IDENTITY_KEY_ENV, *_withheld_names(snapshot, keep)}
+    environment = {name: value for name, value in snapshot.items() if name not in withheld}
+    environment["PYTHONSAFEPATH"] = "1"
+    return environment
+
+
+def _close_descriptors(*descriptors: int) -> None:
+    for descriptor in descriptors:
+        os.close(descriptor)
+
+
+class _WorkerPopen(popen_spawn_posix.Popen):
+    """multiprocessing's spawn launcher, handing the worker its own environment.
+
+    The stdlib launcher starts the child with the process environment, so the only way to
+    change what the child receives would be to change the whole process's environment while
+    it starts, which a program another thread starts meanwhile would inherit. This launcher
+    passes the environment :func:`_worker_environment` builds to ``subprocess.Popen``
+    instead; nothing in the scanner's environment changes. It mirrors CPython 3.13's
+    ``popen_spawn_posix.Popen._launch`` otherwise, except that the worker gets no descriptor
+    of the scanner's resource tracker: that tracker would start with the scanner's
+    environment and working directory, and a plugin that needs one starts its own.
+    """
+
+    # The descriptors the child inherits: the stdlib launcher's list, which pickling the
+    # worker's socket (duplicate_for_child) adds to.
+    _fds: list[int]
+
+    def __init__(self, process_obj: BaseProcess) -> None:
+        self._child: subprocess.Popen[bytes] | None = None
+        super().__init__(process_obj)
+
+    def _launch(self, process_obj: BaseProcess) -> None:
+        if not isinstance(process_obj, _WorkerProcess):
+            raise TypeError("only a plugin worker process starts through this launcher")
+        environment = _worker_environment(os.environ, process_obj.credential_keep)
+        preparation = spawn.get_preparation_data(process_obj.name)
+        data = io.BytesIO()
+        multiprocessing.context.set_spawning_popen(self)
         try:
-            for name in withheld:
-                os.unsetenv(name)
-            yield
+            reduction.dump(preparation, data)
+            reduction.dump(process_obj, data)
         finally:
-            for name in withheld:
-                value = os.environ.get(name)
-                if value is not None:
-                    os.putenv(name, value)
-            if previous is None:
-                os.environ.pop("PYTHONSAFEPATH", None)
-            else:
-                os.environ["PYTHONSAFEPATH"] = previous
+            multiprocessing.context.set_spawning_popen(None)
+        parent_r: int | None = None
+        parent_w: int | None = None
+        child_r: int | None = None
+        child_w: int | None = None
+        try:
+            parent_r, child_w = os.pipe()
+            child_r, parent_w = os.pipe()
+            command = spawn.get_command_line(pipe_handle=child_r)
+            self._fds.extend([child_r, child_w])
+            self._child = subprocess.Popen(  # noqa: S603 - this interpreter, multiprocessing's own command
+                command,
+                executable=spawn.get_executable(),
+                env=environment,
+                close_fds=True,
+                pass_fds=self._fds,
+                restore_signals=False,
+            )
+            self.pid = self._child.pid
+            # As in CPython 3.13: a worker that dies before reading its data must not leave
+            # this write blocked on a pipe whose reading end the scanner itself still holds.
+            os.close(child_r)
+            child_r = None
+            os.close(child_w)
+            child_w = None
+            self.sentinel = parent_r
+            with open(parent_w, "wb", closefd=False) as pipe:
+                pipe.write(data.getbuffer())
+        finally:
+            parent = [descriptor for descriptor in (parent_r, parent_w) if descriptor is not None]
+            self.finalizer = multiprocessing.util.Finalize(self, _close_descriptors, parent)
+            for leftover in (child_r, child_w):
+                if leftover is not None:
+                    os.close(leftover)
+
+    def poll(self, flag: int = os.WNOHANG) -> int | None:
+        # subprocess reaps the child it started; a second waitpid here would race it.
+        if self.returncode is None and self._child is not None:
+            self.returncode = self._child.wait() if flag == 0 else self._child.poll()
+        return self.returncode
+
+
+class _WorkerProcess(multiprocessing.context.SpawnProcess):
+    """A spawned worker started by :class:`_WorkerPopen`; ``keep`` is ``options.plugin_env``."""
+
+    def __init__(self, *args: Any, keep: Iterable[str] = (), **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.credential_keep = tuple(keep)
+
+    @staticmethod
+    def _Popen(process_obj: BaseProcess) -> _WorkerPopen:
+        return _WorkerPopen(process_obj)
 
 
 def _remaining(deadline: float) -> float:
@@ -527,7 +598,7 @@ def _run_plugin_process(
     )
     parent, child = socket.socketpair()
     try:
-        process = multiprocessing.get_context("spawn").Process(
+        process = _WorkerProcess(
             target=_worker,
             args=(
                 child,
@@ -540,6 +611,7 @@ def _run_plugin_process(
             ),
             daemon=True,
             name="shadowscan-plugin",
+            keep=config.plugin_env,
         )
     except Exception:
         parent.close()
@@ -556,11 +628,9 @@ def _run_plugin_process(
         _remaining(deadline)
         if state.cancelled.is_set():
             raise TimeoutError
-        # A planted ``multiprocessing/`` in an untrusted working directory must not run in the
-        # worker (or the resource tracker the first start launches), and the worker must not
-        # start with the scanner's credentials: see _worker_spawn_environment.
-        with _worker_spawn_environment(config.plugin_env):
-            process.start()
+        # The worker starts with its own environment, without the scanner's credentials and
+        # with PYTHONSAFEPATH=1: see _worker_environment and _WorkerPopen.
+        process.start()
         if state.cancelled.is_set():
             raise TimeoutError
         child.close()

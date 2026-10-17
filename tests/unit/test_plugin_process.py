@@ -880,6 +880,47 @@ def test_spawned_plugin_initial_environment_holds_no_withheld_variable(installed
     assert later.stdout.split() == sorted(name for name in before if name.startswith("SHADOWSCAN_P"))
 
 
+def test_program_another_thread_starts_during_a_plugin_spawn_keeps_its_environment(
+    installed_probe, monkeypatch
+):
+    """Regression: the spawn took the withheld variables out of the whole process's environment
+    (``os.unsetenv``) and set PYTHONSAFEPATH for as long as ``Process.start()`` ran. A program a
+    built-in connector's thread started meanwhile with the inherited environment (botocore's
+    ``credential_process``, a thread-mode plugin's helper) started without the credentials it
+    needed, and with PYTHONSAFEPATH set. The concurrent launch runs while the spawn pickles the
+    worker, inside ``Process.start()``."""
+    import multiprocessing.reduction
+    from multiprocessing.process import BaseProcess
+
+    monkeypatch.setenv("SHADOWSCAN_PROBE_GITHUB_TOKEN", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", "hex:" + bytes(range(32)).hex())
+    monkeypatch.setenv("PYTHONSAFEPATH", "sentinel")
+    monkeypatch.delenv("PYTHONSAFEPATH")
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "initial-env")
+    script = 'printf %s "${SHADOWSCAN_PROBE_GITHUB_TOKEN-unset} ${SHADOWSCAN_IDENTITY_KEY:+key} ${PYTHONSAFEPATH-unset}"'
+    seen: list[str] = []
+    original = multiprocessing.reduction.dump
+
+    def launch() -> None:
+        # Inherits the process environment (env=None), as subprocess users on other threads do.
+        seen.append(subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=60).stdout)
+
+    def dump(obj, file, protocol=None):
+        if isinstance(obj, BaseProcess):
+            other = threading.Thread(target=launch)
+            other.start()
+            other.join(60)
+        return original(obj, file, protocol)
+
+    monkeypatch.setattr(multiprocessing.reduction, "dump", dump)
+    result = _engine().run()
+    assert result.complete, result.stats
+    assert seen == ["synthetic key unset"]
+    # The worker itself still starts without them.
+    assert result.findings[0].metadata["initial"] == ["HOME", "PATH"]
+    _assert_reaped(installed_probe)
+
+
 @pytest.mark.parametrize(
     "value",
     ["GITHUB_TOKEN", ["GITHUB_TOKEN", "GITHUB_TOKEN"], ["not a name"], ["X=1"], [1], ["A" * 129]],
