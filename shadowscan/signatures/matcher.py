@@ -844,7 +844,12 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     value class (``_FALLBACK_TOKEN``) that looks like a key
     (``_high_entropy_credential``). A literal inside a call
     ('?? getSecret("<path>")', '?: error("X is not set")') is no fallback,
-    nor is an empty, word-like or interpolated one ('|| ""', '|| f"{x}"').
+    nor is an empty, word-like or interpolated one ('|| ""', '|| f"{x}"'),
+    except the default a call that reads a setting is given
+    (``_DEFAULT_READS``: 'GetValue<string>("X", "<key>")',
+    'configService.get("X", "<key>")', '.orElse("<key>")',
+    'requireNonNullElse(x, "<key>")'), which is judged as a fallback is.
+    Type arguments may follow a blank ('get <string>("X") ??').
     Whether the literal is a placeholder is the caller's test, on the literal
     itself (see ``reported_credential``). A follower without the start of
     such a literal anywhere (``_FALLBACK_HINT``) is not read at all.
@@ -855,6 +860,8 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     operand = fallback = False
     # Parentheses opened where an operand belongs and not closed yet.
     grouping = 0
+    # The name a call right after it calls: the reference's last word at first.
+    callee = _assigned_value(value).rsplit(".", 1)[-1]
     for item in tokens:
         kind, token = item.kind, item.token
         if item.gap and not operand:
@@ -869,22 +876,116 @@ def _fallback_literal(value: str, follower: str) -> str | None:
                 kind == "open" and not _closed_group(tokens, token.group())
             ):
                 return None
-            operand = False
+            operand, callee = False, token.group() if kind == "word" else ""
         elif kind == "close" and grouping and token.group() == ")":
             grouping -= 1
-        elif kind == "member" or (not item.spaced and kind in {"open", "postfix"}):
-            # A member, call, subscript or non-null assertion on the operand before.
-            if kind == "open" and not _closed_group(tokens, token.group()):
-                return None
-        elif token.group() == "<" and not item.spaced:
-            # A generic call's type arguments ('get<string>(...)', 'GetValue<string>(...)').
-            if not _type_arguments(tokens):
+        elif (
+            kind == "member"
+            or (not item.spaced and kind in {"open", "postfix"})
+            or (token.group() == "<" and callee)
+        ):
+            goes_on, literal, callee = _operand_suffix(value, item, tokens, callee)
+            if literal is not None:
+                return literal
+            if not goes_on:
                 return None
         else:
             operator = _operator(item)
             if operator is None:
                 return None
             operand, fallback = True, operator in _FALLBACK_OPERATORS
+    return None
+
+
+# Calls that read a setting and take its default as an argument, by their
+# callee's last word: the position of that argument ('GetValue<T>(key,
+# default)', 'configService.get(key, default)', 'os.getenv("X", default)',
+# 'System.getProperty("x", default)', 'dict.get("X", default)',
+# 'requireNonNullElse(x, default)', 'ENV.fetch("X", default)', and
+# Optional's '.orElse(default)').
+_DEFAULT_READS = {
+    "config": 1,
+    "env": 1,
+    "fetch": 1,
+    "get": 1,
+    "getenv": 1,
+    "getordefault": 1,
+    "getproperty": 1,
+    "getstring": 1,
+    "getvalue": 1,
+    "getvalueordefault": 1,
+    "requirenonnullelse": 1,
+    "orelse": 0,
+    "unwrap_or": 0,
+    "unwrapor": 0,
+}
+# Keyword arguments that name a read's default ('fallback="<key>"', C#'s 'defaultValue: "<key>"').
+_DEFAULT_KEYWORDS = frozenset({"default", "default_value", "defaultvalue", "defval", "fallback"})
+
+
+def _operand_suffix(
+    value: str, item: _OperandToken, tokens: Iterator[_OperandToken], callee: str
+) -> tuple[bool, str | None, str]:
+    """Read a member, call, subscript, type argument list or non-null mark on the operand before.
+
+    Returns whether the value goes on past it, the hard-coded key it gives a
+    setting's read as the default (``_DEFAULT_READS``), which the caller
+    reports as the fallback, and the name a call right after it would call.
+    A generic call's type arguments ('get<string>(...)', 'get <string>(...)')
+    keep the callee.
+    """
+    text = item.token.group()
+    if item.kind == "member":
+        return True, None, text.lstrip("?.")
+    if text == "<":
+        return _type_arguments(tokens), None, callee
+    if item.kind != "open":
+        return True, None, callee  # a non-null assertion
+    position = _DEFAULT_READS.get(callee.lower()) if text == "(" else None
+    if position is None:
+        return _closed_group(tokens, text), None, ""
+    closed, literal = _call_default(tokens, position)
+    if closed and literal is not None and _fallback_credential(value, literal):
+        return True, str(literal["body"]), ""
+    return closed, None, ""
+
+
+def _call_default(tokens: Iterator[_OperandToken], position: int) -> tuple[bool, re.Match[str] | None]:
+    """Read a call's arguments after its '(' up to the ')' that closes it: whether it closes, and its default.
+
+    The default is a string literal that is the whole argument at
+    ``position``, or the whole value of a keyword argument named for a
+    default (``_DEFAULT_KEYWORDS``).
+    """
+    expected = [")"]
+    argument: list[_OperandToken] = []
+    index = 0
+    found: re.Match[str] | None = None
+    for item in tokens:
+        text = item.token.group()
+        if item.kind == "close":
+            if text != expected.pop():
+                return False, None
+            if not expected:
+                return True, found or _default_argument(argument, positional=index == position)
+        elif item.kind == "open":
+            expected.append(_CLOSERS[text])
+        elif text == "," and len(expected) == 1:
+            found = found or _default_argument(argument, positional=index == position)
+            argument, index = [], index + 1
+            continue
+        argument.append(item)
+    return False, None
+
+
+def _default_argument(argument: list[_OperandToken], *, positional: bool) -> re.Match[str] | None:
+    """The string literal an argument gives as a read's default, or None (see ``_call_default``)."""
+    if positional and len(argument) == 1 and argument[0].kind == "string":
+        return argument[0].token
+    if len(argument) == 3 and argument[0].kind == "word" and argument[2].kind == "string":
+        keyword, joiner = argument[0].token.group().lower(), argument[1].token.group()
+        if keyword in _DEFAULT_KEYWORDS and joiner in {"=", ":"}:
+            return argument[2].token
     return None
 
 

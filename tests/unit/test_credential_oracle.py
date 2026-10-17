@@ -192,6 +192,36 @@ R4_ENV_PASSWORDS = (
     "LocalAdmin2024Strong",
     "WelcomeToTheJungle",
 )
+# Round 4's settings reads whose default argument is a hard-coded key.
+R4_DEFAULT_READS = (
+    (
+        "cs-typed-get-value",
+        "src/A.cs",
+        'var openaiApiKey = configuration.GetValue<string>("OpenAI:ApiKey", "<K>");\n',
+    ),
+    ("cs-get-value", "src/A.cs", 'var openaiApiKey = configuration.GetValue("OpenAI:ApiKey", "<K>");\n'),
+    ("ts-config-get", "src/a.ts", "const openaiApiKey = this.configService.get('OPENAI_API_KEY', '<K>');\n"),
+    (
+        "ts-typed-config-get",
+        "src/a.ts",
+        "const openaiApiKey = this.configService.get<string>('OPENAI_API_KEY', '<K>');\n",
+    ),
+    (
+        "java-or-else",
+        "src/A.java",
+        'String openaiApiKey = Optional.ofNullable(System.getenv("OPENAI_API_KEY")).orElse("<K>");\n',
+    ),
+    (
+        "java-require-non-null-else",
+        "src/A.java",
+        'String openaiApiKey = Objects.requireNonNullElse(System.getenv("OPENAI_API_KEY"), "<K>");\n',
+    ),
+    (
+        "ts-spaced-type-arguments",
+        "src/a.ts",
+        "const openaiApiKey = this.configService.get <string>('OPENAI_API_KEY') ?? '<K>';\n",
+    ),
+)
 R4_SENTENCE_PLACES = (
     ("env", "DB_PASSWORD={v}", "env"),
     ("compose", "POSTGRES_PASSWORD: {v}", "text"),
@@ -3928,6 +3958,18 @@ ROWS = [
         main="reported",
         accepted="not a credential: every word is label vocabulary or the name's own (dev, password, local)",
     ),
+    # --- r4-review-creds4.json: a hard-coded key as a settings read's default argument
+    *[
+        Row(
+            f"r4.6-{label}",
+            "scan",
+            {rel: line},
+            mode="",
+            head=((f"{rel}:1",), "complete", "withheld"),
+            main=((f"{rel}:1",), "complete", "withheld"),
+        )
+        for label, rel, line in R4_DEFAULT_READS
+    ],
 ]
 
 
