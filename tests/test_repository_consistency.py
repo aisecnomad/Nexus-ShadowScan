@@ -17,6 +17,7 @@ from __future__ import annotations
 import functools
 import importlib.util
 import inspect
+import io
 import itertools
 import json
 import os
@@ -24,6 +25,7 @@ import re
 import shutil
 import subprocess
 import textwrap
+import tokenize
 import tomllib
 from collections import Counter
 from collections.abc import Iterator
@@ -1211,6 +1213,36 @@ def test_package_bandit_suppressions_give_one_reason() -> None:
         if not reason or line.count("# noqa") != 1
     ]
     assert not unreasoned, f"write one `# noqa: <CODES> - <reason>` per line: {unreasoned}"
+
+
+#: A lint suppression comment: `noqa` for its line or, after `ruff:` or
+#: `flake8:`, for its whole file. Matched ignoring case, as ruff reads the
+#: line form.
+_NOQA_DIRECTIVE = re.compile(r"#\s*(?:(?:ruff|flake8)\s*:\s*)?noqa", re.IGNORECASE)
+_NOQA_CODES = re.compile(r"\s*:\s*[A-Z]+\d+(?:\s*,\s*[A-Z]+\d+)*")
+
+
+def test_noqa_comments_name_the_rules_they_suppress() -> None:
+    """A blanket `noqa` silences every rule, bandit's included, and names none.
+
+    The tests above read only `# noqa: <CODES>`, so a blanket one got past
+    them and still suppressed S602. Ruff's PGH004 rejects it in lint; this
+    holds the paths ruff checks to it should the select list change.
+    """
+    excluded = [ROOT / entry for entry in _pyproject()["tool"]["ruff"]["exclude"]]
+    blanket = []
+    for directory in ("shadowscan", "tests", "tools", "benchmarks"):
+        for path in sorted((ROOT / directory).rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            if "noqa" not in text.lower() or any(path.is_relative_to(entry) for entry in excluded):
+                continue
+            for token in tokenize.generate_tokens(io.StringIO(text).readline):
+                if token.type != tokenize.COMMENT:
+                    continue
+                for directive in _NOQA_DIRECTIVE.finditer(token.string):
+                    if not _NOQA_CODES.match(token.string, directive.end()):
+                        blanket.append(f"{_relative(path)}:{token.start[0]}")
+    assert not blanket, f"name the codes: `# noqa: <CODES> - <reason>`: {blanket}"
 
 
 def test_partial_path_suppressions_name_the_program_they_start() -> None:

@@ -542,7 +542,10 @@ public repositories with the tool and read the committed benchmark metrics.
   variable names -- and each now carries a `noqa` with its reason, so they are
   reviewed decisions rather than unexamined gaps and a new occurrence fails
   CI. Tests and tooling are exempt, where a hard-coded token is the point of
-  the test.
+  the test. A blanket `noqa` (no codes, for a line or a whole file) would
+  silence every rule with no reason given; ruff's `PGH004` rejects it, and
+  `test_noqa_comments_name_the_rules_they_suppress` holds the linted paths to
+  that whatever the select list says.
 - `C901` was never enabled and 119 functions exceed complexity 15, the worst
   at 127. `tools/complexity_gate.py` measures against that target and compares
   with `tools/complexity_baseline.json`: existing debt stays buildable, a new

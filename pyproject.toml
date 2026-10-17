@@ -97,6 +97,8 @@ exclude = [
 # BLE: a broad `except` that does not re-raise is flagged; an intentional one
 # carries `# noqa: BLE001 - <reason>` (tests/test_repository_consistency.py
 # requires the reason). RUF100: a `noqa` that suppresses nothing is flagged.
+# PGH004: a `noqa` must name its codes; a blanket one would silence every
+# rule on its line, or in its file, without the reason the tests require.
 # S (flake8-bandit): a security scanner should be held to the rule set it
 # would apply to anything it scans. Every suppression in the package carries
 # a reason, so each is a reviewed decision rather than an unexamined gap, and
@@ -104,7 +106,7 @@ exclude = [
 # assert; the rest are scoped to the shipped package below, since test and
 # tooling code legitimately holds fake credentials, runs the CLI as a
 # subprocess, writes to temp paths and uses `random` for fixture data.
-select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "BLE", "S", "RUF100"]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "BLE", "S", "RUF100", "PGH004"]
 # Deliberate ignores, not debt. SIM102/SIM103/SIM105/SIM108 and C408 only
 # propose equivalent rewrites (collapsed guards, `return cond`,
 # contextlib.suppress, ternaries, dict literals); the longer forms stay.

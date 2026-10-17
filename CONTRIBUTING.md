@@ -181,9 +181,9 @@ suite untraced on the others; `pyproject.toml` enables branch coverage.
 Ruff enforces a 110-column line length outside `tests/`,
 `tools/benchmark/*_cases.py` and `benchmarks/*/corpus.py`, flags loop
 variables captured by closures (B023), flags a broad `except` that does not
-re-raise (BLE), and rejects `noqa` directives that suppress nothing (RUF100).
-Suppress an intentional broad `except` with `# noqa: BLE001 - <reason>`; a
-repository test requires the reason. Mypy requires annotated definitions
+re-raise (BLE), and rejects `noqa` directives that suppress nothing (RUF100)
+or name no codes (PGH004). Suppress an intentional broad `except` with
+`# noqa: BLE001 - <reason>`; a repository test requires the reason. Mypy requires annotated definitions
 (`disallow_untyped_defs`) and reports unused `type: ignore` comments.
 `pyproject.toml` holds the complete rule sets.
 
