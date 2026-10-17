@@ -112,8 +112,8 @@ across this change reports findings as resolved or new that are neither.
   environment read (`process.env.OPENAI_API_KEY || "<key>"`; a literal passed
   to a call there, such as `?? fail("X is not set")`, is no fallback, and a
   placeholder fallback is `example-credential` evidence) and generated
-  passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`, also joined by
-  `.` or in upper case; a label of words carries credential, test,
+  passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`, also in upper
+  case, and joined by `.` in an env file; a label of words carries credential, test,
   development-default or filler vocabulary or the assigned name, such as
   `local-development-only`) are reported as
   before. References, documentation placeholders, short `sk-` look-alikes
