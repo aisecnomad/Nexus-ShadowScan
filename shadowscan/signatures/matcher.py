@@ -25,6 +25,7 @@ import regex
 
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
 from shadowscan.utils.redaction import sanitize_text
+from shadowscan.utils.redaction_rules import environment_read_name, pasted_key_name
 
 _SCAN_EXECUTION_CAP: ContextVar[float | None] = ContextVar("signature_scan_execution_cap", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
@@ -950,8 +951,9 @@ def _generic_literal(value: str, *, code: bool, follower: str, env_file: bool = 
     """The literal a generic match reports, or None when it holds no key-shaped one.
 
     A literal value reports itself when it looks random; a reference reports
-    the fallback literal after it, if any (``_fallback_literal``). In an env
-    or credential file (``env_file``) a password's value is never another
+    the key pasted as its variable's name (``_pasted_key_read``), else the
+    fallback literal after it, if any (``_fallback_literal``). In an env or
+    credential file (``env_file``) a password's value is never another
     variable's name: such a file has no variables to name, only values. A
     template of one (``.env.example``), a Helm values file, a compose file,
     a workflow or a document is no such file: a PASSWORD value there may name
@@ -959,7 +961,7 @@ def _generic_literal(value: str, *, code: bool, follower: str, env_file: bool = 
     ``useExistingSecretKey``), so the name rules still apply.
     """
     if _reference_value(value, code=code, follower=follower):
-        return _fallback_literal(value, follower)
+        return _pasted_key_read(value, follower) or _fallback_literal(value, follower)
     names = code or not env_file or not _assigned_name(value).lower().endswith(_PASSWORD_NAMES)
     if not names and _label_name(value, _assigned_value(value)):
         return None
@@ -981,6 +983,28 @@ def _label_name(value: str, candidate: str) -> bool:
     words = {word.lower() for word in _NAME_WORD.findall(candidate) if word.isalpha()}
     name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if len(word) >= 3}
     return any(_label_word(word) for word in words) or not words.isdisjoint(name)
+
+
+# Python's environment mapping read as an attribute ('os.environ.<NAME>'),
+# which no evidence pass reads as a lookup: it raises, but its name is still
+# written in the code.
+_ENVIRON_ATTRIBUTE = re.compile(r"os\.environ\.(?P<name>[A-Z_][A-Z0-9_]*+)")
+
+
+def _pasted_key_read(value: str, follower: str) -> str | None:
+    """The key pasted in place of the variable's name in an environment read, or None.
+
+    'process.env.JBSWY3DPEHPK3PXP...' or 'os.environ.QWERTYUIOP...' reads
+    no variable: the name is the credential, written into the code. The
+    test is the redactor's (``pasted_key_name``), which withholds the same
+    read from evidence, so a credential withheld there is reported here.
+    """
+    candidate = _assigned_value(value)
+    name = environment_read_name(candidate + follower)
+    if name is None:
+        attribute = _ENVIRON_ATTRIBUTE.fullmatch(candidate)
+        name = attribute["name"] if attribute else None
+    return name if name is not None and pasted_key_name(name) else None
 
 
 # The generic patterns' names whose value a person chose (DB_PASSWORD,
