@@ -1,0 +1,44 @@
+# Scan this checkout with its own scanner and finish with a COMPLETE report (exit 0).
+#
+# A plain `shadowscan code .` in this repository exits 3 (incomplete): a few files hold
+# deliberately limit-tripping test vectors or oversize benchmark data, and the scanner fails
+# closed on them instead of skipping them silently. This file names those paths, so the scan
+# completes, and a new file that trips a limit anywhere else still fails it. Two more paths are
+# excluded only to keep planted test inputs and retained logs out of the report; each entry says
+# which kind it is. One more, `site`, is the documentation that `make docs` builds into a
+# checkout; a clean checkout has none. Findings are expected here (fixtures and tests carry
+# synthetic credentials; AGENTS.md and the Copilot/Devin files are real coding-agent
+# configuration) and do not fail the scan; incompleteness does.
+#
+# Run it with `make self-scan` (CI runs the same command). Relative paths here resolve beside
+# this file, so ".." is the repository root and the exclusions below are relative to it.
+# A new entry needs a reason in a comment here; an entry that matches nothing fails
+# tests/test_self_scan.py, so the list cannot go stale.
+#
+# No inventory is given on purpose: the sanctioned inventory would sit inside the scanned tree,
+# where scanned content could alter approvals, and no finding here is meant to be approved.
+connectors:
+  - name: code.filesystem
+    paths: [".."]
+    exclude:
+      # Needed for a complete scan. Benchmark corpora and results: three data files above the 1 MB
+      # default max_file_size, and a planted shadow-agent estate, prompt-injection text and MCP
+      # launch commands whose findings would merge into this repository's own root-level findings.
+      - benchmarks
+      # Report content only; the scan completes without it. Retained AI-assisted review logs and
+      # their evidence files, whose text would change what the root-level finding says.
+      - archive
+      # Report content only; the scan completes without it. Sample repositories built to look like
+      # shadow AI agents (the scanner's test inputs), whose planted findings would fill the report.
+      - tests/fixtures
+      # Needed for a complete scan. Credential-form redaction vectors: call-shaped text without
+      # a closing parenthesis exceeds the call-lexing budget, which ends the file's analysis with
+      # a SanitizationLimitError (credential call length limit).
+      - tests/unit/test_credential_form_redaction.py
+      # Needed for a complete scan. Implements that call lexer; its comments and regular
+      # expressions hold the same shapes, so it trips the same budget.
+      - shadowscan/utils/redaction_calls.py
+      # Needed for a complete scan in a checkout that has built the docs; a clean checkout has no
+      # such folder. `make docs` writes the site here and git ignores it. Its connector reference
+      # and changelog pages are too large for the structured-text limits (SanitizationLimitError).
+      - site

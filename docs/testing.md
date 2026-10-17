@@ -148,9 +148,10 @@ make complexity      # function and module size against tools/complexity_baselin
 make signatures      # signature schema and regex validation
 make mappings        # threat and control mapping catalogs
 make secrets         # fail on hardcoded credentials in tracked files, as CI
+make self-scan       # scan this checkout with ShadowScan itself; an incomplete scan (exit 3) fails, as CI
 make audit           # pip-audit on the environment and every hash lock, as CI (needs network)
 make evaluate        # every bundled detection corpus; reports go to a temporary directory
-make check           # exactly: lint format-check typecheck complexity signatures mappings secrets audit test coverage-gate evaluate
+make check           # exactly: lint format-check typecheck complexity signatures mappings secrets self-scan audit test coverage-gate evaluate
 ```
 
 `make complexity` keeps the largest functions and modules from growing back; see
@@ -159,7 +160,8 @@ make check           # exactly: lint format-check typecheck complexity signature
 Two more targets are not prerequisites of `make check`. `make policy` runs the
 two repository test modules on their own, which `make test` also runs; use it
 after touching `.github/` or documentation. `make docs` builds the site with
-`mkdocs build --strict`, as CI's docs job does. `make check-fast` runs lint,
+`mkdocs build --strict`, as CI's docs job does, into `site/`, which git ignores
+and `make self-scan` excludes. `make check-fast` runs lint,
 format, types, the complexity gate, both validators, secrets and policy in a minute or two,
 without the test suite, audit or evaluation.
 

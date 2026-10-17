@@ -80,6 +80,13 @@ mappings: ## Validate the threat and control mapping catalogs
 secrets: ## Fail on hardcoded credentials in tracked files, as CI does
 	set -o pipefail; git ls-files -z | xargs -0 python tools/check_secrets.py
 
+.PHONY: self-scan
+self-scan: ## Scan this checkout with ShadowScan itself; an incomplete scan (exit 3) fails, as in CI
+	@set -euo pipefail; \
+	out="$$(mktemp -d "$${TMPDIR:-/tmp}/shadowscan-self-scan.XXXXXX")"; \
+	echo "Self-scan report: $$out/shadowscan-self-scan.json"; \
+	shadowscan scan -c examples/shadowscan.self-scan.yaml --format json -o "$$out/shadowscan-self-scan.json"
+
 .PHONY: audit
 audit: ## Audit the environment and every hash-locked dependency set, as CI does
 	pip-audit --skip-editable --progress-spinner off
@@ -106,7 +113,7 @@ evaluate: ## Run the bundled detection regression corpora (reports go to a tempo
 
 .PHONY: check
 .NOTPARALLEL: check
-check: lint format-check typecheck complexity signatures mappings secrets audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
+check: lint format-check typecheck complexity signatures mappings secrets self-scan audit test coverage-gate evaluate ## Run local quality gates (CI also validates packaging and containers)
 	@echo "All checks passed."
 
 .PHONY: policy

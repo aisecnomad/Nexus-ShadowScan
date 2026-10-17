@@ -818,6 +818,12 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Release, CI and supply chain
 
+- `make self-scan` (part of `make check`) and a CI step scan this checkout with
+  `examples/shadowscan.self-scan.yaml` and require a complete report: findings do not fail the step,
+  an incomplete scan (exit 3) does. The few paths that deliberately trip a scanner limit, and the
+  docs site that `make docs` builds into a checkout, are named exclusions with a reason each, and
+  `tests/test_self_scan.py` keeps the list explained, narrow and in step with make, CI and the
+  documents. A plain `shadowscan code .` in the checkout still exits 3. (Oct 17)
 - New `tools/complexity_gate.py` (`make complexity`, part of `make check` and `make check-fast`, and
   a step of the CI test job) holds every function above ruff's `C901` limit of 20 and every
   `shadowscan` module above 2,000 lines to `tools/complexity_baseline.json`: nothing listed may
