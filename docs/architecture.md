@@ -57,7 +57,7 @@ classes (`reporters/cyclonedx.py`).
 
 ## Scan pipeline
 
-A scan runs these stages in order. The CLI (`shadowscan/cli.py`) reads the
+A scan runs these stages in order. The CLI (`shadowscan/cli/`) reads the
 configuration in step 1 and renders the reports in step 7; `Engine.run()` in
 `shadowscan/engine.py` runs the rest. Setup refuses an invalid or unsafe
 configuration before anything is collected: the command exits 1 with no
@@ -248,7 +248,7 @@ reports (`--format json`). None contacts a provider except
 | `shadowscan/triage.py` | opt-in, advisory LLM triage of the highest-risk findings |
 | `shadowscan/endpoint.py` | well-known AI client configuration locations that `shadowscan endpoint` reads through `code.filesystem` |
 | `shadowscan/errors.py` | `SetupError`: setup failures whose messages are credential-free and printed verbatim by the CLI |
-| `shadowscan/cli.py` | `scan`, `run`, `code`, `gateway`, `jwt`, `endpoint`, `connectors`, `signatures`, `inventory`, `mcp-registry`, `diff`, `merge`, `dashboard`, `controls` |
+| `shadowscan/cli/` | The command line. `__init__.py` holds the shared options, `_run_scan`, report emission and the `shadowscan` group; each command family sits in its own module and registers itself on import: `_scan.py` (`scan`, `run`, `code`, `gateway`), `_jwt.py`, `_endpoint.py`, `_connectors.py`, `_signatures.py`, `_inventory.py`, `_mcp_registry.py`, `_diff.py`, `_merge.py`, `_dashboard.py` and `_controls.py` |
 
 ### Detection, inventory and assessment
 

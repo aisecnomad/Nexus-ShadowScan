@@ -592,6 +592,13 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Reports and CLI
 
+- `shadowscan/cli.py` (1,922 lines) is now the package `shadowscan/cli/`: the options shared by
+  every command, report output and deadline handling stay in `__init__.py` and each command group
+  has a module of its own. The `shadowscan` command, its options, output and exit codes are
+  unchanged, and `python -m shadowscan.cli` and the names tests patch on `shadowscan.cli` keep
+  working. Old and new gave the same output for every `--help` text and for runs of the report
+  formats, `diff`, `merge`, `dashboard`, `endpoint` and `inventory` on the fixtures, apart from the
+  scanner-source digest inside a report's fingerprint. (Oct 17)
 - SARIF locations resolve `.`/`..`, drop ones above the root or naming a network path, cap
   `startLine` at the 32-bit limit and escape lone surrogates; `terminal_text` and saved reports
   escape every Unicode format, variation-selector and blank character. (Oct 15)
