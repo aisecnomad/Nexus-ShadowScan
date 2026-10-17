@@ -266,7 +266,9 @@ from shadowscan.connectors.code.source_text import (  # noqa: F401 - re-exported
 from shadowscan.connectors.code.tool_attribution import ToolRegions
 from shadowscan.connectors.code.walk import (
     DEFAULT_MAX_WALK_ENTRIES,
+    PROJECT_ROOT_MARKERS,
     _holds_file,
+    _marks_deployable_project,
     _marks_project,
     _nearest_root,
     _project_root,
@@ -1666,6 +1668,9 @@ class FilesystemConnector(BaseConnector):
         # Files of the current root's walk -> the project root it assigned them,
         # which decides whether the ci profile declares a gap there (_declared_omission).
         self._entry_projects: dict[str, str] = {}
+        # Project roots of the current root's walk that are not deployable projects (a template's,
+        # or one whose manifests do not parse) -> the root the ci profile judges paths in them by.
+        self._declaring_roots: dict[str, str] = {}
         # (project root, path) of settings files the walk skipped (a link gap or a non-regular entry).
         self._unread_settings: list[tuple[str, str]] = []
         # Settings files of the scanned tree that a remote API snapshot did not include (set by
@@ -1871,7 +1876,24 @@ class FilesystemConnector(BaseConnector):
         if _is_test_path(rel):
             return not self.include_tests
         project_root = self._entry_projects.get(rel, rel)
+        project_root = self._declaring_roots.get(project_root, project_root)
         return rel != project_root and negative_context(rel, project_root) is not None
+
+    def _note_declaring_root(self, directory: Path, rel_dir: str, parent: str, filenames: list[str]) -> None:
+        """Record which root ``_declared_omission`` judges paths in the project root ``rel_dir`` by.
+
+        A deployable project is judged by itself. A template's directory or one
+        whose manifests do not parse is judged by ``parent``'s root, so the
+        profile still declares the gaps a template's unparsed sources leave.
+        Only the ``ci`` profile reads this, so no other scan probes a manifest.
+        """
+        if self.profile != "ci":
+            return
+        manifests = [
+            name for name in filenames if name in PROJECT_ROOT_MARKERS and self._included(f"{rel_dir}/{name}")
+        ]
+        if not _marks_deployable_project(directory, rel_dir, manifests):
+            self._declaring_roots[rel_dir] = self._declaring_roots.get(parent, parent)
 
     def _gap(
         self, rel: str, message: str, *, error: bool = False, suffix: bool = True, reason: str | None = None
@@ -2282,6 +2304,7 @@ class FilesystemConnector(BaseConnector):
             )
             if rel_dir != "." and _marks_project(Path(dirpath), included_names):
                 roots.append(rel_dir)
+                self._note_declaring_root(Path(dirpath), rel_dir, proj, filenames)
                 proj = rel_dir
             for fn in sorted(filenames):
                 walk.budget.check()
@@ -2757,6 +2780,7 @@ class FilesystemConnector(BaseConnector):
             self._unread_settings = []
             self._lockfile_governed = {}
             self._entry_projects = {}
+            self._declaring_roots = {}
             entries.extend(self._iter_entries(scan.root))
         except _WalkLimitError as exc:
             # Enumeration hit max_entries or its share of the deadline: the

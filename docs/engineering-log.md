@@ -49,6 +49,19 @@ tolerated gap.
   list (more than 200, a malformed list, an older report). Other missing
   findings keep the path-name rule. The fleet reader and the plugin worker
   check the list.
+- **A template's manifest does not make it a deployable project.** The
+  project-root rule counted a manifest by its file name, so a cookiecutter
+  template's `templates/crew/{{cookiecutter.project_slug}}/pyproject.toml`,
+  which never parses, made the template a project: its invalid TOML and
+  JSON manifests and its unparsed `crew.py` were no longer declared and the
+  ci profile exited 3, where it had declared all three. The same held for a
+  `docs/package.json` that does not parse. For the profile's rule only, a
+  project root with template syntax (`{{`, `{%`, `${`) in its path, or none
+  of whose JSON or TOML manifests (`package.json`, `composer.json`,
+  `pyproject.toml`, `Cargo.toml`, `Pipfile`) parses, is judged by the
+  project around it; a manifest that cannot be read or is over a megabyte
+  counts as parsing, so the doubt keeps the gap. Project findings and
+  evidence weighting are unchanged.
 
 ### Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
 

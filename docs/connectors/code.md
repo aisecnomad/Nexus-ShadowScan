@@ -525,7 +525,10 @@ example and generated paths are warnings that leave the scan complete and are
 counted in the report's `declared_omissions`; every other gap still marks the
 scan incomplete. Documentation and example directories count below the file's
 project root, so a project under `demo/` or `examples/svc/` with its own
-manifest keeps its gaps. It conflicts with `strict_coverage`. See
+manifest keeps its gaps. A template's directory (template syntax such as
+`{{cookiecutter.slug}}`, `{%` or `${` in its path) and one none of whose JSON
+or TOML manifests parses are not projects for this rule, so a cookiecutter
+template's unparsed manifest and sources stay declared. It conflicts with `strict_coverage`. See
 [the `ci` profile](../scanning.md#the-ci-profile) and the reason categories in
 `incomplete_reasons` that explain an exit 3.
 

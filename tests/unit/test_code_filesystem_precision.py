@@ -687,6 +687,61 @@ def test_ci_profile_keeps_gaps_in_deployable_example_projects(run_connector, tmp
     assert not stats.incomplete and stats.declared_omissions == 1
 
 
+@pytest.mark.parametrize(
+    ("segment", "valid"),
+    [
+        ("{{cookiecutter.project_slug}}", False),
+        ("{{cookiecutter.project_slug}}", True),
+        ("{% if crew %}crew{% endif %}", False),
+        ("${project_name}", True),
+    ],
+)
+def test_ci_profile_declares_the_gaps_of_a_templated_project(run_connector, tmp_path, segment, valid):
+    # The review's case: a cookiecutter template's manifest made its directory
+    # a deployable project, so the template's invalid manifests and unparsed
+    # source were no longer declared and the scan exited 3. A path segment
+    # with template syntax is a template's, whether its manifest parses or not.
+    write(tmp_path, "pyproject.toml", '[project]\nname = "root"\nversion = "0.1"\n')
+    write(tmp_path, "src/app.py", "VALUE = 1\n")
+    template = f"templates/crew/{segment}"
+    if valid:
+        write(tmp_path, f"{template}/pyproject.toml", '[project]\nname = "crew"\nversion = "0.1"\n')
+    else:
+        write(
+            tmp_path,
+            f"{template}/pyproject.toml",
+            '[project]\nname = "{{cookiecutter.project_slug}}"\n{% for d in deps %}\n"{{ d }}",\n{% endfor %}\n',
+        )
+        write(tmp_path, f"{template}/package.json", '{"name": "{{slug}}", {% if x %}"a": 1{% endif %}}\n')
+    write(
+        tmp_path, f"{template}/src/crew.py", "from crewai import Agent\nclass {{cookiecutter.class_name}}:\n"
+    )
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and not stats.errors, stats.warnings
+    assert stats.declared_omissions == (1 if valid else 3)
+    assert all(path.startswith(f"{template}/") for path in stats.declared_paths)
+
+
+@pytest.mark.parametrize("manifest", ["package.json", "pyproject.toml"])
+def test_ci_profile_declares_gaps_below_a_manifest_that_does_not_parse(run_connector, tmp_path, manifest):
+    # A docs/ directory whose manifest never parses is not a deployable
+    # project: its own defect and the gaps beside it are declared as
+    # documentation. One whose manifest parses is a project (a docs site),
+    # and the same gap in it still exits 3.
+    write(tmp_path, "pyproject.toml", '[project]\nname = "root"\nversion = "0.1"\n')
+    write(tmp_path, f"docs/{manifest}", "{{ broken\n")
+    (tmp_path / "docs" / "blog").mkdir()
+    (tmp_path / "docs" / "blog" / "post.md").write_bytes(b"a\x00b" * 10)
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and not stats.errors, stats.warnings
+    assert sorted(stats.declared_paths) == ["docs/blog/post.md", f"docs/{manifest}"]
+    valid = '{"name": "site"}\n' if manifest == "package.json" else '[project]\nname = "site"\n'
+    write(tmp_path, f"docs/{manifest}", valid)
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.incomplete and stats.declared_omissions == 0
+    assert [e for e in stats.errors if "docs/blog/post.md" in e]
+
+
 @pytest.mark.parametrize("directory", ["docs/snippets", "examples/basic"])
 def test_ci_profile_still_declares_gaps_in_plain_docs_and_example_trees(run_connector, tmp_path, directory):
     write(tmp_path, "pyproject.toml", '[project]\nname = "root"\nversion = "0.1"\n')

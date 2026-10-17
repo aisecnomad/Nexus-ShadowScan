@@ -251,7 +251,11 @@ Documentation and example directories count only below the file's project
 root, as they do for evidence: a directory that holds its own manifest
 (`demo/pyproject.toml`, `examples/svc/package.json`) is a deployable project
 reported at full weight, whatever it is called, so a gap in it still marks
-the scan incomplete. Every other gap, in `src/`, at the repository root or in a path the profile
+the scan incomplete. A template is not such a project: a directory with
+template syntax in its path (`templates/crew/{{cookiecutter.slug}}/`, a `{%`
+or `${` segment), or one none of whose JSON or TOML manifests parses (a
+templated `package.json`), is judged by the project around it, so the
+template's own unparsed manifest and sources are declared. Every other gap, in `src/`, at the repository root or in a path the profile
 does not name, still marks the scan incomplete, and so does a connector
 deadline, a `max_files` or `max_entries` limit and a triage scan. The profile
 and `strict_coverage` conflict and are rejected together. The report of a

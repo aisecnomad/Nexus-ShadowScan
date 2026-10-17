@@ -449,6 +449,8 @@ def test_a_report_without_unread_content_resolves_as_before():
         "svc/docs/a.md",
         "examples/svc/docs/a.md",
         "templates/crew/crew.py",
+        # A template's own manifest does not make its directory a project (judged from the root).
+        "templates/{{cookiecutter.slug}}/pyproject.toml",
         "lib/schema.generated.json",
         "gen/api_pb2.py",
     ],
