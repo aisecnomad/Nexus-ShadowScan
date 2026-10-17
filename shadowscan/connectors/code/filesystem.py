@@ -72,7 +72,6 @@ import hashlib
 import os
 import re
 import stat
-import subprocess
 import time
 import tomllib  # noqa: F401 - re-exported
 from bisect import bisect_right
@@ -147,14 +146,19 @@ from shadowscan.connectors.code.model_identifiers import (  # noqa: F401 - re-ex
     _has_model_stem,
     _model_lookalike,
 )
-from shadowscan.connectors.code.ownership import (
+from shadowscan.connectors.code.ownership import (  # noqa: F401 - re-exported
+    _MAX_GIT_AUTHOR_CHARS,
+    _MAX_GIT_EMAIL_CHARS,
+    _MAX_GIT_TIMESTAMP_CHARS,
     MAX_OWNERSHIP_STEPS,
     MAX_PATTERN_LENGTH,
+    MAX_ROOT_OWNERSHIP_STEPS,
     MAX_RULES,
     OwnershipBudget,
     OwnershipLimitError,
+    OwnershipResolver,
 )
-from shadowscan.connectors.code.ownership import (
+from shadowscan.connectors.code.ownership import (  # noqa: F401 - re-exported
     codeowners_match as _codeowners_match,
 )
 from shadowscan.connectors.code.path_context import (  # noqa: F401 - re-exported
@@ -169,6 +173,7 @@ from shadowscan.connectors.code.path_context import (  # noqa: F401 - re-exporte
     EXAMPLE_PATH_WEIGHT_SCALE,
     GENERATED_MAX_CONFIDENCE,
     GENERATED_WEIGHT_SCALE,
+    NEGATIVE_CONTEXT_TAGS,
     NegativeContext,
     _is_docs_path,
     _is_example_path,
@@ -295,19 +300,13 @@ from shadowscan.signatures.matcher import (
     _finditer,
     language_for_path,
 )
-from shadowscan.utils.files import link_in_path, open_confined_directory, open_confined_file, read_policy_text
+from shadowscan.utils.files import open_confined_directory, read_policy_text
 from shadowscan.utils.git import (
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
     MAX_GITMODULES_BYTES,
-    MetadataOutputLimitError,
-    MetadataTimeoutError,
     declared_submodule_paths,
-    metadata_git_argv_prefix,
-    metadata_git_env,
     read_gitlink_paths,
-    require_local_git_metadata,
-    run_bounded_metadata,
 )
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import (
@@ -324,7 +323,6 @@ from shadowscan.utils.safe_yaml import (
 from shadowscan.utils.text import (
     line_counter,
     notebook_to_source,
-    parse_timestamp,
     read_text,
     redact,
     truncate,
@@ -357,11 +355,6 @@ _MCP_SERVER_IMPORT_RE = re.compile(
 )
 # Detection-rule pack paths listed in a project finding's metadata.
 _MAX_LISTED_RULE_FILES = 20
-
-# Git identities must not turn a small compressed commit into a large report.
-_MAX_GIT_AUTHOR_CHARS = 1024
-_MAX_GIT_EMAIL_CHARS = 1024
-_MAX_GIT_TIMESTAMP_CHARS = 64
 
 # Signal types that establish a library in a project (see _emit_project).
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
@@ -483,6 +476,9 @@ LOCK_FILES = {
 # these globs hold generated, locked or binary content that is explicitly
 # outside the scan scope, so skipping them is a warning and the scan stays
 # complete. The connector's `oversize_skip_globs` replaces the list.
+# Coverage profiles: ``default`` fails closed on every gap; ``ci`` declares the
+# gaps a source gate accepts in advance (see ``FilesystemConnector._declared_omission``).
+PROFILES: tuple[str, ...] = ("default", "ci")
 DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
     "package-lock.json",
     "yarn.lock",
@@ -802,6 +798,7 @@ class _ScanState:
     # Selected files the exhausted artifact budget left uninspected.
     artifacts_uninspected: int = 0
     secret_hits: dict[str, list[tuple[Match, str]]] = field(default_factory=dict)  # relpath -> matches
+    secret_project: dict[str, str] = field(default_factory=dict)  # relpath -> project root
     # relpath, parsed servers
     mcp_files: list[tuple[str, list[dict[str, Any]]]] = field(default_factory=list)
     # relpath, text, kind, project root
@@ -1013,9 +1010,6 @@ def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[
         return local_modules[name]
 
     return is_local_module
-
-
-MAX_ROOT_OWNERSHIP_STEPS = 20_000_000
 
 
 def scan_timeout_for_size(base: float, size: int) -> float:
@@ -1294,6 +1288,13 @@ class FilesystemConnector(BaseConnector):
             "let test and fixture code establish agents and credential findings at full weight "
             "(default false)"
         ),
+        "profile": (
+            "default | ci; ci declares as omissions, with a warning that leaves the scan complete, the "
+            "coverage gaps a source gate accepts in advance: oversize files, unread symbolic links, "
+            "non-regular entries, unparsed content and analysis limits under test, fixture, documentation, "
+            "example and generated paths (test paths only while include_tests is false); every other gap "
+            "still marks the scan incomplete, and the report counts the omissions (default: default)"
+        ),
         "triage": (
             "fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC "
             "only; source analysis, credential detection and content sweeps are skipped and the scan "
@@ -1360,6 +1361,14 @@ class FilesystemConnector(BaseConnector):
         self.use_git = config_boolean(ctx.get("use_git", False), "use_git")
         self.strict_coverage = config_boolean(ctx.get("strict_coverage", False), "strict_coverage")
         self.include_tests = config_boolean(ctx.get("include_tests", False), "include_tests")
+        self.profile = ctx.get("profile", "default")
+        if ("profile" in ctx.config and ctx.config["profile"] is None) or self.profile not in PROFILES:
+            raise ConnectorError("code.filesystem: profile must be default or ci")
+        if self.profile == "ci" and self.strict_coverage:
+            raise ConnectorError(
+                "code.filesystem: profile ci declares omissions that strict_coverage reports as errors; "
+                "set one of them"
+            )
         self.triage = config_boolean(ctx.get("triage", False), "triage")
         self.agent_granularity = ctx.get("agent_granularity", "project")
         if ("agent_granularity" in ctx.config and ctx.config["agent_granularity"] is None) or (
@@ -1420,12 +1429,17 @@ class FilesystemConnector(BaseConnector):
         self.owner: str | None = ctx.get("owner")
         self.provider_override: str | None = ctx.get("provider")
         self.extra_metadata: dict[str, Any] = dict(ctx.get("metadata", {}) or {})
-        self._codeowners_cache: dict[Path, list[tuple[str, list[str]]]] = {}
-        self._ownership_exhausted: set[Path] = set()
-        self._ownership_steps_remaining: dict[Path, int] = {}
-        self._owner_cache: dict[tuple[Path, str], str | None] = {}
-        self._ownership_scan: _ScanState | None = None
+        # CODEOWNERS and git-history ownership (ADR-005): reads stay on the
+        # descriptor scan_tree opens, so the resolver is told the active scan.
+        self.ownership = OwnershipResolver(
+            ctx,
+            owner=self.owner,
+            use_git=self.use_git,
+            max_file_size=self.max_file_size,
+            included=self._included,
+        )
         self._symlink_warnings: set[Path] = set()
+        self._declared_link_notes: set[Path] = set()
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
         self._lockfile_governed: dict[str, bool] = {}
@@ -1612,6 +1626,37 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
+    def _declared_omission(self, rel: str) -> bool:
+        """Whether a coverage gap at ``rel`` is one the ``ci`` profile declared in advance.
+
+        The profile accepts gaps in the paths whose evidence is already
+        discounted (``negative_context`` and the test-path policy): recorded
+        cassettes, fixtures, tutorials, samples and generated files. Test paths
+        count only while ``include_tests`` is false, when their evidence is
+        discounted; with it set they are source like any other.
+        """
+        if self.profile != "ci":
+            return False
+        if _is_test_path(rel):
+            return not self.include_tests
+        return _is_docs_path(rel) or _is_example_path(rel) or _is_generated_path(rel)
+
+    def _gap(self, rel: str, message: str, *, error: bool = False, suffix: bool = True) -> None:
+        """Record a coverage gap at ``rel``.
+
+        An error, or a warning that leaves the scan incomplete (``suffix``
+        appends the usual ``; coverage incomplete``), unless the ``ci`` profile
+        declared the gap: then a warning that leaves the scan complete, counted
+        in the report's ``declared_omissions``, so a profile scan is never read
+        as one that read everything.
+        """
+        if self._declared_omission(rel):
+            self.ctx.warn(f"{message}; declared omission (profile ci)", incomplete=False, declared=True)
+        elif error:
+            self.ctx.error(message)
+        else:
+            self.ctx.warn(f"{message}; coverage incomplete" if suffix else message, incomplete=True)
+
     def _lockfile_gap(self, rel: str, reason: str) -> None:
         """Report a supported lockfile that was not inventoried, scoped to that lockfile.
 
@@ -1650,12 +1695,15 @@ class FilesystemConnector(BaseConnector):
                 return True
         return False
 
-    def _skip_oversize(self, rel: str, size: int, reason: str | None = None) -> None:
+    def _skip_oversize(
+        self, rel: str, size: int, reason: str | None = None, *, declared: bool = False
+    ) -> None:
         reason = reason or "generated or binary content is never analyzed"
         self.ctx.warn(
             f"code.filesystem: {rel}: skipped {size} byte file over max_file_size ({self.max_file_size}); "
             f"{reason}",
             incomplete=False,
+            declared=declared,
         )
 
     def _content_bearing(self, rel: str, name: str) -> bool:
@@ -1710,7 +1758,13 @@ class FilesystemConnector(BaseConnector):
             return False
         if self.scan_secrets:
             # Documentation and fixtures are read for credentials: unread,
-            # they could hide one, so the reader records the gap.
+            # they could hide one, so the reader records the gap, unless the
+            # ci profile declared such a gap in a discounted path in advance.
+            if self._declared_omission(rel):
+                self._skip_oversize(
+                    rel, size, "unread for credentials; declared omission (profile ci)", declared=True
+                )
+                return True
             return False
         if not self._content_bearing(rel, name):
             self._skip_oversize(
@@ -2057,6 +2111,10 @@ class FilesystemConnector(BaseConnector):
         Like a link, such an entry hides whatever a client would find there:
         coverage is incomplete. The first few are named; the rest are counted.
         """
+        if self._declared_omission(rel):
+            # Declared, counted and named in full: it does not take the gap budget below.
+            self._gap(rel, f"code.filesystem: {rel}: skipped, not a regular file ({kind})")
+            return
         walk.non_regular += 1
         if walk.non_regular > _MAX_NON_REGULAR_NOTES + 1:
             return
@@ -2105,6 +2163,14 @@ class FilesystemConnector(BaseConnector):
             # Never followed; scoped like any other lockfile that was not inventoried.
             self._lockfile_gap(rel, "symbolic link is not followed")
             return True
+        message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
+        if self._declared_omission(rel):
+            # One representative note per root, like the gap below, and it
+            # leaves that gap's own representative slot for an undeclared link.
+            if root not in self._declared_link_notes:
+                self._declared_link_notes.add(root)
+                self._gap(rel, message)
+            return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names.
         walk.link_gaps += 1
@@ -2113,7 +2179,6 @@ class FilesystemConnector(BaseConnector):
             # Stays fail-closed: the target's bytes exist and other tools may
             # read them, so an unscanned target is lost coverage a repository
             # could hide behind — not a file-attributable input defect.
-            message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
             if self.strict_coverage:
                 self.ctx.error(f"{message}; coverage incomplete")
             else:
@@ -2166,19 +2231,16 @@ class FilesystemConnector(BaseConnector):
         except ConnectorError:
             raise
         except Exception as exc:  # noqa: BLE001 - isolate hostile input and retain other findings
-            self.ctx.error(f"code.filesystem: {rel}: {analysis} incomplete ({reason(exc)})")
+            self._gap(rel, f"code.filesystem: {rel}: {analysis} incomplete ({reason(exc)})", error=True)
 
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         root = root.absolute()
         scan = _ScanState(root, self._scan_label(root))
-        previous_scan = self._ownership_scan
-        self._ownership_scan = scan
+        previous_scan = self.ownership.scan
+        self.ownership.scan = scan
         # Ownership caches belong to this opened tree, not a pathname that a
         # later scan on the same connector instance may find replaced.
-        self._codeowners_cache.pop(root, None)
-        self._ownership_exhausted.discard(root)
-        self._ownership_steps_remaining.pop(root, None)
-        self._owner_cache = {key: value for key, value in self._owner_cache.items() if key[0] != root}
+        self.ownership.forget_root(root)
         # Each root's gates read only its own listing (scan_tree walks and emits one root at a time).
         self._root_listing_incomplete = self.tree_listing_incomplete
         try:
@@ -2213,7 +2275,7 @@ class FilesystemConnector(BaseConnector):
                 yield f
         finally:
             # Closed whether or not the emit completes.
-            self._ownership_scan = previous_scan
+            self.ownership.scan = previous_scan
             self._close_root(scan)
 
     @staticmethod
@@ -2675,15 +2737,12 @@ class FilesystemConnector(BaseConnector):
             self._note_file(rel, note)
         for issue in read_errors:
             if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
-                    incomplete=True,
-                )
+                self._gap(rel, f"code.filesystem: {rel}: skipped, {issue}")
             else:
                 # Undecodable analyzable files stay fail-closed: editors and
                 # runtimes tolerate bytes the scanner cannot decode, so a NUL
                 # in a CLAUDE.md could otherwise hide content from the scan.
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                self._gap(rel, f"code.filesystem: {rel}: {issue}", error=True)
         if text is None:
             return None
         if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
@@ -2693,7 +2752,7 @@ class FilesystemConnector(BaseConnector):
             if self.strict_coverage:
                 self.ctx.error(f"{message}; coverage incomplete")
             else:
-                self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+                self._gap(rel, message)
             return None
         if path.suffix.lower() != ".ipynb":
             return text, None, (), ()
@@ -2754,10 +2813,7 @@ class FilesystemConnector(BaseConnector):
                 "saved outputs not scanned for credentials"
             )
         if gap is not None:
-            if self.strict_coverage:
-                self.ctx.error(gap)
-            else:
-                self.ctx.warn(f"{gap}; coverage incomplete", incomplete=True)
+            self._gap(rel, gap, error=self.strict_coverage)
         if len(text) > self.max_file_size:
             return None
         return text, raw_notebook, tuple(spans), tuple(foreign)
@@ -2800,8 +2856,11 @@ class FilesystemConnector(BaseConnector):
         # the credential-redaction context could not be established, and
         # parsers diverge on such content (duplicate keys, deep nesting), so
         # treating it as a benign input defect would open an evasion channel.
-        self.ctx.error(
-            f"code.filesystem: {rel}: structured {stage} incomplete ({type(exc).__name__}); excerpts withheld"
+        kind = type(exc).__name__
+        self._gap(
+            rel,
+            f"code.filesystem: {rel}: structured {stage} incomplete ({kind}); excerpts withheld",
+            error=True,
         )
 
     def _input_defect(self, rel: str, issue: str) -> None:
@@ -2814,10 +2873,7 @@ class FilesystemConnector(BaseConnector):
         both forms fail closed.
         """
         message = f"code.filesystem: {rel}: input defect: {issue}"
-        if self.strict_coverage:
-            self.ctx.error(message)
-        else:
-            self.ctx.warn(message, incomplete=True)
+        self._gap(rel, message, error=self.strict_coverage, suffix=False)
 
     # Syntax/shape defects get a distinct diagnostic so operators can find
     # templates and fixtures. This taxonomy never changes completeness:
@@ -2841,7 +2897,7 @@ class FilesystemConnector(BaseConnector):
             if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):
                 self._input_defect(rel, issue)
             else:
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                self._gap(rel, f"code.filesystem: {rel}: {issue}", error=True)
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
@@ -2996,6 +3052,7 @@ class FilesystemConnector(BaseConnector):
             else:
                 snippet = self._file_excerpt(file, m.line, m.value)
             scan.secret_hits.setdefault(file.rel, []).append((m, snippet))
+            scan.secret_project.setdefault(file.rel, file.proj_root)
             self._record(file.proj, m, file.rel, None)
 
     def _detect_mcp(self, file: _SourceFile) -> None:
@@ -3407,10 +3464,11 @@ class FilesystemConnector(BaseConnector):
             limited = limited or len(keyed) > MAX_MODEL_LITERALS_PER_FILE
             literals.extend((m.start(1), m.group(1)) for m in keyed[:MAX_MODEL_LITERALS_PER_FILE])
         if limited:
-            self.ctx.warn(
+            self._gap(
+                file.rel,
                 f"code.filesystem: {file.rel}: model identifiers read from the first "
                 f"{MAX_MODEL_LITERALS_PER_FILE} literals only; later ones were not matched",
-                incomplete=True,
+                suffix=False,
             )
         literals.sort()
         line_at = line_counter(content_text)
@@ -3486,10 +3544,10 @@ class FilesystemConnector(BaseConnector):
                     numbers = ", ".join(str(number + 1) for number in unparsed[:10])
                     cells = "cell" if len(unparsed) == 1 else "cells"
                     verb = "does" if len(unparsed) == 1 else "do"
-                    self.ctx.warn(
+                    self._syntax_warning(
+                        file,
                         f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook "
                         f"{cells} {numbers}, which {verb} not parse; lexical evidence retained",
-                        incomplete=self._syntax_gap(file),
                     )
             bound = bound_source_matches(
                 self.index,
@@ -3520,10 +3578,10 @@ class FilesystemConnector(BaseConnector):
             # import binding. Lexical observations stay visible, but cannot
             # replace the missing proof of agent behavior or capabilities.
             file.unparsed = tuple(whole)
-            self.ctx.warn(
+            self._syntax_warning(
+                file,
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
-                incomplete=self._syntax_gap(file),
             )
             return [], whole
         if truncated:
@@ -3540,6 +3598,17 @@ class FilesystemConnector(BaseConnector):
             else:
                 self.ctx.error(message)
         return bound, list(file.unparsed)
+
+    def _syntax_warning(self, file: _SourceFile, message: str) -> None:
+        """Record source that did not parse: a gap when ``_syntax_gap`` says so, else a plain warning.
+
+        A gap goes through ``_gap``, so the ci profile declares it under a
+        template, example or test path, and is counted as unparsed input.
+        """
+        if self._syntax_gap(file):
+            self._gap(file.rel, message, suffix=False)
+        else:
+            self.ctx.warn(message, incomplete=False)
 
     def _syntax_gap(self, file: _SourceFile) -> bool:
         """Whether source that does not parse leaves coverage incomplete.
@@ -3884,7 +3953,8 @@ class FilesystemConnector(BaseConnector):
                 )
         for rel, hits in scan.secret_hits.items():
             with self._isolated(rel, "credential analysis"):
-                f = self._secret_finding(label, root, rel, hits)
+                project_root = scan.secret_project.get(rel, ".")
+                f = self._secret_finding(label, root, rel, hits, project_root=project_root)
                 if f:
                     yield f
 
@@ -4097,238 +4167,6 @@ class FilesystemConnector(BaseConnector):
                 or ("mcp:" in text and "servers:" in text)
             )
         return False
-
-    def _git_info(self, root: Path, rel_root: str) -> dict[str, Any]:
-        if not self.use_git:
-            return {}
-        marker = root / ".git"
-        if not os.path.lexists(marker):
-            return {}
-        deadline = time.monotonic() + 20
-        if self.ctx.deadline is not None:
-            deadline = min(deadline, self.ctx.deadline)
-        try:
-            require_local_git_metadata(root, timeout=deadline - time.monotonic())
-        except ValueError:
-            self.ctx.warn(
-                "code.filesystem: git metadata must be a confined local .git directory; enrichment skipped"
-            )
-            return {}
-        target = "." if rel_root == "." else rel_root
-        try:
-            out = run_bounded_metadata(
-                [
-                    *metadata_git_argv_prefix(),
-                    "-C",
-                    str(root),
-                    "log",
-                    "--no-show-signature",
-                    "--no-ext-diff",
-                    "--no-textconv",
-                    "-1",
-                    "--format=%an%x00%ae%x00%cI",
-                    "--",
-                    target,
-                ],
-                env=metadata_git_env(),
-                ctx=self.ctx,
-                timeout=deadline - time.monotonic(),
-            )
-            if out.returncode == 0 and out.stdout.strip():
-                # NUL separators: an author name may itself contain "|".
-                fields = out.stdout.strip("\r\n").split("\x00")
-                if len(fields) != 3:
-                    self.ctx.warn("code.filesystem: git metadata has invalid fields; enrichment skipped")
-                    return {}
-                an, ae, ci = fields
-                if any(
-                    len(value) > limit
-                    for value, limit in zip(
-                        fields,
-                        (_MAX_GIT_AUTHOR_CHARS, _MAX_GIT_EMAIL_CHARS, _MAX_GIT_TIMESTAMP_CHARS),
-                        strict=True,
-                    )
-                ):
-                    self.ctx.warn("code.filesystem: git metadata field limit exceeded; enrichment skipped")
-                    return {}
-                if parse_timestamp(ci) is None:
-                    self.ctx.warn(
-                        "code.filesystem: git metadata has an unparseable commit timestamp; "
-                        "enrichment skipped"
-                    )
-                    return {}
-                return {"last_author": an, "last_author_email": ae, "last_commit": ci}
-            if out.returncode == 0:
-                return {}
-        except MetadataOutputLimitError:
-            self.ctx.warn("code.filesystem: git metadata output limit exceeded; enrichment skipped")
-            return {}
-        except MetadataTimeoutError:
-            # A TimeoutError is an OSError: name the cause instead of blaming
-            # the Git version below.
-            self.ctx.warn(
-                "code.filesystem: git metadata collection reached its time limit or the connector "
-                "deadline; enrichment skipped"
-            )
-            return {}
-        except (OSError, ValueError, subprocess.SubprocessError):
-            pass
-        self.ctx.warn(
-            "code.filesystem: bounded offline git enrichment failed; Git 2.45+ and locally available history "
-            "within the metadata output limit are required"
-        )
-        return {}
-
-    @contextmanager
-    def _codeowners_directory(self, root: Path) -> Iterator[int | None]:
-        """Keep ownership reads on the same directory descriptor as source collection.
-
-        Reopening the pathname only verifies that it still names that directory;
-        candidate file reads always use the original descriptor. A replacement
-        after this verification therefore cannot redirect ownership reads.
-        """
-        scan = self._ownership_scan
-        if scan is not None:
-            if scan.root != root:
-                raise ValueError("ownership root differs from the active scan")
-            if scan.root_fd < 0 or scan.base != root:
-                # A failed root open has already been reported. Single-file
-                # scans have never consulted their parent directory's owners.
-                yield None
-                return
-            current = open_confined_directory(root)
-            try:
-                original, present = os.fstat(scan.root_fd), os.fstat(current)
-                if (original.st_dev, original.st_ino) != (present.st_dev, present.st_ino):
-                    raise ValueError("scan root changed before ownership lookup")
-            finally:
-                os.close(current)
-            yield scan.root_fd
-            return
-        # Direct internal ownership callers have no collection descriptor.
-        directory = open_confined_directory(root)
-        try:
-            yield directory
-        finally:
-            os.close(directory)
-
-    def _codeowners(self, root: Path) -> list[tuple[str, list[str]]]:
-        root = root.absolute()
-        if root in self._codeowners_cache:
-            return self._codeowners_cache[root]
-        rules: list[tuple[str, list[str]]] = []
-        try:
-            with self._codeowners_directory(root) as directory:
-                if directory is not None:
-                    rules = self._read_codeowners(root, directory)
-        except (OSError, RuntimeError, ValueError):
-            self.ctx.error("code.filesystem: could not verify scan root for CODEOWNERS; ownership incomplete")
-        self._codeowners_cache[root] = rules
-        return rules
-
-    def _read_codeowners(self, root: Path, directory: int) -> list[tuple[str, list[str]]]:
-        """Read the first selected ownership file below the already anchored root."""
-        rules: list[tuple[str, list[str]]] = []
-        for cand in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS"):
-            if not self._included(cand):
-                continue
-            try:
-                # Distinguish a missing candidate from an unreadable one without
-                # following a link, including links in its parent components.
-                with open_confined_file(PurePosixPath(cand), dir_fd=directory):
-                    pass
-            except FileNotFoundError:
-                continue
-            except NotADirectoryError:
-                # A file named like its parent (``docs``, ``.github``) leaves the
-                # candidate absent. A link there fails the same way and is not
-                # followed, so what it might name stays unread.
-                if not link_in_path(cand, dir_fd=directory):
-                    continue
-                self.ctx.error(f"code.filesystem: could not read {cand}")
-                break
-            except (OSError, RuntimeError, ValueError):
-                self.ctx.error(f"code.filesystem: could not read {cand}")
-                break
-            try:
-                errors: list[str] = []
-                read_notes: list[str] = []
-                content = read_text(
-                    PurePosixPath(cand),
-                    self.max_file_size,
-                    errors,
-                    dir_fd=directory,
-                    notes=read_notes,
-                )
-                # Ownership comes from names in this file: bytes that were replaced could change an owner.
-                errors.extend(f"{note}; ownership may be wrong" for note in read_notes)
-                for issue in errors:
-                    self.ctx.error(f"code.filesystem: {cand}: {issue}")
-                for line in (content or "").splitlines():
-                    line = line.split("#", 1)[0].strip()
-                    if not line:
-                        continue
-                    parts = line.split()
-                    if parts:
-                        if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
-                            self.ctx.error(
-                                "code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete"
-                            )
-                            rules = []
-                            self._ownership_exhausted.add(root)
-                            break
-                        rules.append((parts[0], parts[1:]))
-            except (OSError, RuntimeError, ValueError):
-                self.ctx.error(f"code.filesystem: could not read {cand}")
-            break
-        return rules
-
-    def _owner_for(self, root: Path, rel_root: str) -> str | None:
-        if self.owner:
-            return self.owner
-        root = root.absolute()
-        rules = self._codeowners(root)
-        if root in self._ownership_exhausted:
-            return None
-        key = (root, rel_root)
-        if key in self._owner_cache:
-            return self._owner_cache[key]
-        # Preserve the per-lookup cap and limit aggregate work across many
-        # unique paths. Cache hits consume no steps. Exhaustion is reported as
-        # incomplete ownership rather than assigning a potentially wrong owner.
-        root_remaining = self._ownership_steps_remaining.get(root, MAX_ROOT_OWNERSHIP_STEPS)
-        budget = OwnershipBudget(min(MAX_OWNERSHIP_STEPS, root_remaining))
-        initial = budget.remaining
-        try:
-            # Last matching rule wins, including ownerless exclusions. Stop at
-            # that rule instead of repeatedly re-evaluating overridden rules.
-            for pattern, owners in reversed(rules):
-                if _codeowners_match(pattern, rel_root, budget):
-                    self._owner_cache[key] = ", ".join(owners) if owners else None
-                    return self._owner_cache[key]
-        except OwnershipLimitError:
-            self._ownership_exhausted.add(root)
-            self.ctx.error("code.filesystem: CODEOWNERS processing budget exceeded; ownership incomplete")
-        finally:
-            remaining = max(0, root_remaining - (initial - budget.remaining))
-            self._ownership_steps_remaining[root] = remaining
-            if remaining == 0 and root not in self._ownership_exhausted:
-                self._ownership_exhausted.add(root)
-                self.ctx.error(
-                    "code.filesystem: CODEOWNERS aggregate processing budget exceeded; ownership incomplete"
-                )
-        self._owner_cache[key] = None
-        return None
-
-    def _owners_for_files(self, root: Path, files: Iterable[str]) -> tuple[str | None, dict[str, str]]:
-        paths = sorted(set(files))
-        by_file = {rel: owner for rel in paths if (owner := self._owner_for(root, rel))}
-        owners = set(by_file.values())
-        if len(owners) == 1 and len(by_file) == len(paths):
-            return owners.pop(), by_file
-        # A project finding summarizes many files. Do not name one file's owner
-        # as the owner of unrelated files if CODEOWNERS has differing rules.
-        return None, by_file
 
     # ----------------------------------------------------------------- emits
     def _base(
@@ -4800,11 +4638,11 @@ class FilesystemConnector(BaseConnector):
     ) -> None:
         """Record a project's owner, history, inventory and agent indicators."""
         matches = evidence.matches
-        git = self._git_info(root, proj.root)
+        git = self.ownership.git_info(root, proj.root)
         f.metadata.update(git)
         if git.get("last_commit"):
             f.last_seen = git["last_commit"]
-        f.owner, by_file = self._owners_for_files(root, (rel for _, rel, _ in matches))
+        f.owner, by_file = self.ownership.owners_for_files(root, (rel for _, rel, _ in matches))
         f.owner = f.owner or (git.get("last_author_email") if not by_file else None) or self.owner
         if by_file:
             f.metadata["codeowners_by_file"] = by_file
@@ -4926,7 +4764,7 @@ class FilesystemConnector(BaseConnector):
             f.metadata["agent_definitions"] = defs
             f.add_capability("multi-agent")
         f.kind = Kind.AGENT_CONFIG
-        f.owner, by_file = self._owners_for_files(root, files)
+        f.owner, by_file = self.ownership.owners_for_files(root, files)
         f.owner = f.owner or self.owner
         if by_file:
             f.metadata["codeowners_by_file"] = by_file
@@ -5145,7 +4983,7 @@ class FilesystemConnector(BaseConnector):
                 f.metadata["disabled"] = True
         f.metadata["remote_urls"] = remote_hosts
         f.metadata["client"] = _mcp_client_for(rel)
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.MCP_SERVER
         if sig:
@@ -5214,7 +5052,7 @@ class FilesystemConnector(BaseConnector):
             self._describe_langgraph_manifest(f, rel, data)
         elif kind == "crewai":
             self._describe_crewai_agents(f, rel, data)
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         if validation.incomplete:
             # Evidence of the protocol, never of an agent. Its validation
@@ -5309,7 +5147,7 @@ class FilesystemConnector(BaseConnector):
         agent_flow = any(m.extra.get("verified_agent") for m, _ in hits)
         noun = "agent workflow" if agent_flow else "AI workflow"
         f.title = f"Exported {noun} ({', '.join(sorted(names))}): {rel}"
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.AGENT if agent_flow else Kind.WORKFLOW
         f.metadata["agent_flow"] = agent_flow
@@ -5363,7 +5201,7 @@ class FilesystemConnector(BaseConnector):
         f.metadata["resources"] = resources
         if names_found:
             f.metadata["names"] = names_found
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.INFRA
         return f
@@ -5374,6 +5212,7 @@ class FilesystemConnector(BaseConnector):
         root: Path,
         rel: str,
         hits: list[tuple[Match, str]],
+        project_root: str = ".",
     ) -> Finding | None:
         # A structured value (e.g. a .env assignment) and the raw text pass can
         # both observe the same credential on the same line; count it once.
@@ -5391,8 +5230,18 @@ class FilesystemConnector(BaseConnector):
         # The credential is still reported: cassettes record real traffic, and a
         # key committed under tests/ is as exposed as one anywhere else.
         test_only = not self.include_tests and _is_test_path(rel)
+        # Documentation, example and generated paths are discounted the same way
+        # project evidence is (``negative_context``): a credential-shaped value
+        # in a tutorial is more often a sample than a live key, but it is still
+        # reported, with the context named, because samples are sometimes real.
+        context = None if self.include_tests or test_only else negative_context(rel, project_root)
+        weight_scale = 1.0
+        if test_only:
+            weight_scale = 0.5
+        elif context is not None:
+            weight_scale = context.weight_scale
         for m, snip in hits:
-            apply_matches(f, [m], location=rel, snippet=snip, weight_scale=0.5 if test_only else 1.0)
+            apply_matches(f, [m], location=rel, snippet=snip, weight_scale=weight_scale)
         f.add_tag("hardcoded-credential")
         if not f.model_providers:
             # Only the generic rules matched (an assigned PASSWORD, ACCESS_TOKEN or *_API_KEY): the value
@@ -5402,10 +5251,19 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("unattributed-credential")
         if test_only:
             f.add_tag("test-code-only")
+        elif context is not None:
+            f.add_tag(NEGATIVE_CONTEXT_TAGS[context.reason])
+            f.metadata["negative_contexts"] = [context.reason]
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
         f.metadata["count"] = len(hits)
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
+        if context is not None and context.confidence_cap is not None:
+            cap_confidence(f, context.confidence_cap)
+            f.metadata["confidence_cap"] = {
+                "reason": NEGATIVE_CONTEXT_TAGS[context.reason],
+                "maximum": context.confidence_cap,
+            }
         f.kind = Kind.SECRET
         return f
 

@@ -11,7 +11,7 @@ import pytest
 
 from shadowscan.comparison import IDENTITY_KEY_ENV
 from shadowscan.connectors.base import ConnectorContext
-from shadowscan.connectors.code import filesystem
+from shadowscan.connectors.code import ownership
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
@@ -52,7 +52,7 @@ def test_codeowners_exhaustion_keeps_findings_and_marks_ownership_incomplete(
 ):
     (tmp_path / "CODEOWNERS").write_text("*.py @owner\n")
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    monkeypatch.setattr(filesystem, "OwnershipBudget", lambda _remaining: OwnershipBudget(1))
+    monkeypatch.setattr(ownership, "OwnershipBudget", lambda _remaining: OwnershipBudget(1))
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert any("framework.crewai" in finding.frameworks for finding in findings)
     assert all(finding.owner is None for finding in findings)
@@ -63,7 +63,7 @@ def test_codeowners_exhaustion_keeps_findings_and_marks_ownership_incomplete(
 def test_codeowners_rule_limit_never_uses_partial_rules(tmp_path, run_connector, monkeypatch):
     (tmp_path / "CODEOWNERS").write_text("*.py @incorrect\n*.py @correct\n")
     (tmp_path / "agent.py").write_text("from crewai import Agent\n")
-    monkeypatch.setattr(filesystem, "MAX_RULES", 1)
+    monkeypatch.setattr(ownership, "MAX_RULES", 1)
     findings, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
     assert findings and all(finding.owner is None for finding in findings)
     assert ctx.stats.incomplete
@@ -198,6 +198,6 @@ def test_metadata_and_incremental_git_ignore_inherited_repo_and_config(tmp_path,
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.repositoryformatversion")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", "9999")
     connector = FilesystemConnector(ConnectorContext(config={"use_git": True}, index=index))
-    metadata = connector._git_info(repo, ".")
+    metadata = connector.ownership.git_info(repo, ".")
     assert metadata["last_author_email"] == "expected@example.test"
     assert _git_state(repo, _HashBudget())

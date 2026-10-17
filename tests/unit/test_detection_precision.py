@@ -98,6 +98,19 @@ def _finding(**kwargs) -> Finding:
         ("{{ secrets.OPENAI_API_KEY }}", "template"),
         ("changeme", "template"),
         ("xxxxxxxx", "template"),
+        # Translated documentation: a possessive and words is a placeholder whatever
+        # the language, and the longer placeholder words are recognised inside a key.
+        ("sua_chave_openai", "template"),
+        ("votre-cle-api", "template"),
+        ("deine_api_schluessel", "template"),
+        ("jouw_sleutel", "template"),
+        ("anda_kunci_api", "template"),
+        ("sk-proj-SuaChaveAqui" + "q7Lm3Xz9" * 4, "placeholder-word"),
+        ("sk-proj-" + "su_clave_de_ejemplo_1234567890abcd", "placeholder-word"),
+        ("sk-proj-VotreClefIci" + "q7Lm3Xz9" * 4, "placeholder-word"),
+        ("ghp_" + "BEISPIEL" + "0" * 28, "placeholder-word"),
+        ("sk-proj-" + "la_tua_chiave_api_1234567890abcdef", "placeholder-word"),
+        ("sk-proj-anahtar_" + "q7Lm3Xz9" * 4, "placeholder-word"),
     ],
 )
 def test_placeholder_reason_recognises_documentation_samples(value, reason):

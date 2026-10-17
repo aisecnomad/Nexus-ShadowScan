@@ -16,7 +16,11 @@ The operator workstation or CI runner, scanner configuration and installed Pytho
 packages are trusted. Third-party connector execution requires an exact-name
 allowlist in `options.plugins` or repeatable `--allow-plugin`. Listing connectors
 does not import plugin code. The allowlist is not a sandbox: an approved plugin
-runs with scanner privileges. Built-in connector names cannot be replaced.
+runs with scanner privileges. A spawned plugin worker does not inherit the
+credential-shaped environment variables exported for the built-in connectors
+(`*_TOKEN`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, the cloud SDK credential
+variables) unless `options.plugin_env` names them; a thread-mode plugin shares
+the scanner's environment. Built-in connector names cannot be replaced.
 
 Remote responses, scanned repositories and offline exports are untrusted inputs.
 Review signature packs before installation. Built-in signature IDs are reserved

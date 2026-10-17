@@ -651,6 +651,15 @@ class ScanStats:
     skip_reason: str | None = None
     cached: bool = False
     incomplete: bool = False
+    # Why the scan is incomplete: a count per reason category (see
+    # ``shadowscan.connectors.base.INCOMPLETE_REASONS``) of the diagnostics that
+    # left it so. Empty when the scan is complete; the diagnostics themselves
+    # are in ``errors`` and ``warnings``.
+    incomplete_reasons: dict[str, int] = field(default_factory=dict)
+    # Coverage omissions a profile declared in advance (warnings that leave the
+    # scan complete), so a complete scan under a profile is never read as a
+    # scan that read everything.
+    declared_omissions: int = 0
 
 
 @dataclass(slots=True)
@@ -693,6 +702,10 @@ class ScanResult:
                 providers[p] = providers.get(p, 0) + 1
             if f.shadow:
                 shadow += 1
+        reasons: dict[str, int] = {}
+        for s in self.stats:
+            for reason, count in s.incomplete_reasons.items():
+                reasons[reason] = reasons.get(reason, 0) + count
         return {
             "complete": self.complete,
             "status": "complete" if self.complete else "incomplete",
@@ -704,6 +717,10 @@ class ScanResult:
             "frameworks": dict(sorted(frameworks.items(), key=lambda kv: -kv[1])),
             "model_providers": dict(sorted(providers.items(), key=lambda kv: -kv[1])),
             "errors": sum(len(s.errors) for s in self.stats),
+            # Why an incomplete scan is incomplete, by reason category, most frequent first;
+            # a connector that was skipped or timed out before recording a diagnostic has no entry.
+            "incomplete_reasons": dict(sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))),
+            "declared_omissions": sum(s.declared_omissions for s in self.stats),
         }
 
     def to_dict(self) -> dict[str, Any]:

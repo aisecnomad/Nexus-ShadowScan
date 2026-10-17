@@ -386,6 +386,13 @@ _MOVED_FROM_FILESYSTEM = {
         "_strip_comment",
         "_without_ipython_lines",
     ),
+    # The ownership group (ADR-005): the constants its methods used moved with them.
+    "shadowscan.connectors.code.ownership": (
+        "MAX_ROOT_OWNERSHIP_STEPS",
+        "_MAX_GIT_AUTHOR_CHARS",
+        "_MAX_GIT_EMAIL_CHARS",
+        "_MAX_GIT_TIMESTAMP_CHARS",
+    ),
     # Importable before only because filesystem.py imported them itself.
     "shadowscan.connectors.code.catalogs": ("_PIPELINE_DIRECTORIES", "_PIPELINE_NAMES"),
     "shadowscan.connectors.code.semantic_config": ("has_template_markers",),

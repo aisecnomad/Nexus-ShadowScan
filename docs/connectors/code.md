@@ -465,6 +465,17 @@ provider finding. Imports, dependencies and code patterns in tests still
 anchor (tagged `test-code-only`). A project dropped for this reason is named
 in a note, like one whose evidence is only uncorroborated patterns.
 
+A `secret` finding follows the same contexts: under a test path it keeps half
+weight and the `test-code-only` tag; under a documentation, example or
+generated path it keeps that context's weight and confidence cap and the
+`docs-only`, `example-code-only` or `generated-code-only` tag
+(`metadata.negative_contexts`, `metadata.confidence_cap`). The generic
+assigned-credential rule (`heuristic.inline-credential`) never reports a value
+shaped like the name of another variable (`self.api_key = resolved_api_key`,
+`include_tracing_api_key=include_tracing_api_key`, `BuildConfig.OPENAI_API_KEY`)
+or a translated placeholder (`sua_chave_openai`); see
+[scanning](../scanning.md#test-and-fixture-code).
+
 An `image:` line in a CI pipeline (`.github/workflows/`, `.gitlab-ci.yml`,
 `.circleci/`, `azure-pipelines.yml`, `bitbucket-pipelines.yml`, `.drone.yml`,
 `.woodpecker*`, `.buildkite/`, `.gitlab/`, `Jenkinsfile`) runs a job in that
@@ -482,8 +493,17 @@ Include=... />`, `<PackageReference Update=... />`) and project files whose
 `PackageReference` items carry no version of their own.
 
 Options: `path`/`paths`, `root_ids`, `exclude`, `default_excludes`, `max_file_size`, `max_files`, `max_entries`,
-`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `strict_coverage`, `include_tests`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
+`max_notebook_size`, `max_ast_nodes`, `agent_granularity`, `scan_secrets`, `strict_coverage`, `include_tests`, `profile`, `triage`, `use_git`, `label`. When using labeled `paths`, supply unique
 `root_ids` aligned with those paths for IDs that survive moving checkouts.
+
+`profile: ci` (`--profile ci`) declares the coverage gaps a source gate accepts
+in advance: oversize files, unread symbolic links, non-regular entries,
+unparsed content and analysis limits under test, fixture, documentation,
+example and generated paths are warnings that leave the scan complete and are
+counted in the report's `declared_omissions`; every other gap still marks the
+scan incomplete. It conflicts with `strict_coverage`. See
+[the `ci` profile](../scanning.md#the-ci-profile) and the reason categories in
+`incomplete_reasons` that explain an exit 3.
 
 `max_entries` defaults to 1,000,000 filesystem entries inspected during
 enumeration. It counts directories, skipped files and entries revisited by

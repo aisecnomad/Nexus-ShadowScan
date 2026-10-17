@@ -174,9 +174,15 @@ def _stats(report: dict[str, Any]) -> list[ScanStats]:
         for key in ("skipped", "incomplete", "cached"):
             if key in entry and type(entry[key]) is not bool:
                 raise ValueError("report stats completion flags must be booleans")
-        for key in ("findings", "objects_examined"):
+        for key in ("findings", "objects_examined", "declared_omissions"):
             if key in entry and (type(entry[key]) is not int or entry[key] < 0):
                 raise ValueError("report stats counts must be nonnegative integers")
+        reasons = entry.get("incomplete_reasons", {})
+        if type(reasons) is not dict or any(
+            type(reason) is not str or type(count) is not int or count < 0
+            for reason, count in reasons.items()
+        ):
+            raise ValueError("report stats incomplete reasons must map names to nonnegative integers")
         out.append(ScanStats(**{k: v for k, v in entry.items() if k in _STATS_FIELDS}))
     return out
 

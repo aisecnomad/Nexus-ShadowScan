@@ -202,6 +202,7 @@ shadowscan code . --inventory ./inventory --fail-on high   # with inventory reco
 | `--no-secrets` | Skip credential detection |
 | `--strict-coverage` | Record incomplete file/symlink coverage as errors |
 | `--include-tests` | Let test/fixture code establish agents at full weight |
+| `--profile ci` | Declare oversize files, unread links and analysis limits under test, fixture, documentation, example and generated paths as counted omissions instead of gaps, so a complete source scan exits 0 (conflicts with `--strict-coverage`) |
 | `--triage` | Fast subset scan (manifests, MCP/agent configs, flows, IaC only) |
 
 </details>
@@ -424,7 +425,7 @@ shadowscan mcp-registry snapshot --url https://registry.example.com -o snap.json
 
 | Option | Description |
 |---|---|
-| `--url URL` | Registry base URL (HTTPS only; default: Smithery) |
+| `--url URL` | Registry base URL (HTTPS only; default: `https://registry.modelcontextprotocol.io`) |
 | `-o, --output FILE` | **(required)** Snapshot file to write (mode 0600) |
 | `--max-pages N` | Maximum pages to fetch |
 | `--ca-bundle FILE` | PEM CA bundle for private PKI |
@@ -516,8 +517,12 @@ The global `-v`/`-vv` (info/debug) and `-q` (errors only) flags go before the co
 | **3** | Scan incomplete (API error, timeout, denied access, limit, malformed export); `diff` returns 3 when reports are not comparable |
 
 Gate CI on any non-zero exit: exit 1 means nothing was scanned, and an
-incomplete scan never reads as clean. Exit 0 from a complete static scan does
-not prove that no agent runs; see
+incomplete scan never reads as clean. On exit 3 the CLI names the reason
+categories on stderr (`scan incomplete (exit 3): oversize-file 2`) and the
+report counts them in `summary.incomplete_reasons`; `shadowscan code --profile ci`
+declares the gaps a source gate accepts (fixtures, cassettes, documentation) in
+advance and counts them in `summary.declared_omissions`. Exit 0 from a complete
+static scan does not prove that no agent runs; see
 [scan semantics](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/scanning.md).
 
 ---
@@ -634,6 +639,7 @@ options:
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
   plugins: []                         # exact-name allowlist for third-party connectors
   plugin_execution: process           # or thread
+  plugin_env: []                      # credential-shaped variables a plugin worker keeps
   risk_basis: combined                # or danger (excludes governance factors)
   incremental: false                  # content-addressed result caching
   state_dir: .shadowscan-state       # private incremental state directory
@@ -1051,7 +1057,7 @@ for where the code, tests, docs, tooling and benchmarks live.
 | Report a vulnerability privately | [Security policy](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#reporting) |
 | Understand decisions, review and release requirements | [Governance](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/GOVERNANCE.md), [Maintainers](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/MAINTAINERS.md), [Roadmap](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/ROADMAP.md) |
 | Understand participation standards | [Code of conduct](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CODE_OF_CONDUCT.md) |
-| See what changed or cite the project | [Release notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md), [Changelog](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md), [CITATION.cff](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CITATION.cff) |
+| See what changed or cite the project | [Release notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/RELEASE_NOTES.md), [Changelog](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md), [Engineering log](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/engineering-log.md), [CITATION.cff](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CITATION.cff) |
 
 Use synthetic, minimal examples in public reports. Scan results can contain
 credentials, personal data, and sensitive inventory even after redaction.

@@ -10,6 +10,7 @@ Credentials are assembled at runtime so no key-shaped literal appears here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import random
@@ -19,12 +20,14 @@ from pathlib import Path
 
 import pytest
 
+from shadowscan.connectors.base import ConnectorError
 from shadowscan.connectors.code.filesystem import (
     DEFAULT_OVERSIZE_SKIP_GLOBS,
     FilesystemConnector,
     _crawler_ua_text,
 )
 from shadowscan.models import Kind
+from shadowscan.risk import assess
 
 OPENAI_LIKE_KEY = "sk-proj-" + "Xk29fLq8Zr1mNvB4" + "tYc7Hs0pWe3Ja6Ud9GiKo5Rb2Ex"
 
@@ -146,6 +149,94 @@ def test_secret_outside_test_paths_is_still_reported(run_connector, tmp_path):
     findings, _ = scan(run_connector, tmp_path)
     assert kinds(findings).count(Kind.SECRET) == 1
     assert OPENAI_LIKE_KEY not in json.dumps([f.to_dict() for f in findings])
+
+
+# ---------------------------------------------------------------- assigned names are not credentials
+# Field scans of three public SDK repositories reported every one of these lines
+# as a "Hard-coded credential" at confidence 0.8 to 1.0: the generic assigned-
+# credential rule accepts an unquoted value because .env files carry none, and
+# Shannon entropy alone does not tell a token from an identifier.
+@pytest.mark.parametrize(
+    ("rel", "text"),
+    [
+        ("src/agents/run_state.py", "    include_tracing_api_key=include_tracing_api_key,\n"),
+        (
+            "src/agents/run_state.py",
+            "return self._trace_state.to_json(include_tracing_api_key=include_tracing_api_key)\n",
+        ),
+        ("src/anthropic/lib/aws/_client.py", "        self.api_key = resolved_api_key\n"),
+        ("src/anthropic/lib/credentials/_constants.py", 'ENV_API_KEY = "ANTHROPIC_API_KEY"\n'),
+        ("src/app/config.py", "api_key = settings.openai_api_key_v2\n"),
+        ("src/app/Config.kt", "val apiKey = BuildConfig.OPENAI_API_KEY\n"),
+        ("src/app/client.js", "const apiKey = includeTracingApiKey;\n"),
+        ("src/app/auth.py", "client_secret: oauth2_client_secret_value\n"),
+        # A documentation placeholder in Portuguese: a possessive and words, no digits.
+        (
+            "docs/pt-BR/guides/first-flow.mdx",
+            "OPENAI_API_KEY=sua_chave_openai\nGEMINI_API_KEY=sua_chave_gemini\n",
+        ),
+        ("docs/pt-BR/guides/first-crew.mdx", "SERPER_API_KEY=sua_serper_api_key\n"),
+    ],
+)
+def test_assigned_identifier_values_are_not_credentials(run_connector, tmp_path, rel, text):
+    write(tmp_path, rel, text)
+    findings, stats = scan(run_connector, tmp_path)
+    assert kinds(findings).count(Kind.SECRET) == 0, [f.title for f in findings]
+    assert not stats.errors
+
+
+def _hex_token(seed: str, length: int) -> str:
+    # Derived at runtime so no credential-shaped literal sits in the source.
+    return hashlib.sha256(seed.encode()).hexdigest()[:length]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "SOME_API_KEY=" + _hex_token("generic-hex-token", 32) + "\n",
+        # A vendor prefix over a hex body keeps its digit density; it is not an identifier.
+        "DO_ACCESS_TOKEN=dop_v1_" + _hex_token("digitalocean-like-token", 64) + "\n",
+        "SHOP_ACCESS_TOKEN=shpat_" + _hex_token("shopify-like-token", 32) + "\n",
+        # Mixed case without a digit is kept when the cases are mixed evenly, as a random token's are
+        # (assembled so no key-shaped literal sits in the source).
+        "MY_API_KEY=sk-" + "AbCdEfGhIjKlMnOpQrStUv" + "\n",
+    ],
+)
+def test_assigned_token_values_are_still_credentials(run_connector, tmp_path, text):
+    write(tmp_path, "src/app/.env", text)
+    findings, stats = scan(run_connector, tmp_path)
+    assert kinds(findings).count(Kind.SECRET) == 1, [f.title for f in findings]
+    assert not stats.errors
+
+
+# ---------------------------------------------------------------- documentation credentials
+def test_credentials_in_documentation_paths_are_discounted_not_dropped(run_connector, index, tmp_path):
+    # A credential-shaped value in a tutorial is more often a sample than a live
+    # key: it stays a finding with the documentation context named, at the
+    # documentation weight and confidence cap, like project evidence found there.
+    token = "SERVICE_API_KEY=" + _hex_token("documentation-sample-token", 32) + "\n"
+    write(tmp_path, "docs/guides/quickstart.md", f"```bash\n{token}```\n")
+    write(tmp_path, "src/app/settings.py", token)
+    findings, stats = scan(run_connector, tmp_path)
+    secrets = {f.metadata["path"]: f for f in findings if f.kind == Kind.SECRET}
+    assert set(secrets) == {"docs/guides/quickstart.md", "src/app/settings.py"} and not stats.errors
+    documented = secrets["docs/guides/quickstart.md"]
+    deployed = secrets["src/app/settings.py"]
+    assert "docs-only" in documented.tags and "docs-only" not in deployed.tags
+    assert documented.metadata["negative_contexts"] == ["documentation"]
+    assert documented.metadata["confidence_cap"] == {"reason": "docs-only", "maximum": 0.85}
+    assert documented.confidence < deployed.confidence <= 1.0
+    assert assess(documented, index).score < assess(deployed, index).score
+    # Test paths keep their own policy; a documentation path under tests is test code first.
+    write(tmp_path, "tests/docs/sample.md", token)
+    findings, _ = scan(run_connector, tmp_path)
+    under_tests = next(
+        f for f in findings if f.kind == Kind.SECRET and f.metadata["path"] == "tests/docs/sample.md"
+    )
+    assert "test-code-only" in under_tests.tags and "docs-only" not in under_tests.tags
+    # include_tests reports every path at full weight, documentation included.
+    included, _ = scan(run_connector, tmp_path, include_tests=True)
+    assert not any({"docs-only", "test-code-only"} & set(f.tags) for f in included if f.kind == Kind.SECRET)
 
 
 # ---------------------------------------------------------------- coding-agent evidence
@@ -390,6 +481,109 @@ def test_oversize_file_the_scanner_never_reads_is_ignored_silently(run_connector
     write(tmp_path, "data/model.bin", OVERSIZE)
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
     assert not stats.warnings and not stats.errors and not stats.incomplete
+
+
+# ---------------------------------------------------------------- ci profile
+# Field scans of four public repositories each exited 3 for a gap in content a
+# source gate does not read: a 1.2 MB JSON fixture, a dangling test certificate
+# link, a cassette the credential pass timed out on. The ci profile declares
+# such gaps in advance; every other gap still fails closed.
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "tests/fixtures/released_api_contract.json",
+        "tests/cassettes/session.yaml",
+        "docs/seed-memory/graph.json",
+        "examples/sandbox/data/sample.json",
+        "lib/generated/schema.generated.json",
+    ],
+)
+def test_ci_profile_declares_oversize_files_in_discounted_paths(run_connector, tmp_path, rel):
+    write(tmp_path, rel, OVERSIZE)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100)
+    assert stats.incomplete and stats.incomplete_reasons == {"oversize-file": 1}
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, profile="ci")
+    assert not stats.incomplete and not stats.errors and not stats.incomplete_reasons
+    assert stats.declared_omissions == 1
+    assert [w for w in stats.warnings if rel in w and "declared omission (profile ci)" in w]
+
+
+@pytest.mark.parametrize("rel", ["src/app/config.json", "data/session.yaml", "settings.json"])
+def test_ci_profile_keeps_oversize_source_a_gap(run_connector, tmp_path, rel):
+    write(tmp_path, rel, OVERSIZE)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, profile="ci")
+    assert stats.incomplete and stats.incomplete_reasons == {"oversize-file": 1}
+    assert stats.declared_omissions == 0
+
+
+def test_ci_profile_treats_test_paths_as_source_with_include_tests(run_connector, tmp_path):
+    write(tmp_path, "tests/fixtures/big.json", OVERSIZE)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, profile="ci", include_tests=True)
+    assert stats.incomplete and stats.declared_omissions == 0
+    # Documentation stays declared: include_tests changes the test-path policy only.
+    write(tmp_path, "docs/big.json", OVERSIZE)
+    _, stats = scan(run_connector, tmp_path, max_file_size=100, profile="ci", include_tests=True)
+    assert stats.incomplete_reasons == {"oversize-file": 1} and stats.declared_omissions == 1
+
+
+@needs_symlinks
+def test_ci_profile_declares_unresolved_links_under_tests_only(run_connector, tmp_path):
+    (tmp_path / "tests" / "certs").mkdir(parents=True)
+    (tmp_path / "tests" / "certs" / "ca").symlink_to("../../missing-ca.pem")
+    _, stats = scan(run_connector, tmp_path)
+    assert stats.incomplete and stats.incomplete_reasons == {"unresolved-link": 1}
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and stats.declared_omissions == 1
+    # A declared link does not take the slot of the one representative gap per root.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "config.json").symlink_to("../missing.json")
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.incomplete and stats.incomplete_reasons == {"unresolved-link": 1}
+    assert stats.declared_omissions == 1
+    assert [w for w in stats.warnings if "src/config.json" in w and "coverage incomplete" in w]
+
+
+def test_ci_profile_declares_analysis_failures_in_fixtures_only(run_connector, tmp_path, monkeypatch):
+    from shadowscan.connectors.code import filesystem as module
+
+    def failing(rel: str, text: str, strict: list[bool]):
+        raise module.SanitizationLimitError("synthetic")
+
+    monkeypatch.setattr(module, "_structured_context", failing)
+    write(tmp_path, "tests/cassettes/recorded.json", '{"a": 1}\n')
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and not stats.errors and stats.declared_omissions == 1
+    write(tmp_path, "src/settings.json", '{"a": 1}\n')
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.incomplete and stats.errors and stats.incomplete_reasons == {"sanitization-limit": 1}
+
+
+def test_ci_profile_declares_unparsed_templates_and_fixtures_only(run_connector, tmp_path):
+    # A cookiecutter template is source that does not parse: a gap by default
+    # (counted as unparsed input), declared under the profile; the same text in
+    # src/ stays a gap under the profile too.
+    write(
+        tmp_path,
+        "templates/crew/{{cookiecutter.name}}/crew.py",
+        "from crewai import Agent\nclass {{name}}:\n",
+    )
+    _, stats = scan(run_connector, tmp_path)
+    assert stats.incomplete and stats.incomplete_reasons == {"unparsed-input": 1}
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and stats.declared_omissions == 1
+    write(tmp_path, "src/app/crew.py", "from crewai import Agent\nclass {{name}}:\n")
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.incomplete and stats.incomplete_reasons == {"unparsed-input": 1}
+
+
+def test_ci_profile_rejects_strict_coverage_and_unknown_profiles(run_connector, tmp_path):
+    write(tmp_path, "app.py", "print('hi')\n")
+    with pytest.raises(ConnectorError, match="strict_coverage"):
+        scan(run_connector, tmp_path, profile="ci", strict_coverage=True)
+    with pytest.raises(ConnectorError, match="profile must be default or ci"):
+        scan(run_connector, tmp_path, profile="lenient")
+    with pytest.raises(ConnectorError, match="profile must be default or ci"):
+        scan(run_connector, tmp_path, profile=None)
 
 
 # ---------------------------------------------------------------- model identifiers

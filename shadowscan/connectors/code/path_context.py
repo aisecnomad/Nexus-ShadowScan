@@ -129,6 +129,14 @@ class NegativeContext:
     confidence_cap: float | None = None
 
 
+# The finding tag that names each context (``shadowscan.risk.TAG_WEIGHTS`` scores them).
+NEGATIVE_CONTEXT_TAGS: dict[str, str] = {
+    "documentation": "docs-only",
+    "example-code": "example-code-only",
+    "generated-code": "generated-code-only",
+}
+
+
 def negative_context(rel: str, project_root: str = ".") -> NegativeContext | None:
     """Return the strongest negative context for a file path, or None.
 
