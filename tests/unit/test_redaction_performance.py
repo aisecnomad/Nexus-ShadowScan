@@ -401,6 +401,8 @@ def _best_cpu(work, repeats: int = 3) -> float:
         lambda n: 'x = "machine h\\n' + "  # note\\nlogin u # c\\n" * n + '"',
         lambda n: 'x = "machine a # ' + "machine k # " * n + '\\nx"',
         lambda n: "#machine h " * n,
+        lambda n: "machine h " + 'login "u"password ' * n + "v",
+        lambda n: 'x = "machine h ' + 'login \\"u\\"password ' * n + 'v"',
     ],
     ids=[
         "names",
@@ -426,6 +428,8 @@ def _best_cpu(work, repeats: int = 3) -> float:
         "escaped-comments",
         "escaped-comment-line",
         "hash-heads",
+        "glued-quotes",
+        "escaped-glued-quotes",
     ],
 )
 def test_netrc_redaction_scales_linearly(shape):

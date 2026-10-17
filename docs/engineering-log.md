@@ -694,6 +694,12 @@ public repositories with the tool and read the committed benchmark metrics.
   comment line of its own as what can remain; they now say where a comment
   ends, and SECURITY.md lists a commented-out token outside an entry of its
   comment, a trailing one (`login u # was password v`) included.
+- Redaction: what is glued to the closing quote of a netrc name or value is
+  the next token, as Python's `netrc` reads it. Read as the rest of
+  the quoted text, a keyword there hid its value (`login "u"password v`,
+  `password "a"password v`, `login \"u\"password v` in a JSON string),
+  and the password was shown; a value is still withheld up to the next
+  blank.
 - `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
   `GetAgent` and `ListAgents` return no tags and the collector never called
   `ListTagsForResource`, so no live scan could attribute a Bedrock agent to

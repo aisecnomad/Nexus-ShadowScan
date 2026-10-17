@@ -134,6 +134,14 @@ COMMENT_FORMS = [
     f'{{"netrc": "machine api.openai.com\\n  # deploy bot\\n  login bot\\n  password {SECRET}\\n"}}',
     f"#machine h login u password {SECRET}\n",
 ]
+# What is glued to a closing quote is the next token, as clients read it: read
+# as the rest of the quoted name or value, a 'password' there hid its value.
+GLUED_FORMS = [
+    f'machine h login "u"password {SECRET}\n',
+    f'x = "machine h login \\"u\\"password {SECRET}"',
+    f'machine h login u password "{OTHER}"password {SECRET}\n',
+    f'machine h login "u"account {SECRET}\n',
+]
 # A macro's lines are withheld up to the empty line that ends it.
 MACRO_FORMS = [
     f"machine h login u password {OTHER}\nmacdef init\ncd /pub\nuser deploy {SECRET}\n\n",
@@ -169,6 +177,7 @@ OWN_SYNTAX_FORMS = [
     + CLIENT_FORMS
     + SPLIT_FORMS
     + COMMENT_FORMS
+    + GLUED_FORMS
     + MACRO_FORMS
     + YARNRC_FORMS
     + OWN_SYNTAX_FORMS,
@@ -195,7 +204,14 @@ def _only_adds_markers(before: str, after: str) -> bool:
 
 @pytest.mark.parametrize(
     "source",
-    NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + SPLIT_FORMS + COMMENT_FORMS + MACRO_FORMS + YARNRC_FORMS,
+    NETRC_FORMS
+    + EMBEDDED_FORMS
+    + CLIENT_FORMS
+    + SPLIT_FORMS
+    + COMMENT_FORMS
+    + GLUED_FORMS
+    + MACRO_FORMS
+    + YARNRC_FORMS,
 )
 def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(source):
     # Every form reached them intact: no earlier rule withheld its secret.
@@ -249,6 +265,8 @@ def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(so
             f'NETRC = "machine h\\nlogin CORP\\\\frank\\npassword {REDACTED}"',
         ),
         ("machine h force yes password VALUE\n", f"machine h force yes password {REDACTED}\n"),
+        # A name glued to the keyword after it stays.
+        ('machine h login "u"password VALUE\n', f'machine h login "u"password {REDACTED}\n'),
         # A comment in an escaped string stays, up to the next line-break escape.
         (
             'x = "machine h\\n  # note\\nlogin u # bot\\npassword VALUE"',

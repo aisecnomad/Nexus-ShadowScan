@@ -283,10 +283,12 @@ coverage, even when a response includes an empty collection field.
   after a Windows domain login (`login CORP\fred`, also `CORP\\fred` in a
   string, where an escape is read only on a line that holds a quote or an
   escape next to a keyword) or after a token the format does not define on
-  the line of the entry's last token (`machine h force yes password v`), an
-  entry in a comment, also right after its `#` (a `#` after a blank or a
-  line-break escape starts a comment, which runs to the end of its line or,
-  where escapes are read, to the next line-break escape, so the password of
+  the line of the entry's last token (`machine h force yes password v`), one
+  after a keyword glued to a closing quote, which Python's `netrc` reads as
+  the next token (`login "u"password v`), an entry in a comment, also right
+  after its `#` (a `#` after a blank or a line-break escape starts a
+  comment, which runs to the end of its line or, where escapes are read, to
+  the next line-break escape, so the password of
   `"machine h\n  # bot\npassword v"` is withheld), and the lines of a
   netrc `macdef` macro up to the empty line that ends it (a word after
   `default password` in prose is withheld as well, and so is a word after

@@ -750,13 +750,15 @@ _NETRC_STRING = re.compile(
 # of either kind. Where the escape is part of the token, the rest of its run is
 # read as a token the format does not define (``_NETRC_UNKNOWN``) and skipped.
 _NETRC_LEAD = r"(?:[^\s\\`]|[\\`](?![nrtvf]))"
-# A value: quoted ('"v"', '\"v\"' inside a JSON string), with what is glued to
-# its closing quote, or unquoted, up to the next blank or escape, where the
-# next token can start. A secret whose quote never closes runs to the end of
-# its line; a name, to the next blank, so that it hides no token after it.
+# A value: quoted ('"v"', '\"v\"' inside a JSON string) up to its closing
+# quote, or unquoted, up to the next blank or escape, where the next token can
+# start. What is glued to a closing quote is the next token, as Python's netrc
+# reads it ('login "u"password v'); a secret is withheld up to the next blank
+# all the same. A secret whose quote never closes runs to the end of its line;
+# a name, to the next blank, so that it hides no token after it.
 _NETRC_QUOTED = (
-    rf"\"(?:[^\"\\\r\n]|\\.)*+(?:\"{_NETRC_LEAD}*+{{unclosed}})"
-    rf"|\\\"(?:[^\\\r\n]|\\(?!\"))*+(?:\\\"{_NETRC_LEAD}*+{{unclosed}})"
+    r"\"(?:[^\"\\\r\n]|\\.)*+(?:\"{unclosed})"
+    r"|\\\"(?:[^\\\r\n]|\\(?!\"))*+(?:\\\"{unclosed})"
 )
 _NETRC_VALUE = _NETRC_QUOTED.format(unclosed=r"|[^\r\n]*+") + rf"|{_NETRC_LEAD}++"
 # The optional name after 'login', 'machine' and the like, never one of the words.
