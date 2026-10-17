@@ -22,9 +22,11 @@ from shadowscan import __version__
 from shadowscan.autonomy import apply_autonomy
 from shadowscan.comparison import IDENTITY_KEY_ENV, build_collection_scope
 from shadowscan.config import (
+    DEFAULT_CONNECTOR_TIMEOUT,
     ConfigValidationError,
     ConnectorSpec,
     ScanConfig,
+    connector_timeout_is_default,
     plugin_names,
     validate_min_confidence,
 )
@@ -67,9 +69,6 @@ _JobResult = tuple[ConnectorSpec, list[Finding], ScanStats]
 # A job's connector class, or the exception its lookup raised.
 _Resolved = type[BaseConnector] | Exception
 
-#: The deadline a connector gets when the operator sets none. Scaling applies
-#: only while this exact value is in effect; an explicit setting is honoured.
-DEFAULT_CONNECTOR_TIMEOUT = 120.0
 #: Ceiling on an automatically raised deadline. A scan that needs longer than
 #: this should say so explicitly rather than be allowed to run unbounded.
 MAX_AUTO_TIMEOUT = 1800.0
@@ -619,7 +618,7 @@ class _ConnectorRunner:
         the runner has already resolved: a second lookup would happen outside
         the job's origin-policy scope.
         """
-        if self._config.connector_timeout_seconds != DEFAULT_CONNECTOR_TIMEOUT:
+        if not connector_timeout_is_default(self._config.connector_timeout_seconds):
             return
         try:
             proposed = hooks.estimate_timeout_seconds(dict(spec.config), DEFAULT_CONNECTOR_TIMEOUT)

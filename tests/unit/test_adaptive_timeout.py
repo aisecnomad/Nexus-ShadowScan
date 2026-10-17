@@ -12,7 +12,9 @@ from __future__ import annotations
 import time
 
 import pytest
+from click.testing import CliRunner
 
+from shadowscan.cli import main
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector
 from shadowscan.connectors.code.filesystem import FilesystemConnector
@@ -161,6 +163,48 @@ class TestDeadlineExtension:
             assert self._extend(cfg, spec, self._state(7.0)) == 0
         finally:
             FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
+
+    @staticmethod
+    def _configured(source: str, value: str | None, monkeypatch) -> ScanConfig:
+        """A scan configuration whose timeout comes from ``source``; ``value`` None sets none."""
+        if source == "constructor":
+            return ScanConfig() if value is None else ScanConfig(connector_timeout_seconds=float(value))
+        if source == "legacy null":
+            # The deprecated alias's null, which once meant no deadline, selects the default.
+            return ScanConfig.from_dict({"options": {"connector_timeout": None}})
+        if source == "configuration":
+            return ScanConfig.from_dict(
+                {"options": {} if value is None else {"connector_timeout_seconds": value}}
+            )
+        received: list[ScanConfig] = []
+        monkeypatch.setattr("shadowscan.cli._run_and_emit", lambda config, *a, **k: received.append(config))
+        flag = [] if value is None else ["--connector-timeout-seconds", value]
+        result = CliRunner().invoke(main, ["run", "gateway.logs", *flag])
+        assert result.exit_code == 0, result.output
+        return received[0]
+
+    @pytest.mark.parametrize("source", ["constructor", "configuration", "command line"])
+    def test_an_explicit_timeout_equal_to_the_default_is_never_scaled(
+        self, tmp_path, monkeypatch, source
+    ) -> None:
+        # Regression: the engine compared the setting with 120 s, so an explicit
+        # --connector-timeout-seconds 120 was scaled as if nothing had been set.
+        _tree(tmp_path, 100)
+        monkeypatch.setattr(FilesystemConnector, "_ENTRIES_PER_DEFAULT_BUDGET", 25)
+        cfg = self._configured(source, "120", monkeypatch)
+        cfg.validate_security_options()  # as every run does
+        spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
+        assert self._extend(cfg, spec, self._state(DEFAULT_CONNECTOR_TIMEOUT)) == 0
+
+    @pytest.mark.parametrize("source", ["constructor", "configuration", "legacy null", "command line"])
+    def test_an_unset_timeout_is_scaled_whatever_the_source(self, tmp_path, monkeypatch, source) -> None:
+        _tree(tmp_path, 100)
+        monkeypatch.setattr(FilesystemConnector, "_ENTRIES_PER_DEFAULT_BUDGET", 25)
+        cfg = self._configured(source, None, monkeypatch)
+        cfg.validate_security_options()  # as every run does
+        assert cfg.connector_timeout_seconds == DEFAULT_CONNECTOR_TIMEOUT
+        spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
+        assert self._extend(cfg, spec, self._state(DEFAULT_CONNECTOR_TIMEOUT)) > 0
 
     def test_the_default_is_extended_for_a_large_tree(self, tmp_path) -> None:
         _tree(tmp_path, 100)

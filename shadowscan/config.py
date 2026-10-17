@@ -495,6 +495,27 @@ def _redacted_config(config: Any) -> Any:
     return {key: REDACTED if key in _WITHHELD_KEYS else value for key, value in shown.items()}
 
 
+class _DefaultConnectorTimeout(float):
+    """The connector deadline when the operator sets none: 120 seconds.
+
+    Its own type, so the engine can tell it from an explicit 120: only this
+    default is scaled to a large input. A value a caller, a configuration file
+    or ``--connector-timeout-seconds`` sets is a plain float, 120 included, and
+    is honoured unchanged.
+    """
+
+    __slots__ = ()
+
+
+#: The deadline a connector gets when the operator sets none.
+DEFAULT_CONNECTOR_TIMEOUT: float = _DefaultConnectorTimeout(120.0)
+
+
+def connector_timeout_is_default(value: object) -> bool:
+    """Whether ``value`` is the unset default rather than a deadline someone chose."""
+    return isinstance(value, _DefaultConnectorTimeout)
+
+
 @dataclass(slots=True)
 class ScanConfig:
     connectors: list[ConnectorSpec] = field(default_factory=list)
@@ -520,7 +541,7 @@ class ScanConfig:
     deny_private_origin: bool = field(default=False, kw_only=True)
     allow_instance_credentials: bool = False
     allow_credential_mixing: bool = False
-    connector_timeout_seconds: float = 120.0
+    connector_timeout_seconds: float = DEFAULT_CONNECTOR_TIMEOUT
     # Share of examined entries a connector may leave unread before its scan is
     # reported incomplete. Zero restores strict accounting. A gap the scanner
     # cannot bound (an early stop, a refused page) ignores this and always
@@ -665,7 +686,7 @@ class ScanConfig:
             raise ConfigValidationError(
                 "specify options.connector_timeout_seconds or options.connector_timeout, not both"
             )
-        timeout = opts.get("connector_timeout_seconds", 120.0)
+        timeout = opts.get("connector_timeout_seconds", DEFAULT_CONNECTOR_TIMEOUT)
         if "connector_timeout" in opts:
             # Older configurations used null for no deadline. Keep them usable
             # while enforcing the safe default instead of permitting infinity.
@@ -673,7 +694,9 @@ class ScanConfig:
                 "connector_timeout",
                 "options.connector_timeout is deprecated; use options.connector_timeout_seconds",
             )
-            timeout = 120.0 if opts["connector_timeout"] is None else opts["connector_timeout"]
+            timeout = (
+                DEFAULT_CONNECTOR_TIMEOUT if opts["connector_timeout"] is None else opts["connector_timeout"]
+            )
         connectors = data.get("connectors", [])
         if not isinstance(connectors, list):
             raise ConfigValidationError("connectors must be a list")
@@ -1101,6 +1124,9 @@ def _coverage_gap_option(value: Any) -> float:
 
 
 def validate_connector_timeout_seconds(value: Any) -> float:
+    if connector_timeout_is_default(value):
+        # Valid as it stands; kept so the engine still sees that none was set.
+        return DEFAULT_CONNECTOR_TIMEOUT
     message = "connector_timeout_seconds must be a positive finite number"
     if isinstance(value, bool):
         raise ConfigValidationError(message)
