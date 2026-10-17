@@ -508,8 +508,10 @@ placeholders (repeated characters, marker words such as `EXAMPLE` or their
 Portuguese, Spanish, French, German, Italian, Dutch, Indonesian and Turkish
 equivalents written as whole words between separators, such as
 `sk-proj-sua-chave-aqui-...`, a possessive followed by words that name the
-credential, such as `sua_chave_openai`, `votre-cle-api` or `your_api_key`, or
-very low character diversity) are never reported. A translated word joined to
+credential, such as `sua_chave_openai`, `votre-cle-api` or `your_api_key`,
+when every word after the possessive is template vocabulary, so
+`ton-jardin-secret` is a passphrase, or very low character diversity) are
+never reported. A translated word joined to
 the rest by a case boundary (`SuaChaveDaOpenAI`) is read as part of a token,
 as random keys hold such runs, and so is a passphrase that only begins with a
 possessive or a pronoun (`je-suis-le-patron`). An assigned value shaped like

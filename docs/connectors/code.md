@@ -503,13 +503,37 @@ or `.env.sample`) the name test applies to token names only (`API_KEY`,
 `ACCESS_TOKEN`, `CLIENT_SECRET`): a PASSWORD or CREDENTIAL value there
 (`POSTGRES_PASSWORD=TrustNoOneEverAgain`, `POSTGRES_PASSWORD =
 PostgresProd2024Secure`) cannot name a variable and is reported unless it is
-a placeholder or a label: every word of it is label vocabulary, a function
-word or a word of the name, and every number is the name's
-(`KeycloakAdminPassword`, `svc1_local_dev_password` under
-`SVC1_DB_PASSWORD`); a year or any other word (`LocalAdmin2024Strong`,
-`snout_dev_thump_bloom`) makes it a password. A key pasted in place of an
-environment variable's name (`process.env.<KEY>`) is reported as a
-credential, by the same test that withholds it from evidence. In other
+a placeholder or a label: every word of it is label vocabulary, a qualifier
+(`only`, `for`, `not`, `must`, `please`, ...) or a word of the name, and
+every number is the name's (`KeycloakAdminPassword`,
+`svc1_local_dev_password` under `SVC1_DB_PASSWORD`), or it is an
+instruction: it holds an instruction word and every word of it is in the
+closed vocabulary of instructions (`change_me_to_a_strong_password`,
+`DoNotCommitThisOne`). There the account and quality words `admin`, `user`,
+`strong`, `internal` and `commit` label nothing, and a pronoun, article,
+preposition or the copula (`my`, `the`, `at`, `is`) without an instruction
+word makes a sentence, which is a password (`MyStrongPassword`,
+`my_secret_password`, `InternalUserPassword`); a year or any other word
+(`LocalAdmin2024Strong`, `snout_dev_thump_bloom`) makes it a password. In
+any file a sentence is a label only with an instruction word or a word of
+the label vocabulary and with every word in that closed vocabulary
+(`fly-me-to-the-moon` and `my-secret-garden-gate` are reported), and a
+possessive followed by words (`ton-jardin-secret`) is a label only when the
+placeholder test reads it as a template. A hard-coded fallback after an
+environment read, and the default a settings read is given
+(`GetValue<string>("OpenAI:ApiKey", "<key>")`,
+`configService.get("OPENAI_API_KEY", "<key>")`,
+`.orElse("<key>")`), is reported when it looks like a key; under a
+password's, passphrase's or secret's name it is reported whatever its shape
+unless the redactor would keep it (a variable's name, a path, a URL, a
+placeholder, fewer than six characters) or it is a label. A key pasted in
+place of an environment variable's name is reported where the generic rule
+reads the read itself: a member read (`process.env.<KEY>`,
+`import.meta.env.<KEY>`, `Bun.env.<KEY>`, `os.environ.<KEY>`) or
+`Environment.GetEnvironmentVariable("<KEY>")`. A shorter call or subscript
+read (`os.getenv("<KEY>")`, `process.env["<KEY>"]`, `ENV["<KEY>"]`,
+`System.getenv("<KEY>")`) is withheld from evidence by the same test but
+gives no match, so it is not reported. In other
 configuration, documentation and templates a password's value may name a
 setting or a secret (`adminPassword: useExistingSecretKey`) and is read as
 in source code; see
@@ -644,7 +668,12 @@ Wherever their syntax appears in report text (a Dockerfile that writes a
 passwords, accounts and macros of netrc entries, with keywords in any case
 as curl reads them, including an entry in a comment (a comment in a string
 with `\n` escapes ends at the next one; a netrc file's own comment runs to
-the end of its line, a Windows path in it included), and Yarn 1's
+the end of its line, a Windows path in it included, also one whose
+directory is a netrc keyword such as `\\nas\user\fred` or
+`C:\Users\bob\default\new`; only a keyword right after a line-break escape
+and before another escape, as in `C:\data\nuser\fred`, reads the line as
+escaped text, so that comment ends at the `\n` and what follows is read as
+the entry's tokens), and Yarn 1's
 `name value` registry credentials are withheld (see
 [what is redacted](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-is-redacted),
 and [what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain)
@@ -653,18 +682,27 @@ entry among them).
 A file whose name selects no analysis (`*.jsonl`, `*.bak`,
 `*.j2`, binary and media suffixes) is never opened, so it is neither scanned
 for credentials nor counted as a coverage gap; name such files in a file-name
-signature pack to read them. A file's credential finding carries at most
-five credentials per credential format (`metadata.count` counts them, one per
-credential however many patterns or lines match it: a credential repeated on
-another line, such as one password in each service of a compose file or one
-key in each document of a manifest, is reported once, at its first line, and
-counts once). A reference to a credential
+signature pack to read them. A file's credential finding counts at most
+five distinct credentials per credential format toward its quota, and
+`metadata.count` counts the distinct credentials of the finding's evidence,
+in every credential finding: a credential matched by several patterns, or repeated
+on several lines (one password in each service of a compose file, one key
+in each document of a manifest, one provider key on six lines of a `.env`),
+counts once. Its evidence lists up to five of the lines a repeated
+credential is written on in the file's text, and in a `.env*` file every
+line whose value holds a provider-format key, since each value there is
+also matched on its own. A reference to a credential
 (`api_key = settings.API_KEY`), a documentation placeholder
-(`OPENAI_API_KEY=sk-your-key-here-1a2b`, which becomes example evidence) and
-a short `sk-` value that does not look random take no place in that quota,
-so a `.env.example` of sample keys is complete. A file
-holding more credentials of one format is reported with that quota's worth of
-evidence, `metadata.secrets_limited` naming the formats, and the diagnostic
+(`OPENAI_API_KEY=sk-your-key-here-1a2b`, which becomes example evidence),
+a short `sk-` value that does not look random, a further line of a
+credential already counted, and a key pasted as a variable's name that does
+not look like an opaque key (letters and digits alternating in a long run;
+`process.env.SVC1OPENAIAPIKEYPROD` is reported, at most five of them per
+format) take no place in that quota, so a `.env.example` of sample keys is
+complete. A file
+holding more distinct credentials of one format than the quota counts is
+reported with that quota's worth of them, `metadata.secrets_limited` naming
+the formats, and the diagnostic
 `credential quota limit reached: more than 5 credentials matched <format>;
 credential evidence incomplete`, which makes the scan incomplete
 (`incomplete_reasons.analysis-limit`): the count is a lower bound, never a

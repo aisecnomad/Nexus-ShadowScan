@@ -218,8 +218,18 @@ across this change reports findings as resolved or new that are neither.
   set")`, is no fallback; a placeholder fallback that reads as a token, such
   as `?? "your-api-key-here-Abc123XyZ"`, is `example-credential` evidence,
   and one of words and an ellipsis, such as `?? "sk-ant-api03-..."`, is
-  neither reported nor evidence), a key pasted as an environment variable's
-  name (`process.env.<KEY>`, the name evidence withholds) and generated
+  neither reported nor evidence), the default a settings read is given when
+  it looks like a key (`GetValue<string>("OpenAI:ApiKey", "<key>")`,
+  `configService.get("OPENAI_API_KEY", "<key>")`, `.orElse("<key>")`), a fallback or
+  default of any shape under a password's, passphrase's or secret's name
+  (`dbPassword: process.env.DB_PASSWORD?.trim() || "<password>"`) unless
+  evidence would keep it (a variable's name, a path, a URL, a placeholder,
+  fewer than six characters) or it is a label, a key pasted as an
+  environment variable's name where the generic rule reads the read itself
+  (a member read such as `process.env.<KEY>` or `os.environ.<KEY>`, or
+  `Environment.GetEnvironmentVariable("<KEY>")`; a call or subscript read
+  such as `os.getenv("<KEY>")` or `process.env["<KEY>"]` is withheld from
+  evidence but not reported) and generated
   passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`, also in upper
   case, and joined by `.` as a password outside source code; a label of
   words carries credential, placeholder, development or filler vocabulary or
@@ -228,14 +238,28 @@ across this change reports findings as resolved or new that are neither.
   word, or two function words, such as `change-me-please` and
   `must-be-set-at-runtime`, while one common word such as `default`,
   `passed` or a two-letter word of the name such as `db` alone does not make
-  a label) are reported as before. References, documentation placeholders,
+  a label) are reported as before. A sentence (a pronoun, article,
+  preposition or the copula among its words) is a label only with an
+  instruction word or a word of the label vocabulary and with every word in
+  that closed vocabulary (`change_me_to_a_strong_password` and
+  `DoNotCommitThisOne` are labels; `fly-me-to-the-moon` and
+  `my-secret-garden-gate` are reported), and a possessive followed by words
+  (`ton-jardin-secret`) is a label only when the placeholder test reads it
+  as a template. References, documentation placeholders,
   short `sk-` look-alikes, a second pattern matching a credential already
-  counted and a credential repeated on another line (one password in each
-  service of a compose file) take no place in the five-per-format quota, so
+  counted, a further line of a credential already counted (one password in
+  each service of a compose file) and a pasted variable name that does not
+  look like an opaque key (letters and digits alternating in a long run;
+  at most five such names per format are reported) take no place in the
+  five-per-format quota, so
   a real key after any number of them is reported (the quota used to drop
-  it), a `.env.example` of sample keys no longer exits 3, and a finding's
-  `count` counts each credential of a format once: a repeated one is
-  reported at its first line only. A digit-free
+  it), a `.env.example` of sample keys no longer exits 3, and every
+  credential finding's `count` counts the distinct credentials of its
+  evidence, a credential matched by several patterns or on several lines
+  once; that includes the `.env` provider-key finding, whose `count` counted
+  each match before (one key on six lines counted six and now counts one). The evidence
+  of a repeated credential lists up to five of its lines, and in a `.env*`
+  file every line whose value holds a provider-format key. A digit-free
   value is held to the mixed-case rule only when it is built like a name
   (snake_case, dotted or camelCase), so a single-word passphrase or an AWS
   key id whose body has no digit is reported. In an env or credential file
@@ -244,9 +268,15 @@ across this change reports findings as resolved or new that are neither.
   CREDENTIAL value there (`POSTGRES_PASSWORD=TrustNoOneEverAgain`,
   `POSTGRES_PASSWORD = PostgresProd2024Secure` with blanks around `=` as
   python-dotenv and Node's dotenv read it) is reported as before, unless
-  every word of it is label vocabulary, a function word or a word of the
-  name and every number is the name's (`KeycloakAdminPassword`,
-  `svc1_local_dev_password` under `SVC1_DB_PASSWORD`). Env templates, Helm
+  every word of it is label vocabulary, a qualifier (`only`, `for`, `not`)
+  or a word of the name and every number is the name's
+  (`KeycloakAdminPassword` under `KEYCLOAK_ADMIN_PASSWORD`,
+  `svc1_local_dev_password` under `SVC1_DB_PASSWORD`), or it is an
+  instruction whose every word is in the closed vocabulary of instructions
+  (`change_me_to_a_strong_password`). There `admin`, `user`, `strong`,
+  `internal` and `commit` label nothing, and a sentence without an
+  instruction word is a password (`MyStrongPassword`, `my_secret_password`,
+  `InternalUserPassword`). Env templates, Helm
   values, compose files, workflows and documentation keep the name rules,
   so a single-case snake_case password with digits there
   (`admin_password_123`) reads as a setting's name and is not reported.
@@ -260,13 +290,19 @@ across this change reports findings as resolved or new that are neither.
   of the expression). After that end, on a line that joins a credential name
   to a value (`:`, `=`, `=>`) or gives a credential-named callee its
   arguments (`setApiKey(...)`), each string-literal or comment token that
-  looks like an opaque key is withheld, and so is every literal of a
-  password's value up to the line's next entry, whatever its shape
-  (`dbPassword: process.env.DB_PASSWORD?.trim() || "<password>"`). A later
+  looks like an opaque key is withheld, and so, under each password's or
+  secret's name on the line (not only its first credential name), is every
+  literal of its value up to the next entry of its own mapping, object or
+  argument list, whatever its shape (`dbPassword:
+  process.env.DB_PASSWORD?.trim() || "<password>"`, `clientSecret: ... ||
+  "<secret>"`, a keyword argument of the read such as `fallback="..."` or
+  `default_value="..."` included). Spans withheld for one value merge, so a
+  literal whose start looks like a token is withheld to its end. A later
   line that starts with a fallback operator, or follows a line that ends
   with one, and a block comment that runs past the line are read the same
-  way. What can still remain after such a read (a word-like literal under a
-  name that is no password's, a password literal of fewer than six
+  way. What can still remain after such a read (a literal under a name that
+  is no password's or secret's that does not look like an opaque key,
+  punctuated or not, a password literal of fewer than six
   characters or that reads as an upper-case variable name, a literal on a
   later line that no operator joins) is listed under
   [what can remain](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/SECURITY.md#what-can-remain).
@@ -304,7 +340,9 @@ across this change reports findings as resolved or new that are neither.
   a later line before a `password`, `passwd` or `account` in the entry's
   eight-line region, an indented or trailing comment in a string with `\n`
   escapes, where a comment ends at the next one, a netrc file's own
-  comment with a path in it, which runs to the end of its line, and an
+  comment with a path in it, which runs to the end of its line, a Windows
+  path whose directory is a netrc keyword such as `\\nas\user\fred`
+  included, and an
   entry spread over adjacent string literals;
   SECURITY.md lists the forms that can remain), so excerpts that showed
   them change, and so does a prose word after `default password`, or after
