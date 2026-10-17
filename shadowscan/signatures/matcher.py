@@ -225,6 +225,9 @@ def _finditer(
     excluded: Callable[[int], bool] | None = None,
     selected: Callable[[Any], bool] | None = None,
 ) -> list[Any]:
+    if selected is not None:
+        return _judged_finditer(rx, text, context, limit, excluded, selected)
+
     def collect(timeout: float) -> list[Any]:
         # Tiny patterns dominate this workload. Releasing/reacquiring the GIL
         # for every token under parallel connectors can spend the entire wall
@@ -237,13 +240,64 @@ def _finditer(
         matches = rx.finditer(text, timeout=timeout, concurrent=False)
         if excluded is not None:
             matches = (match for match in matches if not excluded(match.start()))
-        if selected is not None:
-            # Only selected matches count toward the limit.
-            matches = (match for match in matches if selected(match))
         return list(islice(matches, limit))
 
     result: list[Any] = _run_regex(collect, context)
     return result
+
+
+# The raw matches a judged pattern reads per regex execution (``_judged_finditer``).
+_JUDGED_BATCH = 64
+
+
+def _judged_finditer(
+    rx: Any,
+    text: str,
+    context: str,
+    limit: int,
+    excluded: Callable[[int], bool] | None,
+    selected: Callable[[Any], bool],
+) -> list[Any]:
+    """At most ``limit`` matches of ``rx`` that ``selected`` accepts, judged between regex executions.
+
+    The regex engine's iterator timeout charges the CPU spent between two
+    next() calls to the pattern. A judge run inside the iteration (the
+    credential judge reads up to ``_FOLLOWER_CHARS`` after each match) spent
+    the pattern's execution allowance, which scales with the input's size and
+    not with its matches, so a file of a few thousand credential reads timed
+    out (MatchTimeoutError, exit 3) where the pattern alone finishes in time.
+
+    The matches are read in batches of ``_JUDGED_BATCH`` instead. Each
+    execution resumes where the last batch ended and is given only what the
+    earlier ones left of one execution allowance, so the engine's own work is
+    held to the allowance an unjudged run has. The judge runs between the
+    executions and is charged to the input's execution budget, which still
+    ends the input, and marks it incomplete, when spent.
+    """
+    allowance = _remaining_timeout()
+    spent = 0.0
+    found: list[Any] = []
+    position = 0
+    while True:
+
+        def batch(timeout: float, start: int = position) -> list[Any]:
+            return list(islice(rx.finditer(text, start, timeout=timeout, concurrent=False), _JUDGED_BATCH))
+
+        started = time.thread_time()
+        matches: list[Any] = _run_regex(batch, context, max_seconds=allowance - spent)
+        spent += time.thread_time() - started
+        for match in matches:
+            if (excluded is None or not excluded(match.start())) and selected(match):
+                found.append(match)
+                if len(found) >= limit:
+                    return found
+        _remaining_timeout()
+        if len(matches) < _JUDGED_BATCH:
+            return found
+        # Secret patterns never match empty text; were one to, the next
+        # execution must still move on.
+        last = matches[-1]
+        position = last.end() + (last.end() == last.start())
 
 
 def _search(rx: Any, text: str, context: str) -> Any:
