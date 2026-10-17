@@ -204,8 +204,13 @@ class _JobState:
         appends to it is safe in CPython, and the only risk is observing fewer
         findings than the worker had produced — acceptable on a path that
         already reports the scan incomplete, and far better than reporting none.
+
+        Only an exact list is held. The sink is on the connector's context, so a
+        plugin can pass anything, and the supervisor copies what it holds on its
+        own thread: a list subclass would run the plugin's ``__iter__`` there.
         """
-        self.partial_findings.append(findings)
+        if type(findings) is list:
+            self.partial_findings.append(findings)
 
     def take_partial(self) -> list[Finding]:
         return [finding for findings in list(self.partial_findings) for finding in list(findings)]

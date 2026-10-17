@@ -748,3 +748,43 @@ def test_a_plugin_class_that_exits_when_asked_for_its_records_keeps_none(
     [surrendered] = [finding for finding in report["findings"] if finding["connector"] == PLUGIN]
     assert surrendered["title"] == "surrendered"
     assert any("registry record metadata ignored on 1" in warning for warning in plugin["warnings"])
+
+
+_SINK_EXIT_PLUGIN = """
+import sys
+
+from shadowscan.connectors.base import BaseConnector
+from shadowscan.models import Surface
+
+
+class Exiting(list):
+    def __iter__(self):
+        sys.exit(0)
+
+    def __len__(self):
+        sys.exit(0)
+
+
+class Connector(BaseConnector):
+    name = "code.acme-exit"
+    surface = Surface.CODE
+    description = "Registers a findings list that exits when it is read, then overruns."
+    config_keys = {"paths": "roots"}
+
+    def collect(self):
+        return [{}]
+
+    def analyze(self, records):
+        self.ctx.partial_sink(Exiting())
+        self.ctx.cancelled.wait(30)
+        yield from ()
+"""
+
+
+def test_a_findings_list_that_exits_when_read_is_never_surrendered(monkeypatch, tmp_path, plugin_registry):
+    """Regression: the job state held whatever a connector passed to its partial sink, and the
+    supervisor copied it on its own thread, so a list subclass whose __iter__ called sys.exit(0)
+    ended the scan with exit 0 and no report."""
+    report, plugin = _scan_overrunning_plugin(monkeypatch, tmp_path, "acme_sink_plugin", _SINK_EXIT_PLUGIN)
+
+    assert plugin["findings"] == 0 and all(f["connector"] != PLUGIN for f in report["findings"])
