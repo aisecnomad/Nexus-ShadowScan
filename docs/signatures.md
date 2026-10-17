@@ -413,7 +413,7 @@ and tests, which call and test the products they detect.
   name a variable. When operators follow such a reference instead of a value end (`;`, `,`, `)`, `}`, `]`, a blank
   line), past any call, subscript, optional or non-null chain on it (`GetEnvironmentVariable("X") ??`,
   `process.env.X?.trim() ||`) and on the same or the next line (after a comment or a backslash
-  continuation too), the match is kept if a string literal that is a direct operand of `||`, `??`, `?:`, `or`,
+  continuation too, with any blanks between tokens, a no-break or zero-width space as well), the match is kept if a string literal that is a direct operand of `||`, `??`, `?:`, `or`,
   a ternary branch or `+` is one token of the value class and looks like a key: the pattern's value stops
   at the first blank, so `apiKey = process.env.OPENAI_API_KEY || "<key>"` matches only the read and the
   fallback is the credential (`Match.extra["credential"]`, which the placeholder test judges). A literal
