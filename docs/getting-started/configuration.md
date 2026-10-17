@@ -28,6 +28,7 @@ options:
   allow_signature_override: false     # permit custom sigs to replace built-in IDs
   plugins: []                         # exact-name allowlist for third-party connectors
   plugin_execution: process           # or thread: in-process plugins (previous default)
+  plugin_env: []                      # credential-shaped variables a plugin worker keeps
 
 connectors:
   - name: code.github
@@ -51,8 +52,12 @@ connector in its own spawned worker that the scanner can terminate at the
 connector deadline; `plugin_execution: thread` (or `--plugin-execution thread`)
 runs plugins in the scanner process instead, where a blocked plugin cannot be
 stopped. Built-in connectors always use the thread backend. Workers keep the
-scanner's privileges and credentials: this is lifecycle isolation, not a
-sandbox. See
+scanner's privileges but not the credentials it exported for the built-in
+connectors: credential-shaped environment variables (`*_TOKEN`, `*_SECRET`,
+`*_KEY`, `*_PASSWORD`, the cloud SDK credential variables) are removed from a
+worker before the plugin is imported, except the names `plugin_env` lists for a
+plugin that reads its own credential from the environment. This is lifecycle
+isolation, not a sandbox. See
 [third-party plugin execution](../connectors.md#third-party-plugin-execution).
 
 ## Reaching an internal destination

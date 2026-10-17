@@ -109,3 +109,30 @@ moved name (`_redacted_source`) is called solely from `filesystem.py`, so
 existing test seams keep their meaning; the forwarding-pattern caveat above
 still applies to any further move of a patched name. The four collaborator-class moves of the decision remain open,
 and the class itself is unchanged.
+
+## Status (2026-10-17)
+
+The first of the four moves is made: the ownership group. `_git_info`,
+`_codeowners_directory`, `_codeowners`, `_read_codeowners`, `_owner_for` and
+`_owners_for_files`, with the five attributes that held their state, are now
+`OwnershipResolver` in `code/ownership.py` (the module the decision named for
+them), a collaborator the connector constructs once and tells which scan is
+open so ownership reads stay on the collection's descriptor. The connector
+calls `self.ownership.owner_for(...)`, `owners_for_files(...)` and
+`git_info(...)`; nothing forwards the old names, and the constants the methods
+used (`MAX_ROOT_OWNERSHIP_STEPS`, the git field limits) moved with them and
+are re-exported as the defining module's objects, as rule 4 and the 2026-10-15
+status describe.
+
+The test seams moved in the same change, as rule 4 asks: the eight test
+modules that called `connector._git_info`, patched
+`FilesystemConnector._git_info` or `_read_codeowners`, read
+`_ownership_scan` or `_ownership_steps_remaining`, or patched
+`filesystem.run_bounded_metadata`, `OwnershipBudget`, `MAX_RULES` and
+`MAX_ROOT_OWNERSHIP_STEPS` now address `OwnershipResolver` and the
+`ownership` module; the descriptor-confinement test records the resolver's
+`open_confined_directory` and `read_text` beside the connector's. Behaviour
+was checked by the ownership, confinement, git-metadata and gitlink tests, the
+evaluation corpora and the offline demo. The walk, file-scan and
+project-findings moves remain open; the class is about 4,100 lines and 121
+methods, down from 4,250 and 127.

@@ -2,7 +2,9 @@
 
 What changed for people who install, configure or operate ShadowScan, one
 section per release. [CHANGELOG.md](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/CHANGELOG.md)
-is the detailed engineering log, recorded per change, and the
+names each change in a line, the
+[engineering log](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/engineering-log.md)
+records each in detail, and the
 [deployment and migration guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md)
 has the full upgrade steps.
 

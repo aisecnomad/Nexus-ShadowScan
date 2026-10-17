@@ -92,7 +92,7 @@ Dependabot and the tests read them from there:
 | `mkdocs.yml` | Documentation site configuration and navigation |
 | `Dockerfile`, `.dockerignore` | The worker image and its build-context allow-list |
 | `agent-card.yaml` | Sample Agent Capability Card used by the offline demo, the quick start and the image |
-| `CHANGELOG.md`, `RELEASE_NOTES.md` | Engineering change log, and the operator summary of what changes on upgrade |
+| `CHANGELOG.md`, `docs/engineering-log.md`, `RELEASE_NOTES.md` | One line per change, the detailed engineering log, and the operator summary of what changes on upgrade |
 | `AGENTS.md` | Rules for coding agents working in this repository |
 | `CITATION.cff`, `NOTICE`, `LICENSE`, `CODEOWNERS` | Citation metadata, attribution, licence and review ownership |
 
@@ -260,8 +260,9 @@ repository contains no secrets.
 - Do not log raw credentials, JWTs, or unsanitized connector configuration.
 - Pin GitHub Actions by full commit SHA. Do not leave `persist-credentials`
   enabled on checkouts that do not need to push.
-- Update `CHANGELOG.md` under Unreleased and `docs/production.md` when a change
-  affects rollout, finding identity, or credential policy.
+- Add a detailed entry under Unreleased in `docs/engineering-log.md`, name it in
+  a line under Unreleased in `CHANGELOG.md`, and update `docs/production.md`
+  when a change affects rollout, finding identity, or credential policy.
 - Include regression tests for bug fixes.
 - Use the PR template checklist; it covers the main gates. `make check` runs
   every local gate; CI also builds the documentation, audits each lock file and

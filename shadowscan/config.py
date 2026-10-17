@@ -116,6 +116,7 @@ _OPTION_FIELDS = {
     "state_dir",
     "plugins",
     "plugin_execution",
+    "plugin_env",
     "allow_signature_override",
     "allow_private_origin",
     "allow_instance_credentials",
@@ -508,6 +509,9 @@ class ScanConfig:
     state_dir: str | None = None
     plugins: list[str] = field(default_factory=list)
     plugin_execution: str = "process"
+    # Environment variable names a process-mode plugin worker keeps although they are
+    # credential-shaped (see plugin_process.scrub_credential_environment).
+    plugin_env: list[str] = field(default_factory=list)
     allow_signature_override: bool = False
     allow_private_origin: bool = False
     # An explicit refusal (--deny-private-origin, or a library caller): unlike
@@ -553,6 +557,7 @@ class ScanConfig:
         self.plugins = validate_plugins(self.plugins)
         if not isinstance(self.plugin_execution, str) or self.plugin_execution not in {"thread", "process"}:
             raise ConfigValidationError("options.plugin_execution must be thread or process")
+        self.plugin_env = validate_plugin_env(self.plugin_env)
         self.allow_signature_override = _boolean_option(
             self.allow_signature_override, "allow_signature_override"
         )
@@ -720,6 +725,7 @@ class ScanConfig:
             state_dir=_optional_path(base, opts.get("state_dir"), "options.state_dir"),
             plugins=validate_plugins(opts.get("plugins", [])),
             plugin_execution=opts.get("plugin_execution", "process"),
+            plugin_env=validate_plugin_env(opts.get("plugin_env", [])),
             allow_signature_override=_boolean_option(
                 opts.get("allow_signature_override", False), "allow_signature_override"
             ),
@@ -853,6 +859,33 @@ def validate_plugins(value: Any) -> list[str]:
 def plugin_names(entries: list[str]) -> set[str]:
     """The connector names a validated ``plugins`` list approves."""
     return {entry.partition("=")[0].strip() for entry in entries}
+
+
+_ENV_NAME_RX = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+MAX_PLUGIN_ENV = 64
+
+
+def validate_plugin_env(value: Any) -> list[str]:
+    """Validate ``options.plugin_env``: the credential-shaped variables a plugin worker may keep.
+
+    A process-mode plugin worker does not inherit credential-shaped variables
+    (``plugin_process.scrub_credential_environment``); this list names the ones
+    an approved plugin reads itself, by exact name. Names are environment
+    variable identifiers, at most 64 of them, each once. Messages never
+    include the values.
+    """
+    if not isinstance(value, list) or any(not isinstance(name, str) for name in value):
+        raise ConfigValidationError("options.plugin_env must be a list of environment variable names")
+    if len(value) > MAX_PLUGIN_ENV:
+        raise ConfigValidationError(f"options.plugin_env lists more than {MAX_PLUGIN_ENV} names")
+    names: list[str] = []
+    for name in value:
+        if not _ENV_NAME_RX.fullmatch(name):
+            raise ConfigValidationError("options.plugin_env entries must be environment variable names")
+        if name in names:
+            raise ConfigValidationError("options.plugin_env names a variable more than once")
+        names.append(name)
+    return names
 
 
 _TRUSTED_REGISTRY_FLAGS = ("allow_auto_approved", "allow_registered_only", "allow_offline_records")

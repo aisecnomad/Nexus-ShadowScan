@@ -9,9 +9,14 @@ import pytest
 
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors import ConnectorContext
-from shadowscan.connectors.code import filesystem as fs_module
+from shadowscan.connectors.code import ownership as ownership_module
 from shadowscan.connectors.code.filesystem import FilesystemConnector
-from shadowscan.connectors.code.ownership import MAX_OWNERSHIP_STEPS, OwnershipBudget, codeowners_match
+from shadowscan.connectors.code.ownership import (
+    MAX_OWNERSHIP_STEPS,
+    OwnershipBudget,
+    OwnershipResolver,
+    codeowners_match,
+)
 from shadowscan.engine import Engine
 from shadowscan.models import ScanStats, now_iso
 
@@ -92,7 +97,7 @@ def test_codeowners_root_replaced_after_verification_stays_on_source_descriptor(
     (root / "agent.py").write_text("from crewai import Agent\n")
     (root / "CODEOWNERS").write_text("* @original\n")
     (outside / "CODEOWNERS").write_text("* @outside\n")
-    original_read = FilesystemConnector._read_codeowners
+    original_read = OwnershipResolver.read_codeowners
     changed = False
 
     def replace_before_read(self, path, directory):
@@ -102,7 +107,7 @@ def test_codeowners_root_replaced_after_verification_stays_on_source_descriptor(
         root.symlink_to(outside, target_is_directory=True)
         return original_read(self, path, directory)
 
-    monkeypatch.setattr(FilesystemConnector, "_read_codeowners", replace_before_read)
+    monkeypatch.setattr(OwnershipResolver, "read_codeowners", replace_before_read)
     findings, ctx = _run(index, root)
 
     assert changed
@@ -121,7 +126,7 @@ def test_codeowners_cache_is_refreshed_when_connector_scans_again(tmp_path: Path
     owners.write_text("* @second\n")
     findings = connector.run()
     assert findings and all(finding.owner == "@second" for finding in findings)
-    assert connector._ownership_scan is None
+    assert connector.ownership.scan is None
 
 
 def test_single_file_scan_keeps_ownership_scope(tmp_path: Path, index):
@@ -212,18 +217,18 @@ def test_codeowners_large_monorepo_resolves_owners_without_exhausting_the_budget
 
 def test_codeowners_aggregate_budget_marks_later_ownership_incomplete(tmp_path, index, monkeypatch):
     (tmp_path / "CODEOWNERS").write_text("* @org/everyone\n")
-    monkeypatch.setattr(fs_module, "MAX_ROOT_OWNERSHIP_STEPS", 24)
+    monkeypatch.setattr(ownership_module, "MAX_ROOT_OWNERSHIP_STEPS", 24)
     ctx = ConnectorContext(config={"path": str(tmp_path)}, index=index)
     ctx.stats = ScanStats(connector="code.filesystem", started_at=now_iso())
     connector = FilesystemConnector(ctx)
 
-    owners = [connector._owner_for(tmp_path, f"file-{i}.py") for i in range(20)]
+    owners = [connector.ownership.owner_for(tmp_path, f"file-{i}.py") for i in range(20)]
     assert owners[0] == "@org/everyone"
     assert owners[-1] is None
-    assert connector._ownership_steps_remaining[tmp_path] == 0
+    assert connector.ownership.steps_remaining[tmp_path] == 0
     assert any("CODEOWNERS" in error and "ownership incomplete" in error for error in ctx.stats.errors)
     errors_before = len(ctx.stats.errors)
-    assert connector._owner_for(tmp_path, "still-unknown.py") is None
+    assert connector.ownership.owner_for(tmp_path, "still-unknown.py") is None
     assert len(ctx.stats.errors) == errors_before
 
 

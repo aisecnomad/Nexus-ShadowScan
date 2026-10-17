@@ -339,7 +339,8 @@ def test_live_files_name_the_current_repository() -> None:
             text = (ROOT / name).read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        if name == "CHANGELOG.md":
+        if name in ("CHANGELOG.md", "docs/engineering-log.md"):
+            # Dated logs: the released sections record the name the repository had then.
             text = text[: text.index("\n## 0.")]
         stale.extend(
             f"{name}:{number}"
@@ -1170,22 +1171,28 @@ def test_signature_count_claims_are_recognised(text: str, claims: list[tuple[int
 
 
 # Root documents that describe the current tree. The site includes RELEASE_NOTES.md, SECURITY.md and
-# GOVERNANCE.md as snippets, so a stale number there is published too. CHANGELOG.md is a dated log
-# that quotes earlier counts and is left out, as are the released sections of RELEASE_NOTES.md,
-# which quote the counts of their own version (see ``_current_text``). benchmarks/ is left out for
-# the same reason: its READMEs and run reports describe runs made at a recorded commit, so a total
-# stated there belongs to that commit.
+# GOVERNANCE.md as snippets, so a stale number there is published too. CHANGELOG.md and the
+# engineering log (docs/engineering-log.md) are dated logs that quote earlier counts and are left
+# out, as are the released sections of RELEASE_NOTES.md, which quote the counts of their own
+# version (see ``_current_text``). benchmarks/ is left out for the same reason: its READMEs and run
+# reports describe runs made at a recorded commit, so a total stated there belongs to that commit.
 _CURRENT_ROOT_DOCS = ("README.md", "RELEASE_NOTES.md", "SECURITY.md", "GOVERNANCE.md", "CONTRIBUTING.md")
 # The first heading of a released section in RELEASE_NOTES.md: ``## 0.1.1 — 2026-10-08``.
 _RELEASED_HEADING = re.compile(r"^## \d+\.\d+", re.MULTILINE)
 
 
+# The dated engineering log quotes the counts of each entry's date, like CHANGELOG.md.
+_DATED_DOCS = frozenset({"engineering-log.md"})
+
+
 def _current_docs() -> list[Path]:
-    """Documents that describe the current tree; dated review logs may quote old numbers."""
+    """Documents that describe the current tree; dated review and engineering logs may quote old numbers."""
     return [
         path
         for path in [*(ROOT / name for name in _CURRENT_ROOT_DOCS), *sorted((ROOT / "docs").rglob("*.md"))]
-        if "hardening-logs" not in path.parts and not re.search(r"review-\d{4}-\d{2}-\d{2}", path.name)
+        if "hardening-logs" not in path.parts
+        and path.name not in _DATED_DOCS
+        and not re.search(r"review-\d{4}-\d{2}-\d{2}", path.name)
     ]
 
 

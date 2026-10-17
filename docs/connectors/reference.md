@@ -38,6 +38,7 @@ Offline input: n/a (path is the input).
 | `max_coverage_gap` | share of examined entries that may be left unread before this scan reports itself incomplete (default: the scan-wide options.max\_coverage\_gap, 0.02); 0 fails on any gap. A gap the scanner cannot bound always fails closed, whatever this allows |
 | `strict_coverage` | report coverage gaps (unread analyzable oversize files, non-regular entries named like configuration files, symbolic links whose alias path is not covered) as errors instead of warnings; either way the scan is incomplete (default false) |
 | `include_tests` | let test and fixture code establish agents and credential findings at full weight (default false) |
+| `profile` | default \| ci; ci declares as omissions, with a warning that leaves the scan complete, the coverage gaps a source gate accepts in advance: oversize files, unread symbolic links, non-regular entries, unparsed content and analysis limits under test, fixture, documentation, example and generated paths (test paths only while include\_tests is false); every other gap still marks the scan incomplete, and the report counts the omissions (default: default) |
 | `triage` | fast subset scan: manifests, MCP and coding-agent configuration, flow exports and IaC only; source analysis, credential detection and content sweeps are skipped and the scan is always reported incomplete so a triage result is never mistaken for a full scan (default false) |
 | `agent_granularity` | project (default) \| source; source additionally inventories unique named straight-line Python agent constructions by file and scoped binding; other source remains project evidence |
 | `label` | prefix for resource ids (e.g. 'github:org/repo'); defaults to the path |
@@ -74,6 +75,7 @@ Offline input: directory of cloned repositories.
 | `include_tests` | see code.filesystem (default false) |
 | `triage` | see code.filesystem (default false) |
 | `agent_granularity` | project (default) \| source; see code.filesystem |
+| `profile` | default \| ci; see code.filesystem |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |
@@ -113,6 +115,7 @@ Offline input: directory of cloned projects.
 | `include_tests` | see code.filesystem (default false) |
 | `triage` | see code.filesystem (default false) |
 | `agent_granularity` | project (default) \| source; see code.filesystem |
+| `profile` | default \| ci; see code.filesystem |
 | `use_git` | opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ (default false) |
 | `exclude` | forwarded to the filesystem scanner (see code.filesystem) |
 | `max_file_size` | forwarded to the filesystem scanner (see code.filesystem) |

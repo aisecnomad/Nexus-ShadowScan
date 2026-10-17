@@ -11,9 +11,14 @@ live secret, when :func:`placeholder_reason` finds one of:
 
 * a template marker anywhere in the value (``<...>``, ``${...}``, ``{{...}}``);
 * a placeholder word such as REPLACE, REPLACE_ME, YOUR, EXAMPLE, SAMPLE,
-  DUMMY, FAKE, TEST, PLACEHOLDER, CHANGEME, INSERT, PASTE, HERE or TODO,
-  case-insensitive, delimited by ``_ - .`` or by a case boundary; a fill run
-  such as ``xxxx`` or an ellipsis (``sk-ant-api03-...``) counts as a word;
+  DUMMY, FAKE, TEST, PLACEHOLDER, CHANGEME, INSERT, PASTE, HERE or TODO, or
+  its Portuguese, Spanish, French, German, Italian, Dutch, Indonesian or
+  Turkish equivalent of four letters or more (CHAVE, CLAVE, CLEF, SCHLUESSEL,
+  CHIAVE, SLEUTEL, KUNCI, ANAHTAR, EXEMPLO, BEISPIEL, ...), case-insensitive,
+  delimited by ``_ - .`` or by a case boundary; a fill run such as ``xxxx``
+  or an ellipsis (``sk-ant-api03-...``) counts as a word, and a value that is
+  only a possessive (``your``, ``sua``, ``votre``, ``dein``, ``jouw``,
+  ``anda``, ...) followed by words is a placeholder whatever the words are;
 * a low-entropy body: after the provider prefix the value is one or two
   repeated characters, or at least half of its characters continue a run of
   the same or adjacent characters (``0000``, ``1234567890``, ``abcdef``).
@@ -367,13 +372,24 @@ def classify_permissions(index: SignatureIndex, finding: Finding, scopes: Iterab
     apply_matches(finding, matches, weight_scale=0.5)
 
 
+# A value that is only a possessive and words (``your_api_key``, ``sua_chave_openai``,
+# ``votre-cle-api``) is a placeholder in any of the languages documentation is
+# written in; a token carries digits, which the word tail excludes.
+_POSSESSIVES = (
+    "your|sua|seu|suas|seus|su|tu|tus|votre|vos|ton|ta|dein|deine|ihr|ihre|jouw|uw|je"
+    "|tua|tuo|tuoi|vostra|vostro|anda|senin|sizin"
+)
 _PLACEHOLDER = re.compile(
-    r"^(?:x{3,}|\*{3,}|<[^>]+>|\$\{[^}]+\}|your[_-]?[a-z_]*"
+    rf"^(?:x{{3,}}|\*{{3,}}|<[^>]+>|\$\{{[^}}]+\}}|(?:{_POSSESSIVES})[_-]?[a-z_-]*"
     r"|changeme|redacted|placeholder|todo|null|none)$",
     re.IGNORECASE,
 )
 _TEMPLATE_MARKER = re.compile(r"<[^<>\s]+>|\$\{[^{}]*\}|\{\{[^{}]*\}\}")
-# Lowercase words that documentation uses where a real key would go.
+# Lowercase words that documentation uses where a real key would go, in the
+# languages documentation is commonly translated into. Every word has at least
+# four letters: a shorter one (``su``, ``clé``, ``qui``) is too easily an alpha
+# run inside a real token, and the digits-free possessive forms are matched as
+# whole values by ``_PLACEHOLDER`` instead.
 _PLACEHOLDER_WORDS: tuple[str, ...] = (
     "replaceme",
     "replace",
@@ -392,6 +408,46 @@ _PLACEHOLDER_WORDS: tuple[str, ...] = (
     "redacted",
     "mock",
     "demo",
+    # Portuguese
+    "chave",
+    "senha",
+    "exemplo",
+    "substitua",
+    "insira",
+    "aqui",
+    # Spanish
+    "clave",
+    "ejemplo",
+    "reemplazar",
+    "reemplace",
+    "inserte",
+    # French
+    "votre",
+    "clef",
+    "exemple",
+    "remplacer",
+    "remplacez",
+    # German
+    "dein",
+    "deine",
+    "ihre",
+    "schluessel",
+    "beispiel",
+    "ersetzen",
+    "hier",
+    # Italian
+    "chiave",
+    "esempio",
+    "sostituire",
+    # Dutch
+    "jouw",
+    "sleutel",
+    "voorbeeld",
+    # Indonesian and Turkish
+    "kunci",
+    "contoh",
+    "anahtar",
+    "ornek",
 )
 # An ellipsis stands for the rest of a key in documentation ('sk-ant-api03-...');
 # no key alphabet has a run of dots.

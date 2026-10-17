@@ -18,7 +18,7 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, MutableMapping
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from multiprocessing.process import BaseProcess
@@ -48,6 +48,61 @@ _WORKER_GRACE_SECONDS = 2.0
 _MAX_DESCRIPTOR_LIMIT = 1 << 20
 # Serializes the brief PYTHONSAFEPATH window around a spawn (see _safe_path_spawn).
 _SPAWN_ENVIRONMENT = threading.Lock()
+# A process-mode worker does not inherit the credentials the operator exported
+# for the built-in connectors: a variable whose name ends in one of these words
+# (after ``_``, or the whole name), or is one of the cloud SDK variables that
+# carry a credential or the file holding one without such a word in their
+# names. Configuration selectors (``AWS_PROFILE``, ``KUBECONFIG``,
+# ``CLOUDSDK_CONFIG``) stay, as does everything else a program needs: PATH,
+# HOME, locale, temporary directory, proxy and CA settings.
+CREDENTIAL_NAME_SUFFIXES: tuple[str, ...] = (
+    "TOKEN",
+    "SECRET",
+    "KEY",
+    "PASSWORD",
+    "PASSWD",
+    "PASSPHRASE",
+    "CREDENTIALS",
+    "CREDENTIAL",
+)
+CREDENTIAL_NAMES: frozenset[str] = frozenset(
+    {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_WEB_IDENTITY_TOKEN_FILE",
+        "AZURE_CLIENT_CERTIFICATE_PATH",
+        "AZURE_FEDERATED_TOKEN_FILE",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "OCI_CLI_KEY_FILE",
+        "OCI_CLI_KEY_CONTENT",
+        "OCI_CLI_SECURITY_TOKEN_FILE",
+        "DATABASE_URL",
+        "DATABASE_DSN",
+    }
+)
+
+
+def is_credential_name(name: str) -> bool:
+    """Whether an environment variable named ``name`` is withheld from a plugin worker."""
+    upper = name.upper()
+    if upper in CREDENTIAL_NAMES:
+        return True
+    return any(upper == suffix or upper.endswith("_" + suffix) for suffix in CREDENTIAL_NAME_SUFFIXES)
+
+
+def scrub_credential_environment(environ: MutableMapping[str, str], keep: Iterable[str] = ()) -> list[str]:
+    """Remove the credential-shaped variables from ``environ``, except ``keep``; return the names removed.
+
+    Called in the worker before the plugin is imported, on the worker's own
+    copy of the environment: the scanner's environment is not changed, and
+    thread-mode plugins, which share the scanner's process, are unaffected.
+    ``keep`` is ``options.plugin_env``: the variables an approved plugin reads
+    itself, by exact name.
+    """
+    kept = set(keep)
+    removed = sorted(name for name in environ if name not in kept and is_credential_name(name))
+    for name in removed:
+        del environ[name]
+    return removed
 
 
 @contextmanager
@@ -194,10 +249,13 @@ def _worker(
 
         index = SignatureIndex(signatures)
         engine = Engine(config, index)
-        # Remove the operator's raw identity key from the process environment
-        # before importing or running the plugin; connectors that declare
-        # ``uses_run_identity_key`` receive the decoded key via ConnectorContext.
+        # Remove the operator's raw identity key, and every other credential
+        # the operator exported for the built-in connectors, from the process
+        # environment before importing or running the plugin; connectors that
+        # declare ``uses_run_identity_key`` receive the decoded key via
+        # ConnectorContext, and ``options.plugin_env`` names what a plugin keeps.
         os.environ.pop(IDENTITY_KEY_ENV, None)
+        scrub_credential_environment(os.environ, config.plugin_env)
         exports = _ExportLedger()
         runner = _ConnectorRunner(
             engine,
@@ -334,6 +392,14 @@ def _decode_result(
     for key in ("errors", "warnings"):
         if not isinstance(raw[key], list) or any(not isinstance(item, str) for item in raw[key]):
             raise ValueError("invalid plugin diagnostics")
+    if type(raw["declared_omissions"]) is not int or raw["declared_omissions"] < 0:
+        raise ValueError("invalid plugin statistics count")
+    reasons = raw["incomplete_reasons"]
+    if not isinstance(reasons, dict) or any(
+        not isinstance(reason, str) or type(count) is not int or count < 0
+        for reason, count in reasons.items()
+    ):
+        raise ValueError("invalid plugin incomplete reasons")
     stats = ScanStats(**sanitize(raw))
     stats.connector = spec.id
     stats.incomplete = stats.incomplete or stats.skipped or bool(stats.errors)

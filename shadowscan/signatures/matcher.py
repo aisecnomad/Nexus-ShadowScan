@@ -302,8 +302,46 @@ def _reference_value(value: str, *, code: bool, follower: str = "") -> bool:
     return "." in candidate and (follower in _CODE_FOLLOWERS or candidate.startswith(_REFERENCE_ROOTS))
 
 
+# Below this share of digits a separated single-case value reads as an identifier
+# with a version or size in it, not as a hex or base-36 token such as ``dop_v1_<64 hex>``.
+_IDENTIFIER_MAX_DIGIT_SHARE = 0.25
+# A value without digits is kept only when its letters mix cases the way a random
+# token does; camelCase keeps upper case rarer, CONSTANT_CASE has no lower case.
+_RANDOM_UPPER_SHARE = (0.3, 0.7)
+
+
+def _single_case_identifier(candidate: str) -> bool:
+    """Whether an assigned value is the name of another variable rather than a literal token.
+
+    A snake_case, CONSTANT_CASE or dotted attribute path:
+    ``include_tracing_api_key``, ``ANTHROPIC_API_KEY``,
+    ``settings.openai_api_key_v2``. The generic credential patterns accept an
+    unquoted value because ``.env`` and shell assignments carry none, so
+    ``api_key=resolved_api_key`` matches the same way ``api_key=9f86d0...``
+    does. A name is told from a token by its shape: separated by ``_`` or
+    ``.`` into identifier segments, its letters all one case, and few digits.
+    A snake_case password with a year in it (``my_secret_password_2024``) is
+    given up for that; the specific provider patterns do not pass through
+    here.
+    """
+    if not _IDENTIFIER_CHAIN.fullmatch(candidate) or ("_" not in candidate and "." not in candidate):
+        return False
+    letters = [char for char in candidate if char.isalpha()]
+    single_case = all(char.islower() for char in letters) or all(char.isupper() for char in letters)
+    if not letters or not single_case:
+        return False
+    digits = sum(char.isdigit() for char in candidate)
+    return digits / len(candidate) < _IDENTIFIER_MAX_DIGIT_SHARE
+
+
 def _high_entropy_credential(value: str) -> bool:
-    """Require a generic assigned credential to be long and sufficiently diverse."""
+    """Require a generic assigned credential to be long, diverse and shaped like a token, not a name.
+
+    Shannon entropy alone does not separate the two: ordinary identifiers
+    clear 3 bits per character. A value with no digit must mix cases evenly;
+    a value with digits must not be a single-case identifier
+    (``_single_case_identifier``).
+    """
     candidate = _assigned_value(value)
     if len(candidate) < 16 or _WORD_SLUG.fullmatch(candidate):
         return False
@@ -312,6 +350,16 @@ def _high_entropy_credential(value: str) -> bool:
         return False
     adjacent = sum(abs(ord(left) - ord(right)) <= 1 for left, right in zip(body, body[1:], strict=False))
     if adjacent / (len(body) - 1) >= 0.5:
+        return False
+    if not any(char.isdigit() for char in body):
+        letters = [char for char in body if char.isalpha()]
+        if not letters:
+            return False
+        upper_share = sum(char.isupper() for char in letters) / len(letters)
+        low, high = _RANDOM_UPPER_SHARE
+        if upper_share < low or upper_share > high:
+            return False
+    elif _single_case_identifier(candidate):
         return False
     counts = Counter(candidate)
     entropy = -sum((count / len(candidate)) * math.log2(count / len(candidate)) for count in counts.values())
