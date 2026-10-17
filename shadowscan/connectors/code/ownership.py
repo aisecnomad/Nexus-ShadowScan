@@ -1,9 +1,34 @@
-"""Bounded CODEOWNERS glob matching without backtracking regular expressions."""
+"""CODEOWNERS and git-history ownership for the code connectors.
+
+Bounded CODEOWNERS glob matching without backtracking regular expressions, and
+the ``OwnershipResolver`` collaborator that reads the rules on the collection's
+own directory descriptor, answers lookups within a per-root step budget and
+reads the last author from a confined local git history when opted in
+(ADR-005, ownership group).
+"""
 
 from __future__ import annotations
 
+import os
+import subprocess
+import time
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+from typing import Any, Protocol
+
+from shadowscan.connectors.base import ConnectorContext
+from shadowscan.utils.files import link_in_path, open_confined_directory, open_confined_file
+from shadowscan.utils.git import (
+    MetadataOutputLimitError,
+    MetadataTimeoutError,
+    metadata_git_argv_prefix,
+    metadata_git_env,
+    require_local_git_metadata,
+    run_bounded_metadata,
+)
+from shadowscan.utils.text import parse_timestamp, read_text
 
 MAX_RULES = 10_000
 MAX_PATTERN_LENGTH = 4_096
@@ -97,3 +122,304 @@ def codeowners_match(pattern: str, path: str, budget: OwnershipBudget | None = N
                 current[i] = previous[i - 1] and _component_match(selector, part, budget)
         previous = current
     return any(previous[1:]) if descendants else previous[-1]
+
+
+# ------------------------------------------------------------------ resolver
+# Steps for every ownership lookup under one scan root, so a tree of many
+# unique paths cannot spend the whole scan matching CODEOWNERS rules.
+MAX_ROOT_OWNERSHIP_STEPS = 20_000_000
+# Git identities must not turn a small compressed commit into a large report.
+_MAX_GIT_AUTHOR_CHARS = 1024
+_MAX_GIT_EMAIL_CHARS = 1024
+_MAX_GIT_TIMESTAMP_CHARS = 64
+# The ownership files GitHub and GitLab read, in the order the first selected one wins.
+_CODEOWNERS_CANDIDATES = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS")
+
+
+class AnchoredScan(Protocol):
+    """The open scan the resolver verifies its reads against (``filesystem._ScanState``)."""
+
+    root: Path
+    root_fd: int
+    base: Path | None
+
+
+class OwnershipResolver:
+    """Resolve who owns a file or project under a scan root: CODEOWNERS and, opt-in, git history.
+
+    The code connectors share one resolver per connector instance. It keeps
+    the rules and the answers per root, and the per-root step budget that
+    bounds the aggregate CODEOWNERS work, so a tree of many unique paths
+    cannot spend the scan on rule matching: exhaustion is reported as
+    incomplete ownership, never as a possibly wrong owner. Reads stay on the
+    descriptor the collection opened (``scan``), so a root replaced after the
+    walk cannot redirect them; ``forget_root`` drops what an earlier scan of
+    the same root cached, as its files may have changed.
+    """
+
+    def __init__(
+        self,
+        ctx: ConnectorContext,
+        *,
+        owner: str | None,
+        use_git: bool,
+        max_file_size: int,
+        included: Callable[[str], bool],
+    ) -> None:
+        self.ctx = ctx
+        self.owner = owner  # a configured owner overrides every lookup
+        self.use_git = use_git
+        self.max_file_size = max_file_size
+        self._included = included  # whether a path is inside the walk's include list
+        self.codeowners_cache: dict[Path, list[tuple[str, list[str]]]] = {}
+        self.exhausted: set[Path] = set()
+        self.steps_remaining: dict[Path, int] = {}
+        self.owner_cache: dict[tuple[Path, str], str | None] = {}
+        self.scan: AnchoredScan | None = None
+
+    def forget_root(self, root: Path) -> None:
+        """Drop everything cached for ``root``: a later scan opens it afresh and its files may differ."""
+        self.codeowners_cache.pop(root, None)
+        self.exhausted.discard(root)
+        self.steps_remaining.pop(root, None)
+        self.owner_cache = {key: value for key, value in self.owner_cache.items() if key[0] != root}
+
+    def git_info(self, root: Path, rel_root: str) -> dict[str, Any]:
+        """The last author and commit of ``rel_root`` from the local history, or ``{}`` (opt-in).
+
+        Bounded in time, output and field size, and read only from a confined
+        local ``.git`` directory; every failure is a warning, never an author.
+        """
+        if not self.use_git:
+            return {}
+        marker = root / ".git"
+        if not os.path.lexists(marker):
+            return {}
+        deadline = time.monotonic() + 20
+        if self.ctx.deadline is not None:
+            deadline = min(deadline, self.ctx.deadline)
+        try:
+            require_local_git_metadata(root, timeout=deadline - time.monotonic())
+        except ValueError:
+            self.ctx.warn(
+                "code.filesystem: git metadata must be a confined local .git directory; enrichment skipped"
+            )
+            return {}
+        target = "." if rel_root == "." else rel_root
+        try:
+            out = run_bounded_metadata(
+                [
+                    *metadata_git_argv_prefix(),
+                    "-C",
+                    str(root),
+                    "log",
+                    "--no-show-signature",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "-1",
+                    "--format=%an%x00%ae%x00%cI",
+                    "--",
+                    target,
+                ],
+                env=metadata_git_env(),
+                ctx=self.ctx,
+                timeout=deadline - time.monotonic(),
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                # NUL separators: an author name may itself contain "|".
+                fields = out.stdout.strip("\r\n").split("\x00")
+                if len(fields) != 3:
+                    self.ctx.warn("code.filesystem: git metadata has invalid fields; enrichment skipped")
+                    return {}
+                an, ae, ci = fields
+                if any(
+                    len(value) > limit
+                    for value, limit in zip(
+                        fields,
+                        (_MAX_GIT_AUTHOR_CHARS, _MAX_GIT_EMAIL_CHARS, _MAX_GIT_TIMESTAMP_CHARS),
+                        strict=True,
+                    )
+                ):
+                    self.ctx.warn("code.filesystem: git metadata field limit exceeded; enrichment skipped")
+                    return {}
+                if parse_timestamp(ci) is None:
+                    self.ctx.warn(
+                        "code.filesystem: git metadata has an unparseable commit timestamp; "
+                        "enrichment skipped"
+                    )
+                    return {}
+                return {"last_author": an, "last_author_email": ae, "last_commit": ci}
+            if out.returncode == 0:
+                return {}
+        except MetadataOutputLimitError:
+            self.ctx.warn("code.filesystem: git metadata output limit exceeded; enrichment skipped")
+            return {}
+        except MetadataTimeoutError:
+            # A TimeoutError is an OSError: name the cause instead of blaming
+            # the Git version below.
+            self.ctx.warn(
+                "code.filesystem: git metadata collection reached its time limit or the connector "
+                "deadline; enrichment skipped"
+            )
+            return {}
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        self.ctx.warn(
+            "code.filesystem: bounded offline git enrichment failed; Git 2.45+ and locally available history "
+            "within the metadata output limit are required"
+        )
+        return {}
+
+    @contextmanager
+    def _codeowners_directory(self, root: Path) -> Iterator[int | None]:
+        """Keep ownership reads on the same directory descriptor as source collection.
+
+        Reopening the pathname only verifies that it still names that directory;
+        candidate file reads always use the original descriptor. A replacement
+        after this verification therefore cannot redirect ownership reads.
+        """
+        scan = self.scan
+        if scan is not None:
+            if scan.root != root:
+                raise ValueError("ownership root differs from the active scan")
+            if scan.root_fd < 0 or scan.base != root:
+                # A failed root open has already been reported. Single-file
+                # scans have never consulted their parent directory's owners.
+                yield None
+                return
+            current = open_confined_directory(root)
+            try:
+                original, present = os.fstat(scan.root_fd), os.fstat(current)
+                if (original.st_dev, original.st_ino) != (present.st_dev, present.st_ino):
+                    raise ValueError("scan root changed before ownership lookup")
+            finally:
+                os.close(current)
+            yield scan.root_fd
+            return
+        # Direct internal ownership callers have no collection descriptor.
+        directory = open_confined_directory(root)
+        try:
+            yield directory
+        finally:
+            os.close(directory)
+
+    def codeowners(self, root: Path) -> list[tuple[str, list[str]]]:
+        """The root's CODEOWNERS rules, read once per root on the collection's descriptor."""
+        root = root.absolute()
+        if root in self.codeowners_cache:
+            return self.codeowners_cache[root]
+        rules: list[tuple[str, list[str]]] = []
+        try:
+            with self._codeowners_directory(root) as directory:
+                if directory is not None:
+                    rules = self.read_codeowners(root, directory)
+        except (OSError, RuntimeError, ValueError):
+            self.ctx.error("code.filesystem: could not verify scan root for CODEOWNERS; ownership incomplete")
+        self.codeowners_cache[root] = rules
+        return rules
+
+    def read_codeowners(self, root: Path, directory: int) -> list[tuple[str, list[str]]]:
+        """Read the first selected ownership file below the already anchored root."""
+        rules: list[tuple[str, list[str]]] = []
+        for cand in _CODEOWNERS_CANDIDATES:
+            if not self._included(cand):
+                continue
+            try:
+                # Distinguish a missing candidate from an unreadable one without
+                # following a link, including links in its parent components.
+                with open_confined_file(PurePosixPath(cand), dir_fd=directory):
+                    pass
+            except FileNotFoundError:
+                continue
+            except NotADirectoryError:
+                # A file named like its parent (``docs``, ``.github``) leaves the
+                # candidate absent. A link there fails the same way and is not
+                # followed, so what it might name stays unread.
+                if not link_in_path(cand, dir_fd=directory):
+                    continue
+                self.ctx.error(f"code.filesystem: could not read {cand}")
+                break
+            except (OSError, RuntimeError, ValueError):
+                self.ctx.error(f"code.filesystem: could not read {cand}")
+                break
+            try:
+                errors: list[str] = []
+                read_notes: list[str] = []
+                content = read_text(
+                    PurePosixPath(cand),
+                    self.max_file_size,
+                    errors,
+                    dir_fd=directory,
+                    notes=read_notes,
+                )
+                # Ownership comes from names in this file: bytes that were replaced could change an owner.
+                errors.extend(f"{note}; ownership may be wrong" for note in read_notes)
+                for issue in errors:
+                    self.ctx.error(f"code.filesystem: {cand}: {issue}")
+                for line in (content or "").splitlines():
+                    line = line.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if parts:
+                        if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
+                            self.ctx.error(
+                                "code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete"
+                            )
+                            rules = []
+                            self.exhausted.add(root)
+                            break
+                        rules.append((parts[0], parts[1:]))
+            except (OSError, RuntimeError, ValueError):
+                self.ctx.error(f"code.filesystem: could not read {cand}")
+            break
+        return rules
+
+    def owner_for(self, root: Path, rel_root: str) -> str | None:
+        """The owner CODEOWNERS names for ``rel_root`` (last matching rule wins), or None."""
+        if self.owner:
+            return self.owner
+        root = root.absolute()
+        rules = self.codeowners(root)
+        if root in self.exhausted:
+            return None
+        key = (root, rel_root)
+        if key in self.owner_cache:
+            return self.owner_cache[key]
+        # Preserve the per-lookup cap and limit aggregate work across many
+        # unique paths. Cache hits consume no steps. Exhaustion is reported as
+        # incomplete ownership rather than assigning a potentially wrong owner.
+        root_remaining = self.steps_remaining.get(root, MAX_ROOT_OWNERSHIP_STEPS)
+        budget = OwnershipBudget(min(MAX_OWNERSHIP_STEPS, root_remaining))
+        initial = budget.remaining
+        try:
+            # Last matching rule wins, including ownerless exclusions. Stop at
+            # that rule instead of repeatedly re-evaluating overridden rules.
+            for pattern, owners in reversed(rules):
+                if codeowners_match(pattern, rel_root, budget):
+                    self.owner_cache[key] = ", ".join(owners) if owners else None
+                    return self.owner_cache[key]
+        except OwnershipLimitError:
+            self.exhausted.add(root)
+            self.ctx.error("code.filesystem: CODEOWNERS processing budget exceeded; ownership incomplete")
+        finally:
+            remaining = max(0, root_remaining - (initial - budget.remaining))
+            self.steps_remaining[root] = remaining
+            if remaining == 0 and root not in self.exhausted:
+                self.exhausted.add(root)
+                self.ctx.error(
+                    "code.filesystem: CODEOWNERS aggregate processing budget exceeded; ownership incomplete"
+                )
+        self.owner_cache[key] = None
+        return None
+
+    def owners_for_files(self, root: Path, files: Iterable[str]) -> tuple[str | None, dict[str, str]]:
+        """One owner for a set of files when CODEOWNERS agrees on it, and the owner of each file."""
+        paths = sorted(set(files))
+        by_file = {rel: owner for rel in paths if (owner := self.owner_for(root, rel))}
+        owners = set(by_file.values())
+        if len(owners) == 1 and len(by_file) == len(paths):
+            return owners.pop(), by_file
+        # A project finding summarizes many files. Do not name one file's owner
+        # as the owner of unrelated files if CODEOWNERS has differing rules.
+        return None, by_file
