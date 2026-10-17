@@ -45,9 +45,12 @@ import regex
 import shadowscan
 from shadowscan.utils.redaction import sanitize_text
 
-pytestmark = [pytest.mark.slow, pytest.mark.skipif(
-    "fork" not in multiprocessing.get_all_start_methods(), reason="the sweep forks one child per pattern"
-)]
+pytestmark = [
+    pytest.mark.slow,
+    pytest.mark.skipif(
+        "fork" not in multiprocessing.get_all_start_methods(), reason="the sweep forks one child per pattern"
+    ),
+]
 
 # Input sizes. A quadratic pattern quadruples between them; the constants are large enough
 # that the smaller size already exceeds timer noise and the larger one stays well under a
