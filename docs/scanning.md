@@ -48,7 +48,12 @@ that are never silent:
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
   inspect are a coverage gap when skipped: one entry of the
   [budget](#coverage-budget-and-strict-accounting), or an immediate exit 3 for
-  agent configuration (as the links above) and, while `scan_secrets` is on,
+  agent configuration (as the links above), for a JSON, TOML or YAML file
+  the MCP parser decides by its content (`deploy/tools.json`,
+  `.vscode/settings.json`) whose bytes may name a server table key
+  (`mcpServers`, `mcp_servers`, an `mcp` key however quoted, spaced or
+  escaped, read behind any padding up to 128 MiB, and taken to name one past
+  that), for an MCP registry `server.json`, and, while `scan_secrets` is on,
   for a dotenv or tool credential file (`.env`, `.npmrc`, `.netrc`), which
   exists to hold a credential. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
