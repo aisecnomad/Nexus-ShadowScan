@@ -379,6 +379,37 @@ def test_a_literal_past_the_end_of_the_value_is_not_a_fallback(index: SignatureI
     assert _generic(index, text, code=True) == []
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        # A parenthesised literal, a Python triple-quoted literal and a
+        # TypeScript cast before the operator are direct fallbacks too.
+        f'const openaiApiKey = process.env.OPENAI_API_KEY || ("{RANDOM}");',
+        f"const openaiApiKey = process.env.OPENAI_API_KEY ?? ('{RANDOM}');",
+        f'const openaiApiKey = process.env.OPENAI_API_KEY || (process.env.B || "{RANDOM}");',
+        f'openai_api_key = settings.openai_api_key or ("{RANDOM}")',
+        f'openai_api_key = settings.openai_api_key or """{RANDOM}"""',
+        f"openai_api_key = settings.openai_api_key or '''{RANDOM}'''",
+        f'const openaiApiKey = process.env.OPENAI_API_KEY as string || "{RANDOM}";',
+    ],
+)
+def test_a_parenthesised_triple_quoted_or_cast_fallback_is_reported(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=True) != []
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Parentheses do not make a call's argument a fallback.
+        f'const openaiApiKey = process.env.OPENAI_API_KEY || (getSecret("{RANDOM}"));',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY || (() => "{RANDOM}");',
+        f'const openaiApiKey = process.env.OPENAI_API_KEY as Record<string, string> || "{RANDOM}";',
+    ],
+)
+def test_a_literal_inside_a_parenthesised_call_is_not_a_fallback(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=True) == []
+
+
 # Blanks other than a space or a tab that editors and pastes leave between
 # tokens: no-break, thin and ideographic spaces, the zero-width space, the
 # byte order mark, a form feed and a vertical tab.
