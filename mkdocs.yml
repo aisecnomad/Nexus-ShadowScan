@@ -93,6 +93,7 @@ nav:
       - Installation: getting-started/install.md
       - Quick start: getting-started/quickstart.md
       - Configuration: getting-started/configuration.md
+      - Command reference: reference/cli.md
   - Connectors:
       - Overview: connectors.md
       - Code: connectors/code.md

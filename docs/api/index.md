@@ -5,6 +5,26 @@ Auto-generated reference for the ShadowScan Python API.
 These pages are built from source docstrings using
 [mkdocstrings](https://mkdocstrings.github.io/).
 
+## Core data types
+
+```python
+from shadowscan.models import Evidence, Finding, Kind, Risk, RiskLevel, ScanResult, Surface
+
+# Finding fields
+finding.id                    # "ss-3f9c1e2a7b4d8c10"
+finding.surface               # Surface.CODE | .IDENTITY | .GATEWAY | ...
+finding.kind                  # Kind.AGENT | .MCP_SERVER | .OAUTH_GRANT | ...
+finding.title                 # human-readable summary
+finding.risk.score            # 0-100
+finding.risk.level            # RiskLevel.CRITICAL | .HIGH | .MEDIUM | .LOW | .INFO
+finding.shadow                # True if not in inventory
+finding.confidence            # 0.0-1.0 heuristic evidence score
+finding.evidence              # list[Evidence] with signal, description, weight
+finding.metadata["autonomy"]  # {"floor": 2, "floor_label": "L2 Supervised", "ceiling": 5, ...}
+finding.to_dict()["metadata"]["threats"]   # OWASP, MITRE ATLAS, MAESTRO references (derived on export)
+finding.to_dict()["metadata"]["controls"]  # NIST AI RMF, ISO 42001, EU AI Act, AIUC-1 references
+```
+
 ## Core Modules
 
 | Module | Description |
