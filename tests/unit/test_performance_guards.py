@@ -9,6 +9,7 @@ import random
 import re
 import string
 import threading
+import time
 from bisect import bisect_left, bisect_right
 from pathlib import Path
 
@@ -688,6 +689,48 @@ def test_the_operands_after_a_reference_are_read_once_and_within_the_follower(in
         end = token_end
     assert max(runs) <= _FOLLOWER_CHARS
     assert len(counting.reads) <= len(runs) * _FOLLOWER_CHARS
+
+
+def _slow_judge(monkeypatch, seconds: float) -> None:
+    """Make the credential judge spend ``seconds`` of CPU on every generic match before judging it."""
+    from shadowscan.signatures import matcher
+
+    original = matcher._generic_literal
+
+    def slow(value: str, **kwargs):
+        until = time.thread_time() + seconds
+        while time.thread_time() < until:
+            pass
+        return original(value, **kwargs)
+
+    monkeypatch.setattr(matcher, "_generic_literal", slow)
+
+
+_CREDENTIAL_READS = "".join(f"const svc{n}ApiKey = process.env.SVC{n}_API_KEY;\n" for n in range(60))
+
+
+@pytest.mark.production_budgets
+def test_judging_secret_matches_does_not_spend_the_patterns_execution_allowance(index, monkeypatch):
+    # The judge reads up to _FOLLOWER_CHARS after each generic match. Run
+    # inside the regex iteration, its CPU time was charged to the pattern's
+    # allowance (0.1 s for a small input), so a file of a few thousand
+    # credential reads timed out (exit 3) where the pattern alone finishes.
+    # A fixed spin per match stands in for that work, independent of the
+    # machine: 60 matches spend three times the allowance.
+    from shadowscan.signatures import matcher
+
+    _slow_judge(monkeypatch, matcher.REGEX_TIMEOUT_SECONDS / 20)
+    with index.scan_budget(seconds=10):
+        assert index.match_secrets(_CREDENTIAL_READS, code=True) == []
+
+
+@pytest.mark.production_budgets
+def test_judging_secret_matches_still_ends_with_the_inputs_budget(index, monkeypatch):
+    # The judge's time is the input's: a budget it spends ends the input
+    # (MatchTimeoutError, an incomplete scan), however few regex steps ran.
+    _slow_judge(monkeypatch, 0.01)
+    with pytest.raises(MatchTimeoutError), index.scan_budget(seconds=0.2):
+        index.match_secrets(_CREDENTIAL_READS, code=True)
 
 
 @pytest.mark.parametrize(

@@ -781,7 +781,14 @@ public repositories with the tool and read the committed benchmark metrics.
   word joiner and byte order mark (a no-break space before `||` had ended the
   value, which 90d22be and main reported). The
   operands are read once, left to right, within 512 characters of the
-  match. A fallback, concatenation or
+  match. That read is Python and costs more per match than one regex, and it
+  ran inside the regex iteration, whose timeout charges the time between two
+  matches to the pattern: a 260 KB file of 2,000 credential reads with
+  chained calls, or 1,600 lines of `?.trim()` chains with no credential,
+  timed out (exit 3) where 90d22be completed. `matcher._judged_finditer`
+  now reads a secret pattern's matches in batches of 64, judges them between
+  regex executions and charges the judge to the input's execution budget;
+  the executions together keep one pattern's allowance. A fallback, concatenation or
   ternary after it (`process.env.OPENAI_API_KEY || "<key>"`, `?? "<key>"`,
   `process.env.PREFIX + '<key>'`) is still reported when a string literal
   that is a direct operand of `||`, `??`, `?:`, `or`, a ternary branch or `+`
