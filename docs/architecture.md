@@ -308,8 +308,10 @@ The diagram is generated from the connector registry by `python -m tools.readme_
 `code.filesystem` is the largest connector; `code.github` and `code.gitlab`
 reuse it on the checkouts they fetch, in clone or API mode. Its helpers are bounded and conservative:
 each one proves a narrow construct or declines, and none imports or runs
-scanned code. [ADR-005](adrs/005-code-scanner-module-boundaries.md) proposes
-splitting the connector class itself.
+scanned code. [ADR-005](adrs/005-code-scanner-module-boundaries.md) records how
+the connector class itself was split: `filesystem.py` is now the façade, and the
+walk, file scan, findings, shared records and ownership modules below hold the
+rest.
 
 | module | responsibility |
 |---|---|

@@ -399,7 +399,7 @@ def _case_source(value: Any, files: dict[str, str], where: str) -> dict[str, Any
 
 
 # The phrase every code.filesystem note shares when it names files whose evidence
-# was read but reported nowhere (see FilesystemConnector._note_unanchored and
+# was read but reported nowhere (see ProjectFindings._note_unanchored and
 # _note_discounted_catalogs). Such a note never marks the scan incomplete.
 _INFORMATIONAL_NOTE = "evidence not reported because"
 
