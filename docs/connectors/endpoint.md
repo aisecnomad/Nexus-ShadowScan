@@ -215,7 +215,12 @@ ports:
 Kernel-level events usually carry numeric destination addresses, so Tetragon
 and Tracee connects contribute local model ports and process names; AI host
 matching needs a name-bearing source such as Falco's `fd.sip.name`, Hubble's
-`destination_names`, or a flat export. A record that matches none of these
+`destination_names`, or a flat export. The AI hosts are OpenAI and Anthropic
+hosts and the Google AI APIs the bundled signatures name
+(`generativelanguage`, `aiplatform`, `discoveryengine` and `dialogflow` on
+`googleapis.com`, regional prefixes included); other `googleapis.com` names,
+such as `fonts` or `storage`, which Google front-end addresses also resolve
+from, are not. A record that matches none of these
 shapes is not analyzed: the connector records one warning and marks the scan
 incomplete rather than letting an unread export look clean. A recognized
 event or flat record is scored on what can be read, and the scan is

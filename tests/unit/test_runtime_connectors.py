@@ -686,6 +686,68 @@ def test_ebpf_hubble_scores_every_destination_name(names) -> None:
     assert list(connector.analyze([unrelated])) == []
 
 
+def _google_front_end_flow(names: list[str]) -> dict[str, object]:
+    return {
+        "flow": {
+            "IP": {"source": "10.8.0.14", "destination": "142.250.1.1"},
+            "l4": {"TCP": {"destination_port": 443}},
+            "source": {"namespace": "web", "pod_name": "site-0"},
+            "destination_names": names,
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["www.google.com", "fonts.googleapis.com"],
+        ["storage.googleapis.com", "www.googleapis.com", "maps.googleapis.com"],
+        ["xaiplatform.googleapis.com"],
+    ],
+)
+def test_ebpf_google_front_end_flow_with_only_non_ai_googleapis_names_stays_untagged(names) -> None:
+    """Regression: the AI host pattern took any ``*.googleapis.com`` host, and a
+    Google front-end address resolves from many such names, so a flow to fonts or
+    storage was tagged ``llm-egress`` once every destination name was scored."""
+    connector = _ebpf_connector()
+    assert list(connector.analyze([_google_front_end_flow(names)])) == []
+    assert list(connector.analyze([{"process_name": "web", "destination": names[-1], "port": 443}])) == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "generativelanguage.googleapis.com",
+        "aiplatform.googleapis.com",
+        "us-central1-aiplatform.googleapis.com",
+        "discoveryengine.googleapis.com",
+        "global-dialogflow.googleapis.com",
+    ],
+)
+def test_ebpf_google_ai_api_names_are_egress(name) -> None:
+    connector = _ebpf_connector()
+    [finding] = connector.analyze([_google_front_end_flow(["www.google.com", name])])
+    assert "llm-egress" in finding.tags
+
+
+def test_ai_host_pattern_matches_every_google_ai_api_host_the_signatures_name() -> None:
+    """The googleapis hosts the pattern takes are the ones bundled signatures name as domains."""
+    index = EbpfConnector(ConnectorContext()).index
+    hosts = {
+        value
+        for signature in index.signatures.values()
+        for signal in signature.signals
+        if signal.type == "domain"
+        for value in signal.values
+        if value.endswith(".googleapis.com") and not value.startswith("re:")
+    }
+    assert hosts >= {"generativelanguage.googleapis.com", "aiplatform.googleapis.com"}
+    for host in hosts:
+        assert endpoint_runtime._HOST.search(host), host
+        assert index.match_domain(host), host
+
+
 def test_ebpf_unrecognized_records_warn_once_and_mark_incomplete() -> None:
     """An export full of unread events must not look like a clean scan."""
     connector = EbpfConnector(ConnectorContext())

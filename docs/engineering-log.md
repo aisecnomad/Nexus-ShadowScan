@@ -147,7 +147,17 @@ Counts and figures quoted in an entry are those of its date.
   pod; a Falco alert's own `hostname` (the sensor) and a bare Hubble
   flow's `destination` endpoint do not count as flat fields.
   Regression-tested with both shapes, and with a Falco alert from a node
-  named after a runtime that stays unreported.
+  named after a runtime that stays unreported. Scoring every Hubble name
+  also widened the AI host pattern's reach: it took any `*.googleapis.com`
+  host, and a Google front-end address resolves from many, so a flow
+  listing `www.google.com` and `fonts.googleapis.com` was tagged
+  `llm-egress`. The pattern now takes only the Google AI APIs the bundled
+  signatures name (`generativelanguage`, `aiplatform`, `discoveryengine`,
+  `dialogflow`, with regional prefixes); the same pattern serves the MCP
+  tool-poisoning host rule, which therefore no longer counts other
+  `googleapis.com` names as a model provider host (a URL in a description
+  still raises the tag). Regression-tested with non-AI
+  Google flows that stay untagged and AI API names that stay egress.
 - `endpoint.host` reports a host inventory row only when its name or path
   matches an AI product signature, its whole name is a known AI product or
   local model runtime, or its `type`/`category` names an AI category;
