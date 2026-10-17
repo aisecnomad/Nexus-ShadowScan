@@ -9,7 +9,8 @@ tools. `build_inventory()` takes a scan or fleet `ScanResult`, which the command
 
 | Key | Contents |
 |-----|----------|
-| `coverage`, `sources` | Per source: completion, staleness, whether it supplied an inventory, and a status for each connector it ran (`complete`, `cached`, `incomplete` or `skipped`) |
+| `coverage` | The connectors any source ran, and how many sources are complete, incomplete or of unknown coverage |
+| `sources` | Per source: completion, staleness, whether it supplied an inventory, and a status for each connector it ran (`complete`, `cached`, `incomplete` or `skipped`) |
 | `diagnostics` | Connector runs that did not complete cleanly (errors, warnings, skipped or incomplete); beyond 500, the rest are counted in `diagnostics_omitted` |
 | `counts` | AI systems by inventory status (`shadow`, `sanctioned`, `no-inventory`), surface, kind, provider, account, owner and risk level, with the unowned, ambiguous and excluded credential counts |
 | `autonomy` | AI systems by autonomy floor (L0 to L5, `not-classified`, `not-applicable`) against inventory status, and the priority count: shadow AI systems with a floor of L4 or above |
@@ -38,7 +39,8 @@ zero.
 Coverage cells are stored only for the connectors a source actually ran, so the document grows
 with its input, not with sources × connectors.
 
-`build_inventory()` raises `ValueError` on malformed input, including a sanitizer limit. The
+`build_inventory()` raises `ValueError` on malformed input, including a sanitizer limit, and
+`shadowscan dashboard` then exits 1 without writing the page. The
 document's `complete` is false when the result or any source is incomplete; `shadowscan dashboard`
 then exits 3, as it does when the baseline comparison is incomplete, and still writes its files.
 

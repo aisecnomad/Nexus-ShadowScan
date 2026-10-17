@@ -28,7 +28,8 @@ Registration counts only from sources that reconciled against an inventory
 (`inventory_present: true`). A finding is **shadow** when any such source found it unregistered,
 **registered** when such sources matched it to one agent, ambiguous (shadow, with
 `registry_match_reason: ambiguous-resource-approval`) when they matched it to different agents, and
-unassessed (`shadow: null`) when no such source reported it. The `shadow` and `registry_match` of a
+unassessed (`shadow: null`) when no such source assessed it; a `shadow: false` that names no match
+is not a registration. The `shadow` and `registry_match` of a
 source without an inventory are cleared; its evidence still merges.
 
 A merged finding that is shadow or unassessed loses its declared governance block

@@ -9,9 +9,11 @@ exits 3. A malformed report raises `ValueError` (exit 1) rather than reading as 
 ## Collection-scope provenance
 
 `build_collection_scope()` describes a scan's inputs as a `shadowscan.collection-scope/v1`
-fingerprint over the selected built-in connectors with their configuration and resolved paths, the
-minimum confidence, the signature index, the scanner source and version, an HMAC derived from
-`SHADOWSCAN_IDENTITY_KEY` when it is set, and any `options.mcp_registries`. Scope hashes identify
+fingerprint over the selected built-in connectors (an offline or local input by its configuration
+with resolved paths, a `gateway.logs` input by an HMAC of it under the identity key, a live
+connector by its attested scope record), the minimum confidence, the signature index fingerprint,
+the scanner source and version, an HMAC derived from `SHADOWSCAN_IDENTITY_KEY` when it is set, and
+the id, digest and approval of each `options.mcp_registries` snapshot. Scope hashes identify
 inputs, not their contents: a file changing is what comparisons measure. A third-party connector,
 a live connector that could not attest its scope, a configuration that holds credentials or
 sensitive keys, a `code.filesystem` scan with `diff_base`, or `gateway.logs` without
@@ -43,9 +45,11 @@ Risk score, level and factor changes appear in `changed_fields` but are not clas
 
 `load_report_with_digest()` returns the SHA-256 of a report file's raw bytes and, given
 `expected_sha256`, raises `ReportDigestMismatch` before parsing (`--baseline-sha256`, exit 1).
-`baseline_lifecycle_reasons()` makes the comparison incomplete when the baseline started more than
-`max_baseline_age_days` ago (`--max-baseline-age-days`, 1 to 36,500), has no valid timezone-aware
-`started_at`, claims a start in the future, or started after the current scan.
+Only with an age limit (`max_baseline_age_days`, `--max-baseline-age-days`, 1 to 36,500) does
+`baseline_lifecycle_reasons()` make the comparison incomplete: when the baseline started longer
+ago than the limit, has no valid timezone-aware `started_at`, claims a start more than five minutes
+in the future, or started after the current scan, or when the current scan has no valid
+`started_at`. Without a limit it returns no reasons.
 
 ::: shadowscan.comparison
     options:
