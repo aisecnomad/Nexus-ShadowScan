@@ -47,7 +47,13 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   instead of costing one entry of the budget; `tests/.mcp.json` and
   `tests/CLAUDE.md` included, since they are not discounted test code.
   Under discounted test code (`tests/fixtures/package.json`) it still costs
-  one entry.
+  one entry. This includes an alias inside the tree whose target the walk
+  scans under another name, project or test classification, since the
+  alias's own name may be what makes a client read it as configuration
+  (`.mcp.json` linked to `notes/servers.txt`): expect exit 3 for a monorepo
+  that links `apps/web/.env` or a `Dockerfile` to a shared copy. Review such
+  a link and list its path in `exclude` (`exclude: ["apps/web/.env"]`; an
+  entry without `/` or `*` names directories) to keep scanning without it.
 - **Gap weights follow `include_tests`.** With `include_tests: true` a gap
   under a test path weighs a whole entry in the coverage budget instead of a
   quarter, so fewer such gaps are tolerated. Without it, gaps under

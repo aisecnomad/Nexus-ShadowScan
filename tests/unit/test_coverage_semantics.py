@@ -255,6 +255,20 @@ def test_a_link_named_like_configuration_to_an_outside_file_fails_closed(
     assert any(rel in e and "named like configuration" in e for e in ctx.stats.errors)
 
 
+def test_an_alias_whose_name_makes_it_configuration_fails_closed_inside_the_tree(tmp_path, run_connector):
+    # A client reads .mcp.json through the link; the scanner reads the target
+    # as notes only, so the servers it declares are never inventoried.
+    _tree(tmp_path, {"notes/servers.txt": MCP_CONFIG, "apps/web/app.py": "x = 1\n"})
+    (tmp_path / "apps" / "web" / ".mcp.json").symlink_to(tmp_path / "notes" / "servers.txt")
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete and ctx.stats.coverage["blinding_gaps"] == 1
+    # Reviewed, the alias can be excluded by its path, as the migration note says.
+    _, ctx = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, exclude=["apps/web/.mcp.json"]
+    )
+    assert not ctx.stats.incomplete and ctx.stats.coverage is None
+
+
 @pytest.mark.parametrize("rel", [".mcp.json", ".claude/settings.json", "tests/e2e/.mcp.json"])
 def test_a_fifo_named_like_configuration_fails_closed(tmp_path, run_connector, rel):
     _tree(tmp_path)
