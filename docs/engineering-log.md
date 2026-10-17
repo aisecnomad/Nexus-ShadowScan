@@ -386,6 +386,16 @@ file_matches)`, now serves every gap site.
   scan complete, since nothing is hidden once its tables are parsed, and a
   table past the bounds is recorded as a limit (`analysis-limit`). A
   dedicated name holding a list with no table keeps the old diagnostic.
+- **With `scan_secrets` off, oversize agent configuration in tests stays a
+  gap.** `_skipped_oversize` skipped any oversize file under a test path as a
+  discounted fixture once credential detection was off, so a 5 KB
+  `tests/.mcp.json` or `tests/CLAUDE.md` over a 1,000-byte `max_file_size`
+  left the scan complete, contradicting the rule that such files are not
+  discounted there. It now skips only discounted test code
+  (`_discounted_test_path`, which excludes agent configuration) and leaves a
+  JSON, TOML or YAML fixture to the reader, whose content check
+  (`_oversize_gap`) keeps the gap when its bytes name a server table and
+  otherwise skips it with the same counted warning.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 
