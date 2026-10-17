@@ -30,6 +30,7 @@ import importlib
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from _thread import LockType
@@ -44,6 +45,7 @@ from shadowscan.connectors import offline as _offline
 from shadowscan.connectors.offline import OfflineInputBudget
 from shadowscan.coverage import (
     BLINDING,
+    INCOMPLETE_REASONS,
     PARTIAL,
     CoverageGap,
     CoverageLedger,
@@ -131,25 +133,12 @@ class _ExportReplayLimitError(ValueError):
 
 
 # Why a diagnostic leaves a scan incomplete, as ``ScanStats.incomplete_reasons``
-# counts it. A connector names the reason when it records the diagnostic; one
-# recorded without a reason is classified from its text by ``incomplete_reason``,
-# which reads the connectors' own message vocabulary (never a path or a value).
-# The categories separate what an operator can act on: a coverage gap in the
-# input (a file too large, a link not followed, content that did not parse), a
-# limit the scanner hit on it, and a failure to reach or read a live source.
-INCOMPLETE_REASONS: tuple[str, ...] = (
-    "oversize-file",
-    "unresolved-link",
-    "unparsed-input",
-    "sanitization-limit",
-    "timeout",
-    "access-denied",
-    "upstream-error",
-    "analysis-limit",
-    "subset-scan",
-    "unscanned-input",
-    "other",
-)
+# counts it: one of ``INCOMPLETE_REASONS`` (``shadowscan.coverage``). A connector
+# names the reason when it records the diagnostic; one recorded without a reason
+# is classified from its text by ``incomplete_reason``, which reads the
+# connectors' own message vocabulary. A caller that knows the path or resource
+# its message names passes it, and the classifier leaves it out: a file called
+# ``src/http_client.py`` does not make its undecodable content an upstream error.
 # Ordered: the first category whose phrase occurs wins, so "rate limit" is an
 # upstream error before "limit" is an analysis limit, and a withheld excerpt is
 # a sanitization limit before it is unscanned input.
@@ -175,7 +164,7 @@ _INCOMPLETE_REASON_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "unparsed-input",
-        ("not parse", "invalid", "malformed", "input defect", "not strict json", "syntax"),
+        ("not parse", "invalid", "malformed", "input defect", "not strict json", "syntax", "undecodable"),
     ),
     ("analysis-limit", ("limit", "budget", "exhausted", "literals only", "not matched", "partially")),
     ("subset-scan", ("triage scan", "subset")),
@@ -183,8 +172,16 @@ _INCOMPLETE_REASON_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def incomplete_reason(message: str) -> str:
-    """The ``INCOMPLETE_REASONS`` category of a diagnostic, read from the connectors' message vocabulary."""
+def incomplete_reason(message: str, *, path: str = "") -> str:
+    """The ``INCOMPLETE_REASONS`` category of a diagnostic, read from the connectors' message vocabulary.
+
+    ``path`` is the path or resource ``message`` names. Each occurrence of it is
+    left out first, so a scanned tree's own names (``http``, ``403``,
+    ``deadline``) never pick the category. Only whole occurrences go, so a
+    file called ``a`` does not take the letter out of ``max_file_size``.
+    """
+    if path:
+        message = re.sub(rf"(?<![\w./\\-]){re.escape(path)}(?![\w/\\-]|\.\w)", " ", message)
     lowered = message.lower()
     for reason, phrases in _INCOMPLETE_REASON_PHRASES:
         if any(phrase in lowered for phrase in phrases):
@@ -375,6 +372,7 @@ class ConnectorContext:
         blinding: bool = False,
         quiet: bool = False,
         full_weight: bool = False,
+        reason: str | None = None,
     ) -> None:
         """Record content the scan could not read, and say so in the report.
 
@@ -394,30 +392,37 @@ class ConnectorContext:
 
         ``full_weight`` keeps the path discount off, for a gap that is as
         dangerous in a fixture directory as in a deployed one.
+
+        ``reason`` is the ``INCOMPLETE_REASONS`` category the gap is counted
+        under if it leaves the scan incomplete; without one it is classified
+        from ``msg`` with ``path`` left out. The gap keeps it, so a budget
+        verdict at the end of the run counts each gap as it was recorded.
         """
+        if reason is None or reason not in INCOMPLETE_REASONS:
+            reason = incomplete_reason(msg, path=path)
         gap = CoverageGap(
             detail=self.sanitize_message(msg),
             path=path,
             kind=BLINDING if blinding else PARTIAL,
             entries=max(0, entries),
             full_weight=full_weight,
+            reason=reason,
         )
         self._coverage.record(gap)
         if gap.blinding:
             # Fail closed immediately; no budget applies to an unbounded gap.
             if not quiet:
-                self.error(msg)
+                self.error(msg, reason=reason)
             elif self.stats is not None:
                 self.stats.incomplete = True
-                key = incomplete_reason(gap.detail)
-                self.stats.incomplete_reasons[key] = self.stats.incomplete_reasons.get(key, 0) + 1
+                self.stats.incomplete_reasons[reason] = self.stats.incomplete_reasons.get(reason, 0) + 1
             return
         if quiet:
             return
         # Still visible as a warning, but it does not by itself condemn the
         # scan. ``finalize_coverage`` takes that decision once, with the
         # whole run's gaps in view.
-        self.warn(msg, incomplete=False)
+        self.warn(msg, incomplete=False, reason=reason)
 
     def note_coverage_examined(self, count: int) -> None:
         """Raise the examined-entry floor used as the gap ratio's denominator."""
@@ -449,10 +454,10 @@ class ConnectorContext:
             # counted under its own reason, as a blinding gap was when it was
             # recorded: the verdict line below says how far over the budget
             # the scan went, and the reasons say what the unread entries were.
+            counts = self.stats.incomplete_reasons
             for gap in self._coverage.gaps:
                 if not gap.blinding:
-                    key = incomplete_reason(gap.detail)
-                    self.stats.incomplete_reasons[key] = self.stats.incomplete_reasons.get(key, 0) + 1
+                    counts[gap.reason] = counts.get(gap.reason, 0) + 1
         message = self._coverage.verdict_message(self._coverage_policy)
         if message is not None:
             self._diagnostic(

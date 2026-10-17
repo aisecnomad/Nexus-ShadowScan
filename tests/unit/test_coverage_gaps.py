@@ -74,6 +74,27 @@ class TestGapWeighting:
         with pytest.raises(ValueError, match="must not be negative"):
             CoverageGap(detail="d", entries=-1)
 
+    def test_a_gap_publishes_the_reason_it_was_recorded_with(self) -> None:
+        gap = CoverageGap(detail="src/http/403.py: skipped", path="src/http/403.py", reason="unresolved-link")
+        assert gap.to_dict()["reason"] == "unresolved-link"
+        assert CoverageGap(detail="d").reason == "other"
+        with pytest.raises(ValueError, match="unknown coverage gap reason"):
+            CoverageGap(detail="d", reason="\x1b[2Jforged")
+
+    def test_the_ledger_validator_checks_each_gap_reason(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(100)
+        ledger.record(CoverageGap(detail="d", path="src/x.py", reason="oversize-file"))
+        _, summary = ledger.evaluate(CoveragePolicy())
+        assert validate_coverage_summary(summary) is summary
+        for forged in ("\x1b[2Jforged", "src/x.py", None):
+            summary["details"][0]["reason"] = forged
+            with pytest.raises(ValueError, match="coverage"):
+                validate_coverage_summary(summary)
+        del summary["details"][0]["reason"]
+        with pytest.raises(ValueError, match="coverage"):
+            validate_coverage_summary(summary)
+
 
 class TestBudget:
     def test_a_lone_fixture_link_in_a_large_tree_is_tolerated(self) -> None:

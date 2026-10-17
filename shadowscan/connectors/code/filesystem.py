@@ -85,7 +85,13 @@ from typing import Any, ClassVar
 import regex
 import yaml
 
-from shadowscan.connectors.base import BaseConnector, ConnectorContext, ConnectorError, _positive_limit
+from shadowscan.connectors.base import (
+    BaseConnector,
+    ConnectorContext,
+    ConnectorError,
+    _positive_limit,
+    incomplete_reason,
+)
 from shadowscan.connectors.code.catalogs import (  # noqa: F401 - re-exported
     _PIPELINE_DIRECTORIES,
     _PIPELINE_NAMES,
@@ -1008,6 +1014,21 @@ def _exception_name(exc: Exception) -> str:
     return type(exc).__name__
 
 
+# The incomplete-reason categories of the reasons ``read_text`` and
+# ``read_credential_text`` give for not reading a file. Any other reason is
+# classified from its own fixed text, never from the file's path.
+_READ_ISSUE_REASONS = {
+    "file exceeds max_file_size": "oversize-file",
+    BINARY_CONTENT_ERROR: "unparsed-input",
+    "not a regular file": "unscanned-input",
+}
+
+
+def _read_issue_reason(issue: str) -> str:
+    """The ``INCOMPLETE_REASONS`` category of a read failure the reader described as ``issue``."""
+    return _READ_ISSUE_REASONS.get(issue) or incomplete_reason(issue)
+
+
 def _file_failure_reason(exc: Exception) -> str:
     """Describe why one file's analysis stopped without echoing hostile input.
 
@@ -1825,7 +1846,9 @@ class FilesystemConnector(BaseConnector):
             return not self.include_tests
         return _is_docs_path(rel) or _is_example_path(rel) or _is_generated_path(rel)
 
-    def _gap(self, rel: str, message: str, *, error: bool = False, suffix: bool = True) -> None:
+    def _gap(
+        self, rel: str, message: str, *, error: bool = False, suffix: bool = True, reason: str | None = None
+    ) -> None:
         """Record a coverage gap at ``rel``.
 
         An error, or a warning that leaves the scan incomplete (``suffix``
@@ -1833,13 +1856,20 @@ class FilesystemConnector(BaseConnector):
         declared the gap: then a warning that leaves the scan complete, counted
         in the report's ``declared_omissions``, so a profile scan is never read
         as one that read everything.
+
+        ``reason`` is the ``INCOMPLETE_REASONS`` category it is counted under;
+        without one it is classified from ``message`` with ``rel`` left out, so
+        a file called ``http_client.py`` does not make the gap an upstream error.
         """
+        reason = reason or incomplete_reason(message, path=rel)
         if self._declared_omission(rel):
             self.ctx.warn(f"{message}; declared omission (profile ci)", incomplete=False, declared=True)
         elif error:
-            self.ctx.error(message)
+            self.ctx.error(message, reason=reason)
         else:
-            self.ctx.warn(f"{message}; coverage incomplete" if suffix else message, incomplete=True)
+            self.ctx.warn(
+                f"{message}; coverage incomplete" if suffix else message, incomplete=True, reason=reason
+            )
 
     def _budgeted_gap(
         self,
@@ -1849,18 +1879,21 @@ class FilesystemConnector(BaseConnector):
         declared: str | None = None,
         blinding: bool = False,
         full_weight: bool = False,
+        reason: str | None = None,
     ) -> None:
         """Charge a gap at ``rel`` to the coverage budget, unless the ``ci`` profile declared it.
 
         A declared omission is recorded as ``_gap`` records one (with
         ``declared`` as its message when given) and is never also charged to
         the budget, so a gap is counted once: in ``declared_omissions`` or in
-        ``stats.coverage``.
+        ``stats.coverage``. ``reason`` is passed on to either.
         """
         if self._declared_omission(rel):
-            self._gap(rel, declared or message)
+            self._gap(rel, declared or message, reason=reason)
             return
-        self.ctx.coverage_gap(message, path=rel, entries=1, blinding=blinding, full_weight=full_weight)
+        self.ctx.coverage_gap(
+            message, path=rel, entries=1, blinding=blinding, full_weight=full_weight, reason=reason
+        )
 
     def _lockfile_gap(self, rel: str, reason: str) -> None:
         """Report a supported lockfile that was not inventoried, scoped to that lockfile.
@@ -2318,7 +2351,9 @@ class FilesystemConnector(BaseConnector):
         """
         if self._declared_omission(rel):
             # Declared, counted and named in full: it does not take the gap budget below.
-            self._gap(rel, f"code.filesystem: {rel}: skipped, not a regular file ({kind})")
+            self._gap(
+                rel, f"code.filesystem: {rel}: skipped, not a regular file ({kind})", reason="unscanned-input"
+            )
             return
         walk.non_regular += 1
         # Only the diagnostics are bounded: past them the budget still counts
@@ -2333,10 +2368,12 @@ class FilesystemConnector(BaseConnector):
             )
         if self.strict_coverage:
             if not quiet:
-                self.ctx.error(f"{message}; coverage incomplete")
+                self.ctx.error(f"{message}; coverage incomplete", reason="unscanned-input")
         else:
             # One entry of known, bounded lost coverage: budgeted, not fatal.
-            self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1, quiet=quiet)
+            self.ctx.coverage_gap(
+                f"{message}; coverage gap", path=rel, entries=1, quiet=quiet, reason="unscanned-input"
+            )
 
     def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
         """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
@@ -2381,7 +2418,7 @@ class FilesystemConnector(BaseConnector):
             # leaves that gap's own representative slot for an undeclared link.
             if root not in self._declared_link_notes:
                 self._declared_link_notes.add(root)
-                self._gap(rel, message)
+                self._gap(rel, message, reason="unresolved-link")
             return True
         # A single representative diagnostic per root keeps hostile trees
         # from filling the report with thousands of link names. The budget
@@ -2393,7 +2430,7 @@ class FilesystemConnector(BaseConnector):
         if self.strict_coverage:
             if root not in self._symlink_warnings:
                 self._symlink_warnings.add(root)
-                self.ctx.error(f"{message}; coverage incomplete")
+                self.ctx.error(f"{message}; coverage incomplete", reason="unresolved-link")
             return True
         # A dangling link, or one to a regular file, costs one entry. A link
         # to a directory (or to a target the lookup cannot classify) can stand
@@ -2404,7 +2441,9 @@ class FilesystemConnector(BaseConnector):
         first = root not in noted
         noted.add(root)
         if bounded:
-            self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1, quiet=not first)
+            self.ctx.coverage_gap(
+                f"{message}; coverage gap", path=rel, entries=1, quiet=not first, reason="unresolved-link"
+            )
         else:
             self.ctx.coverage_gap(
                 f"code.filesystem: skipped symbolic link {rel} whose target may hold any number of "
@@ -2412,6 +2451,7 @@ class FilesystemConnector(BaseConnector):
                 path=rel,
                 blinding=True,
                 quiet=not first,
+                reason="unresolved-link",
             )
         return True
 
@@ -2995,13 +3035,20 @@ class FilesystemConnector(BaseConnector):
         )
 
     def _discounted_gap(
-        self, rel: str, message: str, *, error: bool = True, suffix: bool = True, full_weight: bool = False
+        self,
+        rel: str,
+        message: str,
+        *,
+        error: bool = True,
+        suffix: bool = True,
+        full_weight: bool = False,
+        reason: str | None = None,
     ) -> None:
         """Record ``message`` about ``rel`` as a gap (``_gap``), or as a warning in discounted test code.
 
         A ``ci`` profile declaration takes precedence over the discount, so the
         omission is counted in ``declared_omissions`` like every other one the
-        profile accepts; ``error`` and ``suffix`` are passed on to ``_gap``.
+        profile accepts; ``error``, ``suffix`` and ``reason`` are passed on to ``_gap``.
         ``full_weight`` keeps the discount off (see ``_discounted_test_gap``).
         """
         if self._discounted_test_gap(rel, full_weight=full_weight) and not self._declared_omission(rel):
@@ -3009,7 +3056,7 @@ class FilesystemConnector(BaseConnector):
                 f"{message}; test code is discounted evidence (include_tests is false)", incomplete=False
             )
         else:
-            self._gap(rel, message, error=error, suffix=suffix)
+            self._gap(rel, message, error=error, suffix=suffix, reason=reason)
 
     def _scan_binary_test_fixture(
         self,
@@ -3034,13 +3081,13 @@ class FilesystemConnector(BaseConnector):
         message = f"code.filesystem: {rel}: {BINARY_CONTENT_ERROR}"
         analyzed = self.scan_secrets and not self.triage
         if not analyzed and not rel.endswith(_MCP_STRUCTURE_SUFFIXES):
-            self._discounted_gap(rel, f"{message}; not analyzed")
+            self._discounted_gap(rel, f"{message}; not analyzed", reason="unparsed-input")
             return
         errors: list[str] = []
         text = read_credential_text(fixture.on_disk, self._size_limit(path.name), errors, dir_fd=scan.root_fd)
         if text is None:
             for issue in errors:
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             return
         if analyzed:
             file = _SourceFile(
@@ -3058,7 +3105,11 @@ class FilesystemConnector(BaseConnector):
         if self._looks_like_mcp_config(rel, path.name, text):
             self._unreadable_gap(rel, BINARY_CONTENT_ERROR)
             return
-        self._discounted_gap(rel, f"{message}; {'read for credentials only' if analyzed else 'not analyzed'}")
+        self._discounted_gap(
+            rel,
+            f"{message}; {'read for credentials only' if analyzed else 'not analyzed'}",
+            reason="unparsed-input",
+        )
 
     def _unreadable_gap(self, rel: str, issue: str) -> None:
         """Charge content of ``rel`` that the scanner could not read or decode to the coverage budget.
@@ -3084,6 +3135,7 @@ class FilesystemConnector(BaseConnector):
             f"code.filesystem: {rel}: {issue}",
             blinding=not incidental,
             full_weight=True,
+            reason=_read_issue_reason(issue),
         )
 
     def _read_source(
@@ -3119,7 +3171,7 @@ class FilesystemConnector(BaseConnector):
         binary_fixture = False
         for issue in read_errors:
             if self.strict_coverage:
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             elif issue == "file exceeds max_file_size":
                 # Configuration its name selects is read for what it declares:
                 # padded past the limit, it hides a definition as well as
@@ -3133,6 +3185,7 @@ class FilesystemConnector(BaseConnector):
                     + ("coverage incomplete" if selected else "coverage gap"),
                     declared=f"code.filesystem: {rel}: skipped, {issue}",
                     blinding=selected,
+                    reason="oversize-file",
                 )
             elif issue == BINARY_CONTENT_ERROR and self._discounted_test_gap(rel):
                 binary_fixture = True
@@ -3226,7 +3279,7 @@ class FilesystemConnector(BaseConnector):
                 "saved outputs not scanned for credentials"
             )
         if gap is not None:
-            self._gap(rel, gap, error=self.strict_coverage)
+            self._gap(rel, gap, error=self.strict_coverage, reason="oversize-file")
         if len(text) > self.max_file_size:
             return None
         return text, raw_notebook, tuple(spans), tuple(foreign)
@@ -3745,7 +3798,10 @@ class FilesystemConnector(BaseConnector):
             return False
         size = len(file.text.encode("utf-8"))
         if len(scan.reexport_files) >= MAX_PENDING_FILES or scan.reexport_bytes + size > MAX_PENDING_BYTES:
-            self.ctx.error(f"code.filesystem: {file.rel}: Python re-export source budget exceeded")
+            self.ctx.error(
+                f"code.filesystem: {file.rel}: Python re-export source budget exceeded",
+                reason="analysis-limit",
+            )
             return False
         scan.reexport_files.append(source)
         scan.reexport_bytes += size
@@ -3926,6 +3982,7 @@ class FilesystemConnector(BaseConnector):
                 f"code.filesystem: {file.rel}: model identifiers read from the first "
                 f"{MAX_MODEL_LITERALS_PER_FILE} literals only; later ones were not matched",
                 suffix=False,
+                reason="analysis-limit",
             )
         literals.sort()
         line_at = line_counter(content_text)
@@ -4026,9 +4083,9 @@ class FilesystemConnector(BaseConnector):
                 "lexical evidence retained"
             )
             if not self.include_tests and _is_test_path(file.rel):
-                self.ctx.warn(message, incomplete=self.strict_coverage)
+                self.ctx.warn(message, incomplete=self.strict_coverage, reason="analysis-limit")
             else:
-                self.ctx.error(message)
+                self.ctx.error(message, reason="analysis-limit")
             return [], whole
         except SourceNotParsed as exc:
             # Newer syntax than the interpreter knows, or invalid source: no
@@ -4051,9 +4108,9 @@ class FilesystemConnector(BaseConnector):
                 f"{MAX_CALL_TEXT} characters; options after them were not read, so coverage is incomplete"
             )
             if not self.include_tests and _is_test_path(file.rel):
-                self.ctx.warn(message, incomplete=self.strict_coverage)
+                self.ctx.warn(message, incomplete=self.strict_coverage, reason="analysis-limit")
             else:
-                self.ctx.error(message)
+                self.ctx.error(message, reason="analysis-limit")
         return bound, list(file.unparsed)
 
     def _syntax_warning(self, file: _SourceFile, message: str) -> None:
@@ -4063,7 +4120,7 @@ class FilesystemConnector(BaseConnector):
         template, example or test path, and is counted as unparsed input.
         """
         if self._syntax_gap(file):
-            self._gap(file.rel, message, suffix=False)
+            self._gap(file.rel, message, suffix=False, reason="unparsed-input")
         else:
             self.ctx.warn(message, incomplete=False)
 

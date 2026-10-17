@@ -42,6 +42,27 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+#: Why a diagnostic leaves a scan incomplete, as ``ScanStats.incomplete_reasons``
+#: counts it and each published gap names it (``shadowscan.connectors.base``
+#: classifies a diagnostic recorded without one). The categories separate what
+#: an operator can act on: a coverage gap in the input (a file too large, a link
+#: not followed, content that did not parse), a limit the scanner hit on it, and
+#: a failure to reach or read a live source. Defined here so the ledger
+#: validator can check a published gap's reason without package imports.
+INCOMPLETE_REASONS: tuple[str, ...] = (
+    "oversize-file",
+    "unresolved-link",
+    "unparsed-input",
+    "sanitization-limit",
+    "timeout",
+    "access-denied",
+    "upstream-error",
+    "analysis-limit",
+    "subset-scan",
+    "unscanned-input",
+    "other",
+)
+
 #: Gap kinds that always mark a scan incomplete, whatever the budget.
 BLINDING = "blinding"
 #: Gap kinds that cost a known, bounded amount of coverage.
@@ -118,7 +139,7 @@ _SUMMARY_AMOUNTS = ("weighted_gap_entries", "allowance", "max_gap_ratio")
 _SUMMARY_KEYS = frozenset(
     (*_SUMMARY_COUNTS, *_SUMMARY_AMOUNTS, "within_budget", "details", "details_truncated")
 )
-_GAP_KEYS = frozenset({"detail", "path", "kind", "entries", "full_weight", "relevance"})
+_GAP_KEYS = frozenset({"detail", "path", "kind", "entries", "full_weight", "reason", "relevance"})
 
 
 def validate_coverage_summary(value: object) -> dict[str, Any] | None:
@@ -169,6 +190,7 @@ def validate_coverage_summary(value: object) -> dict[str, Any] | None:
             or type(gap["entries"]) is not int
             or gap["entries"] < 0
             or type(gap["full_weight"]) is not bool
+            or gap["reason"] not in INCOMPLETE_REASONS
             or gap["relevance"] not in ("low", "high")
         ):
             raise ValueError(message)
@@ -217,12 +239,18 @@ class CoverageGap:
     #: not fall with the path's deployability — content the scanner could not
     #: decode could hide a definition in a fixture as easily as in a service.
     full_weight: bool = False
+    #: The ``INCOMPLETE_REASONS`` category the gap is counted under when it
+    #: leaves the scan incomplete, decided when it was recorded: ``detail``
+    #: names the path, which must not choose the category.
+    reason: str = "other"
 
     def __post_init__(self) -> None:
         if self.kind not in (BLINDING, PARTIAL):
             raise ValueError(f"unknown coverage gap kind {self.kind!r}")
         if self.entries < 0:
             raise ValueError("coverage gap entries must not be negative")
+        if self.reason not in INCOMPLETE_REASONS:
+            raise ValueError(f"unknown coverage gap reason {self.reason!r}")
 
     @property
     def blinding(self) -> bool:

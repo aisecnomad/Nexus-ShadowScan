@@ -103,6 +103,18 @@ def test_incomplete_scan_exits_3_and_names_the_reason_category(tmp_path):
     assert json.loads(result.stdout)["summary"]["incomplete_reasons"] == {"oversize-file": 1}
 
 
+def test_exit_3_line_names_undecodable_source_as_unparsed_input_whatever_its_path(tmp_path):
+    # The path names an upstream error, a denial and a deadline; the file's own
+    # gap is content that could not be decoded.
+    (tmp_path / "requirements.txt").write_text("crewai==0.80.0\n")
+    (tmp_path / "src" / "403" / "deadline").mkdir(parents=True)
+    (tmp_path / "src" / "403" / "deadline" / "http_client.py").write_bytes(b"import os\x00\n")
+    result = CliRunner().invoke(main, ["code", str(tmp_path), "--format", "json"])
+    assert result.exit_code == 3, result.output
+    assert "scan incomplete (exit 3): unparsed-input 1;" in result.stderr
+    assert json.loads(result.stdout)["summary"]["incomplete_reasons"] == {"unparsed-input": 1}
+
+
 def test_ci_profile_turns_a_declared_omission_into_exit_0(tmp_path):
     (tmp_path / "requirements.txt").write_text("crewai==0.80.0\n")
     (tmp_path / "tests" / "fixtures").mkdir(parents=True)

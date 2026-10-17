@@ -614,6 +614,52 @@ def test_ci_profile_declares_unparsed_templates_and_fixtures_only(run_connector,
     assert stats.incomplete and stats.incomplete_reasons == {"unparsed-input": 1}
 
 
+# A scanned tree names its own files: a path that contains "http", "403" or
+# "deadline" must not decide why the scan is incomplete. Each gap names its
+# reason when it is recorded, and an unexplained one is classified without the path.
+@pytest.mark.parametrize(
+    "rel", ["src/http_client.py", "services/403/app.py", "src/deadline/worker.py", "src/symlink/oversize.py"]
+)
+@pytest.mark.parametrize("strict", [False, True])
+def test_undecodable_source_is_unparsed_input_whatever_its_path(run_connector, tmp_path, rel, strict):
+    (tmp_path / rel).parent.mkdir(parents=True)
+    (tmp_path / rel).write_bytes(b"import os\x00\nTOOL = 1\n")
+    _, stats = scan(run_connector, tmp_path, strict_coverage=strict)
+    assert stats.incomplete and stats.incomplete_reasons == {"unparsed-input": 1}
+
+
+def test_model_literal_limit_is_an_analysis_limit_whatever_its_path(run_connector, tmp_path):
+    from shadowscan.connectors.code.filesystem import MAX_MODEL_LITERALS_PER_FILE
+
+    literals = "\n".join(
+        f'x{n} = "claude-3-5-sonnet-{n:08d}"' for n in range(MAX_MODEL_LITERALS_PER_FILE + 50)
+    )
+    write(tmp_path, "src/http/403/models.py", literals + "\n")
+    _, stats = scan(run_connector, tmp_path)
+    assert stats.incomplete and stats.incomplete_reasons == {"analysis-limit": 1}
+
+
+@needs_symlinks
+def test_over_budget_gaps_are_counted_by_the_reason_they_were_recorded_with(run_connector, tmp_path):
+    # Partial gaps are counted only when the budget verdict leaves the scan
+    # incomplete, from the reason each gap kept, not from its message.
+    (tmp_path / "src" / "oversize" / "http").mkdir(parents=True)
+    (tmp_path / "src" / "oversize" / "http" / "403.json").symlink_to("../missing.json")
+    (tmp_path / "src" / "deadline.json").symlink_to("missing.json")
+    _, stats = scan(run_connector, tmp_path)
+    assert stats.incomplete and stats.coverage is not None and not stats.coverage["within_budget"]
+    assert stats.incomplete_reasons == {"unresolved-link": 2}
+    assert {gap["reason"] for gap in stats.coverage["details"]} == {"unresolved-link"}
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="named pipes unavailable")
+def test_non_regular_entry_is_unscanned_input_whatever_its_path(run_connector, tmp_path):
+    (tmp_path / "src" / "http").mkdir(parents=True)
+    os.mkfifo(tmp_path / "src" / "http" / "settings.json")
+    _, stats = scan(run_connector, tmp_path)
+    assert stats.incomplete and stats.incomplete_reasons == {"unscanned-input": 1}
+
+
 def test_ci_profile_rejects_strict_coverage_and_unknown_profiles(run_connector, tmp_path):
     write(tmp_path, "app.py", "print('hi')\n")
     with pytest.raises(ConnectorError, match="strict_coverage"):

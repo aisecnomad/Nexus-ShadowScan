@@ -115,8 +115,15 @@ public repositories with the tool and read the committed benchmark metrics.
   that a merged report or a plugin worker supplies outside these categories
   is counted as `other`, and the banner escapes the reason text like other
   report text, so a crafted report cannot send terminal control sequences
-  (a window title, a screen clear) through `shadowscan merge`. The example
-  GitHub Action passes `--profile ci`.
+  (a window title, a screen clear) through `shadowscan merge`. The classifier
+  no longer reads the scanned path: `code.filesystem` names the reason of
+  its oversize, undecodable, link, non-regular and analysis-limit gaps and
+  classifies any other gap with its path left out, so a NUL byte in
+  `src/http_client.py` is `unparsed-input`, not `upstream-error` (and the
+  canonical undecodable-content case is `unparsed-input`, not `other`).
+  Each coverage gap keeps its reason, published in
+  `stats[].coverage.details[].reason` and used when an over-budget verdict
+  counts the partial gaps. The example GitHub Action passes `--profile ci`.
 - **ADR-005, first move.** The ownership group of `FilesystemConnector`
   (`_git_info`, CODEOWNERS reading and matching, their caches and budgets)
   is `OwnershipResolver` in `code/ownership.py`; the connector calls

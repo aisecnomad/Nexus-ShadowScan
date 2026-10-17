@@ -90,12 +90,61 @@ def test_one_oversized_finding_is_omitted_without_discarding_the_others(index):
         ("code.filesystem: t.py: model identifiers read from the first 400 literals only", "analysis-limit"),
         ("code.filesystem: repo: triage scan: findings are a subset of a full scan", "subset-scan"),
         ("code.filesystem: data.bin: skipped, never read", "unscanned-input"),
+        ("code.filesystem: src/a.py: binary or undecodable content in analyzable file", "unparsed-input"),
         ("something else entirely", "other"),
     ],
 )
 def test_incomplete_reasons_are_classified_from_the_message_vocabulary(message, reason):
     assert incomplete_reason(message) == reason
     assert reason in INCOMPLETE_REASONS
+
+
+@pytest.mark.parametrize(
+    ("path", "detail", "reason"),
+    [
+        ("src/http_client.py", "binary or undecodable content in analyzable file", "unparsed-input"),
+        ("src/app/permissions.py", "binary or undecodable content in analyzable file", "unparsed-input"),
+        ("src/deadline/worker.py", "file analysis incomplete (RecursionError)", "other"),
+        (
+            "services/403/app.py",
+            "structured parse incomplete (ValueError); excerpts withheld",
+            "unscanned-input",
+        ),
+        ("http", "skipped, file exceeds max_file_size", "oversize-file"),
+        ("a", "skipped, file exceeds max_file_size", "oversize-file"),
+    ],
+)
+def test_incomplete_reason_leaves_the_named_path_out(path, detail, reason):
+    # The scanned tree names its files: the path must not pick the category.
+    message = f"code.filesystem: {path}: {detail}"
+    assert incomplete_reason(message, path=path) == reason
+
+
+def test_coverage_gap_keeps_its_reason_for_the_budget_verdict(index):
+    ctx = ConnectorContext(index=index)
+    ctx.stats = ScanStats(connector=_Probe.name, started_at="now")
+    ctx.add_coverage_examined(2)
+    ctx.coverage_gap(
+        "code.filesystem: http/deadline/403.json: skipped; coverage gap", path="http/deadline/403.json"
+    )
+    ctx.coverage_gap(
+        "code.filesystem: src/http.py: unusual entry", path="src/http.py", reason="unresolved-link"
+    )
+    ctx.coverage_gap("code.filesystem: src/x.py: odd", path="src/x.py", reason="not-a-category")
+    ctx.finalize_coverage()
+    assert ctx.stats.incomplete and ctx.stats.coverage is not None
+    assert [gap["reason"] for gap in ctx.stats.coverage["details"]] == [
+        "unscanned-input",
+        "unresolved-link",
+        "other",
+    ]
+    assert ctx.stats.incomplete_reasons == {"unscanned-input": 1, "unresolved-link": 1, "other": 1}
+    blinding = ConnectorContext(index=index)
+    blinding.stats = ScanStats(connector=_Probe.name, started_at="now")
+    blinding.coverage_gap(
+        "code.filesystem: src/http_403.py: walk stopped", path="src/http_403.py", blinding=True
+    )
+    assert blinding.stats.incomplete_reasons == {"other": 1}
 
 
 def test_context_counts_incomplete_reasons_and_declared_omissions(index):
