@@ -4087,6 +4087,33 @@ ROWS = [
             ("nas-login", "machine fs\n  login bob\n  # \\\\nas\\login\\tom\n\n  password <K>\n"),
         )
     ],
+    # --- r4-review-creds4.json: a punctuated secret after a cut read, which round 5 reports
+    Row(
+        "r4.10-client-secret-entry",
+        "sanitize",
+        "clientSecret: process.env.CLIENT_SECRET?.trim() || '<P>',",
+        mode="",
+        head="withheld",
+        main="shown",
+    ),
+    Row(
+        "r4.10-report-excerpt",
+        "scan",
+        {
+            "src/a.ts": "export const cfg = { azureClientSecret: process.env.AZURE_CLIENT_SECRET?.trim() || '<P>' };\n"
+        },
+        mode="",
+        head=(("src/a.ts:1",), "complete", "withheld"),
+        main=(("src/a.ts:1",), "complete", "shown"),
+    ),
+    Row(
+        "r4.10-run-together-name",
+        "scan",
+        {"src/a.ts": "export const cfg = { dbpassword: process.env.DBPASSWORD?.trim() || '<P>' };\n"},
+        mode="",
+        head=(("src/a.ts:1",), "complete", "withheld"),
+        main=(("src/a.ts:1",), "complete", "shown"),
+    ),
 ]
 
 
