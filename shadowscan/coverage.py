@@ -162,10 +162,54 @@ def validate_max_coverage_gap(value: object) -> float:
 
 _SUMMARY_COUNTS = ("examined", "gaps", "blinding_gaps", "gap_entries")
 _SUMMARY_AMOUNTS = ("weighted_gap_entries", "allowance", "max_gap_ratio")
-_SUMMARY_KEYS = frozenset(
-    (*_SUMMARY_COUNTS, *_SUMMARY_AMOUNTS, "within_budget", "details", "details_truncated")
-)
+#: Published only by a summary that combines parts (:func:`combine_coverage_summaries`):
+#: how many parts recorded a gap, how many of them went over their own budget,
+#: and the gap entries the parts within their own budget tolerated.
+_PART_COUNTS = ("parts", "parts_over_budget", "tolerated_gap_entries")
+_OPTIONAL_KEYS = frozenset({"details_truncated", *_PART_COUNTS})
+_SUMMARY_KEYS = frozenset((*_SUMMARY_COUNTS, *_SUMMARY_AMOUNTS, "within_budget", "details", *_OPTIONAL_KEYS))
 _GAP_KEYS = frozenset({"detail", "path", "kind", "entries", "full_weight", "reason", "relevance"})
+
+
+def _is_count(value: object) -> bool:
+    return type(value) is int and value >= 0
+
+
+def _is_amount(value: object) -> bool:
+    return (
+        not isinstance(value, bool) and isinstance(value, int | float) and math.isfinite(value) and value >= 0
+    )
+
+
+def _valid_gap(gap: object) -> bool:
+    return (
+        isinstance(gap, dict)
+        and set(gap) == _GAP_KEYS
+        and isinstance(gap["detail"], str)
+        and isinstance(gap["path"], str)
+        and gap["kind"] in (BLINDING, PARTIAL)
+        and _is_count(gap["entries"])
+        and type(gap["full_weight"]) is bool
+        and gap["reason"] in INCOMPLETE_REASONS
+        and gap["relevance"] in ("low", "high")
+    )
+
+
+def _valid_parts(value: dict[str, Any]) -> bool:
+    """Whether a combined summary's part counts agree with its own verdict and counts."""
+    if not all(_is_count(value.get(key, 0)) for key in _PART_COUNTS):
+        return False
+    tolerated = value.get("tolerated_gap_entries")
+    over = value.get("parts_over_budget")
+    # Within budget, every part tolerated all it lost; otherwise a part over its
+    # budget lost at least one entry no budget tolerated.
+    if tolerated is not None and (
+        tolerated > value["gap_entries"] or (tolerated == value["gap_entries"]) != value["within_budget"]
+    ):
+        return False
+    if over is not None and (value["within_budget"] != (over == 0) or over > value.get("parts", over)):
+        return False
+    return True
 
 
 def validate_coverage_summary(value: object) -> dict[str, Any] | None:
@@ -176,7 +220,8 @@ def validate_coverage_summary(value: object) -> dict[str, Any] | None:
     files. Both readers check every other statistic's type, so this one is
     checked the same way: a forged or malformed ledger is refused rather than
     republished as if the scanner had computed it. None means no gap was
-    recorded.
+    recorded. The part counts of a combined summary are optional, so a report
+    written before they existed still loads.
     """
     if value is None:
         return None
@@ -184,46 +229,26 @@ def validate_coverage_summary(value: object) -> dict[str, Any] | None:
     if (
         not isinstance(value, dict)
         or not set(value) <= _SUMMARY_KEYS
-        or not _SUMMARY_KEYS - {"details_truncated"} <= set(value)
+        or not set(value) >= _SUMMARY_KEYS - _OPTIONAL_KEYS
     ):
         raise ValueError(message)
-    if any(type(value[key]) is not int or value[key] < 0 for key in _SUMMARY_COUNTS):
+    if not all(_is_count(value[key]) for key in _SUMMARY_COUNTS):
         raise ValueError(message)
-    for key in _SUMMARY_AMOUNTS:
-        amount = value[key]
-        if (
-            isinstance(amount, bool)
-            or not isinstance(amount, int | float)
-            or not math.isfinite(amount)
-            or amount < 0
-        ):
-            raise ValueError(message)
+    if not all(_is_amount(value[key]) for key in _SUMMARY_AMOUNTS):
+        raise ValueError(message)
     if type(value["within_budget"]) is not bool:
         raise ValueError(message)
     # Within budget means no part lost more than it was allowed, so neither
     # can the parts together: a summary claiming otherwise was not computed here.
     if value["within_budget"] and value["weighted_gap_entries"] > value["allowance"]:
         raise ValueError(message)
-    truncated = value.get("details_truncated", 0)
-    if type(truncated) is not int or truncated < 0:
+    if not _is_count(value.get("details_truncated", 0)) or not _valid_parts(value):
         raise ValueError(message)
     details = value["details"]
     if not isinstance(details, list) or len(details) > MAX_PUBLISHED_GAPS:
         raise ValueError(message)
-    for gap in details:
-        if (
-            not isinstance(gap, dict)
-            or set(gap) != _GAP_KEYS
-            or not isinstance(gap["detail"], str)
-            or not isinstance(gap["path"], str)
-            or gap["kind"] not in (BLINDING, PARTIAL)
-            or type(gap["entries"]) is not int
-            or gap["entries"] < 0
-            or type(gap["full_weight"]) is not bool
-            or gap["reason"] not in INCOMPLETE_REASONS
-            or gap["relevance"] not in ("low", "high")
-        ):
-            raise ValueError(message)
+    if not all(_valid_gap(gap) for gap in details):
+        raise ValueError(message)
     return value
 
 
@@ -237,11 +262,24 @@ def coverage_incomplete(summary: dict[str, Any] | None) -> bool:
 
 
 def tolerated_gap_entries(summary: Any) -> int:
-    """Unread entries a run's budget tolerated: a within-budget summary's ``gap_entries``, else 0."""
-    if not isinstance(summary, dict) or summary.get("within_budget") is not True:
+    """Unread entries a run's budgets tolerated: the ``gap_entries`` of every part within its own budget.
+
+    A combined summary states it (``tolerated_gap_entries``), since its parts
+    are judged apart and one over its budget does not undo what another
+    tolerated; a single part's, or a report's from before that key, is its
+    ``gap_entries`` when within budget, else 0.
+    """
+    if not isinstance(summary, dict):
         return 0
-    entries = summary.get("gap_entries")
+    entries = summary.get("tolerated_gap_entries")
+    if entries is None and summary.get("within_budget") is True:
+        entries = summary.get("gap_entries")
     return entries if type(entries) is int and entries > 0 else 0
+
+
+def _parts_over_budget(summary: dict[str, Any]) -> int:
+    over = summary.get("parts_over_budget")
+    return over if type(over) is int else int(not summary["within_budget"])
 
 
 def combine_coverage_summaries(summaries: Iterable[dict[str, Any] | None]) -> dict[str, Any] | None:
@@ -252,9 +290,13 @@ def combine_coverage_summaries(summaries: Iterable[dict[str, Any] | None]) -> di
     the published ``allowance`` is the sum of the per-root allowances, and may
     exceed the per-root ceiling of :data:`DEFAULT_MAX_GAP_ENTRIES`.
     Only a part that recorded a gap has a summary, so ``examined`` counts the
-    entries those verdicts were taken over. Details are kept in order up to
-    :data:`MAX_PUBLISHED_GAPS`; every gap is still counted. None when no part
-    recorded a gap.
+    entries those verdicts were taken over. ``parts``, ``parts_over_budget``
+    and ``tolerated_gap_entries`` say how the verdict divides, so a combined
+    ``weighted_gap_entries`` under its ``allowance`` beside ``within_budget``
+    false reads as the one part that went over. Details are kept up to
+    :data:`MAX_PUBLISHED_GAPS`, the parts that left the scan incomplete (over
+    their budget or blinded) first, so the gaps the verdict line points to are
+    listed; every gap is still counted. None when no part recorded a gap.
     """
     parts = [summary for summary in summaries if summary is not None]
     if len(parts) <= 1:
@@ -265,7 +307,11 @@ def combine_coverage_summaries(summaries: Iterable[dict[str, Any] | None]) -> di
     combined["within_budget"] = all(part["within_budget"] for part in parts)
     # The parts are one connector's roots under its one policy.
     combined["max_gap_ratio"] = parts[0]["max_gap_ratio"]
-    combined["details"] = [gap for part in parts for gap in part["details"]][:MAX_PUBLISHED_GAPS]
+    combined["parts"] = sum(part.get("parts", 1) for part in parts)
+    combined["parts_over_budget"] = sum(_parts_over_budget(part) for part in parts)
+    combined["tolerated_gap_entries"] = sum(tolerated_gap_entries(part) for part in parts)
+    ordered = sorted(parts, key=lambda part: not coverage_incomplete(part))
+    combined["details"] = [gap for part in ordered for gap in part["details"]][:MAX_PUBLISHED_GAPS]
     if combined["gaps"] > len(combined["details"]):
         combined["details_truncated"] = combined["gaps"] - len(combined["details"])
     return combined
@@ -516,6 +562,11 @@ class CoverageLedger:
             ]
             more = len(over) - MAX_NAMED_PARTS
             named = "; ".join(over[:MAX_NAMED_PARTS]) + (f"; {more} more over budget" if more > 0 else "")
+            # The other parts' own budgets still tolerated theirs: say so, as
+            # a run of that part alone would.
+            tolerated = tolerated_gap_entries(summary)
+            if tolerated:
+                named += f"; {tolerated} entr(y/ies) tolerated within other roots' own budgets"
             return f"coverage incomplete: {named}; see stats[].coverage.details"
         if incomplete:
             # Within budget, but a blinding gap condemned the scan anyway.

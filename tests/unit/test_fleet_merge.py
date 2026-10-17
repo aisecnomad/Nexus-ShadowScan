@@ -615,3 +615,31 @@ def test_fleet_reads_a_ledger_over_budget_as_incomplete_whatever_the_flag_says(t
     merged = merge_reports([("laptop", report)])
     assert not merged.complete
     assert merged.summary()["tolerated_gaps"] == 0
+
+
+def test_fleet_counts_what_a_root_within_budget_tolerated_beside_one_over_it(tmp_path: Path):
+    # A multi-root report combines its roots' ledgers: the big root tolerated one
+    # link, the small root went over its own budget. The combined summary says so
+    # (tolerated_gap_entries), and merge recomputes summary.tolerated_gaps from it.
+    big, small = tmp_path / "big", tmp_path / "small"
+    for root, modules in ((big, 60), (small, 2)):
+        (root / "tests" / "certs").mkdir(parents=True)
+        for number in range(modules):
+            (root / f"mod{number}.py").write_text(f"VALUE = {number}\n")
+        (root / "tests" / "certs" / "ca.pem").symlink_to(root / "missing.pem")
+    out = tmp_path / "multi.json"
+    result = CliRunner().invoke(
+        main, ["code", str(big), str(small), "--no-incremental", "--format", "json", "-o", str(out)]
+    )
+    assert result.exit_code == 3, result.output
+    report = json.loads(out.read_text())
+    assert report["summary"]["tolerated_gaps"] == 1
+    assert report["stats"][0]["coverage"]["tolerated_gap_entries"] == 1
+    merged = merge_reports([("multi", report)])
+    assert not merged.complete and merged.summary()["tolerated_gaps"] == 1
+    # The part counts are optional: a report written before them still merges.
+    for key in ("parts", "parts_over_budget", "tolerated_gap_entries"):
+        del report["stats"][0]["coverage"][key]
+    report["summary"]["tolerated_gaps"] = 0
+    merged = merge_reports([("multi", report)])
+    assert not merged.complete and merged.summary()["tolerated_gaps"] == 0

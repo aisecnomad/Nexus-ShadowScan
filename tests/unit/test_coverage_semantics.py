@@ -508,6 +508,36 @@ def test_an_over_budget_run_tolerated_nothing(tmp_path, run_connector):
     assert ScanResult(stats=[ctx.stats]).summary()["tolerated_gaps"] == 0
 
 
+def test_a_root_within_its_budget_keeps_its_tolerated_gaps_when_another_goes_over(tmp_path):
+    # The big root's own budget tolerated its three links; the small root went
+    # over its own. summary.tolerated_gaps read only the combined flag and said 0,
+    # and incomplete_reasons counts only the small root, so the big root's gaps
+    # reached no counter; scanned alone, the big root reports them.
+    import json
+
+    big = _tree(tmp_path / "big", links=[f"certs/c{i}.pem" for i in range(3)])
+    for i in range(140):
+        (big / "src" / f"x{i}.py").write_text(f"y = {i}\n")
+    small = tmp_path / "small"
+    (small / "src").mkdir(parents=True)
+    for i in range(10):
+        (small / "src" / f"m{i}.py").write_text(f"x = {i}\n")
+    for i in range(3):
+        os.symlink(small / "nowhere", small / f"l{i}.py")
+    result = CliRunner().invoke(main, ["code", str(big), str(small), "--no-incremental", "--format", "json"])
+    assert result.exit_code == 3, result.output
+    report = json.loads(result.stdout)
+    assert report["summary"]["incomplete_reasons"] == {"unresolved-link": 3}
+    assert report["summary"]["tolerated_gaps"] == 3
+    coverage = report["stats"][0]["coverage"]
+    assert (coverage["parts"], coverage["parts_over_budget"], coverage["tolerated_gap_entries"]) == (2, 1, 3)
+    # The gaps the verdict line points to come first in the published details.
+    assert [gap["path"] for gap in coverage["details"]][:3] == ["l0.py", "l1.py", "l2.py"]
+    assert "3 coverage gap(s) within budget did not count" in result.stderr
+    alone = CliRunner().invoke(main, ["code", str(big), "--no-incremental", "--format", "json"])
+    assert alone.exit_code == 0 and json.loads(alone.stdout)["summary"]["tolerated_gaps"] == 3
+
+
 def test_the_exit_3_line_counts_tolerated_gaps_beside_declared_omissions(tmp_path):
     import json
 

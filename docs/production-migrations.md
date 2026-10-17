@@ -70,11 +70,17 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   within its own, even if their sum passes the 100-entry ceiling. The
   verdict line names the root or repository. `stats[].coverage` covers the
   roots that recorded a gap, so its `examined` no longer counts clean roots,
-  and its `allowance` is the sum of theirs. Cached and uncached runs agree.
+  and its `allowance` is the sum of theirs. A summary that combines several
+  roots or repositories also carries `parts`, `parts_over_budget` and
+  `tolerated_gap_entries`, and lists the gaps of the roots that left the scan
+  incomplete first; consumers that pin `stats[].coverage` keys must accept
+  the three (a single root's summary has none, and older reports load).
+  Cached and uncached runs agree.
 - **`summary.tolerated_gaps`.** Reports gain this count of unread entries
-  the coverage budget tolerated; the table banner and the exit-3 line show it.
-  Consumers that pin the summary's keys must accept it; older reports
-  without it still merge and compare.
+  the coverage budget tolerated, including those a root within its own
+  budget tolerated while another root went over; the table banner and the
+  exit-3 line show it. Consumers that pin the summary's keys must accept it;
+  older reports without it still merge and compare.
 - **Incomplete reasons.** The credential quota is counted as
   `analysis-limit` (it was `other`, or whatever its path suggested), eBPF
   records no reader recognized as `unparsed-input`, and a structured

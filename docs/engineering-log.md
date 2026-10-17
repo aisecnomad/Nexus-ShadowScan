@@ -146,13 +146,30 @@ strict accounting, credentials, declaration, discount, budget.
   semantics: a multi-root scan is complete only if every root would be
   complete scanned alone. The provider connectors keep handing their policy
   to the nested connector, which now reads it (strict accounting above).
+  The first combined summary cut the parts' details at 50 in part order, so
+  `code big small` (3,000 files and 55 dangling links beside 10 files and
+  3) listed only the big root's tolerated links while the verdict line
+  named the small root, and read "58 weighted of 61.36 allowed,
+  within_budget false" with nothing to say how the verdict divided.
+  `combine_coverage_summaries` now lists the gaps of the parts that left the
+  scan incomplete (over budget or blinded) first and publishes `parts`,
+  `parts_over_budget` and `tolerated_gap_entries`, which
+  `validate_coverage_summary` accepts as optional and checks against the
+  summary's own counts.
 - **Tolerated gaps reach the summary.** Both the budget and the ci profile
   let a scan with unread content exit 0, but only `declared_omissions`
   reached `summary`, the table banner and the exit-3 line; a default-profile
   scan that tolerated a dangling `tests/certs` link looked as if it had read
   everything. `summary.tolerated_gaps` is the sum of `gap_entries` over the
   runs within budget, shown in the banner and the exit-3 line beside the
-  declared omissions. Fleet merge recomputes it from the stats and reads a
+  declared omissions. A root within its own budget beside one over it
+  tolerated its gaps too: `tolerated_gap_entries()` read only the combined
+  `within_budget` flag, so they reached neither `incomplete_reasons` nor
+  `tolerated_gaps` (0 for a 204-entry root with three dangling links beside
+  a 13-entry root with three, 3 for the large root alone). It now reads a
+  combined summary's
+  `tolerated_gap_entries`, and the over-budget verdict line counts them.
+  Fleet merge recomputes it from the stats and reads a
   source whose summary disagrees as inconsistent completion evidence; a report
   without the field loads as before. `validate_coverage_summary` (used by
   fleet merge, dashboard, diff and the plugin result checks) refuses a

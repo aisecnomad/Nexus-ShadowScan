@@ -1101,3 +1101,18 @@ def test_result_stats_over_budget_are_incomplete_whatever_the_worker_says():
     payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
     _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
     assert decoded.incomplete
+
+
+def test_result_stats_accept_a_combined_ledger_and_check_its_part_counts():
+    from shadowscan.coverage import combine_coverage_summaries
+
+    combined = combine_coverage_summaries([_worker_ledger(1), _worker_ledger(10)])
+    assert combined is not None and (combined["parts"], combined["parts_over_budget"]) == (2, 1)
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": combined, "incomplete": False}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.incomplete and decoded.coverage["tolerated_gap_entries"] == 1
+    forged = {**stats, "coverage": {**combined, "tolerated_gap_entries": 11}}
+    payload = json.dumps({"stats": forged, "findings": [], "exports": []}).encode()
+    with pytest.raises(ValueError):
+        _decode_result(payload, 1, ConnectorSpec(ENTRY))

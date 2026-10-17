@@ -24,6 +24,7 @@ from shadowscan.coverage import (
     CoverageLedger,
     CoveragePolicy,
     combine_coverage_summaries,
+    tolerated_gap_entries,
     validate_coverage_summary,
     validate_max_coverage_gap,
 )
@@ -193,6 +194,74 @@ class TestBudget:
         assert combine_coverage_summaries([None, summaries[0]]) is summaries[0]
         assert combine_coverage_summaries([None, None]) is None
 
+    @staticmethod
+    def _part(examined: int, gaps: int, prefix: str, *, blinding: bool = False) -> dict:
+        ledger = CoverageLedger()
+        ledger.add_examined(examined)
+        for i in range(gaps):
+            ledger.record(CoverageGap(detail="x", path=f"{prefix}/l{i}.py"))
+        if blinding:
+            ledger.record(CoverageGap(detail="stopped", path=f"{prefix}/stop", kind=BLINDING))
+        return ledger.evaluate(CoveragePolicy())[1]
+
+    def test_a_combined_summary_lists_the_gaps_of_the_parts_that_left_it_incomplete_first(self) -> None:
+        # A large root's 55 tolerated gaps took every published slot, so the gaps
+        # of the small root the verdict line named were not listed at all.
+        big, small = self._part(3_000, 55, "big"), self._part(13, 3, "small")
+        combined = combine_coverage_summaries([big, small])
+        assert validate_coverage_summary(combined) is combined
+        paths = [gap["path"] for gap in combined["details"]]
+        assert paths[:3] == ["small/l0.py", "small/l1.py", "small/l2.py"]
+        assert len(paths) == MAX_PUBLISHED_GAPS and combined["details_truncated"] == 8
+        # A blinded part within its budget left the scan incomplete too.
+        blinded = self._part(3_000, 1, "blinded", blinding=True)
+        combined = combine_coverage_summaries([big, blinded])
+        assert [gap["path"] for gap in combined["details"]][:2] == ["blinded/l0.py", "blinded/stop"]
+
+    def test_a_combined_summary_says_how_its_verdict_divides(self) -> None:
+        # 58 weighted of 61.36 allowed beside within_budget false reads as a
+        # contradiction unless the summary says one part went over its own.
+        big, small = self._part(3_000, 55, "big"), self._part(13, 3, "small")
+        combined = combine_coverage_summaries([big, small])
+        assert combined["weighted_gap_entries"] < combined["allowance"] and not combined["within_budget"]
+        assert (combined["parts"], combined["parts_over_budget"]) == (2, 1)
+        # The big root's own budget tolerated its 55 entries; the small one's tolerated none.
+        assert combined["tolerated_gap_entries"] == 55 == tolerated_gap_entries(combined)
+        both = combine_coverage_summaries([big, self._part(3_000, 2, "other")])
+        assert (both["parts"], both["parts_over_budget"], both["tolerated_gap_entries"]) == (2, 0, 57)
+        # Combining combined summaries keeps counting parts, not summaries.
+        nested = combine_coverage_summaries([combined, both])
+        assert (nested["parts"], nested["parts_over_budget"], nested["tolerated_gap_entries"]) == (4, 1, 112)
+        assert validate_coverage_summary(nested) is nested
+        # A single part publishes none of these keys, and is read as before.
+        assert not {"parts", "parts_over_budget", "tolerated_gap_entries"} & set(big)
+        assert tolerated_gap_entries(big) == 55 and tolerated_gap_entries(small) == 0
+
+    @pytest.mark.parametrize(
+        "forged",
+        [
+            {"tolerated_gap_entries": 59},
+            # Every entry tolerated, yet a part went over its budget.
+            {"tolerated_gap_entries": 58},
+            {"tolerated_gap_entries": -1},
+            {"tolerated_gap_entries": "55"},
+            {"parts_over_budget": 0},
+            {"parts_over_budget": 3},
+            {"parts": True},
+        ],
+    )
+    def test_the_validator_refuses_part_counts_its_summary_refutes(self, forged: dict) -> None:
+        combined = combine_coverage_summaries([self._part(3_000, 55, "big"), self._part(13, 3, "small")])
+        with pytest.raises(ValueError, match="coverage"):
+            validate_coverage_summary({**combined, **forged})
+
+    def test_the_validator_refuses_a_within_budget_summary_that_tolerated_less_than_it_lost(self) -> None:
+        combined = combine_coverage_summaries([self._part(3_000, 5, "a"), self._part(3_000, 2, "b")])
+        assert combined["within_budget"] and combined["tolerated_gap_entries"] == 7
+        for forged in ({"tolerated_gap_entries": 5}, {"parts_over_budget": 1}):
+            with pytest.raises(ValueError, match="coverage"):
+                validate_coverage_summary({**combined, **forged})
+
 
 class TestVerdictMessage:
     def test_silent_when_nothing_was_skipped(self) -> None:
@@ -233,6 +302,25 @@ class TestVerdictMessage:
         assert message is not None
         assert "within budget" in message
         assert "another reason" in message
+
+    def test_an_over_budget_verdict_counts_what_the_other_parts_tolerated(self) -> None:
+        ledger = CoverageLedger()
+        ledger.begin_part("big")
+        ledger.add_examined(3_000)
+        for i in range(55):
+            ledger.record(CoverageGap(detail="link", path=f"links/l{i}.py"))
+        ledger.begin_part("small")
+        ledger.add_examined(13)
+        for i in range(3):
+            ledger.record(CoverageGap(detail="link", path=f"links/l{i}.py"))
+        message = ledger.verdict_message(CoveragePolicy())
+        assert message is not None and message.startswith("coverage incomplete: small: 3 entr(y/ies)")
+        assert "55 entr(y/ies) tolerated within other roots' own budgets" in message
+        # One part alone over its budget tolerated nothing elsewhere.
+        alone = CoverageLedger()
+        alone.add_examined(13)
+        alone.record(CoverageGap(detail="link", path="links/l0.py"))
+        assert "tolerated" not in (alone.verdict_message(CoveragePolicy()) or "")
 
     def test_exceeding_the_budget_is_summarised(self) -> None:
         ledger = CoverageLedger()

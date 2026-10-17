@@ -1162,7 +1162,10 @@ repository is over its own budget, and the verdict names it. A large clean
 repository therefore cannot dilute a small one's gaps, and an organisation of
 repositories each within its budget stays complete. The published
 `stats[].coverage` combines the repositories that recorded a gap; its
-`allowance` is the sum of theirs. Blinding gaps (an LFS pointer, a gitlink,
+`allowance` is the sum of theirs, `parts_over_budget` counts the repositories
+over their own budget, `tolerated_gap_entries` the entries the others
+tolerated, and its `details` list the gaps of the repositories that left the
+scan incomplete first. Blinding gaps (an LFS pointer, a gitlink,
 a directory link) fail closed without a budget, `profile: ci` declarations
 are counted apart, and with `--max-coverage-gap 0`
 ([strict accounting](../scanning.md#coverage-budget-and-strict-accounting))

@@ -293,21 +293,31 @@ clean root dilute a small root's gaps, and would make an organisation of
 ordinary repositories exit 3 with no setting to fix it. The published
 `stats[].coverage` combines the roots that recorded a gap: counts add, the
 `allowance` is the sum of their allowances, and `within_budget` is true only
-if every root was. An incremental scan (`--incremental`), which runs and
-caches each root on its own, reaches the same verdict and publishes the same
-summary.
+if every root was. Because each root was judged against its own allowance, a
+combined `weighted_gap_entries` below the summed `allowance` can sit beside
+`within_budget: false`; the combined summary therefore also states `parts`
+(the roots or repositories that recorded a gap), `parts_over_budget` and
+`tolerated_gap_entries` (the entries the roots within their own budget
+tolerated), and lists in `details` the gaps of the roots that left the scan
+incomplete first, so the gaps the verdict line points to are never crowded
+out of the 50 published by a larger root's tolerated ones. A single root's
+summary has none of these three keys. An incremental scan (`--incremental`),
+which runs and caches each root on its own, reaches the same verdict and
+publishes the same summary.
 
-`summary.tolerated_gaps` counts the entries left unread in every run whose
-budget tolerated them (the `gap_entries` of each `stats[].coverage` within
-budget), so a complete scan that skipped content says so beside
-`summary.declared_omissions`: the table banner shows both, and the stderr
-line of an exit 3 names them as gaps and omissions that did not count. A
-report written before the field existed has none; `shadowscan merge`
+`summary.tolerated_gaps` counts the entries left unread in every root or
+repository whose own budget tolerated them (the `gap_entries` of each
+`stats[].coverage` within budget, or a combined summary's
+`tolerated_gap_entries`), so a complete scan that skipped content says so
+beside `summary.declared_omissions`, and so does a scan another root put over
+its budget: the table banner shows both, and the stderr line of an exit 3
+names them as gaps and omissions that did not count, as the verdict line
+does. A report written before the field existed has none; `shadowscan merge`
 recomputes it from the stats and treats a source whose summary states a
 different value as inconsistent (incomplete). A ledger summary that claims to
-be within budget while losing more than it allows is refused, and one over
-budget or blinded marks its connector incomplete whatever the report or a
-plugin worker says.
+be within budget while losing more than it allows, or whose part counts its
+own counts refute, is refused, and one over budget or blinded marks its
+connector incomplete whatever the report or a plugin worker says.
 
 Every gap a `code.filesystem` scan records (and every gap in a `code.github`
 or `code.gitlab` checkout, which that connector scans) is decided by one rule,
