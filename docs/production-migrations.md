@@ -56,24 +56,42 @@ across this change reports findings as resolved or new that are neither.
   `service.name` is now its own finding, `service:<service>/agent:<agent>`,
   where the agent defaults to the service. The finding id hashes the
   resource, so these findings have new ids: carry triage decisions and
-  suppressions over to them. Flat span records that carry
+  suppressions over to them. The resource attributes now also merge into
+  the span attributes of each nested span (the span's own value wins), so a
+  nested export whose GenAI attributes (`gen_ai.system`, a model) sit only on
+  the resource produces new findings, and callers whose provider was
+  `unknown` take the resource's provider. Flat span records that carry
   `resource.attributes` themselves keep their ids.
-- **`endpoint.host` reports only rows tied to AI.** A row is reported when its
-  name or path matches an AI product signature or its `type`/`category` names
-  an AI category (`ai`, `agent`, `assistant`, `copilot`, `llm`, `mcp`,
-  `model`). Other rows of a general software inventory, which used to become
-  0.7-confidence findings, are dropped with one informational note that does
-  not mark the scan incomplete, and show as resolved against an earlier
-  baseline. Check that the runtimes you expect are still reported; if your
-  collector exports them without a recognized name, have it set an AI
-  `type` or `category`.
+- **`endpoint.host` reports only rows tied to AI.** A row is reported when it
+  names a known AI product or runtime, or an AI category: its name or path
+  matches an AI product signature; its whole `name`, `path` file name or
+  `process` is a known AI product or local model runtime (Ollama, LM Studio,
+  GPT4All, llama.cpp, vLLM, LocalAI, Jan, Msty, the runtimes whose model stores
+  the endpoint catalog lists, ...), compared without an `.app` or `.exe` suffix
+  or a trailing version; or its `type`/`category` contains an AI category word
+  (`ai`, `agent`, `assistant`, `copilot`, `llm`, `mcp`, `model`, so
+  `monitoring agent` counts). osquery `apps`/`programs` and MDM rows such as
+  `Ollama`, `LM Studio.app` or `Ollama version 0.5.7` are therefore still
+  reported and keep their ids. Other rows of a general software inventory,
+  which used to become 0.7-confidence findings, are dropped with one
+  informational note that does not mark the scan incomplete, and show as
+  resolved against an earlier baseline. So are a row whose name only contains
+  a runtime name and a row that names only a model-store directory
+  (`~/.ollama/models`). Check that the runtimes you expect are still reported;
+  if your collector exports them under another name, have it set an AI `type`
+  or `category`. See
+  [host inventory rows](connectors/endpoint.md#host-inventory-rows).
 - **`endpoint.ebpf` reads native exports and fails closed on unknown shapes.**
   Tetragon, Falco, Tracee and Hubble events, which the connector did not read
   before, now report the connections they carry, so their findings appear as
   new. A record that matches none of those shapes or the flat record shape is
   no longer skipped silently: the connector records one warning and the scan
-  is incomplete (exit 3). Fix the export or the collector rather than
-  accepting the exit code; see
+  is incomplete (exit 3). A recognized native event is scored on what can be
+  read, and a field of the wrong type (a `process` given as text, `args` that
+  is not a list, ...) or an `args` or `destination_names` list over 100
+  entries also marks the scan incomplete, with one warning per producer for
+  malformed fields and one for the list limit. Fix the export or the
+  collector rather than accepting the exit code; see
   [eBPF event formats](connectors/endpoint.md#ebpf-event-formats).
 
 ## October 17 precision and completeness migration (Unreleased)

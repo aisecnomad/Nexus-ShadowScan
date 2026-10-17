@@ -43,7 +43,7 @@ from shadowscan.connectors import ConnectorContext, builtin_connector_names, get
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.common import MAX_PAGES
-from shadowscan.connectors.endpoint.runtime import OtelConnector
+from shadowscan.connectors.endpoint.runtime import EbpfConnector, HostConnector, OtelConnector
 from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
 from shadowscan.engine import DEFAULT_CONNECTOR_TIMEOUT, Engine
 from shadowscan.models import ScanStats
@@ -1652,6 +1652,69 @@ def _markdown_section(text: str, heading: str) -> str:
     start = text.index(f"\n{heading}\n") + len(heading) + 2
     end = re.compile(rf"^#{{1,{level}}} ", re.MULTILINE).search(text, start)
     return text[start : end.start() if end else len(text)]
+
+
+def _connector_stats(connector: Any, records: list[dict[str, Any]]) -> tuple[list[Any], ScanStats]:
+    connector.ctx.stats = ScanStats(connector=connector.name, started_at="2026-01-01T00:00:00Z")
+    return list(connector.analyze(records)), connector.ctx.stats
+
+
+def test_connector_migration_note_describes_the_connectors_as_they_behave() -> None:
+    """Regression: the note said endpoint.host reports a row only when an AI product signature
+    matches its name or path, which a bare osquery or MDM row for Ollama or LM Studio does not, and
+    it left out two changes operators see against a baseline: resource attributes merged into
+    nested gateway.otel spans, and native eBPF events with unread fields marking a scan incomplete.
+    Each statement is checked against the connector before the note is required to make it."""
+    heading = "## October 17 connector correctness migration (Unreleased)"
+    note = " ".join(_markdown_section(_read(ROOT / "docs" / "production-migrations.md"), heading).split())
+
+    # endpoint.host: a bare row naming a local runtime is reported; a model-store directory is not.
+    for row in ({"name": "Ollama"}, {"name": "LM Studio.app", "path": "/Applications/LM Studio.app"}):
+        assert _connector_stats(HostConnector(ConnectorContext()), [row])[0], row
+    store_findings, _ = _connector_stats(HostConnector(ConnectorContext()), [{"path": "~/.ollama/models"}])
+    for phrase in (
+        "names a known AI product or runtime, or an AI category",
+        "known AI product or local model runtime",
+        "Ollama",
+        "LM Studio",
+        "`process`",
+    ):
+        assert phrase in note, f"the endpoint.host note should say {phrase!r}"
+    assert ("model-store directory" in note) is not bool(store_findings), (
+        "the endpoint.host note should say whether a row naming only a model-store directory is reported"
+    )
+    assert "name or path matches an AI product signature or" not in note
+
+    # gateway.otel: resource attributes merge into nested spans, giving new findings and providers.
+    def nested(resource: dict[str, str], span: dict[str, str]) -> dict[str, Any]:
+        def attributes(values: dict[str, str]) -> list[dict[str, Any]]:
+            return [{"key": key, "value": {"stringValue": value}} for key, value in values.items()]
+
+        spans = [{"name": "call", "attributes": attributes(span)}]
+        return {
+            "resourceSpans": [
+                {"resource": {"attributes": attributes(resource)}, "scopeSpans": [{"spans": spans}]}
+            ]
+        }
+
+    resource_only = nested({"service.name": "svc", "gen_ai.system": "anthropic"}, {})
+    assert [finding.provider for finding in OtelConnector(ConnectorContext()).analyze([resource_only])] == [
+        "anthropic"
+    ]
+    model_only = nested({"service.name": "svc", "gen_ai.system": "openai"}, {"gen_ai.request.model": "m"})
+    assert [finding.provider for finding in OtelConnector(ConnectorContext()).analyze([model_only])] == [
+        "openai"
+    ]
+    for phrase in ("resource attributes", "span attributes", "`unknown`", "new findings"):
+        assert phrase in note, f"the gateway.otel note should say {phrase!r}"
+
+    # endpoint.ebpf: a recognized event with a wrong-typed field marks the scan incomplete.
+    tracee = {"eventName": "security_socket_connect", "processName": "uvicorn", "args": "remote_addr"}
+    _, stats = _connector_stats(EbpfConnector(ConnectorContext()), [tracee, tracee])
+    assert stats.incomplete
+    assert len(stats.warnings) == 1
+    for phrase in ("wrong type", "100 entries", "one warning per producer"):
+        assert phrase in note, f"the endpoint.ebpf note should say {phrase!r}"
 
 
 def test_connector_finding_churn_has_a_migration_note() -> None:
