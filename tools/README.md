@@ -14,6 +14,7 @@ These run in CI and in `make check`; see
 | Module | What it does | Run it with |
 |---|---|---|
 | [`check_secrets.py`](check_secrets.py) | Fails on credential-shaped values in tracked files; narrow exceptions live in [`secret_allowlist.json`](secret_allowlist.json), each bound to a path and a value digest | `make secrets` |
+| [`complexity_gate.py`](complexity_gate.py) | Fails when a function above ruff's `C901` limit of 20 or a `shadowscan` module above 2,000 lines grows past [`complexity_baseline.json`](complexity_baseline.json), or when that baseline allows more than the code has; `--update` lowers it, `--rebaseline` records a reviewed rise | `make complexity` |
 | [`coverage_gate.py`](coverage_gate.py) | Fails when aggregate coverage hides a built-in connector module below its own floor | `make coverage-gate` |
 | [`complexity_gate.py`](complexity_gate.py) | Fails when a function is new above cyclomatic complexity 15 or above its allowance in [`complexity_baseline.json`](complexity_baseline.json), keyed by file and qualified name; `--update` records only decreases unless `--allow-increase` is passed too | `make complexity` |
 | [`test_annotations.py`](test_annotations.py) | Run by CI after a failed test step: turns the pytest JUnit reports into one error annotation per failing test (node id, file, line, exception type and the redacted first line of the message), so the checks API names each failing test | `python -m tools.test_annotations "$RUNNER_TEMP"/junit-*.xml` |

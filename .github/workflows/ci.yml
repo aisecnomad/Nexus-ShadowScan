@@ -68,7 +68,10 @@ jobs:
         run: python -m shadowscan.mappings.validate
       - name: Check the vendored OCSF requirements match the reporter
         run: python -m tools.ocsf_schema --check
-      - name: Ratchet cyclomatic complexity (no new or worsened functions)
+      - name: Check function and module size against the complexity baseline
+        # A function above ruff's C901 limit of 15 or a package module above 2,000
+        # lines may not grow, and the baseline may not allow more than the code has.
+        # docs/testing.md says how to lower or, after review, raise it.
         run: python -m tools.complexity_gate
       - run: ruff check shadowscan tests tools benchmarks
       - run: ruff format --check shadowscan tests tools benchmarks
@@ -149,7 +152,10 @@ jobs:
         run: python -m shadowscan.mappings.validate
       - name: Check the vendored OCSF requirements match the reporter
         run: python -m tools.ocsf_schema --check
-      - name: Ratchet cyclomatic complexity (no new or worsened functions)
+      - name: Check function and module size against the complexity baseline
+        # A function above ruff's C901 limit of 15 or a package module above 2,000
+        # lines may not grow, and the baseline may not allow more than the code has.
+        # docs/testing.md says how to lower or, after review, raise it.
         run: python -m tools.complexity_gate
       - run: ruff check shadowscan tests tools benchmarks
       - run: ruff format --check shadowscan tests tools benchmarks

@@ -147,12 +147,15 @@ make typecheck       # mypy on the scanner and tools
 make signatures      # signature schema and regex validation
 make mappings        # threat and control mapping catalogs
 make ocsf-schema     # the vendored OCSF requirements match the reporter's version, as CI
-make complexity      # no function new above complexity 15 or above its baseline allowance, as CI
+make complexity      # function and module size against tools/complexity_baseline.json; nothing may grow, as CI
 make secrets         # fail on hardcoded credentials in tracked files, as CI
 make audit           # pip-audit on the environment and every hash lock, as CI (needs network)
 make evaluate        # every bundled detection corpus; reports go to a temporary directory
 make check           # exactly: lint format-check typecheck signatures mappings ocsf-schema complexity secrets audit test coverage-gate evaluate
 ```
+
+`make complexity` keeps the largest functions and modules from growing back; see
+[Function and module size](#function-and-module-size) below.
 
 Two more targets are not prerequisites of `make check`. `make policy` runs the
 two repository test modules on their own, which `make test` also runs; use it
@@ -197,6 +200,36 @@ it fails, make the pattern linear (possessive quantifiers from the `regex` modul
 run under `pattern_timeout()`), bound its input, or add it to `ALLOWED` with the
 reason the sweep's input cannot reach it.
 
+## Function and module size
+
+`make complexity` runs `python -m tools.complexity_gate`, which holds two measures to
+[`tools/complexity_baseline.json`](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/tools/complexity_baseline.json):
+
+- the McCabe complexity that ruff reports as `C901` for every function in `shadowscan/`, `tools/`
+  and `benchmarks/` with complexity above 15. A nested function counts into the function around
+  it, as in ruff, and a `noqa` comment does not hide a function from the gate;
+- the physical line count of every module of the `shadowscan` package above 2,000 lines.
+  The corpus and fixture modules under `tools/` and `benchmarks/` grow with their data, so only
+  their functions are held.
+
+The baseline lists what is already over a limit, each at its value today. Anything not listed
+must stay under the limit and anything listed may not rise above its value, so a new function
+that is too complex, or a hot spot that grows, fails the check. The ratchet turns one way: when
+a listed function or module improves, the check also fails until
+`python -m tools.complexity_gate --update` writes the lower value (or drops the entry once the
+function is under the limit), so room that an improvement made cannot be spent again. `--update`
+refuses to raise or add anything. A rise that review accepts is recorded with
+`python -m tools.complexity_gate --rebaseline`, which also writes the first baseline and shows up
+as a diff of the JSON file in the pull request.
+
+The gate exits 0 within the baseline, 1 when something grew or the baseline allows more than the
+code has, and 2 when the measurement cannot be trusted: ruff missing, failing or timing out, a
+file it cannot parse, or a malformed baseline. It measures with the ruff in the hash-locked
+`requirements-ci.lock` and records that version in the baseline; if a ruff upgrade changes how
+complexity is counted, the gate names the versions and `--update` or `--rebaseline` records the
+new counts. The names are qualified function names, so a function that is renamed or moved has to
+leave the baseline under its old name; it does not carry its room along.
+
 ## What CI runs
 
 The [CI workflow](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/.github/workflows/ci.yml)
@@ -208,7 +241,7 @@ a CycloneDX inventory and blocks HIGH or CRITICAL vulnerabilities in that exact
 image. The Linux Python 3.11 job runs the suite
 with line and branch coverage and enforces both coverage floors; tracing slows
 the suite several-fold, so the other jobs run the same full suite without it.
-The Linux jobs also run `tools/check_secrets.py`, the script behind the
+The Linux jobs also run the complexity gate and `tools/check_secrets.py`, the script behind the
 `no-hardcoded-secrets` pre-commit hook, over every tracked file. The
 `CI gate` job requires every job, including DCO on pull requests, to succeed.
 A new push to a pull request cancels its running checks, but every run on

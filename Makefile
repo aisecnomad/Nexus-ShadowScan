@@ -77,7 +77,7 @@ ocsf-schema: ## Check the vendored OCSF requirements match the reporter's versio
 	python -m tools.ocsf_schema --check
 
 .PHONY: complexity
-complexity: ## Fail on a function new above complexity 15 or above its baseline allowance, as CI does
+complexity: ## Fail when a function or module grows past tools/complexity_baseline.json, or the baseline allows more than the code has, as CI does
 	python -m tools.complexity_gate
 
 .PHONY: secrets

@@ -171,7 +171,7 @@ exact supported Python matrix and dependency pins.
 | Signatures | `python -m shadowscan.signatures.validate` | All valid |
 | Mappings | `python -m shadowscan.mappings.validate` | All valid |
 | OCSF schema | `python -m tools.ocsf_schema --check` | The vendored OCSF requirements match the version the reporter emits |
-| Complexity | `python -m tools.complexity_gate` | No function new above cyclomatic complexity 15, none above its allowance in `tools/complexity_baseline.json` |
+| Complexity | `python -m tools.complexity_gate` | No function above ruff's `C901` limit of 15 and no `shadowscan` module above 2,000 lines grows past `tools/complexity_baseline.json`, and the baseline allows no more than the code has |
 | Secrets | `make secrets` | Every tracked file is scanned; only exact reviewed synthetic-value approvals are accepted |
 | Audit | `make audit` | No known vulnerabilities in the environment or any hash lock |
 | Repository policy | `make policy` | Action pins, permissions, links, anchors, Makefile and hook parity with CI |
@@ -190,15 +190,18 @@ or name no codes (PGH004). Suppress an intentional broad `except` with
 (`disallow_untyped_defs`) and reports unused `type: ignore` comments.
 `pyproject.toml` holds the complete rule sets.
 
-The complexity gate (`make complexity`) measures ruff's C901 against a target
-of 15 and compares the result with `tools/complexity_baseline.json`, which
-records the debt that predates the gate. Each allowance is keyed by the file
-and the function's qualified name (`path::Class.method`, a nested function
-under the function that encloses it), so a method never inherits the allowance
-of another one with its name. A function the gate reports is to be split.
-`python -m tools.complexity_gate --update` records only decreases and
-removals; an increase takes `--update --allow-increase` and shows in the
-baseline's diff for review.
+`make complexity` runs `python -m tools.complexity_gate`, which holds two measures to
+`tools/complexity_baseline.json`: every function above ruff's `C901` limit of 15 in
+`shadowscan/`, `tools/` and `benchmarks/`, and every `shadowscan` module above 2,000 lines.
+Each entry is keyed by file and qualified name (`path::Class.method`, a nested function as
+`outer.<locals>.inner`), so a function never inherits another's room. The gate keeps the
+functions and modules that are already too large from growing and stops a new one from
+joining them. When it fails because your change made a function more complex or a module
+longer, split it; do not raise the number. When it fails because you improved one, run
+`python -m tools.complexity_gate --update` and commit the lower baseline, so the room cannot
+be spent again. A rise that is unavoidable is recorded with
+`python -m tools.complexity_gate --rebaseline` and explained in the pull request.
+[Testing](docs/testing.md#function-and-module-size) has the details.
 
 The same gates as individual commands:
 
