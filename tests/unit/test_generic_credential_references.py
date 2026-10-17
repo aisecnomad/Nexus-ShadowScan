@@ -69,10 +69,27 @@ def test_member_chains_that_code_follows_are_not_credentials_in_any_text(index: 
         "const REQUEST_SCOPED_CREDENTIAL = 'request-scoped-credential';",
         "const resolvedApiKey = 'fc-resolved-api-key-value';",
         "FIRECRAWL_API_KEY: 'fc-shared-env-must-not-be-used',",
+        # A slug that repeats a word of the name it is assigned to labels it.
+        "const SESSION_PASSWORD = 'session-cookie-signing';",
     ],
 )
 def test_labels_made_of_words_are_not_credentials(index: SignatureIndex, line: str):
     assert _generic(index, line, code=True) == []
+
+
+@pytest.mark.parametrize(
+    ("line", "code"),
+    [
+        # Password managers generate passphrases as random words joined by '-' or '_'.
+        ("DB_PASSWORD=snout-fiber-thump-bloom-gravel", False),
+        ('ADMIN_PASSWORD = "unclad-dismount-uncork-unlit-quartz"', False),
+        ('ADMIN_PASSWORD = "unclad-dismount-uncork-unlit-quartz"', True),
+        ("SMTP_PASSWORD: Ostrich-Lantern-Volcano-Tangerine", False),
+        ("VAULT_ACCESS_TOKEN=granite_meadow_falcon_ribbon", False),
+    ],
+)
+def test_generated_passphrases_are_credentials(index: SignatureIndex, line: str, code: bool):
+    assert _generic(index, line, code=code) != []
 
 
 def test_a_documentation_ellipsis_is_a_placeholder(index: SignatureIndex):
@@ -182,6 +199,13 @@ def test_a_scan_still_reports_a_literal_key_and_withholds_it(tmp_path: Path, run
     findings = _scan(tmp_path, run_connector, {"settings.py": f'CUSTOM_API_KEY = "{RANDOM}"\n'})
     [secret] = [f for f in findings if f.kind.value == "secret"]
     assert RANDOM not in json.dumps(secret.to_dict(), default=str)
+
+
+def test_a_scan_reports_a_passphrase_and_withholds_it(tmp_path: Path, run_connector):
+    passphrase = "snout-fiber-thump-bloom-gravel"
+    findings = _scan(tmp_path, run_connector, {"deploy/.env": f"DB_PASSWORD={passphrase}\n"})
+    [secret] = [f for f in findings if f.kind.value == "secret"]
+    assert passphrase not in json.dumps(secret.to_dict(), default=str)
 
 
 def test_a_scan_reports_a_hard_coded_fallback_and_withholds_it(tmp_path: Path, run_connector):
