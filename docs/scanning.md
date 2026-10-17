@@ -384,7 +384,8 @@ applied in this order:
    incomplete under every profile, in test code too. No file is declared
    without a credential read: a gap that left a file's bytes unread by
    credential detection while `scan_secrets` is on (a file over
-   `max_file_size`, a notebook's saved outputs) is recorded as without the
+   `max_file_size`, a notebook's saved outputs, a file that could not be
+   opened or read) is recorded as without the
    profile, an oversize file as one entry of the budget weighed by its path
    like any other gap, or blinding when its name selects it as
    configuration. A binary or undecodable file whose gap would be discounted

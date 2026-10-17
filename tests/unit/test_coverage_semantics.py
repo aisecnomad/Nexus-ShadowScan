@@ -694,6 +694,36 @@ def test_profile_ci_reads_an_undecodable_file_for_credentials_before_it_declares
     assert default.stats.incomplete == (not rel.startswith("tests/"))
 
 
+def test_profile_ci_never_declares_a_fixture_it_could_not_read(tmp_path, run_connector, monkeypatch):
+    # EACCES, simulated so the test holds when it runs with DAC override (root):
+    # none of the file's bytes was read for credentials, so it is not declared.
+    from shadowscan.connectors.code import filesystem
+
+    real = filesystem.read_text
+
+    def unreadable(path, max_bytes, errors=None, **kwargs):
+        if path.name == "prod.env.txt" and errors is not None:
+            errors.append("file could not be read")
+            return None
+        return real(path, max_bytes, errors, **kwargs)
+
+    monkeypatch.setattr(filesystem, "read_text", unreadable)
+    _tree(tmp_path, {"tests/fixtures/prod.env.txt": f'CUSTOM_API_KEY = "{FIXTURE_KEY}"\n'})
+    _, ci = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile="ci")
+    assert ci.stats.declared_omissions == 0
+    assert not [w for w in ci.stats.warnings if "declared omission" in w]
+    # Charged as without the profile: one whole entry, listed.
+    _, default = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ci.stats.coverage == default.stats.coverage
+    [gap] = ci.stats.coverage["details"]
+    assert (gap["path"], gap["full_weight"]) == ("tests/fixtures/prod.env.txt", True)
+    # Without credential detection nothing would have read it for a key: declared.
+    _, off = run_connector(
+        "code.filesystem", path=str(tmp_path), use_git=False, profile="ci", scan_secrets=False
+    )
+    assert off.stats.declared_omissions == 1
+
+
 def test_profile_ci_never_declares_notebook_outputs_unread_for_credentials(tmp_path, run_connector):
     import json
 
