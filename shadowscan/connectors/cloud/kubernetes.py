@@ -263,6 +263,113 @@ def _workload_images(spec: dict[str, Any]) -> list[str]:
     ]
 
 
+def _ai_images(images: list[str]) -> list[str]:
+    """The images that run an AI workload: a vendor image marker or a serving-engine name."""
+    return [
+        image
+        for image in images
+        if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS) or _serving_engine_image(image)
+    ]
+
+
+def _egress_policy_namespaces(objects: list[dict[str, Any]]) -> set[str]:
+    """Namespaces a NetworkPolicy restricts egress in (an Egress policy type or egress rules).
+
+    A policy whose namespace is malformed restricts no namespace.
+    """
+    egress_policies: set[str] = set()
+    for obj in objects:
+        if _kind(obj) == "NetworkPolicy":
+            spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
+            policy_types = spec.get("policyTypes", []) if isinstance(spec, dict) else []
+            if isinstance(spec, dict) and (
+                (isinstance(policy_types, list) and "Egress" in policy_types) or "egress" in spec
+            ):
+                policy_namespace = _namespace(obj)
+                if policy_namespace is not None:
+                    egress_policies.add(policy_namespace)
+    return egress_policies
+
+
+def _exposed_service(obj: dict[str, Any], resource_name: str, spec: dict[str, Any]) -> bool:
+    """Whether a LoadBalancer or NodePort Service's name, labels or selector name an AI resource."""
+    svc_type = spec.get("type")
+    metadata = obj.get("metadata")
+    labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
+    selector = spec.get("selector", {})
+    service_context = " ".join(
+        [
+            resource_name,
+            (json.dumps(labels, sort_keys=True, default=str) if isinstance(labels, dict) else ""),
+            (json.dumps(selector, sort_keys=True, default=str) if isinstance(selector, dict) else ""),
+        ]
+    )
+    return svc_type in {"LoadBalancer", "NodePort"} and bool(_AI_RESOURCE_NAME.search(service_context))
+
+
+def _cluster_admin_binding(obj: dict[str, Any]) -> bool:
+    """Whether a RoleBinding or ClusterRoleBinding grants cluster-admin to a ServiceAccount."""
+    role_ref = obj.get("roleRef")
+    subjects = obj.get("subjects", [])
+    return bool(
+        isinstance(role_ref, dict)
+        and role_ref.get("name") == "cluster-admin"
+        and isinstance(subjects, list)
+        and any(isinstance(subject, dict) and subject.get("kind") == "ServiceAccount" for subject in subjects)
+    )
+
+
+def _exposure_tags(obj: dict[str, Any], kind: str, resource_name: str, spec: dict[str, Any]) -> list[str]:
+    """Tags for an AI resource reachable from outside the cluster, or a ServiceAccount made cluster-admin.
+
+    A Service counts by type, name, labels and selector (_exposed_service), an Ingress or
+    Route by name, backend and target, and a role binding by what it grants to whom
+    (_cluster_admin_binding).
+    """
+    tags: list[str] = []
+    if kind == "Service" and _exposed_service(obj, resource_name, spec):
+        tags.append("exposed-llm-server")
+    exposure_context = " ".join(
+        (
+            resource_name,
+            str(spec.get("backend", "")),
+            str(spec.get("to", "")),
+        )
+    )
+    if kind in {"Ingress", "Route"} and _AI_RESOURCE_NAME.search(exposure_context):
+        tags.append("exposed-llm-server")
+    if kind in {"RoleBinding", "ClusterRoleBinding"} and _cluster_admin_binding(obj):
+        tags.append("cluster-admin")
+    return tags
+
+
+def _add_serving_evidence(finding: Finding, model_argument: bool, serving: bool, gpu_workload: bool) -> None:
+    """Add a workload's model-argument and GPU evidence.
+
+    Additive corroboration of an AI image or AI resource kind only: neither
+    signal changes the kind or scores a non-AI workload.
+    """
+    if model_argument:
+        finding.add_evidence(
+            Evidence(
+                signal="kubernetes:model-argument",
+                description=(
+                    "Container arguments name a Hugging Face-style model identifier"
+                    + ("" if serving else " (not AI evidence without an AI image or resource kind)")
+                ),
+                weight=0.7 if serving else 0.0,
+            )
+        )
+    if serving and gpu_workload:
+        finding.add_evidence(
+            Evidence(
+                signal="kubernetes:gpu-resource",
+                description="Model-serving container requests or limits an NVIDIA GPU",
+                weight=0.45,
+            )
+        )
+
+
 class KubernetesConnector(BaseConnector):
     # No live API: reads a manifest or API dump someone else exported.
     live_collection: ClassVar[bool] = False
@@ -298,297 +405,329 @@ class KubernetesConnector(BaseConnector):
         cluster = self.cluster
         if not isinstance(cluster, str) or not cluster.strip():
             raise ConnectorError("cloud.kubernetes: cluster is required for offline resource identity")
+        accepted = self._accept_objects(records)
+        egress_policies = _egress_policy_namespaces(accepted)
+        for obj in accepted:
+            finding = self._analyze_object(obj, cluster, egress_policies)
+            if finding is not None:
+                yield finding
+
+    def _accept_objects(self, records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Every object of the export, in order, up to the object limit.
+
+        List envelopes give their items; an item that is not an object is skipped with a
+        warning. The first object past the limit stops reading the export, with a warning.
+        """
         accepted: list[dict[str, Any]] = []
-        egress_policies: set[str] = set()
         for record in records:
-            if "items" in record:
-                record = _with_list_item_kinds(record)
-                # A List envelope inside a JSON array is not unwrapped by the
-                # shared loader, so check its continuation here. Observed
-                # items are still analyzed.
-                pagination_issue = self._offline_pagination_issue(record)
-                if pagination_issue:
-                    self.ctx.warn(f"{self.name}: {pagination_issue}")
-                items = record["items"]
-                if not isinstance(items, list):
-                    self.ctx.warn(f"{self.name}: malformed object list")
-                    continue
-            else:
-                items = [record]
-            limit_exceeded = False
+            items = self._record_items(record)
+            if items is None:
+                continue
             for item in items:
                 # Reaching the cap is complete only if no further object is
                 # present, including objects in a subsequent List envelope.
                 if len(accepted) >= _MAX_OBJECTS:
                     self.ctx.warn(f"{self.name}: object limit reached")
-                    limit_exceeded = True
-                    break
+                    return accepted
                 if not isinstance(item, dict):
                     self.ctx.warn(f"{self.name}: malformed object")
                     continue
                 accepted.append(item)
-            if limit_exceeded:
-                break
-        for obj in accepted:
-            if _kind(obj) == "NetworkPolicy":
-                spec = obj.get("spec") if isinstance(obj.get("spec"), dict) else {}
-                policy_types = spec.get("policyTypes", []) if isinstance(spec, dict) else []
-                if isinstance(spec, dict) and (
-                    (isinstance(policy_types, list) and "Egress" in policy_types) or "egress" in spec
-                ):
-                    policy_namespace = _namespace(obj)
-                    if policy_namespace is not None:
-                        egress_policies.add(policy_namespace)
-        for obj in accepted:
-            kind = _kind(obj)
-            if not kind:
-                # Without a kind the object cannot be analyzed or ignored as
-                # another kind: it could be any workload.
-                self.ctx.warn(
-                    f"{self.name}: object has malformed kind"
-                    if "kind" in obj
-                    else f"{self.name}: object without kind outside a typed List"
-                )
-                continue
-            if kind not in _RECOGNIZED | (_OPENSHIFT if self.name == "cloud.openshift" else set()):
-                continue
-            metadata_value = obj.get("metadata")
-            if not isinstance(metadata_value, dict):
-                self.ctx.warn(f"{self.name}: object has malformed metadata")
-                continue
-            resource_name = _name(obj)
-            if not resource_name:
-                self.ctx.warn(f"{self.name}: object without metadata.name")
-                continue
-            if len(resource_name) > 253:
-                self.ctx.warn(f"{self.name}: object has oversized metadata.name")
-                continue
-            namespace = _namespace(obj)
-            if namespace is None:
-                self.ctx.warn(f"{self.name}: object has malformed metadata.namespace")
-                continue
-            spec_value = obj.get("spec")
-            if spec_value is not None and not isinstance(spec_value, dict):
-                self.ctx.warn(f"{self.name}: object has malformed spec")
-                continue
-            workload_spec = spec_value if isinstance(spec_value, dict) else {}
-            if kind == "CronJob":
-                job_template = workload_spec.get("jobTemplate")
-                if not isinstance(job_template, dict):
-                    self.ctx.warn(f"{self.name}: workload has malformed job template")
-                    continue
-                job_spec = job_template.get("spec")
-                if not isinstance(job_spec, dict):
-                    self.ctx.warn(f"{self.name}: workload has malformed job spec")
-                    continue
-                # Image detection and posture checks must inspect the same
-                # nested Job template, never a top-level template lookalike.
-                workload_spec = job_spec
-            if kind in _WORKLOAD_KINDS and not isinstance(workload_spec.get("template"), dict):
-                self.ctx.warn(f"{self.name}: workload has malformed pod template")
-                continue
-            if kind in _WORKLOAD_KINDS:
-                pod_template = workload_spec["template"]
-                if not isinstance(pod_template.get("spec"), dict):
-                    self.ctx.warn(f"{self.name}: workload has malformed pod spec")
-                    continue
-            if kind == "Pod" and not isinstance(spec_value, dict):
-                self.ctx.warn(f"{self.name}: pod has malformed spec")
-                continue
-            images = _workload_images(workload_spec)
-            selected = [
-                image
-                for image in images
-                if any(marker in image.lower() for marker in _AI_IMAGE_MARKERS)
-                or _serving_engine_image(image)
-            ]
-            tags: list[str] = []
-            capabilities: list[str] = []
-            if selected:
-                tags.append("ai-workload")
-            template = workload_spec.get("template")
-            pod_spec_value = (
-                template.get("spec", {})
-                if isinstance(template, dict)
-                else workload_spec
-                if kind == "Pod"
-                else {}
-            )
-            pod_spec = pod_spec_value if isinstance(pod_spec_value, dict) else {}
-            if _malformed_container_fields(pod_spec):
-                self.ctx.warn(f"{self.name}: workload has malformed containers")
-                continue
-            if "imagePullSecrets" in pod_spec and not isinstance(pod_spec["imagePullSecrets"], list):
-                self.ctx.warn(f"{self.name}: workload has malformed image pull secrets")
-                continue
-            if pod_spec.get("hostNetwork") is True:
-                tags.append("privileged-pod")
-            pod_security = pod_spec.get("securityContext")
-            if isinstance(pod_security, dict) and pod_security.get("privileged") is True:
-                tags.append("privileged-pod")
-            containers = _pod_containers(pod_spec)
-            model_argument = False
-            gpu_workload = False
-            if isinstance(containers, list):
-                total = sum(len(pod_spec[f]) for f in _CONTAINER_FIELDS if isinstance(pod_spec.get(f), list))
-                if total > 100:
-                    self.ctx.warn(f"{self.name}: container limit reached")
-                for container in containers:
-                    if not isinstance(container, dict):
-                        self.ctx.warn(f"{self.name}: malformed container")
-                        continue
-                    if "image" in container and not isinstance(container["image"], str):
-                        self.ctx.warn(f"{self.name}: container has malformed image")
-                    for field in ("command", "args"):
-                        arguments = container.get(field)
-                        # kubectl and serializers emit an unset field as null.
-                        if arguments is None:
-                            continue
-                        if not isinstance(arguments, list) or not all(isinstance(a, str) for a in arguments):
-                            self.ctx.warn(f"{self.name}: workload has malformed container {field}")
-                            continue
-                        model_argument = model_argument or bool(_MODEL_ARGUMENT.search(" ".join(arguments)))
-                    security = container.get("securityContext")
-                    if isinstance(security, dict) and security.get("privileged") is True:
-                        tags.append("privileged-pod")
-                    envs = container.get("env", [])
-                    if not isinstance(envs, list):
-                        self.ctx.warn(f"{self.name}: workload has malformed environment")
-                        continue
-                    if len(envs) > 1000:
-                        self.ctx.warn(f"{self.name}: environment limit reached")
-                    for env in envs[:1000]:
-                        if not isinstance(env, dict):
-                            self.ctx.warn(f"{self.name}: workload has malformed environment entry")
-                            continue
-                        key = env.get("name")
-                        if isinstance(key, str) and any(marker in key.upper() for marker in _ENV_MARKERS):
-                            tags.append("provider-config-present")
-                    resources = container.get("resources")
-                    requests = resources.get("requests") if isinstance(resources, dict) else {}
-                    limits = resources.get("limits") if isinstance(resources, dict) else {}
-                    # A GPU can be set in limits alone (Kubernetes then copies it to requests).
-                    gpus = [
-                        _positive_quantity(r.get("nvidia.com/gpu"))
-                        for r in (requests, limits)
-                        if isinstance(r, dict)
-                    ]
-                    if None in gpus:
-                        self.ctx.warn(f"{self.name}: container has malformed GPU quantity")
-                    if True in gpus:
-                        tags.append("gpu-workload")
-                        gpu_workload = True
-            volumes = pod_spec.get("volumes", [])
-            if not isinstance(volumes, list):
-                self.ctx.warn(f"{self.name}: workload has malformed volumes")
-                continue
-            if len(volumes) > 100:
-                self.ctx.warn(f"{self.name}: volume limit reached")
-            if any(isinstance(volume, dict) and "hostPath" in volume for volume in volumes[:100]):
-                tags.append("privileged-pod")
-            # A model argument corroborates an AI image or AI resource kind. It
-            # never makes a workload AI by itself: GPU training and computer
-            # vision jobs take ``--model org/name`` too.
-            serving = model_argument and bool(selected or kind in _AI_RESOURCE_KINDS)
-            if serving:
-                tags.append("self-hosted-model-serving")
-            if kind in {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"} and selected:
-                if namespace not in egress_policies:
-                    tags.append("no-egress-policy")
-            if kind == "Service":
-                svc_type = workload_spec.get("type")
-                metadata = obj.get("metadata")
-                labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
-                selector = workload_spec.get("selector", {})
-                service_context = " ".join(
-                    [
-                        resource_name,
-                        (json.dumps(labels, sort_keys=True, default=str) if isinstance(labels, dict) else ""),
-                        (
-                            json.dumps(selector, sort_keys=True, default=str)
-                            if isinstance(selector, dict)
-                            else ""
-                        ),
-                    ]
-                )
-                if svc_type in {"LoadBalancer", "NodePort"} and _AI_RESOURCE_NAME.search(service_context):
-                    tags.append("exposed-llm-server")
-            exposure_context = " ".join(
-                (
-                    resource_name,
-                    str(workload_spec.get("backend", "")),
-                    str(workload_spec.get("to", "")),
-                )
-            )
-            if kind in {"Ingress", "Route"} and _AI_RESOURCE_NAME.search(exposure_context):
-                tags.append("exposed-llm-server")
-            if kind in {"RoleBinding", "ClusterRoleBinding"}:
-                role_ref = obj.get("roleRef")
-                subjects = obj.get("subjects", [])
-                if (
-                    isinstance(role_ref, dict)
-                    and role_ref.get("name") == "cluster-admin"
-                    and isinstance(subjects, list)
-                    and any(
-                        isinstance(subject, dict) and subject.get("kind") == "ServiceAccount"
-                        for subject in subjects
-                    )
-                ):
-                    tags.append("cluster-admin")
-            if kind in {"Agent", "ToolServer"}:
-                capabilities.append("tool-use")
-            if not tags and not selected and kind not in _AI_RESOURCE_KINDS:
-                self.ctx.examined()
-                continue
-            if len(selected) > 20:
-                self.ctx.warn(f"{self.name}: reported image limit reached")
-            resource = f"k8s:{cluster}/{namespace}/{kind}/{resource_name}"
-            finding = Finding(
-                surface=Surface.CLOUD,
-                connector=self.name,
-                kind=Kind.AGENT if selected or kind in _AI_RESOURCE_KINDS else Kind.CLOUD_RESOURCE,
-                title=f"Kubernetes {kind} {resource_name}",
-                resource=resource,
-                resource_type=f"kubernetes/{kind}",
-                provider="kubernetes",
-                account=sanitize_text(cluster)[:160],
-                confidence=0.8 if selected else 0.65,
-                tags=list(dict.fromkeys(tags)),
-                capabilities=capabilities,
-                metadata={"namespace": namespace, "images": selected[:20]},
-            )
-            finding.add_evidence(
-                Evidence(
-                    signal=f"kubernetes:{kind}",
-                    description=f"Exported Kubernetes {kind} resource",
-                    weight=0.75,
-                )
-            )
-            image_matches = [match for image in selected for match in self.index.match_image(image)]
-            apply_matches(finding, image_matches, weight_scale=0.75)
-            # Additive corroboration of an AI image or AI resource kind only:
-            # neither signal changes the kind or scores a non-AI workload.
-            if model_argument:
-                finding.add_evidence(
-                    Evidence(
-                        signal="kubernetes:model-argument",
-                        description=(
-                            "Container arguments name a Hugging Face-style model identifier"
-                            + ("" if serving else " (not AI evidence without an AI image or resource kind)")
-                        ),
-                        weight=0.7 if serving else 0.0,
-                    )
-                )
-            if serving and gpu_workload:
-                finding.add_evidence(
-                    Evidence(
-                        signal="kubernetes:gpu-resource",
-                        description="Model-serving container requests or limits an NVIDIA GPU",
-                        weight=0.45,
-                    )
-                )
+        return accepted
+
+    def _record_items(self, record: dict[str, Any]) -> list[Any] | None:
+        """The objects a loaded record holds: a List envelope's items, or the record itself.
+
+        None (after a warning) for an envelope whose items are not a list.
+        """
+        if "items" not in record:
+            return [record]
+        record = _with_list_item_kinds(record)
+        # A List envelope inside a JSON array is not unwrapped by the
+        # shared loader, so check its continuation here. Observed
+        # items are still analyzed.
+        pagination_issue = self._offline_pagination_issue(record)
+        if pagination_issue:
+            self.ctx.warn(f"{self.name}: {pagination_issue}")
+        items = record["items"]
+        if not isinstance(items, list):
+            self.ctx.warn(f"{self.name}: malformed object list")
+            return None
+        return items
+
+    def _analyze_object(self, obj: dict[str, Any], cluster: str, egress_policies: set[str]) -> Finding | None:
+        """The finding for one accepted object; None when it is skipped or carries no signal."""
+        identity = self._object_identity(obj)
+        if identity is None:
+            return None
+        kind, resource_name, namespace = identity
+        workload_spec = self._workload_spec(obj, kind)
+        if workload_spec is None:
+            return None
+        selected = _ai_images(_workload_images(workload_spec))
+        tags: list[str] = []
+        capabilities: list[str] = []
+        if selected:
+            tags.append("ai-workload")
+        pod_spec = self._pod_spec(kind, workload_spec)
+        if pod_spec is None:
+            return None
+        pod_signals = self._inspect_pod(pod_spec, tags)
+        if pod_signals is None:
+            return None
+        model_argument, gpu_workload = pod_signals
+        # A model argument corroborates an AI image or AI resource kind. It
+        # never makes a workload AI by itself: GPU training and computer
+        # vision jobs take ``--model org/name`` too.
+        serving = model_argument and bool(selected or kind in _AI_RESOURCE_KINDS)
+        if serving:
+            tags.append("self-hosted-model-serving")
+        if kind in {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"} and selected:
+            if namespace not in egress_policies:
+                tags.append("no-egress-policy")
+        tags.extend(_exposure_tags(obj, kind, resource_name, workload_spec))
+        if kind in {"Agent", "ToolServer"}:
+            capabilities.append("tool-use")
+        if not tags and not selected and kind not in _AI_RESOURCE_KINDS:
             self.ctx.examined()
-            yield finalize(finding, self.index)
+            return None
+        if len(selected) > 20:
+            self.ctx.warn(f"{self.name}: reported image limit reached")
+        finding = self._new_finding(cluster, namespace, kind, resource_name, selected, tags, capabilities)
+        _add_serving_evidence(finding, model_argument, serving, gpu_workload)
+        self.ctx.examined()
+        return finalize(finding, self.index)
+
+    def _object_identity(self, obj: dict[str, Any]) -> tuple[str, str, str] | None:
+        """An object's kind, name and namespace, or None when it is not analyzed.
+
+        An unrecognized kind is skipped silently, a malformed identity with a warning.
+        """
+        kind = _kind(obj)
+        if not kind:
+            # Without a kind the object cannot be analyzed or ignored as
+            # another kind: it could be any workload.
+            self.ctx.warn(
+                f"{self.name}: object has malformed kind"
+                if "kind" in obj
+                else f"{self.name}: object without kind outside a typed List"
+            )
+            return None
+        if kind not in _RECOGNIZED | (_OPENSHIFT if self.name == "cloud.openshift" else set()):
+            return None
+        metadata_value = obj.get("metadata")
+        if not isinstance(metadata_value, dict):
+            self.ctx.warn(f"{self.name}: object has malformed metadata")
+            return None
+        resource_name = _name(obj)
+        if not resource_name:
+            self.ctx.warn(f"{self.name}: object without metadata.name")
+            return None
+        if len(resource_name) > 253:
+            self.ctx.warn(f"{self.name}: object has oversized metadata.name")
+            return None
+        namespace = _namespace(obj)
+        if namespace is None:
+            self.ctx.warn(f"{self.name}: object has malformed metadata.namespace")
+            return None
+        return kind, resource_name, namespace
+
+    def _workload_spec(self, obj: dict[str, Any], kind: str) -> dict[str, Any] | None:
+        """The spec that holds an object's pod template (a CronJob's Job spec), or None when malformed.
+
+        An object without a spec has {}. A malformed spec, Job template or workload pod
+        template is skipped with a warning.
+        """
+        spec_value = obj.get("spec")
+        if spec_value is not None and not isinstance(spec_value, dict):
+            self.ctx.warn(f"{self.name}: object has malformed spec")
+            return None
+        workload_spec = spec_value if isinstance(spec_value, dict) else {}
+        if kind == "CronJob":
+            job_template = workload_spec.get("jobTemplate")
+            if not isinstance(job_template, dict):
+                self.ctx.warn(f"{self.name}: workload has malformed job template")
+                return None
+            job_spec = job_template.get("spec")
+            if not isinstance(job_spec, dict):
+                self.ctx.warn(f"{self.name}: workload has malformed job spec")
+                return None
+            # Image detection and posture checks must inspect the same
+            # nested Job template, never a top-level template lookalike.
+            workload_spec = job_spec
+        if kind in _WORKLOAD_KINDS and not isinstance(workload_spec.get("template"), dict):
+            self.ctx.warn(f"{self.name}: workload has malformed pod template")
+            return None
+        if kind in _WORKLOAD_KINDS:
+            pod_template = workload_spec["template"]
+            if not isinstance(pod_template.get("spec"), dict):
+                self.ctx.warn(f"{self.name}: workload has malformed pod spec")
+                return None
+        if kind == "Pod" and not isinstance(spec_value, dict):
+            self.ctx.warn(f"{self.name}: pod has malformed spec")
+            return None
+        return workload_spec
+
+    def _pod_spec(self, kind: str, workload_spec: dict[str, Any]) -> dict[str, Any] | None:
+        """The pod spec whose posture and containers are read, or None when it is malformed.
+
+        It is the pod template's spec, a Pod's own spec, or {} for any other object. Malformed
+        container fields or image pull secrets are skipped with a warning.
+        """
+        template = workload_spec.get("template")
+        pod_spec_value = (
+            template.get("spec", {}) if isinstance(template, dict) else workload_spec if kind == "Pod" else {}
+        )
+        pod_spec = pod_spec_value if isinstance(pod_spec_value, dict) else {}
+        if _malformed_container_fields(pod_spec):
+            self.ctx.warn(f"{self.name}: workload has malformed containers")
+            return None
+        if "imagePullSecrets" in pod_spec and not isinstance(pod_spec["imagePullSecrets"], list):
+            self.ctx.warn(f"{self.name}: workload has malformed image pull secrets")
+            return None
+        return pod_spec
+
+    def _inspect_pod(self, pod_spec: dict[str, Any], tags: list[str]) -> tuple[bool, bool] | None:
+        """Read a pod spec's posture, containers and volumes, adding the tags they carry.
+
+        Returns whether a container passes a model argument and whether one requests or
+        limits an NVIDIA GPU; None (after a warning) when the volumes are malformed.
+        """
+        if pod_spec.get("hostNetwork") is True:
+            tags.append("privileged-pod")
+        pod_security = pod_spec.get("securityContext")
+        if isinstance(pod_security, dict) and pod_security.get("privileged") is True:
+            tags.append("privileged-pod")
+        model_argument, gpu_workload = self._inspect_containers(pod_spec, tags)
+        volumes = pod_spec.get("volumes", [])
+        if not isinstance(volumes, list):
+            self.ctx.warn(f"{self.name}: workload has malformed volumes")
+            return None
+        if len(volumes) > 100:
+            self.ctx.warn(f"{self.name}: volume limit reached")
+        if any(isinstance(volume, dict) and "hostPath" in volume for volume in volumes[:100]):
+            tags.append("privileged-pod")
+        return model_argument, gpu_workload
+
+    def _inspect_containers(self, pod_spec: dict[str, Any], tags: list[str]) -> tuple[bool, bool]:
+        """Read each container of a pod spec in turn, adding the tags it carries.
+
+        Returns whether a container passes a model argument and whether one requests or
+        limits an NVIDIA GPU.
+        """
+        containers = _pod_containers(pod_spec)
+        model_argument = False
+        gpu_workload = False
+        if isinstance(containers, list):
+            total = sum(len(pod_spec[f]) for f in _CONTAINER_FIELDS if isinstance(pod_spec.get(f), list))
+            if total > 100:
+                self.ctx.warn(f"{self.name}: container limit reached")
+            for container in containers:
+                if not isinstance(container, dict):
+                    self.ctx.warn(f"{self.name}: malformed container")
+                    continue
+                if "image" in container and not isinstance(container["image"], str):
+                    self.ctx.warn(f"{self.name}: container has malformed image")
+                model_argument = self._container_model_argument(container, model_argument)
+                security = container.get("securityContext")
+                if isinstance(security, dict) and security.get("privileged") is True:
+                    tags.append("privileged-pod")
+                if not self._container_environment(container, tags):
+                    continue
+                if self._container_gpu(container):
+                    tags.append("gpu-workload")
+                    gpu_workload = True
+        return model_argument, gpu_workload
+
+    def _container_model_argument(self, container: dict[str, Any], seen: bool) -> bool:
+        """Whether a model argument is ``seen`` already or is in this container's command or args.
+
+        A malformed command or args field is reported and not read.
+        """
+        for field in ("command", "args"):
+            arguments = container.get(field)
+            # kubectl and serializers emit an unset field as null.
+            if arguments is None:
+                continue
+            if not isinstance(arguments, list) or not all(isinstance(a, str) for a in arguments):
+                self.ctx.warn(f"{self.name}: workload has malformed container {field}")
+                continue
+            seen = seen or bool(_MODEL_ARGUMENT.search(" ".join(arguments)))
+        return seen
+
+    def _container_environment(self, container: dict[str, Any], tags: list[str]) -> bool:
+        """Tag the provider configuration a container's environment names.
+
+        False (after a warning) when the environment is not a list: the container's
+        resources are then not read either.
+        """
+        envs = container.get("env", [])
+        if not isinstance(envs, list):
+            self.ctx.warn(f"{self.name}: workload has malformed environment")
+            return False
+        if len(envs) > 1000:
+            self.ctx.warn(f"{self.name}: environment limit reached")
+        for env in envs[:1000]:
+            if not isinstance(env, dict):
+                self.ctx.warn(f"{self.name}: workload has malformed environment entry")
+                continue
+            key = env.get("name")
+            if isinstance(key, str) and any(marker in key.upper() for marker in _ENV_MARKERS):
+                tags.append("provider-config-present")
+        return True
+
+    def _container_gpu(self, container: dict[str, Any]) -> bool:
+        """Whether a container requests or limits a positive NVIDIA GPU count.
+
+        A malformed count is reported with a warning.
+        """
+        resources = container.get("resources")
+        requests = resources.get("requests") if isinstance(resources, dict) else {}
+        limits = resources.get("limits") if isinstance(resources, dict) else {}
+        # A GPU can be set in limits alone (Kubernetes then copies it to requests).
+        gpus = [
+            _positive_quantity(r.get("nvidia.com/gpu")) for r in (requests, limits) if isinstance(r, dict)
+        ]
+        if None in gpus:
+            self.ctx.warn(f"{self.name}: container has malformed GPU quantity")
+        return True in gpus
+
+    def _new_finding(
+        self,
+        cluster: str,
+        namespace: str,
+        kind: str,
+        resource_name: str,
+        selected: list[str],
+        tags: list[str],
+        capabilities: list[str],
+    ) -> Finding:
+        """The finding for a reported object, with its resource evidence and image matches."""
+        resource = f"k8s:{cluster}/{namespace}/{kind}/{resource_name}"
+        finding = Finding(
+            surface=Surface.CLOUD,
+            connector=self.name,
+            kind=Kind.AGENT if selected or kind in _AI_RESOURCE_KINDS else Kind.CLOUD_RESOURCE,
+            title=f"Kubernetes {kind} {resource_name}",
+            resource=resource,
+            resource_type=f"kubernetes/{kind}",
+            provider="kubernetes",
+            account=sanitize_text(cluster)[:160],
+            confidence=0.8 if selected else 0.65,
+            tags=list(dict.fromkeys(tags)),
+            capabilities=capabilities,
+            metadata={"namespace": namespace, "images": selected[:20]},
+        )
+        finding.add_evidence(
+            Evidence(
+                signal=f"kubernetes:{kind}",
+                description=f"Exported Kubernetes {kind} resource",
+                weight=0.75,
+            )
+        )
+        image_matches = [match for image in selected for match in self.index.match_image(image)]
+        apply_matches(finding, image_matches, weight_scale=0.75)
+        return finding
 
 
 class OpenShiftConnector(KubernetesConnector):
