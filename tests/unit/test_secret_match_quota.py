@@ -244,11 +244,50 @@ def test_one_key_repeated_in_six_manifest_documents_counts_once(tmp_path, index)
 def test_one_key_assigned_to_six_names_counts_once(tmp_path, index):
     source = "".join(f'SVC{n}_OPENAI_API_KEY = "{_REPEATED}"\n' for n in range(6))
     limited: set[str] = set()
-    assert len(index.match_secrets(source, code=True, limited=limited)) == 1
+    matches = index.match_secrets(source, code=True, limited=limited)
+    assert {reported_credential(m) for m in matches} == {_REPEATED}
     assert limited == set()
     findings, ctx = _scan(index, tmp_path, {"src/a.py": source})
     assert _secret_finding(findings).metadata["count"] == 1
     assert not ctx.stats.incomplete, ctx.stats.errors
+
+
+# Counted once, a repeated credential was also neither returned nor listed, so
+# a finding pointed at one line of a file that held it on several, where main
+# 8c72467 listed up to five. Each credential keeps up to five locations now.
+def test_a_repeated_credential_is_listed_at_up_to_five_lines(tmp_path, index):
+    source = "".join(f'SVC{n}_OPENAI_API_KEY = "{_REPEATED}"\n' for n in range(7))
+    matches = index.match_secrets(source, code=True)
+    assert sorted(m.line for m in matches) == [1, 2, 3, 4, 5]
+    findings, ctx = _scan(index, tmp_path, {"src/a.py": source})
+    secret = _secret_finding(findings)
+    assert sorted(e.location for e in secret.evidence) == [f"src/a.py:{n}" for n in range(1, 6)]
+    assert secret.metadata["count"] == 1 and not ctx.stats.incomplete
+
+
+def test_an_env_file_lists_every_line_of_a_repeated_key_and_counts_it_once(tmp_path, index):
+    # Each value of an env file is also read on its own line, so every line is listed.
+    key = "sk-" + "proj-" + _REPEATED + "T3BlbkFJ" + _distinct_key(7)
+    env = "".join(f"SVC{n}_OPENAI_API_KEY={key}\n" for n in range(6))
+    findings, ctx = _scan(index, tmp_path, {".env": env})
+    secret = _secret_finding(findings)
+    assert sorted(e.location for e in secret.evidence) == [f".env:{n}" for n in range(1, 7)]
+    assert secret.metadata["count"] == 1 and not ctx.stats.incomplete
+    assert key not in json.dumps(secret.to_dict(), default=str)
+
+
+def test_each_repeated_credential_keeps_its_own_locations(tmp_path, index):
+    compose = "services:\n" + "".join(
+        f"  svc{n}:\n    image: postgres\n    environment:\n      POSTGRES_PASSWORD: {_REPEATED}\n"
+        f"      REDIS_PASSWORD: {_distinct_key(1)}\n"
+        for n in range(6)
+    )
+    findings, ctx = _scan(index, tmp_path, {"docker-compose.yml": compose})
+    secret = _secret_finding(findings)
+    assert len(secret.evidence) == 10 and secret.metadata["count"] == 2
+    assert not ctx.stats.incomplete, ctx.stats.errors
+    dumped = json.dumps(secret.to_dict(), default=str)
+    assert _REPEATED not in dumped and _distinct_key(1) not in dumped
 
 
 def test_six_distinct_keys_still_disclose_the_quota(tmp_path, index):

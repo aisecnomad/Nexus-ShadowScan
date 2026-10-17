@@ -1405,7 +1405,10 @@ class _CredentialJudge:
     credential and counts again toward nothing. It is recognized by a digest
     keyed with a secret of this judge alone (``_seen``), so no credential is
     kept past its match, and the digests cannot be compared with another
-    text's.
+    text's. A repeat is still evidence of where the credential is written:
+    up to :data:`MAX_SECRETS_PER_SIGNAL` locations of each credential, its
+    first included, are kept in ``repeats`` for the caller, as main
+    8c72467 listed them, and none counts toward the quota.
     """
 
     def __init__(
@@ -1420,17 +1423,23 @@ class _CredentialJudge:
         self.accepted: dict[str, list[tuple[int, int]]] = {}
         self.samples: list[tuple[Signature, Signal, Any]] = []
         self._kept_samples: Counter[str] = Counter()
+        self.repeats: list[tuple[Signature, Signal, Any]] = []
         self._key = os.urandom(32)
         self._seen: set[bytes] = set()
+        self._locations: Counter[bytes] = Counter()
 
-    def _repeated(self, signature_id: str, credential: str) -> bool:
-        """Whether ``signature_id`` already counted ``credential``; records it when not."""
+    def _repeated(self, signature_id: str, credential: str) -> bool | None:
+        """Whether ``signature_id`` already counted ``credential``; records it when not.
+
+        None when it did and the credential has as many locations kept as it may.
+        """
         keyed = hashlib.blake2b(f"{signature_id}\0{credential}".encode(), key=self._key, digest_size=16)
         digest = keyed.digest()
-        if digest in self._seen:
-            return True
-        self._seen.add(digest)
-        return False
+        self._locations[digest] += 1
+        if digest not in self._seen:
+            self._seen.add(digest)
+            return False
+        return True if self._locations[digest] <= MAX_SECRETS_PER_SIGNAL else None
 
     def _covered(self, signature_id: str, start: int, end: int) -> bool:
         spans = self.accepted.get(signature_id, ())
@@ -1458,14 +1467,18 @@ class _CredentialJudge:
                 self.accepted.setdefault(signature.id, []).append((start, end))
                 self.samples.append((signature, signal, match))
             return False
-        if self._repeated(signature.id, credential):
+        repeated = self._repeated(signature.id, credential)
+        if repeated is None:
             return False
         self.accepted.setdefault(signature.id, []).append((start, end))
+        if repeated:
+            self.repeats.append((signature, signal, match))  # a location, not a credential
+            return False
         return True
 
 
 def _sample_matches(text: str, samples: Sequence[tuple[Signature, Signal, Any]]) -> list[Match]:
-    """The documentation samples a ``_CredentialJudge`` kept, as matches of ``text``."""
+    """The documentation samples or repeated locations a ``_CredentialJudge`` kept, as matches of ``text``."""
     if not samples:
         return []
     newlines = [newline.start() for newline in re.finditer("\n", text)]
@@ -2603,7 +2616,11 @@ class SignatureIndex:
         test, which judges the credential a match stands for
         (``reported_credential``): a few samples per signature are returned
         besides the quota, for example evidence, and a file of them is never
-        reported as holding more credentials than the quota.
+        reported as holding more credentials than the quota. A credential a
+        signature already counted counts again toward nothing either, but up
+        to :data:`MAX_SECRETS_PER_SIGNAL` of its locations are returned, so a
+        finding lists where a repeated credential is written while its count
+        (the distinct credentials) and the quota see it once.
 
         The quota bounds the evidence one finding can carry. It also hides
         every further credential of a format once that many have matched, so
@@ -2622,7 +2639,7 @@ class SignatureIndex:
             limited=limited,
             accept=judge,
         )
-        matches.extend(_sample_matches(text, judge.samples))
+        matches.extend(_sample_matches(text, judge.samples + judge.repeats))
         ends = [m.extra.get("end") for m in matches]
         followers = [text[end : end + _FOLLOWER_CHARS] if end is not None else "" for end in ends]
         credentials = _kept_credentials(

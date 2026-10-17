@@ -6171,7 +6171,9 @@ class FilesystemConnector(BaseConnector):
             f.add_tag(NEGATIVE_CONTEXT_TAGS[context.reason])
             f.metadata["negative_contexts"] = [context.reason]
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
-        f.metadata["count"] = len(hits)
+        # The distinct credentials: one written on several lines, or matched by
+        # several patterns, counts once, and its evidence lists each location.
+        f.metadata["count"] = len({reported_credential(m) for m, _ in hits})
         if limited:
             # The matcher stopped at its per-signal quota for these formats:
             # ``count`` is a lower bound, and the scan is already incomplete
