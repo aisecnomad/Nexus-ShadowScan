@@ -300,13 +300,14 @@ public repositories with the tool and read the committed benchmark metrics.
   the path it occurred at, and takes the verdict once at the end of the run. A
   *blinding* gap -- the walk stopped, a page was refused, a deadline expired,
   a symbolic link names a directory (inside the tree or outside it), a
-  manifest or agent card would not parse, undecodable bytes outside a test
-  or vendored path, any sanitizer limit -- marks the scan incomplete at once,
-  with no budget: the scanner cannot bound what it missed. A *partial* gap
-  costs a known amount (a dangling link, or a link to one regular file, is
-  one entry) and accumulates against `options.max_coverage_gap` /
-  `--max-coverage-gap`, 2% of examined entries with a ceiling of 100 weighted
-  entries.
+  manifest or agent card would not parse, an agent, MCP or dependency
+  configuration file its name selects is over `max_file_size`, undecodable
+  bytes outside a test or vendored path, any sanitizer limit -- marks the
+  scan incomplete at once, with no budget: the scanner cannot bound what it
+  missed. A *partial* gap costs a known amount (a dangling link, or a link
+  to one regular file, is one entry) and accumulates against
+  `options.max_coverage_gap` / `--max-coverage-gap`, 2% of examined entries
+  with a ceiling of 100 weighted entries.
 - Gaps under paths that cannot hold deployed code (`node_modules`, `vendor`,
   test fixtures) are weighted to a quarter, not ignored, so a tree seeded with
   thousands still exhausts the budget. Undecodable content is charged at full

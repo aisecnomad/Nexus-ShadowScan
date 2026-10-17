@@ -64,6 +64,13 @@ def assert_coverage_gap(stats, rel: str | None = None) -> None:
     assert all("budget" in error for error in stats.errors), stats.errors
 
 
+def assert_blinding_gap(stats, rel: str) -> None:
+    """The file was not read, and no budget could have tolerated it: the error names the file."""
+    assert stats.incomplete, "an unread file must never leave the scan looking complete"
+    assert any(rel in error for error in stats.errors), f"{rel} is not named in {stats.errors}"
+    assert stats.coverage is not None and stats.coverage["blinding_gaps"] >= 1, stats.coverage
+
+
 def assert_disclosed_without_a_gap(stats, rel: str | None = None) -> None:
     """The file was skipped by policy, which costs no coverage and no exit code."""
     assert not stats.incomplete, "a policy skip must not mark the scan incomplete"
@@ -461,10 +468,13 @@ def test_oversize_documentation_and_fixtures_read_for_credentials_stay_gaps(run_
 )
 def test_oversize_agent_documents_stay_coverage_gaps(run_connector, tmp_path, rel):
     # Coding-agent instructions and agent definitions are parsed: unread, they
-    # could hide an agent, so they keep the gap whatever their extension.
+    # could hide an agent, so they keep the gap whatever their extension, and
+    # no budget tolerates it however large the tree.
     write(tmp_path, rel, OVERSIZE)
+    for index in range(100):
+        write(tmp_path, f"src/mod{index}.py", f"VALUE = {index}\n")
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert_coverage_gap(stats)
+    assert_blinding_gap(stats, rel)
 
 
 @pytest.mark.parametrize(

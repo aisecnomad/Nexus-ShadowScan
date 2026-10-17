@@ -23,14 +23,15 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   `Project Nexus`; SARIF and CycloneDX keep the tool name `ShadowScan`.
 - Coverage gaps are budgeted. A gap the scanner can bound -- a handful of
   unreadable entries, a dangling symbolic link or one to a single file, one
-  file over `max_file_size` -- no longer marks the scan incomplete on its own. Such
-  gaps accumulate against `options.max_coverage_gap` / `--max-coverage-gap`,
-  2% of examined entries by default, and are always reported under
-  `stats.coverage` whether or not they change the exit code. A gap the
-  scanner *cannot* bound still fails closed with no budget: an early stop, a
-  refused page, an expired deadline, a symbolic link to a directory, an
-  unparseable manifest or agent card, undecodable bytes outside a test or
-  vendored path, and any sanitizer limit.
+  source or data file over `max_file_size` -- no longer marks the scan
+  incomplete on its own. Such gaps accumulate against
+  `options.max_coverage_gap` / `--max-coverage-gap`, 2% of examined entries
+  by default, and are always reported under `stats.coverage` whether or not
+  they change the exit code. A gap the scanner *cannot* bound still fails
+  closed with no budget: an early stop, a refused page, an expired deadline,
+  a symbolic link to a directory, an unparseable manifest or agent card, an
+  agent, MCP or dependency configuration file over `max_file_size`,
+  undecodable bytes outside a test or vendored path, and any sanitizer limit.
   `strict_coverage` and `--max-coverage-gap 0` restore the previous
   behaviour exactly. Expect scans that previously exited 3 on a dangling
   symbolic link in a test fixture to exit 0 now, with the gap listed.

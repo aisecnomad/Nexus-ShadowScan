@@ -279,6 +279,38 @@ class TestEndToEnd:
         assert stats.incomplete is True and stats.coverage["within_budget"] is False
         assert len([w for w in stats.warnings if "not a regular file" in w or "not listed" in w]) == 11
 
+    def test_padding_an_mcp_configuration_past_the_size_limit_never_hides_it(self, tmp_path) -> None:
+        """Whitespace hides a configuration as well as undecodable bytes do, so neither is budgeted."""
+        self._tree(tmp_path, 100)
+        mcp = '{"mcpServers": {"fs": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem"]}}}'
+        (tmp_path / ".mcp.json").write_text(mcp + " " * 1_100_000, encoding="utf-8")
+        stats = self._run(tmp_path)
+        assert stats.incomplete is True
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 1
+        assert any(".mcp.json" in error and "max_file_size" in error for error in stats.errors)
+        assert stats.incomplete_reasons == {"oversize-file": 1}
+
+    def test_oversize_configuration_in_discounted_test_code_is_budgeted(self, tmp_path) -> None:
+        """As undecodable bytes there are: test code establishes no agent while include_tests is off."""
+        self._tree(tmp_path, 100)
+        (tmp_path / "tests" / "fixtures").mkdir(parents=True)
+        (tmp_path / "tests" / "fixtures" / ".mcp.json").write_text("{}" + " " * 1_100_000, encoding="utf-8")
+        stats = self._run(tmp_path)
+        assert stats.incomplete is False
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 0
+        stats = self._run(tmp_path, include_tests=True)
+        assert stats.incomplete is True
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 1
+
+    def test_oversize_incidental_content_is_still_budgeted(self, tmp_path) -> None:
+        self._tree(tmp_path, 100)
+        (tmp_path / "data").mkdir()
+        (tmp_path / "data" / "export.json").write_text("[" + " " * 1_100_000 + "]", encoding="utf-8")
+        stats = self._run(tmp_path)
+        assert stats.incomplete is False
+        assert stats.coverage is not None
+        assert stats.coverage["gaps"] == 1 and stats.coverage["blinding_gaps"] == 0
+
     def test_a_directory_link_to_an_outside_tree_is_never_budgeted(self, tmp_path) -> None:
         """One link can stand for a whole service of agents and MCP servers: no budget bounds it."""
         from click.testing import CliRunner

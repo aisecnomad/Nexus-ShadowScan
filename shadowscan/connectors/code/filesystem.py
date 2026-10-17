@@ -2994,10 +2994,18 @@ class FilesystemConnector(BaseConnector):
             if self.strict_coverage:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
             elif issue == "file exceeds max_file_size":
+                # Configuration its name selects is read for what it declares:
+                # padded past the limit, it hides a definition as well as
+                # undecodable bytes would, so it is blinding like them outside
+                # discounted test code. Other oversize content (generated
+                # source, a data export) is incidental and costs one entry.
+                selected = self._named_configuration(rel, path.name) and not self._discounted_test_gap(rel)
                 self._budgeted_gap(
                     rel,
-                    f"code.filesystem: {rel}: skipped, {issue}; coverage gap",
+                    f"code.filesystem: {rel}: skipped, {issue}; "
+                    + ("coverage incomplete" if selected else "coverage gap"),
                     declared=f"code.filesystem: {rel}: skipped, {issue}",
+                    blinding=selected,
                 )
             elif issue == BINARY_CONTENT_ERROR and self._discounted_test_gap(rel):
                 binary_fixture = True
@@ -3034,6 +3042,24 @@ class FilesystemConnector(BaseConnector):
         if path.suffix.lower() != ".ipynb":
             return text, None, (), ()
         return self._notebook_source(rel, text)
+
+    def _named_configuration(self, rel: str, name: str) -> bool:
+        """Whether ``rel`` is read as the configuration its name selects, rather than as incidental content.
+
+        MCP configuration, dependency and deployment manifests, coding-agent
+        instructions, settings and definitions, agent cards, and any file a
+        file-name signature names: the files where an agent or a server is
+        declared.
+        """
+        return (
+            name in MCP_CONFIG_NAMES
+            or is_manifest_name(name)
+            or _is_coding_agent_doc(name)
+            or is_agent_config_path(rel)
+            or agent_manifest_kind(rel) is not None
+            or any(directory in rel for directory in _AGENT_DEFINITION_DIRS)
+            or self._named_by_signature(rel, self.index.match_file(rel))
+        )
 
     def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
         """Whether a file-name signature selects ``rel`` by its name, not only by its directory.
