@@ -18,7 +18,7 @@ import socket
 import sys
 import threading
 import time
-from collections.abc import Iterable, Iterator, MutableMapping
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from multiprocessing.process import BaseProcess
@@ -48,7 +48,7 @@ _WORKER_GRACE_SECONDS = 2.0
 # Without a descriptor listing, descriptors up to the open-file limit are
 # visited, but never more than this many.
 _MAX_DESCRIPTOR_LIMIT = 1 << 20
-# Serializes the brief PYTHONSAFEPATH window around a spawn (see _safe_path_spawn).
+# Serializes the brief environment window around a spawn (see _worker_spawn_environment).
 _SPAWN_ENVIRONMENT = threading.Lock()
 # A process-mode worker does not inherit the credentials the operator exported
 # for the built-in connectors: a variable whose name ends in one of these words
@@ -91,6 +91,12 @@ def is_credential_name(name: str) -> bool:
     return any(upper == suffix or upper.endswith("_" + suffix) for suffix in CREDENTIAL_NAME_SUFFIXES)
 
 
+def _withheld_names(environ: Mapping[str, str], keep: Iterable[str]) -> list[str]:
+    """The names of the credential-shaped variables in ``environ``, except ``keep``."""
+    kept = set(keep)
+    return sorted(name for name in environ if name not in kept and is_credential_name(name))
+
+
 def scrub_credential_environment(environ: MutableMapping[str, str], keep: Iterable[str] = ()) -> list[str]:
     """Remove the credential-shaped variables from ``environ``, except ``keep``; return the names removed.
 
@@ -98,18 +104,18 @@ def scrub_credential_environment(environ: MutableMapping[str, str], keep: Iterab
     copy of the environment: the scanner's environment is not changed, and
     thread-mode plugins, which share the scanner's process, are unaffected.
     ``keep`` is ``options.plugin_env``: the variables an approved plugin reads
-    itself, by exact name.
+    itself, by exact name. The worker was already started without these
+    variables (see _worker_spawn_environment); this is the second line.
     """
-    kept = set(keep)
-    removed = sorted(name for name in environ if name not in kept and is_credential_name(name))
+    removed = _withheld_names(environ, keep)
     for name in removed:
         del environ[name]
     return removed
 
 
 @contextmanager
-def _safe_path_spawn() -> Iterator[None]:
-    """Give an interpreter spawned in this block PYTHONSAFEPATH=1, then restore os.environ.
+def _worker_spawn_environment(keep: Iterable[str]) -> Iterator[None]:
+    """Start an interpreter in this block with PYTHONSAFEPATH=1 and without the withheld credentials.
 
     The spawned child runs ``python -c``, which would put the working directory (possibly an
     untrusted checkout) first on sys.path before its first ``import multiprocessing``.
@@ -117,13 +123,31 @@ def _safe_path_spawn() -> Iterator[None]:
     duration of the spawn, under a lock so concurrent spawns cannot restore it early, and
     the previous value (or its absence) is put back: the scanner's and an embedder's own
     later children must not inherit it.
+
+    The credential-shaped variables (except ``keep``) and the identity key are taken out of
+    the environment the new program receives for the same window, so the worker starts
+    without them: removing a variable inside the worker would not change the environment it
+    was started with, which it can still read (``/proc/self/environ`` on Linux). Only the
+    process environment changes (``os.unsetenv``), never ``os.environ``: connectors running
+    on the scanner's other threads read ``os.environ``, and the scanner's own subprocesses
+    receive an environment built from it, so neither loses a credential meanwhile. Each
+    variable is put back from ``os.environ`` afterwards.
     """
+    from shadowscan.comparison import IDENTITY_KEY_ENV
+
     with _SPAWN_ENVIRONMENT:
         previous = os.environ.get("PYTHONSAFEPATH")
+        withheld = sorted({IDENTITY_KEY_ENV, *_withheld_names(os.environ, keep)} & set(os.environ))
         os.environ["PYTHONSAFEPATH"] = "1"
         try:
+            for name in withheld:
+                os.unsetenv(name)
             yield
         finally:
+            for name in withheld:
+                value = os.environ.get(name)
+                if value is not None:
+                    os.putenv(name, value)
             if previous is None:
                 os.environ.pop("PYTHONSAFEPATH", None)
             else:
@@ -493,8 +517,9 @@ def _run_plugin_process(
         if state.cancelled.is_set():
             raise TimeoutError
         # A planted ``multiprocessing/`` in an untrusted working directory must not run in the
-        # worker (or the resource tracker the first start launches): see _safe_path_spawn.
-        with _safe_path_spawn():
+        # worker (or the resource tracker the first start launches), and the worker must not
+        # start with the scanner's credentials: see _worker_spawn_environment.
+        with _worker_spawn_environment(config.plugin_env):
             process.start()
         if state.cancelled.is_set():
             raise TimeoutError

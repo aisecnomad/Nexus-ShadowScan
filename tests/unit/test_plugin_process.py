@@ -116,6 +116,19 @@ class Connector(BaseConnector):
                         if name.startswith("SHADOWSCAN_PROBE_") or name in ("PATH", "HOME")
                     ),
                 )
+            if mode == "initial-env":
+                # The environment the worker was started with, which removing a variable from
+                # os.environ does not change.
+                with open("/proc/self/environ", "rb") as initial:
+                    entries = initial.read().split(b"\\0")
+                names = [entry.partition(b"=")[0].decode() for entry in entries if entry]
+                metadata.update(
+                    initial=sorted(
+                        name for name in names
+                        if name.startswith("SHADOWSCAN_PROBE_")
+                        or name in ("PATH", "HOME", "SHADOWSCAN_IDENTITY_KEY")
+                    ),
+                )
             # "forge" builds the finding under a built-in connector's name; "forge-id" gives a
             # finding under its own name that finding's id, and "forge-replace" re-labels a copy.
             shape = dict(
@@ -821,6 +834,45 @@ def test_spawned_plugin_does_not_inherit_credential_environment(installed_probe,
     # The scanner's own environment is untouched.
     assert os.environ["SHADOWSCAN_PROBE_GITHUB_TOKEN"] == "synthetic"
     _assert_reaped(installed_probe)
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/environ"), reason="reads /proc/<pid>/environ")
+def test_spawned_plugin_initial_environment_holds_no_withheld_variable(installed_probe, monkeypatch):
+    """Regression: the worker removed the credentials from os.environ, but spawn had already
+    started it with the scanner's whole environment, so a plugin still read every withheld value
+    from /proc/self/environ, which removing a variable does not change. The identity key is
+    withheld even when ``plugin_env`` names it."""
+    monkeypatch.setenv("SHADOWSCAN_PROBE_GITHUB_TOKEN", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_DB_PASSWORD", "synthetic")
+    monkeypatch.setenv("SHADOWSCAN_PROBE_VENDOR_TOKEN", "synthetic")  # the plugin's own, allowlisted
+    monkeypatch.setenv("SHADOWSCAN_PROBE_REGION", "eu-west-1")  # not credential-shaped: stays
+    monkeypatch.setenv("SHADOWSCAN_IDENTITY_KEY", "hex:" + bytes(range(32)).hex())
+    monkeypatch.setenv("SHADOWSCAN_PROCESS_PROBE", "initial-env")
+    before = dict(os.environ)
+    result = _engine(plugin_env=["SHADOWSCAN_PROBE_VENDOR_TOKEN", "SHADOWSCAN_IDENTITY_KEY"]).run()
+    assert result.complete, result.stats
+    assert result.findings[0].metadata["initial"] == [
+        "HOME",
+        "PATH",
+        "SHADOWSCAN_PROBE_REGION",
+        "SHADOWSCAN_PROBE_VENDOR_TOKEN",
+    ]
+    _assert_reaped(installed_probe)
+    # The scanner's environment, and the one its later programs inherit, are unchanged.
+    assert dict(os.environ) == before
+    later = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import os; print(' '.join(sorted(n for n in os.environ if n.startswith('SHADOWSCAN_P'))))",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    assert later.stdout.split() == sorted(name for name in before if name.startswith("SHADOWSCAN_P"))
 
 
 @pytest.mark.parametrize(

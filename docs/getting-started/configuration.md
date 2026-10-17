@@ -52,12 +52,13 @@ connector in its own spawned worker that the scanner can terminate at the
 connector deadline; `plugin_execution: thread` (or `--plugin-execution thread`)
 runs plugins in the scanner process instead, where a blocked plugin cannot be
 stopped. Built-in connectors always use the thread backend. Workers keep the
-scanner's privileges but not the credentials it exported for the built-in
-connectors: credential-shaped environment variables (`*_TOKEN`, `*_SECRET`,
-`*_KEY`, `*_PASSWORD`, the cloud SDK credential variables) are removed from a
-worker before the plugin is imported, except the names `plugin_env` lists for a
+scanner's privileges, and are started without the credentials it exported for
+the built-in connectors: credential-shaped environment variables (`*_TOKEN`,
+`*_SECRET`, `*_KEY`, `*_PASSWORD`, the cloud SDK credential variables) are left
+out of a worker's environment, except the names `plugin_env` lists for a
 plugin that reads its own credential from the environment. This is lifecycle
-isolation, not a sandbox. See
+isolation, not a sandbox: a worker runs as the scanner's user and can still
+read the scanner's own environment. See
 [third-party plugin execution](../connectors.md#third-party-plugin-execution).
 
 ## Reaching an internal destination

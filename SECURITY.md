@@ -16,11 +16,18 @@ The operator workstation or CI runner, scanner configuration and installed Pytho
 packages are trusted. Third-party connector execution requires an exact-name
 allowlist in `options.plugins` or repeatable `--allow-plugin`. Listing connectors
 does not import plugin code. The allowlist is not a sandbox: an approved plugin
-runs with scanner privileges. A spawned plugin worker does not inherit the
+runs with scanner privileges. A spawned plugin worker is started without the
 credential-shaped environment variables exported for the built-in connectors
 (`*_TOKEN`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, the cloud SDK credential
-variables) unless `options.plugin_env` names them; a thread-mode plugin shares
-the scanner's environment. Built-in connector names cannot be replaced.
+variables) unless `options.plugin_env` names them, so they are neither in its
+environment (`os.environ`, on Linux `/proc/self/environ`) nor in that of the
+programs it starts; a thread-mode plugin shares the scanner's environment. This
+keeps credentials from a plugin that does not look for them, not from one that
+does: the worker runs as the scanner's user, which can read the scanner's own
+environment (on Linux `/proc/<scanner pid>/environ`; other systems have
+equivalents) and every credential file that user can. Process mode is lifecycle
+isolation, not a sandbox: run a plugin that must not reach a credential in a
+job that does not hold it. Built-in connector names cannot be replaced.
 
 Remote responses, scanned repositories and offline exports are untrusted inputs.
 Review signature packs before installation. Built-in signature IDs are reserved

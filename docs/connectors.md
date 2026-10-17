@@ -133,9 +133,9 @@ interpreter lock indefinitely still needs external supervision.
 
 This is **lifecycle isolation, not a security sandbox**. A child retains the
 scanner's operating-system privileges and can read what the scanner can. It
-does not inherit the credentials the operator exported for the built-in
-connectors: before the plugin is imported, the worker removes from its own
-environment every variable whose name ends in `TOKEN`, `SECRET`, `KEY`,
+is started without the credentials the operator exported for the built-in
+connectors, and removes them from its own environment again before the plugin
+is imported: every variable whose name ends in `TOKEN`, `SECRET`, `KEY`,
 `PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIALS` or `CREDENTIAL` (after an
 underscore, or as the whole name) and the cloud SDK variables that carry a
 credential or the file holding one (`AWS_ACCESS_KEY_ID`,
@@ -148,7 +148,13 @@ proxy and CA settings stay. A plugin that reads its own credential from the
 environment names it in `options.plugin_env` (exact names, at most 64), and the
 worker keeps those; a value the configuration interpolates with `${VAR}` is
 expanded by the scanner before the worker starts and needs no entry. The
-scanner's own environment is not changed, and thread-mode plugins share it.
+variables are left out of the worker's initial environment (on Linux
+`/proc/self/environ`) and so of the programs it starts; the scanner's
+`os.environ` is not changed, and thread-mode plugins share it. Withholding them
+keeps credentials from a plugin that does not look for them, not from one that
+does: the worker runs as the scanner's user, which can read the scanner's own
+environment (on Linux `/proc/<scanner pid>/environ`) and that user's credential
+files.
 Sibling connector configurations are not passed to the worker. Record exports go only
 to the private export directory the scanner prepared (expanded, symlink-free,
 owned, mode 0700); the worker never derives that path again. Descendant subprocesses

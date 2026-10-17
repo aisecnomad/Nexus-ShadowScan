@@ -190,10 +190,11 @@ public repositories with the tool and read the committed benchmark metrics.
   worker inherited the scanner's whole environment, so an approved
   third-party connector could read `GITHUB_TOKEN`, cloud credentials and
   every other secret the operator had exported for the built-in connectors.
-  Before the plugin is imported, the worker now removes from its own
-  environment every variable whose name ends in `TOKEN`, `SECRET`, `KEY`,
-  `PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIALS` or `CREDENTIAL` (after
-  an underscore, or as the whole name) and the cloud SDK variables that
+  The worker is now started without, and removes again from its own
+  environment before the plugin is imported, every variable whose name ends
+  in `TOKEN`, `SECRET`, `KEY`, `PASSWORD`, `PASSWD`, `PASSPHRASE`,
+  `CREDENTIALS` or `CREDENTIAL` (after an underscore, or as the whole name)
+  and the cloud SDK variables that
   carry a credential or the file holding one (`AWS_ACCESS_KEY_ID`,
   `AWS_WEB_IDENTITY_TOKEN_FILE`, `AZURE_CLIENT_CERTIFICATE_PATH`,
   `AZURE_FEDERATED_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, the OCI
@@ -206,7 +207,20 @@ public repositories with the tool and read the committed benchmark metrics.
   scanner before the worker starts. The scanner's own environment is not
   changed, and thread-mode plugins, which share it, are unaffected, as
   before. The worker's result validation also checks the two statistics
-  fields the ci profile added.
+  fields the ci profile added. A follow-up review found the worker's removal
+  alone left every withheld value in the environment the worker was started
+  with, which `del os.environ[...]` does not change: a plugin read them from
+  `/proc/self/environ`. The spawn now leaves them, and the identity key even
+  when `plugin_env` names it, out of the environment it hands on
+  (`os.unsetenv` for the duration of the spawn, under the lock that already
+  sets `PYTHONSAFEPATH`, then put back from `os.environ`, which is never
+  changed, so connectors on other threads keep reading their credentials);
+  the worker's own removal stays as a second line. A worker still runs as
+  the scanner's user and can read the scanner's environment from
+  `/proc/<scanner pid>/environ`: withholding keeps credentials from a plugin
+  that does not look for them, not from one that does, and SECURITY.md, the
+  production guide and the plugin contract now say so instead of saying a
+  worker "does not inherit" them.
 - **Not carried: redaction patterns on the `regex` module.** The review
   suggested giving the credential redaction patterns a match timeout
   through the `regex` module, as the code connectors' patterns have, so a
