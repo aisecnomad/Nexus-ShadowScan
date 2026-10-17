@@ -190,6 +190,9 @@ class _JobState:
     partial_findings: list[list[Finding]] = field(default_factory=list)
     # The job's engine hooks, so an expiry withholds registry records from the
     # surrendered findings exactly as _run_one does from a completed job's.
+    # _run_one records them before the connector can register any finding, and
+    # _hooks() always gives a class (BaseConnector for a failed lookup), so this
+    # is None only for an expiry that came before _run_one got that far.
     hooks: type[BaseConnector] | None = None
 
     def register_partial(self, findings: list[Finding]) -> None:
@@ -252,8 +255,10 @@ def _withhold_registry_records(
     that copies record-shaped metadata from an export or a repository, or a plugin that declares
     the hook, must not create an approval, so the key is dropped and the drop is reported. A
     declaring connector keeps only records of the registry types it lists, so it cannot speak
-    for another vendor's registry. ``hooks`` is None for a job no class was resolved for, which
-    declares nothing.
+    for another vendor's registry. ``hooks`` is None only when a job's deadline expired before
+    ``_run_one`` recorded its class on the job state (a failed lookup still gets
+    ``BaseConnector``'s hooks, see ``_hooks``), or when a surrendering job's class could not say
+    what it declares; None declares nothing, so every record is withheld.
     """
     declared = getattr(hooks, "emits_registry_records", False) is True
     declared_types = getattr(hooks, "registry_record_types", None)
