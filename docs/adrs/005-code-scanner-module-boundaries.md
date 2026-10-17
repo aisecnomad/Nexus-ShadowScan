@@ -112,10 +112,10 @@ and the class itself is unchanged.
 
 ## Status (2026-10-17)
 
-Being implemented step by step, one commit per group in the order ownership,
-walk, file scan, findings, moving code without changing it apart from renaming
-the methods other classes now call; the collaborators are classes the façade
-constructs and wires, not mixins. The line ranges above are those of
+Accepted and implemented step by step, one commit per group in the order
+ownership, walk, file scan, findings, moving code without changing it apart
+from renaming the methods other classes now call; the collaborators are classes
+the façade constructs and wires, not mixins. The line ranges above are those of
 2026-10-01; the groups were derived again from the current call graph, and a
 method that served two groups went where it needed the fewest calls across
 them.
@@ -150,8 +150,21 @@ them.
    binding of Python re-export consumers (`resolve_reexport_sources`), with the
    `_Project`, `_SourceFile` and `_MatchedSource` records. `file_errors` (was
    `_file_errors`) is also used by the findings code.
+4. **Findings** moved into the new `project_findings.ProjectFindings`:
+   `emit_findings` (was `_emit_findings`) and every project, source-agent,
+   coding-agent, MCP, agent-manifest, workflow, IaC and credential finding
+   builder. Like the file scan it receives `_base`, and like the walker
+   `_root_prefix`.
 
-The findings group (step 4) is still part of the class.
+`FilesystemConnector` is the façade: configuration and its validation, the
+engine hooks, `collect()`/`analyze()`/`load_offline()`, `scan_tree` with the
+per-root `_ScanState`, label and diff resolution, `_base`, which stamps the
+connector's identity on every finding and is handed to the file scan and the
+findings collaborators (both build findings), and `_root_prefix`, handed to the
+walker and the findings collaborator. The collaborators receive the validated
+options they read when the connector is constructed; `unread_settings` and
+`tree_listing_incomplete`, which `remote.py` sets after construction, are still
+read per root.
 
 `filesystem.py` still re-exports every name that was importable from it before
 (patch a name in its defining module): those it no longer uses are explicit
@@ -182,10 +195,10 @@ listed above (and one pair of redundant parentheses `ruff format` dropped). The
 13,334 tests of the 199 test modules that touch the code scanner or scan its
 sources, with the repository policy tests, pass as on main, apart from
 wall-clock budget tests that fail intermittently under load on main too.
-Together the inputs and those tests execute 93.1% (ownership), 93.5% (walk) and
-98.1% (file scan) of the moved statements; most of the rest are deadline, race
-and Git 2.45+ paths. Not verified: the public repositories of the 2026-10-01
-field scan (nothing was cloned), live clone and API modes of `code.github` and
-`code.gitlab`, Git 2.45+ metadata (the runner had Git 2.43, so `use_git` and
-`diff_base` took their failure paths) and permission-denied reads (the runner
-was root).
+Together the inputs and those tests execute 93.1% (ownership), 93.5% (walk),
+98.1% (file scan) and 97.6% (findings) of the moved statements; most of the
+rest are deadline, race and Git 2.45+ paths. Not verified: the public
+repositories of the 2026-10-01 field scan (nothing was cloned), live clone and
+API modes of `code.github` and `code.gitlab`, Git 2.45+ metadata (the runner
+had Git 2.43, so `use_git` and `diff_base` took their failure paths) and
+permission-denied reads (the runner was root).

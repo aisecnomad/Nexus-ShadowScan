@@ -3,7 +3,7 @@
 An excerpt is one redacted, sanitized source line. Cutting it is deferred
 (``_LazyExcerpt``) until a report retains the evidence, and every line comes
 from the redacted text of its file (``_ExcerptSource``), never from the raw
-read; see ``FilesystemConnector._settle_excerpts``.
+read; see ``FileScanner._settle_excerpts``.
 """
 
 from __future__ import annotations

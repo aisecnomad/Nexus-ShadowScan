@@ -17,6 +17,7 @@ from shadowscan.connectors.code.ownership import (
     OwnershipBudget,
     codeowners_match,
 )
+from shadowscan.connectors.code.project_findings import ProjectFindings
 from shadowscan.engine import Engine
 from shadowscan.models import ScanStats, now_iso
 
@@ -63,7 +64,7 @@ def test_codeowners_root_replaced_before_emission_is_incomplete(
     (root / "agent.py").write_text("from crewai import Agent\n")
     (root / "CODEOWNERS").write_text("* @original\n")
     (outside / "CODEOWNERS").write_text("* @outside\n")
-    original_emit = FilesystemConnector._emit_findings
+    original_emit = ProjectFindings.emit_findings
 
     def replace_root(self, scan):
         root.rename(tmp_path / "original")
@@ -73,7 +74,7 @@ def test_codeowners_root_replaced_before_emission_is_incomplete(
             outside.rename(root)
         yield from original_emit(self, scan)
 
-    monkeypatch.setattr(FilesystemConnector, "_emit_findings", replace_root)
+    monkeypatch.setattr(ProjectFindings, "emit_findings", replace_root)
     result = Engine(
         ScanConfig(connectors=[ConnectorSpec("code.filesystem", {"path": str(root), "use_git": False})]),
         index,

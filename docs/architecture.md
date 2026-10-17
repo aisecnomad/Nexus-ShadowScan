@@ -313,9 +313,10 @@ splitting the connector class itself.
 
 | module | responsibility |
 |---|---|
-| `filesystem.py` | the connector: finding construction; constructs and wires its walk, file scan and ownership collaborators (ADR-005) |
+| `filesystem.py` | the connector façade (ADR-005): configuration, `collect()`/`analyze()`, the per-root scan state and the identity every finding carries; constructs and wires the walk, file scan, findings and ownership collaborators |
 | `walk.py` | the tree walk (`TreeWalker`): root opening, exclusions and `include`, links, oversize and non-regular entries, submodules, deadline scheduling and the fail-closed coverage accounting; bounded, non-recursive directory walking that never follows links; project-root markers |
 | `file_scan.py` | one file's analysis (`FileScanner`): confined reads, notebooks, redacted excerpts, and dispatch to the credential, MCP, manifest, IaC, configuration and source passes; Python re-export consumers bound after the walk |
+| `project_findings.py` | finding construction (`ProjectFindings`): project, source-agent, coding-agent, MCP, agent-manifest, workflow, IaC and credential findings from one walk's observations |
 | `path_context.py` | path-derived evidence context: test, documentation, example, generated and CI-pipeline paths, and the discounts they apply |
 | `project_evidence.py` | how a project's observations count toward its finding: corroboration, weak mentions, env-only and model-ids-only capping |
 | `model_identifiers.py` | model-identifier literal recognition: vendor stems, id shapes and tooling look-alikes |
