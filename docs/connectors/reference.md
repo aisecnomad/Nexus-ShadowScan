@@ -703,7 +703,7 @@ Offline input: JSON / JSONL / YAML export.
 
 | Key | Description |
 | --- | --- |
-| `input` | Offline host inventory JSON, JSONL, or YAML export; rows are reported when the name or path matches an AI product signature, the whole application or executable name is a known AI product or local model runtime (Ollama, LM Studio, GPT4All, llama.cpp, vLLM, LocalAI, Jan, Msty, ...), or the record's type/category names an AI category (ai, agent, assistant, copilot, llm, mcp, model). |
+| `input` | Offline host inventory JSON, JSONL, or YAML export; rows are reported when the name or path matches an AI product signature, the whole application or executable name is a known AI product, local model runtime or self-hosted AI platform (Ollama, LM Studio, GPT4All, llama.cpp, vLLM, LocalAI, Jan, Msty, Open WebUI, AnythingLLM, LiteLLM, ...), the path lies in a local model store (~/.ollama/models, ...), or the record's type/category names an AI category (ai, agent, assistant, copilot, llm, mcp, model). |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |

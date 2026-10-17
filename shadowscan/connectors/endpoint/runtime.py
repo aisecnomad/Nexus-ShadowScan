@@ -28,7 +28,12 @@ from shadowscan.connectors.code.semantic_config import (
 from shadowscan.connectors.code.skill_audit import MAX_TEXT_BYTES, audit_skill_text
 from shadowscan.connectors.common import apply_matches, failure_summary, finalize, name_matches
 from shadowscan.connectors.endpoint import a2a
-from shadowscan.connectors.endpoint.catalog import LOCAL_RUNTIME_NAMES, MODEL_STORES, SHELL_TOOLS
+from shadowscan.connectors.endpoint.catalog import (
+    AMBIGUOUS_PRODUCT_NAMES,
+    LOCAL_RUNTIME_NAMES,
+    MODEL_STORES,
+    SHELL_TOOLS,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.http import diagnostic_url
@@ -251,13 +256,24 @@ def _ai_category(category: str) -> bool:
 
 
 # Signature categories whose products a host installs or runs: model providers
-# (Ollama, LM Studio, vLLM, llama.cpp, LocalAI) and coding agents. Platform and
-# framework names are left out: "Make (Integromat)" is also GNU make.
-_HOST_PRODUCT_CATEGORIES = frozenset({"provider", "coding-agent"})
+# (Ollama, LM Studio, vLLM, llama.cpp, LocalAI), coding agents, and platforms
+# (self-hosted chat UIs such as Open WebUI and AnythingLLM, LiteLLM, Dify,
+# Flowise). A product name that is also a common word or another program's
+# name is left out by name, not by category (catalog.AMBIGUOUS_PRODUCT_NAMES):
+# "Make (Integromat)" is also GNU make.
+_HOST_PRODUCT_CATEGORIES = frozenset({"provider", "coding-agent", "platform"})
+# The products a signature groups, listed in its display name:
+# "Self-hosted chat UIs (Open WebUI, LibreChat, AnythingLLM, ...)".
+_LISTED_PRODUCTS = re.compile(r"\(([^()/]*,[^()/]*)\)")
 _APP_SUFFIX = re.compile(r"\.(?:app|exe)$", re.IGNORECASE)
 # "Ollama version 0.5.7", "LM Studio 0.3.14": Windows program names carry the version.
 _TRAILING_VERSION = re.compile(r"\s+(?:version\s+)?v?\d[\w.+-]*$", re.IGNORECASE)
 _NON_ALNUM = re.compile(r"[^0-9a-z]+")
+_PATH_SEPARATOR = re.compile(r"[\\/]")
+# Host inventory paths are read this far, so a long path keeps its file name.
+_MAX_HOST_PATH = 1024
+# The catalog's model stores as case-folded path components (``~/.ollama/models``).
+_MODEL_STORE_ROOTS = tuple(tuple(store.root.casefold().split("/")) for store in MODEL_STORES)
 
 
 def _product_key(text: str) -> str:
@@ -266,27 +282,53 @@ def _product_key(text: str) -> str:
 
     ``/Applications/LM Studio.app``, ``lm-studio`` and ``LM Studio 0.3.14`` share one key.
     """
-    base = re.split(r"[\\/]", text.rstrip("\\/"))[-1]
+    base = _PATH_SEPARATOR.split(text.rstrip("\\/"))[-1]
     base = _TRAILING_VERSION.sub("", _APP_SUFFIX.sub("", base))
     return _NON_ALNUM.sub("", base.casefold())
+
+
+def _signature_product_names(name: str) -> list[str]:
+    """The product names in a signature's display name: the name before any ``/``
+    alternative or parenthesis ("Gemini CLI / Jules" gives "Gemini CLI"), and each
+    product a parenthesized list names. A parenthesis that is not a comma-separated
+    list ("LiteLLM (SDK / Proxy)", "Make (Integromat)") qualifies the name and is not read.
+    """
+    names = [re.split(r"\s+/\s+|\s*\(", name)[0]]
+    listed = _LISTED_PRODUCTS.search(name)
+    if listed:
+        names += listed.group(1).split(",")
+    return names
 
 
 def _host_product_keys(index: SignatureIndex) -> frozenset[str]:
     """Keys of the products whose whole name marks a host inventory row as AI-related.
 
-    A signature contributes its product name: the display name before any ``/``
-    alternative or parenthesis ("Gemini CLI / Jules" gives "Gemini CLI"). The endpoint
-    catalog contributes its local model runtimes and AI command-line tools.
+    A signature contributes its product names (see ``_signature_product_names``). The
+    endpoint catalog contributes its local model runtimes and AI command-line tools. A
+    name the catalog lists as ambiguous contributes nothing.
     """
     names = [
-        re.split(r"\s+/\s+|\s*\(", signature.name)[0]
+        product
         for signature in index.signatures.values()
         if signature.category in _HOST_PRODUCT_CATEGORIES
+        for product in _signature_product_names(signature.name)
     ]
     names += [name for store in MODEL_STORES for name in (store.product, store.runtime)]
     names += [name for command, (product, _) in SHELL_TOOLS.items() for name in (command, product)]
     names += LOCAL_RUNTIME_NAMES
-    return frozenset(key for key in map(_product_key, names) if key)
+    ambiguous = {_product_key(name) for name in AMBIGUOUS_PRODUCT_NAMES}
+    return frozenset(key for key in map(_product_key, names) if key and key not in ambiguous)
+
+
+def _in_model_store(text: str) -> bool:
+    """Whether the path ``text`` is, or lies in, one of the catalog's model stores
+    (``~/.ollama/models``, ``/Users/u/.cache/lm-studio/models/...``), ignoring case."""
+    parts = tuple(part for part in _PATH_SEPARATOR.split(text.casefold()) if part)
+    return any(
+        parts[start : start + len(root)] == root
+        for root in _MODEL_STORE_ROOTS
+        for start in range(len(parts) - len(root) + 1)
+    )
 
 
 class HostConnector(_EndpointConnector):
@@ -297,9 +339,11 @@ class HostConnector(_EndpointConnector):
         "input": (
             "Offline host inventory JSON, JSONL, or YAML export; rows are reported when the "
             "name or path matches an AI product signature, the whole application or executable "
-            "name is a known AI product or local model runtime (Ollama, LM Studio, GPT4All, "
-            "llama.cpp, vLLM, LocalAI, Jan, Msty, ...), or the record's type/category names "
-            "an AI category (ai, agent, assistant, copilot, llm, mcp, model)."
+            "name is a known AI product, local model runtime or self-hosted AI platform (Ollama, "
+            "LM Studio, GPT4All, llama.cpp, vLLM, LocalAI, Jan, Msty, Open WebUI, AnythingLLM, "
+            "LiteLLM, ...), the path lies in a local model store (~/.ollama/models, ...), or the "
+            "record's type/category names an AI category (ai, agent, assistant, copilot, llm, "
+            "mcp, model)."
         )
     }
     # Whether rows without a recognized AI product were noted (one fixed-text note).
@@ -308,7 +352,8 @@ class HostConnector(_EndpointConnector):
     _product_keys: frozenset[str] | None = None
 
     def _names_ai_product(self, record: dict[str, Any]) -> bool:
-        """Whether the row's name, path or process names, as a whole, a known AI product.
+        """Whether the row's name, path or process names, as a whole, a known AI product,
+        or is a path in a local model store.
 
         osquery ``apps``/``programs`` and MDM rows carry an application or executable
         name (``LM Studio.app``, ``/usr/local/bin/ollama``, ``Ollama version 0.5.7``) and
@@ -316,10 +361,8 @@ class HostConnector(_EndpointConnector):
         """
         if self._product_keys is None:
             self._product_keys = _host_product_keys(self.index)
-        return any(
-            _product_key(self._text(record.get(key))) in self._product_keys
-            for key in ("name", "path", "process")
-        )
+        values = [self._text(record.get(key), _MAX_HOST_PATH) for key in ("name", "path", "process")]
+        return any(_product_key(value) in self._product_keys or _in_model_store(value) for value in values)
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:

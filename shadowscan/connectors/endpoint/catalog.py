@@ -190,6 +190,12 @@ class ModelStore:
     provider: str | None  # provider signature id
     layout: str  # how models are laid out: "ollama", "files" or "hf-hub"
 
+    @property
+    def root(self) -> str:
+        """The directory the runtime keeps its models in: ``path``, or for the Ollama
+        layout the ``models`` directory that holds ``manifests`` beside ``blobs``."""
+        return self.path.removesuffix("/manifests") if self.layout == "ollama" else self.path
+
 
 MODEL_STORES: tuple[ModelStore, ...] = (
     ModelStore("ollama", "Ollama", ".ollama/models/manifests", "provider.ollama", "ollama"),
@@ -240,4 +246,13 @@ LOCAL_RUNTIME_NAMES: tuple[str, ...] = (
     "Ollama app",  # Ollama's Windows tray application
     "llamafile",
     "KoboldCpp",
+)
+
+# Product names that are also a common word or the name of unrelated software:
+# a host inventory row named "Make" is GNU make far more often than Make
+# (Integromat), and "Rivet" names more than Ironclad's agent IDE.
+# endpoint.host never reports a row because its whole name is one of these.
+AMBIGUOUS_PRODUCT_NAMES: tuple[str, ...] = (
+    "Make",
+    "Rivet",
 )

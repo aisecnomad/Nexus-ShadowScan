@@ -14,6 +14,7 @@ from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud import kubernetes as kubernetes_module
 from shadowscan.connectors.cloud.kubernetes import KubernetesConnector, OpenShiftConnector
 from shadowscan.connectors.endpoint import runtime as endpoint_runtime
+from shadowscan.connectors.endpoint.catalog import AMBIGUOUS_PRODUCT_NAMES
 from shadowscan.connectors.endpoint.runtime import (
     EbpfConnector,
     HostConnector,
@@ -433,15 +434,62 @@ def test_endpoint_host_reports_local_model_runtimes_without_a_category(row) -> N
 
 
 @pytest.mark.parametrize(
-    "name", ["Slack", "Google Chrome", "zoom.us.app", "Zoom 6.2.5", "Make", "Jane Doe", "Janitor.exe"]
+    "name",
+    ["Slack", "Google Chrome", "zoom.us.app", "Zoom 6.2.5", "Make", "Rivet", "Jane Doe", "Janitor.exe"],
 )
 def test_endpoint_host_still_filters_ordinary_software_named_alone(name) -> None:
     """The whole-name comparison never reports a product that only contains or
-    resembles a runtime name, and leaves out platform names such as Make."""
+    resembles a runtime name, nor an ambiguous product name such as Make."""
     connector = HostConnector(ConnectorContext())
     connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
     assert list(connector.analyze([{"name": name}])) == []
     assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "Open WebUI"},
+        {"name": "AnythingLLM"},
+        {"name": "AnythingLLM.app", "path": "/Applications/AnythingLLM.app"},
+        {"name": "LibreChat"},
+        {"name": "litellm", "path": "/usr/local/bin/litellm"},
+        {"name": "LiteLLM"},
+        {"path": "~/.ollama/models"},
+        {"path": "/Users/u/.ollama/models/blobs/sha256-0123"},
+        {"path": "/Users/u/.cache/lm-studio/models"},
+        {"name": "~/.lmstudio/models"},
+        {"path": "C:\\Users\\u\\.cache\\huggingface\\hub"},
+        {"path": "/Users/u/jan/models"},
+    ],
+)
+def test_endpoint_host_reports_self_hosted_platforms_and_model_store_paths(row) -> None:
+    """Regression: platform signatures were left out wholesale, so a self-hosted
+    chat UI (Open WebUI, AnythingLLM, LibreChat) or a LiteLLM row was filtered,
+    and the catalog's model store paths were never consulted, so a
+    ``~/.ollama/models`` or LM Studio model directory row was filtered too, each
+    with an informational note on a scan that stayed complete."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    findings = list(connector.analyze([row]))
+    assert len(findings) == 1
+    assert findings[0].resource == next(row[key] for key in ("name", "path") if key in row)
+    assert connector.ctx.stats.warnings == []
+
+
+def test_endpoint_host_ambiguous_product_names_are_left_out_by_name() -> None:
+    """Make is a platform signature's product, left out because the name is
+    ambiguous, not because of its category; each ambiguous name the catalog
+    lists would otherwise be a product key, so the list holds no dead entry."""
+    index = HostConnector(ConnectorContext()).index
+    keys = endpoint_runtime._host_product_keys(index)
+    assert {"openwebui", "anythingllm", "librechat", "litellm", "dify", "flowise"} <= keys
+    for name in AMBIGUOUS_PRODUCT_NAMES:
+        key = endpoint_runtime._product_key(name)
+        assert key not in keys, name
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(endpoint_runtime, "AMBIGUOUS_PRODUCT_NAMES", ())
+            assert key in endpoint_runtime._host_product_keys(index), name
 
 
 def test_ebpf_known_local_model_port_is_tagged() -> None:

@@ -161,7 +161,7 @@ particular, MCP tool fingerprints are not compared with a rug-pull baseline.
 
 | Connector | Offline input |
 |---|---|
-| `endpoint.host` | Host/MDM inventory records with a runtime or configuration name; a row is reported only when its name or path matches an AI product signature, its whole `name`, `path` file name or `process` is a known AI product or local model runtime ([below](#host-inventory-rows)), or its `type`/`category` names an AI category (`ai`, `agent`, `assistant`, `copilot`, `llm`, `mcp`, `model`) — filtered rows add one informational note, not a coverage gap |
+| `endpoint.host` | Host/MDM inventory records with a runtime or configuration name; a row is reported only when its name or path matches an AI product signature, its whole `name`, `path` file name or `process` is a known AI product, local model runtime or self-hosted AI platform, its path lies in a local model store ([below](#host-inventory-rows)), or its `type`/`category` names an AI category (`ai`, `agent`, `assistant`, `copilot`, `llm`, `mcp`, `model`) — filtered rows add one informational note, not a coverage gap |
 | `endpoint.mcp` | Server records containing MCP tool-list responses, and A2A card records exported with `--dump-records` |
 | `endpoint.ollama` | Ollama-compatible model inventory, including an `endpoint` and `models` list |
 | `endpoint.models` | Artifact metadata records; do not serialize model contents |
@@ -177,12 +177,18 @@ the file name of `path` and the `process` are each compared without an
 `.app` or `.exe` suffix or a trailing version, ignoring case, spaces and
 punctuation: `LM Studio.app`, `/usr/local/bin/ollama`, `Jan.exe` and
 `Ollama version 0.5.7` qualify. The known products are the product names of the
-bundled provider and coding-agent signatures (Ollama, LM Studio, vLLM,
-llama.cpp, LocalAI, SGLang, Aider, Goose, Continue, ...) and the local model
-runtimes and AI command-line tools the endpoint inventory catalog lists
-(GPT4All, Jan, Msty, `llama-server`, `lms`, `opencode`, ...). A name that
-only contains one of them is not enough, and platform names such as Make are
-left out, so ordinary software stays filtered.
+bundled provider, coding-agent and platform signatures (Ollama, LM Studio,
+vLLM, llama.cpp, LocalAI, SGLang, Aider, Goose, Continue, LiteLLM, Dify,
+Flowise, and the self-hosted chat UIs Open WebUI, LibreChat and AnythingLLM,
+...) and the local model runtimes and AI command-line tools the endpoint
+inventory catalog lists (GPT4All, Jan, Msty, `llama-server`, `lms`,
+`opencode`, ...). A path that is, or lies in, one of the catalog's local model
+stores (`~/.ollama/models`, `~/.lmstudio/models`, `~/.cache/lm-studio/models`,
+`~/.cache/huggingface/hub`, the GPT4All and Jan model directories) is
+reported too. A name that only contains one of them is not enough, and a
+product name that is also a common word or another program's name (Make,
+which is also GNU make, and Rivet) is never enough on its own, so ordinary
+software stays filtered.
 
 ### eBPF event formats
 

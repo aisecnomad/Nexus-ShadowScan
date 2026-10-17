@@ -135,7 +135,16 @@ Counts and figures quoted in an entry are those of its date.
   product names of the bundled provider and coding-agent signatures and the
   endpoint catalog's local runtimes and AI command-line tools.
   Regression-tested with each runtime and with Slack, Chrome, Zoom and Make
-  rows that stay filtered.
+  rows that stay filtered. A second review found the rule still filtered
+  `Open WebUI`, `AnythingLLM`, `litellm` and model store paths such as
+  `~/.ollama/models` and `~/.cache/lm-studio/models`: platform signatures
+  were excluded wholesale to keep Make out, and the catalog's model store
+  paths were never consulted. Platform signatures now contribute their
+  product names, including each product a signature lists in its display
+  name ("Self-hosted chat UIs (Open WebUI, LibreChat, AnythingLLM, ...)");
+  an explicit catalog list of ambiguous names (Make, Rivet) keeps those out
+  by name instead; and a path that is or lies in a catalog model store is
+  reported. Regression-tested with each of those rows.
 - These three connector changes alter which findings a scan reports, and
   `gateway.otel` findings from nested exports get new ids; the
   [connector correctness migration note](production-migrations.md#october-17-connector-correctness-migration-unreleased)
