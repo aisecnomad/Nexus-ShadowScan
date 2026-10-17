@@ -990,6 +990,14 @@ class _CredentialJudge:
     ``samples`` for the caller's example evidence, and the rest are dropped,
     since none of them is reported. ``accepted`` holds the spans counted or
     kept per signature, a bounded number.
+
+    The quota counts distinct credentials: a credential a signature already
+    counted, repeated on another line (one password in each service of a
+    compose file, one key in each document of a manifest), is the same
+    credential and counts again toward nothing. It is recognized by a digest
+    keyed with a secret of this judge alone (``_seen``), so no credential is
+    kept past its match, and the digests cannot be compared with another
+    text's.
     """
 
     def __init__(
@@ -1004,6 +1012,17 @@ class _CredentialJudge:
         self.accepted: dict[str, list[tuple[int, int]]] = {}
         self.samples: list[tuple[Signature, Signal, Any]] = []
         self._kept_samples: Counter[str] = Counter()
+        self._key = os.urandom(32)
+        self._seen: set[bytes] = set()
+
+    def _repeated(self, signature_id: str, credential: str) -> bool:
+        """Whether ``signature_id`` already counted ``credential``; records it when not."""
+        keyed = hashlib.blake2b(f"{signature_id}\0{credential}".encode(), key=self._key, digest_size=16)
+        digest = keyed.digest()
+        if digest in self._seen:
+            return True
+        self._seen.add(digest)
+        return False
 
     def _covered(self, signature_id: str, start: int, end: int) -> bool:
         spans = self.accepted.get(signature_id, ())
@@ -1030,6 +1049,8 @@ class _CredentialJudge:
                 self._kept_samples[signature.id] += 1
                 self.accepted.setdefault(signature.id, []).append((start, end))
                 self.samples.append((signature, signal, match))
+            return False
+        if self._repeated(signature.id, credential):
             return False
         self.accepted.setdefault(signature.id, []).append((start, end))
         return True
