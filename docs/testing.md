@@ -159,6 +159,13 @@ after touching `.github/` or documentation. `make docs` builds the site with
 format, types, both validators, secrets and policy in a minute or two, without
 the test suite, audit or evaluation.
 
+`make fuzz` is not a prerequisite of `make check` either: it fuzzes the redaction and
+source-lexing code with Atheris for `FUZZ_SECONDS` (default 60) per target, needs the
+hash-locked engine in `requirements-fuzz.lock` and runs on Linux x86_64 only. The checks
+it applies also run in the ordinary suite, from Hypothesis (`tests/unit/test_fuzz_targets.py`),
+so a change that breaks a fuzz target fails `make test`. [Fuzzing](operations/fuzzing.md)
+says what each target checks and what it leaves out.
+
 `make evaluate` runs each corpus under `tools/evaluation/`; a corpus fails on
 an unwaived regression, an over-budget or expired known-gap waiver, or a waived
 case that now passes. See [Evaluation](evaluation.md) for the report format.

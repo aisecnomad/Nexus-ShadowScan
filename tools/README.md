@@ -20,6 +20,17 @@ These run in CI and in `make check`; see
 | [`mapping_reference.py`](mapping_reference.py) | Renders [`docs/concepts/mappings-reference.md`](../docs/concepts/mappings-reference.md) from the mapping catalogs | `make mapping-reference` |
 | [`evaluation/`](evaluation/) | The labeled detection regression corpora and their scorer | `make evaluate`; see [docs/evaluation.md](../docs/evaluation.md) |
 
+## Fuzzing
+
+Assurance tooling that runs on a schedule and on demand, not as a merge gate. It looks for inputs that
+break a stated guarantee; a clean run does not show that none exist. See
+[docs/operations/fuzzing.md](../docs/operations/fuzzing.md) for what each target checks and what it
+leaves out.
+
+| Package | What it does | Run it with |
+|---|---|---|
+| [`fuzz/`](fuzz/) | Atheris targets for the redaction and source-lexing code, the seed corpora they start from (built in code, so no credential-shaped file is stored) and the checks that Hypothesis tests in the ordinary suite share | `make fuzz`, or `python -m tools.fuzz TARGET`; needs [`requirements-fuzz.lock`](../requirements-fuzz.lock) |
+
 ## Benchmarks
 
 Comparative and real-world benchmarks. Each one answers a different question;

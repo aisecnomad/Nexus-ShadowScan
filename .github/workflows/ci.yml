@@ -145,7 +145,7 @@ jobs:
         run: |
           # Fail if a locked package cannot be checked, even when an installed
           # environment audit permits an intentionally skipped editable package.
-          for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do
+          for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock requirements-fuzz.lock; do
             pip-audit --require-hashes --strict --progress-spinner off \
               --disable-pip -r "$lock"
           done

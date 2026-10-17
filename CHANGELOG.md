@@ -818,6 +818,14 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Release, CI and supply chain
 
+- New `tools/fuzz` fuzzes `sanitize_text`, `sanitize` and the source lexer with Atheris 3.1.0,
+  hash-locked in `requirements-fuzz.lock` (Linux x86_64 only). `make fuzz` and the weekly `Fuzz`
+  workflow run it, the workflow with a read-only token and no stored corpus; a failing lexing input
+  is kept as an artifact, but the input that beat the redactor is never printed or uploaded. The
+  same checks run as Hypothesis tests in the ordinary suite (`tests/unit/test_fuzz_targets.py`), and
+  `make audit` and the dependency audit cover the new lock. Atheris is not an engine OpenSSF
+  Scorecard's Fuzzing check recognises, so that score does not change. See
+  `docs/operations/fuzzing.md`. (Oct 17)
 - `pyproject.toml` caps `click`, `rich`, `PyYAML`, `requests`, `PyJWT[crypto]` and the cloud SDKs
   (`boto3`, `google-auth`, `azure-identity`, `oci`) at the next major; `regex` stays uncapped (a
   year cap would shut out security fixes). (Oct 15)

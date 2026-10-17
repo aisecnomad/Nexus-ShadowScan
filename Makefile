@@ -79,7 +79,7 @@ secrets: ## Fail on hardcoded credentials in tracked files, as CI does
 .PHONY: audit
 audit: ## Audit the environment and every hash-locked dependency set, as CI does
 	pip-audit --skip-editable --progress-spinner off
-	set -e; for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock; do \
+	set -e; for lock in requirements.lock requirements-build.lock requirements-ci.lock requirements-docs.lock requirements-fuzz.lock; do \
 		pip-audit --require-hashes --strict --progress-spinner off \
 			--disable-pip -r "$$lock"; \
 	done
@@ -111,6 +111,24 @@ policy: ## Check repository policy: action pins, permissions, links, anchors, Ma
 
 .PHONY: check-fast
 check-fast: lint format-check typecheck signatures mappings secrets policy ## Offline subset of check for a quick pre-push run (no tests, audit or evaluation)
+
+# Not part of `check`: fuzzing has no end, and the engine (Atheris, Linux x86_64 only) comes from
+# requirements-fuzz.lock, which `make install` does not install. The Fuzz workflow runs the same
+# commands; docs/operations/fuzzing.md has the details, the install command and how to replay a failure.
+FUZZ_SECONDS ?= 60
+
+.PHONY: fuzz
+fuzz: ## Fuzz the redaction and lexing targets with Atheris, FUZZ_SECONDS (default 60) each; needs requirements-fuzz.lock
+	@set -euo pipefail; \
+	case "$(FUZZ_SECONDS)" in ''|0*|*[!0-9]*) echo "FUZZ_SECONDS must be a whole number of seconds, at least 1" >&2; exit 2;; esac; \
+	work="$$(mktemp -d "$${TMPDIR:-/tmp}/shadowscan-fuzz.XXXXXX")"; \
+	echo "Fuzz corpora and any failing inputs: $$work"; \
+	for target in redaction-text redaction-record lexing; do \
+		mkdir -p "$$work/crashes/$$target"; \
+		python -m tools.fuzz.seeds "$$target" "$$work/corpus/$$target" --fixtures tests/fixtures; \
+		python -m tools.fuzz "$$target" -max_total_time="$(FUZZ_SECONDS)" \
+			-artifact_prefix="$$work/crashes/$$target/" "$$work/corpus/$$target"; \
+	done
 
 # --- Build -----------------------------------------------------------------
 

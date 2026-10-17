@@ -28,6 +28,7 @@ jobs needs a ruleset change in the same pull request.
 | [Scorecard](scorecard.yml) | push to `main`, ruleset changes, Monday 05:20 UTC, manual | OpenSSF Scorecard; publishes the result | `security-events`, `id-token` |
 | [Dependency and governance audit](audit.yml) | Tuesday 04:41 UTC, manual | `pip-audit` of every hash lock; read-only check of the visible `main` rules | nothing |
 | [Discovery benchmark](benchmark.yml) | Wednesday 06:23 UTC, manual | Regression gate on the pinned public corpus in [`benchmarks/shadow-ai-discovery`](../../benchmarks/shadow-ai-discovery/) | nothing |
+| [Fuzz](fuzz.yml) | Sunday 03:37 UTC, manual, pull requests touching `tools/fuzz/**`, `requirements-fuzz.lock` or the workflow | Atheris fuzzing of the redaction and source-lexing code ([guide](../../docs/operations/fuzzing.md)); a failing lexing input is kept as an artifact, a redaction input never is | nothing |
 | [AI review](ai-review-gate.yml) | pull requests that change `.github/ai-review/**` | Validates and publishes AI review evidence ([gate design](../../docs/security/ai-review-gate.md)); never an approval | `pull-requests`, `checks` (publication job only) |
 | [Release candidate evidence](release.yml) | manual only | Builds and attests a review bundle; uploads to an index only after review, from a protected environment | `attestations`, `id-token` |
 | [Labels](labels.yml) | push to `main` changing [`labels.yml`](../labels.yml), manual | Creates or updates every label in the taxonomy; never deletes one | `issues` |

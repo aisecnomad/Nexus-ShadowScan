@@ -1,0 +1,111 @@
+name: Fuzz
+# Coverage-guided fuzzing of the redaction and source-lexing code with Atheris
+# (tools/fuzz, docs/operations/fuzzing.md). Each target runs on its own runner:
+# `sanitize_text` and `sanitize` must withhold a planted synthetic credential from any
+# text or record and keep its lines, and the source lexer must return in-bounds,
+# sorted, repeatable spans and fail only with its documented budget error. A crash,
+# a hang over 30 seconds or a memory blow-up fails the run. The failing input of the
+# lexing target is kept as an artifact. That of a redaction target is not, and the
+# job log stops before the engine prints it: the input shows how to get a credential
+# past the redactor, SECURITY.md takes such reports privately, and a public
+# repository's logs and artifacts are public. The log keeps the traceback and the
+# input's digest, and the guide says how to find the input again.
+# Every run starts from seeds built in code; no corpus is cached or committed, and
+# no credential-shaped value is stored. The engine comes from a hash lock, nothing
+# here writes to the repository, and a fork's pull request gets the same read-only
+# token and no secrets. This is assurance evidence, not a security guarantee.
+on:
+  schedule:
+    - cron: "37 3 * * 0"  # Sunday 03:37 UTC
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Seconds to fuzz each target (1 to 3000; default 900)"
+        required: false
+        default: "900"
+  # A short run when the harness, its lock or this workflow changes, so a broken
+  # harness is found before the weekly run.
+  pull_request:
+    paths:
+      - "tools/fuzz/**"
+      - "requirements-fuzz.lock"
+      - ".github/workflows/fuzz.yml"
+permissions:
+  contents: read
+concurrency:
+  # A newer pull-request push supersedes the older run; scheduled and dispatched
+  # runs each keep their own group and finish.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    # The run itself is at most 3000 seconds; the rest is the install and the seeds.
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [redaction-text, redaction-record, lexing]
+    env:
+      # A dispatch input is text from whoever dispatches; it reaches the shell only
+      # through this variable, which the step checks is a number.
+      FUZZ_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.seconds || (github.event_name == 'schedule' && '900' || '60') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          # Atheris publishes wheels for CPython 3.12 to 3.14 on Linux x86_64 only.
+          python-version: "3.12"
+      - name: Install the hash-locked runtime and fuzzing engine
+        run: |
+          # The scanner runs from the checkout (python -m puts it on the path), so only its
+          # dependencies are installed. Atheris is never built from source.
+          python -m pip install --require-hashes --only-binary=:all: -r requirements.lock -r requirements-fuzz.lock
+      - name: Fuzz the ${{ matrix.target }} target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          # Digits only, no leading zero (libFuzzer reads 0 as "no limit") and at most four of them,
+          # so the comparison below never sees a number too large for the shell.
+          case "$FUZZ_SECONDS" in
+            ''|0*|*[!0-9]*|?????*) echo "FUZZ_SECONDS must be a whole number of seconds from 1 to 3000" >&2; exit 2 ;;
+          esac
+          if [ "$FUZZ_SECONDS" -gt 3000 ]; then
+            echo "FUZZ_SECONDS must be a whole number of seconds from 1 to 3000" >&2
+            exit 2
+          fi
+          corpus="$RUNNER_TEMP/corpus/$TARGET"
+          crashes="$RUNNER_TEMP/fuzz-crashes/$TARGET"
+          log="$RUNNER_TEMP/fuzz-$TARGET.log"
+          mkdir -p "$crashes"
+          # The seeds are built in code; the fixtures add real-looking files from this checkout.
+          python -m tools.fuzz.seeds "$TARGET" "$corpus" --fixtures tests/fixtures
+          # libFuzzer exits non-zero on a crash, a timeout or a memory-limit hit and writes the input
+          # under the artifact prefix. The harness supplies the input-length, timeout and memory limits.
+          # Its output goes to a file: a long run prints a line for every new path it finds.
+          status=0
+          python -m tools.fuzz "$TARGET" -max_total_time="$FUZZ_SECONDS" -print_final_stats=1 \
+            -artifact_prefix="$crashes/" "$corpus" > "$log" 2>&1 || status=$?
+          if [ "$status" -eq 0 ]; then
+            tail -n 25 "$log"
+            exit 0
+          fi
+          # After the line that starts with "MS:" the engine prints the failing input (as hex, escaped
+          # text and base64). Print what comes before it: the seed, the traceback and the invariant
+          # that failed, which names the input by its digest.
+          sed '/^MS: /,$d' "$log" | tail -n 120
+          echo "The $TARGET target failed with exit status $status." >&2
+          exit "$status"
+      # The failing input of a redaction target stays on the runner (see the top of this file).
+      - name: Retain the failing input
+        if: failure() && matrix.target == 'lexing'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: ${{ runner.temp }}/fuzz-crashes/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 14

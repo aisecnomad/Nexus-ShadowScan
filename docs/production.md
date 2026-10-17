@@ -832,6 +832,12 @@ different resolver version only as an intentional toolchain change. Use
 `--upgrade` only for an intentional dependency refresh. Preserve each lock's
 supported-platform comment when regenerating. Do not bypass failed hash checks.
 
+`requirements-fuzz.lock` is a fifth lock, for the fuzzing engine alone (Atheris,
+which PyPI publishes for Linux x86_64 only). Only the [Fuzz workflow](operations/fuzzing.md)
+and `make fuzz` install it; the worker image, the wheel and the other locks do
+not depend on it. It is written by hand from the PyPI release metadata, like the
+build lock, and every audit of the other locks audits it too.
+
 The Dockerfile installs both locks under `--require-hashes`: the runtime lock
 into the virtual environment the runtime stage copies, and the build lock into
 a separate build environment. That environment builds the package wheel with
