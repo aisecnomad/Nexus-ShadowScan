@@ -791,7 +791,12 @@ public repositories with the tool and read the committed benchmark metrics.
   (`|| "v"`, `or "v"`, `?? "v"`, also chained in a `key: value` entry),
   concatenation, a computed name, a method on the value or a comment after the
   read (`apiKey: process.env.X // old: <key>`) keeps the whole value withheld,
-  as does any other identifier, call or token. The variable name must not look
+  as does any other identifier, call or token. When `,` or `;` ends the value
+  before the comment (`apiKey: process.env.X, // old: <key>`, `api_key =
+  os.environ["X"]; # <key>`), the read stays visible and the comment keeps
+  its words, but `redaction_assignments._redact_trailing_comments` withholds
+  each opaque token in a comment on a line that assigns a credential name,
+  after any value (main showed those tokens too). The variable name must not look
   like an opaque key (`redaction_rules._opaque`: letters and digits alternating
   in a long run) and must not run to 16 characters or more without a `_`
   (`_PASTED_KEY_NAME`), so an upper-case key or base32 secret pasted as the
