@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,6 @@ from shadowscan.connectors.code.mcp_config import _parse_mcp_servers
 from shadowscan.models import Kind
 from shadowscan.signatures.matcher import MatchTimeoutError
 from shadowscan.utils.text import BINARY_CONTENT_ERROR, read_text
-from tests.perf import wall_budget
 
 
 def test_malformed_manifest_preserves_same_file_and_neighbor_findings(tmp_path, run_connector):
@@ -1236,24 +1236,32 @@ def test_symbolic_link_checks_stop_at_the_listing_deadline(tmp_path, index, monk
         for number in range(300):
             os.symlink("../pkg", links / f"alias{number}")
     original = FilesystemConnector._link_target_is_scanned
+    checks: list[str] = []
 
     def slow(self, rel, target, root, walk=None):
-        time.sleep(0.01)
+        checks.append(rel)
         return original(self, rel, target, root, walk)
 
+    # On the connector's own clock the walk starts 3 s before the deadline and
+    # each link check costs 10 ms. Nothing else advances that clock, and the
+    # real one is an hour from the deadline, so where the walk stops does not
+    # depend on how busy the machine is.
+    deadline = time.monotonic() + 3600.0
+    connector_clock = types.SimpleNamespace(monotonic=lambda: deadline - 3.0 + 0.01 * len(checks))
     monkeypatch.setattr(FilesystemConnector, "_link_target_is_scanned", slow)
+    monkeypatch.setattr(filesystem_module, "time", connector_clock)
     ctx = ConnectorContext(
         config={"path": str(tmp_path), "use_git": False, "scan_timeout": 0.5},
         index=index,
-        deadline=time.monotonic() + 3.0,
+        deadline=deadline,
     )
+    findings = FilesystemConnector(ctx).run()
     # 300 links at 10 ms each would overrun the 3 s deadline. Link checks are
     # listing work: they stop at half of the 2.25 s in which a file can still
-    # start (3 s minus a 0.25 s margin and the 0.5 s matching budget), and
-    # the regular file listed before them is still scanned. The simulated cost
-    # is a sleep, which uses no CPU time, so the deadline is measured by the clock.
-    with wall_budget(3.0, "symbolic link checks under a 3 s deadline"):
-        findings = FilesystemConnector(ctx).run()
+    # start (3 s minus a 0.25 s margin and the 0.5 s matching budget), so 113
+    # of them run, and the regular file listed before them is still scanned.
+    # Stopping only at the deadline's margin would run 275, and no stop all 300.
+    assert len(checks) == 113
     assert any("connector deadline: listing stopped after" in issue for issue in ctx.stats.errors)
     assert any("framework.crewai" in finding.frameworks for finding in findings)
 

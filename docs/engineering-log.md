@@ -554,9 +554,10 @@ public repositories with the tool and read the committed benchmark metrics.
   with inline `time.process_time()` bounds that contention cannot inflate.
   `tests/perf.py` explains the choice and holds the helpers: a calibrated CPU
   budget with a single retry (`assert_cpu_budget`, which no guard uses yet)
-  and a wall budget scaled by `load_factor` (`wall_budget`) for a guard whose
-  subject is elapsed real time. The symbolic-link listing-deadline test uses
-  it: its simulated cost is a sleep, which spends no CPU time.
+  and a wall budget scaled by `load_factor` (`wall_budget`), which no test
+  uses either. The symbolic-link listing-deadline test counts link checks
+  instead: each costs 10 ms on a connector clock that nothing else advances,
+  so where the walk stops does not depend on the machine's load.
 - `tests/unit/test_aws_stubber.py` exercises AWS collection through botocore's
   own `Stubber`: continuation tokens, the page cap, pages kept across a
   mid-listing failure, real `ClientError` shapes, and that an SDK error
