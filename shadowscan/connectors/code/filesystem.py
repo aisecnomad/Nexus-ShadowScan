@@ -502,8 +502,10 @@ LOCK_FILES = {
 # these globs hold generated, locked or binary content that is explicitly
 # outside the scan scope, so skipping them is a warning and the scan stays
 # complete. The connector's `oversize_skip_globs` replaces the list.
-# Coverage profiles: ``default`` fails closed on every gap; ``ci`` declares the
-# gaps a source gate accepts in advance (see ``FilesystemConnector._declared_omission``).
+# Coverage profiles: ``default`` charges every gap to the coverage budget or, for a
+# gap it cannot bound, fails closed; ``ci`` declares the gaps a source gate accepts
+# in advance (see ``FilesystemConnector._declared_omission``) and is refused under
+# strict accounting (``coverage_profile``).
 PROFILES: tuple[str, ...] = ("default", "ci")
 DEFAULT_OVERSIZE_SKIP_GLOBS: tuple[str, ...] = (
     "package-lock.json",

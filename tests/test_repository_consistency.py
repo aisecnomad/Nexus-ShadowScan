@@ -2630,3 +2630,41 @@ def test_plugin_isolation_docs_name_the_parent_environment_route(name: str) -> N
     assert "under a separate user or in a separate container" in text, (
         f"{name} must recommend a separate user or container for an untrusted plugin"
     )
+
+
+# Statements the unified coverage semantics made false: strict accounting has two
+# spellings, the budget is judged per root and repository, and gaps the scanner can
+# bound are budgeted rather than fatal on their own. Matched case-insensitively on
+# whitespace-normalized text.
+_STALE_COVERAGE_CLAIMS = (
+    "restore the previous behaviour exactly",
+    "restores the previous accounting exactly",
+    "every other link makes the scan incomplete",
+    "charged to one coverage budget for the run",
+    "fails closed on every gap",
+    "dangling test certificate links each exit 3 by default",
+    "it conflicts with `strict_coverage`",
+)
+
+
+def test_coverage_docs_state_the_unified_semantics() -> None:
+    sources = [*_current_docs(), ROOT / "shadowscan" / "connectors" / "code" / "filesystem.py"]
+    for path in sources:
+        text = (
+            " ".join(_current_text(path).split()).lower()
+            if path.suffix == ".md"
+            else " ".join(_read(path).split()).lower()
+        )
+        for claim in _STALE_COVERAGE_CLAIMS:
+            assert claim not in text, f"{_relative(path)} still says {claim!r}"
+    scanning = " ".join(_read(ROOT / "docs" / "scanning.md").split())
+    assert "### Coverage budget and strict accounting" in _read(ROOT / "docs" / "scanning.md")
+    for statement in (
+        "are both strict accounting",
+        "The budget is judged per scan root, and per repository for `code.github` and `code.gitlab`",
+        "the `allowance` is the sum of their allowances",
+        "`summary.tolerated_gaps`",
+    ):
+        assert statement in scanning, f"docs/scanning.md no longer says {statement!r}"
+    keys = FilesystemConnector.config_keys
+    assert "strict accounting" in keys["max_coverage_gap"] and "strict accounting" in keys["strict_coverage"]

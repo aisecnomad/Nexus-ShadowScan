@@ -171,7 +171,9 @@ across this change reports findings as resolved or new that are neither.
   binary test fixture is still scanned for credentials. Set
   `strict_coverage: true` or `max_coverage_gap: 0` (both are
   [strict accounting](scanning.md#coverage-budget-and-strict-accounting)) to
-  keep treating every such gap as incomplete (exit 3), as before; product code, calls over 65,536 characters and, under
+  keep treating every such gap as incomplete (exit 3), as before, or
+  `include_tests: true`, under which test code is source: its gaps are not
+  discounted and weigh in full in the budget; product code, calls over 65,536 characters and, under
   a test path too, MCP configurations (by a dedicated name such as
   `.mcp.json`, or by a structure or text that declares servers),
   coding-agent instruction, rule and settings files (`CLAUDE.md`,

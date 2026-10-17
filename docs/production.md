@@ -547,11 +547,17 @@ links, configuration aliases, links into excluded or unread content, links
 leaving the root, oversized files the scanner would
 inspect and files it analyzes by name but cannot read as text (binary content
 with dense NUL bytes, mostly invalid UTF-8, or UTF-16 or UTF-32 without a byte-order mark; a few stray NUL
-bytes or invalid bytes in otherwise valid text do not count) make the scan
-incomplete (exit 3) by default, with a warning naming the omission.
-`strict_coverage: true` (`--strict-coverage`) records those
-conditions as errors; explicit `oversize_skip_globs` remain declared omissions
-in both modes. Raise `max_file_size` or add `exclude` patterns for known data files,
+bytes or invalid bytes in otherwise valid text do not count) are coverage gaps,
+each named in a diagnostic. A directory link, undecodable content outside
+discounted test code and an oversize configuration file make the scan
+incomplete (exit 3) at once; the others are charged to each scan root's
+coverage budget (2% of its entries, `max_coverage_gap`), within which the
+scan stays complete and counts them in `summary.tolerated_gaps` (see
+[coverage budget and strict accounting](scanning.md#coverage-budget-and-strict-accounting)).
+`strict_coverage: true` (`--strict-coverage`) or a budget of 0 is strict
+accounting: every such condition marks the scan incomplete, none is
+discounted or declared, and `strict_coverage` records each as an error;
+explicit `oversize_skip_globs` remain declared omissions in every mode. Raise `max_file_size` or add `exclude` patterns for known data files,
 or declare the gaps a source gate accepts with `profile: ci` (`--profile ci`):
 under it an oversize file, an unread link, a non-regular entry, unparsed content
 or an analysis limit under a test, fixture, documentation, example or generated

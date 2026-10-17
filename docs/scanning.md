@@ -21,18 +21,23 @@ that are never silent:
   to a scanned artifact with the same suffix, in the same project and test
   classification (`latest.gguf` linking to `model-q4.gguf`), is covered the
   same way: artifacts are inspected by suffix and content, and the target is
-  inventoried at its real path. Every other link makes
-  the scan incomplete (exit code 3): directory links, whose alias paths are not
-  inspected; other configuration and document aliases, whose parsing can depend
-  on their path; aliases into another project or test directory; links into
-  excluded or unread content; links outside the root; and unresolved links.
+  inventoried at its real path. Every other link is a
+  [coverage gap](#coverage-budget-and-strict-accounting): other configuration
+  and document aliases, whose parsing can depend on their path; aliases into
+  another project or test directory; links into excluded or unread content;
+  links outside the root; and unresolved links. A dangling link, or one to a
+  single regular file, costs one entry of the coverage budget; a link to a
+  directory, whose alias paths are not inspected and which can stand for any
+  number of files, makes the scan incomplete (exit code 3) at once.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the
   root. Like a read by path, this needs only search permission on the
   directories above each file.
 * **Oversize files** (`max_file_size`, default 1,000,000 bytes) that the scanner would
-  inspect make the scan incomplete when skipped. Known generated, binary and
+  inspect are a coverage gap when skipped: one entry of the
+  [budget](#coverage-budget-and-strict-accounting), or an immediate exit 3 for
+  a configuration file its name selects. Known generated, binary and
   lockfile names in `oversize_skip_globs` are declared omissions and remain
   warnings, including when `strict_coverage` is enabled.
 * **Binary or undecodable content.** Text with a UTF-8, UTF-16 or UTF-32
@@ -65,8 +70,8 @@ that are never silent:
   cannot decode or does not read as ASCII where the bytes are ASCII (UTF-16 or
   UTF-32 without a byte-order mark, UTF-7, HZ, EBCDIC code pages), makes the
   scan incomplete (exit code 3) with `binary or
-  undecodable content in analyzable file`; it is never silently treated as
-  empty. A compiled or packed artifact with no file extension and a known
+  undecodable content in analyzable file`, outside the test-code exception
+  below; it is never silently treated as empty. A compiled or packed artifact with no file extension and a known
   header (ELF, Mach-O, WebAssembly, gzip, zip, bzip2, xz, zstd, 7z, PNG, JPEG,
   GIF, PDF) is skipped quietly, as are names the scanner never analyzes
   (images, archives, fonts, lockfiles, minified bundles). Exclude a directory
@@ -124,8 +129,8 @@ that are never silent:
   exclude a known binary with an `exclude` file glob.
 * **Entries that are not regular files** (a directory, FIFO, socket or device)
   named like a file the scanner analyzes, such as `.mcp.json` or
-  `requirements.txt`, make the scan incomplete, as a symbolic link of the same
-  name does. A directory is only reported when its name is an MCP configuration
+  `requirements.txt`, are a coverage gap of one entry each, as a symbolic link
+  of the same name to a single file is. A directory is only reported when its name is an MCP configuration
   file name such as `.mcp.json`; directories that agent tools read as
   directories (`.roo/rules/`, `.clinerules/`, `.cursor/rules/`) are not. Its
   contents are still scanned.
@@ -701,7 +706,12 @@ connector's deadline. Legacy `options.connector_timeout` and `--connector-timeou
 are deprecated compatibility aliases; the YAML alias logs a deprecation warning
 once per process. Configure only one YAML key; supplying both is rejected.
 Legacy YAML `connector_timeout: null` uses the 120-second default; it does not
-disable the deadline.
+disable the deadline. Left unset, the default is raised for a large input
+when the connector can measure it: `code.filesystem` counts up to 20,000
+entries and scales the deadline above 12,000, to at most 200 seconds. An
+explicit value, 120 included, is honoured unchanged, so a configuration that
+sets `connector_timeout_seconds: 120` turns that scaling off; a larger tree
+needs an explicit, larger deadline.
 
 Leaving the option out and setting it are not the same. Left out (or given as
 legacy `connector_timeout: null`), the 120 seconds is where a connector starts,

@@ -478,7 +478,10 @@ tolerated gap.
   not read ASCII as ASCII — the scanned estate's interpreter may still
   honor it — instead of falling into the keep-default branch and being
   silently analyzed; a bare `utf-16`/`utf-32` cookie is now a gap on every
-  interpreter for the same reason. Regression tests force the refusal path
+  interpreter for the same reason. That gap is undecodable content, so it
+  follows that rule: blinding in product code, and in test code whose
+  evidence is discounted read for credentials and charged to the coverage
+  budget, unless `profile: ci` declares the path. Regression tests force the refusal path
   so the pre-3.14 CI legs exercise it too.
 
 ### Review fixes: credential precision, the ci profile, incomplete reasons, the ownership move and plugin environments (October 17)
@@ -985,15 +988,19 @@ public repositories with the tool and read the committed benchmark metrics.
 - Gaps under paths that cannot hold deployed code (`node_modules`, `vendor`,
   test fixtures) are weighted to a quarter, not ignored, so a tree seeded with
   thousands still exhausts the budget. A file that could not be read or
-  decoded is never weighted down by its path.
+  decoded is never weighted down by its path: in test code whose evidence is
+  discounted it is read for credentials and charged a whole entry, and an
+  unparseable manifest there is charged a quarter (see the October 17
+  coverage-semantics entry above, which also makes the budget per root).
 - Tolerated gaps are counted in the JSON report's `stats[].coverage`, and the
   first 50 (`MAX_PUBLISHED_GAPS`) are listed under `stats[].coverage.details`
   with their paths and weights, `details_truncated` counting the rest. A
   one-line verdict joins the connector's warnings, so nothing is hidden by
   being tolerated. SARIF has no coverage block; its notifications carry that
   line, which names the JSON report and so is worded without brackets, which
-  SARIF escapes in a message. `strict_coverage` and `--max-coverage-gap 0`
-  restore the previous accounting exactly.
+  SARIF escapes in a message. `strict_coverage` and `--max-coverage-gap 0` are
+  both strict accounting and restore the previous accounting: no gap is
+  tolerated, discounted as test code or declared by `profile: ci`.
 
 ### Connector deadlines scale to their input, and an overrun keeps its findings (October 17)
 
@@ -1008,7 +1015,9 @@ public repositories with the tool and read the committed benchmark metrics.
   above 12,000, so it proposes at most 200 seconds at the 120-second default.
   A larger tree needs an explicit `--connector-timeout-seconds`; without one
   an overrun still marks the scan incomplete. An explicit
-  `--connector-timeout-seconds` is honoured unchanged. The same scan now
+  `--connector-timeout-seconds` is honoured unchanged, 120 included: only an
+  unset deadline is scaled, so a configuration that sets
+  `connector_timeout_seconds: 120` turns the scaling off. The same scan now
   completes with 51 findings.
 - A connector that still overruns surrenders the findings it had already
   produced and sanitized, instead of having them discarded. The scan is

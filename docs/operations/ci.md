@@ -43,17 +43,23 @@ budget: `summary.tolerated_gaps` counts them, as `summary.declared_omissions`
 counts what `--profile ci` declared, and the table banner shows both.
 
 A repository's test cassettes, fixtures over a megabyte and dangling test
-certificate links each exit 3 by default, because the credential pass would
-have read them. A gate on the repository's source can declare those gaps in
-advance with `--profile ci`: a gap under a test, fixture, documentation, example
-or generated path becomes a warning that names it and is counted in
-`summary.declared_omissions`, and the scan stays complete; a gap in `src/`, at
-the root or in any directory that holds a manifest of its own still exits 3.
-Such a directory is a project whatever it is called: a `demo/` or
-`examples/svc/` with a `pyproject.toml`, and also a documentation site with its
-own `docs/package.json`, whose blog posts and static assets are then its
-source. The documentation and example directories below a project are still
-declared (`docs/docs/` in that layout); its own content is not. The example workflow passes the flag. Leave it out when
+certificate links are coverage gaps by default, because the credential pass
+would have read them: a few are tolerated within the coverage budget and counted
+in `summary.tolerated_gaps`, and enough of them exit 3. A gate on the
+repository's source can declare those gaps in advance with `--profile ci`: a gap
+under a test, fixture, documentation, example or generated path becomes a
+warning that names it and is counted in `summary.declared_omissions`, and is
+never charged to the budget; a gap in `src/`, at the root or in any directory
+that holds a manifest of its own is judged by the budget as usual. Such a
+directory is a project whatever it is called: a `demo/` or `examples/svc/` with
+a `pyproject.toml`, and also a documentation site with its own
+`docs/package.json`, whose blog posts and static assets are then its source. The
+documentation and example directories below a project are still declared
+(`docs/docs/` in that layout); its own content is not. Generated files are
+recognised by name wherever they lie (`*_pb2.py`, `*.generated.*`), so one under
+`src/` is declared too. A credential limit, and a gap in an MCP configuration,
+coding-agent file or agent card, are never declared. The example workflow passes
+the flag. Leave it out when
 the gate should also establish that every fixture was read for credentials, and
 never combine it with `--strict-coverage` or `--max-coverage-gap 0`: both are
 [strict accounting](../scanning.md#coverage-budget-and-strict-accounting), which

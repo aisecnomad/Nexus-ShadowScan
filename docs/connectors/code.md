@@ -578,8 +578,9 @@ them to `exclude` unless that is intended); version-control metadata (`.git`,
 `.hg`, `.svn`) is never scanned, since its index and objects are binary. The
 same option is accepted by `code.github` and `code.gitlab` and forwarded to the
 scan of each checkout.
-Unread oversized source files and symlinks leaving the root make a scan incomplete
-by default, as do binary content (NUL bytes that are not stray ones in text, see
+Unread oversized source files and symlinks leaving the root are coverage gaps
+charged to the [budget](../scanning.md#coverage-budget-and-strict-accounting),
+and binary content (NUL bytes that are not stray ones in text, see
 [scan semantics](../scanning.md)) in an analyzable file, non-regular
 entries named like configuration files, and directory nesting deeper than the
 walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
@@ -1309,13 +1310,14 @@ same suffix in the same project and test classification (`latest.gguf` to
 `model-q4.gguf`) loses nothing, since the target is inventoried at its real
 path, and leaves coverage complete; a link to an artifact outside the root, in
 an excluded directory, under a test path or with another suffix is an unscanned
-symbolic link (coverage incomplete). Headers are an inventory aid, not a guarantee that an artifact
+symbolic link (a coverage gap of one entry). Headers are an inventory aid, not a guarantee that an artifact
 is safe to load. No deserializer, inference engine or scanned executable runs.
 
 Known limitation: a Hugging Face cache (`snapshots/<revision>/model.safetensors`
 linked to an extensionless file under `blobs/`) is not inventoried through its
 links, because inventory symlinks are never followed. Each link is reported as
-an unscanned symbolic link (coverage incomplete). A GGUF blob is still
+an unscanned symbolic link (a coverage gap of one entry; enough of them
+exhaust the budget). A GGUF blob is still
 inventoried at its `blobs/` path by its magic; a safetensors blob has no magic
 and is read as an ordinary extensionless file, so its binary content is
 reported as unreadable. Scan a materialised copy instead, such as a download

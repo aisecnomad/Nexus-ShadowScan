@@ -29,10 +29,17 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   by default, and are always reported under `stats.coverage` whether or not
   they change the exit code. A gap the scanner *cannot* bound still fails
   closed with no budget: an early stop, a refused page, an expired deadline,
-  a symbolic link to a directory, an unparseable manifest or agent card, an
-  agent, MCP or dependency configuration file over `max_file_size`,
-  undecodable bytes anywhere but in test code while `include_tests` is off,
-  and any sanitizer limit.
+  a symbolic link to a directory, an unparseable manifest or agent card
+  outside test code, an agent, MCP or dependency configuration file whose
+  name selects it over `max_file_size`, undecodable bytes anywhere but in
+  test code while `include_tests` is off, and any sanitizer limit. Test code
+  whose evidence is discounted (`include_tests` off) is the exception for
+  manifests and undecodable bytes: a malformed fixture is charged to the
+  budget at a quarter weight and an undecodable one, read for credentials
+  first, at a whole entry, so a few leave the scan complete and a tree
+  seeded with them does not. An MCP configuration, coding-agent file or
+  agent card keeps the gap in test code too. The budget is judged per scan
+  root and per repository.
   `strict_coverage` and `--max-coverage-gap 0` (or `max_coverage_gap: 0`)
   are both strict accounting and restore the previous accounting: every gap
   marks the scan incomplete, and none is discounted as test code or declared
