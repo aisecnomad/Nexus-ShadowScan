@@ -1102,6 +1102,10 @@ them. The check walks the checkout through open directory descriptors and follow
 no link; a directory nested more than 64 levels below the repository root, or an
 entry replaced while it is read, means the clone could not be checked.
 API mode reports LFS pointer files the same way.
+Coverage gaps in every checkout (a clone, an API snapshot or an offline clone)
+are charged to one coverage budget for the run (`--max-coverage-gap`) and
+judged after the last repository, as for a `code.filesystem` scan of several
+`paths`; with `--max-coverage-gap 0` any gap makes the scan incomplete.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) first checks the provider's repository
@@ -1143,7 +1147,8 @@ made for it, and the other projects in the listing are still scanned.
 The group listing is ordered by project `id`, read to the end before the first
 project is cloned, and compared with the `X-Total` / `X-Total-Pages` totals GitLab
 reports (it omits them for very large groups); a mismatch makes the scan
-incomplete. LFS pointer files are reported as for GitHub.
+incomplete. LFS pointer files are reported, and checkout coverage gaps
+budgeted, as for GitHub.
 GitLab clones use the same observed `clone_max_bytes` and timeout behavior,
 address pinning and fallback as GitHub clones above. GitLab's reported size is a preflight estimate in bytes;
 it does not replace a filesystem/container disk quota.

@@ -1056,6 +1056,68 @@ def test_per_repository_contexts_share_the_diagnostic_cap(tmp_path, index):
     assert sum("diagnostic limit reached" in e for e in ctx.stats.errors) == 1
 
 
+def _clone_with_gaps(root: Path, name: str, files: int, links: list[str]) -> None:
+    """An offline clone of ``files`` source files and dangling links at ``links`` (coverage gaps)."""
+    clone = root / name
+    (clone / "src").mkdir(parents=True)
+    for i in range(files):
+        (clone / "src" / f"mod{i}.py").write_text(f"VALUE = {i}\n")
+    for rel in links:
+        (clone / rel).parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(clone / "does-not-exist", clone / rel)
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+@pytest.mark.parametrize("budget", [{}, {"_max_coverage_gap": 0.0}], ids=["default-budget", "zero-budget"])
+def test_checkout_gap_flood_exceeds_the_coverage_budget(tmp_path, run_connector, cls, budget):
+    _clone_with_gaps(tmp_path, "acme__app", 20, [f"services/link{i}.py" for i in range(300)])
+    _, ctx = run_connector(cls.name, input=str(tmp_path), use_git=False, **budget)
+    assert ctx.stats.incomplete
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["within_budget"] is False
+    assert ctx.stats.coverage["gaps"] == 300 and ctx.stats.coverage["examined"] == 320
+    assert any(f"{cls.name}: coverage incomplete" in error for error in ctx.stats.errors)
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_live_checkout_gap_flood_exceeds_the_coverage_budget(tmp_path, index, monkeypatch, cls):
+    connector = cls(ConnectorContext(config={"use_git": False}, index=index, workdir=str(tmp_path)))
+    monkeypatch.setattr(connector, "collect", lambda: iter([_record()]))
+
+    def fetch(_record, destination):
+        _clone_with_gaps(Path(destination), "repo", 20, [f"services/link{i}.py" for i in range(300)])
+        return str(Path(destination) / "repo")
+
+    monkeypatch.setattr(connector, _fetch_name(cls), fetch)
+    remote_level_name = "_repo_level_findings" if cls is GitHubConnector else "_project_level"
+    monkeypatch.setattr(connector, remote_level_name, lambda _record: iter([]))
+    connector.run()
+    assert connector.ctx.stats.incomplete
+    assert connector.ctx.stats.coverage is not None
+    assert connector.ctx.stats.coverage["within_budget"] is False
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_checkout_gaps_are_judged_against_every_repository(tmp_path, run_connector, cls):
+    _clone_with_gaps(tmp_path, "acme__app", 200, ["tests/certs/ca"])
+    _clone_with_gaps(tmp_path, "acme__lib", 50, [])
+    _, ctx = run_connector(cls.name, input=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["within_budget"] is True
+    # One ledger for the run: entries of both clones count towards the budget.
+    assert ctx.stats.coverage["gaps"] == 1 and ctx.stats.coverage["examined"] == 251
+    _, strict = run_connector(cls.name, input=str(tmp_path), use_git=False, _max_coverage_gap=0.0)
+    assert strict.stats.incomplete
+    assert strict.stats.coverage is not None and strict.stats.coverage["within_budget"] is False
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_clean_checkout_stays_complete_under_a_zero_budget(tmp_path, run_connector, cls):
+    _clone_with_gaps(tmp_path, "acme__app", 20, [])
+    _, ctx = run_connector(cls.name, input=str(tmp_path), use_git=False, _max_coverage_gap=0.0)
+    assert not ctx.stats.incomplete and not ctx.stats.warnings and not ctx.stats.errors
+    assert ctx.stats.coverage is None
+
+
 # ---------------------------------------------------- listing completeness
 def _listing_connector(index, cls, **config):
     """A connector listing an org/group of eight repositories ordered by activity (most recent first)."""

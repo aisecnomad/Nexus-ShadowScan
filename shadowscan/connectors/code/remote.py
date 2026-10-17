@@ -481,6 +481,11 @@ class RemoteRepositoryConnector(BaseConnector):
         fs.tree_listing_incomplete = repo.get("_tree_incomplete") is True
         # Share the diagnostic budget so repositories cannot each fill 1000 entries.
         fs.ctx._diagnostic_counts = self.ctx._diagnostic_counts
+        # Share the coverage ledger and this connector's gap budget too. The
+        # nested connector's run() never runs, so nothing would judge its
+        # gaps; this connector's finalize_coverage judges every repository's.
+        fs.ctx._coverage = self.ctx._coverage
+        fs.ctx.set_coverage_policy(self.ctx.coverage_policy)
         if isinstance(snapshot, dict) and snapshot.get("capture_method") == "git-clone":
             # Cloning already authorizes Git. Inspect gitlinks even without a
             # .gitmodules declaration; never fetch their remote contents.
