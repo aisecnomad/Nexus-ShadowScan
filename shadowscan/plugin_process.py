@@ -294,7 +294,7 @@ def _worker(
         for stream in (sys.stdout, sys.stderr):
             try:
                 stream.flush()
-            except Exception:  # noqa: BLE001, S110 - output goes to /dev/null  # noqa: S110 - teardown must not raise; see the comment above; teardown must not raise; the comment above says why
+            except Exception:  # noqa: BLE001, S110 - output goes to /dev/null; teardown must not raise
                 pass
         os._exit(status)
 
@@ -506,7 +506,7 @@ def _run_plugin_process(
         warnings = [
             "Plugin worker terminated; its descendants and external side effects are not rolled back."
         ]
-    except Exception:  # noqa: BLE001, S110 - no fallback or unsafe exception/configuration diagnostics  # noqa: S110 - teardown must not raise; see the comment above; teardown must not raise; the comment above says why
+    except Exception:  # noqa: BLE001, S110 - no fallback or unsafe exception/configuration diagnostics
         pass
     finally:
         parent.close()

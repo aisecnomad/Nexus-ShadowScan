@@ -172,7 +172,7 @@ class Kind(str, Enum):
     CLOUD_RESOURCE = "cloud-resource"  # managed AI resource (endpoint, deployment, function...)
     IAM_GRANT = "iam-grant"  # IAM role / policy enabling LLM or agent access
 
-    SECRET = "secret"  # noqa: S105 - credential for an LLM provider in code / config
+    SECRET = "secret"  # noqa: S105 - a finding kind, not a credential: an LLM provider credential in code / config
     INFRA = "infra"  # IaC or container definitions provisioning AI agents
     AI_APP = "ai-app"  # AI assistant application or editor/browser extension installed on an endpoint
     LOCAL_MODEL = "local-model"  # model weights stored for a local runtime (Ollama, LM Studio...)

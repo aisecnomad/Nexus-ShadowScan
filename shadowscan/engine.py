@@ -867,7 +867,7 @@ def _scanned_roots(specs: list[ConnectorSpec]) -> list[tuple[str, Path]]:
         try:
             # Built-in connectors only: this lookup never imports a plugin outside a job's deadline.
             declared = _hooks(get_connector_class(spec.name)).scanned_local_paths(spec.config)
-        except Exception:  # noqa: BLE001, S112 - an unknown or unapproved connector declares no tree  # noqa: S112 - teardown must not raise; see the comment above; a lookup failure here must not stop the scan; recorded by the caller
+        except Exception:  # noqa: BLE001, S112 - an unknown or unapproved connector declares no tree; the caller records the lookup failure
             continue
         roots += [(path, Path(os.path.realpath(path))) for path in declared]
     return roots
