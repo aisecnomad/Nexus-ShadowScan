@@ -98,6 +98,54 @@ def test_generated_passphrases_are_credentials(index: SignatureIndex, line: str,
     assert _generic(index, line, code=code) != []
 
 
+@pytest.mark.parametrize(
+    "passphrase",
+    [
+        # A '.' separator (a password manager option), an upper-case slug that
+        # is not CONSTANT_CASE, and a word as short as the name's 'db'.
+        "snout.fiber.thump.bloom.gravel",
+        "Snout.Fiber.Thump.Bloom.Gravel",
+        "SNOUT-FIBER-THUMP-BLOOM-GRAVEL",
+        "SNOUT.FIBER.THUMP.BLOOM.GRAVEL",
+        "db-fiber-thump-bloom-gravel",
+    ],
+)
+def test_passphrases_in_other_separators_and_cases_are_credentials(index: SignatureIndex, passphrase: str):
+    assert _generic(index, f"DB_PASSWORD={passphrase}", code=False) != []
+    assert _generic(index, f'DB_PASSWORD = "{passphrase}"', code=True) != []
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "local-development-only",
+        "insecure-default-for-dev",
+        "unsafe-dev-only-default",
+        "development-only-insecure",
+        "for-local-dev-use-only",
+        "this-should-be-changed",
+        "dont-use-this-in-prod",
+        "foo-bar-baz-qux-quux",
+        "lorem-ipsum-dolor-sit-amet",
+        "hello-world-foo-bar",
+        # Plurals and past forms of the vocabulary.
+        "defaults-were-replaced",
+        "rotate-these-tokens",
+    ],
+)
+def test_development_defaults_and_filler_are_labels(index: SignatureIndex, label: str):
+    assert _generic(index, f"DB_PASSWORD={label}", code=False) == []
+    assert _generic(index, f'DB_PASSWORD = "{label}"', code=True) == []
+
+
+def test_a_fixture_env_file_of_development_defaults_stays_complete(tmp_path: Path, run_connector):
+    labels = ["local-development-only", "insecure-default-for-dev", "this-should-be-changed"]
+    labels += ["dont-use-this-in-prod", "foo-bar-baz-qux-quux", "lorem-ipsum-dolor-sit-amet"]
+    env = "".join(f"USER{n}_PASSWORD={label}\n" for n, label in enumerate(labels))
+    findings = _scan(tmp_path, run_connector, {"tests/fixtures/.env.test": env})
+    assert [f.title for f in findings if f.kind.value == "secret"] == []
+
+
 def test_a_documentation_ellipsis_is_a_placeholder(index: SignatureIndex):
     [match] = [
         m for m in index.match_secrets('anthropic_api_key: "sk-ant-api03-..."') if m.signature_id == GENERIC
@@ -471,6 +519,9 @@ def test_digit_free_tokens_without_name_structure_are_reported(index: SignatureI
         'ENV_API_KEY = "ANTHROPIC_API_KEY"',
         'apiKey = "includeTracingApiKey"',
         'secret_key = "settings.openai_api_key"',
+        # A dotted name is no dotted passphrase: its words change case inside.
+        'OPENAI_API_KEY = "config.openai.apiKey"',
+        "OPENAI_API_KEY=ANTHROPIC_API_KEY",
     ],
 )
 def test_digit_free_names_are_still_not_credentials(index: SignatureIndex, line: str):
