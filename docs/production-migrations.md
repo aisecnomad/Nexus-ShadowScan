@@ -96,6 +96,20 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   fixture that did not parse as `unparsed-input`, so a gate that matches
   `summary.incomplete_reasons` sees these categories instead.
 
+## October 17 CLI package and identity sign-in client migration (Unreleased)
+
+- **`shadowscan.cli` is a package.** The command line is unchanged, and
+  `python -m shadowscan.cli` still runs it. A script that imported a click
+  command from `shadowscan.cli` (`scan`, `code`, `run`, `diff`,
+  `merge_command`, ...) keeps working. A script that imported any other name
+  through it (`json`, `Path`, `Finding`, `compare_reports`, `get_index`, ...)
+  must import it from its own module.
+- **`identity.okta` and `identity.entra` report fewer sign-in clients.** An
+  app whose scopes are all OpenID Connect Core scopes and whose only AI signal
+  is a common word in its name (agent, assistant, copilot, bot) is no longer a
+  finding, and shows as resolved against an earlier baseline. Apps named for
+  an LLM, a GPT, GenAI or an AI product stay reported.
+
 ## October 17 engine review migration (Unreleased)
 
 - **Every incremental cache entry misses once.** The entry format moves to 5:

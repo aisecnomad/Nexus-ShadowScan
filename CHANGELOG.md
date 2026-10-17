@@ -17,6 +17,7 @@ Notion bots, gateway routes, Kubernetes serving images, n8n HTTP model calls
 and ServiceNow flow names were adjusted), so a later ShadowScan run on that
 estate is in-sample.
 
+- CLI package, reporter protocol, condensed README, identity sign-in clients and API page narratives (#252, #253; October 17)
 - Credential review fixes: env-file passwords, typed reads, pasted names, repeated credentials, labels and cut-read evidence (October 17)
 - Coverage gaps take one decision, judged per root and repository (October 17)
 - Review fixes: what diff holds back under the ci profile (October 17)

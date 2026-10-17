@@ -13,6 +13,34 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### CLI package, reporter protocol, condensed README, identity sign-in clients and API page narratives (#252, #253; October 17)
+
+- `shadowscan/cli.py` is now the `shadowscan/cli/` package: the group and its
+  shared helpers in `__init__.py`, one private module per command family. Every
+  command module looks the replaceable names (`console`, `err_console`,
+  `_run_scan`, `_emit`, `available_connectors`) up on the package at call
+  time, so replacing one on `shadowscan.cli` reaches every command;
+  `tests/unit/test_cli_package_seams.py` pins that. `python -m shadowscan.cli`
+  works through `cli/__main__.py` (the ShadowBench cases adapter runs it that
+  way), and the 20 click commands stay importable from `shadowscan.cli` under
+  their old names. The names the old module held only because it imported them
+  (`json`, `Path`, `Finding`, `compare_reports` and similar) are gone; import
+  them from their own modules.
+- `shadowscan.reporters.Renderer` types the renderer contract every
+  `RENDERERS` entry keeps: the result, positionally, returning text.
+- The README keeps a command summary; the full command reference is
+  `docs/reference/cli.md` and the data types moved to `docs/api/index.md`. The
+  detection matrix stays generated.
+- `identity.okta` and `identity.entra` leave out a sign-in client only when
+  every scope is an OpenID Connect Core scope, it carries no AI attribution
+  or other tag, and its name matches no signature or the generic hint only on
+  a common word (agent, assistant, copilot, bot). "LLM Gateway", "Company GPT",
+  "GenAI Portal" and "Gemini" with OIDC scopes stay reported, as on main. The
+  "57% to about 80%" precision figure #253 quoted was not measured and is not
+  carried.
+- The 23 `docs/api/` pages gained a narrative introduction each, checked
+  against the code in two passes.
+
 ### Credential review fixes: env-file passwords, typed reads, pasted names, repeated credentials, labels and cut-read evidence (October 17)
 
 Fixes from two reviews of the credential pipeline (round 3, rebased as
