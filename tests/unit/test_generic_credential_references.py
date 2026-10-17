@@ -439,6 +439,52 @@ def test_text_after_an_environment_read_keeps_the_value_withheld(line: str):
     assert sanitize_text(safe) == safe
 
 
+@pytest.mark.parametrize(
+    ("line", "kept"),
+    [
+        # The read ends its value at ',' or ';', and the comment after it is
+        # withheld where it holds key material; the read itself stays visible.
+        (
+            f"  apiKey: process.env.AZURE_OPENAI_API_KEY, // old: {AZURE_KEY}",
+            "process.env.AZURE_OPENAI_API_KEY,",
+        ),
+        (f"apiKey = process.env.OPENAI_API_KEY; // {AZURE_KEY}", "process.env.OPENAI_API_KEY;"),
+        (
+            f"apiKey: import.meta.env.VITE_OPENAI_API_KEY , // {AZURE_KEY}",
+            "import.meta.env.VITE_OPENAI_API_KEY ,",
+        ),
+        (
+            f"  apiKey: process.env.AZURE_OPENAI_API_KEY, /* {AZURE_KEY} */",
+            "process.env.AZURE_OPENAI_API_KEY,",
+        ),
+        (f"api_key = os.environ['OPENAI_API_KEY']; # {AZURE_KEY}", "os.environ['OPENAI_API_KEY'];"),
+        # After any other credential value too.
+        (f'  apiKey: "{RANDOM}", // was {AZURE_KEY}', "// was"),
+        (f"  openaiKey: config.azure, // {AZURE_KEY}", "config.azure,"),
+    ],
+)
+def test_key_material_in_a_comment_after_a_credential_value_is_withheld(line: str, kept: str):
+    safe = sanitize_text(line)
+    assert AZURE_KEY not in safe and RANDOM not in safe and kept in safe
+    assert sanitize_text(safe) == safe
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Words, references and placeholders in the comment stay, and a comment
+        # on a line that assigns no credential name is read as before.
+        "  apiKey: process.env.AZURE_OPENAI_API_KEY, // rotate quarterly via $VAULT_PATH",
+        "apiKey = process.env.OPENAI_API_KEY; // see docs/credentials.md",
+        "api_key = os.environ['OPENAI_API_KEY']; # your-api-key-here",
+        "color: '#a8f3c91d', // brand",
+        "  url: 'https://example.com/#a8f3c91d7e2b', // docs",
+    ],
+)
+def test_a_comment_without_key_material_keeps_its_text(line: str):
+    assert sanitize_text(line) == line
+
+
 # An upper-case random key and a base32 TOTP secret, derived so no key sits in the source.
 UPPER_KEY = base64.b32encode(hashlib.sha256(b"upper-case-key").digest()).decode()[:40]
 TOTP_SECRET = base64.b32encode(hashlib.sha256(b"totp-secret").digest()).decode()[:32]
