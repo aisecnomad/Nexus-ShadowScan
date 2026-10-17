@@ -54,7 +54,12 @@ from shadowscan.connectors.common import (
     finalize,
     scope_matches,
 )
-from shadowscan.connectors.identity.common import assess_app, identity_kind_for, summarize_scopes
+from shadowscan.connectors.identity.common import (
+    assess_app,
+    identity_kind_for,
+    only_ai_name_hint,
+    summarize_scopes,
+)
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.registries import (
     LISTING_SCOPES,
@@ -1335,6 +1340,13 @@ class EntraConnector(BaseConnector):
             and not app_perms
             and sp_type != "ManagedIdentity"
         ):
+            return None
+        # Suppress third-party SPs whose only AI signal is a generic name hint
+        # (e.g. "Agent Portal", "Bedrock Admin") with no substantive permission
+        # evidence.  Delegated scopes or app-role assignments would have already
+        # returned above if absent; if they are present, only_ai_name_hint
+        # returns False (non-benign scopes remain), so real SPs are unaffected.
+        if not retained and not machine and only_ai_name_hint(f, list(delegated) + app_perms):
             return None
         f.add_evidence(
             Evidence(

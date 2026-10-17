@@ -136,3 +136,68 @@ def identity_kind_for(*, user_consented: bool, machine: bool) -> Kind:
 def summarize_scopes(scopes: Iterable[str], limit: int = 25) -> list[str]:
     out = sorted({str(s) for s in scopes if s})
     return out[:limit] + ([f"... +{len(out) - limit} more"] if len(out) > limit else [])
+
+
+# Standard OIDC / OAuth housekeeping scopes that carry no AI signal.
+# An app whose permission set is a subset of these is not meaningfully
+# distinguished from a plain SSO app by its scopes alone.
+_BENIGN_OIDC_SCOPES: frozenset[str] = frozenset(
+    {
+        "openid",
+        "profile",
+        "email",
+        "address",
+        "phone",
+        "offline_access",
+        # Salesforce / Okta housekeeping names that are routine and non-AI
+        "refresh_token",
+        "web",
+        "full",
+        "api",
+        # GitHub / GitLab housekeeping
+        "workflow",
+        # generic OIDC-adjacent scopes that policy.yaml explicitly excludes
+        "OFFLINE_ACCESS",
+    }
+)
+
+
+def only_ai_name_hint(finding: Finding, scopes: Iterable[str]) -> bool:
+    """Return True when the finding has no substantive AI signal and only benign scopes.
+
+    This covers two related suppression cases:
+
+    1. The *only* AI signal is a generic name hint (``ai-name-hint`` tag) with
+       no identified product, no model provider, no LLM-access or privileged
+       scope tag, and no non-housekeeping permissions.  Emitting it would
+       produce a false positive for any app whose display name happens to
+       contain a word like "agent", "bot", or "copilot" without being AI.
+
+    2. There is *no* AI signal at all — the name matched nothing, the scopes
+       are all standard OIDC housekeeping values, and no framework / provider
+       is established.  Such an app is a plain SSO client that only passed the
+       earlier ``not scopes`` gate because it declared ``openid`` / ``profile``
+       / ``offline_access`` — common on every web app regardless of AI use.
+
+    Callers use this to suppress the finding rather than lower its confidence,
+    keeping the precision improvement invisible to downstream scoring and
+    avoiding a situation where a soft-suppressed finding still shows up in
+    high-sensitivity modes.
+    """
+    if finding.frameworks or finding.model_providers:
+        return False
+    ai_tags = {"policy.llm-access-scopes", "entra-agent-identity", "registry-record"}
+    if ai_tags.intersection(finding.tags):
+        return False
+    # Allow through if there is a strong AI signal beyond a mere name hint.
+    # (ai-name-hint itself is weak; its absence is even weaker — still suppressed.)
+    tags_set = set(finding.tags)
+    strong_ai_tags = tags_set - {"ai-name-hint"} - ai_tags
+    if strong_ai_tags:
+        # Some other AI-indicative tag (e.g. policy.data-access-scopes, machine-identity
+        # added by the connector, or a product tag from a matched signature) is present;
+        # do not suppress.
+        return False
+    scope_set = {str(s).lower() for s in scopes if s}
+    non_benign = scope_set - {s.lower() for s in _BENIGN_OIDC_SCOPES}
+    return not non_benign
