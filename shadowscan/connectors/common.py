@@ -55,6 +55,7 @@ from shadowscan.config import ConfigValidationError, connector_boolean
 from shadowscan.connectors.base import ConnectorError, _positive_limit
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, SignatureIndex
+from shadowscan.signatures.matcher import reported_credential
 from shadowscan.utils.http import HttpError
 from shadowscan.utils.text import redact
 
@@ -592,7 +593,9 @@ def blob_matches(index: SignatureIndex, text: str, *, secrets: bool = False) -> 
     if not text:
         return out
     secret_matches = (
-        [m for m in index.match_secrets(text) if not looks_like_placeholder(m.value)] if secrets else []
+        [m for m in index.match_secrets(text) if not looks_like_placeholder(reported_credential(m))]
+        if secrets
+        else []
     )
     candidates = [
         *index.match_code(text, None),

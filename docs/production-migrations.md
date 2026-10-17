@@ -198,7 +198,9 @@ across this change reports findings as resolved or new that are neither.
   baseline shows those `secret` findings as resolved; review any `--fail-on`
   threshold that only these findings reached. Literal keys, provider key
   formats, unquoted values in env files, a hard-coded fallback after an
-  environment read (`process.env.OPENAI_API_KEY || "<key>"`) and generated
+  environment read (`process.env.OPENAI_API_KEY || "<key>"`; a literal passed
+  to a call there, such as `?? fail("X is not set")`, is no fallback, and a
+  placeholder fallback is `example-credential` evidence) and generated
   passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`; a label of words
   carries credential or test vocabulary or the assigned name) are reported as
   before. References, and a second pattern matching a credential already

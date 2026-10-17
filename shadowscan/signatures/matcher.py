@@ -415,43 +415,96 @@ def _reference_value(value: str, *, code: bool, follower: str = "") -> bool:
     return "." in candidate and (follower[:1] in _CODE_FOLLOWERS or candidate.startswith(_REFERENCE_ROOTS))
 
 
-# What ends a value after a reference and any blanks: a statement or argument
-# separator, a closing bracket or the end of the line.
-_VALUE_TERMINATORS = frozenset(";,)}]\r\n")
-# What opens on a reference and makes it a call or a subscript.
-_CALL_OR_SUBSCRIPT = frozenset("([")
 # How much of the text after a generic match is read for operands that follow it.
 _FOLLOWER_CHARS = 512
-# The rest of a value after a reference: string literals, and anything but a
-# value terminator ('|| "<key>"', '?? process.env.B ?? "<key>"', '+ "<key>"').
-_OPERANDS = re.compile(r"(?:\"[^\"\r\n]*+\"|'[^'\r\n]*+'|`[^`\r\n]*+`|[^\"'`;,)}\]\r\n])*+")
-# A literal operand: a quoted string, or a bare run of the generic value class.
-_OPERAND_LITERAL = re.compile(r"\"([^\"\r\n]*+)\"|'([^'\r\n]*+)'|`([^`\r\n]*+)`|([A-Za-z0-9_./+=-]{16,256})")
+# The text after a reference, read as tokens: each one is matched where the
+# last one ended, so the read is linear in the follower. A string literal
+# with its prefix ('f"..."', C#'s '$"..."'), an operator, a member access, a
+# word, and any other single character, which ends the value.
+_OPERAND_TOKEN = re.compile(
+    r"(?P<blank>[ \t]++)"
+    r"|(?P<string>(?P<prefix>[rRbBuUfF]{1,2}|[@$])?(?P<quote>[\"'`])"
+    r"(?P<body>(?:\\[^\r\n]|(?!(?P=quote))[^\\\r\n])*+)(?P=quote))"
+    r"|(?P<operator>\|\||\?\?|\?:|&&|===?|!==?|[?:+])"
+    r"|(?P<member>\??\.[A-Za-z_$][\w$]*+)"
+    r"|(?P<word>[A-Za-z_$][\w$]*+)"
+    r"|(?P<other>[\s\S])"
+)
+# Operators whose next operand is the value when the reference is unset: a
+# fallback ('||', '??', Kotlin's '?:', Python's 'or'), a ternary branch ('?',
+# ':', Python's 'else') or a concatenation ('+').
+_FALLBACK_OPERATORS = frozenset({"||", "??", "?:", "?", ":", "+", "or", "else"})
+# Operators the value goes on past whose next operand is no fallback: a
+# comparison, a conjunction and the condition of Python's 'a if c else b'.
+_OTHER_OPERATORS = frozenset({"&&", "==", "===", "!=", "!==", "and", "if"})
+# A fallback literal is one token of the generic value class, as an assigned
+# value is: a sentence ('"OPENAI_API_KEY is not set"') is a message.
+_FALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_./+=-]{16,256}")
 
 
-def _fallback_literal(follower: str) -> str | None:
-    """The key-shaped literal among the operands after a reference, or None.
+def _operand_tokens(follower: str) -> Iterator[tuple[str, re.Match[str]]]:
+    """The tokens of ``follower`` that are not blanks, as (kind, match), up to the first other character."""
+    position = 0
+    while position < len(follower):
+        token = _OPERAND_TOKEN.match(follower, position)
+        if token is None:  # pragma: no cover - the last alternative matches any character
+            return
+        position = token.end()
+        kind = token.lastgroup or "other"
+        if kind != "blank":
+            yield kind, token
+
+
+def _operator(kind: str, token: re.Match[str]) -> str | None:
+    """The operator a token is, or None: a symbol, or one of Python's word operators."""
+    text = token.group()
+    if kind == "operator" or (kind == "word" and text in _FALLBACK_OPERATORS | _OTHER_OPERATORS):
+        return text
+    return None
+
+
+def _fallback_literal(value: str, follower: str) -> str | None:
+    """The key-shaped literal that is a direct fallback operand after a reference, or None.
 
     The generic pattern's value stops at the first blank, so for
     'apiKey = process.env.OPENAI_API_KEY || "<key>"' it covers only the read.
-    The reference ends the value when only blanks and a value terminator
-    follow it, or a call or subscript opens on it. Otherwise the value goes on
-    with a fallback ('||', '??', '?:', 'or'), a concatenation ('+'), a ternary
-    branch or another operand, and a literal there that looks like a key
-    (``_high_entropy_credential``) is a hard-coded credential. An empty or
-    word-like fallback ('|| ""', '?? "not-configured"') is none, and a bare
-    operand that reads as a name ('|| defaults.azure') is another reference.
+    The value goes on only through operators (``_FALLBACK_OPERATORS`` and
+    ``_OTHER_OPERATORS``) between operands that are string literals, names
+    and member chains ('?? process.env.B ?? "<key>"'); anything else, a call
+    or a subscript included, ends it. A string literal right after a fallback
+    operator is a hard-coded credential when it is one token of the value
+    class (``_FALLBACK_TOKEN``) that looks like a key
+    (``_high_entropy_credential``). A literal passed to a call
+    ('?? getSecret("<path>")', '?: error("X is not set")') is no fallback,
+    nor is an empty, word-like or interpolated one ('|| ""', '|| f"{x}"').
+    Whether the literal is a placeholder is the caller's test, on the literal
+    itself (see ``reported_credential``).
     """
-    rest = follower.lstrip(" \t")
-    if follower[:1] in _CALL_OR_SUBSCRIPT or not rest or rest[0] in _VALUE_TERMINATORS:
-        return None
-    operands = _OPERANDS.match(rest)
-    for operand in _OPERAND_LITERAL.finditer(rest, 0, operands.end() if operands else 0):
-        literal = operand[operand.lastindex or 0]
-        bare = operand.lastindex == 4
-        if not (bare and _identifier_shaped(literal)) and _high_entropy_credential(literal):
-            return str(literal)
+    operand = fallback = False
+    for kind, token in _operand_tokens(follower):
+        if not operand:
+            operator = _operator(kind, token)
+            if kind == "member":
+                continue
+            if operator is None:
+                return None
+            operand, fallback = True, operator in _FALLBACK_OPERATORS
+            continue
+        if kind == "string":
+            body = token["body"]
+            literal = fallback and not _interpolated_literal(token) and _FALLBACK_TOKEN.fullmatch(body)
+            if literal and _high_entropy_credential(value, literal=body):
+                return body
+        elif kind != "word":
+            return None
+        operand = False
     return None
+
+
+def _interpolated_literal(token: re.Match[str]) -> bool:
+    """Whether a string token assembles its text from expressions ('f"{x}"', '`${x}`', C#'s '$"..."')."""
+    prefix, body = (token["prefix"] or "").lower(), token["body"]
+    return prefix == "$" or ("f" in prefix and "{" in body) or (token["quote"] == "`" and "${" in body)
 
 
 # Below this share of digits a separated single-case value reads as an identifier
@@ -522,16 +575,18 @@ def _name_shaped(candidate: str) -> bool:
     )
 
 
-def _high_entropy_credential(value: str) -> bool:
+def _high_entropy_credential(value: str, *, literal: str | None = None) -> bool:
     """Require a generic assigned credential to be long, diverse and shaped like a token, not a name.
 
     Shannon entropy alone does not separate the two: ordinary identifiers
     clear 3 bits per character. A name-shaped value with no digit
     (``_name_shaped``) must mix cases evenly, unless it is a passphrase of
     words (``_label_slug``); a value with digits must not be a single-case
-    identifier (``_single_case_identifier``).
+    identifier (``_single_case_identifier``). ``literal`` is the value to
+    judge when it is not the one ``value`` assigns (a fallback after a
+    reference); ``value`` still names it.
     """
-    candidate = _assigned_value(value)
+    candidate = _assigned_value(value) if literal is None else literal
     passphrase = _WORD_SLUG.fullmatch(candidate) is not None
     if len(candidate) < 16 or (passphrase and _label_slug(value, candidate)):
         return False
@@ -587,17 +642,24 @@ def _generic_literal(value: str, *, code: bool, follower: str) -> str | None:
     the fallback literal after it, if any (``_fallback_literal``).
     """
     if _reference_value(value, code=code, follower=follower):
-        return _fallback_literal(follower)
+        return _fallback_literal(value, follower)
     return _assigned_value(value) if _high_entropy_credential(value) else None
 
 
-def reported_credential(signature_id: str, value: str) -> str:
-    """The credential a secret match stands for: a generic assignment's value, or the match itself.
+def reported_credential(match: Match) -> str:
+    """The credential a secret match stands for: a generic match's literal, or the match itself.
 
     ``OPENAI_KEY=ghp_...`` read as a line and ``ghp_...`` read as that line's
-    parsed value are one credential, however the match was cut.
+    parsed value are one credential, however the match was cut. A generic
+    match of a reference stands for the fallback literal after it, which
+    ``match_secrets`` records as ``extra["credential"]``: that literal, not
+    the reference, is what a placeholder test judges and what a finding
+    counts.
     """
-    return _assigned_value(value) if signature_id == GENERIC_CREDENTIAL else value
+    credential = match.extra.get("credential")
+    if isinstance(credential, str):
+        return credential
+    return _assigned_value(match.value) if match.signature_id == GENERIC_CREDENTIAL else match.value
 
 
 def _credential_candidate(
@@ -640,6 +702,21 @@ def keep_secret_matches(
     A short unattributed ``sk-`` value only adds keys nothing else reports: it
     is kept when it looks random and no kept generic match covers it.
     """
+    credentials = _kept_credentials(matches, code=code, followers=followers)
+    return [credential is not None for credential in credentials]
+
+
+def _kept_credentials(
+    matches: Sequence[tuple[str, str, int | None]],
+    *,
+    code: bool = False,
+    followers: Sequence[str] | None = None,
+) -> list[str | None]:
+    """The credential each match of ``keep_secret_matches`` stands for, or None where it is not kept.
+
+    A generic match stands for its literal: the value it assigns, or the
+    fallback literal after a reference. Any other match stands for itself.
+    """
     after = list(followers) if followers is not None else [""] * len(matches)
     short = [
         signature_id == UNATTRIBUTED_KEY and len(value) - len("sk-") < _SHORT_KEY_BODY
@@ -649,24 +726,24 @@ def keep_secret_matches(
     for (signature_id, value, line), is_short in zip(matches, short, strict=True):
         if signature_id != GENERIC_CREDENTIAL and not is_short:
             specific.setdefault(line, []).append(value)
-    keep = []
+    kept: list[str | None] = []
     generic: dict[int | None, list[str]] = {}
     for (signature_id, value, line), follower in zip(matches, after, strict=True):
         if signature_id != GENERIC_CREDENTIAL:
-            keep.append(True)
+            kept.append(value)
             continue
         literal = _generic_literal(value, code=code, follower=follower)
         others = specific.get(line, ())
         if literal is None or any(other in value or other in literal or literal in other for other in others):
-            keep.append(False)
+            kept.append(None)
             continue
-        keep.append(True)
+        kept.append(literal)
         generic.setdefault(line, []).extend((value, literal))
     for position, ((_, value, line), is_short) in enumerate(zip(matches, short, strict=True)):
         if is_short:
             covered = any(value in other for other in generic.get(line, ()))
-            keep[position] = not covered and _random_key_body(value[len("sk-") :])
-    return keep
+            kept[position] = None if covered or not _random_key_body(value[len("sk-") :]) else value
+    return kept
 
 
 # ------------------------------------------------------- domain prefilters
@@ -1737,10 +1814,16 @@ class SignatureIndex:
         )
         ends = [m.extra.get("end") for m in matches]
         followers = [text[end : end + _FOLLOWER_CHARS] if end is not None else "" for end in ends]
-        keep = keep_secret_matches(
+        credentials = _kept_credentials(
             [(m.signature_id, m.value, m.line) for m in matches], code=code, followers=followers
         )
-        return [match for match, keep_match in zip(matches, keep, strict=True) if keep_match]
+        kept = []
+        for match, credential in zip(matches, credentials, strict=True):
+            if credential is not None:
+                # What a placeholder test judges and a finding counts (``reported_credential``).
+                match.extra["credential"] = credential
+                kept.append(match)
+        return kept
 
     def match_user_agent(self, ua: str) -> list[Match]:
         if not ua:
