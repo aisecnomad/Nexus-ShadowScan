@@ -367,6 +367,34 @@ class _WorkerHandle:
             _stop(self._process)
 
 
+def _check_statistics(raw: Any) -> None:
+    """Refuse a worker's statistics unless every field has the type ``ScanStats`` gives it."""
+    if not isinstance(raw, dict) or set(raw) != set(asdict(ScanStats("", ""))):
+        raise ValueError("invalid plugin statistics")
+    for key in ("connector", "started_at"):
+        if not isinstance(raw[key], str):
+            raise ValueError("invalid plugin statistics string")
+    for key in ("finished_at", "skip_reason"):
+        if raw[key] is not None and not isinstance(raw[key], str):
+            raise ValueError("invalid plugin statistics optional string")
+    for key in ("findings", "objects_examined", "declared_omissions"):
+        if type(raw[key]) is not int or raw[key] < 0:
+            raise ValueError("invalid plugin statistics count")
+    for key in ("incomplete", "skipped", "cached"):
+        if type(raw[key]) is not bool:
+            raise ValueError("invalid plugin statistics flag")
+    for key in ("errors", "warnings"):
+        if not isinstance(raw[key], list) or any(not isinstance(item, str) for item in raw[key]):
+            raise ValueError("invalid plugin diagnostics")
+    reasons = raw["incomplete_reasons"]
+    if not isinstance(reasons, dict) or any(
+        not isinstance(reason, str) or type(count) is not int or count < 0
+        for reason, count in reasons.items()
+    ):
+        raise ValueError("invalid plugin incomplete reasons")
+    validate_coverage_summary(raw["coverage"])
+
+
 def _decode_result(
     payload: bytes, number: int, spec: ConnectorSpec
 ) -> tuple[list[Finding], ScanStats, list[dict[str, Any]]]:
@@ -376,32 +404,7 @@ def _decode_result(
     if not isinstance(data["findings"], list) or not isinstance(data["exports"], list):
         raise ValueError("invalid plugin result arrays")
     raw = data["stats"]
-    if not isinstance(raw, dict) or set(raw) != set(asdict(ScanStats("", ""))):
-        raise ValueError("invalid plugin statistics")
-    for key in ("connector", "started_at"):
-        if not isinstance(raw[key], str):
-            raise ValueError("invalid plugin statistics string")
-    for key in ("finished_at", "skip_reason"):
-        if raw[key] is not None and not isinstance(raw[key], str):
-            raise ValueError("invalid plugin statistics optional string")
-    for key in ("findings", "objects_examined"):
-        if type(raw[key]) is not int or raw[key] < 0:
-            raise ValueError("invalid plugin statistics count")
-    for key in ("incomplete", "skipped", "cached"):
-        if type(raw[key]) is not bool:
-            raise ValueError("invalid plugin statistics flag")
-    for key in ("errors", "warnings"):
-        if not isinstance(raw[key], list) or any(not isinstance(item, str) for item in raw[key]):
-            raise ValueError("invalid plugin diagnostics")
-    if type(raw["declared_omissions"]) is not int or raw["declared_omissions"] < 0:
-        raise ValueError("invalid plugin statistics count")
-    reasons = raw["incomplete_reasons"]
-    if not isinstance(reasons, dict) or any(
-        not isinstance(reason, str) or type(count) is not int or count < 0
-        for reason, count in reasons.items()
-    ):
-        raise ValueError("invalid plugin incomplete reasons")
-    validate_coverage_summary(raw["coverage"])
+    _check_statistics(raw)
     stats = ScanStats(**sanitize(raw))
     stats.connector = spec.id
     stats.incomplete = stats.incomplete or stats.skipped or bool(stats.errors)

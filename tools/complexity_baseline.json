@@ -2,8 +2,7 @@
   "_comment": "Cyclomatic complexity above 15 that predates the C901 gate. Entries may fall and be re-recorded with `python -m tools.complexity_gate --update`; they may never rise, and a function not listed here may not exceed the target. Removing an entry entirely is the goal.",
   "target": 15,
   "allowances": {
-    "shadowscan/cli.py::code": 16,
-    "shadowscan/cli.py::diff": 17,
+    "shadowscan/cli/_diff.py::diff": 17,
     "shadowscan/comparison.py::_collection_scope": 20,
     "shadowscan/config.py::from_dict": 17,
     "shadowscan/connectors/cloud/aws.py::_iam_policy_signals": 21,

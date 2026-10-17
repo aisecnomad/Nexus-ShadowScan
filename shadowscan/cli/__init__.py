@@ -189,6 +189,14 @@ def _explain_incomplete(result: ScanResult) -> None:
         pass
 
 
+def _abandoned_exit_message(result: ScanResult, code: int, abandoned: int) -> str:
+    """The notice for leaving timed-out workers behind; with exit 3 it leads with the reasons."""
+    message = f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]"
+    if code == 3:
+        message = f"[yellow]{terminal_text(_incomplete_explanation(result))}[/yellow]\n{message}"
+    return message
+
+
 def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
     """Best-effort output must not prevent the CLI leaving blocked workers."""
     try:
@@ -317,12 +325,9 @@ def _run_and_emit_with_deadline(
             # Python joins worker threads at interpreter exit, which would hold the
             # process (and its CI job) open indefinitely. The report is written.
             # One diagnostic carries the exit-3 explanation with the notice.
-            abandoned = len(engine.abandoned_workers)
-            notice = f"exiting without waiting for {abandoned} timed-out connector worker(s)"
-            message = f"[yellow]{notice}[/yellow]"
-            if code == 3:
-                message = f"[yellow]{terminal_text(_incomplete_explanation(result))}[/yellow]\n{message}"
-            _exit_abandoned_workers(code, message)
+            _exit_abandoned_workers(
+                code, _abandoned_exit_message(result, code, len(engine.abandoned_workers))
+            )
         if code == 3:
             _explain_incomplete(result)
         sys.exit(code)

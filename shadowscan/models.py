@@ -579,35 +579,7 @@ class Finding:
         d["kind"] = Kind(d["kind"])
         d["likelihood"] = Likelihood(d.get("likelihood", "weak"))
         _validate_number(d.get("confidence", 0.0), "confidence", minimum=0, maximum=1)
-        risk = d.get("risk")
-        if risk is None:
-            risk = {}
-        if not isinstance(risk, dict):
-            raise ValueError("finding risk must be an object")
-        _validate_number(risk.get("score", 0), "risk score", minimum=0, maximum=100)
-        factors = risk.get("factors", [])
-        if not isinstance(factors, list) or any(not isinstance(factor, dict) for factor in factors):
-            raise ValueError("finding risk factors must be objects")
-        for factor in factors:
-            if not isinstance(factor.get("id"), str) or not isinstance(factor.get("description"), str):
-                raise ValueError("finding risk factors must have a string id and description")
-            _validate_number(factor.get("weight"), "risk factor weight")
-        _validate_number(risk.get("danger_score", 0), "risk danger score", minimum=0, maximum=100)
-        d["risk"] = Risk(
-            score=risk.get("score", 0),
-            level=RiskLevel(risk.get("level", "info")),
-            danger_score=risk.get("danger_score", 0),
-            factors=[
-                RiskFactor(
-                    **{
-                        name: value
-                        for name, value in factor.items()
-                        if name in {"id", "description", "weight"}
-                    }
-                )
-                for factor in factors
-            ],
-        )
+        d["risk"] = _risk_from_dict(d.get("risk"))
         evidence = d.get("evidence", [])
         if not isinstance(evidence, list) or any(not isinstance(item, dict) for item in evidence):
             raise ValueError("finding evidence must be objects")
@@ -634,6 +606,35 @@ class Finding:
                 setattr(observation, name, value)
             d["evidence"].append(observation)
         return cls(**d)
+
+
+_RISK_FACTOR_FIELDS = frozenset({"id", "description", "weight"})
+
+
+def _risk_from_dict(risk: Any) -> Risk:
+    """A finding's imported ``risk`` object, validated; an absent one is the zero risk."""
+    if risk is None:
+        risk = {}
+    if not isinstance(risk, dict):
+        raise ValueError("finding risk must be an object")
+    _validate_number(risk.get("score", 0), "risk score", minimum=0, maximum=100)
+    factors = risk.get("factors", [])
+    if not isinstance(factors, list) or any(not isinstance(factor, dict) for factor in factors):
+        raise ValueError("finding risk factors must be objects")
+    for factor in factors:
+        if not isinstance(factor.get("id"), str) or not isinstance(factor.get("description"), str):
+            raise ValueError("finding risk factors must have a string id and description")
+        _validate_number(factor.get("weight"), "risk factor weight")
+    _validate_number(risk.get("danger_score", 0), "risk danger score", minimum=0, maximum=100)
+    return Risk(
+        score=risk.get("score", 0),
+        level=RiskLevel(risk.get("level", "info")),
+        danger_score=risk.get("danger_score", 0),
+        factors=[
+            RiskFactor(**{name: value for name, value in factor.items() if name in _RISK_FACTOR_FIELDS})
+            for factor in factors
+        ],
+    )
 
 
 # Public model fields, in declaration order. The verified-clean marker is

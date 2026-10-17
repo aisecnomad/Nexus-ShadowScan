@@ -95,6 +95,32 @@ def run(connector: str, input_path: str | None, settings: tuple[str, ...], opts:
 
 
 # ---------------------------------------------------------------------- code
+def _code_options(
+    exclude: tuple[str, ...],
+    no_default_excludes: bool,
+    no_secrets: bool,
+    strict_coverage: bool,
+    include_tests: bool,
+    triage: bool,
+    profile: str | None,
+) -> dict[str, Any]:
+    """The configuration every code connector of one `shadowscan code` run shares."""
+    common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
+    if no_default_excludes:
+        common["default_excludes"] = False
+    if strict_coverage:
+        common["strict_coverage"] = True
+    if include_tests:
+        common["include_tests"] = True
+    if triage:
+        common["triage"] = True
+    if profile:
+        if strict_coverage and profile == "ci":
+            raise click.UsageError("--profile ci and --strict-coverage conflict; pass one of them")
+        common["profile"] = profile
+    return common
+
+
 @main.command()
 @click.argument("paths", nargs=-1, type=click.Path(exists=True))
 @click.option("--github-org", help="scan every repository of a GitHub organisation (GITHUB_TOKEN)")
@@ -166,19 +192,9 @@ def code(
     """Scan local directories and/or remote repositories for agent code, MCP, coding agents, IaC and
     secrets."""
     specs: list[ConnectorSpec] = []
-    common: dict[str, Any] = {"exclude": list(exclude), "scan_secrets": not no_secrets}
-    if no_default_excludes:
-        common["default_excludes"] = False
-    if strict_coverage:
-        common["strict_coverage"] = True
-    if include_tests:
-        common["include_tests"] = True
-    if triage:
-        common["triage"] = True
-    if profile:
-        if strict_coverage and profile == "ci":
-            raise click.UsageError("--profile ci and --strict-coverage conflict; pass one of them")
-        common["profile"] = profile
+    common = _code_options(
+        exclude, no_default_excludes, no_secrets, strict_coverage, include_tests, triage, profile
+    )
     if diff_base and not paths:
         raise click.UsageError("--diff-base applies only to local PATHS")
     if mode and not (github_org or github_repo or gitlab_group):

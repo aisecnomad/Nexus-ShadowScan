@@ -156,6 +156,65 @@ def _run_regex(operation: Callable[[float], Any], context: str, *, max_seconds: 
                 ) from exc
 
 
+def _plan_candidates(
+    plan: _RegexPlan, text: str, scan: LiteralScan | None
+) -> tuple[set[int], dict[str, bool], str | None, dict[str, bool]]:
+    """The plan entries whose first literal group occurs in ``text``, with the literal memos.
+
+    Returns the candidates, the plain and casefolded presence memos and the
+    casefolded text (None when no case-insensitive pattern needs it).
+    """
+    candidates = set(plan.unhinted)
+    folded_text: str | None = None
+    folded_present: dict[str, bool] = {}
+    if scan is not None and scan.text is text:
+        # A shared scan holds the union of the plans' literals; a plan's
+        # candidates are the entries its own literals hit. The dicts also
+        # memoise the remaining groups, so an absent literal is a False
+        # entry, not a missing one.
+        present = scan.present
+        for literal in plan.plain_literals:
+            if present.get(literal):
+                candidates.update(plan.plain_first[literal])
+        if plan.folded_literals:
+            folded_text, folded_present = scan.folded_text, scan.folded_present
+            for literal in plan.folded_literals:
+                if folded_present.get(literal):
+                    candidates.update(plan.folded_first[literal])
+    else:
+        present = {literal: True for literal in plan.plain_literals if literal in text}
+        for literal in present:
+            candidates.update(plan.plain_first[literal])
+        if plan.folded_literals:
+            folded_text = _fold(text)
+            folded_present = {literal: True for literal in plan.folded_literals if literal in folded_text}
+            for literal in folded_present:
+                candidates.update(plan.folded_first[literal])
+    return candidates, present, folded_text, folded_present
+
+
+def _quota_matches(
+    rx: Any,
+    text: str,
+    signature_id: str,
+    quota: int,
+    excluded: Callable[[int], bool] | None,
+    limited: set[str] | None,
+) -> list[Any]:
+    """At most ``quota`` matches of ``rx``; with ``limited``, one past it is looked for.
+
+    A match past the quota is never returned. It records ``signature_id`` in
+    ``limited``, so the caller can disclose that the matches are a lower bound.
+    """
+    if limited is None:
+        return _finditer(rx, text, signature_id, quota, excluded)
+    found = _finditer(rx, text, signature_id, quota + 1, excluded)
+    if len(found) > quota:
+        limited.add(signature_id)
+        del found[quota:]
+    return found
+
+
 def _finditer(
     rx: Any,
     text: str,
@@ -1372,32 +1431,17 @@ class SignatureIndex:
         # the candidates; their remaining groups are checked with a memo. The
         # casefolded text is built only when a case-insensitive pattern needs it.
         plan = self._regex_plan(signal_type, language)
-        candidates = set(plan.unhinted)
-        folded_text: str | None = None
-        folded_present: dict[str, bool] = {}
-        if scan is not None and scan.text is text:
-            # A shared scan holds the union of the plans' literals; a plan's
-            # candidates are the entries its own literals hit. The dicts also
-            # memoise the remaining groups, so an absent literal is a False
-            # entry, not a missing one.
-            present = scan.present
-            for literal in plan.plain_literals:
-                if present.get(literal):
-                    candidates.update(plan.plain_first[literal])
-            if plan.folded_literals:
-                folded_text, folded_present = scan.folded_text, scan.folded_present
-                for literal in plan.folded_literals:
-                    if folded_present.get(literal):
-                        candidates.update(plan.folded_first[literal])
-        else:
-            present = {literal: True for literal in plan.plain_literals if literal in text}
-            for literal in present:
-                candidates.update(plan.plain_first[literal])
-            if plan.folded_literals:
-                folded_text = _fold(text)
-                folded_present = {literal: True for literal in plan.folded_literals if literal in folded_text}
-                for literal in folded_present:
-                    candidates.update(plan.folded_first[literal])
+        candidates, present, folded_text, folded_present = _plan_candidates(plan, text, scan)
+
+        def hinted(rest: Any, fold: bool) -> bool:
+            """Whether the pattern's remaining literal groups occur in the text."""
+            if not rest:
+                return True
+            if fold:
+                return _hints_present(rest, folded_text or "", folded_present)
+            return _hints_present(rest, text, present)
+
+        skip = excluded if starts else None
         current: int | None = None
         hits = 0
         for number in sorted(candidates):
@@ -1409,31 +1453,13 @@ class SignatureIndex:
                 # know about matches the quota hides, a later pattern of the
                 # same signal is still given one bounded search, so a credential
                 # that only its second pattern recognizes is counted as hidden.
-                if limited is not None and sig.id not in limited:
-                    if rest:
-                        if fold:
-                            if not _hints_present(rest, folded_text or "", folded_present):
-                                continue
-                        elif not _hints_present(rest, text, present):
-                            continue
-                    if _finditer(rx, text, sig.id, 1, excluded if starts else None):
+                if limited is not None and sig.id not in limited and hinted(rest, fold):
+                    if _finditer(rx, text, sig.id, 1, skip):
                         limited.add(sig.id)
                 continue
-            if rest:
-                if fold:
-                    if not _hints_present(rest, folded_text or "", folded_present):
-                        continue
-                elif not _hints_present(rest, text, present):
-                    continue
-            quota = max_per_signal - hits
-            if limited is None:
-                found = _finditer(rx, text, sig.id, quota, excluded if starts else None)
-            else:
-                found = _finditer(rx, text, sig.id, quota + 1, excluded if starts else None)
-                if len(found) > quota:
-                    limited.add(sig.id)
-                    del found[quota:]
-            for m in found:
+            if not hinted(rest, fold):
+                continue
+            for m in _quota_matches(rx, text, sig.id, max_per_signal - hits, skip, limited):
                 if newlines is None:
                     newlines = [newline.start() for newline in re.finditer("\n", text)]
                 line = bisect_left(newlines, m.start()) + 1
