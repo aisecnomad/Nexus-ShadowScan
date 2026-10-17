@@ -468,9 +468,11 @@ path. A file over `max_file_size` that matches one is skipped with a warning
 and the scan stays complete, even under `strict_coverage`. Any other oversize
 analyzable file is a coverage gap: an incidental one costs one entry of the
 root's [coverage budget](scanning.md#coverage-budget-and-strict-accounting),
-and configuration its name selects (an MCP configuration, a coding-agent
-file, a manifest) makes the scan incomplete at once, as a link to it or a
-FIFO in its place does.
+and agent configuration (an MCP configuration by its name in any letter case
+or by a server table its bytes name, a coding-agent instruction, rule or
+settings file, an agent card) makes the scan incomplete at once, as a link to
+it or a FIFO in its place does; an oversize manifest costs one entry, and an
+oversize `.env` or tool credential file exits 3 while credentials are scanned.
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
 relative to it without following a link in any path component. A root that
