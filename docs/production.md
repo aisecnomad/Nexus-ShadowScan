@@ -554,8 +554,11 @@ with dense NUL bytes, mostly invalid UTF-8, or UTF-16 or UTF-32 without a byte-o
 bytes or invalid bytes in otherwise valid text do not count) are coverage gaps,
 each named in a diagnostic. A directory link (other than an alias of a
 directory the walk scans whole inside the root), undecodable content outside
-discounted test code and unread agent configuration make the scan
-incomplete (exit 3) at once; the others are charged to each scan root's
+discounted test code and unread agent configuration (by its name in any
+letter case, by a coding-agent or MCP file signature, or by the server table an
+oversize file's bytes name) make the scan incomplete (exit 3) at once; a file
+left unread for credentials (oversize, or unreadable) costs a whole entry under
+a test path too and is never declared by `profile: ci`; the others are charged to each scan root's
 coverage budget (2% of its entries, `max_coverage_gap`), within which the
 scan stays complete and counts them in `summary.tolerated_gaps` (see
 [coverage budget and strict accounting](scanning.md#coverage-budget-and-strict-accounting)).

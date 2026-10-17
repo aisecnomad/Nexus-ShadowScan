@@ -833,7 +833,7 @@ def test_a_gap_in_a_test_path_the_scan_discounts_weighs_low(tmp_path, run_connec
 @pytest.mark.parametrize("profile", ["default", "ci"])
 def test_a_full_weight_file_under_a_test_path_weighs_in_full(tmp_path, run_connector, profile):
     # The discount and the declaration treat tests/e2e/.mcp.json as an MCP
-    # configuration wherever it lies (_full_weight_in_tests); the budget must not
+    # configuration wherever it lies (_agent_configuration); the budget must not
     # weigh its gap as an ordinary fixture's. A directory of that name is the one
     # such gap that stays partial: its contents are walked.
     _tree(tmp_path, {"tests/e2e/.mcp.json/README.txt": "notes\n"})
