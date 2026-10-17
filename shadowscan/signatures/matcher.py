@@ -386,6 +386,8 @@ _LABEL_WORDS = frozenset(
         "auth",
         "credential",
         "env",
+        "environment",
+        "jwt",
         "passwd",
         "password",
         "pwd",
@@ -419,12 +421,17 @@ _LABEL_WORDS = frozenset(
 # Label vocabulary that is also an ordinary word of a passphrase word list, as
 # are its plural and past forms ('passed', 'valued', 'keyed', 'tested', 'devs',
 # 'locals'): a slug is a label by these only with another label word or with a
-# function word ('unsafe-dev-only-default', 'this-should-be-changed').
+# function word ('unsafe-dev-only-default', 'this-should-be-changed'). The
+# account and service words name what a credential belongs to
+# ('pg-replica-sync-user', 'mq-broker-admin-user', 'ai-gateway-internal-route').
 _COMMON_LABEL_WORDS = frozenset(
     {
+        "admin",
         "change",
+        "commit",
         "default",
         "dev",
+        "internal",
         "invalid",
         "key",
         "local",
@@ -434,19 +441,28 @@ _COMMON_LABEL_WORDS = frozenset(
         "replace",
         "scoped",
         "shared",
+        "strong",
         "test",
         "unsafe",
+        "user",
         "value",
         "your",
     }
 )
 # Words that join a sentence, which generated passphrases leave out but labels
-# written as instructions need ('dont-use-this-in-prod', 'for-local-dev-use-only').
+# written as instructions need ('dont-use-this-in-prod', 'for-local-dev-use-only',
+# 'change-me-please', 'must-be-set-at-runtime', 'not-configured-yet'): two of
+# them, or one with a word of the label vocabulary, make a slug an instruction.
 _FUNCTION_WORDS = frozenset(
     {
+        "a",
+        "an",
         "and",
         "are",
+        "at",
         "be",
+        "before",
+        "by",
         "do",
         "does",
         "dont",
@@ -456,23 +472,29 @@ _FUNCTION_WORDS = frozenset(
         "in",
         "is",
         "it",
+        "me",
         "must",
+        "my",
         "never",
         "no",
         "not",
+        "now",
         "of",
         "on",
         "only",
         "or",
+        "please",
         "should",
         "the",
         "these",
         "this",
         "to",
         "use",
+        "via",
         "was",
         "were",
         "with",
+        "yet",
     }
 )
 
@@ -844,23 +866,28 @@ def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
     'lorem-ipsum-dolor-sit-amet'), two are vocabulary that is also a common
     word ('unsafe-dev-only-default', 'defaults-were-replaced'), one such word
     comes with a function word that joins a sentence
-    ('this-should-be-changed', 'dont-use-this-in-prod'), see
-    ``_label_strength``, or a word has three letters or more of the name it
-    is assigned to ('OPENAI_API_KEY=sua_chave_openai'; 'db' in 'DB_PASSWORD'
-    is too short to tell). One common word alone does not make a label: a
-    passphrase may hold 'passed', 'keyed', 'default' or 'lorem'. With
-    ``names``, an upper-case slug joined by '_' only is CONSTANT_CASE, an
-    environment variable's name.
+    ('this-should-be-changed', 'change-me-please'), two function words make
+    it an instruction ('do-not-commit-this', 'must-be-set-at-runtime',
+    'not-configured-yet'), see ``_label_strength``, or a word has three
+    letters or more of the name it is assigned to
+    ('OPENAI_API_KEY=sua_chave_openai'). A two-letter word of the name ('pg'
+    in 'PG_PASSWORD', 'db', 'mq', 'ai') counts as a common word: with another
+    one it labels the slug ('pg-replica-sync-user'), alone it does not
+    ('db-fiber-thump-bloom-gravel'). One common word alone does not make a
+    label either: a passphrase may hold 'passed', 'keyed', 'default' or
+    'lorem'. With ``names``, an upper-case slug joined by '_' only is
+    CONSTANT_CASE, an environment variable's name.
     """
     if names and candidate.isupper() and "-" not in candidate and "." not in candidate:
         return True
     words = [word.lower() for word in _SLUG_SEPARATOR.split(candidate)]
-    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if len(word) >= 3}
-    if not name.isdisjoint(words):
+    name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if word.isalpha()}
+    if any(word in name and len(word) >= 3 for word in words):
         return True
-    strengths = [_label_strength(word) for word in words]
+    strengths = [1 if word in name else _label_strength(word) for word in words]
     common = strengths.count(1)
-    return 2 in strengths or common >= 2 or (common == 1 and not _FUNCTION_WORDS.isdisjoint(words))
+    function = sum(word in _FUNCTION_WORDS for word in words)
+    return 2 in strengths or common >= 2 or (common == 1 and function > 0) or function >= 2
 
 
 def _name_shaped(candidate: str) -> bool:
