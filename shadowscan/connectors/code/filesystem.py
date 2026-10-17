@@ -2050,9 +2050,13 @@ class FilesystemConnector(BaseConnector):
         ``_is_test_path`` names it (``testing/``, ``e2e/``, ``cassettes/``,
         ``test_*.py``, ``*.test.ts``, ``conftest.py``, ...) while
         ``include_tests`` is off and its evidence is discounted. With
-        ``include_tests`` a test path is source and its gaps weigh in full.
+        ``include_tests`` a test path is source and its gaps weigh in full,
+        and so does a file whose findings keep their full weight under a test
+        path (``_full_weight_in_tests``: ``tests/.mcp.json``, ``tests/CLAUDE.md``):
+        the discount, the declaration and the budget read it alike
+        (``_discounted_test_path``).
         """
-        if is_vendored_path(rel) or (not self.include_tests and _is_test_path(rel)):
+        if is_vendored_path(rel) or self._discounted_test_path(rel):
             return "low"
         return "high"
 

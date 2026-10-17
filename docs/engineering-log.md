@@ -74,7 +74,14 @@ strict accounting, credentials, declaration, discount, budget.
   a vendored path, or a test path as `_is_test_path` names it while
   `include_tests` is off, and `high` otherwise. A caller that passes none
   keeps the segment rule, so other connectors are unchanged, and the
-  published gap shape is the same.
+  published gap shape is the same. A file whose findings keep their full
+  weight under a test path (`_full_weight_in_tests`) weighs in full: the
+  first version weighed a FIFO or a directory named `tests/e2e/.mcp.json`
+  at a quarter although the discount and the declaration both treated it
+  as an MCP configuration, so the three rules now share
+  `_discounted_test_path`. `__snapshots__/`, a test segment of
+  `CoverageGap.relevance` that `_is_test_path` does not name, now weighs in
+  full, as the scan's evidence there does.
 - **Discounted test code is charged to the budget.** #255's discount wrote a
   plain warning that nothing counted, so 61 product files beside 200
   `tests/fixtures/agents*.yaml` with duplicate keys, or 200 binary

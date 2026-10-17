@@ -32,7 +32,11 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   under a test path weighs a whole entry in the coverage budget instead of a
   quarter, so fewer such gaps are tolerated. Without it, gaps under
   `testing/`, `e2e/`, `cassettes/`, `__mocks__/` and in test files such as
-  `src/agent.test.ts` now weigh a quarter, as `tests/` already did.
+  `src/agent.test.ts` now weigh a quarter, as `tests/` already did. Some
+  gaps got heavier: one under `__snapshots__/`, which the scan does not read
+  as a test path, and one in an MCP configuration, coding-agent file or agent
+  card under a test path (`tests/.mcp.json`), now weigh a whole entry instead
+  of a quarter.
 - **Discounted test-code gaps are budgeted.** A malformed or binary fixture
   under a test path (with `include_tests` off) is charged to the coverage
   budget and listed in `stats[].coverage.details`, instead of a warning

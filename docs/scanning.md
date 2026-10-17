@@ -265,7 +265,12 @@ deployed code as the scan reads it: under a dependency tree or tool cache
 `include_tests` is off (the test paths of
 [test and fixture code](#test-and-fixture-code), test file names such as
 `test_*.py`, `*.test.ts` and `conftest.py` included). With `include_tests` a
-test path is source and its gaps weigh in full. Within the budget the scan
+test path is source and its gaps weigh in full, and so does a file whose
+findings keep their full weight under a test path (an MCP configuration such
+as `tests/.mcp.json`, a coding-agent instruction, rule or settings file, an
+agent manifest or card), as the discount and the declaration read it. A
+`__snapshots__/` directory is not a test path to the scan, so its gaps weigh
+in full too. Within the budget the scan
 stays complete; every gap is still listed in `stats[].coverage.details`, with
 its path, reason and `relevance` (`low` for a quarter-weight gap).
 

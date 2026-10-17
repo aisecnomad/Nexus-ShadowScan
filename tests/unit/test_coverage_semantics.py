@@ -238,6 +238,29 @@ def test_a_gap_in_a_test_path_the_scan_discounts_weighs_low(tmp_path, run_connec
     assert ctx.stats.coverage["weighted_gap_entries"] == pytest.approx(0.25)
 
 
+@pytest.mark.parametrize("profile", ["default", "ci"])
+def test_a_full_weight_file_under_a_test_path_weighs_in_full(tmp_path, run_connector, profile):
+    # The discount and the declaration treat tests/e2e/.mcp.json as an MCP
+    # configuration wherever it lies (_full_weight_in_tests); the budget must not
+    # weigh its gap as an ordinary fixture's. A directory of that name is the one
+    # such gap that stays partial: its contents are walked.
+    _tree(tmp_path, {"tests/e2e/.mcp.json/README.txt": "notes\n"})
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False, profile=profile)
+    assert ctx.stats.coverage is not None and ctx.stats.declared_omissions == 0
+    [gap] = ctx.stats.coverage["details"]
+    assert (gap["path"], gap["relevance"]) == ("tests/e2e/.mcp.json", "high")
+    assert ctx.stats.coverage["weighted_gap_entries"] == pytest.approx(1.0)
+
+
+def test_a_snapshot_directory_is_not_a_test_path_to_the_budget(tmp_path, run_connector):
+    # CoverageGap.relevance's own segment list names __snapshots__; the scan's
+    # test-path rule does not, and the budget follows the scan (migration note).
+    _tree(tmp_path, links=["web/__snapshots__/view.py"])
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.coverage is not None
+    assert [gap["relevance"] for gap in ctx.stats.coverage["details"]] == ["high"]
+
+
 def test_include_tests_weighs_test_path_gaps_in_full(tmp_path, run_connector):
     # Three links weigh 0.75 against an allowance of 1.24 while test code is
     # discounted, and 3.0 once include_tests makes it source.
