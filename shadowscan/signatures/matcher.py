@@ -451,14 +451,15 @@ _FOLLOWER_CHARS = 512
 # space but a line end, such as U+00A0, U+2009, U+3000, '\f' and '\v', the
 # zero-width space, word joiner and byte order mark that an editor or a paste
 # leaves between tokens, and Python's backslash continuation), a line end, a
-# comment, a string literal with its prefix ('f"..."', C#'s '$"..."'), a
-# member access ('.trim', '?.trim', '?.' before a call), an operator,
-# TypeScript's non-null '!', a word, a bracket, and any other single character.
+# comment, a string literal with its prefix ('f"..."', C#'s '$"..."') and
+# Python's triple quotes on one line ('"""..."""'), a member access ('.trim',
+# '?.trim', '?.' before a call), an operator, TypeScript's non-null '!', a
+# word, a bracket, and any other single character.
 _OPERAND_TOKEN = re.compile(
     r"(?P<blank>(?:[^\S\r\n]|[\u200b\u2060\ufeff]|\\(?:\r\n|\r|\n))++)"
     r"|(?P<newline>\r\n|\r|\n)"
     r"|(?P<comment>(?://|#)[^\r\n]*+|/\*(?:[^*]|\*(?!/))*+\*/)"
-    r"|(?P<string>(?P<prefix>[rRbBuUfF]{1,2}|[@$])?(?P<quote>[\"'`])"
+    r"|(?P<string>(?P<prefix>[rRbBuUfF]{1,2}|[@$])?(?P<quote>\"\"\"|'''|[\"'`])"
     r"(?P<body>(?:\\[^\r\n]|(?!(?P=quote))[^\\\r\n])*+)(?P=quote))"
     r"|(?P<member>\??\.[A-Za-z_$][\w$]*+|\?\.(?=[(\[]))"
     r"|(?P<operator>\|\||\?\?|\?:|&&|===?|!==?|[?:+])"
@@ -473,8 +474,9 @@ _CLOSERS = {"(": ")", "[": "]", "{": "}"}
 # ':', Python's 'else') or a concatenation ('+').
 _FALLBACK_OPERATORS = frozenset({"||", "??", "?:", "?", ":", "+", "or", "else"})
 # Operators the value goes on past whose next operand is no fallback: a
-# comparison, a conjunction and the condition of Python's 'a if c else b'.
-_OTHER_OPERATORS = frozenset({"&&", "==", "===", "!=", "!==", "and", "if"})
+# comparison, a conjunction, the condition of Python's 'a if c else b' and the
+# type of a TypeScript cast ('process.env.X as string || "<key>"').
+_OTHER_OPERATORS = frozenset({"&&", "==", "===", "!=", "!==", "and", "if", "as", "satisfies"})
 # A fallback literal is one token of the generic value class, as an assigned
 # value is: a sentence ('"OPENAI_API_KEY is not set"') is a message.
 _FALLBACK_TOKEN = re.compile(r"[A-Za-z0-9_./+=-]{16,256}")
@@ -544,7 +546,10 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     ``_OTHER_OPERATORS``) between operands: string literals, names and member
     chains ('?? process.env.B ?? "<key>"'), each with its calls, subscripts
     and non-null or optional members ('GetEnvironmentVariable("X") ??',
-    'process.env.X?.trim() ||', 'getKey()!.value ??'), and bracketed groups.
+    'process.env.X?.trim() ||', 'getKey()!.value ??') and a TypeScript cast
+    ('as string ||'), and bracketed groups. Parentheses around an operand
+    ('|| ("<key>")', '|| (a || "<key>")') are read through, so the operand
+    inside is direct.
     An operator may end a line or start the next one, after a comment or a
     backslash continuation; a blank line, a value end (';', ',', a closing
     bracket) or any other token ends the value. A string literal right after
@@ -558,11 +563,16 @@ def _fallback_literal(value: str, follower: str) -> str | None:
     """
     tokens = _operand_tokens(follower)
     operand = fallback = False
+    # Parentheses opened where an operand belongs and not closed yet.
+    grouping = 0
     for item in tokens:
         kind, token = item.kind, item.token
         if item.lines > 1:
             return None
         if operand:
+            if kind == "open" and token.group() == "(":
+                grouping += 1  # '|| ("<key>")': the operand is inside
+                continue
             if kind == "string" and fallback and _fallback_credential(value, token):
                 return str(token["body"])
             if kind not in {"string", "word", "open"} or (
@@ -570,6 +580,8 @@ def _fallback_literal(value: str, follower: str) -> str | None:
             ):
                 return None
             operand = False
+        elif kind == "close" and grouping and token.group() == ")":
+            grouping -= 1
         elif kind == "member" or (not item.spaced and kind in {"open", "postfix"}):
             # A member, call, subscript or non-null assertion on the operand before.
             if kind == "open" and not _closed_group(tokens, token.group()):
