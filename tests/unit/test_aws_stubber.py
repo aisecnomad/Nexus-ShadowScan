@@ -43,8 +43,8 @@ def _lambda_client() -> Any:
         "lambda",
         region_name="us-east-1",
         aws_access_key_id="testing",
-        aws_secret_access_key="testing",  # noqa: S106 - a literal botocore never sends
-        aws_session_token="testing",  # noqa: S106 - a literal botocore never sends
+        aws_secret_access_key="testing",
+        aws_session_token="testing",
     )
 
 

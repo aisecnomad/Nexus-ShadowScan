@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import functools
 import importlib.util
+import inspect
 import itertools
 import json
 import os
-import inspect
 import re
 import shutil
 import subprocess
@@ -36,9 +36,9 @@ import yaml
 
 from shadowscan.config import ScanConfig
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
-from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
 from shadowscan.connectors.cloud.gcp import GcpConnector
 from shadowscan.connectors.common import MAX_PAGES
+from shadowscan.coverage import DEFAULT_MAX_GAP_RATIO
 from shadowscan.engine import Engine
 from shadowscan.models import ScanStats
 from shadowscan.reporters.csv_ import _safe_cell
