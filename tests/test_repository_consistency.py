@@ -4,11 +4,12 @@
 This module covers the rest of the repository's self-consistency: every relative
 Markdown link and heading anchor resolves, the community files GitHub and the
 OpenSSF Scorecard look for exist, `CITATION.cff` matches `pyproject.toml`, the
-CI matrix matches the classifiers, the Makefile and pre-commit hooks run what CI
-runs, every CodeQL action step is pinned to the same release, the docs toolchain
-comes from its lock everywhere, and documented counts, the README's demo output,
-CSV report markers, the HTTP read deadline and the plugin execution default match
-the shipped code. Run both modules with ``make policy``.
+CI matrices, `requires-python` and every documented interpreter range match the
+classifiers, the Makefile and pre-commit hooks run what CI runs, every CodeQL
+action step is pinned to the same release, the docs toolchain comes from its lock
+everywhere, and documented counts, the README's demo output, CSV report markers,
+the HTTP read deadline and the plugin execution default match the shipped code.
+Run both modules with ``make policy``.
 """
 
 from __future__ import annotations
@@ -610,6 +611,103 @@ def test_ci_matrix_covers_every_classified_python_version() -> None:
         if re.fullmatch(r"Programming Language :: Python :: 3\.\d+", classifier)
     }
     assert matrix == classified, f"CI tests {sorted(matrix)} but pyproject classifies {sorted(classified)}"
+
+
+def _classified_minors() -> set[int]:
+    return {
+        int(classifier.rsplit(".", 1)[1])
+        for classifier in _pyproject()["project"]["classifiers"]
+        if re.fullmatch(r"Programming Language :: Python :: 3\.\d+", classifier)
+    }
+
+
+def _ci_matrix_minors(job: str) -> set[int]:
+    versions = _load_yaml(GITHUB / "workflows" / "ci.yml")["jobs"][job]["strategy"]["matrix"]["python"]
+    return {int(str(version).split(".", 1)[1]) for version in versions}
+
+
+def _versions(minors: set[int]) -> str:
+    return ", ".join(f"3.{minor}" for minor in sorted(minors))
+
+
+def test_requires_python_admits_exactly_the_classified_versions() -> None:
+    requires = _pyproject()["project"]["requires-python"]
+    bounds = re.fullmatch(r">=3\.(\d+),<3\.(\d+)", requires)
+    assert bounds is not None, f"requires-python {requires!r} is not a >=3.N,<3.M range"
+    admitted = set(range(int(bounds.group(1)), int(bounds.group(2))))
+    assert admitted == _classified_minors(), (
+        f"requires-python {requires} admits {_versions(admitted)} but pyproject classifies "
+        f"{_versions(_classified_minors())}"
+    )
+    assert _ci_matrix_minors("test-macos") <= admitted, "the macOS job tests an interpreter pyproject refuses"
+
+
+# Two or more CPython minor versions written as one list or range: "3.11, 3.12 and 3.13",
+# "3.11 to 3.14", "3.11-3.14", "macOS 3.11/3.14". A patch release such as 3.12.4 is not a minor
+# version and ends the span, so "3.12.0 to 3.12.3" is not an interpreter claim.
+_MINOR_VERSION = r"(?<![\d.])3\.\d+(?!\.?\d)"
+_INTERPRETER_SPAN = re.compile(
+    rf"{_MINOR_VERSION}(?:(?:,? (?:and|or) |, | to | through |[-–/]){_MINOR_VERSION})+"
+)
+_RANGE_SEPARATORS = frozenset({"to", "through", "-", "–"})
+# Spans that record an earlier interpreter set on purpose, and why.
+_DATED_INTERPRETER_SPANS = {
+    ("docs/assurance-results.md", "3.11/3.12"): "the CI matrix when that dated result was recorded",
+}
+# The lock headers state the interpreters each lock is validated on; docs/production.md asks for
+# that comment to be kept when a lock is regenerated.
+_LOCK_HEADERS = ("requirements.lock", "requirements-ci.lock", "requirements-ci-constraints.txt")
+
+
+def _span_minors(span: str) -> set[int]:
+    parts = re.split(r"3\.(\d+)", span)
+    minors = [int(part) for part in parts[1::2]]
+    covered = {minors[0]}
+    for previous, separator, current in zip(minors[:-1], parts[2:-1:2], minors[1:], strict=True):
+        covered.update(range(previous, current + 1) if separator.strip() in _RANGE_SEPARATORS else {current})
+    return covered
+
+
+def _comment_header(path: Path) -> str:
+    """The comment lines a requirements file starts with, joined into one paragraph."""
+    lines = itertools.takewhile(lambda line: line.startswith("#"), _read(path).splitlines())
+    return " ".join(" ".join(line.lstrip("#").split()) for line in lines)
+
+
+def _interpreter_claims() -> Iterator[tuple[str, str, bool]]:
+    """``(document, span, about_macos)`` for every interpreter span a current document states."""
+    texts = [(_relative(path), _current_text(path)) for path in _current_docs()]
+    texts += [(name, _comment_header(ROOT / name)) for name in _LOCK_HEADERS]
+    for name, text in texts:
+        for paragraph in re.split(r"\n[ \t]*\n", text):
+            paragraph = " ".join(paragraph.split())
+            for match in _INTERPRETER_SPAN.finditer(paragraph):
+                yield name, match.group(0), "macOS" in paragraph[max(0, match.start() - 20) : match.start()]
+
+
+def test_documented_interpreter_ranges_match_the_classifiers_and_ci() -> None:
+    """Every stated set of supported or CI-tested Pythons is the one pyproject and ci.yml declare.
+
+    A span right after "macOS" describes the macOS job's matrix. Any other span describes what is
+    supported and what the Linux job tests, which the matrix test above keeps equal to the
+    classifiers. Adding 3.14 to pyproject and CI left the rollout guide, the testing guide and the
+    lock headers promising 3.11 to 3.13 and macOS 3.11/3.13.
+    """
+    expected = {False: _classified_minors(), True: _ci_matrix_minors("test-macos")}
+    claims = list(_interpreter_claims())
+    stale = [
+        f"{name}: {span!r} names {_versions(_span_minors(span))}, expected {_versions(expected[macos])}"
+        + (" (macOS CI)" if macos else "")
+        for name, span, macos in claims
+        if (name, span) not in _DATED_INTERPRETER_SPANS and _span_minors(span) != expected[macos]
+    ]
+    assert not stale, "interpreter ranges disagree with pyproject.toml and ci.yml:\n" + "\n".join(stale)
+    stating = {name for name, _, _ in claims}
+    required = {"README.md", "docs/testing.md", "docs/production.md", *_LOCK_HEADERS[:2]}
+    assert required <= stating, f"{sorted(required - stating)} no longer state the interpreters they cover"
+    assert any(macos for _, _, macos in claims), "a document should state the macOS CI interpreters"
+    unused = set(_DATED_INTERPRETER_SPANS) - {(name, span) for name, span, _ in claims}
+    assert not unused, f"stale dated interpreter spans: {sorted(unused)}"
 
 
 def test_distribution_rename_preserves_cli_and_plugin_contract() -> None:

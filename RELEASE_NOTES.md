@@ -62,7 +62,7 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   `mcp-not-in-approved-registry` (15) are new.
 - On CPython 3.12.0 to 3.12.3 (Ubuntu 24.04 ships 3.12.3), a file with a very
   long line no longer stalls redaction: the finding is omitted and the scan is
-  incomplete (exit 3). Run ShadowScan on 3.11, 3.12.4 or later, or 3.13.
+  incomplete (exit 3). Run ShadowScan on 3.11, or on 3.12.4 or later.
 - A tree whose directory listing alone takes more than half the connector
   deadline is now incomplete; raise `connector_timeout_seconds`. `cloud.aws`
   exports with registry records from earlier builds replay as incomplete.

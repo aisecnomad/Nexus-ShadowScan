@@ -1,4 +1,4 @@
-# Hash-locked core and development test environment for CPython 3.11-3.13.
+# Hash-locked core and development test environment for CPython 3.11-3.14.
 # Generated universally with uv 0.11.32 from pyproject.toml
 # [project.dependencies] + [dev], constrained by requirements-ci-constraints.txt,
 # requirements.lock and requirements-build.lock. Hashes cover published

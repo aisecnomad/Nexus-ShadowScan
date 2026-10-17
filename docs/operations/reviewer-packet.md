@@ -41,7 +41,7 @@ stop and name one SHA. Operators who later deploy must pin that same SHA.
 
 ## What to run
 
-From a POSIX checkout, Python 3.11 to 3.13:
+From a POSIX checkout, Python 3.11 to 3.14:
 
 ```bash
 python -m venv .venv && . .venv/bin/activate

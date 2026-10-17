@@ -86,7 +86,7 @@ Dependabot and the tests read them from there:
 | `Makefile` | Every development command; `make help` lists them by section |
 | `requirements.lock` | Hash-locked runtime and cloud SDK set for deployments, CI and the image |
 | `requirements-build.lock` | Hash-locked build backend for `--no-build-isolation` builds |
-| `requirements-ci.lock` | Hash-locked development and test toolchain (CPython 3.11 to 3.13) |
+| `requirements-ci.lock` | Hash-locked development and test toolchain (CPython 3.11 to 3.14) |
 | `requirements-ci-constraints.txt` | Reviewed inputs that `requirements-ci.lock` is generated from; never installed directly |
 | `requirements-docs.lock` | Hash-locked MkDocs toolchain for `make docs` and the Docs workflow |
 | `mkdocs.yml` | Documentation site configuration and navigation |

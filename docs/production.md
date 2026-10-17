@@ -87,12 +87,13 @@ The install commands below use the files in this checked out tree. Check that
 lock and built wheel hash for each worker deployment.
 
 The runtime lock covers the core scanner and all cloud SDK extras on CPython
-3.11, 3.12 and 3.13, Linux x86_64. It contains exact versions and permitted
-SHA-256 hashes; Linux CI checks installation and dependency consistency on all
-three interpreters. Linux x86_64 is the only validated deployment target for
-this full runtime/cloud lock. The macOS 3.11 and 3.13 CI jobs install
-`requirements-ci.lock` and this runtime lock from the same published wheel
-hashes and run the full test suite, which validates development use there;
+3.11, 3.12, 3.13 and 3.14, Linux x86_64. It contains exact versions and
+permitted SHA-256 hashes; Linux CI checks installation and dependency
+consistency on each of those interpreters. Linux x86_64 is the only validated
+deployment target for this full runtime/cloud lock. The macOS 3.11 and 3.14 CI
+jobs install `requirements-ci.lock` and this runtime lock from the same
+published wheel hashes and run the full test suite, which validates development
+use there;
 the coverage floors are enforced on Linux Python 3.11. Use CPython 3.12.4 or
 later rather than 3.12.0 to 3.12.3: their `tokenize` is quadratic on a long
 line, so redaction there charges each token's line copy to its work budget and
@@ -156,7 +157,9 @@ uv pip compile pyproject.toml --extra dev --universal --generate-hashes \
 The current CI lock records the reviewed `uv` version in its header. Use a
 different resolver version only as an intentional toolchain change. Use
 `--upgrade` only for an intentional dependency refresh. Preserve each lock's
-supported-platform comment when regenerating. Do not bypass failed hash checks.
+supported-platform comment when regenerating; a repository-consistency test
+checks the interpreters it names against `pyproject.toml`. Do not bypass failed
+hash checks.
 
 The Dockerfile installs both locks under `--require-hashes`: the runtime lock
 into the virtual environment the runtime stage copies, and the build lock into
