@@ -374,8 +374,10 @@ _WORD_SLUG = re.compile(r"[A-Za-z]{2,}(?:[-_][A-Za-z]{2,}){2,}")
 _SLUG_WORD = r"(?:[a-z]{2,}|[A-Z][a-z]+|[A-Z]{2,})"
 _DOTTED_SLUG = re.compile(_SLUG_WORD + r"(?:\." + _SLUG_WORD + r"){2,}")
 _SLUG_SEPARATOR = re.compile(r"[-_.]")
-# Words that make a word slug a label rather than a passphrase, read with a
-# plural '-s' or a past '-ed' taken off (``_label_word``).
+# Words that make a word slug a label on their own, read with a plural '-s'
+# or a past '-ed' taken off (``_label_strength``): credential, placeholder,
+# development and filler words that passphrase word lists leave out
+# ('request-scoped-credential', 'rotate-these-tokens', 'foo-bar-baz-qux-quux').
 _LABEL_WORDS = frozenset(
     {
         # What the value stands for.
@@ -383,64 +385,114 @@ _LABEL_WORDS = frozenset(
         "auth",
         "credential",
         "env",
-        "key",
-        "pass",
         "passwd",
         "password",
         "pwd",
         "secret",
         "token",
-        "value",
         # Test values and placeholders.
         "demo",
         "dummy",
         "example",
         "fake",
         "fixture",
-        "invalid",
         "mock",
         "placeholder",
         "sample",
         "stub",
-        "test",
         "testing",
-        # Instructions and scope.
-        "change",
-        "must",
-        "never",
-        "not",
-        "replace",
-        "scoped",
-        "shared",
-        "your",
         # Development defaults ('local-development-only', 'insecure-default-for-dev').
-        "default",
-        "dev",
         "development",
         "insecure",
-        "local",
         "localhost",
-        "prod",
         "production",
-        "unsafe",
         # Filler text ('foo-bar-baz-qux-quux', 'lorem-ipsum-dolor-sit-amet').
         "baz",
         "foo",
         "foobar",
         "ipsum",
-        "lorem",
         "quux",
         "qux",
     }
 )
+# Label vocabulary that is also an ordinary word of a passphrase word list, as
+# are its plural and past forms ('passed', 'valued', 'keyed', 'tested', 'devs',
+# 'locals'): a slug is a label by these only with another label word or with a
+# function word ('unsafe-dev-only-default', 'this-should-be-changed').
+_COMMON_LABEL_WORDS = frozenset(
+    {
+        "change",
+        "default",
+        "dev",
+        "invalid",
+        "key",
+        "local",
+        "lorem",
+        "pass",
+        "prod",
+        "replace",
+        "scoped",
+        "shared",
+        "test",
+        "unsafe",
+        "value",
+        "your",
+    }
+)
+# Words that join a sentence, which generated passphrases leave out but labels
+# written as instructions need ('dont-use-this-in-prod', 'for-local-dev-use-only').
+_FUNCTION_WORDS = frozenset(
+    {
+        "and",
+        "are",
+        "be",
+        "do",
+        "does",
+        "dont",
+        "for",
+        "from",
+        "here",
+        "in",
+        "is",
+        "it",
+        "must",
+        "never",
+        "no",
+        "not",
+        "of",
+        "on",
+        "only",
+        "or",
+        "should",
+        "the",
+        "these",
+        "this",
+        "to",
+        "use",
+        "was",
+        "were",
+        "with",
+    }
+)
 
 
-def _label_word(word: str) -> bool:
-    """Whether a lower-case slug word is label vocabulary, read with a plural or past ending taken off."""
+def _label_strength(word: str) -> int:
+    """How a lower-case slug word marks a label, read with a plural or past ending taken off.
+
+    2: label vocabulary on its own (``_LABEL_WORDS``); 1: vocabulary that is
+    also a common word (``_COMMON_LABEL_WORDS``); 0: neither.
+    """
     stems = {word, word[:-1] if word.endswith("s") else word}
     if word.endswith("ed"):
         stems.update((word[:-1], word[:-2]))  # 'changed' is change, 'tested' is test
-    return not stems.isdisjoint(_LABEL_WORDS)
+    if not stems.isdisjoint(_LABEL_WORDS):
+        return 2
+    return int(not stems.isdisjoint(_COMMON_LABEL_WORDS))
+
+
+def _label_word(word: str) -> bool:
+    """Whether a lower-case word is label vocabulary of either kind (``_label_strength``)."""
+    return _label_strength(word) > 0
 
 
 _VALUE_QUOTES = "\"'"
@@ -728,20 +780,29 @@ def _label_slug(value: str, candidate: str, *, names: bool = True) -> bool:
     or '.' ('snout-fiber-thump-bloom-gravel', 'Ostrich-Lantern-Volcano-Tangerine',
     'snout.fiber.thump.bloom.gravel', 'SNOUT-FIBER-THUMP-BLOOM-GRAVEL'), which
     is also the shape of a label. A label says what it stands for: one of its
-    words is credential, test, instruction, development-default or filler
-    vocabulary (``_label_word``: 'request-scoped-credential',
-    'fc-shared-env-must-not-be-used', 'this-should-be-changed',
-    'local-development-only', 'lorem-ipsum-dolor-sit-amet') or a word of three
-    letters or more of the name it is assigned to
-    ('OPENAI_API_KEY=sua_chave_openai'; 'db' in 'DB_PASSWORD' is too short to
-    tell). With ``names``, an upper-case slug joined by '_' only is
-    CONSTANT_CASE, an environment variable's name.
+    words is credential, placeholder, development or filler vocabulary that
+    word lists leave out ('request-scoped-credential',
+    'fc-shared-env-must-not-be-used', 'local-development-only',
+    'lorem-ipsum-dolor-sit-amet'), two are vocabulary that is also a common
+    word ('unsafe-dev-only-default', 'defaults-were-replaced'), one such word
+    comes with a function word that joins a sentence
+    ('this-should-be-changed', 'dont-use-this-in-prod'), see
+    ``_label_strength``, or a word has three letters or more of the name it
+    is assigned to ('OPENAI_API_KEY=sua_chave_openai'; 'db' in 'DB_PASSWORD'
+    is too short to tell). One common word alone does not make a label: a
+    passphrase may hold 'passed', 'keyed', 'default' or 'lorem'. With
+    ``names``, an upper-case slug joined by '_' only is CONSTANT_CASE, an
+    environment variable's name.
     """
     if names and candidate.isupper() and "-" not in candidate and "." not in candidate:
         return True
-    words = {word.lower() for word in _SLUG_SEPARATOR.split(candidate)}
+    words = [word.lower() for word in _SLUG_SEPARATOR.split(candidate)]
     name = {word.lower() for word in _NAME_WORD.findall(_assigned_name(value)) if len(word) >= 3}
-    return any(_label_word(word) for word in words) or not words.isdisjoint(name)
+    if not name.isdisjoint(words):
+        return True
+    strengths = [_label_strength(word) for word in words]
+    common = strengths.count(1)
+    return 2 in strengths or common >= 2 or (common == 1 and not _FUNCTION_WORDS.isdisjoint(words))
 
 
 def _name_shaped(candidate: str) -> bool:

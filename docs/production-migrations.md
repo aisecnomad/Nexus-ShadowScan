@@ -113,9 +113,10 @@ across this change reports findings as resolved or new that are neither.
   to a call there, such as `?? fail("X is not set")`, is no fallback, and a
   placeholder fallback is `example-credential` evidence) and generated
   passphrases (`DB_PASSWORD=snout-fiber-thump-bloom-gravel`, also in upper
-  case, and joined by `.` in an env file; a label of words carries credential, test,
-  development-default or filler vocabulary or the assigned name, such as
-  `local-development-only`) are reported as
+  case, and joined by `.` in an env file; a label of words carries
+  credential, placeholder, development or filler vocabulary or the assigned
+  name, such as `local-development-only`, while one common word such as
+  `default` or `passed` alone does not make a label) are reported as
   before. References, documentation placeholders, short `sk-` look-alikes
   and a second pattern matching a credential already counted take no place
   in the five-per-format quota, so a real key after any number of them is
