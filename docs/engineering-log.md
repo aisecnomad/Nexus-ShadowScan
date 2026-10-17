@@ -368,7 +368,10 @@ public repositories with the tool and read the committed benchmark metrics.
   produced and sanitized, instead of having them discarded. The scan is
   marked incomplete either way; dropping them turned an overrun into an empty
   report. The timeout diagnostic now says results are truncated and names the
-  option to raise.
+  option to raise. Surrendered findings are copied away from the abandoned
+  worker and prepared as a completed job's are: a plugin's get the id its own
+  name derives and lose any registry record, so an overrun cannot report a
+  built-in finding's id or an approval the completed run would not.
 
 ### Risk scoring gains capability interactions (October 17)
 

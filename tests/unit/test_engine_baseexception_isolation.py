@@ -541,3 +541,87 @@ def test_a_plugin_finding_never_merges_with_the_builtin_finding_it_imitates(
     [forged] = [finding for finding in result.findings if finding.connector == PLUGIN]
     expected = Finding(connector=PLUGIN, surface=target.surface, kind=Kind.AGENT, title="FORGED", **fields).id
     assert forged.id == expected != target.id
+
+
+# The colliding finding again, with a registry record, from a plugin that then overruns its
+# deadline. It holds its worker until the test releases it, then changes the finding it yielded.
+_OVERRUNNING_PLUGIN = """
+import json
+import os
+import threading
+
+from shadowscan.connectors.base import BaseConnector
+from shadowscan.models import Finding, Kind, Surface
+
+TARGET = json.loads(os.environ["SHADOWSCAN_FORGE_TARGET"])
+release = threading.Event()
+changed = threading.Event()
+
+
+class Connector(BaseConnector):
+    name = "code.acme-exit"
+    surface = Surface.CODE
+    description = "Claims a built-in finding's id and a registry approval, then overruns."
+    config_keys = {"paths": "roots"}
+
+    def collect(self):
+        return [{}]
+
+    def analyze(self, records):
+        shape = {**TARGET, "surface": Surface(TARGET["surface"]), "kind": Kind.AGENT, "title": "FORGED"}
+        claimed = Finding(connector="code.filesystem", **shape)
+        forged = Finding(connector=self.name, id=claimed.id, tags=["plugin-injected"], **shape)
+        forged.metadata["registry_record"] = {"registry": "aws-agent-registry"}
+        yield forged
+        self.ctx.cancelled.wait(30)
+        release.wait(30)
+        forged.id = claimed.id
+        forged.title = "CHANGED AFTER THE DEADLINE"
+        changed.set()
+"""
+
+
+def test_an_overrunning_plugin_surrenders_only_what_a_completed_plugin_could_report(
+    monkeypatch, tmp_path, index
+):
+    """Regression: an expired job's findings were published as the worker left them. A thread-mode
+    plugin's finding kept the built-in finding's id it claimed and folded that finding into its own,
+    kept a registry record only built-in connectors may emit, and stayed the object the abandoned
+    worker could still change after the report was built."""
+    repository = ConnectorSpec("code.filesystem", {"path": str(_repository(tmp_path)), "use_git": False})
+    target = Engine(ScanConfig(connectors=[repository]), index).run().findings[0]
+    identity = ("resource", "resource_type", "provider", "account", "region", "identity_discriminator")
+    fields = {name: getattr(target, name) for name in identity}
+    monkeypatch.setenv("SHADOWSCAN_FORGE_TARGET", json.dumps({**fields, "surface": target.surface.value}))
+    monkeypatch.setattr(registry, "_cache", {})
+    monkeypatch.setattr(registry, "_load_errors", {})
+    monkeypatch.setattr(registry, "_listing_errors", [])
+    _install_plugin(monkeypatch, tmp_path, "acme_overrunning_plugin", _OVERRUNNING_PLUGIN)
+    config = ScanConfig(
+        connectors=[ConnectorSpec(PLUGIN), repository],
+        plugins=[PLUGIN],
+        plugin_execution="thread",
+        allow_credential_mixing=True,
+        # Long enough for the built-in scan to finish beside the plugin's overrun.
+        connector_timeout_seconds=3.0,
+        parallel=2,
+    )
+    try:
+        result = Engine(config, index).run()
+    finally:
+        # Only now may the abandoned worker change the finding it surrendered.
+        plugin = sys.modules["acme_overrunning_plugin"]
+        plugin.release.set()
+    assert plugin.changed.wait(10)
+
+    assert not result.complete
+    [builtin] = [finding for finding in result.findings if finding.id == target.id]
+    assert builtin.connector == "code.filesystem" and builtin.title == target.title
+    assert "plugin-injected" not in builtin.tags
+    [forged] = [finding for finding in result.findings if finding.connector == PLUGIN]
+    expected = Finding(connector=PLUGIN, surface=target.surface, kind=Kind.AGENT, title="FORGED", **fields).id
+    assert forged.id == expected != target.id and forged.title == "FORGED"
+    assert all("registry_record" not in finding.metadata for finding in result.findings)
+    [stats] = [st for st in result.stats if st.connector == PLUGIN]
+    assert stats.findings == 1 and any("registry record metadata ignored on 1" in w for w in stats.warnings)
+    assert not any(st.connector == "engine.registries" for st in result.stats)

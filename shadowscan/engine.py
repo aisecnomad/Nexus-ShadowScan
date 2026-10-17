@@ -183,6 +183,9 @@ class _JobState:
     # discarding them turns an overrun into a silent clean report. The scan is
     # still marked incomplete, so they cannot be read as a complete result.
     partial_findings: list[Finding] | None = None
+    # The job's engine hooks, so an expiry withholds registry records from the
+    # surrendered findings exactly as _run_one does from a completed job's.
+    hooks: type[BaseConnector] | None = None
 
     def register_partial(self, findings: list[Finding]) -> None:
         """Hold the worker's live findings list so an expiry can still read it.
@@ -235,7 +238,7 @@ def _retain_sanitizable(candidates: list[Finding]) -> tuple[list[Finding], int]:
 
 
 def _withhold_registry_records(
-    hooks: type[BaseConnector], builtin: bool, findings: list[Finding], st: ScanStats
+    hooks: type[BaseConnector] | None, builtin: bool, findings: list[Finding], st: ScanStats
 ) -> None:
     """Keep registry records only from built-in connectors that declare they read vendor registries.
 
@@ -243,7 +246,8 @@ def _withhold_registry_records(
     that copies record-shaped metadata from an export or a repository, or a plugin that declares
     the hook, must not create an approval, so the key is dropped and the drop is reported. A
     declaring connector keeps only records of the registry types it lists, so it cannot speak
-    for another vendor's registry.
+    for another vendor's registry. ``hooks`` is None for a job no class was resolved for, which
+    declares nothing.
     """
     declared = getattr(hooks, "emits_registry_records", False) is True
     declared_types = getattr(hooks, "registry_record_types", None)
@@ -274,6 +278,34 @@ def _withhold_registry_records(
             f"registry record metadata ignored on {undeclared_type} finding(s): "
             "the connector does not declare that registry type"
         )
+
+
+def _surrender(spec: ConnectorSpec, state: _JobState, st: ScanStats) -> list[Finding]:
+    """An expired job's findings, prepared as ``_collect`` and ``_run_one`` prepare a completed job's.
+
+    The abandoned worker still holds these objects and may change them while the
+    report is built, so each is copied through its serialized form, as a cache
+    entry or a plugin worker's result is read. A plugin finding then gets the id
+    its own name derives, and registry records are withheld: an overrun cannot
+    report what the same plugin's completed run would not.
+    """
+    plugin = spec.name not in builtin_connector_names()
+    surrendered = []
+    omitted = 0
+    for finding in state.take_partial():
+        try:
+            copied = Finding.from_dict(finding.to_dict())
+            if plugin:
+                copied.reattribute(spec.name, derive_id=True)
+            copied.sanitize()
+        except Exception:  # noqa: BLE001 - one the worker is still changing is omitted, never guessed at
+            omitted += 1
+            continue
+        surrendered.append(copied)
+    if omitted:
+        st.errors.append(f"{omitted} finding(s) completed before the deadline omitted: not readable")
+    _withhold_registry_records(state.hooks, not plugin, surrendered, st)
+    return surrendered
 
 
 def _offline_record_ids(spec: ConnectorSpec, findings: list[Finding]) -> set[str]:
@@ -651,6 +683,7 @@ class _ConnectorRunner:
             gateway_identity_key_stable=identity_key is not None and self._identity_key_stable,
         )
         ctx.partial_sink = state.register_partial
+        state.hooks = hooks
         fs: list[Finding] = []
         started_at = now_iso()
         origin_token = set_allow_private_origin(self._allow_private_origin(spec))
@@ -1012,31 +1045,27 @@ class _Supervisor:
             self._engine.abandoned_workers.append(spec.id)
             self._engine._abandoned_futures.append(future)
         # Findings the worker completed before the deadline are real
-        # observations, already sanitized. Dropping them turned an overrun
-        # into an empty report that reads as clean on every surface except the
-        # exit code; the scan stays incomplete either way.
-        partial = state.take_partial()
-        warnings = [_TIMEOUT_WARNING]
+        # observations. Dropping them turned an overrun into an empty report
+        # that reads as clean on every surface except the exit code; the scan
+        # stays incomplete either way.
+        stats = ScanStats(
+            connector=spec.id,
+            started_at=state.started_at or self._started_at,
+            finished_at=now_iso(),
+            incomplete=True,
+            skipped=True,
+            skip_reason=_TIMEOUT_MESSAGE,
+            errors=[_TIMEOUT_MESSAGE],
+            warnings=[_TIMEOUT_WARNING],
+        )
+        partial = _surrender(spec, state, stats)
+        stats.findings = len(partial)
         if partial:
-            warnings.append(
+            stats.warnings.append(
                 f"{spec.id}: {len(partial)} finding(s) completed before the deadline are reported; "
                 "they are a subset of what a full run would find, never a clean result"
             )
-        self.completed[number] = (
-            spec,
-            partial,
-            ScanStats(
-                connector=spec.id,
-                started_at=state.started_at or self._started_at,
-                finished_at=now_iso(),
-                findings=len(partial),
-                incomplete=True,
-                skipped=True,
-                skip_reason=_TIMEOUT_MESSAGE,
-                errors=[_TIMEOUT_MESSAGE],
-                warnings=warnings,
-            ),
-        )
+        self.completed[number] = (spec, partial, stats)
 
     def _capacity_exhausted(self) -> bool:
         # A timed-out worker can still be running inside an SDK or
