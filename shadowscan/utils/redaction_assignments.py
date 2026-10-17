@@ -1405,8 +1405,15 @@ _COMMENT_LINE = re.compile(r"[ \t]*+(?://|#|/\*|<!--)")
 # The end of a block comment that may run past its line.
 _COMMENT_CLOSERS = {"/*": "*/", "<!--": "-->"}
 # The last words of a password's name, whose value a person chose: any literal
-# of it is withheld, not only one that looks like an opaque key.
-_PASSWORD_WORDS = frozenset({"pass", "passphrase", "passwd", "password", "pwd"})
+# of it is withheld, not only one that looks like an opaque key. A secret's
+# (a client secret, a webhook or signing secret) is read the same way: its
+# fallback is reported whatever its shape, as a password's is
+# (``shadowscan.signatures.matcher._PASSWORD_FALLBACK_NAMES``), so evidence
+# must withhold it whatever its shape too. The matcher reads a name's end
+# whatever its case, so a last word that runs words together ('dbpassword',
+# 'CLIENTSECRET') names one too when it ends in one of the longer words.
+_PASSWORD_WORDS = frozenset({"pass", "passphrase", "passwd", "password", "pwd", "secret"})
+_PASSWORD_ENDS = ("passphrase", "passwd", "password", "secret")
 # A run of a comment that could be key material: the base64 and URL-safe alphabet.
 _COMMENT_TOKEN = re.compile(r"[A-Za-z0-9+/_.~=-]{8,}+")
 # The same in a string literal, where '=' joins a name to its value
@@ -1493,9 +1500,12 @@ def _credential_joins(line: str, end: int) -> list[_Join]:
 
 
 def _password_name(name: str) -> bool:
-    """Whether a credential's name names a password ('dbPassword', 'DB_PASS', 'smtp.passwd')."""
+    """Whether a credential's name names a password or a secret ('dbPassword', 'DB_PASS', 'clientsecret')."""
     words = _CALLEE_WORD.findall(name.rsplit(".", 1)[-1])
-    return bool(words) and words[-1].lower() in _PASSWORD_WORDS
+    if not words:
+        return False
+    last = words[-1].lower()
+    return last in _PASSWORD_WORDS or last.endswith(_PASSWORD_ENDS)
 
 
 def _inside(starts: list[int], literals: list[tuple[int, int]], position: int) -> bool:

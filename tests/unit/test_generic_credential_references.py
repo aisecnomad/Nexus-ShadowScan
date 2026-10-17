@@ -1619,6 +1619,37 @@ def test_overlapping_spans_are_withheld_to_their_union():
     assert _withhold_spans("abcd", [(0, 2), (2, 4)]) == REDACTED + REDACTED
 
 
+# A secret's fallback is reported whatever its shape, as a password's is, but
+# after a cut read in 'name: value' form only a token that looks opaque was
+# withheld under a secret's name: the reported credential showed in its own
+# finding's excerpt.
+@pytest.mark.parametrize("password", TAIL_PASSWORDS)
+@pytest.mark.parametrize(
+    "line",
+    [
+        "export const cfg = { azureClientSecret: process.env.AZURE_CLIENT_SECRET?.trim() || '<P>' };",
+        "clientSecret: process.env.CLIENT_SECRET?.trim() || '<P>',",
+        "webhook_secret: os.environ[ 'WEBHOOK_SECRET' ] if PROD else '<P>'",
+        "client.setClientSecret(process.env.S?.trim() ?? '<P>');",
+        # A last word that runs words together, whose end the matcher reads too.
+        "dbpassword: process.env.DBPASSWORD?.trim() || '<P>',",
+        "CLIENTSECRET: process.env.CLIENTSECRET?.trim() || '<P>',",
+    ],
+)
+def test_a_secret_after_a_cut_read_is_withheld_whole(line: str, password: str):
+    safe = sanitize_text(line.replace("<P>", password))
+    assert password not in safe and REDACTED in safe
+
+
+@pytest.mark.parametrize("name", ["azureClientSecret", "dbpassword"])
+def test_a_reported_secret_fallback_is_withheld_from_its_excerpt(tmp_path: Path, run_connector, name: str):
+    password = TAIL_PASSWORDS[0]
+    line = f"export const cfg = {{ {name}: process.env.AZURE_CLIENT_SECRET?.trim() || '{password}' }};\n"
+    findings = _scan(tmp_path, run_connector, {"src/a.ts": line})
+    assert [f.metadata["path"] for f in findings if f.kind.value == "secret"] == ["src/a.ts"]
+    assert password not in json.dumps([f.to_dict() for f in findings], default=str)
+
+
 @pytest.mark.parametrize(
     ("line", "kept"),
     [
