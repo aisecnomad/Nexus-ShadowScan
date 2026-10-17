@@ -395,6 +395,55 @@ def test_endpoint_host_reports_only_ai_relevant_inventory_rows() -> None:
     assert sum("not reported" in warning for warning in connector.ctx.stats.warnings) == 1
 
 
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "Ollama"},
+        {
+            "name": "Ollama.app",
+            "path": "/Applications/Ollama.app",
+            "bundle_identifier": "com.electron.ollama",
+        },
+        {"process": "ollama"},
+        {"name": "Ollama version 0.5.7", "source": "osquery"},
+        {"name": "LM Studio"},
+        {"name": "LM Studio.app", "path": "/Applications/LM Studio.app"},
+        {"name": "GPT4All"},
+        {"name": "llama.cpp"},
+        {"name": "llama-server", "path": "/opt/homebrew/bin/llama-server"},
+        {"name": "vLLM"},
+        {"name": "LocalAI"},
+        {"path": "/usr/local/bin/local-ai"},
+        {"name": "Jan"},
+        {"name": "Jan.exe"},
+        {"name": "Msty"},
+    ],
+)
+def test_endpoint_host_reports_local_model_runtimes_without_a_category(row) -> None:
+    """Regression: osquery ``apps``/``programs`` and MDM rows carry no type or
+    category, and the local runtime signatures have no display-name signal, so
+    Ollama, LM Studio and the other local runtimes were filtered as ordinary
+    software with an informational note on a scan that stayed complete."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    findings = list(connector.analyze([row]))
+    assert len(findings) == 1
+    assert findings[0].resource == next(row[key] for key in ("name", "path", "process") if key in row)
+    assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "name", ["Slack", "Google Chrome", "zoom.us.app", "Zoom 6.2.5", "Make", "Jane Doe", "Janitor.exe"]
+)
+def test_endpoint_host_still_filters_ordinary_software_named_alone(name) -> None:
+    """The whole-name comparison never reports a product that only contains or
+    resembles a runtime name, and leaves out platform names such as Make."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert list(connector.analyze([{"name": name}])) == []
+    assert not connector.ctx.stats.incomplete
+
+
 def test_ebpf_known_local_model_port_is_tagged() -> None:
     findings = list(EbpfConnector(ConnectorContext()).analyze([{"binary": "python", "port": 11434}]))
     assert len(findings) == 1

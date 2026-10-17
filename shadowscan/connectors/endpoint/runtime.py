@@ -28,7 +28,9 @@ from shadowscan.connectors.code.semantic_config import (
 from shadowscan.connectors.code.skill_audit import MAX_TEXT_BYTES, audit_skill_text
 from shadowscan.connectors.common import apply_matches, failure_summary, finalize, name_matches
 from shadowscan.connectors.endpoint import a2a
+from shadowscan.connectors.endpoint.catalog import LOCAL_RUNTIME_NAMES, MODEL_STORES, SHELL_TOOLS
 from shadowscan.models import Evidence, Finding, Kind, Surface
+from shadowscan.signatures import SignatureIndex
 from shadowscan.utils.http import diagnostic_url
 from shadowscan.utils.jcs import CanonicalizationError
 from shadowscan.utils.jwks import fetch_jwks
@@ -248,6 +250,45 @@ def _ai_category(category: str) -> bool:
     return not _AI_CATEGORY_TOKENS.isdisjoint(_CATEGORY_TOKEN.findall(category.casefold()))
 
 
+# Signature categories whose products a host installs or runs: model providers
+# (Ollama, LM Studio, vLLM, llama.cpp, LocalAI) and coding agents. Platform and
+# framework names are left out: "Make (Integromat)" is also GNU make.
+_HOST_PRODUCT_CATEGORIES = frozenset({"provider", "coding-agent"})
+_APP_SUFFIX = re.compile(r"\.(?:app|exe)$", re.IGNORECASE)
+# "Ollama version 0.5.7", "LM Studio 0.3.14": Windows program names carry the version.
+_TRAILING_VERSION = re.compile(r"\s+(?:version\s+)?v?\d[\w.+-]*$", re.IGNORECASE)
+_NON_ALNUM = re.compile(r"[^0-9a-z]+")
+
+
+def _product_key(text: str) -> str:
+    """``text`` as a product-name key: its last path component without an ``.app``/``.exe``
+    suffix or a trailing version, letters and digits only, case-folded.
+
+    ``/Applications/LM Studio.app``, ``lm-studio`` and ``LM Studio 0.3.14`` share one key.
+    """
+    base = re.split(r"[\\/]", text.rstrip("\\/"))[-1]
+    base = _TRAILING_VERSION.sub("", _APP_SUFFIX.sub("", base))
+    return _NON_ALNUM.sub("", base.casefold())
+
+
+def _host_product_keys(index: SignatureIndex) -> frozenset[str]:
+    """Keys of the products whose whole name marks a host inventory row as AI-related.
+
+    A signature contributes its product name: the display name before any ``/``
+    alternative or parenthesis ("Gemini CLI / Jules" gives "Gemini CLI"). The endpoint
+    catalog contributes its local model runtimes and AI command-line tools.
+    """
+    names = [
+        re.split(r"\s+/\s+|\s*\(", signature.name)[0]
+        for signature in index.signatures.values()
+        if signature.category in _HOST_PRODUCT_CATEGORIES
+    ]
+    names += [name for store in MODEL_STORES for name in (store.product, store.runtime)]
+    names += [name for command, (product, _) in SHELL_TOOLS.items() for name in (command, product)]
+    names += LOCAL_RUNTIME_NAMES
+    return frozenset(key for key in map(_product_key, names) if key)
+
+
 class HostConnector(_EndpointConnector):
     name = "endpoint.host"
     provider = "host"
@@ -255,12 +296,30 @@ class HostConnector(_EndpointConnector):
     config_keys = {
         "input": (
             "Offline host inventory JSON, JSONL, or YAML export; rows are reported when the "
-            "name or path matches an AI product signature or the record's type/category names "
+            "name or path matches an AI product signature, the whole application or executable "
+            "name is a known AI product or local model runtime (Ollama, LM Studio, GPT4All, "
+            "llama.cpp, vLLM, LocalAI, Jan, Msty, ...), or the record's type/category names "
             "an AI category (ai, agent, assistant, copilot, llm, mcp, model)."
         )
     }
     # Whether rows without a recognized AI product were noted (one fixed-text note).
     _skipped_records = False
+    # Keys of the AI products a row may name as a whole (see _host_product_keys).
+    _product_keys: frozenset[str] | None = None
+
+    def _names_ai_product(self, record: dict[str, Any]) -> bool:
+        """Whether the row's name, path or process names, as a whole, a known AI product.
+
+        osquery ``apps``/``programs`` and MDM rows carry an application or executable
+        name (``LM Studio.app``, ``/usr/local/bin/ollama``, ``Ollama version 0.5.7``) and
+        no category, and local runtime signatures have no display-name signal.
+        """
+        if self._product_keys is None:
+            self._product_keys = _host_product_keys(self.index)
+        return any(
+            _product_key(self._text(record.get(key))) in self._product_keys
+            for key in ("name", "path", "process")
+        )
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:
@@ -271,9 +330,14 @@ class HostConnector(_EndpointConnector):
                 continue
             # A general software inventory names every installed product; a row
             # becomes a finding only when something ties it to AI: a product
-            # name or configuration path a signature recognizes, or an AI
-            # category the collector declared.
-            relevant = bool(name_matches(self.index, name)) or _ai_category(category)
+            # name or configuration path a signature recognizes, the whole name
+            # of a known AI product or local runtime, or an AI category the
+            # collector declared.
+            relevant = (
+                bool(name_matches(self.index, name))
+                or _ai_category(category)
+                or self._names_ai_product(record)
+            )
             if not relevant:
                 path = self._text(record.get("path") or record.get("name"))
                 relevant = bool(self.index.match_file(path.lstrip("~"))) if path else False

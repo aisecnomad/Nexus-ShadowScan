@@ -25,9 +25,19 @@ Counts and figures quoted in an entry are those of its date.
   scan. Fixtures cover all four producers, and the Falco example rule also
   emits `fd.sip.name` so AI host names reach the alert.
 - `endpoint.host` reports a host inventory row only when its name or path
-  matches an AI product signature or its `type`/`category` names an AI
-  category; filtered rows add one informational note instead of becoming
-  0.7-confidence findings.
+  matches an AI product signature, its whole name is a known AI product or
+  local model runtime, or its `type`/`category` names an AI category;
+  filtered rows add one informational note instead of becoming
+  0.7-confidence findings. The whole-name rule came from review: the local
+  runtime signatures have no display-name signal, so an osquery `apps` row
+  such as `LM Studio.app`, or a bare `Ollama`, `GPT4All`, `llama-server`,
+  `Jan` or `Msty` row without a category, was filtered as ordinary software
+  on a scan that stayed complete. The row's name, path file name or process
+  is now compared, without `.app`/`.exe` or a trailing version, with the
+  product names of the bundled provider and coding-agent signatures and the
+  endpoint catalog's local runtimes and AI command-line tools.
+  Regression-tested with each runtime and with Slack, Chrome, Zoom and Make
+  rows that stay filtered.
 - The CI coverage leg is selected by a job-level environment expression
   instead of a matrix `include` key, so its check reports as `test (3.11)` —
   the name the branch rulesets require — rather than `test (3.11, true)`,

@@ -300,7 +300,7 @@ The diagram is generated from the connector registry by `python -m tools.readme_
 | `connectors/lowcode/` | `lowcode.power-platform`, `lowcode.salesforce`, `lowcode.servicenow`, `lowcode.n8n`, `lowcode.make`, `lowcode.zapier`, `lowcode.workato` | the four automation platforms share `automation.py` |
 | `connectors/saas/` | `saas.slack`, `saas.microsoft-teams`, `saas.github-apps`, `saas.atlassian`, `saas.notion`, `saas.zoom`, `saas.generic` | one module per provider; `generic.py` reads any CSV or JSON app inventory |
 | `connectors/cloud/` | `cloud.aws`, `cloud.gcp`, `cloud.azure`, `cloud.oci`, `cloud.kubernetes`, `cloud.openshift` | `aws_registry.py` and `gcp_registry.py` read vendor agent registries; `credentials.py` holds the instance-credential policy; `kubernetes.py` serves both workload inventories |
-| `connectors/endpoint/` | `endpoint.inventory`, `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`, `endpoint.ebpf` | `catalog.py` lists what `endpoint.inventory` looks for; `runtime.py` holds the offline host and runtime inventories; `a2a.py` is the opt-in A2A Agent Card probe of `endpoint.mcp` |
+| `connectors/endpoint/` | `endpoint.inventory`, `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models`, `endpoint.ebpf` | `catalog.py` lists what `endpoint.inventory` looks for and the local runtime names `endpoint.host` recognizes; `runtime.py` holds the offline host and runtime inventories; `a2a.py` is the opt-in A2A Agent Card probe of `endpoint.mcp` |
 | `connectors/network/` | `network.logs` | DNS, TLS SNI and flow records |
 | `connectors/runtime/` | `runtime.processes` | process inventories or `/proc`; command lines are never kept |
 

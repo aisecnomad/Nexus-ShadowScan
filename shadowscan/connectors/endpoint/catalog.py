@@ -227,3 +227,17 @@ SHELL_TOOLS: dict[str, tuple[str, str | None]] = {
     "copilot": ("GitHub Copilot CLI", "coding-agent.github-copilot"),
     "kiro-cli": ("Kiro CLI", None),
 }
+
+# Local model runtimes as a host or MDM software inventory names them, beyond
+# the products MODEL_STORES, SHELL_TOOLS and the bundled provider signatures
+# already name: desktop runtimes without a model store or signature here, and
+# the executables runtimes install under a name of their own.
+LOCAL_RUNTIME_NAMES: tuple[str, ...] = (
+    "Msty",
+    "Msty Studio",
+    "llama-server",  # llama.cpp
+    "llama-cli",  # llama.cpp
+    "Ollama app",  # Ollama's Windows tray application
+    "llamafile",
+    "KoboldCpp",
+)
