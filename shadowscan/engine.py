@@ -67,7 +67,16 @@ _JobResult = tuple[ConnectorSpec, list[Finding], ScanStats]
 # A job's connector class, or the exception its lookup raised.
 _Resolved = type[BaseConnector] | Exception
 
-_TIMEOUT_MESSAGE = "connector_timeout completion deadline exceeded; results discarded"
+#: The deadline a connector gets when the operator sets none. Scaling applies
+#: only while this exact value is in effect; an explicit setting is honoured.
+DEFAULT_CONNECTOR_TIMEOUT = 120.0
+#: Ceiling on an automatically raised deadline. A scan that needs longer than
+#: this should say so explicitly rather than be allowed to run unbounded.
+MAX_AUTO_TIMEOUT = 1800.0
+_TIMEOUT_MESSAGE = (
+    "connector_timeout completion deadline exceeded; this connector's results are truncated. "
+    "Raise --connector-timeout-seconds (default 120) for a large estate or repository"
+)
 _TIMEOUT_WARNING = (
     "Cancellation is cooperative: an in-flight SDK, plugin call, or filesystem "
     "replacement may continue. A cache or record artifact whose replacement "
@@ -168,6 +177,26 @@ class _JobState:
     publication_lock: Lock = field(default_factory=Lock)
     isolated_process: bool = False
     kill_process: Callable[[], None] | None = None
+    # Findings the worker had already produced and sanitized when its deadline
+    # expired. Unlike a late *artifact*, which must never count as an accepted
+    # export, these are observations the connector completed inside its budget:
+    # discarding them turns an overrun into a silent clean report. The scan is
+    # still marked incomplete, so they cannot be read as a complete result.
+    partial_findings: list[Finding] | None = None
+
+    def register_partial(self, findings: list[Finding]) -> None:
+        """Hold the worker's live findings list so an expiry can still read it.
+
+        The reference is registered once; the worker then appends without
+        synchronising. Copying a list while another thread appends to it is
+        safe in CPython, and the only risk is observing fewer findings than the
+        worker had produced — acceptable on a path that already reports the
+        scan incomplete, and far better than reporting none.
+        """
+        self.partial_findings = findings
+
+    def take_partial(self) -> list[Finding]:
+        return list(self.partial_findings or ())
 
     @property
     def supervision_deadline(self) -> float | None:
@@ -376,7 +405,7 @@ class _ConnectorRunner:
 
     def run(self, number: int, spec: ConnectorSpec, state: _JobState) -> _JobResult:
         state.started_at = now_iso()
-        timeout = self._config.connector_timeout_seconds
+        timeout = self._resolved_timeout(spec)
         state.deadline = time.monotonic() + timeout
         try:
             if state.isolated_process:
@@ -405,6 +434,33 @@ class _ConnectorRunner:
             # Include sanitization, cache writes and callbacks in the
             # measured runtime, even if completion precedes the next poll.
             state.completed_at = time.monotonic()
+
+    def _resolved_timeout(self, spec: ConnectorSpec) -> float:
+        """This connector's deadline, scaled to its input when the default applies.
+
+        A fixed 120 seconds is ample for an API page and far too little for a
+        large monorepo, where it produced an empty report that looked clean.
+        When the operator left the default in place, the connector class may
+        propose a larger budget from a cheap look at its own input; an explicit
+        ``--connector-timeout-seconds`` is always honoured unchanged.
+        """
+        configured = self._config.connector_timeout_seconds
+        if configured != DEFAULT_CONNECTOR_TIMEOUT:
+            return configured
+        try:
+            cls = get_connector_class(spec.name)
+            proposed = cls.estimate_timeout_seconds(dict(spec.config), configured)
+        except Exception:  # noqa: BLE001 - an estimate must never fail a scan
+            return configured
+        if proposed is None or proposed <= configured:
+            return configured
+        scaled = min(float(proposed), MAX_AUTO_TIMEOUT)
+        self._engine._report_progress(
+            spec.id,
+            f"input is large; deadline raised to {scaled:.0f}s "
+            f"(set --connector-timeout-seconds to override)",
+        )
+        return scaled
 
     def _allow_private_origin(self, spec: ConnectorSpec) -> bool:
         """This connector's private-origin policy: its own grant, else the scan's.
@@ -556,6 +612,9 @@ class _ConnectorRunner:
             cfg["allow_private_origin"] = self._allow_private_origin(spec)
         if spec.label:
             cfg.setdefault("label", spec.label)
+        # The scan-wide gap budget, unless this connector names its own. A
+        # connector that sets strict_coverage still overrides any budget.
+        cfg.setdefault("max_coverage_gap", self._config.max_coverage_gap)
         if self._dump_directory:
             label = re.sub(r"[^A-Za-z0-9_-]", "_", spec.id)[:80] or "connector"
             cfg["_dump_path"] = os.path.join(self._dump_directory, f"{dump_key}-{label}.jsonl")
@@ -586,6 +645,7 @@ class _ConnectorRunner:
             gateway_identity_key=identity_key,
             gateway_identity_key_stable=identity_key is not None and self._identity_key_stable,
         )
+        ctx.partial_sink = state.register_partial
         fs: list[Finding] = []
         started_at = now_iso()
         origin_token = set_allow_private_origin(self._allow_private_origin(spec))
@@ -946,18 +1006,30 @@ class _Supervisor:
         if future.running():
             self._engine.abandoned_workers.append(spec.id)
             self._engine._abandoned_futures.append(future)
+        # Findings the worker completed before the deadline are real
+        # observations, already sanitized. Dropping them turned an overrun
+        # into an empty report that reads as clean on every surface except the
+        # exit code; the scan stays incomplete either way.
+        partial = state.take_partial()
+        warnings = [_TIMEOUT_WARNING]
+        if partial:
+            warnings.append(
+                f"{spec.id}: {len(partial)} finding(s) completed before the deadline are reported; "
+                "they are a subset of what a full run would find, never a clean result"
+            )
         self.completed[number] = (
             spec,
-            [],
+            partial,
             ScanStats(
                 connector=spec.id,
                 started_at=state.started_at or self._started_at,
                 finished_at=now_iso(),
+                findings=len(partial),
                 incomplete=True,
                 skipped=True,
                 skip_reason=_TIMEOUT_MESSAGE,
                 errors=[_TIMEOUT_MESSAGE],
-                warnings=[_TIMEOUT_WARNING],
+                warnings=warnings,
             ),
         )
 

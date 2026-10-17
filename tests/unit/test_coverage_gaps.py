@@ -1,0 +1,264 @@
+"""Coverage-gap budgeting: a bounded gap is tolerated, an unbounded one never is.
+
+The guarantee under test is two-sided. A scan must not report itself complete
+when it was blinded, and it must not report itself incomplete because a test
+fixture held a dangling symbolic link. Both halves are asserted here, including
+that every tolerated gap is still published.
+"""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+
+from shadowscan.coverage import (
+    BLINDING,
+    DEFAULT_MAX_GAP_RATIO,
+    MAX_PUBLISHED_GAPS,
+    PARTIAL,
+    CoverageGap,
+    CoverageLedger,
+    CoveragePolicy,
+    validate_max_coverage_gap,
+)
+
+
+class TestGapWeighting:
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "tests/certs/valid/ca",
+            "node_modules/pkg/index.js",
+            "vendor/github.com/x/y.go",
+            "src/__tests__/helper.ts",
+            "a/site-packages/b.py",
+            "testdata/sample.bin",
+        ],
+    )
+    def test_vendored_and_test_paths_weigh_less(self, path: str) -> None:
+        assert CoverageGap(detail="d", path=path).relevance() == "low"
+        assert CoverageGap(detail="d", path=path).weight() == pytest.approx(0.25)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "services/agent/main.py",
+            "src/app.py",
+            "infra/terraform/main.tf",
+            "",
+            # 'latest' is not a test segment; a near-miss must stay high.
+            "contests/entry.py",
+        ],
+    )
+    def test_deployable_paths_weigh_full(self, path: str) -> None:
+        assert CoverageGap(detail="d", path=path).relevance() == "high"
+        assert CoverageGap(detail="d", path=path).weight() == pytest.approx(1.0)
+
+    def test_entries_scale_the_weight(self) -> None:
+        assert CoverageGap(detail="d", path="src/x", entries=7).weight() == pytest.approx(7.0)
+
+    def test_windows_separators_are_understood(self) -> None:
+        assert CoverageGap(detail="d", path=r"pkg\node_modules\x.js").relevance() == "low"
+
+    def test_unknown_kind_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="unknown coverage gap kind"):
+            CoverageGap(detail="d", kind="whatever")
+
+    def test_negative_entries_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must not be negative"):
+            CoverageGap(detail="d", entries=-1)
+
+
+class TestBudget:
+    def test_a_lone_fixture_link_in_a_large_tree_is_tolerated(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(1000)
+        ledger.record(CoverageGap(detail="link", path="tests/certs/ca"))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        assert incomplete is False
+        assert summary["within_budget"] is True
+        # Tolerated is not hidden.
+        assert summary["gaps"] == 1
+        assert summary["details"][0]["path"] == "tests/certs/ca"
+
+    def test_many_gaps_exhaust_the_budget(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(1000)
+        for i in range(200):
+            ledger.record(CoverageGap(detail="link", path=f"tests/f{i}"))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        # 200 * 0.25 = 50 weighted vs an allowance of 20.
+        assert incomplete is True
+        assert summary["within_budget"] is False
+
+    def test_one_gap_in_a_deployable_path_of_a_small_tree_fails(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(10)
+        ledger.record(CoverageGap(detail="unreadable", path="services/agent.py"))
+        incomplete, _ = ledger.evaluate(CoveragePolicy())
+        assert incomplete is True
+
+    def test_absolute_cap_binds_on_a_huge_tree(self) -> None:
+        """A 2% ratio of a million entries must not tolerate 20,000 unread files."""
+        ledger = CoverageLedger()
+        ledger.add_examined(1_000_000)
+        for i in range(500):
+            ledger.record(CoverageGap(detail="x", path=f"src/f{i}.py"))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        assert summary["allowance"] == pytest.approx(100.0)
+        assert incomplete is True
+
+    def test_blinding_gap_ignores_the_budget(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(1_000_000)
+        ledger.record(CoverageGap(detail="walk stopped", path="tests/x", kind=BLINDING))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        assert incomplete is True
+        assert summary["blinding_gaps"] == 1
+
+    def test_strict_policy_restores_the_original_behaviour(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(1_000_000)
+        ledger.record(CoverageGap(detail="link", path="tests/certs/ca"))
+        incomplete, _ = ledger.evaluate(CoveragePolicy.strict())
+        assert incomplete is True
+
+    def test_no_gaps_is_complete_under_every_policy(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(10)
+        for policy in (CoveragePolicy(), CoveragePolicy.strict()):
+            assert ledger.evaluate(policy)[0] is False
+
+    def test_published_details_are_bounded_but_counting_is_not(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(10_000_000)
+        for i in range(MAX_PUBLISHED_GAPS + 25):
+            ledger.record(CoverageGap(detail="x", path=f"tests/f{i}"))
+        _, summary = ledger.evaluate(CoveragePolicy())
+        assert len(summary["details"]) == MAX_PUBLISHED_GAPS
+        assert summary["details_truncated"] == 25
+        assert summary["gaps"] == MAX_PUBLISHED_GAPS + 25
+
+    def test_examined_sums_across_roots_and_never_shrinks(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(40)
+        ledger.add_examined(60)
+        assert ledger.examined == 100
+        ledger.note_examined(50)
+        assert ledger.examined == 100
+
+
+class TestVerdictMessage:
+    def test_silent_when_nothing_was_skipped(self) -> None:
+        assert CoverageLedger().verdict_message(CoveragePolicy()) is None
+
+    def test_tolerated_gaps_are_announced(self) -> None:
+        ledger = CoverageLedger()
+        ledger.add_examined(1000)
+        ledger.record(CoverageGap(detail="link", path="tests/x"))
+        message = ledger.verdict_message(CoveragePolicy())
+        assert message is not None
+        assert "tolerated" in message
+
+    def test_a_blinding_gap_says_the_amount_is_unknown(self) -> None:
+        ledger = CoverageLedger()
+        ledger.record(CoverageGap(detail="stopped", kind=BLINDING))
+        message = ledger.verdict_message(CoveragePolicy())
+        assert message is not None
+        assert "unknown amount" in message
+
+
+class TestValidation:
+    @pytest.mark.parametrize("value", [0, 0.0, 0.02, 0.5, 1, 1.0])
+    def test_accepts_a_ratio(self, value: object) -> None:
+        assert 0.0 <= validate_max_coverage_gap(value) <= 1.0
+
+    @pytest.mark.parametrize(
+        "value", [-0.1, 1.5, "0.5", None, True, False, float("nan"), float("inf")]
+    )
+    def test_rejects_anything_else(self, value: object) -> None:
+        with pytest.raises(ValueError, match="between 0 and 1"):
+            validate_max_coverage_gap(value)
+
+    def test_default_is_small(self) -> None:
+        assert 0 < DEFAULT_MAX_GAP_RATIO <= 0.05
+
+
+class TestEndToEnd:
+    """The behaviour the change exists for, through a real scan."""
+
+    @staticmethod
+    def _tree(tmp_path, files: int) -> None:
+        src = tmp_path / "src"
+        src.mkdir()
+        for i in range(files):
+            (src / f"mod{i}.py").write_text(f"VALUE = {i}\n", encoding="utf-8")
+
+    @staticmethod
+    def _dangling_link(tmp_path, rel: str) -> None:
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(tmp_path / "does-not-exist", target)
+
+    def _run(self, tmp_path, **config):
+        from shadowscan.connectors.code.filesystem import FilesystemConnector
+        from shadowscan.connectors.base import ConnectorContext
+
+        ctx = ConnectorContext(config={"paths": [str(tmp_path)], **config})
+        connector = FilesystemConnector(ctx)
+        connector.run()
+        assert ctx.stats is not None
+        return ctx.stats
+
+    def test_dangling_fixture_link_no_longer_fails_the_scan(self, tmp_path) -> None:
+        self._tree(tmp_path, 200)
+        self._dangling_link(tmp_path, "tests/certs/ca")
+        stats = self._run(tmp_path)
+        assert stats.incomplete is False
+        assert stats.coverage is not None
+        assert stats.coverage["gaps"] == 1
+        assert stats.coverage["within_budget"] is True
+
+    def test_the_tolerated_gap_is_still_reported(self, tmp_path) -> None:
+        self._tree(tmp_path, 200)
+        self._dangling_link(tmp_path, "tests/certs/ca")
+        stats = self._run(tmp_path)
+        assert any("symbolic link" in w for w in stats.warnings)
+        assert stats.coverage is not None
+        assert stats.coverage["details"][0]["relevance"] == "low"
+
+    def test_strict_coverage_still_fails(self, tmp_path) -> None:
+        self._tree(tmp_path, 200)
+        self._dangling_link(tmp_path, "tests/certs/ca")
+        stats = self._run(tmp_path, strict_coverage=True)
+        assert stats.incomplete is True
+
+    def test_zero_budget_still_fails(self, tmp_path) -> None:
+        self._tree(tmp_path, 200)
+        self._dangling_link(tmp_path, "tests/certs/ca")
+        stats = self._run(tmp_path, max_coverage_gap=0.0)
+        assert stats.incomplete is True
+
+    def test_a_flood_of_links_still_fails(self, tmp_path) -> None:
+        """Quiet ledger entries must still reach the budget."""
+        self._tree(tmp_path, 50)
+        for i in range(400):
+            self._dangling_link(tmp_path, f"tests/certs/ca{i}")
+        stats = self._run(tmp_path)
+        assert stats.incomplete is True
+        assert stats.coverage is not None
+        assert stats.coverage["within_budget"] is False
+
+    def test_a_gap_in_deployable_code_is_weighed_in_full(self, tmp_path) -> None:
+        self._tree(tmp_path, 30)
+        self._dangling_link(tmp_path, "services/agent/link.py")
+        stats = self._run(tmp_path)
+        assert stats.coverage is not None
+        assert stats.coverage["details"][0]["relevance"] == "high"
+
+    def test_a_clean_tree_publishes_no_coverage_block(self, tmp_path) -> None:
+        self._tree(tmp_path, 20)
+        stats = self._run(tmp_path)
+        assert stats.incomplete is False
+        assert stats.coverage is None

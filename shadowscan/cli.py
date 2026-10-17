@@ -53,6 +53,7 @@ from shadowscan.connectors import (
     plugin_registry_errors,
 )
 from shadowscan.controls import ControlSelectionError, build_control_evidence, check_sources, control_catalogs
+from shadowscan.coverage import validate_max_coverage_gap
 from shadowscan.dashboard import (
     MAX_HISTORY,
     HistoryError,
@@ -360,6 +361,15 @@ def _connector_timeout_option(
         raise click.BadParameter(str(exc)) from exc
 
 
+def _max_coverage_gap_option(ctx: click.Context, param: click.Parameter, value: float | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return validate_max_coverage_gap(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
+
 def _job_deadline_option(ctx: click.Context, param: click.Parameter, value: float | None) -> float | None:
     try:
         seconds = validate_job_deadline_seconds(value)
@@ -403,6 +413,16 @@ security_options = [
         callback=_connector_timeout_option,
         help="per-connector completion deadline in seconds (default: 120); --connector-timeout is a"
         " deprecated alias; thread workers use cooperative cancellation",
+    ),
+    click.option(
+        "--max-coverage-gap",
+        "max_coverage_gap",
+        type=float,
+        default=None,
+        callback=_max_coverage_gap_option,
+        help="share of examined entries that may be left unread before a scan reports itself"
+        " incomplete (default: 0.02); 0 fails on any gap. A gap the scanner cannot bound"
+        " (an early stop, a refused page) always fails closed, whatever this allows",
     ),
     click.option(
         "--plugin-execution",
@@ -510,6 +530,7 @@ class ScanOptions:
     allow_instance_credentials: bool | None
     allow_credential_mixing: bool | None
     connector_timeout_seconds: float | None
+    max_coverage_gap: float | None
     allow_plugin: tuple[str, ...]
     plugin_execution: str | None
     allow_signature_override: bool | None
@@ -570,6 +591,8 @@ def _apply_security_options(cfg: ScanConfig, opts: ScanOptions) -> None:
         cfg.allow_credential_mixing = opts.allow_credential_mixing
     if opts.connector_timeout_seconds is not None:
         cfg.connector_timeout_seconds = opts.connector_timeout_seconds
+    if opts.max_coverage_gap is not None:
+        cfg.max_coverage_gap = opts.max_coverage_gap
     if opts.job_deadline_seconds is not None:
         cfg.job_deadline_seconds = opts.job_deadline_seconds
 

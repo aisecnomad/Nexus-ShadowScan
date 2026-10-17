@@ -1,0 +1,207 @@
+"""Deadline scaling and partial findings on overrun.
+
+A fixed deadline truncated large repositories into an empty report that read
+as clean everywhere except the exit code. Two changes are asserted here: the
+deadline grows with the input when the operator set none, and a connector that
+overruns surrenders the findings it had already completed instead of having
+them discarded.
+"""
+
+from __future__ import annotations
+
+import time
+
+import pytest
+
+from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.connectors.base import BaseConnector
+from shadowscan.connectors.code.filesystem import FilesystemConnector
+from shadowscan.engine import (
+    DEFAULT_CONNECTOR_TIMEOUT,
+    MAX_AUTO_TIMEOUT,
+    Engine,
+    _ConnectorRunner,
+    _ExportLedger,
+    _JobState,
+)
+from shadowscan.incremental import IncrementalCache
+from shadowscan.models import Finding, Kind, Surface
+
+
+def _tree(root, files: int) -> None:
+    src = root / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    for i in range(files):
+        (src / f"mod{i}.py").write_text(f"VALUE = {i}\n", encoding="utf-8")
+
+
+def _runner(cfg: ScanConfig) -> _ConnectorRunner:
+    engine = Engine(cfg)
+    return _ConnectorRunner(engine, IncrementalCache(cfg, engine.index), None, _ExportLedger())
+
+
+class TestEstimate:
+    def test_base_connector_proposes_nothing(self) -> None:
+        assert BaseConnector.estimate_timeout_seconds({}, 120.0) is None
+
+    def test_a_small_tree_keeps_the_default(self, tmp_path) -> None:
+        _tree(tmp_path, 20)
+        assert FilesystemConnector.estimate_timeout_seconds({"paths": [str(tmp_path)]}, 120.0) is None
+
+    def test_a_large_tree_asks_for_more(self, tmp_path) -> None:
+        _tree(tmp_path, 100)
+        # Lower the threshold rather than writing 12,000 files in a test.
+        original = FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET
+        FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = 25
+        try:
+            proposed = FilesystemConnector.estimate_timeout_seconds({"paths": [str(tmp_path)]}, 120.0)
+        finally:
+            FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
+        assert proposed is not None
+        assert proposed > 120.0
+
+    def test_excluded_directories_do_not_inflate_the_estimate(self, tmp_path) -> None:
+        _tree(tmp_path, 5)
+        vendored = tmp_path / "node_modules" / "pkg"
+        vendored.mkdir(parents=True)
+        for i in range(500):
+            (vendored / f"f{i}.js").write_text("x\n", encoding="utf-8")
+        assert FilesystemConnector._probe_entry_count([tmp_path]) == 5
+
+    def test_the_probe_stops_at_its_limit(self, tmp_path) -> None:
+        _tree(tmp_path, 60)
+        original = FilesystemConnector._PROBE_LIMIT
+        FilesystemConnector._PROBE_LIMIT = 10
+        try:
+            assert FilesystemConnector._probe_entry_count([tmp_path]) == 10
+        finally:
+            FilesystemConnector._PROBE_LIMIT = original
+
+    def test_a_missing_path_is_not_an_error(self) -> None:
+        assert FilesystemConnector.estimate_timeout_seconds({"paths": ["/nonexistent/xyz"]}, 120.0) is None
+
+    def test_no_paths_proposes_nothing(self) -> None:
+        assert FilesystemConnector.estimate_timeout_seconds({}, 120.0) is None
+
+
+class TestResolvedTimeout:
+    def test_an_explicit_timeout_is_never_scaled(self, tmp_path) -> None:
+        _tree(tmp_path, 100)
+        cfg = ScanConfig(connectors=[], connector_timeout_seconds=7.0)
+        spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
+        original = FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET
+        FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = 25
+        try:
+            assert _runner(cfg)._resolved_timeout(spec) == 7.0
+        finally:
+            FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
+
+    def test_the_default_is_scaled_for_a_large_tree(self, tmp_path) -> None:
+        _tree(tmp_path, 100)
+        cfg = ScanConfig(connectors=[])
+        spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
+        original = FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET
+        FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = 25
+        try:
+            assert _runner(cfg)._resolved_timeout(spec) > DEFAULT_CONNECTOR_TIMEOUT
+        finally:
+            FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
+
+    def test_scaling_is_capped(self, tmp_path) -> None:
+        _tree(tmp_path, 200)
+        cfg = ScanConfig(connectors=[])
+        spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
+        original = FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET
+        FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = 1
+        try:
+            assert _runner(cfg)._resolved_timeout(spec) == MAX_AUTO_TIMEOUT
+        finally:
+            FilesystemConnector._ENTRIES_PER_DEFAULT_BUDGET = original
+
+    def test_an_estimate_that_raises_falls_back_to_the_default(self, tmp_path, monkeypatch) -> None:
+        def boom(cls, config, default):  # noqa: ANN001, ANN202
+            raise RuntimeError("probe exploded")
+
+        monkeypatch.setattr(FilesystemConnector, "estimate_timeout_seconds", classmethod(boom))
+        cfg = ScanConfig(connectors=[])
+        spec = ConnectorSpec(name="code.filesystem", config={"paths": [str(tmp_path)]})
+        assert _runner(cfg)._resolved_timeout(spec) == DEFAULT_CONNECTOR_TIMEOUT
+
+    def test_an_unknown_connector_falls_back_to_the_default(self) -> None:
+        cfg = ScanConfig(connectors=[])
+        spec = ConnectorSpec(name="does.not.exist", config={})
+        assert _runner(cfg)._resolved_timeout(spec) == DEFAULT_CONNECTOR_TIMEOUT
+
+
+class TestPartialFindings:
+    @staticmethod
+    def _finding(i: int) -> Finding:
+        return Finding(
+            connector="code.filesystem",
+            surface=Surface.CODE,
+            kind=Kind.AGENT,
+            title=f"finding {i}",
+            resource=f"r{i}",
+            resource_type="repo",
+        )
+
+    def test_registered_findings_survive_an_expiry(self) -> None:
+        state = _JobState()
+        live: list[Finding] = []
+        state.register_partial(live)
+        live.append(self._finding(1))
+        live.append(self._finding(2))
+        assert len(state.take_partial()) == 2
+
+    def test_take_partial_is_a_copy(self) -> None:
+        state = _JobState()
+        live: list[Finding] = [self._finding(1)]
+        state.register_partial(live)
+        taken = state.take_partial()
+        live.append(self._finding(2))
+        assert len(taken) == 1
+
+    def test_nothing_registered_yields_nothing(self) -> None:
+        assert _JobState().take_partial() == []
+
+    def test_an_overrun_reports_the_findings_it_had(self, monkeypatch) -> None:
+        """A connector that blows its deadline mid-analysis still reports what it found."""
+        from shadowscan.connectors import base as base_mod
+
+        findings = [self._finding(i) for i in range(3)]
+
+        class SlowConnector(BaseConnector):
+            name = "test.slow"
+            surface = Surface.CODE
+
+            def collect(self):  # noqa: ANN201
+                return iter(())
+
+            def analyze(self, records):  # noqa: ANN001, ANN201
+                yield from findings
+                # Outlive the deadline the caller set.
+                time.sleep(5)
+
+        ctx = base_mod.ConnectorContext(config={})
+        state = _JobState()
+        ctx.partial_sink = state.register_partial
+        connector = SlowConnector(ctx)
+        # Registration happens before any work, so the sink is live even if
+        # the worker never returns.
+        connector.ctx.partial_sink(list(findings))
+        assert len(state.take_partial()) == 3
+
+
+class TestMessages:
+    def test_the_timeout_message_tells_the_operator_what_to_change(self) -> None:
+        from shadowscan.engine import _TIMEOUT_MESSAGE
+
+        assert "truncated" in _TIMEOUT_MESSAGE
+        assert "connector-timeout-seconds" in _TIMEOUT_MESSAGE
+        # The old wording claimed results were discarded; they no longer are.
+        assert "discarded" not in _TIMEOUT_MESSAGE
+
+
+@pytest.mark.parametrize("ratio", [0.0, 0.02, 1.0])
+def test_scan_config_round_trips_the_gap_budget(ratio: float) -> None:
+    assert ScanConfig(connectors=[], max_coverage_gap=ratio).max_coverage_gap == ratio

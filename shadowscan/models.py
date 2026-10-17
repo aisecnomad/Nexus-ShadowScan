@@ -651,6 +651,10 @@ class ScanStats:
     skip_reason: str | None = None
     cached: bool = False
     incomplete: bool = False
+    #: Unread content this connector accounted for, whether or not it changed
+    #: ``incomplete``. Published so that a tolerated gap is never invisible.
+    #: See :mod:`shadowscan.coverage`.
+    coverage: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)

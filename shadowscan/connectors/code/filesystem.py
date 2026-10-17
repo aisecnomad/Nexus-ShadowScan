@@ -1201,6 +1201,54 @@ def _scan_timeout(value: Any) -> float:
 
 
 class FilesystemConnector(BaseConnector):
+    #: Entries a probe counts before it stops and extrapolates. Bounded so the
+    #: estimate costs a fraction of a second even on a huge tree.
+    _PROBE_LIMIT = 20_000
+    #: Entries the default deadline comfortably covers. Above this the budget
+    #: grows in proportion, because the walk's cost is roughly linear in
+    #: entries once signature matching dominates.
+    _ENTRIES_PER_DEFAULT_BUDGET = 12_000
+
+    @classmethod
+    def estimate_timeout_seconds(cls, config: dict[str, Any], default: float) -> float | None:
+        """Scale the deadline to the size of the tree about to be walked.
+
+        A fixed deadline silently truncated large repositories: the walk hit
+        it mid-tree and the connector reported nothing, which reads as a clean
+        result everywhere except the exit code. The probe counts entries up to
+        ``_PROBE_LIMIT`` and stops; reaching the limit means "at least this
+        many", which is all the estimate needs.
+        """
+        try:
+            roots = [Path(p) for p in cls.scanned_local_paths(config)]
+        except Exception:  # noqa: BLE001 - an unusable path is the scan's problem, not the estimate's
+            return None
+        if not roots:
+            return None
+        entries = cls._probe_entry_count(roots)
+        if entries < cls._ENTRIES_PER_DEFAULT_BUDGET:
+            return None
+        return default * (entries / cls._ENTRIES_PER_DEFAULT_BUDGET)
+
+    @classmethod
+    def _probe_entry_count(cls, roots: list[Path]) -> int:
+        """Count entries under *roots*, stopping at ``_PROBE_LIMIT``.
+
+        Directory names the walk always prunes are pruned here too, so the
+        estimate reflects the tree that will actually be read.
+        """
+        seen = 0
+        for root in roots:
+            if not root.is_dir():
+                seen += 1
+                continue
+            for _dirpath, dirnames, filenames in os.walk(root, onerror=lambda _exc: None):
+                dirnames[:] = [d for d in dirnames if d not in DEFAULT_EXCLUDES]
+                seen += len(filenames)
+                if seen >= cls._PROBE_LIMIT:
+                    return cls._PROBE_LIMIT
+        return seen
+
     @classmethod
     def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
         # Engine hook: each repository root is an independent incremental-cache unit.
@@ -2070,11 +2118,16 @@ class FilesystemConnector(BaseConnector):
         if self.strict_coverage:
             self.ctx.error(f"{message}; coverage incomplete")
         else:
-            self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+            # One entry of known, bounded lost coverage: budgeted, not fatal.
+            self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1)
 
     def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
         """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
         walk.examined += 1
+        # The denominator of the coverage-gap ratio: entries the walk reached,
+        # not findings, so a gap is judged against the tree it occurred in.
+        # Summed across roots, because walk counters restart at each one.
+        self.ctx.add_coverage_examined(1)
         if walk.examined > self.max_files:
             self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
             self._root_listing_incomplete = True
@@ -2106,18 +2159,20 @@ class FilesystemConnector(BaseConnector):
             self._lockfile_gap(rel, "symbolic link is not followed")
             return True
         # A single representative diagnostic per root keeps hostile trees
-        # from filling the report with thousands of link names.
+        # from filling the report with thousands of link names. The budget
+        # still counts every one of them, via the quiet ledger entries.
         walk.link_gaps += 1
-        if root not in self._symlink_warnings:
-            self._symlink_warnings.add(root)
-            # Stays fail-closed: the target's bytes exist and other tools may
-            # read them, so an unscanned target is lost coverage a repository
-            # could hide behind — not a file-attributable input defect.
-            message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
-            if self.strict_coverage:
+        first = root not in self._symlink_warnings
+        self._symlink_warnings.add(root)
+        # The target's bytes exist and other tools may read them, so an
+        # unscanned target is lost coverage a repository could hide behind —
+        # not a file-attributable input defect.
+        message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
+        if self.strict_coverage:
+            if first:
                 self.ctx.error(f"{message}; coverage incomplete")
-            else:
-                self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+            return True
+        self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1, quiet=not first)
         return True
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
@@ -2674,16 +2729,28 @@ class FilesystemConnector(BaseConnector):
         for note in read_notes:
             self._note_file(rel, note)
         for issue in read_errors:
-            if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
-                    incomplete=True,
+            if self.strict_coverage:
+                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+            elif issue == "file exceeds max_file_size":
+                self.ctx.coverage_gap(
+                    f"code.filesystem: {rel}: skipped, {issue}; coverage gap", path=rel, entries=1
                 )
             else:
-                # Undecodable analyzable files stay fail-closed: editors and
-                # runtimes tolerate bytes the scanner cannot decode, so a NUL
-                # in a CLAUDE.md could otherwise hide content from the scan.
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                # Editors and runtimes tolerate bytes the scanner cannot
+                # decode, so undecodable content could hide a definition. In a
+                # file the scanner specifically looks for — a coding-agent
+                # instruction document — that is exactly the place to hide one,
+                # so it stays fail-closed. Anywhere else it is one file's worth
+                # of lost coverage: charged at full weight, never discounted as
+                # a test fixture, so a tree seeded with them still fails.
+                critical = _is_coding_agent_doc(PurePosixPath(rel).name)
+                self.ctx.coverage_gap(
+                    f"code.filesystem: {rel}: {issue}",
+                    path=rel,
+                    entries=1,
+                    blinding=critical,
+                    full_weight=True,
+                )
         if text is None:
             return None
         if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
@@ -2834,14 +2901,19 @@ class FilesystemConnector(BaseConnector):
         """Record parser or validator issues for ``rel``.
 
         ``defect`` routes recognized input failures through
-        :meth:`_input_defect` for a distinct diagnostic. Every issue marks
-        coverage incomplete, regardless of diagnostic severity.
+        :meth:`_input_defect` for a distinct diagnostic. Every issue is a
+        coverage gap; one file's worth of unread content is bounded, so it is
+        charged to the gap budget rather than condemning the scan on its own.
+        A repository full of unreadable files still exhausts that budget, and
+        ``strict_coverage`` restores the unconditional error.
         """
         for issue in issues:
             if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):
                 self._input_defect(rel, issue)
-            else:
+            elif self.strict_coverage:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}")
+            else:
+                self.ctx.coverage_gap(f"code.filesystem: {rel}: {issue}", path=rel, entries=1)
 
     def _redacted_lines(self, file: _SourceFile) -> list[str]:
         """Return the redacted lines excerpts are cut from, redacting on first use."""
