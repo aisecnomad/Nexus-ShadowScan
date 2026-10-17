@@ -11,14 +11,14 @@ treat scan output as sensitive (see the [threat model](../security/threat-model.
 - `sanitize(value)` returns a sanitized JSON-like copy, keeping nonsecret fields and types.
   Environment variable values are withheld whatever their name, argv pairs such as
   `["--token", "<value>"]` are recognized, and a credential found in one field is also removed
-  from the other fields of the same object. `Finding` and `Evidence` call it on every reportable
-  field when they are created and again before every export.
+  from the other fields of the same object. `Finding` and `Evidence` call it on their reportable
+  fields when they are created and again before every export.
 - `sanitize_text(text)` redacts one string.
 - `sanitize_excerpt(value, limit=200)` redacts the whole text before shortening it, because
   shortening first can cut a credential away from what identifies it. Text past the safety
   limits becomes `[REDACTED]`. `sanitize_text_excerpt` does the same for a provider record's
-  text field and raises `TypeError` for any value that is not text, so the connector rejects the
-  record as malformed and its coverage is incomplete.
+  text field, returns `None` for an absent one and raises `TypeError` for any other value that is
+  not text, so the connector rejects the record as malformed and its coverage is incomplete.
 - `credential_id(value)` returns a keyed pseudonym, `credential:hmac-sha256:<digest>`, that is
   stable only within the active key scope.
 - `policy_token()` identifies the rules and limits in force. A finding's verified-clean digest
@@ -26,8 +26,9 @@ treat scan output as sensitive (see the [threat model](../security/threat-model.
 
 ## Passes
 
-This module drives the passes in the `redaction_*` modules beside it. `redaction_rules` holds
-the shared marker, sensitive names, limits and value tests.
+This module drives the passes in the `redaction_*` modules beside it, except
+`redaction_entropy`, which neither `sanitize()` nor `sanitize_text()` runs. `redaction_rules`
+holds the shared marker, sensitive names, limits and value tests.
 
 | Module | Withholds |
 |--------|-----------|
@@ -50,8 +51,8 @@ imported.
 nesting or work limits, and by `Finding.sanitize()` when redaction would rewrite the fields that
 identify a finding. A finding that raises it is never published partially sanitized: the
 engine omits it and records the error `finding omitted: sanitization safety limit exceeded`,
-which marks the scan incomplete, so it exits 3. A finding that fails after merging and scoring
-is counted in an `engine.postprocess` error, with the same effect. Reporters let the error
+which marks the scan incomplete, so it exits 3. A finding that fails after merging, or after
+scoring, is counted in an `engine.postprocess` error, with the same effect. Reporters let the error
 propagate instead of writing a partly checked report (see [Reporters](reporters.md#sanitization)).
 
 ::: shadowscan.utils.redaction

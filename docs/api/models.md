@@ -25,8 +25,9 @@ Its key fields are:
   `ai-name-hint` or `policy.llm-access-scopes`.
 - **`evidence`**: a list of `Evidence` items, each with a `signal`, `description`, `location`,
   `snippet`, `weight` (0 to 1), `signature` and `attributes`.
-- **`shadow`**: `None` when no inventory was supplied, `True` when the finding matches no
-  inventory entry, `False` when it matches one (`registry_match` names it).
+- **`shadow`**: `None` when the scan had no inventory (no inventory files and no trusted
+  registry), `True` when the finding matches no inventory entry, `False` when it matches one
+  (`registry_match` names it).
 - **`id`**: `ss-` and 16 hexadecimal digits of a SHA-256 over the finding's identity fields,
   under the identity schema `shadowscan.finding-identity/v2`.
 
@@ -39,21 +40,22 @@ pass keeps a digest of the sanitized state together with the redaction policy in
 value to a field drops the digest, and an in-place change through a container or a replaced
 redaction rule no longer matches it, so each of these gets a full pass.
 
-If redaction would rewrite the fields that identify a finding (its connector, resource type or
-identity discriminator, or any identity field when the id was not derived from them),
-`sanitize()` raises `SanitizationLimitError`, as it does for a value past the sanitizer's limits.
-The engine omits such a finding and records the error
+If redaction would rewrite the fields that identify a finding (its connector, resource type,
+identity discriminator or identity schema, or any identity field when the id was not derived
+from them), `sanitize()` raises `SanitizationLimitError`, as it does for a value past the
+sanitizer's limits. The engine omits such a finding and records the error
 `finding omitted: sanitization safety limit exceeded`, which marks the scan incomplete (exit 3);
 see [Redaction](redaction.md#safety-limits).
 
 ## ScanResult
 
-`ScanResult` holds the findings and one `ScanStats` per connector (objects examined, errors,
-warnings, coverage and the reasons a scan is incomplete), with `started_at`, `finished_at`,
-`version`, `inventory_size`, `inventory_present` and `collection_scope`. `complete` is true only
-when there is at least one `ScanStats` and none has errors, was skipped or is incomplete; the
-CLI exits 3 otherwise. `to_json()` raises `ValueError` rather than publish a NaN or infinite
-value. `Engine.run()` returns a `ScanResult`, and the reporters render one.
+`ScanResult` holds the findings and one `ScanStats` per connector and per engine stage that
+reports, such as `engine.postprocess` (objects examined, errors, warnings, coverage and the
+reasons a scan is incomplete), with `started_at`, `finished_at`, `version`, `inventory_size`,
+`inventory_present` and `collection_scope`. `complete` is true only when there is at least one
+`ScanStats` and none has errors, was skipped or is incomplete; the CLI exits 3 otherwise.
+`to_json()` raises `ValueError` rather than publish a NaN or infinite value. `Engine.run()`
+returns a `ScanResult`, and the reporters render one.
 
 ::: shadowscan.models
     options:

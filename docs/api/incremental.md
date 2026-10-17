@@ -22,10 +22,10 @@ connectors:
 - `code.github`, `code.gitlab`, `cloud.aws`, `cloud.azure`, `cloud.gcp` and `cloud.oci`
   with an offline `input`.
 
-Live APIs and every other connector, including a plugin that replaces a built-in
-connector, are collected on every run: an unchanged configuration cannot establish
-that remote state is unchanged. `--dump-records` disables the cache, because a cached
-result has no records to export.
+Live APIs are collected on every run, because an unchanged configuration cannot
+establish that remote state is unchanged. So is every other connector, and a plugin
+that replaces a built-in connector, which may read inputs the cache does not know.
+`--dump-records` disables the cache, because a cached result has no records to export.
 
 ## Fingerprint and reuse
 
@@ -33,16 +33,19 @@ The fingerprint is a SHA-256 digest over the cache format, the ShadowScan versio
 digest of the scanner's source, the signature index, the connector's name, id and
 configuration, a commitment to `SHADOWSCAN_IDENTITY_KEY` when it is set, and each input
 root: the content of every file below it, apart from directories a code scan excludes by
-name, plus the mode, times, device and inode of every file and directory and each
-file's size. A code file over
-`max_file_size` contributes only its metadata. Hashing is bounded (512 MiB, 200,000
-entries and 30 seconds per snapshot, 64 MiB per file); exceeding a bound, or meeting a
-symbolic link or special file, falls back to a full run.
+name, plus the mode, times, device and inode of every file and directory, each file's
+size and, with `use_git`, each Git checkout's HEAD and shallow boundary. For
+`code.github` and `code.gitlab` only the checkout directories inside the `input`
+directory count. A code file over `max_file_size` contributes only its metadata.
+Hashing is bounded (512 MiB, 200,000 entries and 30 seconds per snapshot, 64 MiB per
+file); exceeding a bound, or meeting a symbolic link or special file, falls back to a
+full run.
 
 The input is fingerprinted again before a cached result is used, and a fresh collection
 follows when it changed. After a fresh collection it is fingerprinted once more; a
-change marks the connector incomplete with the error "static input changed during the
-scan; rerun required", so the scan exits 3.
+change, or an input that can no longer be fingerprinted, marks the connector incomplete
+with the error "static input changed during the scan; rerun required", so the scan
+exits 3.
 
 Findings are stored before reconciliation, scoring and correlation, and those stages
 always run again. Only a result without errors that was neither skipped nor incomplete

@@ -8,8 +8,8 @@ Python, which validates itself on construction. The
 ## Configuration sources
 
 - **YAML file**: `shadowscan scan` requires `--config` / `-c`. The file must be UTF-8 text of
-  at most 8 MiB and not a symbolic link, and a key repeated in one mapping is rejected.
-  Relative paths resolve beside the file.
+  at most 8 MiB, neither a symbolic link nor inside one, and a key repeated in one mapping is
+  rejected. Relative paths resolve beside the file.
 - **Command line**: a scan option given on the command line replaces the file's value (for
   example `--fail-on`, `--dump-records`, `--connector-timeout-seconds`,
   `--job-deadline-seconds` and the `--allow-…` / `--deny-…` switches). `--inventory`,
@@ -45,9 +45,9 @@ connectors:
 
 ## Validation
 
-`ConfigValidationError`, a `SetupError` and a `ValueError` whose message never includes
-user-supplied values, is raised for an unsupported field or connector key, a value of the
-wrong type or range, conflicting options (such as both `connector_timeout_seconds` and its
+`ConfigValidationError`, a `SetupError` and a `ValueError` whose message never echoes a
+configured value, is raised for an unsupported field or connector key, a value of the wrong
+type or range, conflicting options (such as both `connector_timeout_seconds` and its
 deprecated alias `connector_timeout`) and a `${VAR}` whose variable is missing or empty. The
 CLI prints it and exits 1 before anything is scanned. The engine raises `SetupError` for
 problems found when it is constructed, such as a signature directory that does not exist.

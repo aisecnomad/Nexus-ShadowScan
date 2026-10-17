@@ -8,8 +8,9 @@ adjustments. The weights are author-chosen heuristics, not fitted to incident ou
 
 ## Score model
 
-`assess` sums the factors below, multiplies the sum by `0.6 + 0.4 × confidence` and bounds the
-result to 0–100. [Risk scoring](../concepts/risk.md#risk) lists the default weights.
+`assess` sums the factors below, multiplies the sum by `0.6 + 0.4 × confidence` (confidence
+clamped to 0–1), rounds it and bounds the result to 0–100.
+[Risk scoring](../concepts/risk.md#risk) lists the default weights.
 
 | Factors | `risk_weights` group |
 |---------|----------------------|
@@ -35,7 +36,8 @@ result to 0–100. [Risk scoring](../concepts/risk.md#risk) lists the default we
 ## Danger score
 
 `danger_score` applies the same scaling and bounds to every factor except the governance
-factors, so triage can rank what a finding can do separately from whether anyone approved it.
+factors, so a reviewer can rank what a finding can do separately from whether anyone approved
+it.
 
 ## Risk policies
 

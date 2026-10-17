@@ -12,18 +12,18 @@ The built-in packs are YAML files under `shadowscan/signatures/data/`:
 | Directory | Signatures |
 |-----------|------------|
 | `frameworks/` | Agent frameworks (`framework.*`: LangChain, LlamaIndex, AutoGen, Spring AI, …) |
-| `providers/` | Model providers and inference APIs (`provider.*`: OpenAI, Anthropic, AWS Bedrock, Ollama, …) |
-| `protocols/` | Agent protocols (`protocol.*`: MCP, A2A, ACP, OpenAI function calling, ChatGPT plugins) |
+| `providers/` | Model providers and inference APIs (`provider.*`: OpenAI, Anthropic, Amazon Bedrock, Ollama, …) |
+| `protocols/` | Agent protocols (`protocol.*`: MCP, A2A, ACP, LLM tool/function calling, ChatGPT plugin and GPT action manifests) |
 | `platforms/` | Agent platforms, AI gateways and low-code tools (`platform.*`: Dify, n8n, LiteLLM, Copilot Studio, …) and managed cloud AI services (`cloud.*`: Bedrock Agents, Vertex Agent Engine, Azure AI Foundry Agents, …) |
 | `identity/` | AI SaaS apps seen as OAuth grants and bots (`identity-app.*`) and the permission policies the risk engine scores (`policy.*`) |
 | `coding_agents/` | Coding agents (`coding-agent.*`: Claude Code, GitHub Copilot, Cursor, …) |
 | `heuristics/` | Vendor-neutral idioms such as tool registration, agent loops and autonomy flags (`heuristic.*`), and file-corpus signatures |
 | `observability/` | The OpenTelemetry GenAI conventions, observability tools, memory layers, sandboxes and tool providers (`observability.*`, `memory.*`, `sandbox.*`, `tool.*`) |
 
-A pack file holds one signature, a list of signatures, or a mapping whose only key is
-`signatures`. Each signature has an `id`, a `category` and at least one signal; the schema rejects
-unknown fields (including `severity`, which the risk engine derives), duplicate YAML keys and
-duplicate ids in a file.
+Each YAML document in a pack file holds one signature, a list of signatures, or a mapping whose
+only key is `signatures`. Each signature has an `id`, a `category` and at least one signal; the
+schema rejects unknown fields (including `severity`, which the risk engine derives), duplicate
+YAML keys and duplicate ids in a file.
 
 ## Signal types
 
@@ -56,9 +56,9 @@ second agent indicator.
 Extra pack directories come from the config's top-level `signatures:` list and from
 `--signatures`/`-s` (repeatable), which the CLI adds after the config's. They load after the
 built-in packs, in that order. Symbolic links are not followed, and a custom directory without
-any `.yaml` or `.yml` pack is an error. A later custom pack can replace an id from an earlier
-one, but a repeated id within one directory is an error. A built-in id is reserved: a custom
-signature that reuses one is refused unless `options.allow_signature_override: true` or
+any `.yaml` or `.yml` pack is an error. A later custom directory can replace an id from an
+earlier one, but a repeated id within one directory is an error. A built-in id is reserved: a
+custom signature that reuses one is refused unless `options.allow_signature_override: true` or
 `--allow-signature-override` is set, and then it replaces the whole built-in signature.
 
 ```yaml

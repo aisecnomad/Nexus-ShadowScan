@@ -27,21 +27,22 @@ The module does not read `metadata.controls` from the reports. It evaluates the
 packaged control rules of [`shadowscan.mappings`](mappings.md) against every merged
 finding again, so the counts follow the installed catalogs. Each finding's shadow
 status is first recomputed from the source reports: shadow when a report reconciled
-with an inventory says so, registered when every report says so, and unknown
-otherwise. A report that `shadowscan merge` produced is refused with `ValueError`;
+with an inventory says so, registered when every report that holds it was reconciled
+and says so, and unknown otherwise. A report that `shadowscan merge` produced is refused with `ValueError`;
 pass the source reports instead. An example referenced only through an EU AI Act risk
 class declared in a Capability Card has the basis `declared`, any other `observed`.
 
 ## Completeness
 
-Every catalog entry gets one of the `EVIDENCE_STATUSES`. A control reads
-`not observed` only when every report is complete and no finding could reference it
-through a fact the reports do not hold (a shadow status without an inventory, a risk
-class no card declares); otherwise a control without references reads
+Every catalog entry gets one of the `EVIDENCE_STATUSES`. A control that findings
+reference reads `referenced`, or `referenced (scan incomplete)` when the evidence is
+incomplete, and a control that no packaged rule references reads `not mapped`. Any
+other control reads `not observed` only when every report is complete and no finding
+could reference it through a fact the reports do not hold (a shadow status without an
+inventory, a risk class no card declares); otherwise it reads
 `unknown (scan incomplete)`, `unknown (inventory not supplied)` or
-`unknown (risk class not declared)`. A control that no packaged rule references reads
-`not mapped`. The guide's [evidence status](../operations/controls.md#evidence-status)
-table explains each value.
+`unknown (risk class not declared)`. The guide's
+[evidence status](../operations/controls.md#evidence-status) table explains each value.
 
 A report is complete only when its summary says so, no connector record has errors,
 was skipped or is incomplete, and its summary counts match its findings array. One
