@@ -17,6 +17,7 @@ from click.testing import CliRunner
 
 from shadowscan.cli import main
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
+from shadowscan.connectors.code import file_scan as file_scan_module
 from shadowscan.connectors.code import filesystem as filesystem_module
 from shadowscan.connectors.code import lockfiles, manifests
 from shadowscan.connectors.code import walk as walk_module
@@ -833,7 +834,7 @@ def test_blank_lines_after_agent_front_matter_marker_cannot_stall_the_scan(tmp_p
 )
 def test_agent_front_matter_formats_still_parse(tmp_path, index, document):
     connector = FilesystemConnector(ConnectorContext(config={"path": str(tmp_path)}, index=index))
-    info = connector._parse_agent_definition(".claude/agents/reviewer.md", document)
+    info = connector.file_scanner._parse_agent_definition(".claude/agents/reviewer.md", document)
     assert info["name"] == "reviewer" and info["tools"] == "Bash"
 
 
@@ -863,7 +864,7 @@ class _Stalls:
 def test_pattern_timeout_is_an_explicit_coverage_gap(
     tmp_path, index, monkeypatch, attribute, path, text, error
 ):
-    monkeypatch.setattr(filesystem_module, attribute, _Stalls(error))
+    monkeypatch.setattr(file_scan_module, attribute, _Stalls(error))
     target = tmp_path / path
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text)
@@ -1351,7 +1352,7 @@ def test_agent_definition_frontmatter_keeps_multiline_metadata(tmp_path, index, 
     ctx = ConnectorContext(config={"path": str(tmp_path)}, index=index)
     connector = FilesystemConnector(ctx)
     text = newline.join(["--- \t", "", "name: reviewer", "tools:", "  - Read", "--- \t", "Body"])
-    info = connector._parse_agent_definition(".claude/agents/reviewer.md", text)
+    info = connector.file_scanner._parse_agent_definition(".claude/agents/reviewer.md", text)
     assert info["name"] == "reviewer" and info["tools"] == ["Read"]
 
 

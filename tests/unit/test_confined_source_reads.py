@@ -76,7 +76,7 @@ def test_source_and_ownership_reads_share_one_root_descriptor(tmp_path, index, m
     # root and reads CODEOWNERS.
     for module in ("walk", "ownership"):
         monkeypatch.setattr(f"shadowscan.connectors.code.{module}.open_confined_directory", recording)
-    for module in ("filesystem", "ownership"):
+    for module in ("file_scan", "ownership"):
         monkeypatch.setattr(f"shadowscan.connectors.code.{module}.read_text", reading)
     findings, ctx = _run(index, tmp_path)
     # The second open verifies the root's identity before ownership lookup;

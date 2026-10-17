@@ -143,9 +143,15 @@ them.
    façade (configuration reads outside the connector class cannot be attributed
    to its `config_keys`, `tests/unit/test_connector_config_keys.py`); the
    walker receives the bound method.
+3. **File scan** moved into the new `file_scan.FileScanner`: `scan_file` (was
+   `_scan_file`) to `_record_special_files`, the record helpers the passes
+   share (`_record`, `_handle_artifact`, `_looks_like_mcp_config` and the
+   others), `_parse_agent_definition`, `_note_ua_mentions` and the post-walk
+   binding of Python re-export consumers (`resolve_reexport_sources`), with the
+   `_Project`, `_SourceFile` and `_MatchedSource` records. `file_errors` (was
+   `_file_errors`) is also used by the findings code.
 
-The file scan and findings groups (steps 3 and 4) are still methods of the
-class.
+The findings group (step 4) is still part of the class.
 
 `filesystem.py` still re-exports every name that was importable from it before
 (patch a name in its defining module): those it no longer uses are explicit
@@ -176,10 +182,10 @@ listed above (and one pair of redundant parentheses `ruff format` dropped). The
 13,334 tests of the 199 test modules that touch the code scanner or scan its
 sources, with the repository policy tests, pass as on main, apart from
 wall-clock budget tests that fail intermittently under load on main too.
-Together the inputs and those tests execute 93.1% (ownership) and 93.5% (walk)
-of the moved statements; most of the rest are deadline, race and Git 2.45+
-paths. Not verified: the public repositories of the 2026-10-01 field scan
-(nothing was cloned), live clone and API modes of `code.github` and
+Together the inputs and those tests execute 93.1% (ownership), 93.5% (walk) and
+98.1% (file scan) of the moved statements; most of the rest are deadline, race
+and Git 2.45+ paths. Not verified: the public repositories of the 2026-10-01
+field scan (nothing was cloned), live clone and API modes of `code.github` and
 `code.gitlab`, Git 2.45+ metadata (the runner had Git 2.43, so `use_git` and
 `diff_base` took their failure paths) and permission-denied reads (the runner
 was root).
