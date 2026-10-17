@@ -1222,8 +1222,8 @@ def _redact_fallback_defaults(text: str, *, extended: bool = False) -> str:
 
 _TEXT_LINE = re.compile(r"[^\r\n]++")
 # What a scan of a line's string literals and comment stops at: a quote, which
-# opens a string literal, and the comment markers.
-_LINE_PIECE = re.compile(r"[\"'`]|//|/\*|#")
+# opens a string literal, and the comment markers of code and of XML or HTML.
+_LINE_PIECE = re.compile(r"[\"'`]|//|/\*|#|<!--")
 # A name joined to a value on a line ('apiKey:', 'api_key =', '"token":').
 _LINE_NAME = re.compile(r"(?<![\w$.-])(?P<name>[A-Za-z_$][\w$.-]*+)[\"']?[ \t]*+(?::(?!:)|=(?![=>~]))")
 # A run of a comment that could be key material: the base64 and URL-safe alphabet.
@@ -1254,8 +1254,8 @@ def _line_regions(line: str) -> tuple[list[tuple[int, int]], int | None]:
     """The spans of a line's string literal bodies, and where its comment starts, or None.
 
     A '//' or '#' starts a comment at the line's start or after a blank, ','
-    or ';' ('https://h/#x' and 'this.#k' hold none); a '/*' starts one
-    anywhere. A string literal that does not close on the line runs to its
+    or ';' ('https://h/#x' and 'this.#k' hold none); a '/*' or an XML or
+    HTML '<!--' starts one anywhere. A string literal that does not close on the line runs to its
     end, and no comment follows it. A template that assembles its text from
     expressions ('f"{x}..."', '`${prefix}...`') is left out, as the
     assignment passes leave it.
@@ -1273,7 +1273,7 @@ def _line_regions(line: str) -> tuple[list[tuple[int, int]], int | None]:
             if close is None:
                 return literals, None
             position = close + 1
-        elif mark == "/*" or start == 0 or line[start - 1] in " \t,;":
+        elif mark in {"/*", "<!--"} or start == 0 or line[start - 1] in " \t,;":
             return literals, start
         else:
             position = piece.end()
@@ -1305,7 +1305,7 @@ def _redact_line_tails(text: str) -> str:
     ``_credential_literal`` takes for an opaque key is withheld; words,
     references, model names and placeholders stay. A line is read once.
     """
-    if not any(mark in text for mark in "\"'`#/"):
+    if not any(mark in text for mark in "\"'`#/<"):
         return text
     spans: list[tuple[int, int]] = []
     for line in _TEXT_LINE.finditer(text):

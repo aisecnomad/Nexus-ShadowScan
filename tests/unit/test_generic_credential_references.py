@@ -461,6 +461,12 @@ def test_text_after_an_environment_read_keeps_the_value_withheld(line: str):
         # After any other credential value too.
         (f'  apiKey: "{RANDOM}", // was {AZURE_KEY}', "// was"),
         (f"  openaiKey: config.azure, // {AZURE_KEY}", "config.azure,"),
+        # An XML or HTML comment after a credential-named setting.
+        (
+            f'<add key="OpenaiApiKey" value="%OPENAI_API_KEY%" /> <!-- {AZURE_KEY} -->',
+            'value="%OPENAI_API_KEY%" /> <!--',
+        ),
+        (f'<add key="OpenAI:Key" value="%OPENAI_KEY%"/><!--old {AZURE_KEY}-->', "<!--old "),
     ],
 )
 def test_key_material_in_a_comment_after_a_credential_value_is_withheld(line: str, kept: str):
@@ -479,6 +485,7 @@ def test_key_material_in_a_comment_after_a_credential_value_is_withheld(line: st
         "api_key = os.environ['OPENAI_API_KEY']; # your-api-key-here",
         "color: '#a8f3c91d', // brand",
         "  url: 'https://example.com/#a8f3c91d7e2b', // docs",
+        '<add key="OpenaiApiKey" value="%OPENAI_API_KEY%" /> <!-- rotate via the vault -->',
     ],
 )
 def test_a_comment_without_key_material_keeps_its_text(line: str):

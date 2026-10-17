@@ -342,7 +342,8 @@ coverage, even when a response includes an empty collection field.
   comment after it the value is withheld up to where the value lexer ends it
   (a quote, bracket, `,` or `;` of the expression). On a line that joins a
   credential name to a value, every string literal after that name and the
-  comment keep their words, references and model names, but each token in them
+  comment (`//`, `#`, `/* */` or an XML or HTML `<!-- -->`) keep their words,
+  references and model names, but each token in them
   that looks like an opaque key is withheld, wherever the value ended: a
   fallback after a cut read (`azureApiKey: process.env.K?.trim() || "..."`,
   `os.environ[ 'K' ] if PROD else '...'`, `cfg("a", "b") || "..."`), a default
