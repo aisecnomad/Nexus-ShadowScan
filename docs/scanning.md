@@ -28,7 +28,12 @@ that are never silent:
   links outside the root; and unresolved links. A dangling link, or one to a
   single regular file, costs one entry of the coverage budget; a link to a
   directory, whose alias paths are not inspected and which can stand for any
-  number of files, makes the scan incomplete (exit code 3) at once.
+  number of files, makes the scan incomplete (exit code 3) at once. So does a
+  dangling link or one to a single file whose own name is configuration the
+  scanner reads (`.mcp.json` or `.claude/settings.json` pointing outside the
+  tree, `CLAUDE.md`, a manifest), as an oversize copy of that file does,
+  except in discounted test code; an MCP configuration or coding-agent file
+  under a test path (`tests/.mcp.json`) is not discounted.
   Files are read relative to the opened scan root without following a link in
   any path component, so a directory replaced by a link after the walk listed it
   fails that file's read (incomplete) instead of reading content outside the
@@ -129,12 +134,15 @@ that are never silent:
   Unrecognised binary content stays a gap in those places too. An operator can
   exclude a known binary with an `exclude` file glob.
 * **Entries that are not regular files** (a directory, FIFO, socket or device)
-  named like a file the scanner analyzes, such as `.mcp.json` or
-  `requirements.txt`, are a coverage gap of one entry each, as a symbolic link
-  of the same name to a single file is. A directory is only reported when its name is an MCP configuration
-  file name such as `.mcp.json`; directories that agent tools read as
-  directories (`.roo/rules/`, `.clinerules/`, `.cursor/rules/`) are not. Its
-  contents are still scanned.
+  named like a file the scanner analyzes are a coverage gap of one entry
+  each, as a symbolic link of the same name to a single file is. A FIFO,
+  socket or device in place of configuration the scanner reads (`.mcp.json`,
+  `.claude/settings.json`, `requirements.txt`) makes the scan incomplete at
+  once, outside discounted test code, as a link or an oversize copy of it
+  does. A directory is only reported when its name is an MCP configuration
+  file name such as `.mcp.json`, and costs one entry: its contents are still
+  scanned. Directories that agent tools read as directories (`.roo/rules/`,
+  `.clinerules/`, `.cursor/rules/`) are not reported.
 * **Directory nesting** of any depth is walked on an explicit stack, so a tree
   deeper than the Python runtime's recursion limit loses no findings.
 
@@ -251,11 +259,12 @@ JSON report of the same scan as well (`--format json`).
 
 A coverage gap is *blinding* when the scanner cannot bound what it lost: the
 walk stopped early (`max_files`, `max_entries`, a deadline), a page was
-refused, a symbolic link names a directory, undecodable bytes or padding past
-`max_file_size` hide a file read as configuration, or a sanitizer limit was
-hit. A blinding gap marks the scan incomplete at once. A *partial* gap costs a
-known number of entries: a dangling link or one to a single file, a
-non-regular entry, an incidental file over `max_file_size`. Partial gaps
+refused, a symbolic link names a directory, undecodable bytes, padding past
+`max_file_size`, a link or a FIFO, socket or device hide a file read as
+configuration, or a sanitizer limit was hit. A blinding gap marks the scan
+incomplete at once. A *partial* gap costs a known number of entries: any other
+dangling link or link to a single file, any other non-regular entry, an
+incidental file over `max_file_size`. Partial gaps
 accumulate against the gap budget, `options.max_coverage_gap`
 (`--max-coverage-gap`; `code.filesystem` also takes its own
 `max_coverage_gap`): 2% of examined entries by default, at most 100 weighted

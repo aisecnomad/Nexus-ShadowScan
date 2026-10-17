@@ -28,6 +28,16 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   malformed or oversize MCP configuration, coding-agent instruction, rule or
   settings file, or agent card under a test, documentation or example path
   is no longer declared, so a ci scan holding one exits 3.
+- **A link or special file named like configuration fails closed.** A
+  dangling symbolic link or one to a single file, a FIFO, socket or device
+  whose own name is configuration the scanner reads (`.mcp.json`,
+  `.claude/settings.json`, `CLAUDE.md`, a dependency manifest, a shared
+  client name such as `config.json` or `settings.json`) now makes the scan
+  incomplete (exit 3) at once, as an oversize copy of the file already did,
+  instead of costing one entry of the budget; `tests/.mcp.json` and
+  `tests/CLAUDE.md` included, since they are not discounted test code.
+  Under discounted test code (`tests/fixtures/package.json`) it still costs
+  one entry.
 - **Gap weights follow `include_tests`.** With `include_tests: true` a gap
   under a test path weighs a whole entry in the coverage budget instead of a
   quarter, so fewer such gaps are tolerated. Without it, gaps under

@@ -466,7 +466,11 @@ globs. The defaults cover lockfiles, minified bundles, source maps, images,
 fonts, archives and compiled artifacts, and a glob with `/` matches the relative
 path. A file over `max_file_size` that matches one is skipped with a warning
 and the scan stays complete, even under `strict_coverage`. Any other oversize
-analyzable file makes coverage incomplete.
+analyzable file is a coverage gap: an incidental one costs one entry of the
+root's [coverage budget](scanning.md#coverage-budget-and-strict-accounting),
+and configuration its name selects (an MCP configuration, a coding-agent
+file, a manifest) makes the scan incomplete at once, as a link to it or a
+FIFO in its place does.
 
 Each root is opened once, and every file, including `CODEOWNERS`, is read
 relative to it without following a link in any path component. A root that

@@ -64,6 +64,20 @@ strict accounting, credentials, declaration, discount, budget.
   structure, so those gaps go to the budget or fail closed as in the default
   profile. A credential limit was never declared (it is an error under
   every profile); a test pins that.
+- **An unread configuration file is blinding however it goes unread.** An
+  oversize `.mcp.json` was blinding, but `.mcp.json`, `.claude/settings.json`
+  or `CLAUDE.md` linked to a file outside the tree, or a FIFO in its place,
+  cost one entry of the budget, so 62 entries with an outside `.mcp.json`
+  holding a server exited 0 where main exited 3, and a FIFO
+  `tests/e2e/.mcp.json` cost a quarter while an oversize one exited 3. One
+  predicate, `_unread_configuration` (the name selects the file as
+  configuration, outside discounted test code), now decides the oversize
+  reader, `_skip_link` for a dangling link or one to a single file, and
+  `_skip_non_regular` for a FIFO, socket or device; a directory of such a
+  name is walked and still costs one entry. Each blinding link kind keeps
+  one representative error per root. A shared client name such as
+  `config.json` is configuration by its content, which an unread file does
+  not show, so it is blinding unread as it already was oversize.
 - **Gap weight follows the connector's own test-path rule.** #254 weighed a
   gap at a quarter by its path segments alone (`CoverageGap.relevance`), so
   `include_tests: true`, which makes test code source everywhere else, still

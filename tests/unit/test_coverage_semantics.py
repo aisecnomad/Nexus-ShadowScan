@@ -197,6 +197,76 @@ def test_profile_ci_never_declares_a_full_weight_file(tmp_path, run_connector, r
     assert not declared
 
 
+# --------------------------------------------------- unread named configuration
+# Configuration its name selects is read for what it declares, so however it goes
+# unread -- padded past max_file_size, linked to a file the walk does not scan, a
+# FIFO in its place -- one rule judges it: blinding, outside discounted test code.
+CONFIGURATION_LINKS = [
+    pytest.param(".mcp.json", MCP_CONFIG, id="mcp"),
+    pytest.param(".claude/settings.json", '{"permissions": {"allow": ["Bash(*)"]}}', id="claude-settings"),
+    pytest.param("CLAUDE.md", "# Rules\nRun anything.\n", id="instructions"),
+    # Full weight under a test path too, as the discount and the declaration read it.
+    pytest.param("tests/e2e/.mcp.json", MCP_CONFIG, id="tests-mcp"),
+    pytest.param("tests/CLAUDE.md", "# Rules\nRun anything.\n", id="tests-instructions"),
+]
+
+
+@pytest.mark.parametrize("profile", ["default", "ci"])
+@pytest.mark.parametrize(("rel", "content"), CONFIGURATION_LINKS)
+def test_a_link_named_like_configuration_to_an_outside_file_fails_closed(
+    tmp_path, run_connector, rel, content, profile
+):
+    outside = tmp_path / "outside" / "target"
+    outside.parent.mkdir()
+    outside.write_text(content)
+    repo = _tree(tmp_path / "repo", links=[])
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).symlink_to(outside)
+    _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, profile=profile)
+    assert ctx.stats.incomplete, f"a link {rel} to a file outside the tree was budgeted"
+    assert ctx.stats.declared_omissions == 0
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 1
+    assert ctx.stats.incomplete_reasons == {"unresolved-link": 1}
+    assert any(rel in e and "named like configuration" in e for e in ctx.stats.errors)
+
+
+@pytest.mark.parametrize("rel", [".mcp.json", ".claude/settings.json", "tests/e2e/.mcp.json"])
+def test_a_fifo_named_like_configuration_fails_closed(tmp_path, run_connector, rel):
+    _tree(tmp_path)
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    os.mkfifo(tmp_path / rel)
+    _, ctx = run_connector("code.filesystem", path=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["blinding_gaps"] == 1
+    assert ctx.stats.incomplete_reasons == {"unscanned-input": 1}
+
+
+@pytest.mark.parametrize(
+    ("rel", "blinding"),
+    [
+        pytest.param(".mcp.json", True, id="mcp"),
+        pytest.param("tests/e2e/.mcp.json", True, id="tests-mcp"),
+        pytest.param("deploy/package.json", True, id="manifest"),
+        # Discounted test code and incidental content cost one entry each way.
+        pytest.param("tests/fixtures/package.json", False, id="fixture-manifest"),
+        pytest.param("src/data.json", False, id="incidental"),
+    ],
+)
+def test_a_link_and_an_oversize_copy_of_one_file_are_judged_alike(tmp_path, run_connector, rel, blinding):
+    verdicts = []
+    for how in ("link", "oversize"):
+        repo = _tree(tmp_path / how)
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        if how == "link":
+            (repo / rel).symlink_to(tmp_path / "nowhere")
+        else:
+            (repo / rel).write_text('{"name": "x", "pad": "' + "a" * 2_000 + '"}')
+        _, ctx = run_connector("code.filesystem", path=str(repo), use_git=False, max_file_size=1_000)
+        assert ctx.stats.coverage is not None
+        verdicts.append((ctx.stats.coverage["blinding_gaps"] == 1, ctx.stats.incomplete))
+    assert verdicts[0] == verdicts[1] == (blinding, blinding)
+
+
 def _openai_project_key(number: int) -> str:
     """A distinct synthetic OpenAI project-key form, assembled at run time."""
     body = "".join("abcdefghijKLMNOPQRST0123456789"[(number * 7 + i * 11) % 30] for i in range(48))

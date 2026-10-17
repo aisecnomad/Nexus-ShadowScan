@@ -31,7 +31,8 @@ and the [candidate change history](https://github.com/aisecnomad/Nexus-ShadowSca
   closed with no budget: an early stop, a refused page, an expired deadline,
   a symbolic link to a directory, an unparseable manifest or agent card
   outside test code, an agent, MCP or dependency configuration file whose
-  name selects it over `max_file_size`, undecodable bytes anywhere but in
+  name selects it over `max_file_size`, linked to a file the walk does not
+  scan or replaced by a FIFO or device, undecodable bytes anywhere but in
   test code while `include_tests` is off, and any sanitizer limit. Test code
   whose evidence is discounted (`include_tests` off) is the exception for
   manifests and undecodable bytes: a malformed fixture is charged to the

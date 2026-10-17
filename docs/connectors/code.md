@@ -578,12 +578,17 @@ them to `exclude` unless that is intended); version-control metadata (`.git`,
 `.hg`, `.svn`) is never scanned, since its index and objects are binary. The
 same option is accepted by `code.github` and `code.gitlab` and forwarded to the
 scan of each checkout.
-Unread oversized source files and symlinks leaving the root are coverage gaps
-charged to the [budget](../scanning.md#coverage-budget-and-strict-accounting),
-and binary content (NUL bytes that are not stray ones in text, see
-[scan semantics](../scanning.md)) in an analyzable file, non-regular
-entries named like configuration files, and directory nesting deeper than the
-walker supports; `strict_coverage` promotes their diagnostics to errors. Declared
+An incidental source or data file over `max_file_size`, a dangling symbolic
+link or one to a single file, and a non-regular entry named like analyzable
+content are coverage gaps of one entry each, charged to the
+[budget](../scanning.md#coverage-budget-and-strict-accounting). Binary content
+(NUL bytes that are not stray ones in text, see
+[scan semantics](../scanning.md)) in an analyzable file outside discounted test
+code, a link to a directory, and configuration its name selects (an MCP
+configuration, a coding-agent instruction, rule or settings file, a manifest,
+an agent card) that is over `max_file_size`, a link to a file the walk does not
+scan, or a FIFO, socket or device, make the scan incomplete at once, whatever
+the budget allows; `strict_coverage` promotes their diagnostics to errors. Declared
 oversize skip globs remain visible omissions, and directories skipped by the
 default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
 root that does not affect completeness. Incomplete coverage is reserved for

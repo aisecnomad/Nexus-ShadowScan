@@ -1710,6 +1710,7 @@ class FilesystemConnector(BaseConnector):
         self._symlink_warnings: set[Path] = set()
         self._declared_link_notes: set[Path] = set()
         self._blinding_link_notes: set[Path] = set()
+        self._configuration_link_notes: set[Path] = set()
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
         self._lockfile_governed: dict[str, bool] = {}
@@ -2532,6 +2533,10 @@ class FilesystemConnector(BaseConnector):
 
         Like a link, such an entry hides whatever a client would find there:
         coverage is incomplete. The first few are named; the rest are counted.
+        A FIFO, socket or device in place of configuration its name selects
+        (``.mcp.json``, ``.claude/settings.json``) is blinding, as an oversize
+        copy of it is (``_unread_configuration``); a directory of that name is
+        walked, so it costs one entry.
         """
         if self._walk_declared(root, rel, walk):
             # Declared, counted and named in full: it does not take the gap budget below.
@@ -2543,19 +2548,21 @@ class FilesystemConnector(BaseConnector):
         # Only the diagnostics are bounded: past them the budget still counts
         # every entry, via quiet ledger entries, as it does for links.
         quiet = walk.non_regular > _MAX_NON_REGULAR_NOTES + 1
+        blinding = kind != "directory" and self._unread_configuration(rel, PurePosixPath(rel).name)
         if walk.non_regular == _MAX_NON_REGULAR_NOTES + 1:
             message = f"code.filesystem: further non-regular entries under {root} not listed"
         else:
-            message = (
-                f"code.filesystem: {rel}: skipped, not a regular file ({kind}) but named like "
-                "analyzable content"
-            )
+            named = "configuration the scanner reads" if blinding else "analyzable content"
+            message = f"code.filesystem: {rel}: skipped, not a regular file ({kind}) but named like {named}"
         if self.strict_coverage:
             if not quiet:
                 self.ctx.error(f"{message}; coverage incomplete", reason="unscanned-input")
         else:
-            # One entry of known, bounded lost coverage: budgeted, not fatal.
-            self._ledger_gap(rel, f"{message}; coverage gap", quiet=quiet, reason="unscanned-input")
+            # Otherwise one entry of known, bounded lost coverage: budgeted, not fatal.
+            suffix = "coverage incomplete" if blinding else "coverage gap"
+            self._ledger_gap(
+                rel, f"{message}; {suffix}", blinding=blinding, quiet=quiet, reason="unscanned-input"
+            )
 
     def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
         """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
@@ -2617,26 +2624,38 @@ class FilesystemConnector(BaseConnector):
                 self._symlink_warnings.add(root)
                 self.ctx.error(f"{message}; coverage incomplete", reason="unresolved-link")
             return True
-        # A dangling link, or one to a regular file, costs one entry. A link
-        # to a directory (or to a target the lookup cannot classify) can stand
-        # for any number of files, a whole service outside the tree among
-        # them: the scanner cannot bound what it hides, so no budget applies.
-        bounded = _link_names_one_file(link)
-        noted = self._symlink_warnings if bounded else self._blinding_link_notes
+        self._budgeted_link_gap(root, rel, link, message)
+        return True
+
+    def _budgeted_link_gap(self, root: Path, rel: str, link: Path, message: str) -> None:
+        """Charge an unscanned symbolic link at ``rel`` to the budget, or fail closed if it cannot be bounded.
+
+        A dangling link, or one to a regular file, costs one entry. A link to
+        a directory (or to a target the lookup cannot classify) can stand for
+        any number of files, a whole service outside the tree among them: the
+        scanner cannot bound what it hides, so no budget applies. Nor does one
+        to a single file named like configuration the scanner reads
+        (``.mcp.json``, ``.claude/settings.json``, ``CLAUDE.md`` pointing
+        outside the tree), which is judged as an oversize copy of that file is
+        (``_unread_configuration``). One representative diagnostic per root
+        and kind; the budget still counts every link.
+        """
+        if not _link_names_one_file(link):
+            noted = self._blinding_link_notes
+            message = (
+                f"code.filesystem: skipped symbolic link {rel} whose target may hold any number of "
+                "files and is unscanned; coverage incomplete"
+            )
+        elif self._unread_configuration(rel, link.name):
+            noted = self._configuration_link_notes
+            message = f"{message}; it is named like configuration the scanner reads; coverage incomplete"
+        else:
+            noted = self._symlink_warnings
+            message = f"{message}; coverage gap"
         first = root not in noted
         noted.add(root)
-        if bounded:
-            self._ledger_gap(rel, f"{message}; coverage gap", quiet=not first, reason="unresolved-link")
-        else:
-            self._ledger_gap(
-                rel,
-                f"code.filesystem: skipped symbolic link {rel} whose target may hold any number of "
-                "files and is unscanned; coverage incomplete",
-                blinding=True,
-                quiet=not first,
-                reason="unresolved-link",
-            )
-        return True
+        blinding = noted is not self._symlink_warnings
+        self._ledger_gap(rel, message, blinding=blinding, quiet=not first, reason="unresolved-link")
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
         """Return the share of ``budget`` a file must have left before the walk may start it.
@@ -3425,12 +3444,9 @@ class FilesystemConnector(BaseConnector):
             elif self.strict_coverage:
                 self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             elif issue == "file exceeds max_file_size":
-                # Configuration its name selects is read for what it declares:
-                # padded past the limit, it hides a definition as well as
-                # undecodable bytes would, so it is blinding like them outside
-                # discounted test code. Other oversize content (generated
-                # source, a data export) is incidental and costs one entry.
-                selected = self._named_configuration(rel, path.name) and not self._discounted_test_gap(rel)
+                # Other oversize content (generated source, a data export) is
+                # incidental and costs one entry (_unread_configuration).
+                selected = self._unread_configuration(rel, path.name)
                 self._budgeted_gap(
                     rel,
                     f"code.filesystem: {rel}: skipped, {issue}; "
@@ -3455,6 +3471,21 @@ class FilesystemConnector(BaseConnector):
         if path.suffix.lower() != ".ipynb":
             return text, None, (), ()
         return self._notebook_source(rel, text)
+
+    def _unread_configuration(self, rel: str, name: str) -> bool:
+        """Whether leaving ``rel`` unread hides configuration its name selects: a gap no budget bounds.
+
+        Such a file is read for what it declares, so however it goes unread --
+        padded past ``max_file_size``, a symbolic link to a file the walk does
+        not scan, a FIFO, socket or device in its place -- it hides a
+        definition as well as undecodable bytes would, and is blinding like
+        them. One rule for every way, so a link and an oversize copy of the
+        same ``.mcp.json`` are judged alike. Discounted test code is the
+        exception (``_discounted_test_gap``), which a file whose findings keep
+        their full weight there, ``tests/.mcp.json`` or ``tests/CLAUDE.md``,
+        is not; other unread content costs one entry of the budget.
+        """
+        return self._named_configuration(rel, name) and not self._discounted_test_gap(rel)
 
     def _named_configuration(self, rel: str, name: str) -> bool:
         """Whether ``rel`` is read as the configuration its name selects, rather than as incidental content.

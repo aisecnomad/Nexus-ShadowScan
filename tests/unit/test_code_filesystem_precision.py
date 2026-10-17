@@ -571,13 +571,14 @@ def test_ci_profile_declares_unresolved_links_under_tests_only(run_connector, tm
     assert not stats.incomplete and stats.declared_omissions == 1
     # A declared link does not take the slot of the one representative gap per root.
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "config.json").symlink_to("../missing.json")
+    # Not a name read as configuration (src/config.json is one, and is blinding when unread).
+    (tmp_path / "src" / "data.json").symlink_to("../missing.json")
     _, stats = scan(run_connector, tmp_path, profile="ci")
     assert stats.incomplete and stats.incomplete_reasons == {"unresolved-link": 1}
     assert stats.declared_omissions == 1
     # The undeclared link keeps its own representative diagnostic, a budgeted coverage gap
     # (#254) that the budget verdict of this one-entry tree turns into exit 3.
-    assert [w for w in stats.warnings if "src/config.json" in w and "coverage gap" in w]
+    assert [w for w in stats.warnings if "src/data.json" in w and "coverage gap" in w]
     assert [e for e in stats.errors if "over the" in e and "budget" in e]
 
 
