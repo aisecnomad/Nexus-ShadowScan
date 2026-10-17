@@ -24,9 +24,10 @@ references.
 
 ## `cloud.aws`
 Bedrock Agents (action groups, knowledge bases, aliases, collaborators,
-guardrails, memory), Flows, AgentCore (runtimes, gateways = MCP, memories,
-browsers, code interpreters, workload identities), model invocation logging
-state, Lambda (env names, plaintext keys, layers, images, tags), ECS task
+guardrails, memory, tags), Flows, AgentCore (runtimes with their tags,
+gateways = MCP, memories, browsers, code interpreters, workload identities),
+model invocation logging state, Lambda (env names, plaintext keys, layers,
+images, tags), ECS task
 definitions referenced by running tasks and service deployments, plus latest
 registered definitions, SageMaker endpoints (LLM containers), Step Functions with Bedrock
 states, Q Business, Lex, Secrets Manager / SSM names, IAM principals with LLM
@@ -39,6 +40,11 @@ Bedrock agents whose action-group functions set `requireConfirmation: ENABLED`
 record `metadata.approval_gate` (`every-action` when every enabled action group
 other than the user-input group defines functions and each one requires
 confirmation, else `some-actions`); see [autonomy tiers](../concepts/autonomy.md).
+A Bedrock agent's and an AgentCore runtime's `owner` is its `owner` or `Owner`
+tag, read through `ListTagsForResource` (`GetAgent` and `GetAgentRuntime`
+return no tags; the documented `bedrock:List*` and `bedrock-agentcore:List*`
+grants cover the call). A denied or malformed tag listing marks the scan
+incomplete and leaves the resource recorded without an owner.
 Opt-in: AWS Agent Registry and AgentCore registry records
 ([below](#aws-agent-registry-and-agentcore-registry-records)).
 Options: `profile`, `role_arn`, `regions` (`all`), `services` (default: every

@@ -210,6 +210,10 @@ def _budgeted_search(rx: Any, text: str, context: str, timeout: float) -> Any:
 
 GENERIC_CREDENTIAL = "heuristic.inline-credential"
 UNATTRIBUTED_KEY = "heuristic.unattributed-api-key"
+# Credential matches kept per secret signal and text. A text with more
+# credentials of one format than this is reported with the quota's worth of
+# evidence and a disclosure that the count is a lower bound (``match_secrets``).
+MAX_SECRETS_PER_SIGNAL = 5
 # An unattributed sk- value shorter than this after the prefix must look random.
 _SHORT_KEY_BODY = 32
 _VALUE_END = frozenset("\"',;")
@@ -1199,11 +1203,12 @@ class SignatureIndex:
         max_per_signal: int = 3,
         ignore_spans: Sequence[tuple[int, int]] = (),
         scan: LiteralScan | None = None,
+        limited: set[str] | None = None,
     ) -> list[Match]:
         # One deadline covers the whole signal class even outside filesystem scans.
         with self._input_budget():
             return self._match_regex_signals_with_budget(
-                signal_type, text, language, max_per_signal, ignore_spans, scan
+                signal_type, text, language, max_per_signal, ignore_spans, scan, limited
             )
 
     def _match_regex_signals_with_budget(
@@ -1214,7 +1219,17 @@ class SignatureIndex:
         max_per_signal: int,
         ignore_spans: Sequence[tuple[int, int]],
         scan: LiteralScan | None = None,
+        limited: set[str] | None = None,
     ) -> list[Match]:
+        """Match the regex signals of one type, at most ``max_per_signal`` per signal.
+
+        ``limited``, when given, collects the id of every signature whose
+        signal had more matches than its quota: the matcher then looks one
+        match past each quota (a single bounded regex step) instead of
+        stopping exactly at it, so a caller can disclose that the returned
+        matches are a lower bound. Without it the quota is applied silently,
+        as it always was for import and code signals.
+        """
         out: list[Match] = []
         # Ignore matches beginning inside comments and literals before applying
         # the per-signal quota. A file with many examples must not hide live code.
@@ -1264,6 +1279,19 @@ class SignatureIndex:
             if id(s) != current:
                 current, hits = id(s), 0
             elif hits >= max_per_signal:
+                # The signal's quota is already full. When the caller wants to
+                # know about matches the quota hides, a later pattern of the
+                # same signal is still given one bounded search, so a credential
+                # that only its second pattern recognizes is counted as hidden.
+                if limited is not None and sig.id not in limited:
+                    if rest:
+                        if fold:
+                            if not _hints_present(rest, folded_text or "", folded_present):
+                                continue
+                        elif not _hints_present(rest, text, present):
+                            continue
+                    if _finditer(rx, text, sig.id, 1, excluded if starts else None):
+                        limited.add(sig.id)
                 continue
             if rest:
                 if fold:
@@ -1271,7 +1299,15 @@ class SignatureIndex:
                         continue
                 elif not _hints_present(rest, text, present):
                     continue
-            for m in _finditer(rx, text, sig.id, max_per_signal - hits, excluded if starts else None):
+            quota = max_per_signal - hits
+            if limited is None:
+                found = _finditer(rx, text, sig.id, quota, excluded if starts else None)
+            else:
+                found = _finditer(rx, text, sig.id, quota + 1, excluded if starts else None)
+                if len(found) > quota:
+                    limited.add(sig.id)
+                    del found[quota:]
+            for m in found:
                 if newlines is None:
                     newlines = [newline.start() for newline in re.finditer("\n", text)]
                 line = bisect_left(newlines, m.start()) + 1
@@ -1330,8 +1366,21 @@ class SignatureIndex:
     ) -> list[Match]:
         return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans, scan=scan)
 
-    def match_secrets(self, text: str, scan: LiteralScan | None = None) -> list[Match]:
-        matches = self._match_regex_signals("secret", text, None, max_per_signal=5, scan=scan)
+    def match_secrets(
+        self, text: str, scan: LiteralScan | None = None, limited: set[str] | None = None
+    ) -> list[Match]:
+        """Credential matches in ``text``, at most :data:`MAX_SECRETS_PER_SIGNAL` per signal.
+
+        The quota bounds the work one text can cost and the evidence one
+        finding can carry. It also hides every further credential of a format
+        once that many have matched, so a caller that reports credentials
+        passes ``limited``: it receives the ids of the signatures whose quota
+        was exceeded and can disclose that its count is a lower bound rather
+        than report a complete-looking result.
+        """
+        matches = self._match_regex_signals(
+            "secret", text, None, max_per_signal=MAX_SECRETS_PER_SIGNAL, scan=scan, limited=limited
+        )
         keep = keep_secret_matches([(m.signature_id, m.value, m.line) for m in matches])
         return [match for match, kept in zip(matches, keep, strict=True) if kept]
 

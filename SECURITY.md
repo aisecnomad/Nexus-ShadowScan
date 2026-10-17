@@ -412,6 +412,17 @@ coverage, even when a response includes an empty collection field.
   record outside the bounded sibling/flow rules above; a
   value split across concatenated strings; and sensitive
   business data.
+- **Plural collection names are not sensitive names.** `credentials` names a
+  credential, but the list or mapping under a plural `secrets` or `tokens`
+  key keeps its values unless each one has a recognized shape or a sensitive
+  name of its own: `secrets: [prod-db-password]` lists the names a secret
+  store holds, which the Secrets Manager, Key Vault, Secret Manager and OCI
+  Vault collectors read and report as inventory, and `tokens: 12` is a count.
+  A raw credential placed under one of those keys without a recognized shape
+  therefore remains (the structural pass still removes it wherever a
+  sensitive-named field holds the same value). Keep that in mind for a
+  GitHub Actions `secrets:` block or a Kubernetes manifest an operator pastes
+  into an issue.
 
 ### Other implemented controls
 
