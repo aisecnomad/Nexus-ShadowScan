@@ -223,7 +223,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | --- | --- |
 | `org_url` | https://&lt;org&gt;.okta.com (env OKTA\_ORG\_URL) |
 | `token` | SSWS API token (env OKTA\_API\_TOKEN); ignored when `bearer` is set |
-| `bearer` | OAuth 2.0 access token with okta.apps.read, sent as Bearer instead of `token` (env OKTA\_ACCESS\_TOKEN) |
+| `bearer` | OAuth 2.0 access token with okta.apps.read and okta.appGrants.read, sent as Bearer instead of `token` (env OKTA\_ACCESS\_TOKEN) |
 | `include_inactive` | include INACTIVE apps (default false) |
 | `fetch_tokens` | call /tokens per OIDC app to count user consents (default true) |
 | `input` | offline: JSON export of /api/v1/apps (with optional \_grants/\_tokens) |
@@ -457,7 +457,8 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | Key | Description |
 | --- | --- |
 | `org` | organisation login (env GITHUB\_ORG) |
-| `token` | org admin token (env GITHUB\_TOKEN, which code.github also reads by default: give each connector a variable of its own) |
+| `token` | org admin token (env GITHUB\_TOKEN, which code.github also reads by default: give each connector a variable of its own); a GitHub App token with organization Administration, Personal access tokens and GitHub Copilot Business read permissions covers every call |
+| `app_token` | GitHub App installation or user access token for the fine-grained PAT inventory, which GitHub serves only to GitHub Apps (env GITHUB\_APP\_TOKEN; default: token) |
 | `api_url` | API base URL (default https://api.github.com, env GITHUB\_API\_URL) |
 | `input` | offline: installations JSON |
 | `include_unrecognized_apps` | also report write-capable apps with no AI signature or AI-like name, capped at possible confidence (default false) |
@@ -514,7 +515,7 @@ Offline input: JSON / JSONL / YAML / CSV export.
 | Key | Description |
 | --- | --- |
 | `token` | xoxb/xoxp token (env SLACK\_TOKEN); admin.apps.\* need an org admin user token |
-| `team_id` | expected workspace id for live collection (env SLACK\_TEAM\_ID); required for offline exports without a team record |
+| `team_id` | expected workspace id for live collection (env SLACK\_TEAM\_ID), sent with users.list, admin.apps.\* and team.integrationLogs as an org-level token requires; required for offline exports without a team record |
 | `input` | offline: JSON export of users / apps / integration logs |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |

@@ -1,10 +1,15 @@
 """Okta: OAuth/OIDC applications, service apps (client credentials), consent grants and user tokens.
 
-Live API (SSWS token or OAuth bearer with ``okta.apps.read``):
+Live API (SSWS token, or OAuth bearer with ``okta.apps.read`` and ``okta.appGrants.read``):
 
-* ``GET /api/v1/apps``                       – all applications
-* ``GET /api/v1/apps/{id}/grants``           – OAuth 2.0 scope consent grants (admin granted)
-* ``GET /api/v1/apps/{id}/tokens``           – refresh tokens users issued to the app (user consent)
+* ``GET /api/v1/apps``                       – all applications (``okta.apps.read``)
+* ``GET /api/v1/apps/{id}/grants``           – OAuth 2.0 scope consent grants (admin granted;
+  ``okta.appGrants.read``, a separate scope that ``okta.apps.read`` does not include)
+* ``GET /api/v1/apps/{id}/tokens``           – refresh tokens users issued to the app (user consent;
+  ``okta.apps.read``)
+
+A bearer token without ``okta.appGrants.read`` is refused on every grants call, so
+the inventory is incomplete (exit 3) rather than missing the grants silently.
 
 Offline export: list of app objects, optionally with ``_grants`` and ``_tokens`` arrays embedded.
 """
@@ -34,8 +39,8 @@ class OktaConnector(BaseConnector):
         "org_url": "https://<org>.okta.com (env OKTA_ORG_URL)",
         "token": "SSWS API token (env OKTA_API_TOKEN); ignored when `bearer` is set",
         "bearer": (
-            "OAuth 2.0 access token with okta.apps.read, sent as Bearer instead of `token` (env "
-            "OKTA_ACCESS_TOKEN)"
+            "OAuth 2.0 access token with okta.apps.read and okta.appGrants.read, sent as Bearer "
+            "instead of `token` (env OKTA_ACCESS_TOKEN)"
         ),
         "include_inactive": "include INACTIVE apps (default false)",
         "fetch_tokens": "call /tokens per OIDC app to count user consents (default true)",

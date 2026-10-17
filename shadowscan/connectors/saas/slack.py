@@ -8,6 +8,10 @@ Live (bot/user token with ``users:read``; org admin token for the ``admin.apps.*
 * ``admin.apps.requests.list``   – pending install requests (shadow demand)
 * ``team.integrationLogs``       – who installed what, when (admin)
 
+An org-level token (Enterprise Grid, as the ``admin.apps.*`` methods need) must name
+the workspace: ``team_id`` is sent with ``users.list``, ``team.integrationLogs`` and
+the ``admin.apps.*`` methods, and a workspace-level token ignores it.
+
 Offline export: any mix of the above objects (``_kind`` optional; inferred from shape).
 """
 
@@ -59,7 +63,8 @@ class SlackConnector(BaseConnector):
     config_keys: ClassVar[dict[str, str]] = {
         "token": "xoxb/xoxp token (env SLACK_TOKEN); admin.apps.* need an org admin user token",
         "team_id": (
-            "expected workspace id for live collection (env SLACK_TEAM_ID); "
+            "expected workspace id for live collection (env SLACK_TEAM_ID), sent with users.list, "
+            "admin.apps.* and team.integrationLogs as an org-level token requires; "
             "required for offline exports without a team record"
         ),
         "input": "offline: JSON export of users / apps / integration logs",
@@ -98,13 +103,14 @@ class SlackConnector(BaseConnector):
             )
             return
         yield {**team, "_kind": "team"}
-        for u in self._cursor(http, "/users.list", {"limit": 200}, "members"):
+        # users.list and team.integrationLogs require team_id with an org-level token (the
+        # Enterprise token the admin.apps.* methods need) and ignore it with a workspace token.
+        scoped: dict[str, Any] = {"team_id": self.team_id} if self.team_id else {}
+        for u in self._cursor(http, "/users.list", {"limit": 200, **scoped}, "members"):
             if u.get("is_bot") or u.get("is_app_user"):
                 u["_kind"] = "bot_user"
                 yield u
-        params = {"limit": 100}
-        if self.team_id:
-            params["team_id"] = self.team_id
+        params: dict[str, Any] = {"limit": 100, **scoped}
         for method, kind, key in (
             ("admin.apps.approved.list", "approved_app", "approved_apps"),
             ("admin.apps.restricted.list", "restricted_app", "restricted_apps"),
@@ -115,7 +121,7 @@ class SlackConnector(BaseConnector):
                 yield item
         page = 1
         while page <= 1000:
-            data = self._api(http, "/team.integrationLogs", {"count": 1000, "page": page})
+            data = self._api(http, "/team.integrationLogs", {"count": 1000, "page": page, **scoped})
             if data is None:
                 return
             logs = data.get("logs")
