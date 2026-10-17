@@ -21,7 +21,7 @@ SDIST_ROOT = f"nexusshadowscan-{VERSION}"
 DIST_INFO = f"nexusshadowscan-{VERSION}.dist-info"
 METADATA = (
     f"Metadata-Version: 2.4\nName: NexusShadowScan\nVersion: {VERSION}\n"
-    "Requires-Python: <3.14,>=3.11\n\n# Nexus ShadowScan\n"
+    "Requires-Python: <3.15,>=3.11\n\n# Nexus ShadowScan\n"
 ).encode()
 WHEEL = b"Wheel-Version: 1.0\nGenerator: setuptools (84.0.0)\nRoot-Is-Purelib: true\nTag: py3-none-any\n\n"
 PACKAGE = {

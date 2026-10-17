@@ -14,7 +14,7 @@ Exports must satisfy strict JSON and the same encoded byte limits as replay.
 A rejected replacement marks the scan incomplete, preserves an existing file,
 and leaves that instance unexported in the current manifest. Check the manifest
 before replaying a path from an earlier run. A complete zero-record export is an
-explicit empty record envelope. See [migration guidance](production.md#october-9-scan-evidence-corrections-unreleased).
+explicit empty record envelope. See [migration guidance](history/production-change-history.md#october-9-scan-evidence-corrections-unreleased).
 Live HTTP endpoints require HTTPS; redirects and pagination cannot send credentials
 to another origin. Denied access, collection failures, pagination limits and
 oversized or slow responses (see
@@ -158,12 +158,12 @@ filesystem or network activity.
 
 The unreleased attribution corrections resolve a bounded subset of Python
 re-exports. See the [code](connectors/code.md) guide and the
-[migration notes](production.md#unreleased-attribution-migration). Regression
+[migration notes](production-migrations.md#unreleased-attribution-migration). Regression
 coverage for these cases does not change the field-evaluation or live-acceptance
 status below.
 
 For the October 1 code-collection and capability corrections, review the
-[migration notes](production.md#october-1-discovery-review-migration) and
+[migration notes](history/production-change-history.md#october-1-discovery-review-migration) and
 [source coverage policy](scanning.md#coverage-policy). Added regression tests
 do not raise a connector's live-acceptance or field-evaluation status.
 
@@ -284,7 +284,7 @@ tool coordinates, including execution capabilities. This is static source
 inventory, not runtime instance discovery. The default
 `project` mode preserves existing identities; see the
 [source guide](connectors/code.md#separate-source-identities) and
-[migration notes](production.md#unreleased-review-migration). GitHub and GitLab
+[migration notes](production-migrations.md#unreleased-review-migration). GitHub and GitLab
 forward the same option to their checkout scans.
 
 `package.json` npm aliases (`"runtime": "npm:@langchain/langgraph@^1"`) are
@@ -1257,7 +1257,11 @@ guides).
 ### `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`
 The offline inventories analyze host and runtime, MCP tool-list, Ollama, local
 model metadata and eBPF event exports; see the
-[endpoint guide](connectors/endpoint.md). They do not perform local host
+[endpoint guide](connectors/endpoint.md). `endpoint.ebpf` reads native
+Tetragon, Falco, Tracee and Hubble event shapes as well as flat records
+(see [eBPF event formats](connectors/endpoint.md#ebpf-event-formats)); a
+record matching none of them is reported, not silently dropped, and marks the
+scan incomplete. They do not perform local host
 filesystem discovery, and their findings carry no device name, so lifecycle
 links do not apply to them. The one live probe among them is opt-in:
 `endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (at most
@@ -1335,7 +1339,7 @@ unread); other long command lines are classified from their leading arguments
 and reported in one counted warning. Launches with options a launcher's grammar
 does not recognize are not reported. Full validated host and user
 identities are used for aggregation; display shortening never merges devices
-or users. See the [migration notes](production.md#unreleased-runtime-identity-and-completeness-migration)
+or users. See the [migration notes](production-migrations.md#unreleased-runtime-identity-and-completeness-migration)
 before rebuilding inventory bindings and comparison baselines.
 
 Lifecycle assessments additionally disclose their observation window, runtime
