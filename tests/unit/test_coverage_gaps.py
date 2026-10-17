@@ -181,6 +181,36 @@ class TestBudget:
         assert paths[:3] == ["zz/.mcp.json", "tests/certs/c0.pem", "tests/certs/c1.pem"]
         assert len(paths) == MAX_PUBLISHED_GAPS and summary["details_truncated"] == 11
 
+    def test_each_published_gap_names_the_root_or_repository_it_lies_in(self) -> None:
+        # Two repositories with the same dangling link: without the part, the
+        # gap the verdict line names could not be told from the tolerated one.
+        ledger = CoverageLedger()
+        for label, examined in (("github:acme/big", 1_000), ("github:acme/tiny", 6)):
+            ledger.begin_part(label)
+            ledger.add_examined(examined)
+            ledger.record(CoverageGap(detail="link", path="ca.pem"))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        assert incomplete and validate_coverage_summary(summary) is summary
+        assert [(gap["part"], gap["path"]) for gap in summary["details"]] == [
+            ("github:acme/tiny", "ca.pem"),
+            ("github:acme/big", "ca.pem"),
+        ]
+        # An unlabelled part publishes none, and older reports without the key load.
+        unlabelled = CoverageLedger()
+        unlabelled.record(CoverageGap(detail="link", path="ca.pem"))
+        _, single = unlabelled.evaluate(CoveragePolicy())
+        assert "part" not in single["details"][0] and validate_coverage_summary(single) is single
+
+    @pytest.mark.parametrize("part", [7, "", None, ["github:acme/a"]])
+    def test_the_validator_refuses_a_part_that_is_no_name(self, part) -> None:
+        ledger = CoverageLedger()
+        ledger.begin_part("root")
+        ledger.record(CoverageGap(detail="link", path="ca.pem"))
+        _, summary = ledger.evaluate(CoveragePolicy())
+        summary["details"][0]["part"] = part
+        with pytest.raises(ValueError):
+            validate_coverage_summary(summary)
+
     def test_examined_sums_across_roots_and_never_shrinks(self) -> None:
         ledger = CoverageLedger()
         ledger.add_examined(40)

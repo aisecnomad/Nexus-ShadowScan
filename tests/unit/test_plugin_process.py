@@ -1108,6 +1108,23 @@ def test_result_stats_over_budget_are_incomplete_whatever_the_worker_says():
     assert decoded.incomplete
 
 
+def test_result_stats_accept_the_part_a_published_gap_names_and_refuse_a_forged_one():
+    ledger = CoverageLedger()
+    ledger.begin_part("plugin-root")
+    ledger.add_examined(1_000)
+    ledger.record(CoverageGap(detail="code.filesystem: tests/a.bin: unreadable", path="tests/a.bin"))
+    summary = ledger.evaluate(CoveragePolicy())[1]
+    assert summary["details"][0]["part"] == "plugin-root"
+    stats = {**asdict(ScanStats(ENTRY, "now")), "coverage": summary}
+    payload = json.dumps({"stats": stats, "findings": [], "exports": []}).encode()
+    _, decoded, _ = _decode_result(payload, 1, ConnectorSpec(ENTRY))
+    assert decoded.coverage["details"][0]["part"] == "plugin-root"
+    forged = {**summary, "details": [{**summary["details"][0], "part": 3}]}
+    payload = json.dumps({"stats": {**stats, "coverage": forged}, "findings": [], "exports": []}).encode()
+    with pytest.raises(ValueError):
+        _decode_result(payload, 1, ConnectorSpec(ENTRY))
+
+
 def test_result_stats_accept_a_combined_ledger_and_check_its_part_counts():
     from shadowscan.coverage import combine_coverage_summaries
 
