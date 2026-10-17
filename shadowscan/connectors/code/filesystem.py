@@ -1123,6 +1123,19 @@ def _is_coding_agent_doc(name: str) -> bool:
     return name.lower() in _CODING_AGENT_DOC_NAMES
 
 
+def _credential_store_name(name: str) -> bool:
+    """Whether ``name`` exists to hold credentials: a dotenv file or a tool credential file."""
+    lower = name.lower()
+    return lower.startswith(".env") or lower in CREDENTIAL_FILE_NAMES
+
+
+def _agent_file_signal(match: Match) -> bool:
+    """Whether ``match`` is a coding-agent or MCP file-name signal: one that selects agent configuration."""
+    return match.signal.type == "file" and (
+        match.signature.category == "coding-agent" or match.signature_id == "protocol.mcp"
+    )
+
+
 def _resolved_link_target(link: Path, resolved_root: Path) -> Path | None:
     """Resolve only to classify a link; never open it through the link path."""
     try:
@@ -1948,11 +1961,11 @@ class FilesystemConnector(BaseConnector):
         assigned none, a project root itself among them, is not declared for
         its directory names.
 
-        A file whose findings keep their full weight wherever it lies is never
-        declared: an MCP configuration (by a dedicated name, or by the
-        structure a caller found, ``full_weight``), a coding-agent instruction,
-        rule or settings file, an agent manifest or card
-        (``_full_weight_in_tests``). A client started under ``tests/`` or
+        Agent configuration, whose findings keep their full weight wherever it
+        lies, is never declared (``_agent_configuration``): an MCP
+        configuration (by a dedicated name, or by the structure a caller
+        found, ``full_weight``), a coding-agent instruction, rule or settings
+        file, an agent manifest or card. A client started under ``tests/`` or
         ``docs/`` reads it there, so the profile cannot have accepted its gap.
         Strict accounting declares nothing (``_strict_accounting``).
 
@@ -1971,7 +1984,7 @@ class FilesystemConnector(BaseConnector):
             project_root = self._entry_projects.get(rel, rel)
             project_root = self._declaring_roots.get(project_root, project_root)
             declared = rel != project_root and negative_context(rel, project_root) is not None
-        return declared and not self._full_weight_in_tests(rel)
+        return declared and not self._agent_configuration(rel)
 
     def _note_declaring_root(self, directory: Path, rel_dir: str, parent: str, filenames: list[str]) -> None:
         """Record which root ``_declared_omission`` judges paths in the project root ``rel_dir`` by.
@@ -2087,8 +2100,8 @@ class FilesystemConnector(BaseConnector):
         ``test_*.py``, ``*.test.ts``, ``conftest.py``, ...) while
         ``include_tests`` is off and its evidence is discounted. With
         ``include_tests`` a test path is source and its gaps weigh in full,
-        and so does a file whose findings keep their full weight under a test
-        path (``_full_weight_in_tests``: ``tests/.mcp.json``, ``tests/CLAUDE.md``):
+        and so does agent configuration under a test path
+        (``_agent_configuration``: ``tests/.mcp.json``, ``tests/CLAUDE.md``):
         the discount, the declaration and the budget read it alike
         (``_discounted_test_path``).
         """
@@ -2570,10 +2583,11 @@ class FilesystemConnector(BaseConnector):
 
         Like a link, such an entry hides whatever a client would find there:
         coverage is incomplete. The first few are named; the rest are counted.
-        A FIFO, socket or device in place of configuration its name selects
+        A FIFO, socket or device in place of agent configuration
         (``.mcp.json``, ``.claude/settings.json``) is blinding, as an oversize
-        copy of it is (``_unread_configuration``); a directory of that name is
-        walked, so it costs one entry.
+        copy of it is (``_agent_configuration``); a directory of that name is
+        walked, so it costs one entry, and so does any other entry, a FIFO
+        named ``.env`` or ``Dockerfile`` among them.
         """
         if self._walk_declared(root, rel, walk):
             # Declared, counted and named in full: it does not take the gap budget below.
@@ -2585,11 +2599,11 @@ class FilesystemConnector(BaseConnector):
         # Only the diagnostics are bounded: past them the budget still counts
         # every entry, via quiet ledger entries, as it does for links.
         quiet = walk.non_regular > _MAX_NON_REGULAR_NOTES + 1
-        blinding = kind != "directory" and self._unread_configuration(rel, PurePosixPath(rel).name)
+        blinding = kind != "directory" and self._agent_configuration(rel)
         if walk.non_regular == _MAX_NON_REGULAR_NOTES + 1:
             message = f"code.filesystem: further non-regular entries under {root} not listed"
         else:
-            named = "configuration the scanner reads" if blinding else "analyzable content"
+            named = "agent configuration" if blinding else "analyzable content"
             message = f"code.filesystem: {rel}: skipped, not a regular file ({kind}) but named like {named}"
         if self.strict_coverage:
             if not quiet:
@@ -2671,11 +2685,13 @@ class FilesystemConnector(BaseConnector):
         a directory (or to a target the lookup cannot classify) can stand for
         any number of files, a whole service outside the tree among them: the
         scanner cannot bound what it hides, so no budget applies. Nor does one
-        to a single file named like configuration the scanner reads
-        (``.mcp.json``, ``.claude/settings.json``, ``CLAUDE.md`` pointing
-        outside the tree), which is judged as an oversize copy of that file is
-        (``_unread_configuration``). One representative diagnostic per root
-        and kind; the budget still counts every link.
+        to a single file named like agent configuration (``.mcp.json``,
+        ``.claude/settings.json``, ``CLAUDE.md`` pointing outside the tree),
+        which is judged as an oversize copy of that file is
+        (``_agent_configuration``); a link named like a manifest or a build
+        file (``Dockerfile``, ``package.json``, ``.env``) costs one entry, as
+        any other does. One representative diagnostic per root and kind; the
+        budget still counts every link.
         """
         if not _link_names_one_file(link):
             noted = self._blinding_link_notes
@@ -2683,9 +2699,9 @@ class FilesystemConnector(BaseConnector):
                 f"code.filesystem: skipped symbolic link {rel} whose target may hold any number of "
                 "files and is unscanned; coverage incomplete"
             )
-        elif self._unread_configuration(rel, link.name):
+        elif self._agent_configuration(rel, link.name):
             noted = self._configuration_link_notes
-            message = f"{message}; it is named like configuration the scanner reads; coverage incomplete"
+            message = f"{message}; it is named like agent configuration; coverage incomplete"
         else:
             noted = self._symlink_warnings
             message = f"{message}; coverage gap"
@@ -3271,53 +3287,24 @@ class FilesystemConnector(BaseConnector):
         test fixture or test code that does not parse already is. Credentials are
         never discounted: a fixture that cannot be decoded is still read for them
         (``_scan_binary_test_fixture``). Strict accounting keeps every gap, and
-        so does a file whose evidence is not discounted in test code either
-        (``_full_weight_in_tests``, or ``full_weight`` from a caller that found an
-        MCP configuration by its structure).
+        so does agent configuration, whose evidence is not discounted in test
+        code either (``_agent_configuration``, or ``full_weight`` from a caller
+        that found an MCP configuration by its structure).
         """
         return not full_weight and not self._strict_accounting() and self._discounted_test_path(rel)
 
     def _discounted_test_path(self, rel: str) -> bool:
         """Whether the evidence passes discount ``rel`` as test code, whatever the accounting.
 
-        ``include_tests`` off, a test path, and not a file whose findings keep
-        their full weight there (``_full_weight_in_tests``). Such a file that
-        cannot be decoded is read for credentials under every accounting
-        (``_read_source``): strict accounting decides how its gap is recorded,
-        never whether its credentials are read.
+        ``include_tests`` off, a test path, and not agent configuration
+        (``_agent_configuration``), whose findings keep their full weight in
+        ``tests/`` as anywhere else: a client started there reads
+        ``tests/.mcp.json``, Claude Code reads ``testing/CLAUDE.md``. Such a
+        file that cannot be decoded is read for credentials under every
+        accounting (``_read_source``): strict accounting decides how its gap
+        is recorded, never whether its credentials are read.
         """
-        return not self.include_tests and _is_test_path(rel) and not self._full_weight_in_tests(rel)
-
-    def _full_weight_in_tests(self, rel: str) -> bool:
-        """Whether ``rel`` is named as a file whose findings keep their full weight under a test path.
-
-        MCP configurations, coding-agent instruction, rule and settings files
-        and agent manifests or cards are reported the same in ``tests/`` as
-        anywhere else (a client started there reads ``tests/.mcp.json``, Claude
-        Code reads ``testing/CLAUDE.md``), so a NUL byte or a syntax error that
-        hides one is a gap there too. Decided as the passes that read them
-        decide: by dedicated MCP configuration name, manifest kind, settings
-        path, instruction document name and the MCP or coding-agent file-name
-        signatures, whose file evidence ``_record`` keeps in test code. A
-        shared client name (``settings.json``, ``config.yaml``) is an MCP
-        configuration only by its content, as ``_looks_like_mcp_config``
-        decides, so it keeps the gap only when that content declares servers
-        (``_detect_mcp``, ``_scan_binary_test_fixture``).
-        """
-        name = PurePosixPath(rel).name
-        return (
-            name.lower() in _DEDICATED_MCP_CONFIG_NAMES
-            or agent_manifest_kind(rel) is not None
-            or is_agent_config_path(rel)
-            or posture_client(rel) is not None
-            or _is_coding_agent_doc(name)
-            or any(directory in rel for directory in _AGENT_DEFINITION_DIRS)
-            or any(
-                m.signal.type == "file"
-                and (m.signature.category == "coding-agent" or m.signature_id == "protocol.mcp")
-                for m in self.index.match_file(rel)
-            )
-        )
+        return not self.include_tests and _is_test_path(rel) and not self._agent_configuration(rel)
 
     def _discounted_gap(
         self,
@@ -3483,8 +3470,11 @@ class FilesystemConnector(BaseConnector):
                 self.ctx.error(f"code.filesystem: {rel}: {issue}", reason=_read_issue_reason(issue))
             elif issue == "file exceeds max_file_size":
                 # Other oversize content (generated source, a data export) is
-                # incidental and costs one entry (_unread_configuration).
-                selected = self._unread_configuration(rel, path.name)
+                # incidental and costs one entry (_agent_configuration). A file
+                # that exists to hold credentials does not: unread, it hides one.
+                selected = self._agent_configuration(rel, path.name) or (
+                    self.scan_secrets and _credential_store_name(path.name)
+                )
                 self._budgeted_gap(
                     rel,
                     f"code.filesystem: {rel}: skipped, {issue}; "
@@ -3511,38 +3501,64 @@ class FilesystemConnector(BaseConnector):
             return text, None, (), ()
         return self._notebook_source(rel, text)
 
-    def _unread_configuration(self, rel: str, name: str) -> bool:
-        """Whether leaving ``rel`` unread hides configuration its name selects: a gap no budget bounds.
+    def _agent_configuration(
+        self,
+        rel: str,
+        name: str | None = None,
+        file_matches: list[Match] | None = None,
+        *,
+        by_content: bool = False,
+    ) -> bool:
+        """Whether ``rel`` is agent, MCP or coding-agent configuration the scanner reports at full weight.
 
-        Such a file is read for what it declares, so however it goes unread --
-        padded past ``max_file_size``, a symbolic link to a file the walk does
-        not scan, a FIFO, socket or device in its place -- it hides a
-        definition as well as undecodable bytes would, and is blinding like
-        them. One rule for every way, so a link and an oversize copy of the
-        same ``.mcp.json`` are judged alike. Discounted test code is the
-        exception (``_discounted_test_gap``), which a file whose findings keep
-        their full weight there, ``tests/.mcp.json`` or ``tests/CLAUDE.md``,
-        is not; other unread content costs one entry of the budget.
+        The one predicate every coverage gap site reads -- a link, a FIFO or
+        other non-regular entry, an oversize, undecodable or unreadable file,
+        content that did not parse -- and so do the ``ci`` declaration
+        (``_declared_omission``), the test-code discount
+        (``_discounted_test_path``) and the budget's path weighting: such a
+        file is never budgeted, discounted or declared away. However it goes
+        unread, padded, linked, NUL-poisoned or renamed in case, it hides a
+        definition, so a link and an oversize copy of one file are judged
+        alike. It is:
+
+        * a dedicated MCP configuration name, a coding-agent settings path, a
+          coding-agent instruction document, an agent manifest or card, each
+          compared case-insensitively, as the detectors and a case-insensitive
+          file system compare them (``.MCP.JSON``, ``.claude/Settings.json``);
+        * a file in an agent definition directory (``.cursor/rules/``) or that
+          a coding-agent or MCP file-name signature selects, its
+          directory-wide globs included (``.continue/mcpServers/*.yaml``,
+          ``.roo/rules/*.md``, ``.kiro/steering/*``), when the file is text
+          the scanner reads or a signature names it: an image kept beside the
+          rules is not;
+        * a file whose content a caller found to declare MCP servers
+          (``by_content``).
+
+        Generic manifests and build files are not (``requirements.txt``,
+        ``Dockerfile``, ``*.tf``, ``package.json``, ``.env``,
+        ``docker-compose.yml``), nor shared client names such as
+        ``config.json`` or ``settings.json`` outside an agent's directory,
+        which are MCP configuration only by their content: their gaps are
+        ordinary, budgeted ones. ``file_matches`` saves a caller that holds
+        the file-name matches another lookup.
         """
-        return self._named_configuration(rel, name) and not self._discounted_test_gap(rel)
-
-    def _named_configuration(self, rel: str, name: str) -> bool:
-        """Whether ``rel`` is read as the configuration its name selects, rather than as incidental content.
-
-        MCP configuration, dependency and deployment manifests, coding-agent
-        instructions, settings and definitions, agent cards, and any file a
-        file-name signature names: the files where an agent or a server is
-        declared.
-        """
-        return (
-            name in MCP_CONFIG_NAMES
-            or is_manifest_name(name)
+        if by_content:
+            return True
+        name = PurePosixPath(rel).name if name is None else name
+        lower = rel.lower()
+        if (
+            name.lower() in _DEDICATED_MCP_CONFIG_NAMES
             or _is_coding_agent_doc(name)
-            or is_agent_config_path(rel)
-            or agent_manifest_kind(rel) is not None
-            or any(directory in rel for directory in _AGENT_DEFINITION_DIRS)
-            or self._named_by_signature(rel, self.index.match_file(rel))
-        )
+            or is_agent_config_path(lower)
+            or posture_client(rel) is not None
+            or agent_manifest_kind(lower) is not None
+        ):
+            return True
+        matches = self.index.match_file(rel) if file_matches is None else file_matches
+        selected = [m for m in matches if _agent_file_signal(m)]
+        if not selected and not any(directory in lower for directory in _AGENT_DEFINITION_DIRS):
+            return False
+        return _analyzed_by_name(name) or self._named_by_signature(rel, selected)
 
     def _named_by_signature(self, rel: str, file_matches: list[Match]) -> bool:
         """Whether a file-name signature selects ``rel`` by its name, not only by its directory.

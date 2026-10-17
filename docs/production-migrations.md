@@ -38,22 +38,31 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   as without the profile, so a ci scan of a small repository holding one, or
   of one holding many, now exits 3. Raise `max_file_size` for such files, or
   set `scan_secrets: false` on a gate that does not need credential findings.
-- **A link or special file named like configuration fails closed.** A
-  dangling symbolic link or one to a single file, a FIFO, socket or device
-  whose own name is configuration the scanner reads (`.mcp.json`,
-  `.claude/settings.json`, `CLAUDE.md`, a dependency manifest, a shared
-  client name such as `config.json` or `settings.json`) now makes the scan
-  incomplete (exit 3) at once, as an oversize copy of the file already did,
-  instead of costing one entry of the budget; `tests/.mcp.json` and
-  `tests/CLAUDE.md` included, since they are not discounted test code.
-  Under discounted test code (`tests/fixtures/package.json`) it still costs
-  one entry. This includes an alias inside the tree whose target the walk
-  scans under another name, project or test classification, since the
-  alias's own name may be what makes a client read it as configuration
-  (`.mcp.json` linked to `notes/servers.txt`): expect exit 3 for a monorepo
-  that links `apps/web/.env` or a `Dockerfile` to a shared copy. Review such
-  a link and list its path in `exclude` (`exclude: ["apps/web/.env"]`; an
-  entry without `/` or `*` names directories) to keep scanning without it.
+- **A link or special file named like agent configuration fails closed.**
+  A dangling symbolic link or one to a single file, a FIFO, socket or device
+  whose own name makes it agent configuration now makes the scan incomplete
+  (exit 3) at once, as an oversize copy of the file does, instead of costing
+  one entry of the budget: a dedicated MCP name in any letter case
+  (`.mcp.json`, `.MCP.JSON`, `Claude_Desktop_Config.json`), a coding-agent
+  instruction, rule or settings file (`CLAUDE.md`, `.claude/settings.json`),
+  a file a coding-agent or MCP file signature selects, directory-wide globs
+  included (`.roo/rules/deploy.md`, `.continue/mcpServers/x.yaml`,
+  `.kiro/steering/x.md`), and an agent manifest or card;
+  `tests/.mcp.json` and `tests/CLAUDE.md` included, since they are not
+  discounted test code. This includes an alias inside the tree whose target
+  the walk scans under another name, project or test classification, since
+  the alias's own name may be what makes a client read it as configuration
+  (`.mcp.json` linked to `notes/servers.txt`). Review such a link and list
+  its path in `exclude` (`exclude: ["apps/web/.mcp.json"]`; an entry without
+  `/` or `*` names directories) to keep scanning without it. A manifest or
+  build file (`Dockerfile`, `package.json`, `requirements.txt`, `.env`,
+  `*.tf`, `docker-compose.yml`) or a shared client name (`config.json`,
+  `settings.json`) linked, inside the tree or out, or replaced by a FIFO
+  still costs one entry, so a monorepo that links `apps/web/.env` or a
+  `Dockerfile` to a shared copy stays complete; an image or video beside
+  agent rules (`.cursor/rules/demo.mp4`) over `max_file_size` costs one
+  entry too. An oversize `.env` or tool credential file (`.npmrc`,
+  `.netrc`) exits 3 while `scan_secrets` is on.
 - **Gap weights follow `include_tests`.** With `include_tests: true` a gap
   under a test path weighs a whole entry in the coverage budget instead of a
   quarter, so fewer such gaps are tolerated. Without it, gaps under

@@ -435,8 +435,9 @@ class TestEndToEnd:
         """As undecodable bytes there are: test code establishes no agent while include_tests is off.
 
         settings.json is a shared client name, an MCP configuration only by its
-        content, so a fixture of that name is discounted test code. A dedicated
-        MCP name is not: tests/.mcp.json is read at full weight there too.
+        content, so a fixture of that name is discounted test code, and with
+        include_tests incidental content of the product: one entry either way.
+        A dedicated MCP name is not: tests/.mcp.json is read at full weight there too.
         """
         self._tree(tmp_path, 100)
         (tmp_path / "tests" / "fixtures").mkdir(parents=True)
@@ -447,8 +448,9 @@ class TestEndToEnd:
         assert stats.incomplete is False
         assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 0
         stats = self._run(tmp_path, include_tests=True)
-        assert stats.incomplete is True
-        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 1
+        assert stats.incomplete is False
+        assert stats.coverage is not None and stats.coverage["blinding_gaps"] == 0
+        assert [gap["relevance"] for gap in stats.coverage["details"]] == ["high"]
 
     def test_oversize_mcp_configuration_under_a_test_path_is_never_budgeted(self, tmp_path) -> None:
         self._tree(tmp_path, 100)

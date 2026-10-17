@@ -270,6 +270,47 @@ lines, reported once.
 The evaluation corpora give the same per-case results and tp/fp/fn/tn as
 5aa142b; the complexity gate passes with no function above its allowance.
 
+### Agent configuration never vanishes into a coverage gap (October 17)
+
+The previous change gave every coverage gap one decision, but which file hides
+agent configuration was still decided three ways: `_named_configuration` for
+the oversize reader, links and special files, `_full_weight_in_tests` for the
+test-code discount, the declaration and the budget's weight, and the MCP
+parser's `full_weight` for content. They disagreed, and each disagreement
+failed open somewhere. One predicate, `_agent_configuration(rel, name,
+file_matches)`, now serves every gap site.
+
+- **One predicate, in any letter case and for every signature.**
+  `_named_configuration` compared names case-sensitively while the detectors
+  do not: a padded `.MCP.JSON`, `Claude_Desktop_Config.json` or
+  `.claude/Settings.json`, each reported as configuration when readable, was
+  one budgeted entry, and a 100-file tree exited 0 where main exited 3. It
+  also dropped the coding-agent and MCP files that only a directory-wide
+  signature selects (`.continue/mcpServers/*.yaml`, `.roo/rules/*.md`,
+  `.clinerules/*.md`, `.amazonq/rules/*`, `.kiro/steering/*`,
+  `.junie/guidelines.md`, `.augment/rules/*`, `.trae/rules/*`), so a link to
+  an outside copy or a padded copy exited 0 while a NUL in the same file was
+  blinding. Its agent-definition clause made a large asset beside the rules
+  (`.cursor/rules/demo.mp4`) blinding. And it named every manifest and shared
+  client name, so ordinary single-source aliases exited 3 with no budget:
+  `requirements.txt` linked to `requirements/prod.txt`, `.env` to
+  `.env.example`, a `Dockerfile` or `providers.tf` to a shared copy,
+  `config/config.json` to `config.development.json`. `_agent_configuration`
+  is true for a dedicated MCP name, a coding-agent settings path, an
+  instruction document, an agent manifest or card (each compared
+  case-insensitively), a file in an agent definition directory or that a
+  coding-agent or MCP file signature selects, directory-wide globs included,
+  when the file is text the scanner reads or a signature names it, and a file
+  whose content a caller found to declare servers. Generic manifests, build
+  files and shared client names are not: linked or replaced by a FIFO they
+  cost one entry. An oversize dotenv or tool credential file (`.env`,
+  `.npmrc`, `.netrc`) stays blinding while `scan_secrets` is on, as it was:
+  it exists to hold a key, and unread it hides one, while a link of that name
+  hides no byte of the tree. The oversize reader, `_skip_link`,
+  `_skip_non_regular`, `_declared_omission`, `_discounted_test_path` (and
+  through it the discount and the gap weight) read the one predicate, so a
+  link and an oversize copy of one file are judged alike.
+
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 
 Three mechanisms decided when unread content leaves a scan incomplete, each

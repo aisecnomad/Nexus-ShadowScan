@@ -625,11 +625,18 @@ content are coverage gaps of one entry each, charged to the
 [budget](../scanning.md#coverage-budget-and-strict-accounting). Binary content
 (NUL bytes that are not stray ones in text, see
 [scan semantics](../scanning.md)) in an analyzable file outside discounted test
-code, a link to a directory, and configuration its name selects (an MCP
-configuration, a coding-agent instruction, rule or settings file, a manifest,
-an agent card) that is over `max_file_size`, a link to a file the walk does not
-scan, or a FIFO, socket or device, make the scan incomplete at once, whatever
-the budget allows; `strict_coverage` promotes their diagnostics to errors. Declared
+code, a link to a directory, and agent configuration (an MCP configuration
+by a dedicated name in any letter case, a coding-agent instruction, rule or
+settings file, a file a coding-agent or MCP file signature selects with a
+directory-wide glob such as `.roo/**`, an agent manifest or card) that is over
+`max_file_size`, a link to a file the walk does not scan, or a FIFO, socket or
+device, make the scan incomplete at once, under a test path too, whatever the
+budget allows; `strict_coverage` promotes their diagnostics to errors. A
+manifest or build file (`Dockerfile`, `package.json`, `requirements.txt`,
+`.env`) or a shared client name (`config.json`, `settings.json`) linked or
+replaced by a FIFO costs one entry, as an asset beside agent rules
+(`.cursor/rules/demo.mp4`) over `max_file_size` does; an oversize dotenv or
+tool credential file is blinding while `scan_secrets` is on. Declared
 oversize skip globs remain visible omissions, and directories skipped by the
 default excludes (`build`, `vendor`, `external`, …) are listed in one warning per
 root that does not affect completeness. Incomplete coverage is reserved for

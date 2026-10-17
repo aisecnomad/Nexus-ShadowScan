@@ -22,6 +22,7 @@ estate is in-sample.
 - CLI package, reporter protocol, condensed README, identity sign-in clients and API page narratives (#252, #253; October 17)
 - Credential review fixes, round 5: every password entry, closed label vocabularies, settings defaults, password fallbacks, repeated lines and netrc paths (October 17)
 - Credential review fixes: env-file passwords, typed reads, pasted names, repeated credentials, labels and cut-read evidence (October 17)
+- Agent configuration never vanishes into a coverage gap (October 17)
 - Coverage gaps take one decision, judged per root and repository (October 17)
 - Review fixes: what diff holds back under the ci profile (October 17)
 - Engine review fixes: surrendered findings, explicit deadlines, the cache key and split jobs (October 17)
