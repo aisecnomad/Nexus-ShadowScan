@@ -1367,6 +1367,121 @@ def test_ebpf_native_events_keep_their_own_top_level_fields() -> None:
     assert not connector.ctx.stats.incomplete
 
 
+def _tracee_remote(address: str, port: str) -> list[dict[str, object]]:
+    return [{"name": "remote_addr", "value": {"sin_addr": address, "sin_port": port}}]
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(
+            {
+                "eventName": "security_socket_connect",
+                "processName": "python",
+                "url": "https://api.openai.com",
+                "args": _tracee_remote("", "443"),
+            },
+            id="tracee-port-only",
+        ),
+        pytest.param(
+            {
+                "eventName": "security_socket_connect",
+                "processName": "python",
+                "url": "https://api.openai.com",
+                "args": _tracee_remote("10.0.0.5", "443"),
+            },
+            id="tracee-non-ai-address",
+        ),
+        pytest.param(
+            {
+                "rule": "r",
+                "output_fields": {"proc.name": "python", "fd.sip": "10.0.0.5"},
+                "url": "https://api.openai.com",
+            },
+            id="falco-non-ai-address",
+        ),
+        pytest.param(
+            {
+                "rule": "r",
+                "output_fields": {"proc.name": "python", "fd.sport": 443},
+                "destination": "api.anthropic.com",
+            },
+            id="falco-port-only",
+        ),
+    ],
+)
+def test_ebpf_native_port_or_non_ai_address_keeps_the_flat_destination(record) -> None:
+    """Regression: a record a native reader claims was read as flat only when that reader
+    found neither a destination nor a port, so a top-level ``url`` or ``destination`` was
+    lost in silence, on a complete scan, beside a native reading that found only a port
+    (an empty ``sin_addr``) or only a non-AI address."""
+    connector = _ebpf_connector()
+    findings = list(connector.analyze([record]))
+    assert [finding.resource for finding in findings] == ["python"]
+    assert "llm-egress" in findings[0].tags
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+def test_ebpf_producer_keys_are_never_read_as_flat_fields() -> None:
+    """Regression: once another flat key made a Falco alert read as flat too, its own
+    ``hostname`` (the sensor's node) was scored as a destination, so a node named
+    ``ollama-node-1`` made the alert egress; and a bare Hubble flow's ``destination``
+    endpoint map was read as a flat destination and reported as malformed."""
+    connector = _ebpf_connector()
+    falco = {
+        "rule": "r",
+        "output_fields": {"proc.name": "python"},
+        "hostname": "ollama-node-1",
+        "url": "https://example.com",
+    }
+    assert list(connector.analyze([falco])) == []
+    hubble = {
+        "verdict": "FORWARDED",
+        "l4": {"ICMPv4": {"type": 8}},
+        "source": {"namespace": "ai", "pod_name": "agent-0"},
+        "destination": {"namespace": "ai", "pod_name": "model-0"},
+        "url": "https://api.openai.com",
+    }
+    [finding] = connector.analyze([hubble])
+    assert "llm-egress" in finding.tags
+    assert connector.ctx.stats.warnings == []
+    assert not connector.ctx.stats.incomplete
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        pytest.param(
+            {"process_name": "p", "destination": "10.0.0.1", "port": 443, "destination_port": 11434},
+            id="flat-destination-port",
+        ),
+        pytest.param(
+            {"process_name": "p", "destination": "10.0.0.1", "port": 11434, "destination_port": 443},
+            id="flat-port",
+        ),
+        pytest.param(
+            {
+                "eventName": "connect",
+                "processName": "p",
+                "args": _tracee_remote("10.0.0.1", "443"),
+                "port": 11434,
+            },
+            id="tracee-and-flat",
+        ),
+    ],
+)
+def test_ebpf_every_flat_port_is_scored(record) -> None:
+    """Regression: the flat reader took only the first of ``port`` and ``destination_port``,
+    while the native readers score every port, so a local model port in the second was
+    not tagged ``local-llm-traffic``."""
+    connector = _ebpf_connector()
+    findings = list(connector.analyze([record]))
+    assert [finding.resource for finding in findings] == ["p"]
+    assert "local-llm-traffic" in findings[0].tags
+    assert connector.ctx.stats.warnings == []
+
+
 def test_kubernetes_offline_resource_identity_and_security_tags() -> None:
     connector = KubernetesConnector(ConnectorContext(config={"cluster": "test-cluster"}))
     findings = list(

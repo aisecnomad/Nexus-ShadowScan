@@ -239,7 +239,19 @@ tolerated gap.
   from `AI_SERVICES`, each with a regional prefix and as its `mtls`
   endpoint, and matched from the start of a label, which also keeps a
   64 KiB hostile MCP description cheaper than before. Regression-tested
-  with each missed host; the guide is checked to name every service.
+  with each missed host; the guide is checked to name every service. The
+  same review found the flat fall-back too narrow and too wide. It ran
+  only when the native reader found neither a destination nor a port, so
+  a top-level `url` beside a Tracee socket with an empty `sin_addr`, or
+  beside a non-AI Falco `fd.sip`, was still lost on a complete scan; once
+  it ran, a Falco alert's own `hostname` was read as a destination, so a
+  node named `ollama-node-1` made the alert egress; and the flat reader
+  scored only the first of `port` and `destination_port`. A record with
+  native and flat fields is now read both ways and scored on every
+  destination and port either reading finds, the producer's own keys are
+  never read as flat fields (which also stops a bare Hubble flow's
+  `destination` endpoint from counting as a malformed flat field), and
+  every flat port is scored. Regression-tested with each record.
 - `endpoint.host` reports a host inventory row only when its name or path
   matches an AI product signature, its whole name is a known AI product or
   local model runtime, or its `type`/`category` names an AI category;

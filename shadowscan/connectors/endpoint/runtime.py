@@ -1295,32 +1295,51 @@ _EBPF_READERS: tuple[tuple[str, Callable[[dict[str, Any], set[str]], dict[str, A
 )
 
 
-def _flat_ebpf_record(record: dict[str, Any], defects: set[str]) -> dict[str, Any]:
+# The flat fields that name a port an event connected to; every one is scored.
+_EBPF_PORT_KEYS = ("port", "destination_port")
+# The flat fields that say where a record connected.
+_EBPF_FLAT_DESTINATION_KEYS = frozenset({*_EBPF_DESTINATION_KEYS, *_EBPF_PORT_KEYS})
+# Top-level keys of a producer's own events that the flat shape also names: a
+# Falco alert's ``hostname`` is the sensor's host, and a bare Hubble flow's
+# ``destination`` is the destination endpoint, neither of them a flat destination.
+_EBPF_PRODUCER_KEYS = {"Falco": frozenset({"hostname"}), "Hubble": frozenset({"destination"})}
+
+
+def _flat_ebpf_record(
+    record: dict[str, Any], defects: set[str], own: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     """Flat record: the field names other collectors export (_EBPF_FLAT_KEYS), read with
     the type checks the native readers apply.
 
     The process is a ``process`` map's ``binary`` or ``name``, else ``binary`` or
-    ``process_name``; every destination field is scored; the port is ``port`` or
-    ``destination_port``.
+    ``process_name``; every destination field and every port field is scored. ``own``
+    names the top-level keys that belong to the native producer whose event this is
+    (_EBPF_PRODUCER_KEYS): they are not flat fields and are not read.
     """
     process = _ebpf_field(record, ("process",), dict, defects) or {}
-    destinations = (_ebpf_field(record, (key,), str, defects) for key in _EBPF_DESTINATION_KEYS)
+    destinations = (
+        _ebpf_field(record, (key,), str, defects) for key in _EBPF_DESTINATION_KEYS if key not in own
+    )
+    ports = (_ebpf_field(record, (key,), _EBPF_PORT, defects) for key in _EBPF_PORT_KEYS if key not in own)
     return {
         "process_name": _ebpf_field(process, ("binary", "name"), str, defects)
         or _ebpf_field(record, ("binary", "process_name"), str, defects),
-        "destination": tuple(destination for destination in destinations if destination),
-        "destination_port": _ebpf_field(record, ("port", "destination_port"), _EBPF_PORT, defects),
+        "destination": _present(destinations),
+        "destination_port": _present(ports),
         "namespace": _ebpf_field(record, ("namespace",), str, defects),
         "pod": _ebpf_field(record, ("pod", "pod_name"), str, defects),
     }
 
 
-# The flat fields that say where a record connected.
-_EBPF_FLAT_DESTINATION_KEYS = frozenset({*_EBPF_DESTINATION_KEYS, "port", "destination_port"})
-# Top-level keys of a producer's own events that the flat shape also names: a
-# Falco alert's ``hostname`` is the sensor's host, and a bare Hubble flow's
-# ``destination`` is the destination endpoint, neither of them a flat destination.
-_EBPF_PRODUCER_KEYS = {"Falco": frozenset({"hostname"}), "Hubble": frozenset({"destination"})}
+def _combined_ebpf_record(native: dict[str, Any], flat: dict[str, Any]) -> dict[str, Any]:
+    """A record's native and flat readings as one record to score: every destination and
+    port either reading found, and the flat process and workload, with gaps filled from
+    the native reading."""
+    combined = {key: value or native.get(key) for key, value in flat.items()}
+    for key in ("destination", "destination_port"):
+        combined[key] = _present((*_each(flat[key]), *_each(native.get(key))))
+    return combined
+
 
 # A record to score and, for each reader that read it, the producer and what it
 # could not read (see _EBPF_DEFECT_WARNINGS).
@@ -1333,22 +1352,23 @@ def _normalize_ebpf_record(record: dict[str, Any]) -> _EbpfReading | None:
 
     A flat record can carry a key a native reader claims: a string ``eventName`` beside
     ``processName`` reads as Tracee, ``rule`` beside an ``output_fields`` map as Falco.
-    When that reader finds no destination and the record has flat destination fields
-    of its own, the record is also read as flat and scored on its flat fields, with what
-    the native reader read filling the gaps, so its top-level destination is not lost.
+    When the record also has flat destination or port fields, it is read both ways and
+    scored on every destination and port either reading finds, so a top-level ``url``
+    or ``destination`` is not lost beside a native reading that found only a port or a
+    non-AI address. The producer's own top-level keys (_EBPF_PRODUCER_KEYS) are never
+    read as flat fields: a Falco alert's ``hostname`` is the sensor, not a destination.
     """
     for producer, reader in _EBPF_READERS:
         defects: set[str] = set()
-        normalized = reader(record, defects)
-        if normalized is None:
+        native = reader(record, defects)
+        if native is None:
             continue
-        flat_keys = _EBPF_FLAT_DESTINATION_KEYS - _EBPF_PRODUCER_KEYS.get(producer, frozenset())
-        if normalized["destination"] or normalized["destination_port"] or flat_keys.isdisjoint(record):
-            return normalized, [(producer, defects)]
+        own = _EBPF_PRODUCER_KEYS.get(producer, frozenset())
+        if (_EBPF_FLAT_DESTINATION_KEYS - own).isdisjoint(record):
+            return native, [(producer, defects)]
         flat_defects: set[str] = set()
-        flat = _flat_ebpf_record(record, flat_defects)
-        merged = {key: value or normalized.get(key) for key, value in flat.items()}
-        return merged, [(producer, defects), ("flat", flat_defects)]
+        flat = _flat_ebpf_record(record, flat_defects, own)
+        return _combined_ebpf_record(native, flat), [(producer, defects), ("flat", flat_defects)]
     if _EBPF_FLAT_KEYS.intersection(record):
         defects = set()
         return _flat_ebpf_record(record, defects), [("flat", defects)]
