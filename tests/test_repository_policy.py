@@ -7,6 +7,7 @@ on the real tree and on a mutated copy that proves the rule still bites.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -3016,3 +3017,109 @@ def test_the_fuzzing_guide_covers_every_target_the_make_target_and_the_private_r
     # recognize Atheris or Hypothesis, and a fuzzing run is no proof of absence.
     assert "Scorecard" in guide
     assert not re.search(r"\b(?:proves?|guarantees?) that\b", guide, re.I)
+
+
+# --- OpenSSF Best Practices evidence -----------------------------------------------------------------
+# docs/operations/openssf-best-practices.md maps the passing-level criteria to this repository. It must stay
+# in the shape a maintainer can answer from, and its statements about the code must stay true.
+
+OPENSSF_PAGE = ROOT / "docs" / "operations" / "openssf-best-practices.md"
+OPENSSF_STATUSES = ("Met", "Confirm", "Attest", "N/A", "Gap")
+_CRITERION_ROW = re.compile(
+    r"^\| `(?P<id>[a-z0-9_]+)` \| (?P<level>MUST|SHOULD|SUGGESTED) \| \*\*(?P<status>[A-Za-z/]+)\*\* \| (?P<evidence>.+) \|$",
+    re.M,
+)
+
+
+def _openssf_rows() -> list[re.Match[str]]:
+    text = OPENSSF_PAGE.read_text(encoding="utf-8")
+    passing = text.split("## Passing level, criterion by criterion", 1)[1].split("\n## ", 1)[0]
+    return list(_CRITERION_ROW.finditer(passing))
+
+
+def test_openssf_page_answers_every_passing_criterion_once_with_a_known_status() -> None:
+    rows = _openssf_rows()
+    identifiers = [row["id"] for row in rows]
+    assert len(identifiers) == len(set(identifiers)) == 67, "the passing level has 67 criteria (2026-10-17)"
+    assert {
+        level: sum(row["level"] == level for row in rows) for level in ("MUST", "SHOULD", "SUGGESTED")
+    } == {
+        "MUST": 43,
+        "SHOULD": 10,
+        "SUGGESTED": 14,
+    }
+    assert {row["status"] for row in rows} <= set(OPENSSF_STATUSES)
+    assert all(len(row["evidence"].split()) >= 3 for row in rows), "every status needs its evidence"
+    # The summary sentence is what a reader sees first; it must be the count of the rows.
+    counted = ", ".join(
+        f"{count} {status}"
+        for status in OPENSSF_STATUSES
+        if (count := sum(row["status"] == status for row in rows))
+    )
+    assert f"Of the 67 criteria (43 MUST, 10 SHOULD, 14 SUGGESTED): {counted}." in OPENSSF_PAGE.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_openssf_page_stays_honest_about_the_badge() -> None:
+    page = OPENSSF_PAGE.read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    # The page says the repository claims no badge. If the README gains one, that sentence is false and the
+    # page must be updated with the level and date, which is the moment to re-read this test.
+    assert "bestpractices.dev/projects/" not in readme, (
+        "update the page's status when the README shows a badge"
+    )
+    assert "This repository claims no badge." in page
+    assert "not independent" in page
+    # A MUST criterion that only the maintainer can answer, or that has a gap, is never marked as plainly met.
+    must_rows = {row["id"]: row["status"] for row in _openssf_rows() if row["level"] == "MUST"}
+    for identifier in ("know_secure_design", "know_common_errors"):
+        assert must_rows[identifier] == "Attest"
+    for identifier in ("report_responses", "vulnerability_report_response", "tests_are_added", "maintained"):
+        assert must_rows[identifier] == "Confirm", f"{identifier} depends on the tracker, not on the files"
+
+
+def _identifier_values(tree: ast.AST) -> list[tuple[int, str]]:
+    """Names, attributes, imports and short string constants of a module, as an algorithm name would appear."""
+    values: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            values.append((node.lineno, node.attr))
+        elif isinstance(node, ast.Name):
+            values.append((node.lineno, node.id))
+        elif isinstance(node, ast.alias):
+            values.append((node.lineno if hasattr(node, "lineno") else 0, node.name))
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) and len(node.value) <= 24:
+            values.append((node.lineno, node.value))
+    return values
+
+
+def test_openssf_page_statements_about_the_cryptography_match_the_code() -> None:
+    weak = re.compile(r"(?<![a-z0-9])(md4|md5|rc4|arc4|des|3des|ecb|blowfish)(?![a-z0-9])")
+    sha1: set[str] = set()
+    randomness: set[str] = set()
+    weak_uses: list[str] = []
+    for path in sorted((ROOT / "shadowscan").rglob("*.py")):
+        relative = path.relative_to(ROOT).as_posix()
+        for lineno, value in _identifier_values(ast.parse(path.read_text(encoding="utf-8"))):
+            if weak.search(value.lower()):
+                weak_uses.append(f"{relative}:{lineno}: {value}")
+            if "sha1" in value.lower():
+                sha1.add(relative)
+            if value == "random":
+                randomness.add(relative)
+    page = OPENSSF_PAGE.read_text(encoding="utf-8")
+    # "uses no MD4, MD5, DES, RC4 or ECB mode"
+    assert not weak_uses, weak_uses
+    # "SHA-1 appears once ... in connectors/code/remote.py"
+    assert sha1 == {"shadowscan/connectors/code/remote.py"} and "connectors/code/remote.py" in page
+    # "random.uniform appears only to add jitter to HTTP retry delays in utils/http.py"
+    assert randomness == {"shadowscan/utils/http.py"} and "utils/http.py" in page
+    # "The package and its tooling are Python only"
+    native = [
+        path.as_posix()
+        for directory in ("shadowscan", "tools")
+        for pattern in ("*.c", "*.h", "*.cc", "*.cpp", "*.pyx", "*.rs")
+        for path in (ROOT / directory).rglob(pattern)
+    ]
+    assert not native, native

@@ -919,6 +919,12 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Documentation
 
+- New `docs/operations/openssf-best-practices.md` answers each of the 67 passing-level OpenSSF Best
+  Practices criteria with a status (Met, Confirm, Attest, N/A, Gap) and the evidence in this
+  repository, and lists what silver and gold would still need. The page claims no badge, and nothing
+  in the repository records an application for one. It records one gap for the maintainer to decide:
+  JWTs verified through a JWKS set no minimum RSA key size (`crypto_keylength`). Tests keep every
+  criterion answered once and tie the page's statements about cryptography to the code. (Oct 17)
 - This file is condensed from 7,050 lines of per-change entries to one summary per version, grouped
   by theme; the original is kept word for word under `archive/changelog/`. A test caps the file's
   size and the length of an entry, and `CONTRIBUTING.md` says where a new entry goes. (Oct 17)
