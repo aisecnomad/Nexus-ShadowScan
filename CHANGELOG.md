@@ -5,6 +5,93 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Precision, completeness and connector requirements from an outside review (October 17)
+
+- **Markup redaction runs in linear time.** The XML tag pattern of the
+  redaction pass (`redaction_markup._XML_TAG`) let name characters belong to
+  the tag or to its attributes, so an unterminated tag followed by a long run
+  of letters was retried at every split of that run: quadratic in stdlib `re`,
+  which no connector or job deadline interrupts, and every scanned file passes
+  through it. Its quantifiers are now possessive. The tag is always the
+  longest name run and the attribute alternatives never overlap, so the matches
+  are unchanged (a differential test compares the two patterns on 20,000
+  random documents); the cost is linear.
+- **The generic credential rule reports literals, not names of credentials.**
+  `heuristic.inline-credential` admits `.` and `_` in its value, so a read of
+  the environment (`apiKey = process.env.ANTHROPIC_API_KEY`), a member chain
+  (`old_password = self.cleaned_data["old_password"]`,
+  `password = hasher.encode(...)`) or a variable passed through
+  (`self.api_key = api_key`) passed as a long, diverse key and was reported as
+  a hard-coded credential at high risk. An unquoted identifier or member chain
+  in source code, and elsewhere a member chain that code follows (a call, a
+  subscript, `;`, `,`, `)`, `}`) or that starts at `process.env.`,
+  `import.meta.env.`, `os.environ.`, `self.` or `this.`, is now a reference,
+  not a credential; a quoted value is always a literal, a random-looking value
+  is never a name, and in an env file an unquoted value
+  (`DB_PASSWORD=Summer.Vacation2024`) stays a candidate. Labels of three or
+  more letter words (`'request-scoped-credential'`,
+  `'fc-shared-env-must-not-be-used'`) are not high-entropy keys, and a value
+  with an ellipsis (`sk-ant-api03-...`) is a documentation placeholder
+  (`example-credential` evidence). Secret matches are filtered before the
+  five-per-signal cap, so rejected references no longer use up the places of a
+  key further down the file. Provider-specific key formats are unchanged.
+- **An environment read stays visible in evidence.** After a credential name,
+  the redaction passes kept nothing of the value: `const apiKey =
+  process.env.OPENAI_API_KEY;` became `const apiKey = [REDACTED];`, which reads
+  as a hard-coded key. A value that is exactly one read of an environment
+  variable by an upper-case name (`process.env.X`, `import.meta.env.X`,
+  `os.environ["X"]`, `os.getenv("X")`, `os.environ.get("X")`,
+  `System.getenv("X")`, `Environment.GetEnvironmentVariable("X")`,
+  `os.Getenv("X")`, `ENV["X"]`, `ENV.fetch("X")`, `Deno.env.get("X")`,
+  `getenv("X")`) is now kept. A default argument, a fallback (`|| "v"`,
+  `or "v"`, `?? "v"`), concatenation, a computed name or a method on the value
+  keeps the whole value withheld, as does any other identifier or call.
+- **Fewer spurious incomplete scans.** Exit 3 was the common case on ordinary
+  repositories, so a CI gate on a nonzero exit failed on them for good:
+  - A JSON array or scalar, or a YAML mapping whose structure declares no MCP
+    servers (a transcript listing `mcp_servers`, a workflow example writing an
+    MCP configuration in a heredoc), is no longer parsed as an MCP
+    configuration and rejected. A dedicated MCP configuration name, or a
+    document whose structure declares servers, keeps the strict rules.
+  - Import-bound calls are read up to 65,536 characters instead of 8,192
+    (`source_semantics.MAX_CALL_TEXT`): agent constructions carry their
+    instructions and tools inline, and their options were unread. The
+    JavaScript call extent is found with one regex pass over its parentheses.
+    A longer call is still a gap.
+  - In test code that the scan discounts (`include_tests` false), a malformed
+    fixture (invalid manifest XML, YAML that fails the integrity checks,
+    source the lexer cannot settle, a parser input defect) is a warning that
+    leaves the scan complete, as an oversize test fixture already was. A
+    binary or undecodable test fixture is read for credentials only (its bytes
+    as Latin-1 without NUL bytes, no excerpts), since credentials are never
+    discounted, and is then a warning. `strict_coverage` and `include_tests`
+    keep every such gap, and the same files in product code are gaps as
+    before.
+- **OpenAI Agents SDK realtime agents are agents.** `RealtimeAgent` from
+  `@openai/agents/realtime` (and `agents.realtime` in Python), and the
+  `RealtimeSession` / `RealtimeRunner` that run one, are agent constructions
+  with the `tools` and `handoffs` options of `Agent`; they were LLM usage at
+  autonomy L0. The realtime `tool()` factory defines executable tools, and the
+  Python import pattern recognizes `RealtimeAgent` and `RealtimeRunner`.
+  Evaluation corpus: two positive cases and a hard negative (a local
+  `RealtimeAgent` class) in `current_idioms_corpus.json`.
+- **Live connectors ask for what the vendor references require** (checked
+  against the published API references, not live tenants):
+  - `identity.okta`: an OAuth bearer needs `okta.appGrants.read` for
+    `/apps/{id}/grants` besides `okta.apps.read`; documented in the
+    connector, its guide and the least-privilege table.
+  - `saas.slack`: `team_id` is sent with `users.list`, the `admin.apps.*`
+    lists and `team.integrationLogs`, which an org-level token requires.
+  - `saas.github-apps`: GitHub serves the approved fine-grained PAT list only
+    to GitHub App tokens. New `app_token` (env `GITHUB_APP_TOKEN`) for that
+    listing; a refusal without it names `app_token`. A GitHub App token with
+    the organization Administration, Personal access tokens and GitHub
+    Copilot Business read permissions covers every call.
+  - `identity.entra`: the service principal listing selects only v1.0
+    properties (`publisherName` and `createdDateTime` are beta); the publisher
+    comes from `verifiedPublisher`. Agent identities need
+    `AgentIdentity.Read.All`, now documented.
+
 ### README: benchmark chart generated from the committed ShadowBench cases run (October 16)
 
 - From #249: the README's Benchmarks section gains a cross-tool chart. It is
