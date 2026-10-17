@@ -273,7 +273,12 @@ tolerated gap.
   desktop application; a Windows `goose.exe` is left out because
   pressly/goose builds one too. Regression-tested with each of those rows
   and with Ollama, LM Studio, Open WebUI and AnythingLLM applications and
-  executables that stay reported.
+  executables that stay reported. The same review found the older LM
+  Studio CLI path `~/.cache/lm-studio/bin/lms` filtered since `lms` needed
+  context: `.cache` names no product and `lm-studio` is no dot-directory,
+  although the catalog lists `.cache/lm-studio` as LM Studio's directory.
+  `lms` now counts in every directory the catalog lists for LM Studio;
+  regression-tested, with a check that ties that context to the catalog.
 - These three connector changes alter which findings a scan reports, and
   `gateway.otel` findings from nested exports get new ids; the
   [connector correctness migration note](production-migrations.md#october-17-connector-correctness-migration-unreleased)

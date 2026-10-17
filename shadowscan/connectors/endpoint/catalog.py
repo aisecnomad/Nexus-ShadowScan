@@ -268,7 +268,10 @@ AMBIGUOUS_PRODUCT_CONTEXTS: dict[str, tuple[str, ...]] = {
     "Goose": ("Goose.app", ".config/goose", "Block/goose"),  # Block's desktop app and configuration
     "Jan": ("Jan.app", "Jan.exe"),  # a given name and a month
     # LM Studio's CLI, and the usual abbreviation of a learning management system.
-    "lms": ("LM Studio.app", ".lmstudio"),
+    # Its context is LM Studio's bundle and every directory the catalog lists for
+    # LM Studio: older releases install ~/.cache/lm-studio/bin/lms, newer ones
+    # ~/.lmstudio/bin/lms.
+    "lms": ("LM Studio.app", ".lmstudio", ".cache/lm-studio"),
     # Common words.
     "Continue": (".continue",),
     "Replicate": (),

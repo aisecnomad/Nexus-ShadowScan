@@ -193,9 +193,10 @@ word, a given name or another program's name — Make (also GNU make), Goose
 `lms`, Continue, Replicate, Cohere and Rivet — counts only in its own
 product's context: an application bundle or executable that product installs,
 or a directory it keeps, as the endpoint catalog lists them (`Jan.app`,
-`Jan.exe`, `Goose.app`, `~/.config/goose`, LM Studio's `LM Studio.app` and
-`~/.lmstudio` for `lms`, `~/.continue`), anywhere on the path
-(`/Applications/Goose.app/Contents/MacOS/goose`, `~/.lmstudio/bin/lms`). An
+`Jan.exe`, `Goose.app`, `~/.config/goose`, LM Studio's `LM Studio.app`,
+`~/.lmstudio` and `~/.cache/lm-studio` for `lms`, `~/.continue`), anywhere on
+the path (`/Applications/Goose.app/Contents/MacOS/goose`, `~/.lmstudio/bin/lms`,
+the older `~/.cache/lm-studio/bin/lms`). An
 `.app` or `.exe` suffix or a dot-directory alone is no context: Make
 (Integromat), Replicate and Cohere have no desktop application, so `make.exe`
 (GNU make under Chocolatey, MSYS2 or GnuWin32), `Make.app`, `~/.make`,

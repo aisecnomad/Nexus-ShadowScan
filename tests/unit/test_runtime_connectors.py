@@ -15,7 +15,12 @@ from shadowscan.connectors.base import ConnectorContext
 from shadowscan.connectors.cloud import kubernetes as kubernetes_module
 from shadowscan.connectors.cloud.kubernetes import KubernetesConnector, OpenShiftConnector
 from shadowscan.connectors.endpoint import runtime as endpoint_runtime
-from shadowscan.connectors.endpoint.catalog import AMBIGUOUS_PRODUCT_CONTEXTS, AMBIGUOUS_PRODUCT_NAMES
+from shadowscan.connectors.endpoint.catalog import (
+    AMBIGUOUS_PRODUCT_CONTEXTS,
+    AMBIGUOUS_PRODUCT_NAMES,
+    CONFIG_LOCATIONS,
+    MODEL_STORES,
+)
 from shadowscan.connectors.endpoint.runtime import (
     EbpfConnector,
     HostConnector,
@@ -584,6 +589,35 @@ def test_endpoint_host_unambiguous_products_stay_reported_under_any_suffix(row) 
     connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
     assert len(list(connector.analyze([row]))) == 1
     assert connector.ctx.stats.warnings == []
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": "lms", "path": "/Users/u/.cache/lm-studio/bin/lms"},
+        {"path": "/home/u/.cache/lm-studio/bin/lms"},
+        {"path": "C:\\Users\\u\\.cache\\lm-studio\\bin\\lms.exe"},
+    ],
+)
+def test_endpoint_host_lms_in_the_older_lm_studio_directory_is_reported(row) -> None:
+    """Regression: once ``lms`` needed context, the older LM Studio CLI path
+    ``~/.cache/lm-studio/bin/lms`` was filtered, since ``.cache`` names no product and
+    ``lm-studio`` is no dot-directory, although the catalog lists ``.cache/lm-studio``
+    as LM Studio's directory."""
+    connector = HostConnector(ConnectorContext())
+    connector.ctx.stats = ScanStats(connector="endpoint.host", started_at="2026-01-01T00:00:00Z")
+    assert len(list(connector.analyze([row]))) == 1
+    assert connector.ctx.stats.warnings == []
+
+
+def test_endpoint_host_lms_context_is_every_lm_studio_catalog_directory() -> None:
+    """``lms`` counts in each directory the catalog lists LM Studio's configuration or
+    models in, so the CLI LM Studio installs beside them is never filtered."""
+    paths = [location.path for location in CONFIG_LOCATIONS if location.product == "LM Studio"]
+    paths += [store.path for store in MODEL_STORES if store.product == "LM Studio"]
+    directories = {path.rsplit("/", 1)[0] for path in paths}
+    assert directories == {".lmstudio", ".cache/lm-studio"}
+    assert directories <= set(AMBIGUOUS_PRODUCT_CONTEXTS["lms"])
 
 
 def test_endpoint_host_ambiguous_contexts_belong_to_their_products() -> None:
