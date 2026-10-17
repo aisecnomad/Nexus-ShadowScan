@@ -2980,7 +2980,11 @@ class FilesystemConnector(BaseConnector):
                     f"code.filesystem: {file.rel}: notebook excerpt sanitization incomplete; "
                     "excerpts withheld"
                 )
-        for m in self.index.match_secrets(raw, scan=file.literals):
+        # In source code an unquoted value is an expression, so a generic match on
+        # 'api_key = api_key' names a variable. A notebook's raw document is JSON
+        # with outputs and markdown, where an unquoted value is printed text.
+        code = file.lang is not None and not from_raw_notebook
+        for m in self.index.match_secrets(raw, scan=file.literals, code=code):
             if (m.signature_id, m.value) in skip_values:
                 continue
             key = (m.signature_id, m.value, m.line)

@@ -13,7 +13,7 @@ live secret, when :func:`placeholder_reason` finds one of:
 * a placeholder word such as REPLACE, REPLACE_ME, YOUR, EXAMPLE, SAMPLE,
   DUMMY, FAKE, TEST, PLACEHOLDER, CHANGEME, INSERT, PASTE, HERE or TODO,
   case-insensitive, delimited by ``_ - .`` or by a case boundary; a fill run
-  such as ``xxxx`` counts as a word;
+  such as ``xxxx`` or an ellipsis (``sk-ant-api03-...``) counts as a word;
 * a low-entropy body: after the provider prefix the value is one or two
   repeated characters, or at least half of its characters continue a run of
   the same or adjacent characters (``0000``, ``1234567890``, ``abcdef``).
@@ -393,7 +393,9 @@ _PLACEHOLDER_WORDS: tuple[str, ...] = (
     "mock",
     "demo",
 )
-_FILL_RUN = re.compile(r"(?<![A-Za-z])(?:x{4,}|X{4,})(?![A-Za-z])|[*#?]{4,}")
+# An ellipsis stands for the rest of a key in documentation ('sk-ant-api03-...');
+# no key alphabet has a run of dots.
+_FILL_RUN = re.compile(r"(?<![A-Za-z])(?:x{4,}|X{4,})(?![A-Za-z])|[*#?]{4,}|\.{3,}|…")
 _ALPHA_RUN = re.compile(r"[A-Za-z]+")
 # Vendor prefixes such as sk-ant-api03- or lsv2_pt_ are not part of the body.
 _SECRET_PREFIX = re.compile(r"^(?:[A-Za-z0-9]{1,8}[-_]){1,3}")

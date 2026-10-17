@@ -210,6 +210,10 @@ def _budgeted_search(rx: Any, text: str, context: str, timeout: float) -> Any:
 
 GENERIC_CREDENTIAL = "heuristic.inline-credential"
 UNATTRIBUTED_KEY = "heuristic.unattributed-api-key"
+# Each secret signal reports at most _SECRETS_PER_SIGNAL matches per text, out
+# of at most _SECRET_CANDIDATES_PER_SIGNAL candidates read before filtering.
+_SECRETS_PER_SIGNAL = 5
+_SECRET_CANDIDATES_PER_SIGNAL = 25
 # An unattributed sk- value shorter than this after the prefix must look random.
 _SHORT_KEY_BODY = 32
 _VALUE_END = frozenset("\"',;")
@@ -230,10 +234,75 @@ def _assigned_value(value: str) -> str:
     return rest
 
 
+# A value that names something instead of holding it: a member chain
+# ('process.env.OPENAI_API_KEY', 'self.cleaned_data', 'config.fireCrawlApiKey',
+# 'hasher.encode') or a single identifier. The generic pattern's value class
+# admits '.' and '_', so these passed as long, diverse credentials.
+_IDENTIFIER_CHAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
+# The words of a name: 'fireCrawlApiKey' is fire, Crawl, Api, Key; 'ANTHROPIC_API_KEY'
+# is ANTHROPIC, API, KEY.
+_NAME_WORD = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+# Three or more letter words joined by '-' or '_': a label or a test value
+# ('request-scoped-credential', 'fc-shared-env-must-not-be-used'), not a key.
+_WORD_SLUG = re.compile(r"[A-Za-z]{2,}(?:[-_][A-Za-z]{2,}){2,}")
+_VALUE_QUOTES = "\"'"
+
+
+def _assignment_parts(value: str) -> tuple[str, bool]:
+    """The assigned value of a ``NAME = value`` match, and whether a quote opened it."""
+    positions = [i for i in (value.find("="), value.find(":")) if i >= 0]
+    if not positions:
+        return value, False
+    rest = value[min(positions) + 1 :].lstrip(" \t")
+    return _assigned_value(value), rest[:1] in _VALUE_QUOTES
+
+
+def _identifier_shaped(value: str) -> bool:
+    """Whether ``value`` reads as a program name rather than random key material.
+
+    Names are made of words: at least 60% of their letters fall in words of
+    three letters or more ('os.environ', 'encode_md5_hash', 'SetUnusablePasswordMixin').
+    Random keys split into one- and two-letter fragments ('eyJhbGciOiJIUzI1NiJ9':
+    ey, Jhb, Gci, Oi, JI ...) and carry more digits.
+    """
+    letters = sum(char.isalpha() for char in value)
+    if not letters or sum(char.isdigit() for char in value) * 3 > len(value):
+        return False
+    in_words = sum(len(word) for word in _NAME_WORD.findall(value) if word.isalpha() and len(word) >= 3)
+    return in_words * 5 >= letters * 3
+
+
+# What follows a member chain in code but never a literal in configuration: a
+# call, a subscript, the end of a statement, the end of an argument or member.
+_CODE_FOLLOWERS = frozenset("([;),}")
+# Chains that are references wherever they are written.
+_REFERENCE_ROOTS = ("process.env.", "import.meta.env.", "os.environ.", "self.", "this.")
+
+
+def _reference_value(value: str, *, code: bool, follower: str = "") -> bool:
+    """Whether a generic match assigns a reference to a credential rather than a literal.
+
+    In source code (``code``) an unquoted value is an expression, so an
+    identifier or a member chain names a variable ('self.api_key = api_key',
+    'k = settings.OPENAI_API_KEY'). Elsewhere an unquoted value is a literal
+    ('DB_PASSWORD=Summer.Vacation2024' in an env file), so only a member chain
+    that code follows (``follower``: '(' after 'hasher.encode', ';' after
+    'process.env.KEY' in a documentation snippet) or that starts from the
+    environment or the instance is one. A quoted value is always a literal,
+    and a random-looking value is never a name.
+    """
+    candidate, quoted = _assignment_parts(value)
+    if quoted or not _IDENTIFIER_CHAIN.fullmatch(candidate) or not _identifier_shaped(candidate):
+        return False
+    if code:
+        return True
+    return "." in candidate and (follower in _CODE_FOLLOWERS or candidate.startswith(_REFERENCE_ROOTS))
+
+
 def _high_entropy_credential(value: str) -> bool:
     """Require a generic assigned credential to be long and sufficiently diverse."""
     candidate = _assigned_value(value)
-    if len(candidate) < 16:
+    if len(candidate) < 16 or _WORD_SLUG.fullmatch(candidate):
         return False
     body = re.sub(r"[^A-Za-z0-9]", "", candidate)
     if len(body) < 2 or len(set(body)) <= 2:
@@ -270,15 +339,24 @@ def keep_file_matches(signatures: Sequence[Signature]) -> list[bool]:
     return [s.category == "coding-agent" or s.vendor not in agents for s in signatures]
 
 
-def keep_secret_matches(matches: Sequence[tuple[str, str, int | None]]) -> list[bool]:
+def keep_secret_matches(
+    matches: Sequence[tuple[str, str, int | None]],
+    *,
+    code: bool = False,
+    followers: Sequence[str] | None = None,
+) -> list[bool]:
     """Which ``(signature id, value, line)`` secret matches to keep.
 
-    A generic assigned-credential match is kept only when its value looks
-    random and no specific credential pattern matched the same value on the
-    same line: ``OPENAI_API_KEY=sk-...`` is one OpenAI key, not two findings.
+    A generic assigned-credential match is kept only when its value is a
+    literal that looks random and no specific credential pattern matched the
+    same value on the same line: ``OPENAI_API_KEY=sk-...`` is one OpenAI key,
+    not two findings. A value that only names a credential is not one (see
+    ``_reference_value``: ``code`` says the text is source code, and
+    ``followers`` holds the character after each match, '' at the end).
     A short unattributed ``sk-`` value only adds keys nothing else reports: it
     is kept when it looks random and no kept generic match covers it.
     """
+    after = list(followers) if followers is not None else [""] * len(matches)
     short = [
         signature_id == UNATTRIBUTED_KEY and len(value) - len("sk-") < _SHORT_KEY_BODY
         for signature_id, value, _ in matches
@@ -289,13 +367,14 @@ def keep_secret_matches(matches: Sequence[tuple[str, str, int | None]]) -> list[
             specific.setdefault(line, []).append(value)
     keep = []
     generic: dict[int | None, list[str]] = {}
-    for signature_id, value, line in matches:
+    for (signature_id, value, line), follower in zip(matches, after, strict=True):
         if signature_id != GENERIC_CREDENTIAL:
             keep.append(True)
             continue
         candidate = _assigned_value(value)
         repeated = any(other in value or candidate in other for other in specific.get(line, ()))
-        keep.append(not repeated and _high_entropy_credential(value))
+        reference = _reference_value(value, code=code, follower=follower)
+        keep.append(not repeated and not reference and _high_entropy_credential(value))
         if keep[-1]:
             generic.setdefault(line, []).append(value)
     for position, ((_, value, line), is_short) in enumerate(zip(matches, short, strict=True)):
@@ -1330,10 +1409,29 @@ class SignatureIndex:
     ) -> list[Match]:
         return self._match_regex_signals("code", text, language, ignore_spans=ignore_spans, scan=scan)
 
-    def match_secrets(self, text: str, scan: LiteralScan | None = None) -> list[Match]:
-        matches = self._match_regex_signals("secret", text, None, max_per_signal=5, scan=scan)
-        keep = keep_secret_matches([(m.signature_id, m.value, m.line) for m in matches])
-        return [match for match, kept in zip(matches, keep, strict=True) if kept]
+    def match_secrets(self, text: str, scan: LiteralScan | None = None, *, code: bool = False) -> list[Match]:
+        """At most five credential matches per secret signal in ``text``.
+
+        ``code`` says the text is source code (see ``keep_secret_matches``).
+        Matches are filtered before they are capped: five rejected references
+        ('self.api_key = api_key' in a settings module) must not use up the
+        places of a key written further down.
+        """
+        matches = self._match_regex_signals(
+            "secret", text, None, max_per_signal=_SECRET_CANDIDATES_PER_SIGNAL, scan=scan
+        )
+        followers = [text[m.extra["end"] : m.extra["end"] + 1] if "end" in m.extra else "" for m in matches]
+        keep = keep_secret_matches(
+            [(m.signature_id, m.value, m.line) for m in matches], code=code, followers=followers
+        )
+        kept: list[Match] = []
+        per_signal: Counter[tuple[str, int]] = Counter()
+        for match, keep_match in zip(matches, keep, strict=True):
+            key = (match.signature_id, id(match.signal))
+            if keep_match and per_signal[key] < _SECRETS_PER_SIGNAL:
+                per_signal[key] += 1
+                kept.append(match)
+        return kept
 
     def match_user_agent(self, ua: str) -> list[Match]:
         if not ua:

@@ -21,6 +21,7 @@ from collections.abc import Iterator
 
 from shadowscan.utils.redaction_formats import _URL
 from shadowscan.utils.redaction_rules import (
+    _ENVIRONMENT_LOOKUP,
     _FINGERPRINT,
     _MAX_REDACTION_WORK,
     REDACTED,
@@ -549,7 +550,8 @@ def _redact_python_assignments(text: str) -> str:
             fingerprint = bare
             if bare.startswith(('"', "'")) and bare.endswith(bare[0]):
                 fingerprint = bare[1:-1]
-            if _FINGERPRINT.fullmatch(fingerprint):
+            if _FINGERPRINT.fullmatch(fingerprint) or _ENVIRONMENT_LOOKUP.fullmatch(bare):
+                # A whole value that only reads an environment variable by name holds no credential.
                 continue
             pieces.append(text[cursor:assigned_at])
             if annotated:
