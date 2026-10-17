@@ -891,6 +891,11 @@ def test_digit_free_names_are_still_not_credentials(index: SignatureIndex, line:
         "SERVICE_CREDENTIAL=TrustNoOneEverAgain",
         "DB_PASSWORD=summer_vacation_beach_2024",
         "DB_PASSWORD=SNOUT_FIBER_THUMP_BLOOM",
+        # A word or a number that is no label vocabulary makes a value built
+        # like a label a password (main 8c72467 reports each of these).
+        "DB_PASSWORD=admin_password_123",
+        "DB_PASSWORD=DbPasswordFromSecretsManager",
+        "DB_PASSWORD=managedIdentityCredential",
     ],
 )
 def test_a_password_in_an_env_file_is_never_read_as_a_name(index: SignatureIndex, line: str):
@@ -911,9 +916,6 @@ def test_a_password_in_an_env_file_is_never_read_as_a_name(index: SignatureIndex
         "KEYCLOAK_ADMIN_PASSWORD=KeycloakAdminPassword",
         "POSTGRES_PASSWORD=change_me_to_a_strong_password",
         "SVC1_DB_PASSWORD=svc1_local_dev_password",
-        "DB_PASSWORD=admin_password_123",
-        "DB_PASSWORD=DbPasswordFromSecretsManager",
-        "DB_PASSWORD=managedIdentityCredential",
     ],
 )
 def test_token_names_labels_and_placeholders_keep_their_exemptions_in_env_files(
@@ -1182,3 +1184,75 @@ def test_an_env_example_of_instruction_labels_stays_complete(tmp_path: Path, run
     }
     findings = _scan(tmp_path, run_connector, files)
     assert [f.metadata["path"] for f in findings if f.kind.value == "secret"] == []
+
+
+# In an env or credential file a PASSWORD value was dropped as a label when
+# one of its words was any label word or a word of the name, so ordinary
+# passwords with a year and generated passphrases with one common word went
+# unreported there, while YAML and compose files and main 8c72467 reported
+# them. Only a value whose every word labels it is a label now.
+@pytest.mark.parametrize(
+    "line",
+    [
+        "POSTGRES_PASSWORD=PostgresProd2024Secure",
+        "REDIS_PASSWORD=RedisCacheProd2024",
+        "KEYCLOAK_ADMIN_PASSWORD=KeycloakAdmin2024Strong",
+        "DB_PASSWORD=LocalAdmin2024Strong",
+        "DB_PASSWORD=snout_passed_thump_bloom",
+        "DB_PASSWORD=snout_dev_thump_bloom",
+        "DB_PASSWORD=glider_keyed_thump_bloom",
+        "DB_PASSWORD=SnoutPassedThump2024",
+        "DB_PASSWORD=MyCompanyName2024Prod",
+        "DB_PASSWORD=MailServerKey2024Abc",
+        "DB_PASSWORD=BlueSkyValue2024Go",
+        "DB_PASSWORD=GrafanaAdmin_2024_Zz",
+        "DB_PASSWORD=myDevPassword123x",
+    ],
+)
+def test_a_password_with_any_word_of_its_own_is_reported_in_an_env_file(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=False, env_file=True) != []
+
+
+# python-dotenv and Node's dotenv read blanks around '=': the name kept them,
+# so 'POSTGRES_PASSWORD ' named no password and the name rules dropped a
+# password built like a name.
+@pytest.mark.parametrize(
+    "line",
+    [
+        "POSTGRES_PASSWORD = TrustNoOneEverAgain",
+        "POSTGRES_PASSWORD\t=\tTrustNoOneEverAgain",
+        'POSTGRES_PASSWORD = "TrustNoOneEverAgain"',
+        "export POSTGRES_PASSWORD = TrustNoOneEverAgain",
+        "POSTGRES_PASSWORD : TrustNoOneEverAgain",
+    ],
+)
+def test_blanks_around_the_operator_keep_a_password_named(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=False, env_file=True) != []
+
+
+def test_a_label_with_blanks_around_the_operator_stays_a_label(index: SignatureIndex):
+    assert _generic(index, "KEYCLOAK_ADMIN_PASSWORD = KeycloakAdminPassword", code=False, env_file=True) == []
+
+
+def test_a_scan_reports_dotenv_passwords_with_blanks(tmp_path: Path, run_connector):
+    env = "POSTGRES_PASSWORD = TrustNoOneEverAgain\nDB_PASSWORD = correct-horse-battery-staple\n"
+    findings = _scan(
+        tmp_path, run_connector, {".env": env, ".env.local": "DB_PASSWORD=snout_dev_thump_bloom\n"}
+    )
+    secrets = {f.metadata["path"]: f for f in findings if f.kind.value == "secret"}
+    assert secrets[".env"].metadata["count"] == 2 and ".env.local" in secrets
+    dumped = json.dumps([f.to_dict() for f in secrets.values()], default=str)
+    assert (
+        "TrustNoOneEverAgain" not in dumped and "battery-staple" not in dumped and "thump_bloom" not in dumped
+    )
+
+
+# Outside source code a password's words joined by '.' are a passphrase, as in
+# an env file: a compose or YAML value names no package or message key there.
+@pytest.mark.parametrize(
+    "line", ["DB_PASSWORD=snout.fiber.thump.bloom.gravel", "db_password: Snout.Fiber.Thump.Bloom.Gravel"]
+)
+def test_a_dotted_passphrase_outside_source_code_is_a_credential(index: SignatureIndex, line: str):
+    assert _generic(index, line, code=False) != []
+    # In source code it still reads as a name ('android.injected.signing.store').
+    assert _generic(index, line.replace("=", ' = "').replace(": ", ' = "') + '"', code=True) == []
