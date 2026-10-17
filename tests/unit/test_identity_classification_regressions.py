@@ -312,6 +312,7 @@ def test_failed_and_successful_verification_set_the_same_field(index: SignatureI
 # match and only standard OIDC scopes were previously emitted as false
 # positives.  They must now be suppressed.
 
+
 def _okta_app(
     *,
     label: str,
