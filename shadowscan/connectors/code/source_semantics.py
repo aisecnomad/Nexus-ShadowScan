@@ -199,7 +199,11 @@ _FACTORIES = {
     ),
     "framework.smolagents": r"(?:CodeAgent|ToolCallingAgent|ManagedAgent)",
     "framework.transformers-agents": r"(?:ReactCodeAgent|ReactJsonAgent|HfAgent)",
-    "framework.openai-agents-sdk": r"(?:Agent|Runner\.run(?:_sync|_streamed|Sync)?)",
+    # RealtimeAgent is the voice agent of '@openai/agents/realtime' and 'agents.realtime':
+    # the same tools, handoffs and guardrails, run by a RealtimeSession / RealtimeRunner.
+    "framework.openai-agents-sdk": (
+        r"(?:Agent|RealtimeAgent|Runner\.run(?:_sync|_streamed|Sync)?|RealtimeSession|RealtimeRunner)"
+    ),
     "framework.openai-swarm": r"(?:Agent|Swarm)",
     "framework.claude-agent-sdk": r"(?:ClaudeSDKClient|query)",
     "framework.pydantic-ai": r"Agent",

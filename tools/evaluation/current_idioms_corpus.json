@@ -210,6 +210,72 @@
       }
     },
     {
+      "id": "openai-agents-typescript-realtime",
+      "family": "openai-agents-sdk",
+      "description": "OpenAI Agents SDK realtime voice agents: RealtimeAgent with a tool and a handoff, run by a RealtimeSession",
+      "files": {
+        "package.json": "{\n  \"name\": \"harbor-voice-desk\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": {\n    \"@openai/agents\": \"^0.3.0\",\n    \"zod\": \"^3.25.0\"\n  }\n}\n",
+        "src/agents.ts": "import { RealtimeAgent, RealtimeSession, tool } from \"@openai/agents/realtime\";\nimport { z } from \"zod\";\nimport { findBooking } from \"./bookings.js\";\n\nconst lookupBooking = tool({\n  name: \"lookup_booking\",\n  description: \"Find a ferry booking by its reference\",\n  parameters: z.object({ reference: z.string().length(6) }),\n  execute: async ({ reference }) => findBooking(reference),\n});\n\nexport const refundsAgent = new RealtimeAgent({\n  name: \"refunds\",\n  voice: \"sage\",\n  instructions: \"Explain the refund rules for cancelled sailings and confirm the booking first.\",\n  tools: [lookupBooking],\n});\n\nexport const deskAgent = new RealtimeAgent({\n  name: \"desk\",\n  voice: \"sage\",\n  instructions: \"Greet the caller, look their booking up, and hand refunds to the refunds agent.\",\n  tools: [lookupBooking],\n  handoffs: [refundsAgent],\n});\n\nexport function startSession() {\n  return new RealtimeSession(deskAgent);\n}\n",
+        "src/bookings.ts": "type Booking = { reference: string; sailing: string; status: \"booked\" | \"cancelled\" };\n\nconst bookings: Booking[] = [];\n\nexport function findBooking(reference: string): Booking | undefined {\n  return bookings.find((booking) => booking.reference === reference);\n}\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "openai-agents-python-realtime",
+      "family": "openai-agents-sdk",
+      "description": "OpenAI Agents SDK for Python: a RealtimeAgent with a function tool started by a RealtimeRunner",
+      "files": {
+        "requirements.txt": "openai-agents==0.4.2\n",
+        "voice.py": "from agents import function_tool\nfrom agents.realtime import RealtimeAgent, RealtimeRunner\n\n\n@function_tool\ndef opening_hours(branch: str) -> str:\n    \"\"\"Opening hours of a library branch.\"\"\"\n    return {\"central\": \"9-20\", \"harbour\": \"10-17\"}.get(branch.lower(), \"unknown branch\")\n\n\nlibrarian = RealtimeAgent(\n    name=\"librarian\",\n    instructions=\"Answer questions about branch opening hours. Use the tool for every answer.\",\n    tools=[opening_hours],\n)\n\nrunner = RealtimeRunner(starting_agent=librarian)\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": true,
+      "assertions": {
+        "expected_findings": [
+          {
+            "kind": "agent",
+            "product_signature": "framework.openai-agents-sdk"
+          }
+        ]
+      }
+    },
+    {
+      "id": "local-realtime-agent-class",
+      "family": "openai-agents-sdk",
+      "description": "A game defines its own RealtimeAgent bot class with tools and handoffs options; nothing imports the OpenAI Agents SDK",
+      "files": {
+        "package.json": "{\n  \"name\": \"tidepool-arena\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"dependencies\": {\n    \"ws\": \"^8.18.0\"\n  }\n}\n",
+        "src/realtime-agent.js": "// Bots that play the arena in real time; no model is involved.\nexport class RealtimeAgent {\n  constructor(options) {\n    this.name = options.name;\n    this.tools = options.tools ?? [];\n  }\n\n  act(state) {\n    return this.tools.length ? this.tools[0](state) : \"wait\";\n  }\n}\n",
+        "src/main.js": "import { RealtimeAgent } from \"./realtime-agent.js\";\n\nconst chase = (state) => (state.target ? \"move\" : \"wait\");\nexport const hunter = new RealtimeAgent({ name: \"hunter\", tools: [chase], handoffs: [] });\n"
+      },
+      "target": {
+        "kind": "agent",
+        "signature": "framework.openai-agents-sdk"
+      },
+      "present": false,
+      "assertions": {
+        "max_agent_findings": 0,
+        "forbidden_signatures": [
+          "framework.openai-agents-sdk"
+        ]
+      }
+    },
+    {
       "id": "claude-agent-sdk-python-query",
       "family": "claude-agent-sdk",
       "description": "Claude Agent SDK query() with read-only built-in tools reviews a changelog in the working tree",

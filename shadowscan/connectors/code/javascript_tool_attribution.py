@@ -32,6 +32,9 @@ _TOOL_FACTORIES = frozenset(
     {
         ("@openai/agents", "tool"),
         ("@openai/agents-core", "tool"),
+        # The realtime entry point re-exports the same tool() factory.
+        ("@openai/agents/realtime", "tool"),
+        ("@openai/agents-realtime", "tool"),
         ("ai", "tool"),
         ("@mastra/core/tools", "createTool"),
         ("@voltagent/core", "createTool"),
