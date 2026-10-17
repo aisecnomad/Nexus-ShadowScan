@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from shadowscan.utils.redaction import REDACTED, sanitize_text
+from shadowscan.utils.redaction_assignments import _redact_netrc_entries
 
 # Slow by nature: times the redaction patterns against hostile inputs.
 # `make test-fast` skips these; CI runs them.
@@ -330,15 +332,23 @@ assert secret not in sanitize_text('secret_value: ' + secret)
 def test_netrc_and_yarnrc_patterns_read_hostile_text_in_linear_time():
     # An entry's tokens are read once from its head (a head inside a read entry
     # is skipped), each value and macro line once, and an rc name once per line.
+    # A run of tokens parted by '\n' escapes, with names ('login\nu\n...') or
+    # without, and the comments after an entry that ends were each read again
+    # from every token or entry after them: 400 KB took 24 s, and a 600 KB
+    # app.py exhausted the file's analysis budget (exit 3).
     _bounded_process("""
 from shadowscan.utils.redaction import REDACTED, SanitizationLimitError, sanitize_text
 n = 200_000
+mixed = 'x = "machine\\\\n' + 'login\\\\nu\\\\nmachine\\\\nh\\\\npassword\\\\nx\\\\n' * (n // 30) + '"'
 shapes = [
     'machine ' * (n // 8), 'machine h ' + 'login u ' * (n // 8), 'machine h login ' + 'a' * n,
     'machine h password ' + '\\\\n' * (n // 2), 'machine h password "' + 'a' * n,
     'machine h password \\\\"' + 'a' * n, '\\ndefault' * (n // 8), 'macdef m\\n' + 'x\\n' * (n // 2),
     'macdef m\\n' * (n // 9), 'machine h' + ' \\n' * (n // 2) + 'password x', 'machine h' + ' #c\\n' * (n // 4),
     'machine\\\\n' * (n // 9), '"' * n + 'machine h login u', 'machine h login u password ' + 'a\\\\' * (n // 2),
+    'x = "machine\\\\n' + 'login\\\\nu\\\\n' * (n // 9) + '"', 'x = "machine\\\\n' + 'machine\\\\nh\\\\n' * (n // 11) + '"',
+    mixed, 'machine h\\n' + '# machine h\\n' * (n // 12), 'machine a # ' + 'machine k # ' * (n // 12) + '\\nx',
+    'machine\\\\n' + 'password\\\\nx\\\\nfoo\\\\nmachine\\\\nh\\\\n' * (n // 30),
     '//' + 'a' * n + ' x', '_auth ' * (n // 6), '"//' + 'a:' * (n // 2),
 ]
 for shape in shapes:
@@ -347,7 +357,42 @@ for shape in shapes:
     except SanitizationLimitError:
         pass  # a nesting limit fails closed, quickly
 assert sanitize_text('machine h login u password ' + 'a' * n) == 'machine h login u password ' + REDACTED
+assert 'password\\\\nx' not in sanitize_text(mixed) and REDACTED in sanitize_text(mixed)
 """)
+
+
+def _best_cpu(work, repeats: int = 3) -> float:
+    # The fastest of three runs: one slow moment on a shared runner would
+    # otherwise read as a super-linear cost of the larger input.
+    best = float("inf")
+    for _ in range(repeats):
+        started = time.process_time()
+        work()
+        best = min(best, time.process_time() - started)
+    return best
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        lambda n: 'x = "machine\\n' + "login\\nu\\n" * n + '"',
+        lambda n: 'x = "machine\\n' + "machine\\nh\\n" * n + '"',
+        lambda n: 'x = "machine\\n' + "login\\nu\\nmachine\\nh\\npassword\\nx\\n" * n + '"',
+        lambda n: "machine\\n" + "password\\nx\\nfoo\\nmachine\\nh\\n" * n,
+        lambda n: "x\\n" + "password\\nx\\nfoo'machine\\nh\\npassword\\ny\\nfoo\"machine\\nh\\n" * n,
+        lambda n: "machine h password\\n" + "{{a\\npassword\\n}}" * n,
+        lambda n: "machine h\n" + "# machine h\n" * n,
+        lambda n: "machine a # " + "machine k # " * n + "\nx",
+    ],
+    ids=["names", "machines", "mixed", "ended-entries", "quotes", "references", "comments", "comment-line"],
+)
+def test_netrc_redaction_scales_linearly(shape):
+    # Four times the input must not cost more than ten times the time (a
+    # quadratic read costs sixteen times); the floor absorbs timer noise.
+    small, large = shape(2_500), shape(10_000)
+    small_time = _best_cpu(lambda: _redact_netrc_entries(small))
+    large_time = _best_cpu(lambda: _redact_netrc_entries(large))
+    assert large_time < max(small_time, 0.02) * 10, (small_time, large_time)
 
 
 def test_quadratic_tokenizer_versions_pay_for_each_line_copy(monkeypatch):

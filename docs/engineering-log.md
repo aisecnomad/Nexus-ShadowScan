@@ -392,6 +392,21 @@ public repositories with the tool and read the committed benchmark metrics.
   secret keys) was already withheld and is pinned by
   `tests/unit/test_credential_file_redaction.py`; `test_credential_file_names.py`
   renders every report format of a repository holding each kind.
+- Redaction: the netrc pass reads a text in linear time. As first written,
+  an unquoted value matched to the end of its non-blank run and the next
+  token was read from the `\n` escape inside it, so each token of a run
+  parted by escapes read the rest of the run again; and where an entry
+  ended at a token the format does not define, each entry found in the
+  comments after it read the remaining comments again. sanitize_text took
+  24 s for `x = "machine\nlogin\nu\n..."` at 400 KB (0.4 s before the pass
+  existed), and a 600 KB `app.py` exhausted its file analysis budget, so
+  `shadowscan code` exited 3. A value now matches up to its escape; the run
+  it is withheld to is found once and shared by the values in it, and the
+  blanks and comments between two tokens are read once whichever entry
+  reaches them. What is withheld is unchanged, except that a reference with
+  more than 64 characters glued after it past an escape is withheld without
+  being read; `tests/unit/test_redaction_performance.py` times these shapes
+  at two sizes.
 - `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
   `GetAgent` and `ListAgents` return no tags and the collector never called
   `ListTagsForResource`, so no live scan could attribute a Bedrock agent to
