@@ -419,10 +419,16 @@ applied in this order:
    settle) is charged to the budget as a partial gap at a quarter weight, and
    a binary or undecodable fixture, read for credentials first, at a whole
    entry. Its warning and its `stats[].coverage.details` entry say `test code
-   is discounted evidence`. Against the default 2% budget a root therefore
-   tolerates malformed fixtures up to about 8% of its entries, but binary
-   ones only up to about 2%, fewer beside other gaps: a 200-file service with
-   four binary fixtures and one dangling certificate link exits 3 (see
+   is discounted evidence`. Each gap a malformed fixture records costs a
+   quarter, and a fixture can record more than one: XML or a manifest that
+   does not parse records one, a structured file that fails the integrity
+   checks (duplicate keys, non-finite numbers) two (its excerpts withheld,
+   then its ambiguous data), and such a dependency manifest three (adding its
+   input defect). Against the default 2% budget a root therefore tolerates
+   about 8% of its entries in one-gap fixtures, 4% in structured ones and
+   under 3% in such manifests, but binary ones only up to about 2%, fewer
+   beside other gaps: a 200-file service with four binary fixtures and one
+   dangling certificate link exits 3 (see
    [test and fixture code](#test-and-fixture-code)).
 5. **Budget.** Every other partial gap is charged to the budget; a blinding
    one marks the scan incomplete.
@@ -741,8 +747,10 @@ incomplete depends on what the file could hide:
   that does not parse, YAML that fails the integrity checks, source the lexer
   cannot settle, a parser input defect) is a warning ending `test code is
   discounted evidence (include_tests is false)`, charged to the coverage
-  budget at a quarter weight, so a root tolerates such files up to about 8%
-  of its entries (2% at a quarter each), fewer beside other gaps. Its
+  budget at a quarter weight per gap it records (one to three: see
+  [discounted test code](#coverage-budget-and-strict-accounting)), so a root
+  tolerates such files up to about 8% of its entries when each records one,
+  and 4% or less when they record more, fewer beside other gaps. Its
   credentials were scanned on the text as read. The
   same file outside a test path is a gap, and `include_tests: true` or
   [strict accounting](#coverage-budget-and-strict-accounting) keeps it one.

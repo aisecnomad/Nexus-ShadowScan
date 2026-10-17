@@ -322,7 +322,9 @@ strict accounting, credentials, declaration, discount, budget.
   discount, and a binary or undecodable fixture at a whole entry after the
   credential-only read. A few fixtures leave the scan complete and are
   listed; a seeded tree exhausts the budget. "A few" is about 8% of a
-  root's entries for malformed fixtures but only about 2% for binary ones,
+  root's entries for malformed fixtures that record one gap each (4% for a
+  structured file with duplicate keys, which records two, and under 3% for
+  such a `package.json`, three) but only about 2% for binary ones,
   which cost a whole entry each as the plan's full-weight clause requires:
   a 200-file service with four binary fixtures and one dangling certificate
   link, complete before, exits 3. The docs first said hundreds were needed;
