@@ -276,8 +276,11 @@ the scan is incomplete.
 Each entry of `details` has `detail` (the diagnostic), `path`, `kind`
 (`blinding` or `partial`), `entries`, `full_weight` (true when the path discount
 was not applied), `reason` (the `incomplete_reasons` category the gap counts
-under if it leaves the scan incomplete) and `relevance` (`low` for a dependency,
-cache or test path, otherwise `high`). `shadowscan merge` and a process-mode plugin's result are
+under if it leaves the scan incomplete), `relevance` (`low` for a dependency,
+cache or test path, otherwise `high`) and `part`, the scan root's label (its
+path unless `label` names it) or the repository (`github:<repo>`) the gap lies
+in, so the gap a verdict line names can be found when several roots share a
+path; a report written before `part` existed has none. `shadowscan merge` and a process-mode plugin's result are
 checked against this shape (`shadowscan.coverage.validate_coverage_summary`), and
 a ledger that does not match is refused rather than republished.
 

@@ -178,6 +178,14 @@ file_matches)`, now serves every gap site.
   was cut while 50 tolerated links were listed. `_LedgerPart.evaluate` now
   lists a part's blinding gaps first, each kind in the order recorded; an
   over-budget part's partial gaps are the ones that condemned it already.
+- **Each published gap names its root or repository.** In a `code.github`
+  scan of ten clones and a tiny one, every one of the 11 details read
+  `{path: "ca.pem", ...}`, so the gap the verdict line named
+  (`github:tiny`) could not be picked out. A labelled part now adds `part`,
+  its label (the scan root's resource prefix, or `github:<repo>`), to each
+  detail it publishes; `validate_coverage_summary`, and through it `shadowscan
+  merge` and the plugin result check, accepts it as an optional non-empty
+  string, so older reports load, and refuses any other value.
 
 ### Coverage gaps take one decision, judged per root and repository (October 17)
 

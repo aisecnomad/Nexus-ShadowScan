@@ -581,6 +581,19 @@ def _tolerating_report(tmp_path: Path) -> dict:
     return report
 
 
+def test_fleet_accepts_the_part_each_published_gap_names_and_refuses_a_forged_one(tmp_path: Path):
+    report = _tolerating_report(tmp_path)
+    [gap] = report["stats"][0]["coverage"]["details"]
+    assert gap["part"] and gap["path"] == "tests/certs/ca.pem"
+    assert merge_reports([("laptop", report)]).complete
+    # A report written before the key existed loads.
+    del gap["part"]
+    assert merge_reports([("laptop", report)]).complete
+    gap["part"] = {"root": "x"}
+    with pytest.raises(ValueError, match="coverage"):
+        merge_reports([("laptop", report)])
+
+
 def test_fleet_carries_tolerated_gaps_and_loads_reports_without_the_field(tmp_path: Path):
     report = _tolerating_report(tmp_path)
     merged = merge_reports([("laptop", report)])

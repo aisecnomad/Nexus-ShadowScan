@@ -112,6 +112,11 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   incomplete first; consumers that pin `stats[].coverage` keys must accept
   the three (a single root's summary has none, and older reports load).
   Cached and uncached runs agree.
+- **Published gaps name their root.** Each entry of
+  `stats[].coverage.details` from `code.filesystem`, `code.github` and
+  `code.gitlab` gains `part`, the scan root's label or the repository it was
+  recorded in. Consumers that pin the keys of a published gap must accept it;
+  reports without it still merge, compare and load.
 - **`summary.tolerated_gaps`.** Reports gain this count of unread entries
   the coverage budget tolerated, including those a root within its own
   budget tolerated while another root went over; the table banner and the
