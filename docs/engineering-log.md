@@ -585,7 +585,14 @@ public repositories with the tool and read the committed benchmark metrics.
   a token's shape: a value without digits must mix cases evenly, a value
   with digits must not be identifier-shaped (separated by `_` or `.` into
   identifier segments, letters all one case, few digits). A snake_case
-  password with a year in it is given up for that; vendor-prefixed hex
+  password with a year in it is given up for that in source code. Outside
+  source code (an env or credential file, documentation, YAML) a PASSWORD
+  or CREDENTIAL value cannot name another variable, so these shape rules,
+  and the CONSTANT_CASE label rule, apply there only to token names
+  (`API_KEY`, `ACCESS_TOKEN`, `CLIENT_SECRET`):
+  `POSTGRES_PASSWORD=TrustNoOneEverAgain` and
+  `DB_PASSWORD=summer_vacation_beach_2024` in `.env` are reported, while
+  labels and placeholders stay unreported under any name. Vendor-prefixed hex
   tokens keep their digit density and still match. Placeholder recognition
   covers the languages documentation is translated into (a possessive
   followed by words, and the placeholder words of four letters or more in
