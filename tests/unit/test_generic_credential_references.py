@@ -1091,3 +1091,94 @@ def test_a_scan_reports_a_pasted_name_and_withholds_it(tmp_path: Path, run_conne
     findings = _scan(tmp_path, run_connector, files)
     [secret] = [f for f in findings if f.kind.value == "secret"]
     assert _TOTP not in json.dumps(secret.to_dict(), default=str)
+
+
+# Instructions written as labels: function words and ordinary words, which
+# generated passphrases leave out ('change-me-please', 'do-not-commit-this',
+# 'must-be-set-at-runtime'), and a word of two letters of the name with an
+# account or service word ('pg-replica-sync-user'). They were reported as
+# hard-coded credentials, and six in an .env.example made the scan incomplete.
+INSTRUCTION_LABELS = [
+    "change-me-before-deploying",
+    "change-me-please",
+    "please-change-me-now",
+    "change-me-asap-please",
+    "change_me_please",
+    "CHANGE-ME-BEFORE-DEPLOY",
+    "CHANGE-ME-PLEASE-NOW",
+    "do-not-commit-this",
+    "never-commit-real-ones",
+    "must-be-set-at-runtime",
+    "not-set-in-this-repo",
+    "must-come-from-vault",
+    "do-not-use-this-one",
+    "must-override-at-deploy",
+    "must-not-be-empty",
+    "must-be-overridden",
+    "must-be-set-at-deploy-time",
+    "not-configured-yet",
+    "not-configured-yet-xyz",
+    "jwt-signing-key-material",
+    "NOT-SET-IN-THIS-ENVIRONMENT",
+    "SET-VIA-ENVIRONMENT-VAR",
+]
+
+
+@pytest.mark.parametrize("label", INSTRUCTION_LABELS)
+def test_instruction_labels_are_not_credentials(index: SignatureIndex, label: str):
+    assert _generic(index, f"export DB_PASSWORD={label}", code=False) == []
+    assert _generic(index, f"db_password = '{label}'", code=True) == []
+    assert _generic(index, f"DB_PASSWORD={label}", code=False, env_file=True) == []
+    assert _generic(index, f'OPENAI_API_KEY = "{label}"', code=True) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "label"),
+    [
+        ("PG_PASSWORD", "pg-replica-sync-user"),
+        ("DB_PASSWORD", "db-readonly-reporting-user"),
+        ("AI_API_KEY", "ai-gateway-internal-route"),
+        ("MQ_PASSWORD", "mq-broker-admin-user"),
+    ],
+)
+def test_a_two_letter_word_of_the_name_with_an_account_word_is_a_label(
+    index: SignatureIndex, name: str, label: str
+):
+    assert _generic(index, f"{name}={label}", code=False) == []
+    assert _generic(index, f"{name.lower()} = '{label}'", code=True) == []
+    assert _generic(index, f"{name}={label}", code=False, env_file=True) == []
+
+
+@pytest.mark.parametrize(
+    "passphrase",
+    [
+        # The same rules leave generated passphrases reported: no function
+        # word, and at most one word that is common label vocabulary or a
+        # two-letter word of the name.
+        "snout-fiber-thump-bloom-gravel",
+        "db-fiber-thump-bloom-gravel",
+        "snout-admin-thump-bloom",
+        "glider-user-thump-bloom",
+        "snout-strong-thump-gravel",
+        "commit-snout-fiber-thump",
+    ],
+)
+def test_one_account_or_name_word_does_not_label_a_passphrase(index: SignatureIndex, passphrase: str):
+    assert _generic(index, f"DB_PASSWORD={passphrase}", code=False) != []
+    assert _generic(index, f'db_password = "{passphrase}"', code=True) != []
+    assert _generic(index, f"DB_PASSWORD={passphrase}", code=False, env_file=True) != []
+
+
+def test_an_env_example_of_instruction_labels_stays_complete(tmp_path: Path, run_connector):
+    names = ["POSTGRES", "REDIS", "SMTP", "KEYCLOAK_ADMIN", "MINIO_ROOT", "GRAFANA_ADMIN"]
+    files = {
+        ".env.example": "".join(f"{name}_PASSWORD=must-be-set-at-runtime\n" for name in names),
+        "docker-compose.yml": (
+            "services:\n  db:\n    environment:\n      POSTGRES_PASSWORD: do-not-commit-this\n"
+            "      ADMIN_PASSWORD: change_me_asap_please\n"
+        ),
+        "app/settings.py": 'DATABASE_PASSWORD = "not-configured-yet"\n',
+        "README.md": "```sh\nexport DATABASE_PASSWORD=change-me-before-deploying\n```\n",
+    }
+    findings = _scan(tmp_path, run_connector, files)
+    assert [f.metadata["path"] for f in findings if f.kind.value == "secret"] == []
