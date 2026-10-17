@@ -558,6 +558,24 @@ def test_ci_profile_declares_analysis_failures_in_fixtures_only(run_connector, t
     assert stats.incomplete and stats.errors and stats.incomplete_reasons == {"sanitization-limit": 1}
 
 
+def test_ci_profile_declares_unparsed_templates_and_fixtures_only(run_connector, tmp_path):
+    # A cookiecutter template is source that does not parse: a gap by default
+    # (counted as unparsed input), declared under the profile; the same text in
+    # src/ stays a gap under the profile too.
+    write(
+        tmp_path,
+        "templates/crew/{{cookiecutter.name}}/crew.py",
+        "from crewai import Agent\nclass {{name}}:\n",
+    )
+    _, stats = scan(run_connector, tmp_path)
+    assert stats.incomplete and stats.incomplete_reasons == {"unparsed-input": 1}
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert not stats.incomplete and stats.declared_omissions == 1
+    write(tmp_path, "src/app/crew.py", "from crewai import Agent\nclass {{name}}:\n")
+    _, stats = scan(run_connector, tmp_path, profile="ci")
+    assert stats.incomplete and stats.incomplete_reasons == {"unparsed-input": 1}
+
+
 def test_ci_profile_rejects_strict_coverage_and_unknown_profiles(run_connector, tmp_path):
     write(tmp_path, "app.py", "print('hi')\n")
     with pytest.raises(ConnectorError, match="strict_coverage"):

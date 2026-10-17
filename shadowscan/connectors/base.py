@@ -167,7 +167,7 @@ _INCOMPLETE_REASON_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "unparsed-input",
-        ("does not parse", "invalid", "malformed", "input defect", "not strict json", "syntax"),
+        ("not parse", "invalid", "malformed", "input defect", "not strict json", "syntax"),
     ),
     ("analysis-limit", ("limit", "budget", "exhausted", "literals only", "not matched", "partially")),
     ("subset-scan", ("triage scan", "subset")),

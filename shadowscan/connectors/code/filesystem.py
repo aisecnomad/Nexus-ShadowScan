@@ -3544,10 +3544,10 @@ class FilesystemConnector(BaseConnector):
                     numbers = ", ".join(str(number + 1) for number in unparsed[:10])
                     cells = "cell" if len(unparsed) == 1 else "cells"
                     verb = "does" if len(unparsed) == 1 else "do"
-                    self.ctx.warn(
+                    self._syntax_warning(
+                        file,
                         f"code.filesystem: {file.rel}: import-bound analysis skipped for notebook "
                         f"{cells} {numbers}, which {verb} not parse; lexical evidence retained",
-                        incomplete=self._syntax_gap(file),
                     )
             bound = bound_source_matches(
                 self.index,
@@ -3578,10 +3578,10 @@ class FilesystemConnector(BaseConnector):
             # import binding. Lexical observations stay visible, but cannot
             # replace the missing proof of agent behavior or capabilities.
             file.unparsed = tuple(whole)
-            self.ctx.warn(
+            self._syntax_warning(
+                file,
                 f"code.filesystem: {file.rel}: import-bound analysis skipped ({exc}); "
                 "lexical evidence retained",
-                incomplete=self._syntax_gap(file),
             )
             return [], whole
         if truncated:
@@ -3598,6 +3598,17 @@ class FilesystemConnector(BaseConnector):
             else:
                 self.ctx.error(message)
         return bound, list(file.unparsed)
+
+    def _syntax_warning(self, file: _SourceFile, message: str) -> None:
+        """Record source that did not parse: a gap when ``_syntax_gap`` says so, else a plain warning.
+
+        A gap goes through ``_gap``, so the ci profile declares it under a
+        template, example or test path, and is counted as unparsed input.
+        """
+        if self._syntax_gap(file):
+            self._gap(file.rel, message, suffix=False)
+        else:
+            self.ctx.warn(message, incomplete=False)
 
     def _syntax_gap(self, file: _SourceFile) -> bool:
         """Whether source that does not parse leaves coverage incomplete.

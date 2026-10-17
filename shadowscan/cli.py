@@ -194,8 +194,8 @@ def _exit_code(result: ScanResult, fail_on: str | None) -> int:
     return 2 if worst <= threshold else 0
 
 
-def _explain_incomplete(result: ScanResult) -> None:
-    """Say on stderr why the scan exits 3, by reason category; the diagnostics themselves stay in the report.
+def _incomplete_explanation(result: ScanResult) -> str:
+    """Why the scan exits 3, by reason category; the diagnostics themselves stay in the report.
 
     The categories come from the connectors' own message vocabulary and name no path or value,
     so they can go to a terminal or a CI log that the private report does not reach.
@@ -209,7 +209,15 @@ def _explain_incomplete(result: ScanResult) -> None:
     note = f"scan incomplete (exit 3): {detail}; see the report's warnings, errors and stats"
     if summary["declared_omissions"]:
         note += f"; {summary['declared_omissions']} declared omission(s) did not count"
-    err_console.print(Text(terminal_text(note), style="yellow"))
+    return note
+
+
+def _explain_incomplete(result: ScanResult) -> None:
+    """Print the exit-3 explanation on stderr, best effort: a closed stream must not change the exit."""
+    try:
+        err_console.print(Text(terminal_text(_incomplete_explanation(result)), style="yellow"))
+    except Exception:  # noqa: BLE001 - output streams may already be closed
+        pass
 
 
 def _exit_abandoned_workers(code: int, message: str) -> NoReturn:
@@ -335,17 +343,19 @@ def _run_and_emit_with_deadline(
                 )
             raise
         code = _exit_code(result, cfg.fail_on)
-        if code == 3:
-            _explain_incomplete(result)
         if engine.abandoned_workers:
             # A timed-out connector's thread may still be blocked in an SDK call.
             # Python joins worker threads at interpreter exit, which would hold the
             # process (and its CI job) open indefinitely. The report is written.
+            # One diagnostic carries the exit-3 explanation with the notice.
             abandoned = len(engine.abandoned_workers)
-            _exit_abandoned_workers(
-                code,
-                f"[yellow]exiting without waiting for {abandoned} timed-out connector worker(s)[/yellow]",
-            )
+            notice = f"exiting without waiting for {abandoned} timed-out connector worker(s)"
+            message = f"[yellow]{notice}[/yellow]"
+            if code == 3:
+                message = f"[yellow]{terminal_text(_incomplete_explanation(result))}[/yellow]\n{message}"
+            _exit_abandoned_workers(code, message)
+        if code == 3:
+            _explain_incomplete(result)
         sys.exit(code)
     except KeyboardInterrupt:
         # Interpreter exit would join the blocked workers, so keep an exit

@@ -86,6 +86,7 @@ def test_one_oversized_finding_is_omitted_without_discarding_the_others(index):
             "code.filesystem: mkdocs.yml: invalid structured configuration syntax; checks skipped",
             "unparsed-input",
         ),
+        ("code.filesystem: tool.py: import-bound analysis skipped (source did not parse)", "unparsed-input"),
         ("code.filesystem: t.py: model identifiers read from the first 400 literals only", "analysis-limit"),
         ("code.filesystem: repo: triage scan: findings are a subset of a full scan", "subset-scan"),
         ("code.filesystem: data.bin: skipped, never read", "unscanned-input"),
