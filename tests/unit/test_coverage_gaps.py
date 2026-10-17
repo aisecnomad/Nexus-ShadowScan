@@ -23,6 +23,8 @@ from shadowscan.coverage import (
     CoverageGap,
     CoverageLedger,
     CoveragePolicy,
+    combine_coverage_summaries,
+    validate_coverage_summary,
     validate_max_coverage_gap,
 )
 
@@ -150,6 +152,25 @@ class TestBudget:
         assert ledger.examined == 100
         ledger.note_examined(50)
         assert ledger.examined == 100
+
+    def test_parts_judged_apart_combine_into_one_published_summary(self) -> None:
+        # Each repository root of an incremental scan is judged on its own; the
+        # combined summary keeps every gap counted and the worst verdict.
+        summaries = []
+        for examined, gaps in ((10_000, 30), (10, 30)):
+            ledger = CoverageLedger()
+            ledger.add_examined(examined)
+            for i in range(gaps):
+                ledger.record(CoverageGap(detail="x", path=f"src/f{i}.py"))
+            summaries.append(ledger.evaluate(CoveragePolicy())[1])
+        combined = combine_coverage_summaries([summaries[0], None, summaries[1]])
+        assert validate_coverage_summary(combined) is combined
+        assert combined["examined"] == 10_010 and combined["gaps"] == 60
+        assert combined["allowance"] == pytest.approx(summaries[0]["allowance"] + summaries[1]["allowance"])
+        assert summaries[0]["within_budget"] and not combined["within_budget"]
+        assert len(combined["details"]) == MAX_PUBLISHED_GAPS and combined["details_truncated"] == 10
+        assert combine_coverage_summaries([None, summaries[0]]) is summaries[0]
+        assert combine_coverage_summaries([None, None]) is None
 
 
 class TestVerdictMessage:

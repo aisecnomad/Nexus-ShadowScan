@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import time
+from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
@@ -33,6 +34,7 @@ from shadowscan.config import (
 from shadowscan.connectors import ConnectorContext, builtin_connector_names, get_connector_class
 from shadowscan.connectors.base import BaseConnector, ConnectorError
 from shadowscan.correlation import correlate, correlate_lifecycle, correlate_runtime
+from shadowscan.coverage import combine_coverage_summaries
 from shadowscan.errors import SetupError
 from shadowscan.governance import apply_declared_governance
 from shadowscan.incremental import IncrementalCache
@@ -181,24 +183,25 @@ class _JobState:
     # export, these are observations the connector completed inside its budget:
     # discarding them turns an overrun into a silent clean report. The scan is
     # still marked incomplete, so they cannot be read as a complete result.
-    partial_findings: list[Finding] | None = None
+    partial_findings: list[list[Finding]] = field(default_factory=list)
     # The job's engine hooks, so an expiry withholds registry records from the
     # surrendered findings exactly as _run_one does from a completed job's.
     hooks: type[BaseConnector] | None = None
 
     def register_partial(self, findings: list[Finding]) -> None:
-        """Hold the worker's live findings list so an expiry can still read it.
+        """Hold a worker's live findings list so an expiry can still read it.
 
-        The reference is registered once; the worker then appends without
-        synchronising. Copying a list while another thread appends to it is
-        safe in CPython, and the only risk is observing fewer findings than the
-        worker had produced — acceptable on a path that already reports the
-        scan incomplete, and far better than reporting none.
+        A job split into repository roots registers one list per root, and an
+        expiry reports them all. Each reference is registered once; the worker
+        then appends without synchronising. Copying a list while another thread
+        appends to it is safe in CPython, and the only risk is observing fewer
+        findings than the worker had produced — acceptable on a path that
+        already reports the scan incomplete, and far better than reporting none.
         """
-        self.partial_findings = findings
+        self.partial_findings.append(findings)
 
     def take_partial(self) -> list[Finding]:
-        return list(self.partial_findings or ())
+        return [finding for findings in list(self.partial_findings) for finding in list(findings)]
 
     @property
     def supervision_deadline(self) -> float | None:
@@ -584,6 +587,9 @@ class _ConnectorRunner:
             combined.extend(child_findings)
             parts.append(child_stats)
         cached_count = sum(s.cached for s in parts)
+        reasons: Counter[str] = Counter()
+        for part in parts:
+            reasons.update(part.incomplete_reasons)
         stats = ScanStats(
             connector=spec.id,
             started_at=min(s.started_at for s in parts),
@@ -595,6 +601,9 @@ class _ConnectorRunner:
             incomplete=any(s.incomplete or s.skipped or s.errors for s in parts),
             skipped=all(s.skipped for s in parts),
             cached=cached_count == len(parts),
+            coverage=combine_coverage_summaries(s.coverage for s in parts),
+            incomplete_reasons=dict(reasons),
+            declared_omissions=sum(s.declared_omissions for s in parts),
         )
         if cached_count:
             stats.warnings.append(
@@ -769,6 +778,10 @@ class _ConnectorRunner:
             fs.extend(cached_findings)
             if cache.snapshot(spec, check_deadline=ctx.check_deadline, deadline=ctx.deadline) == snapshot:
                 ctx.check_deadline()
+                if ctx.partial_sink is not None:
+                    # A reused root is as complete as an analysed one, so an
+                    # expiry in a later root of the same job reports it too.
+                    ctx.partial_sink(fs)
                 self._engine._report_progress(spec.id, f"{len(fs)} findings (unchanged input; cached)")
                 return st, True
             fs.clear()

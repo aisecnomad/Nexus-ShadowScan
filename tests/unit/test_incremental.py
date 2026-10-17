@@ -197,6 +197,34 @@ def test_independent_repository_roots_do_not_rescan_unchanged_repo(tmp_path, ind
     assert any("framework.langgraph" in f.frameworks for f in second.findings)
 
 
+def test_a_multi_root_scan_publishes_every_roots_coverage_account(tmp_path, index):
+    # Regression: the per-root results were combined without their coverage
+    # ledgers, declared omissions or incomplete reasons, so a multi-root
+    # incremental scan published none of them. Root one tolerates its oversize
+    # file and declares its test file; root two is too small to tolerate one.
+    cfg = config(tmp_path)
+    roots = [tmp_path / "one", tmp_path / "two"]
+    for root, modules in zip(roots, (60, 1), strict=True):
+        (root / "tests").mkdir(parents=True)
+        for number in range(modules):
+            (root / f"module{number}.py").write_text(f"VALUE = {number}\n")
+        (root / "agent.py").write_text("import langchain\n" + "#" * 2_000)
+    (roots[0] / "tests" / "large.py").write_text("x = 1\n" + "#" * 2_000)
+    options = {"paths": [str(root) for root in roots], "use_git": False, "max_file_size": 1_000}
+    cfg.connectors[0].config = {**options, "profile": "ci"}
+    first = Engine(cfg, index).run()
+    [stats] = first.stats
+    assert not first.complete and stats.declared_omissions == 1
+    assert stats.incomplete_reasons == {"oversize-file": 1}
+    coverage = stats.coverage
+    assert coverage["gaps"] == 2 and coverage["examined"] > 60 and not coverage["within_budget"]
+    assert [gap["path"] for gap in coverage["details"]] == ["agent.py", "agent.py"]
+    # Root one is now reused from the cache and publishes the same account.
+    second = Engine(cfg, index).run()
+    assert any("reused 1/2" in warning for warning in second.stats[0].warnings)
+    assert second.stats[0].coverage == coverage and second.stats[0].declared_omissions == 1
+
+
 def test_configuration_and_signature_changes_invalidate(tmp_path, index, monkeypatch):
     cfg = config(tmp_path)
     calls = count_runs(monkeypatch)

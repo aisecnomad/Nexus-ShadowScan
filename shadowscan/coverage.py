@@ -38,6 +38,7 @@ reviewer sees what was skipped whether or not it changed the exit code.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -172,6 +173,31 @@ def validate_coverage_summary(value: object) -> dict[str, Any] | None:
         ):
             raise ValueError(message)
     return value
+
+
+def combine_coverage_summaries(summaries: Iterable[dict[str, Any] | None]) -> dict[str, Any] | None:
+    """One summary for a scan judged in parts, such as an incremental scan's repository roots.
+
+    Each part was judged against its own allowance, so the counts and the
+    allowances add up and the whole is within budget only if every part was.
+    Only a part that recorded a gap has a summary, so ``examined`` counts the
+    entries those verdicts were taken over. Details are kept in order up to
+    :data:`MAX_PUBLISHED_GAPS`; every gap is still counted. None when no part
+    recorded a gap.
+    """
+    parts = [summary for summary in summaries if summary is not None]
+    if len(parts) <= 1:
+        return parts[0] if parts else None
+    combined: dict[str, Any] = {key: sum(part[key] for part in parts) for key in _SUMMARY_COUNTS}
+    combined["weighted_gap_entries"] = round(sum(part["weighted_gap_entries"] for part in parts), 3)
+    combined["allowance"] = round(sum(part["allowance"] for part in parts), 3)
+    combined["within_budget"] = all(part["within_budget"] for part in parts)
+    # The parts are one connector's roots under its one policy.
+    combined["max_gap_ratio"] = parts[0]["max_gap_ratio"]
+    combined["details"] = [gap for part in parts for gap in part["details"]][:MAX_PUBLISHED_GAPS]
+    if combined["gaps"] > len(combined["details"]):
+        combined["details_truncated"] = combined["gaps"] - len(combined["details"])
+    return combined
 
 
 @dataclass(frozen=True, slots=True)

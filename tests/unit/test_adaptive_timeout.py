@@ -19,6 +19,7 @@ from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import BaseConnector
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.engine import (
+    _TIMEOUT_MESSAGE,
     DEFAULT_CONNECTOR_TIMEOUT,
     MAX_AUTO_TIMEOUT,
     Engine,
@@ -283,6 +284,38 @@ class TestPartialFindings:
 
     def test_nothing_registered_yields_nothing(self) -> None:
         assert _JobState().take_partial() == []
+
+    def test_a_multi_root_overrun_reports_every_root_it_finished(self, tmp_path, monkeypatch, index) -> None:
+        # Regression: each repository root registered its findings in place of
+        # the last root's, and a root reused from the cache registered none, so
+        # an expiry in the last root reported only that root's findings.
+        roots = [tmp_path / name for name in ("cached", "analysed", "overrunning")]
+        for root in roots:
+            root.mkdir()
+            (root / "requirements.txt").write_text("langchain\n")
+        spec = ConnectorSpec("code.filesystem", {"paths": [str(root) for root in roots], "use_git": False})
+        cfg = ScanConfig(
+            connectors=[spec],
+            incremental=True,
+            state_dir=str(tmp_path / "state"),
+            connector_timeout_seconds=3.0,
+        )
+        assert Engine(cfg, index).run().complete
+        for root, framework in zip(roots[1:], ("crewai", "langgraph"), strict=True):
+            (root / "requirements.txt").write_text(f"{framework}\n")
+        analyze = FilesystemConnector.analyze
+
+        def overrun(self, records):
+            yield from analyze(self, records)
+            if self.ctx.config["path"] == str(roots[-1]):
+                self.ctx.cancelled.wait(30)
+
+        monkeypatch.setattr(FilesystemConnector, "analyze", overrun)
+        result = Engine(cfg, index).run()
+
+        assert not result.complete and result.stats[0].skip_reason == _TIMEOUT_MESSAGE
+        frameworks = {framework for finding in result.findings for framework in finding.frameworks}
+        assert {"framework.langchain", "framework.crewai", "framework.langgraph"} <= frameworks
 
     def test_an_overrun_reports_the_findings_it_had(self, monkeypatch) -> None:
         """A connector that blows its deadline mid-analysis still reports what it found."""
