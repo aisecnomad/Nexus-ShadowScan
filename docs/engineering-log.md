@@ -656,6 +656,31 @@ public repositories with the tool and read the committed benchmark metrics.
   is withheld (`Change the default password [REDACTED] deploying`). The
   connector guide, SECURITY.md and the migration note no longer claim more
   than this, and SECURITY.md lists the commented-out token that remains.
+- Redaction: a netrc entry no longer ends at a token the format does not
+  define on the line of its last token, so the password after one is
+  withheld. Reading `\v`, `\f` and backtick escapes as blanks everywhere cut
+  an unquoted Windows domain login (`login CORP\fred`, `CORP\victor`), as
+  `\n`, `\r` and `\t` already cut `CORP\nancy` and `CORP\tom`, and the
+  escaped backslash of a source string was cut the same way
+  (`"login CORP\\fred password v"`): the rest of the name ended the entry,
+  and the password after it was in every report format (`shadowscan code`
+  exited 0 with it in the JSON, SARIF, Markdown and HTML reports of an app
+  that kept such an entry).
+  Escapes now separate tokens only on a line written as an escaped string,
+  one that holds a quote or an escape next to a keyword; on a netrc file's
+  own lines a backslash is part of the name, as clients read it. Once a
+  `machine`, `login` or `user` token is read, a token the format does not
+  define is skipped on the line of the entry's last token, as curl skips it,
+  so a name an escape seems to split and `machine h force yes password v`
+  end nothing either; a head inside such a token still starts its own entry.
+  Such a token on a later line still ends the entry: skipped there too, a
+  `machine learning` near the top of a document withheld the word after
+  every later `account` (16 more of 23,359 repository and installed-package
+  files changed, against 2 with the line rule: a documented entry and a
+  prose line). Failing closed, a prose word after `password` or `account`
+  that follows `machine` or `login` on its line is withheld (`my machine has
+  no login password [REDACTED]`). SECURITY.md lists the later-line token as
+  what can remain.
 - `cloud.aws`: `_h_bedrock_agent` read the agent's owner from `tags`, but
   `GetAgent` and `ListAgents` return no tags and the collector never called
   `ListTagsForResource`, so no live scan could attribute a Bedrock agent to

@@ -279,10 +279,16 @@ coverage, even when a response includes an empty collection field.
   vertical tabs and form feeds as blanks, also in a string with `\n`, `\t`,
   `\v` or `\f` escapes or PowerShell's `` `n ``, or written by `echo`),
   whatever it looks like, including a value that is itself a keyword
-  (`login account password v` withholds both words after `account`), an
+  (`login account password v` withholds both words after `account`), one
+  after a Windows domain login (`login CORP\fred`, also `CORP\\fred` in a
+  string, where an escape is read only on a line that holds a quote or an
+  escape next to a keyword) or after a token the format does not define on
+  the line of the entry's last token (`machine h force yes password v`), an
   entry in a comment, and the lines of a netrc `macdef` macro up to the empty
   line that ends it (a word after `default password` in prose is withheld as
-  well); Yarn 1's `.yarnrc` registry credentials written `name value`
+  well, and so is a word after `password` or `account` that follows
+  `machine` or `login` on its line, as in `the machine needs an account and
+  a key`); Yarn 1's `.yarnrc` registry credentials written `name value`
   (`"//registry.yarnpkg.com/:_authToken" "v"`, `_auth v`);
   mappings, YAML block scalars, properties and INI entries; `getenv`-style
   calls; name/value records such as Kubernetes `env` lists; XML elements and
@@ -447,11 +453,13 @@ coverage, even when a response includes an empty collection field.
   bare `auth` or `pass`) and holds a value that looks like no credential; a
   record outside the bounded sibling/flow rules above; a
   value split across concatenated strings; a netrc value after a token the
-  format does not define, which ends the entry where redaction reads it
-  (`machine h force yes password v`), or in an entry whose `machine` is glued
-  to other text; a commented-out netrc token on a comment line of its own
-  that holds no `machine` or `default` (`# password v` under a commented
-  `# machine h`); and sensitive business data.
+  format does not define on a later line than the entry's last token, which
+  ends the entry there as prose after `machine learning` does (`force yes` on
+  a line of its own between `machine h` and `password v`), or in an entry
+  whose `machine` is glued to other text; a commented-out netrc token on a
+  comment line of its own that holds no `machine` or `default`
+  (`# password v` under a commented `# machine h`); and sensitive business
+  data.
 - **Plural collection names are not sensitive names.** `credentials` names a
   credential, but the list or mapping under a plural `secrets` or `tokens`
   key keeps its values unless each one has a recognized shape or a sensitive

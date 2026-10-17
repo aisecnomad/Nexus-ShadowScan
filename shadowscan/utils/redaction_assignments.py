@@ -9,6 +9,7 @@ defaults of credentials read from the environment.
 
 from __future__ import annotations
 
+import bisect
 import re
 
 from shadowscan.utils.redaction_rules import (
@@ -706,14 +707,22 @@ def _redact_connection_passwords(text: str) -> str:
 # ('login account password v', where clients read the login 'account') is
 # withheld and read again as the token it names. A quoted value (curl) runs
 # to its closing quote, or to the end of its line when it never closes.
-# Blanks include the vertical tab and form feed, and JSON and shell '\n',
-# '\r', '\t', '\v' and '\f' escapes and PowerShell's '`n' ones separate
-# tokens as well ('"machine h\nlogin u\npassword v"'), but a value is
-# withheld up to the next blank all the same, so a backslash in it never
-# shows its tail. A '#' after a blank starts a comment up to the end of its
-# line, and one after a line-break escape up to the next such escape; a
-# comment, like a quoted name, is also read on its own, so an entry
-# commented out in it is withheld. 'macdef <name>' starts a macro, whose
+# Blanks include the vertical tab and form feed. On a line written as an
+# escaped string (``_NETRC_STRING``), JSON and shell '\n', '\r', '\t', '\v'
+# and '\f' escapes and PowerShell's '`n' ones separate tokens as well
+# ('"machine h\nlogin u\npassword v"'); on any other line, such as a netrc
+# file's own, an escape is part of the token it is in, as clients read it
+# ('login CORP\fred'). A value is withheld up to the next blank all the same,
+# so a backslash in it never shows its tail. Once a 'machine', 'login' or
+# 'user' token is read, a token the format does not define ends no entry on
+# the line of the entry's last token: curl skips it, and the value after a
+# 'password', 'passwd' or 'account' after it is withheld ('machine h force
+# yes password v'). On a later line such a token ends the entry, as prose
+# after 'machine learning' does. A '#' after a blank starts a comment up to
+# the end of its line, and one after a line-break escape on an escaped
+# string's line up to the next such escape; a comment, like a quoted name, is
+# also read on its own, so an entry commented out in it is withheld. 'macdef
+# <name>' starts a macro, whose
 # lines up to the empty line that ends it, and the rest of its name's line,
 # are withheld whole (see ``_netrc_macro``). An entry starts at 'machine' or
 # 'default' anywhere a word starts, and at 'macdef' only first on a line or
@@ -727,7 +736,17 @@ _NETRC_BREAK = rf"(?:{_NETRC_SPACE}|{_NETRC_ESCAPE})"
 _NETRC_END = rf"(?={_NETRC_BREAK}|\Z)"
 _NETRC_WORDS = r"(?ai:login|user|port|protocol|machine|macdef|default|password|passwd|account)"
 _NETRC_WORD = re.compile(_NETRC_WORDS)
-# The characters of an unquoted value, up to the next blank or escape.
+# A line written as an escaped string: one that holds a quote, as a string
+# literal does, or an escape next to a keyword ('machine h\nlogin u' in an
+# unquoted value). On a netrc file's own lines, which hold neither, a
+# backslash before a letter is part of a name ('login CORP\nancy').
+_NETRC_STRING = re.compile(
+    rf"[\"'`]|{_NETRC_ESCAPE}{_NETRC_WORDS}(?![A-Za-z0-9_])|(?<![A-Za-z0-9_]){_NETRC_WORDS}{_NETRC_ESCAPE}"
+)
+# The characters of an unquoted value, up to the next blank or escape. A token
+# stops at an escape on every line, since a name or value can start on a line
+# of either kind. Where the escape is part of the token, the rest of its run is
+# read as a token the format does not define (``_NETRC_UNKNOWN``) and skipped.
 _NETRC_LEAD = r"(?:[^\s\\`]|[\\`](?![nrtvf]))"
 # A value: quoted ('"v"', '\"v\"' inside a JSON string), with what is glued to
 # its closing quote, or unquoted, up to the next blank or escape, where the
@@ -761,10 +780,17 @@ _NETRC_TOKEN = re.compile(
     rf"|(?P<macdef>(?ai:macdef)){_NETRC_END}(?:{_NETRC_BREAK}++{_NETRC_MACRO_NAME})?"
     rf"|(?ai:default){_NETRC_END}"
 )
+# A token the format does not define, on a line of plain text and on an escaped
+# string's, where an escape ends it; and the tokens after which one ends no entry.
+_NETRC_UNKNOWN = (re.compile(r"\S++"), re.compile(rf"{_NETRC_LEAD}++"))
+_NETRC_KNOWN = frozenset({"machine", "login", "user"})
+# Where a head may start inside such a token ('force "machine h').
+_NETRC_HEAD_WORD = re.compile(r"(?ai:machine|default|macdef)")
 # The rest of a run of non-blank characters, and of a comment: after a blank, its
 # line; after a line-break escape, up to the next one ('"machine h\n# c\npassword v"').
 _NETRC_RUN = re.compile(r"\S*+")
 _NETRC_LINES = (re.compile(r"[^\r\n]*+"), re.compile(r"(?:[^\r\n\\`]|[\\`](?![nr]))*+"))
+_NETRC_LINE_END = re.compile(r"[\r\n]")
 # How much of its run past an escape a value may have and still be read as a
 # reference ('password $NETRC_TOKEN\n'); a value with more is withheld.
 _NETRC_TAIL = 64
@@ -778,10 +804,10 @@ def _redact_netrc_entries(text: str) -> str:
         if not any(hint in lowered for hint in _NETRC_HINTS):
             return text
     spans: list[tuple[int, int]] = []
-    ranges = [(0, len(text))]
+    ranges: list[tuple[int, int, bool | None]] = [(0, len(text), None)]
     while ranges:
-        start, end = ranges.pop()
-        _NetrcReader(text, end, spans, ranges).read(start)
+        start, end, escapes = ranges.pop()
+        _NetrcReader(text, end, spans, ranges, escapes).read(start)
     return _withhold_spans(text, _union(spans))
 
 
@@ -803,27 +829,39 @@ class _NetrcReader:
     linear time. An entry's tokens are read once from its head, and a head
     inside an entry already read is skipped. Where an entry ends at a token
     the format does not define, the next head is searched for from its last
-    token, so an entry commented out after it is read; a comment between two
-    tokens of an entry is queued in ``comments`` and read on its own, up to
-    its end. The blanks and comments between two tokens are read once
-    whichever entry reaches them (``gaps``), a token that is not one is read
-    once (``dead``), and so are the run of a value, which the values in it
-    share, and the line of a comment.
+    token, so an entry commented out after it is read. A comment between two
+    tokens that an entry reads past, and a quoted name, is queued in
+    ``ranges`` with the kind of its line and read on its own, up to its end.
+    The blanks and comments between two tokens are read once whichever entry
+    reaches them (``gaps``), a token that is not one is read once (``dead``),
+    and so are the run of a value, which the values in it share, the line of
+    a comment, and each line's kind (``_escapes``).
     """
 
     def __init__(
-        self, text: str, end: int, spans: list[tuple[int, int]], comments: list[tuple[int, int]]
+        self,
+        text: str,
+        end: int,
+        spans: list[tuple[int, int]],
+        ranges: list[tuple[int, int, bool | None]],
+        escapes: bool | None = None,
     ) -> None:
         self.text = text
         self.end = end
         self.spans = spans
-        self.comments = comments
+        self.ranges = ranges
         self.withheld = 0  # where the last value withheld ends
-        self.gaps: dict[int, int] = {}  # where a gap read from each of its pieces ends
+        # Where a gap read from each of its pieces ends, and its comments no entry has queued.
+        self.gaps: dict[int, tuple[int, list[tuple[int, int, bool | None]]]] = {}
         self.dead: set[int] = set()  # where no token starts after a gap
         self.run = (-1, -1)  # the run read last, from the end of its first value
         self.quotes: dict[str, int] = {}  # the last of each quote in that run
-        self.lines = [(-1, -1), (-1, -1)]  # the comment of each kind read last, from its first piece
+        self.comment = [(-1, -1), (-1, -1)]  # the comment of each kind read last, from its first piece
+        # The line read last and whether it is an escaped string, and each line
+        # read, by where it starts. A queued range lies on one line, whose kind it is given.
+        self.line = (0, 0, False) if escapes is None else (0, end + 1, escapes)
+        self.starts: list[int] = []
+        self.lines: dict[int, tuple[int, bool]] = {}
 
     def read(self, start: int) -> None:
         position = start
@@ -839,74 +877,150 @@ class _NetrcReader:
         ``quote`` is the quote an entry is written in ('echo "machine h login u
         password v" > ~/.netrc'): the last one in a value closes that string, so
         the value is withheld up to it.
+
+        Once a 'machine', 'login' or 'user' token is read, a token the format
+        does not define on the line of the entry's last token is skipped, as
+        curl skips it (see ``_skip``): an entry that ended there left the
+        password after it unread ('machine h force yes password v', and
+        'login CORP\\fred password v', whose name an escape ended). An entry of
+        'default' alone still ends at one, as prose does ('the default is').
         """
         position = start
+        line = -1  # where the line of the entry's last token starts, once 'machine' or 'login' is read
         while True:
             gap, comments = self._gap(position)
             token = self._token(gap)
-            if token is None:
-                return position
-            self.comments.extend(comments)
-            if token.group("secret"):
-                value = token.start("value")
-                self._secret(value, token.end("value"), quote)
-                # A keyword as the value is a name to clients ('login account password v'):
-                # the value is withheld and read again as that keyword.
-                keyword = _NETRC_WORD.fullmatch(self.text, value, token.end("value"))
-                position = value if keyword is not None else token.end()
-            elif token.group("macdef"):
-                position = _netrc_macro(self.text, token.end(), self.end, self.spans)
-            else:
-                if self.text.startswith(_NETRC_QUOTES, token.start("name")):
-                    # A quoted name can hold what reads as an entry: it is read on its own too.
-                    self.comments.append((token.start("name") + 1, token.end("name")))
-                position = token.end()
+            following = self._skip(gap, line) if token is None else self._read(token, quote)
+            if following is None:
+                return position  # the head search reads the gap's comments from here
+            # Read past, a gap's comments are read on their own.
+            self.ranges.extend(comments)
+            comments.clear()
+            position = following
+            if token is not None and (line >= 0 or (token.group("keyword") or "").lower() in _NETRC_KNOWN):
+                self._escapes(token.end() - 1)
+                line = self.line[0]
 
-    def _gap(self, position: int) -> tuple[int, list[tuple[int, int]]]:
-        """Where the blanks, escapes and comments from ``position`` end, and the comments.
+    def _read(self, token: re.Match[str], quote: str) -> int:
+        """Collect the secret of ``token`` and queue its quoted name; return where the next token starts."""
+        if token.group("secret"):
+            value = token.start("value")
+            self._secret(value, token.end("value"), quote)
+            # A keyword as the value is a name to clients ('login account password v'):
+            # the value is withheld and read again as that keyword.
+            keyword = _NETRC_WORD.fullmatch(self.text, value, token.end("value"))
+            return value if keyword is not None else token.end()
+        if token.group("macdef"):
+            return _netrc_macro(self.text, token.end(), self.end, self.spans)
+        name = token.start("name")
+        if name >= 0 and self.text.startswith(_NETRC_QUOTES, name):
+            # A quoted name can hold what reads as an entry: it is read on its own too.
+            self.ranges.append((name + 1, token.end("name"), self._escapes(name)))
+        return token.end()
 
-        A gap read again from one of its pieces gives no comments: they were
-        queued when it was first read, if a token followed it.
+    def _gap(self, position: int) -> tuple[int, list[tuple[int, int, bool | None]]]:
+        """Where the blanks, escapes and comments from ``position`` end, and the comments not yet queued.
+
+        Escapes are read only on a line that is an escaped string. The
+        pieces of a gap share its list of comments, which an entry that reads
+        past the gap queues and empties, so a gap read again from one of its
+        pieces gives only those no entry has queued.
         """
         text, end = self.text, self.end
         pieces: list[int] = []
-        comments: list[tuple[int, int]] = []
-        known: int | None = None
+        comments: list[tuple[int, int, bool | None]] = []
+        known: tuple[int, list[tuple[int, int, bool | None]]] | None = None
         while position < end and (known := self.gaps.get(position)) is None:
             pieces.append(position)
             blanks = _NETRC_BLANKS.match(text, position, end)
-            escaped = blanks is None and text.startswith(_NETRC_LINE_BREAKS, position, end)
-            if blanks is not None or escaped:
+            escapes = blanks is None and self._escapes(position)
+            line_break = escapes and text.startswith(_NETRC_LINE_BREAKS, position, end)
+            if blanks is not None or line_break:
                 position = blanks.end() if blanks is not None else position + 2
                 if text.startswith("#", position, end):
-                    comment = self._comment_end(position, escaped)
-                    comments.append((position + 1, comment))
+                    comment = self._comment_end(position, line_break)
+                    comments.append((position + 1, comment, self._escapes(position)))
                     position = comment
-            elif text.startswith(_NETRC_ESCAPES, position, end):
+            elif escapes and text.startswith(_NETRC_ESCAPES, position, end):
                 position += 2
             else:
                 pieces.pop()
                 break
-        stop = known if known is not None else position
+        stop = position
+        if known is not None:
+            stop, rest = known
+            comments.extend(rest)
+            rest.clear()
         for piece in pieces:
-            self.gaps[piece] = stop
+            self.gaps[piece] = (stop, comments)
         return stop, comments
 
     def _token(self, position: int) -> re.Match[str] | None:
-        if position in self.dead:
+        if position >= self.end or position in self.dead:
             return None
         token = _NETRC_TOKEN.match(self.text, position, self.end)
         if token is None:
             self.dead.add(position)
         return token
 
+    def _skip(self, position: int, line: int) -> int | None:
+        """Where the token at ``position``, which the format does not define, ends, or None if the entry does.
+
+        ``line`` is where the line of the entry's last token starts, or -1
+        before its 'machine' or 'login'. The token is skipped only on that
+        line: on a later one it starts prose as often as it interrupts an
+        entry, and skipped there, 'machine learning' withheld the word after
+        each 'account' of a document. A head inside the token ('force
+        "machine h') starts an entry of its own, which the entry ends before.
+        """
+        if line < 0 or position >= self.end:
+            return None
+        escapes = self._escapes(position)
+        if self.line[0] != line:
+            return None
+        run = _NETRC_UNKNOWN[escapes].match(self.text, position, self.end)
+        end = run.end() if run is not None else position + 1
+        for word in _NETRC_HEAD_WORD.finditer(self.text, position, end):
+            if _NETRC_HEAD.match(self.text, word.start(), self.end) is not None:
+                return None
+        return end
+
+    def _escapes(self, position: int) -> bool:
+        """Whether the line at ``position`` is an escaped string (see ``_NETRC_STRING``).
+
+        Each line is read once: the reader reaches positions in order, so the
+        line before the one read last is not searched for its start again.
+        """
+        start, end, escapes = self.line
+        if start <= position < end:
+            return escapes
+        index = bisect.bisect_right(self.starts, position)
+        floor = 0
+        if index:
+            start = self.starts[index - 1]
+            end, escapes = self.lines[start]
+            if position < end:
+                self.line = (start, end, escapes)
+                return escapes
+            floor = end
+        text = self.text
+        newline = text.rfind("\n", floor, position)
+        start = max(newline, text.rfind("\r", max(newline, floor), position)) + 1
+        line_end = _NETRC_LINE_END.search(text, position)
+        end = line_end.start() if line_end is not None else len(text) + 1
+        escapes = _NETRC_STRING.search(text, start, end) is not None
+        self.starts.insert(index, start)
+        self.lines[start] = (end, escapes)
+        self.line = (start, end, escapes)
+        return escapes
+
     def _comment_end(self, position: int, escaped: bool) -> int:
         """Where the comment at ``position`` ends (see ``_NETRC_LINES``), each comment read once."""
-        first, last = self.lines[escaped]
+        first, last = self.comment[escaped]
         if not first <= position <= last:
             line = _NETRC_LINES[escaped].match(self.text, position, self.end)
-            self.lines[escaped] = (position, line.end() if line is not None else position)
-        return self.lines[escaped][1]
+            self.comment[escaped] = (position, line.end() if line is not None else position)
+        return self.comment[escaped][1]
 
     def _secret(self, start: int, end: int, quote: str) -> None:
         """Withhold the value ``text[start:end]`` up to the end of its run, unless it is a reference."""

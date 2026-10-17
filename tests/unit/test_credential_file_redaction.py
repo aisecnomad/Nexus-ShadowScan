@@ -20,6 +20,9 @@ import string
 
 import pytest
 
+from shadowscan.config import ConnectorSpec, ScanConfig
+from shadowscan.engine import Engine
+from shadowscan.reporters import RENDERERS
 from shadowscan.utils.redaction import REDACTED, _sanitize_established, sanitize_text
 
 _RANDOM = random.Random(20261017)
@@ -89,6 +92,35 @@ CLIENT_FORMS = [
     f"MACDEF init\nuser deploy {SECRET}\n\n",
     f"machine h login u password {OTHER} macdef init now\nuser deploy {SECRET}\n\n",
 ]
+# A login with a backslash or backtick before an escape letter, as a Windows
+# domain login has, in a netrc file's own text (where clients read the
+# backslash as part of the name) and in an escaped string in source (where
+# '\\' is one backslash), and a token the format does not define before the
+# password, on the line of the entry's last token. Each ended the entry, so
+# the password after it was shown; a head inside such a token still starts
+# an entry of its own.
+SPLIT_FORMS = [
+    f"machine proxy.corp login CORP\\fred password {SECRET}\n",
+    f"machine proxy.corp login CORP\\victor password {SECRET}\n",
+    f"machine proxy.corp\nlogin CORP\\frank\npassword {SECRET}\n",
+    f"machine proxy.corp login CORP\\tom password {SECRET}\n",
+    f"machine proxy.corp login CORP\\nancy password {SECRET}\n",
+    f"machine proxy.corp login CORP\\rob password {SECRET}\n",
+    f"MACHINE proxy.corp LOGIN CORP\\FRED PASSWORD {SECRET}\n",
+    f"machine fs.corp login u`fred password {SECRET}\n",
+    f"machine fs.corp login u`nfred password {SECRET}\n",
+    f'NETRC = "machine api.openai.com login CORP\\\\fred password {SECRET}"',
+    f'NETRC = "machine api.openai.com\\nlogin CORP\\\\frank\\npassword {SECRET}\\n"',
+    f'NETRC = "machine api.openai.com\\nlogin CORP\\\\victor\\npassword {SECRET}\\n"',
+    f'NETRC = "machine api.openai.com\\nlogin CORP\\\\nancy\\npassword {SECRET}\\n"',
+    f'NETRC = "machine api.openai.com\\nlogin CORP\\\\tom\\npassword {SECRET}\\n"',
+    f"const netrc = 'machine h\\nlogin CORP\\\\fred\\npassword {SECRET}';",
+    f'{{"netrc": "machine h login CORP\\\\fred password {SECRET}"}}',
+    f"machine h force yes password {SECRET}\n",
+    f"machine h login u force yes password {SECRET}\n",
+    f'x = "machine h\\nforce yes\\npassword {SECRET}"',
+    f'machine a login u password {OTHER} x="macdef init\\nuser deploy {SECRET}\\n\\n"',
+]
 # A macro's lines are withheld up to the empty line that ends it.
 MACRO_FORMS = [
     f"machine h login u password {OTHER}\nmacdef init\ncd /pub\nuser deploy {SECRET}\n\n",
@@ -118,7 +150,8 @@ OWN_SYNTAX_FORMS = [
 
 
 @pytest.mark.parametrize(
-    "source", NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + MACRO_FORMS + YARNRC_FORMS + OWN_SYNTAX_FORMS
+    "source",
+    NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + SPLIT_FORMS + MACRO_FORMS + YARNRC_FORMS + OWN_SYNTAX_FORMS,
 )
 def test_a_credential_file_value_is_withheld_in_its_own_syntax(source):
     safe = sanitize_text(source)
@@ -140,7 +173,9 @@ def _only_adds_markers(before: str, after: str) -> bool:
     return after.endswith(REDACTED) or before.endswith(after.split(REDACTED)[-1])
 
 
-@pytest.mark.parametrize("source", NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + MACRO_FORMS + YARNRC_FORMS)
+@pytest.mark.parametrize(
+    "source", NETRC_FORMS + EMBEDDED_FORMS + CLIENT_FORMS + SPLIT_FORMS + MACRO_FORMS + YARNRC_FORMS
+)
 def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(source):
     # Every form reached them intact: no earlier rule withheld its secret.
     # They run last and only add markers, so they hide no name another rule reads.
@@ -183,6 +218,16 @@ def test_the_netrc_and_yarnrc_rules_only_add_markers_to_what_the_others_leave(so
             "echo default login x password VALUE >> ~/.netrc",
             f"echo default login x password {REDACTED} >> ~/.netrc",
         ),
+        # A Windows domain login stays whole, in a netrc file and in an escaped string.
+        (
+            "machine proxy.corp login CORP\\fred password VALUE\n",
+            f"machine proxy.corp login CORP\\fred password {REDACTED}\n",
+        ),
+        (
+            'NETRC = "machine h\\nlogin CORP\\\\frank\\npassword VALUE"',
+            f'NETRC = "machine h\\nlogin CORP\\\\frank\\npassword {REDACTED}"',
+        ),
+        ("machine h force yes password VALUE\n", f"machine h force yes password {REDACTED}\n"),
     ],
 )
 def test_names_hosts_and_layout_stay_visible(source, expected):
@@ -211,8 +256,9 @@ def test_a_reference_in_place_of_the_value_stays_visible(source):
         "MACHINE LEARNING needs a LOGIN",
         "machine learning models need a login and password",
         "machine = Machine()\nmachine.login(user)",
-        "my machine has no login password set",
         "macdef is an ftp macro keyword",
+        # A token the format does not define on a later line ends the entry.
+        "machine learning tools\ncreate an account for each user",
         "_auth helpers live in auth.py",
     ],
 )
@@ -229,7 +275,37 @@ def test_prose_and_code_that_merely_use_the_words_stay(source):
         # password v >> ~/.netrc').
         ("Change the default password before deploying", f"Change the default password {REDACTED} deploying"),
         ("Default Password Policy", f"Default Password {REDACTED}"),
+        # After 'machine' or 'login', a token the format does not define on the
+        # same line ends no entry, as it ends none for curl.
+        ("my machine has no login password set", f"my machine has no login password {REDACTED}"),
+        (
+            "This machine learning library needs an account and a key",
+            f"This machine learning library needs an account {REDACTED} a key",
+        ),
     ],
 )
 def test_a_prose_word_after_a_netrc_keyword_is_withheld(source, expected):
     assert sanitize_text(source) == expected
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'NETRC = "machine api.openai.com login CORP\\\\fred password VALUE"',
+        "# machine api.openai.com login CORP\\victor password VALUE",
+    ],
+)
+def test_no_report_format_shows_a_netrc_password_beside_a_windows_login(tmp_path, index, line):
+    # An app that uses OpenAI and keeps a netrc entry for a domain login, in a
+    # string or a comment: the entry ended at the escape the login seemed to
+    # hold, and the excerpt showed the password in every report format.
+    password = "pw-" + _random(24)
+    (tmp_path / "app.py").write_text(
+        "import openai\n\nclient = openai.OpenAI()\n" + line.replace("VALUE", password) + "\n"
+    )
+    spec = ConnectorSpec("code.filesystem", {"path": str(tmp_path), "use_git": False})
+    result = Engine(ScanConfig(connectors=[spec]), index).run()
+    assert result.complete
+    reports = {name: render(result) for name, render in RENDERERS.items()}
+    assert any("CORP" in report for report in reports.values())  # the excerpt is reported
+    assert [name for name, report in reports.items() if password in report] == []

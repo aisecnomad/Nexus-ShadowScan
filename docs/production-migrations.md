@@ -138,9 +138,12 @@ across this change reports findings as resolved or new that are neither.
   that only a netrc entry established as resolved. Report text withholds
   netrc passwords, accounts and macros and Yarn 1 registry credentials
   wherever their syntax appears (netrc keywords in any case, `` `n ``
-  escapes, `default` anywhere on a line; SECURITY.md lists the forms that
-  can remain), so excerpts that showed them change, and so does a prose word
-  after `default password`; finding ids do not.
+  escapes, `default` anywhere on a line, a Windows domain login, a token
+  the format does not define on the line of the entry's last token;
+  SECURITY.md lists the forms that can remain), so excerpts that showed them
+  change, and so does a prose word after `default password`, or after
+  `password` or `account` when `machine` or `login` comes before it on its
+  line; finding ids do not.
 - **Realtime agents.** A project that builds OpenAI Agents SDK realtime
   agents (`RealtimeAgent`, `RealtimeSession`, `RealtimeRunner`) is now an
   `agent` finding with its tool and handoff capabilities and a higher
