@@ -1037,3 +1037,57 @@ def test_a_scan_reports_a_fallback_after_typed_reads(tmp_path: Path, run_connect
     secrets = [f for f in findings if f.kind.value == "secret"]
     assert sorted(f.metadata["path"] for f in secrets) == ["src/A.cs", "src/A.kt", "src/a.ts"]
     assert TAIL_KEY not in json.dumps([f.to_dict() for f in secrets], default=str)
+
+
+# A key pasted in place of an environment variable's name reads no variable:
+# the name is the credential, written into the code. Evidence withheld it,
+# but the detector read the chain as a reference and reported nothing, where
+# main 8c72467 reported it. Built at run time: a base32 TOTP secret, a
+# letters-only run and the same secret without its digits.
+_TOTP = base64.b32encode(b"Hello!\xde\xad\xbe\xef").decode() * 2
+_LETTERS = "QWERTYUIOP" + "ASDFGHJKL" + "ZXCVBNM"
+_DIGIT_FREE = _TOTP.replace("3", "") + "AB"
+
+
+@pytest.mark.parametrize(
+    ("line", "name"),
+    [
+        (f"const openaiApiKey = process.env.{_TOTP};", _TOTP),
+        (f"const openaiApiKey = process.env.{_LETTERS};", _LETTERS),
+        (f"openai_api_key = os.environ.{_DIGIT_FREE}", _DIGIT_FREE),
+        (f"const openaiApiKey = import.meta.env.{_TOTP};", _TOTP),
+        (f'var openaiApiKey = Environment.GetEnvironmentVariable("{_LETTERS}");', _LETTERS),
+    ],
+)
+def test_a_key_pasted_as_the_variable_name_is_reported(index: SignatureIndex, line: str, name: str):
+    [match] = [m for m in index.match_secrets(line, code=True) if m.signature_id == GENERIC]
+    assert match.extra["credential"] == name
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        _TOTP,
+        _LETTERS,
+        _DIGIT_FREE,
+        "OPENAI_API_KEY",
+        "PGPASSWORD",
+        "K8S_TOKEN",
+        "GITHUBTOKEN",
+        "OPENAI_API_KEY_2",
+    ],
+)
+def test_detection_and_evidence_read_a_pasted_name_alike(index: SignatureIndex, name: str):
+    # One test decides both: a name the detector reports is withheld from
+    # evidence, and a name it leaves as a reference stays visible there.
+    line = f"const openaiApiKey = process.env.{name};"
+    reported = any(m.signature_id == GENERIC for m in index.match_secrets(line, code=True))
+    withheld = name not in sanitize_text(line)
+    assert reported is withheld
+
+
+def test_a_scan_reports_a_pasted_name_and_withholds_it(tmp_path: Path, run_connector):
+    files = {"src/a.ts": f"const openaiApiKey = process.env.{_TOTP};\n"}
+    findings = _scan(tmp_path, run_connector, files)
+    [secret] = [f for f in findings if f.kind.value == "secret"]
+    assert _TOTP not in json.dumps(secret.to_dict(), default=str)

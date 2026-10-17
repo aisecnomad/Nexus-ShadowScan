@@ -322,6 +322,29 @@ _VALUE_END_CHARACTERS = frozenset("\r\n;,)}]")
 _PASTED_KEY_NAME = 16
 
 
+def pasted_key_name(name: str) -> bool:
+    """Whether an environment variable's upper-case name is a key pasted in the name's place.
+
+    An upper-case key or base32 secret pasted as the name
+    ('os.getenv("JBSWY3DPEHPK3PXP...")') is the credential itself. A name is
+    opaque when letters and digits alternate in a long run (``_opaque``), or
+    when it runs to ``_PASTED_KEY_NAME`` characters or more without a '_'
+    between its words, digits or none ('process.env.QWERTYUIOPASDFGHJKLZXCVBNM').
+    Evidence withholds such a read (``_environment_lookup``) and the
+    credential detector reports it (``shadowscan.signatures.matcher``), by
+    this one test.
+    """
+    return _opaque(name) or (len(name) >= _PASTED_KEY_NAME and "_" not in name)
+
+
+def environment_read_name(text: str, start: int = 0) -> str | None:
+    """The variable name of the environment read by name (``_ENVIRONMENT_LOOKUP``) at ``start``, or None."""
+    match = _ENVIRONMENT_LOOKUP.match(text, start)
+    if match is None:
+        return None
+    return str(match["member"] or match["subscript"] or match["argument"])
+
+
 def _environment_lookup(text: str, start: int = 0, end: int | None = None) -> bool:
     """Whether an environment variable read starts at ``start`` and ends the value there.
 
@@ -330,18 +353,14 @@ def _environment_lookup(text: str, start: int = 0, end: int | None = None) -> bo
     value end: in 'apiKey: process.env.KEY // old: <key>' or
     'apiKey: process.env.KEY ?? "<key>"' the value goes on past the read.
 
-    The variable's name must be shaped like a name, not like an opaque key:
-    an upper-case key or base32 secret pasted in its place
-    ('os.getenv("JBSWY3DPEHPK3PXP...")') is the credential itself. A name is
-    opaque when letters and digits alternate in a long run (``_opaque``), or
-    when it runs to ``_PASTED_KEY_NAME`` characters or more without a '_'
-    between its words, digits or none ('process.env.QWERTYUIOPASDFGHJKLZXCVBNM').
+    The variable's name must be shaped like a name, not like an opaque key
+    (``pasted_key_name``).
     """
     match = _ENVIRONMENT_LOOKUP.match(text, start)
     if match is None:
         return False
     name = match["member"] or match["subscript"] or match["argument"]
-    if _opaque(name) or (len(name) >= _PASTED_KEY_NAME and "_" not in name):
+    if pasted_key_name(name):
         return False
     if end is not None:
         return match.end() == end
