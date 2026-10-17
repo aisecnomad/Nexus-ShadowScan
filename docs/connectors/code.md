@@ -58,15 +58,24 @@ container files, `.env`/CI secret references, provider credentials (redacted).
 A JSON, YAML or TOML file with another name is read as an MCP configuration
 when its structure declares servers (an `mcpServers` or `mcp_servers` key, or
 `mcp` with `servers`, within twelve levels of mappings and lists, the first 256
-entries of each). Inside a list only such a key holding a mapping of servers
-counts, so an array of records is not one because a record lists server
-statuses (a session transcript's `mcp_servers`). A document that declares no
-servers, a scalar included, is not one either, even when those keys appear in
-its values (a workflow example whose step writes an MCP configuration with a
-heredoc), and the other passes read it as ordinary configuration. A list that
-does declare them (an Ansible task writing `~/.cursor/mcp.json` from structured
-`content`) is passed to the MCP parser, which rejects its shape (`MCP
-configuration must be an object`), so the scan is incomplete. A
+entries of each). Inside a list only such a key holding a mapping of servers,
+or a list of server records (Continue's `mcpServers: [{name, command}]`, a
+record carrying `command`, `url`, `args`, `type` or `transport`), counts, so
+an array of records is not one because a record lists server statuses (a
+session transcript's `mcp_servers`). A document that declares no servers, a
+scalar included, is not one either, even when those keys appear in its values
+(a workflow example whose step writes an MCP configuration with a heredoc),
+and the other passes read it as ordinary configuration. A list that does
+declare them (an Ansible task writing `~/.cursor/mcp.json` or
+`~/.continue/config.yaml` from structured `content`, a list of client
+profiles, a registry catalog of `install` blocks) is read as the server
+tables its entries hold, merged into one MCP configuration finding (a name
+repeated across entries keeps a numbered suffix); a list that holds none
+under a dedicated MCP name is an input defect (`MCP configuration must be an
+object`). When a document is larger or deeper than the walk's bounds, the
+structure cannot rule a table out, so the file is decided from its text, and
+a table in a list past the bounds is recorded as a limit (`MCP server tables
+in a list past the walk limit`), which makes the scan incomplete. A
 dedicated MCP configuration name (`.mcp.json`, `mcp.json`, `smithery.yaml`, …)
 is always parsed, so its defects still make the scan incomplete, as does a
 document that declares servers in malformed form or cannot be read at all.
