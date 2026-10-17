@@ -155,7 +155,15 @@ strict accounting, credentials, declaration, discount, budget.
   scan incomplete (over budget or blinded) first and publishes `parts`,
   `parts_over_budget` and `tolerated_gap_entries`, which
   `validate_coverage_summary` accepts as optional and checks against the
-  summary's own counts.
+  summary's own counts. A single-file root of a multi-root `paths` scan
+  counted no examined entry in the plain run (examined 0, allowance 0)
+  while its incremental run, a connector run of its own, was floored at the
+  one object it examined (examined 1, allowance 0.02); the walker now counts
+  a single-file root as the entry it is (`_single_file_entry`), so the plain,
+  uncached and cached runs publish the same summary. The test that claimed
+  this compared only a plain run with a first incremental run, and its
+  within-budget case recorded no gap; it now replays from the cache and
+  compares a tolerated gap on every side.
 - **Tolerated gaps reach the summary.** Both the budget and the ci profile
   let a scan with unread content exit 0, but only `declared_omissions`
   reached `summary`, the table banner and the exit-3 line; a default-profile

@@ -2354,6 +2354,25 @@ class FilesystemConnector(BaseConnector):
             return
         self._check_submodule_paths(root, (path if rel_dir == "." else f"{rel_dir}/{path}" for path in paths))
 
+    def _single_file_entry(self, root: Path, walk: _WalkCounters) -> Iterator[tuple[str, Path, str, int]]:
+        """Yield a single-file root as ``_iter_entries`` yields a file, counted as one examined entry.
+
+        Counted like every file a directory walk reaches, so a single-file root
+        of a multi-root scan is judged against the one entry it examined, in a
+        plain run as in an incremental run of that root alone (whose only part
+        the connector run would otherwise floor at the objects it examined).
+        """
+        try:
+            size = root.stat().st_size
+        except OSError:
+            self.ctx.error(f"code.filesystem: could not inspect {root.name}")
+            return
+        self._entry_projects[root.name] = "."
+        if size > self._size_limit(root.name) and self._skipped_oversize(root.name, root.name, size):
+            return
+        if self._count_entry(walk, root):
+            yield root.name, root, ".", size
+
     def _iter_entries(self, root: Path) -> Iterator[tuple[str, Path, str, int]]:
         """Yield (relpath, path, project_root_rel, size) for every regular file to analyze.
 
@@ -2386,15 +2405,7 @@ class FilesystemConnector(BaseConnector):
         resolved_root = Path(os.path.realpath(root))
 
         if root.is_file():
-            try:
-                size = root.stat().st_size
-            except OSError:
-                self.ctx.error(f"code.filesystem: could not inspect {root.name}")
-                return
-            self._entry_projects[root.name] = "."
-            if size > self._size_limit(root.name) and self._skipped_oversize(root.name, root.name, size):
-                return
-            yield root.name, root, ".", size
+            yield from self._single_file_entry(root, walk)
             return
 
         def walk_error(exc: OSError) -> None:

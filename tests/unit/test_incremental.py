@@ -1399,30 +1399,73 @@ def test_default_excluded_probe_consumes_the_fingerprint_entry_budget(tmp_path, 
     assert cache.snapshot(cfg.connectors[0]) is None
 
 
-@pytest.mark.parametrize("small_gaps", [2, 0], ids=["small-root-over-budget", "within-budget"])
-def test_a_multi_root_scan_gives_one_coverage_verdict_with_and_without_the_cache(tmp_path, index, small_gaps):
-    # A small root with oversize source files beside a large clean root: judged
-    # alone the small root is over its budget. Summed, 2 gaps in 212 entries
-    # fitted 4.24 and the plain run was complete while the incremental run,
-    # which judges each root, was not. Both now take the per-root verdict.
+def _multi_root_runs(tmp_path: Path, index, paths: list[Path], *, replayed: int) -> list:
+    """A plain run, then an incremental run on an empty cache and one that replays ``replayed`` roots.
+
+    Only a complete root is cached, so a root over its budget runs again.
+    """
+    options = {"paths": [str(path) for path in paths], "use_git": False, "max_file_size": 1_000}
+    runs = []
+    for incremental in (False, True, True):
+        cfg = config(tmp_path, incremental=incremental)
+        cfg.connectors[0].config = dict(options)
+        runs.append(Engine(cfg, index).run())
+    plain, first, replay = runs
+    assert not plain.stats[0].cached and not first.stats[0].cached
+    assert not any("incremental: reused" in warning for warning in first.stats[0].warnings)
+    assert any(
+        f"incremental: reused {replayed}/{len(paths)}" in warning for warning in replay.stats[0].warnings
+    ), replay.stats[0].warnings
+    return runs
+
+
+@pytest.mark.parametrize(
+    ("small_files", "small_gaps"),
+    [pytest.param(10, 2, id="small-root-over-budget"), pytest.param(60, 1, id="within-budget")],
+)
+def test_a_multi_root_scan_gives_one_coverage_verdict_with_and_without_the_cache(
+    tmp_path, index, small_files, small_gaps
+):
+    # A small root with oversize source files beside a large root that has one:
+    # judged alone the small root is over its budget in the first case. Summed,
+    # 2 gaps in 212 entries fitted 4.24 and the plain run was complete while the
+    # incremental run, which judges each root, was not. Plain, uncached and
+    # cached runs now publish one verdict and one summary, with the large
+    # root's tolerated gap in it either way.
     big, small = tmp_path / "big", tmp_path / "small"
     big.mkdir()
     small.mkdir()
     for number in range(200):
         (big / f"mod{number}.py").write_text(f"VALUE = {number}\n")
-    for number in range(60 if not small_gaps else 10):
+    (big / "agent.py").write_text("import langchain\n" + "#" * 2_000)
+    for number in range(small_files):
         (small / f"mod{number}.py").write_text(f"VALUE = {number}\n")
     for number in range(small_gaps):
         (small / f"agent{number}.py").write_text("import langchain\n" + "#" * 2_000)
-    options = {"paths": [str(big), str(small)], "use_git": False, "max_file_size": 1_000}
-    results = {}
-    for incremental in (False, True):
-        cfg = config(tmp_path, incremental=incremental)
-        cfg.connectors[0].config = dict(options)
-        results[incremental] = Engine(cfg, index).run()
-    plain, split = results[False], results[True]
-    assert plain.complete == split.complete == (small_gaps == 0)
-    assert plain.stats[0].coverage == split.stats[0].coverage
-    if small_gaps:
-        assert plain.stats[0].coverage["within_budget"] is False
-        assert plain.stats[0].incomplete_reasons == split.stats[0].incomplete_reasons == {"oversize-file": 2}
+    runs = _multi_root_runs(tmp_path, index, [big, small], replayed=1 if small_gaps == 2 else 2)
+    over = small_gaps == 2
+    for run in runs:
+        coverage = run.stats[0].coverage
+        assert coverage is not None and coverage == runs[0].stats[0].coverage
+        assert run.complete is not over and coverage["within_budget"] is not over
+        assert coverage["gap_entries"] == 1 + small_gaps
+        assert run.summary()["tolerated_gaps"] == (1 if over else 1 + small_gaps)
+        assert run.stats[0].incomplete_reasons == ({"oversize-file": 2} if over else {})
+
+
+def test_a_single_file_root_publishes_one_summary_with_and_without_the_cache(tmp_path, index):
+    # A single-file root counted no examined entry in the plain run (allowance
+    # 0, examined 0) while its incremental run, a connector run of its own, was
+    # floored at the one object it examined (allowance 0.02, examined 1).
+    big = tmp_path / "big"
+    big.mkdir()
+    for number in range(200):
+        (big / f"mod{number}.py").write_text(f"VALUE = {number}\n")
+    agent = tmp_path / "agent.py"
+    agent.write_text("import langchain\n" + "#" * 2_000)
+    runs = _multi_root_runs(tmp_path, index, [big, agent], replayed=1)
+    for run in runs:
+        assert not run.complete
+        assert run.stats[0].coverage == runs[0].stats[0].coverage
+    coverage = runs[0].stats[0].coverage
+    assert (coverage["examined"], coverage["allowance"], coverage["within_budget"]) == (1, 0.02, False)
