@@ -182,6 +182,30 @@ def test_development_defaults_and_filler_are_labels(index: SignatureIndex, label
     assert _generic(index, f'DB_PASSWORD = "{label}"', code=True) == []
 
 
+@pytest.mark.parametrize(
+    "passphrase",
+    [
+        # One common word of the label vocabulary, or its plural or past
+        # form, is also a word of a passphrase list: alone it labels nothing.
+        "snout-passed-thump-bloom-gravel",
+        "valued-snout-fiber-thump",
+        "glider-keyed-thump-bloom",
+        "snout-fiber-locals-thump",
+        "snout-fiber-devs-thump",
+        "unsafe-gravel-thump-bloom",
+        "snout-fiber-default-thump",
+        "lorem-snout-fiber-thump",
+        # Words that only start like the vocabulary.
+        "snout-fiber-bazaars-thump",
+        "basked-snout-fiber-thump-bloom",
+        "envied-snout-fiber-thump",
+    ],
+)
+def test_a_passphrase_with_one_common_label_word_is_a_credential(index: SignatureIndex, passphrase: str):
+    assert _generic(index, f"DB_PASSWORD={passphrase}", code=False) != []
+    assert _generic(index, f'db_password = "{passphrase}"', code=True) != []
+
+
 def test_a_fixture_env_file_of_development_defaults_stays_complete(tmp_path: Path, run_connector):
     labels = ["local-development-only", "insecure-default-for-dev", "this-should-be-changed"]
     labels += ["dont-use-this-in-prod", "foo-bar-baz-qux-quux", "lorem-ipsum-dolor-sit-amet"]
