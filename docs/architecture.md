@@ -313,7 +313,7 @@ splitting the connector class itself.
 
 | module | responsibility |
 |---|---|
-| `filesystem.py` | the connector: tree walk, coverage accounting, file dispatch, ownership and finding construction |
+| `filesystem.py` | the connector: tree walk, coverage accounting, file dispatch and finding construction; ownership is its `ownership.py` collaborator (ADR-005) |
 | `walk.py` | bounded, non-recursive directory walking that never follows links; project-root markers |
 | `path_context.py` | path-derived evidence context: test, documentation, example, generated and CI-pipeline paths, and the discounts they apply |
 | `project_evidence.py` | how a project's observations count toward its finding: corroboration, weak mentions, env-only and model-ids-only capping |
@@ -331,7 +331,7 @@ splitting the connector class itself.
 | `javascript_dispatch.py`, `javascript_reachability.py`, `javascript_tool_attribution.py` | JavaScript Responses dispatch, literal dead-branch exclusion, tool registrations linked to their execution sites |
 | `polyglot_bindings.py`, `go_semantics.py`, `dotnet_semantics.py`, `java_semantics.py` | bounded lexical import and scope checks for LangChainGo constructors, .NET automatic tool invocation and Spring AI annotated tools; no general cross-file type resolution (a Spring AI tool class is matched by its qualified name across the project) |
 | `catalogs.py`, `rule_packs.py` | data files that name technologies without using them, and detection-rule packs, so neither counts as an integration |
-| `ownership.py` | CODEOWNERS glob matching without backtracking regular expressions |
+| `ownership.py` | ownership (`CodeOwnership`): CODEOWNERS matching without backtracking regular expressions, owner lookups within per-root step budgets, and opt-in git history |
 
 ### Utilities
 

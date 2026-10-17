@@ -16,6 +16,7 @@ from shadowscan.connectors.code import filesystem, remote
 from shadowscan.connectors.code.filesystem import FilesystemConnector
 from shadowscan.connectors.code.github import GitHubConnector
 from shadowscan.connectors.code.gitlab import GitLabConnector
+from shadowscan.connectors.code.ownership import CodeOwnership
 from shadowscan.models import ScanStats
 from shadowscan.utils import git as git_utils
 from shadowscan.utils.git import declared_submodule_paths, read_gitlink_paths, safe_git_env
@@ -302,7 +303,7 @@ def test_unavailable_git_inventory_is_incomplete_and_keeps_findings(tmp_path, in
     (tmp_path / ".git").mkdir()
     (tmp_path / "requirements.txt").write_text("langgraph\n")
     monkeypatch.setattr(filesystem, "read_gitlink_paths", lambda *a, **kw: None)
-    monkeypatch.setattr(FilesystemConnector, "_git_info", lambda *a: {})
+    monkeypatch.setattr(CodeOwnership, "git_info", lambda *a: {})
     findings, stats = _scan(tmp_path, index, use_git=True)
     assert findings and stats.incomplete
     assert "could not inventory gitlinks safely" in stats.warnings[0]
@@ -317,7 +318,7 @@ def test_failed_git_inventory_reports_safe_cause_and_preserves_findings(tmp_path
         "run_bounded_metadata",
         Mock(side_effect=PermissionError(errno.EACCES, "private-token", "/private/customer-repository")),
     )
-    monkeypatch.setattr(FilesystemConnector, "_git_info", lambda *a: {})
+    monkeypatch.setattr(CodeOwnership, "git_info", lambda *a: {})
     findings, stats = _scan(tmp_path, index, use_git=True, strict_coverage=strict)
     assert findings and stats.incomplete
     assert (stats.errors if strict else stats.warnings) == [

@@ -392,6 +392,39 @@ _MOVED_FROM_FILESYSTEM = {
     "shadowscan.utils.jsonc": ("_load_json_lenient_marked",),
 }
 
+# The same for the names that the collaborator moves of ADR-005 (from main at
+# 8c72467) took out of filesystem.py: it no longer uses them itself and re-exports
+# them as `name as name` imports (_codeowners_match by assignment). Without those,
+# dir() of the module lacks exactly these and the modules listed after them.
+_MOVED_TO_COLLABORATORS = {
+    "shadowscan.connectors.code.ownership": (
+        "MAX_OWNERSHIP_STEPS",
+        "MAX_PATTERN_LENGTH",
+        "MAX_ROOT_OWNERSHIP_STEPS",
+        "MAX_RULES",
+        "OwnershipBudget",
+        "OwnershipLimitError",
+        "_MAX_GIT_AUTHOR_CHARS",
+        "_MAX_GIT_EMAIL_CHARS",
+        "_MAX_GIT_TIMESTAMP_CHARS",
+        "_codeowners_match",
+    ),
+    # Importable before only because filesystem.py imported them itself.
+    "shadowscan.utils.files": ("link_in_path", "open_confined_file"),
+    "shadowscan.utils.git": (
+        "MetadataOutputLimitError",
+        "MetadataTimeoutError",
+        "metadata_git_argv_prefix",
+        "metadata_git_env",
+        "require_local_git_metadata",
+        "run_bounded_metadata",
+    ),
+    "shadowscan.utils.text": ("parse_timestamp",),
+}
+_MODULES_MOVED_TO_COLLABORATORS = ("subprocess",)
+# Names that filesystem.py bound to another name of the defining module.
+_ALIASED = {"_load_json_lenient_marked": "load_json_lenient_marked", "_codeowners_match": "codeowners_match"}
+
 
 def test_names_moved_out_of_filesystem_stay_importable_from_it():
     # The helper move must not break importers of filesystem.py: each name is
@@ -402,11 +435,11 @@ def test_names_moved_out_of_filesystem_stay_importable_from_it():
 
     from shadowscan.connectors.code import filesystem
 
-    for module_name, names in _MOVED_FROM_FILESYSTEM.items():
+    for module_name, names in (*_MOVED_FROM_FILESYSTEM.items(), *_MOVED_TO_COLLABORATORS.items()):
         module = importlib.import_module(module_name)
         for name in names:
-            # utils.jsonc defines the marked loader without the underscore alias.
-            source = "load_json_lenient_marked" if name == "_load_json_lenient_marked" else name
-            assert getattr(filesystem, name) is getattr(module, source), name
+            assert getattr(filesystem, name) is getattr(module, _ALIASED.get(name, name)), name
     assert filesystem.ast is ast
     assert filesystem.tomllib is tomllib
+    for name in _MODULES_MOVED_TO_COLLABORATORS:
+        assert getattr(filesystem, name) is importlib.import_module(name), name

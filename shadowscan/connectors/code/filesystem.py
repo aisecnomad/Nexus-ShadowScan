@@ -61,10 +61,12 @@ Precision safeguards
 from __future__ import annotations
 
 # Every name importable from this module before its helpers moved into
-# path_context, project_evidence, model_identifiers, source_text and excerpts
-# (ADR-005) stays importable: the imports marked `noqa: F401 - re-exported`
-# carry names this module does not use itself. Patch such a name in its
-# defining module; rebinding it here does not change what the helpers use.
+# path_context, project_evidence, model_identifiers, source_text and excerpts,
+# and before its ownership, walk, file scan and finding code moved into
+# collaborator classes (ADR-005), stays importable: the imports marked
+# `noqa: F401 - re-exported` and the redundant `name as name` imports carry
+# names this module does not use itself. Patch such a name in its defining
+# module; rebinding it here does not change what the helpers use.
 import ast  # noqa: F401 - re-exported
 import errno
 import fnmatch
@@ -72,7 +74,7 @@ import hashlib
 import os
 import re
 import stat
-import subprocess
+import subprocess as subprocess
 import time
 import tomllib  # noqa: F401 - re-exported
 from bisect import bisect_right
@@ -147,16 +149,16 @@ from shadowscan.connectors.code.model_identifiers import (  # noqa: F401 - re-ex
     _has_model_stem,
     _model_lookalike,
 )
-from shadowscan.connectors.code.ownership import (
-    MAX_OWNERSHIP_STEPS,
-    MAX_PATTERN_LENGTH,
-    MAX_RULES,
-    OwnershipBudget,
-    OwnershipLimitError,
-)
-from shadowscan.connectors.code.ownership import (
-    codeowners_match as _codeowners_match,
-)
+from shadowscan.connectors.code.ownership import _MAX_GIT_AUTHOR_CHARS as _MAX_GIT_AUTHOR_CHARS
+from shadowscan.connectors.code.ownership import _MAX_GIT_EMAIL_CHARS as _MAX_GIT_EMAIL_CHARS
+from shadowscan.connectors.code.ownership import _MAX_GIT_TIMESTAMP_CHARS as _MAX_GIT_TIMESTAMP_CHARS
+from shadowscan.connectors.code.ownership import MAX_OWNERSHIP_STEPS as MAX_OWNERSHIP_STEPS
+from shadowscan.connectors.code.ownership import MAX_PATTERN_LENGTH as MAX_PATTERN_LENGTH
+from shadowscan.connectors.code.ownership import MAX_ROOT_OWNERSHIP_STEPS as MAX_ROOT_OWNERSHIP_STEPS
+from shadowscan.connectors.code.ownership import MAX_RULES as MAX_RULES
+from shadowscan.connectors.code.ownership import CodeOwnership, codeowners_match
+from shadowscan.connectors.code.ownership import OwnershipBudget as OwnershipBudget
+from shadowscan.connectors.code.ownership import OwnershipLimitError as OwnershipLimitError
 from shadowscan.connectors.code.path_context import (  # noqa: F401 - re-exported
     _DOCS_DIR_NAMES,
     _EXAMPLE_DIR_NAMES,
@@ -295,20 +297,22 @@ from shadowscan.signatures.matcher import (
     _finditer,
     language_for_path,
 )
-from shadowscan.utils.files import link_in_path, open_confined_directory, open_confined_file, read_policy_text
+from shadowscan.utils.files import link_in_path as link_in_path
+from shadowscan.utils.files import open_confined_directory, read_policy_text
+from shadowscan.utils.files import open_confined_file as open_confined_file
 from shadowscan.utils.git import (
     LFS_POINTER_MAX_BYTES,
     LFS_POINTER_PREFIX,
     MAX_GITMODULES_BYTES,
-    MetadataOutputLimitError,
-    MetadataTimeoutError,
     declared_submodule_paths,
-    metadata_git_argv_prefix,
-    metadata_git_env,
     read_gitlink_paths,
-    require_local_git_metadata,
-    run_bounded_metadata,
 )
+from shadowscan.utils.git import MetadataOutputLimitError as MetadataOutputLimitError
+from shadowscan.utils.git import MetadataTimeoutError as MetadataTimeoutError
+from shadowscan.utils.git import metadata_git_argv_prefix as metadata_git_argv_prefix
+from shadowscan.utils.git import metadata_git_env as metadata_git_env
+from shadowscan.utils.git import require_local_git_metadata as require_local_git_metadata
+from shadowscan.utils.git import run_bounded_metadata as run_bounded_metadata
 from shadowscan.utils.jsonc import load_json_lenient as _load_json_lenient
 from shadowscan.utils.jsonc import (
     load_json_lenient_marked as _load_json_lenient_marked,  # noqa: F401 - re-exported
@@ -324,11 +328,14 @@ from shadowscan.utils.safe_yaml import (
 from shadowscan.utils.text import (
     line_counter,
     notebook_to_source,
-    parse_timestamp,
     read_text,
     redact,
     truncate,
 )
+from shadowscan.utils.text import parse_timestamp as parse_timestamp
+
+# The name this module bound CODEOWNERS matching to before its caller moved (ADR-005).
+_codeowners_match = codeowners_match
 
 # Manifests that configure the code of the project containing them. A2A cards
 # and M365 declarative agents declare a separately addressable agent (its own
@@ -357,11 +364,6 @@ _MCP_SERVER_IMPORT_RE = re.compile(
 )
 # Detection-rule pack paths listed in a project finding's metadata.
 _MAX_LISTED_RULE_FILES = 20
-
-# Git identities must not turn a small compressed commit into a large report.
-_MAX_GIT_AUTHOR_CHARS = 1024
-_MAX_GIT_EMAIL_CHARS = 1024
-_MAX_GIT_TIMESTAMP_CHARS = 64
 
 # Signal types that establish a library in a project (see _emit_project).
 _LIBRARY_SIGNALS = frozenset({"import", "dependency", "code"})
@@ -1015,9 +1017,6 @@ def _local_module_predicate(root: Path, path: Path, proj_root: str) -> Callable[
     return is_local_module
 
 
-MAX_ROOT_OWNERSHIP_STEPS = 20_000_000
-
-
 def scan_timeout_for_size(base: float, size: int) -> float:
     """Return the matching budget in seconds for one file of ``size`` bytes.
 
@@ -1420,11 +1419,13 @@ class FilesystemConnector(BaseConnector):
         self.owner: str | None = ctx.get("owner")
         self.provider_override: str | None = ctx.get("provider")
         self.extra_metadata: dict[str, Any] = dict(ctx.get("metadata", {}) or {})
-        self._codeowners_cache: dict[Path, list[tuple[str, list[str]]]] = {}
-        self._ownership_exhausted: set[Path] = set()
-        self._ownership_steps_remaining: dict[Path, int] = {}
-        self._owner_cache: dict[tuple[Path, str], str | None] = {}
-        self._ownership_scan: _ScanState | None = None
+        self.ownership = CodeOwnership(
+            ctx,
+            use_git=self.use_git,
+            owner=self.owner,
+            max_file_size=self.max_file_size,
+            included=self._included,
+        )
         self._symlink_warnings: set[Path] = set()
         # Supported lockfiles of the current root's walk -> whether their own
         # manifest sits beside them (see _lockfile_gap).
@@ -2171,14 +2172,7 @@ class FilesystemConnector(BaseConnector):
     def scan_tree(self, root: Path) -> Iterator[Finding]:
         root = root.absolute()
         scan = _ScanState(root, self._scan_label(root))
-        previous_scan = self._ownership_scan
-        self._ownership_scan = scan
-        # Ownership caches belong to this opened tree, not a pathname that a
-        # later scan on the same connector instance may find replaced.
-        self._codeowners_cache.pop(root, None)
-        self._ownership_exhausted.discard(root)
-        self._ownership_steps_remaining.pop(root, None)
-        self._owner_cache = {key: value for key, value in self._owner_cache.items() if key[0] != root}
+        previous_scan = self.ownership.begin_scan(scan)
         # Each root's gates read only its own listing (scan_tree walks and emits one root at a time).
         self._root_listing_incomplete = self.tree_listing_incomplete
         try:
@@ -2213,7 +2207,7 @@ class FilesystemConnector(BaseConnector):
                 yield f
         finally:
             # Closed whether or not the emit completes.
-            self._ownership_scan = previous_scan
+            self.ownership.end_scan(previous_scan)
             self._close_root(scan)
 
     @staticmethod
@@ -4098,238 +4092,6 @@ class FilesystemConnector(BaseConnector):
             )
         return False
 
-    def _git_info(self, root: Path, rel_root: str) -> dict[str, Any]:
-        if not self.use_git:
-            return {}
-        marker = root / ".git"
-        if not os.path.lexists(marker):
-            return {}
-        deadline = time.monotonic() + 20
-        if self.ctx.deadline is not None:
-            deadline = min(deadline, self.ctx.deadline)
-        try:
-            require_local_git_metadata(root, timeout=deadline - time.monotonic())
-        except ValueError:
-            self.ctx.warn(
-                "code.filesystem: git metadata must be a confined local .git directory; enrichment skipped"
-            )
-            return {}
-        target = "." if rel_root == "." else rel_root
-        try:
-            out = run_bounded_metadata(
-                [
-                    *metadata_git_argv_prefix(),
-                    "-C",
-                    str(root),
-                    "log",
-                    "--no-show-signature",
-                    "--no-ext-diff",
-                    "--no-textconv",
-                    "-1",
-                    "--format=%an%x00%ae%x00%cI",
-                    "--",
-                    target,
-                ],
-                env=metadata_git_env(),
-                ctx=self.ctx,
-                timeout=deadline - time.monotonic(),
-            )
-            if out.returncode == 0 and out.stdout.strip():
-                # NUL separators: an author name may itself contain "|".
-                fields = out.stdout.strip("\r\n").split("\x00")
-                if len(fields) != 3:
-                    self.ctx.warn("code.filesystem: git metadata has invalid fields; enrichment skipped")
-                    return {}
-                an, ae, ci = fields
-                if any(
-                    len(value) > limit
-                    for value, limit in zip(
-                        fields,
-                        (_MAX_GIT_AUTHOR_CHARS, _MAX_GIT_EMAIL_CHARS, _MAX_GIT_TIMESTAMP_CHARS),
-                        strict=True,
-                    )
-                ):
-                    self.ctx.warn("code.filesystem: git metadata field limit exceeded; enrichment skipped")
-                    return {}
-                if parse_timestamp(ci) is None:
-                    self.ctx.warn(
-                        "code.filesystem: git metadata has an unparseable commit timestamp; "
-                        "enrichment skipped"
-                    )
-                    return {}
-                return {"last_author": an, "last_author_email": ae, "last_commit": ci}
-            if out.returncode == 0:
-                return {}
-        except MetadataOutputLimitError:
-            self.ctx.warn("code.filesystem: git metadata output limit exceeded; enrichment skipped")
-            return {}
-        except MetadataTimeoutError:
-            # A TimeoutError is an OSError: name the cause instead of blaming
-            # the Git version below.
-            self.ctx.warn(
-                "code.filesystem: git metadata collection reached its time limit or the connector "
-                "deadline; enrichment skipped"
-            )
-            return {}
-        except (OSError, ValueError, subprocess.SubprocessError):
-            pass
-        self.ctx.warn(
-            "code.filesystem: bounded offline git enrichment failed; Git 2.45+ and locally available history "
-            "within the metadata output limit are required"
-        )
-        return {}
-
-    @contextmanager
-    def _codeowners_directory(self, root: Path) -> Iterator[int | None]:
-        """Keep ownership reads on the same directory descriptor as source collection.
-
-        Reopening the pathname only verifies that it still names that directory;
-        candidate file reads always use the original descriptor. A replacement
-        after this verification therefore cannot redirect ownership reads.
-        """
-        scan = self._ownership_scan
-        if scan is not None:
-            if scan.root != root:
-                raise ValueError("ownership root differs from the active scan")
-            if scan.root_fd < 0 or scan.base != root:
-                # A failed root open has already been reported. Single-file
-                # scans have never consulted their parent directory's owners.
-                yield None
-                return
-            current = open_confined_directory(root)
-            try:
-                original, present = os.fstat(scan.root_fd), os.fstat(current)
-                if (original.st_dev, original.st_ino) != (present.st_dev, present.st_ino):
-                    raise ValueError("scan root changed before ownership lookup")
-            finally:
-                os.close(current)
-            yield scan.root_fd
-            return
-        # Direct internal ownership callers have no collection descriptor.
-        directory = open_confined_directory(root)
-        try:
-            yield directory
-        finally:
-            os.close(directory)
-
-    def _codeowners(self, root: Path) -> list[tuple[str, list[str]]]:
-        root = root.absolute()
-        if root in self._codeowners_cache:
-            return self._codeowners_cache[root]
-        rules: list[tuple[str, list[str]]] = []
-        try:
-            with self._codeowners_directory(root) as directory:
-                if directory is not None:
-                    rules = self._read_codeowners(root, directory)
-        except (OSError, RuntimeError, ValueError):
-            self.ctx.error("code.filesystem: could not verify scan root for CODEOWNERS; ownership incomplete")
-        self._codeowners_cache[root] = rules
-        return rules
-
-    def _read_codeowners(self, root: Path, directory: int) -> list[tuple[str, list[str]]]:
-        """Read the first selected ownership file below the already anchored root."""
-        rules: list[tuple[str, list[str]]] = []
-        for cand in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ".gitlab/CODEOWNERS"):
-            if not self._included(cand):
-                continue
-            try:
-                # Distinguish a missing candidate from an unreadable one without
-                # following a link, including links in its parent components.
-                with open_confined_file(PurePosixPath(cand), dir_fd=directory):
-                    pass
-            except FileNotFoundError:
-                continue
-            except NotADirectoryError:
-                # A file named like its parent (``docs``, ``.github``) leaves the
-                # candidate absent. A link there fails the same way and is not
-                # followed, so what it might name stays unread.
-                if not link_in_path(cand, dir_fd=directory):
-                    continue
-                self.ctx.error(f"code.filesystem: could not read {cand}")
-                break
-            except (OSError, RuntimeError, ValueError):
-                self.ctx.error(f"code.filesystem: could not read {cand}")
-                break
-            try:
-                errors: list[str] = []
-                read_notes: list[str] = []
-                content = read_text(
-                    PurePosixPath(cand),
-                    self.max_file_size,
-                    errors,
-                    dir_fd=directory,
-                    notes=read_notes,
-                )
-                # Ownership comes from names in this file: bytes that were replaced could change an owner.
-                errors.extend(f"{note}; ownership may be wrong" for note in read_notes)
-                for issue in errors:
-                    self.ctx.error(f"code.filesystem: {cand}: {issue}")
-                for line in (content or "").splitlines():
-                    line = line.split("#", 1)[0].strip()
-                    if not line:
-                        continue
-                    parts = line.split()
-                    if parts:
-                        if len(rules) >= MAX_RULES or len(parts[0]) > MAX_PATTERN_LENGTH:
-                            self.ctx.error(
-                                "code.filesystem: CODEOWNERS rule limit exceeded; ownership incomplete"
-                            )
-                            rules = []
-                            self._ownership_exhausted.add(root)
-                            break
-                        rules.append((parts[0], parts[1:]))
-            except (OSError, RuntimeError, ValueError):
-                self.ctx.error(f"code.filesystem: could not read {cand}")
-            break
-        return rules
-
-    def _owner_for(self, root: Path, rel_root: str) -> str | None:
-        if self.owner:
-            return self.owner
-        root = root.absolute()
-        rules = self._codeowners(root)
-        if root in self._ownership_exhausted:
-            return None
-        key = (root, rel_root)
-        if key in self._owner_cache:
-            return self._owner_cache[key]
-        # Preserve the per-lookup cap and limit aggregate work across many
-        # unique paths. Cache hits consume no steps. Exhaustion is reported as
-        # incomplete ownership rather than assigning a potentially wrong owner.
-        root_remaining = self._ownership_steps_remaining.get(root, MAX_ROOT_OWNERSHIP_STEPS)
-        budget = OwnershipBudget(min(MAX_OWNERSHIP_STEPS, root_remaining))
-        initial = budget.remaining
-        try:
-            # Last matching rule wins, including ownerless exclusions. Stop at
-            # that rule instead of repeatedly re-evaluating overridden rules.
-            for pattern, owners in reversed(rules):
-                if _codeowners_match(pattern, rel_root, budget):
-                    self._owner_cache[key] = ", ".join(owners) if owners else None
-                    return self._owner_cache[key]
-        except OwnershipLimitError:
-            self._ownership_exhausted.add(root)
-            self.ctx.error("code.filesystem: CODEOWNERS processing budget exceeded; ownership incomplete")
-        finally:
-            remaining = max(0, root_remaining - (initial - budget.remaining))
-            self._ownership_steps_remaining[root] = remaining
-            if remaining == 0 and root not in self._ownership_exhausted:
-                self._ownership_exhausted.add(root)
-                self.ctx.error(
-                    "code.filesystem: CODEOWNERS aggregate processing budget exceeded; ownership incomplete"
-                )
-        self._owner_cache[key] = None
-        return None
-
-    def _owners_for_files(self, root: Path, files: Iterable[str]) -> tuple[str | None, dict[str, str]]:
-        paths = sorted(set(files))
-        by_file = {rel: owner for rel in paths if (owner := self._owner_for(root, rel))}
-        owners = set(by_file.values())
-        if len(owners) == 1 and len(by_file) == len(paths):
-            return owners.pop(), by_file
-        # A project finding summarizes many files. Do not name one file's owner
-        # as the owner of unrelated files if CODEOWNERS has differing rules.
-        return None, by_file
-
     # ----------------------------------------------------------------- emits
     def _base(
         self,
@@ -4800,11 +4562,11 @@ class FilesystemConnector(BaseConnector):
     ) -> None:
         """Record a project's owner, history, inventory and agent indicators."""
         matches = evidence.matches
-        git = self._git_info(root, proj.root)
+        git = self.ownership.git_info(root, proj.root)
         f.metadata.update(git)
         if git.get("last_commit"):
             f.last_seen = git["last_commit"]
-        f.owner, by_file = self._owners_for_files(root, (rel for _, rel, _ in matches))
+        f.owner, by_file = self.ownership.owners_for_files(root, (rel for _, rel, _ in matches))
         f.owner = f.owner or (git.get("last_author_email") if not by_file else None) or self.owner
         if by_file:
             f.metadata["codeowners_by_file"] = by_file
@@ -4926,7 +4688,7 @@ class FilesystemConnector(BaseConnector):
             f.metadata["agent_definitions"] = defs
             f.add_capability("multi-agent")
         f.kind = Kind.AGENT_CONFIG
-        f.owner, by_file = self._owners_for_files(root, files)
+        f.owner, by_file = self.ownership.owners_for_files(root, files)
         f.owner = f.owner or self.owner
         if by_file:
             f.metadata["codeowners_by_file"] = by_file
@@ -5145,7 +4907,7 @@ class FilesystemConnector(BaseConnector):
                 f.metadata["disabled"] = True
         f.metadata["remote_urls"] = remote_hosts
         f.metadata["client"] = _mcp_client_for(rel)
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.MCP_SERVER
         if sig:
@@ -5214,7 +4976,7 @@ class FilesystemConnector(BaseConnector):
             self._describe_langgraph_manifest(f, rel, data)
         elif kind == "crewai":
             self._describe_crewai_agents(f, rel, data)
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         if validation.incomplete:
             # Evidence of the protocol, never of an agent. Its validation
@@ -5309,7 +5071,7 @@ class FilesystemConnector(BaseConnector):
         agent_flow = any(m.extra.get("verified_agent") for m, _ in hits)
         noun = "agent workflow" if agent_flow else "AI workflow"
         f.title = f"Exported {noun} ({', '.join(sorted(names))}): {rel}"
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.AGENT if agent_flow else Kind.WORKFLOW
         f.metadata["agent_flow"] = agent_flow
@@ -5363,7 +5125,7 @@ class FilesystemConnector(BaseConnector):
         f.metadata["resources"] = resources
         if names_found:
             f.metadata["names"] = names_found
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.INFRA
         return f
@@ -5404,7 +5166,7 @@ class FilesystemConnector(BaseConnector):
             f.add_tag("test-code-only")
         f.metadata["providers"] = sorted({m.signature_id for m, _ in hits})
         f.metadata["count"] = len(hits)
-        f.owner = self._owner_for(root, rel) or f.owner
+        f.owner = self.ownership.owner_for(root, rel) or f.owner
         finalize(f, self.index)
         f.kind = Kind.SECRET
         return f

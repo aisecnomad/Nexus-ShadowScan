@@ -109,3 +109,56 @@ moved name (`_redacted_source`) is called solely from `filesystem.py`, so
 existing test seams keep their meaning; the forwarding-pattern caveat above
 still applies to any further move of a patched name. The four collaborator-class moves of the decision remain open,
 and the class itself is unchanged.
+
+## Status (2026-10-17)
+
+Being implemented step by step, one commit per group in the order ownership,
+walk, file scan, findings, moving code without changing it apart from renaming
+the methods other classes now call; the collaborators are classes the façade
+constructs and wires, not mixins. The line ranges above are those of
+2026-10-01; the groups were derived again from the current call graph, and a
+method that served two groups went where it needed the fewest calls across
+them.
+
+1. **Ownership** moved into `ownership.CodeOwnership`: `git_info` (was
+   `_git_info`), `owner_for` (`_owner_for`), `owners_for_files`
+   (`_owners_for_files`) and the private `_codeowners_directory`, `_codeowners`
+   and `_read_codeowners`, with their per-root caches, step budgets
+   (`MAX_ROOT_OWNERSHIP_STEPS`) and git identity limits. `scan_tree` brackets
+   every root with `begin_scan` and `end_scan`; CODEOWNERS is still read
+   through the scan root descriptor the walk opened.
+
+The walk, file scan and findings groups (steps 2 to 4) are still methods of the
+class.
+
+`filesystem.py` still re-exports every name that was importable from it before
+(patch a name in its defining module): those it no longer uses are explicit
+`name as name` imports, pinned with the earlier ones in
+`tests/unit/test_negative_context.py`. Tests patch the collaborator class or
+its module instead of `FilesystemConnector` or `filesystem.py`, with no
+forwarding or module-class replacement.
+
+Verification, for each step against main (8c72467): the moved code produced the
+same output as the unchanged code on 165 inputs — the offline demo; the nine
+corpora `make evaluate` runs; `shadowscan code` on
+`tests/fixtures/sample_repo`, the ten ShadowBench code repositories, `docs/`,
+`tools/` and the repository root, each with no option, `--include-tests`,
+`--no-secrets`, `--triage`, `--strict-coverage` and `--inventory
+agent-card.yaml` (the root and a Git tree also with `--diff-base HEAD~1`); and
+hand-made trees for CODEOWNERS ownership, links, oversize, special and
+non-regular entries, nested project roots, lockfiles, submodules and Git
+metadata, scanned through `code.filesystem` (with limit, `include`, exclusion,
+multi-root and source-granularity options), `code.github` and `code.gitlab`.
+JSON reports, exit codes and console output were compared; the only fields
+ignored are those that differed between two runs of the unchanged code: start
+and finish times, the evaluation reports' timings and their digest of the
+scanner's own source, and the connector-run window in `endpoint.inventory`
+lifecycle metadata (the demo's console lines, logged by connectors running in
+parallel, were compared regardless of order). The 13,245 tests of the 197 test
+modules that touch the code scanner, with the repository policy tests, pass as
+on main, apart from wall-clock budget tests that fail intermittently under load
+on main too. Not verified: the public repositories of the 2026-10-01 field scan
+(nothing was cloned), live clone and API modes of `code.github` and
+`code.gitlab`, Git 2.45+ metadata (the runner had Git 2.43, so `use_git` and
+`diff_base` took their failure paths) and permission-denied reads (the runner
+was root).

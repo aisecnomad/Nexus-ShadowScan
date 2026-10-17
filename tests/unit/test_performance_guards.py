@@ -17,6 +17,7 @@ import pytest
 from shadowscan.config import ConnectorSpec, ScanConfig
 from shadowscan.connectors.base import ConnectorContext, ConnectorError
 from shadowscan.connectors.code import filesystem as filesystem_module
+from shadowscan.connectors.code import ownership as ownership_module
 from shadowscan.connectors.code.filesystem import (
     DEADLINE_MARGIN_MIN_SECONDS,
     DEFAULT_OVERSIZE_SKIP_GLOBS,
@@ -59,7 +60,9 @@ def _fake_clock(monkeypatch, *, step: float) -> list[float]:
         clock[0] += step
         return original(path, max_bytes, errors, **options)
 
+    # Sources are read by the file scan, CODEOWNERS by the ownership collaborator.
     monkeypatch.setattr(filesystem_module, "read_text", read_text)
+    monkeypatch.setattr(ownership_module, "read_text", read_text)
     return clock
 
 

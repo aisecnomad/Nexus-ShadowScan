@@ -71,8 +71,10 @@ def test_source_and_ownership_reads_share_one_root_descriptor(tmp_path, index, m
         reads.append((Path(path), kwargs.get("dir_fd")))
         return read_text(path, *args, **kwargs)
 
-    monkeypatch.setattr("shadowscan.connectors.code.filesystem.open_confined_directory", recording)
-    monkeypatch.setattr("shadowscan.connectors.code.filesystem.read_text", reading)
+    # The walk opens the root and reads sources; ownership verifies the root and reads CODEOWNERS.
+    for module in ("filesystem", "ownership"):
+        monkeypatch.setattr(f"shadowscan.connectors.code.{module}.open_confined_directory", recording)
+        monkeypatch.setattr(f"shadowscan.connectors.code.{module}.read_text", reading)
     findings, ctx = _run(index, tmp_path)
     # The second open verifies the root's identity before ownership lookup;
     # every source and CODEOWNERS read stays on the original descriptor.
