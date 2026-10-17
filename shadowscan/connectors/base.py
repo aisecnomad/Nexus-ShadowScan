@@ -42,6 +42,14 @@ from typing import Any, ClassVar, NoReturn
 
 from shadowscan.connectors import offline as _offline
 from shadowscan.connectors.offline import OfflineInputBudget
+from shadowscan.coverage import (
+    BLINDING,
+    PARTIAL,
+    CoverageGap,
+    CoverageLedger,
+    CoveragePolicy,
+    validate_max_coverage_gap,
+)
 from shadowscan.models import Finding, ScanStats, Surface, now_iso
 from shadowscan.signatures import SignatureIndex, get_index
 from shadowscan.utils.files import changed_since
@@ -157,6 +165,15 @@ class ConnectorContext:
         self.dump_path: str | None = None
         self._resolved_config: dict[str, Any] = {}
         self._diagnostic_counts: dict[str, int] = {}
+        # Coverage gaps accumulate here and are judged once, at the end of the
+        # run, against the policy. A blinding gap marks the scan incomplete the
+        # moment it is recorded, so an early stop is never tolerated.
+        self._coverage = CoverageLedger()
+        self._coverage_policy = CoveragePolicy()
+        # Set by the engine so a connector that overruns its deadline can still
+        # surrender the findings it completed. Discarding them would turn an
+        # overrun into an empty report that looks clean.
+        self.partial_sink: Callable[[list[Finding]], None] | None = None
         # Live collection scope evidence (the attest_* methods). The engine reads it
         # only for a built-in connector that declares attests_live_scope.
         self._scope_principal: dict[str, str] | None = None
@@ -253,6 +270,90 @@ class ConnectorContext:
         if self.stats is not None:
             self.stats.incomplete = True
         self._diagnostic(msg, warning=False)
+
+    # ------------------------------------------------------- coverage gaps
+    def set_coverage_policy(self, policy: CoveragePolicy) -> None:
+        """Install the budget this connector's partial gaps are judged against."""
+        self._coverage_policy = policy
+
+    @property
+    def coverage_policy(self) -> CoveragePolicy:
+        return self._coverage_policy
+
+    def coverage_gap(
+        self,
+        msg: str,
+        *,
+        path: str = "",
+        entries: int = 1,
+        blinding: bool = False,
+        quiet: bool = False,
+        full_weight: bool = False,
+    ) -> None:
+        """Record content the scan could not read, and say so in the report.
+
+        A *blinding* gap (the walk stopped, a page was refused, a deadline
+        expired) marks the scan incomplete at once: the scanner cannot bound
+        what it missed. A partial gap costs ``entries`` of known coverage and
+        is judged at the end of the run against :class:`CoveragePolicy`, so a
+        handful of unreadable entries in a large tree no longer invalidates an
+        otherwise complete scan. Either way the gap is reported.
+
+        ``quiet`` records the gap against the budget without a second
+        diagnostic line, for a caller that already emitted one representative
+        message for a run of identical gaps. The budget still sees every entry,
+        so a tree planted with thousands of them is not tolerated.
+
+        ``full_weight`` keeps the path discount off, for a gap that is as
+        dangerous in a fixture directory as in a deployed one.
+        """
+        gap = CoverageGap(
+            detail=self.sanitize_message(msg),
+            path=path,
+            kind=BLINDING if blinding else PARTIAL,
+            entries=max(0, entries),
+            full_weight=full_weight,
+        )
+        self._coverage.record(gap)
+        if gap.blinding:
+            # Fail closed immediately; no budget applies to an unbounded gap.
+            self.error(msg)
+            return
+        if quiet:
+            return
+        # Still visible as a warning, but it does not by itself condemn the
+        # scan. ``finalize_coverage`` takes that decision once, with the
+        # whole run's gaps in view.
+        self.warn(msg, incomplete=False)
+
+    def note_coverage_examined(self, count: int) -> None:
+        """Raise the examined-entry floor used as the gap ratio's denominator."""
+        self._coverage.note_examined(count)
+
+    def add_coverage_examined(self, delta: int = 1) -> None:
+        """Count entries reached, summed across roots."""
+        self._coverage.add_examined(delta)
+
+    def finalize_coverage(self) -> None:
+        """Judge the run's partial gaps against the policy and publish the ledger.
+
+        Called once, after ``analyze()``. Tolerated gaps are published under
+        ``stats.coverage`` with their paths and weights, so a reader sees every
+        skipped entry whether or not the exit code changed.
+        """
+        if self.stats is None:
+            return
+        if not self._coverage.gaps:
+            return
+        if self._coverage.examined <= 0:
+            self._coverage.note_examined(self.stats.objects_examined)
+        incomplete, summary = self._coverage.evaluate(self._coverage_policy)
+        self.stats.coverage = summary
+        if incomplete:
+            self.stats.incomplete = True
+        message = self._coverage.verdict_message(self._coverage_policy)
+        if message is not None:
+            self._diagnostic(f"{self.stats.connector}: {message}", warning=not incomplete)
 
     def diagnostics_recorded(self) -> int:
         """Warnings and errors recorded so far, including those past the report's diagnostic limit.
@@ -429,6 +530,26 @@ class BaseConnector(ABC):
     # credential. Third-party connectors are never attested, whatever they declare.
     attests_live_scope: ClassVar[bool] = False
     scope_options: ClassVar[frozenset[str]] = frozenset()
+    # Whether this connector can collect from a live API at all. False for one
+    # that only replays an export someone else produced: a Kubernetes manifest
+    # dump, a gateway log, an endpoint inventory. Declared rather than inferred
+    # from whether ``collect`` raises, so the published count of live
+    # connectors is a fact the connector states and a test can pin, not a
+    # guess from an exception message. ``collect`` must still raise.
+    live_collection: ClassVar[bool] = True
+
+    @classmethod
+    def estimate_timeout_seconds(cls, config: dict[str, Any], default: float) -> float | None:
+        """Propose a larger deadline than *default* for a large input, or None.
+
+        The engine calls this only when the operator left the default deadline
+        in place, and never lets the result exceed its own ceiling. An
+        estimate must be cheap: it runs before the connector starts and its
+        cost is charged to the scan. Returning None keeps *default*, which is
+        right for a connector whose work does not grow with an input it can
+        measure beforehand — most API connectors.
+        """
+        return None
 
     @classmethod
     def inherits_instance_credentials_approval(cls) -> bool:
@@ -699,7 +820,12 @@ class BaseConnector(ABC):
         self.ctx.stats = stats
         self.ctx.dump_path = None
         self._offline_bytes_read = 0
+        self.ctx.set_coverage_policy(self._resolve_coverage_policy())
         findings: list[Finding] = []
+        if self.ctx.partial_sink is not None:
+            # Registered before any work, so even a deadline reached during
+            # collection surrenders whatever analysis had already produced.
+            self.ctx.partial_sink(findings)
         try:
             self.ctx.check_deadline()
             if self.offline:
@@ -735,9 +861,49 @@ class BaseConnector(ABC):
         except Exception as exc:  # noqa: BLE001 - connectors must never abort the whole scan
             self.ctx.error(f"{self.name}: {failure_summary(exc)}")
             self.log.debug("connector failure (%s)", type(exc).__name__)
+        # After analysis, so the ledger sees every gap the run recorded.
+        self.ctx.finalize_coverage()
         stats.finished_at = now_iso()
         stats.findings = len(findings)
         return findings
+
+    def coverage_is_strict(self) -> bool:
+        """Whether every gap, however small, marks this connector incomplete.
+
+        False here, so the gap budget applies. A connector with its own
+        strictness option (the code connectors' ``strict_coverage``) overrides
+        this; the option stays theirs rather than becoming one every connector
+        appears to accept.
+        """
+        return False
+
+    def coverage_gap_override(self) -> float | None:
+        """A gap budget from this connector's own configuration, or None.
+
+        None here: most connectors take the scan-wide policy. A connector that
+        documents its own ``max_coverage_gap`` reads it in an override, so the
+        key belongs to the connectors that advertise it rather than appearing
+        on every one.
+        """
+        return None
+
+    def _resolve_coverage_policy(self) -> CoveragePolicy:
+        """Build this run's gap budget: the connector's own setting, else the scan's.
+
+        Strictness wins over any budget: it restores the original accounting
+        in which a single unread entry marks the scan incomplete.
+        """
+        if self.coverage_is_strict():
+            return CoveragePolicy.strict()
+        raw = self.coverage_gap_override()
+        if raw is None:
+            # Injected by the engine from options.max_coverage_gap. Private,
+            # because it is a scan-wide policy rather than a key each
+            # connector independently accepts.
+            raw = self.ctx.config.get("_max_coverage_gap")
+        if raw is None:
+            return CoveragePolicy()
+        return CoveragePolicy(max_gap_ratio=validate_max_coverage_gap(raw))
 
 
 class _NoDump:

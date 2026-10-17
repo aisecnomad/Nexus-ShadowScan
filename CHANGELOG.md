@@ -5,6 +5,112 @@ summarizes each release for people who install and operate ShadowScan.
 
 ## Unreleased
 
+### Coverage gaps are budgeted, so exit 3 means something again (October 17)
+
+- A scan reported itself incomplete over any unread byte. One dangling
+  symbolic link under `tests/certs/` made `psf/requests` exit 3, and 43 of the
+  87 repositories in `benchmarks/shadow-ai-discovery` are marked incomplete
+  for the same class of reason. An exit code that fires on half of real
+  repositories teaches operators to suppress it, which is what strict
+  accounting was meant to prevent.
+- New `shadowscan/coverage.py` records each gap with the entries it costs and
+  the path it occurred at, and takes the verdict once at the end of the run. A
+  *blinding* gap -- the walk stopped, a page was refused, a deadline expired,
+  a manifest or agent card would not parse, undecodable bytes outside a test
+  or vendored path, any sanitizer limit -- marks the scan incomplete at once,
+  with no budget: the scanner cannot bound what it missed. A *partial* gap
+  costs a known amount and accumulates against `options.max_coverage_gap` /
+  `--max-coverage-gap`, 2% of examined entries with a ceiling of 100 weighted
+  entries.
+- Gaps under paths that cannot hold deployed code (`node_modules`, `vendor`,
+  test fixtures) are weighted to a quarter, not ignored, so a tree seeded with
+  thousands still exhausts the budget. Undecodable content is charged at full
+  weight whatever the path.
+- Tolerated gaps are published in full under `stats.coverage` with their
+  paths, weights and a one-line verdict, so nothing is hidden by being
+  tolerated. `strict_coverage` and `--max-coverage-gap 0` restore the previous
+  accounting exactly.
+
+### Connector deadlines scale to their input, and an overrun keeps its findings (October 17)
+
+- A fixed 120-second deadline truncated large repositories: the walk hit it
+  mid-tree and the connector reported nothing, which reads as a clean result
+  on every surface except the exit code. `langchain-ai/langchain` produced
+  zero findings at the default. A new `estimate_timeout_seconds` engine hook
+  lets a connector propose a budget from a cheap bounded probe of its own
+  input; `code.filesystem` counts entries up to 20,000 and scales in
+  proportion, capped at 30 minutes. An explicit `--connector-timeout-seconds`
+  is honoured unchanged. The same scan now completes with 51 findings.
+- A connector that still overruns surrenders the findings it had already
+  produced and sanitized, instead of having them discarded. The scan is
+  marked incomplete either way; dropping them turned an overrun into an empty
+  report. The timeout diagnostic now says results are truncated and names the
+  option to raise.
+
+### Risk scoring gains capability interactions (October 17)
+
+- The additive model could not express that two capabilities are worse
+  together than apart: `browsing` with `code-exec` is the
+  prompt-injection-to-execution path, and private data with untrusted content
+  and an outbound channel is one injection from exfiltration, yet each scored
+  as any unrelated pair of the same weights. Seven combinations in
+  `COMBINATION_WEIGHTS` add a named `combination:` factor when the whole set
+  is present. The capability sets are fixed so an id means the same thing in
+  every report; only the weights are tunable, under
+  `options.risk_weights.combinations`. Factors still sum to the score.
+
+### OCSF events always carry the required `time` attribute (October 17)
+
+- `time` is required on the Detection Finding class, and the reporter omitted
+  it whenever no scan timestamp parsed -- reachable in ordinary use, since
+  `fleet.merge` sets `started_at` to the empty string for an undated merge. A
+  validating pipeline rejects an event missing a required attribute, so the
+  whole report was discarded rather than read. The render time is published
+  instead, with `unmapped.time_source` set to `report_render` so a consumer
+  can tell a substituted timestamp from a scan's own.
+- `tests/fixtures/ocsf/detection_finding_1.1.0.json` holds the class's
+  attribute requirements and drives the conformance tests, as the vendored
+  OASIS schema does for SARIF. It states that it is a transcription, because
+  OCSF serves its schema rather than distributing it;
+  `python -m tools.ocsf_schema --refresh` replaces it from the live
+  definition, and `--check` (wired into CI) fails if the reporter's version
+  moves without it.
+
+### Lint, tests and tooling (October 17)
+
+- Ruff's flake8-bandit rules (`S`) are enabled for the shipped package. All 38
+  findings were false positives -- SafeLoader subclasses, XML parsing behind
+  an entity-declaration guard, argv-list subprocess calls, environment
+  variable names -- and each now carries a `noqa` with its reason, so they are
+  reviewed decisions rather than unexamined gaps and a new occurrence fails
+  CI. Tests and tooling are exempt, where a hard-coded token is the point of
+  the test.
+- `C901` was never enabled and 119 functions exceed complexity 15, the worst
+  at 127. `tools/complexity_gate.py` measures against that target and compares
+  with `tools/complexity_baseline.json`: existing debt stays buildable, a new
+  or worsened function fails CI, and improvements can only ratchet down.
+- 62 timing guards measured wall time for what is an algorithmic, CPU-bound
+  question, so a parallel run failed linear code. They measure CPU time now,
+  which contention cannot inflate; `tests/perf.py` carries a calibrated
+  budget, a single retry and a `load_factor` for the few guards where elapsed
+  real time is genuinely the subject.
+- `tests/unit/test_aws_stubber.py` exercises AWS collection through botocore's
+  own `Stubber`: continuation tokens, the page cap, pages kept across a
+  mid-listing failure, real `ClientError` shapes, and that an SDK error
+  message never reaches the report. The existing tests replace `_paginate`
+  with a `Mock`, which skips all of it in the largest connector in the
+  codebase. These found `AuthorizationError` -- Organizations and SNS --
+  missing from `_DENIED_CODES`, so those denials read as unexplained failures
+  instead of naming a missing permission.
+- `live_collection` is declared per connector, pinning the README's new
+  "28 of the 38 connectors collect from a live API" against the classes, with
+  a test that each connector declaring no live mode actually refuses to
+  collect.
+- The slow timed sweeps carry a `slow` marker and `make test-fast` deselects
+  them, taking those modules from 105 seconds to 0.4. CI runs the full suite
+  as before, and a consistency test fails the build if any workflow adds
+  `-m "not slow"`.
+
 ### README: benchmark chart generated from the committed ShadowBench cases run (October 16)
 
 - From #249: the README's Benchmarks section gains a cross-tool chart. It is

@@ -1,4 +1,7 @@
 """CSV reports must not start a spreadsheet formula under any common delimiter."""
+# Timing guards here measure CPU time, not wall time: they bound algorithmic
+# cost, and wall time additionally measures whatever else the machine is doing,
+# which failed honest code under a parallel run. See tests/perf.py.
 
 from __future__ import annotations
 
@@ -148,9 +151,9 @@ def test_neutralising_a_long_whitespace_run_is_linear(value):
     # The earlier pattern needed about five seconds for 40,000 characters and
     # four times as long for every doubling, so a long run in a title or owner
     # stalled "-f csv".
-    started = time.perf_counter()
+    started = time.process_time()
     cell = _safe_cell(value)
-    assert time.perf_counter() - started < 1.0
+    assert time.process_time() - started < 1.0
     assert cell.replace("'", "") == value
 
 
@@ -163,8 +166,8 @@ def test_a_hostile_finding_title_renders_quickly():
         resource="repo",
         resource_type="repository",
     )
-    started = time.perf_counter()
+    started = time.process_time()
     stats = [ScanStats(connector="code.filesystem", started_at=now_iso())]
     report = render_csv(ScanResult(findings=[finding], stats=stats))
-    assert time.perf_counter() - started < 1.0
+    assert time.process_time() - started < 1.0
     assert next(csv.DictReader(io.StringIO(report)))["title"].endswith("'=1+1")

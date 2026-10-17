@@ -39,6 +39,7 @@ from shadowscan.models import (
 from shadowscan.risk import (
     AUTONOMY_WEIGHTS,
     CAPABILITY_WEIGHTS,
+    COMBINATION_WEIGHTS,
     GOVERNANCE_WEIGHTS,
     KIND_BASE,
     PROVIDER_WEIGHTS,
@@ -367,6 +368,13 @@ def _reference_assess(finding: Finding, index, inventory_present: bool) -> Risk:
             w, d = TAG_WEIGHTS[tag]
             if w:
                 factors.append(RiskFactor(f"tag:{tag}", d, w))
+    # Capability interactions, in the same position as the real scorer emits
+    # them: after the individual capabilities, before providers.
+    present = set(finding.capabilities)
+    for cid in sorted(COMBINATION_WEIGHTS):
+        caps, weight, description = COMBINATION_WEIGHTS[cid]
+        if weight and caps <= present:
+            factors.append(RiskFactor(f"combination:{cid}", description, weight))
     for pid in finding.model_providers:
         if pid in PROVIDER_WEIGHTS:
             w, d = PROVIDER_WEIGHTS[pid]

@@ -284,6 +284,7 @@ from shadowscan.connectors.posture import (
 )
 from shadowscan.connectors.posture import assess as assess_posture
 from shadowscan.connectors.posture import parseable as posture_parseable
+from shadowscan.coverage import CoverageGap, validate_max_coverage_gap
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.signatures import Match, Signature
 from shadowscan.signatures.loader import builtin_signature_dir
@@ -1201,6 +1202,63 @@ def _scan_timeout(value: Any) -> float:
 
 
 class FilesystemConnector(BaseConnector):
+    #: Entries a probe counts before it stops and extrapolates. Bounded so the
+    #: estimate costs a fraction of a second even on a huge tree.
+    _PROBE_LIMIT = 20_000
+    #: Entries the default deadline comfortably covers. Above this the budget
+    #: grows in proportion, because the walk's cost is roughly linear in
+    #: entries once signature matching dominates.
+    _ENTRIES_PER_DEFAULT_BUDGET = 12_000
+
+    def coverage_is_strict(self) -> bool:
+        # This connector's own option, parsed in __init__.
+        return self.strict_coverage
+
+    def coverage_gap_override(self) -> float | None:
+        """This connector's documented ``max_coverage_gap``, if the scan set one."""
+        raw = self.ctx.get("max_coverage_gap")
+        return None if raw is None else validate_max_coverage_gap(raw)
+
+    @classmethod
+    def estimate_timeout_seconds(cls, config: dict[str, Any], default: float) -> float | None:
+        """Scale the deadline to the size of the tree about to be walked.
+
+        A fixed deadline silently truncated large repositories: the walk hit
+        it mid-tree and the connector reported nothing, which reads as a clean
+        result everywhere except the exit code. The probe counts entries up to
+        ``_PROBE_LIMIT`` and stops; reaching the limit means "at least this
+        many", which is all the estimate needs.
+        """
+        try:
+            roots = [Path(p) for p in cls.scanned_local_paths(config)]
+        except Exception:  # noqa: BLE001 - an unusable path is the scan's problem, not the estimate's
+            return None
+        if not roots:
+            return None
+        entries = cls._probe_entry_count(roots)
+        if entries < cls._ENTRIES_PER_DEFAULT_BUDGET:
+            return None
+        return default * (entries / cls._ENTRIES_PER_DEFAULT_BUDGET)
+
+    @classmethod
+    def _probe_entry_count(cls, roots: list[Path]) -> int:
+        """Count entries under *roots*, stopping at ``_PROBE_LIMIT``.
+
+        Directory names the walk always prunes are pruned here too, so the
+        estimate reflects the tree that will actually be read.
+        """
+        seen = 0
+        for root in roots:
+            if not root.is_dir():
+                seen += 1
+                continue
+            for _dirpath, dirnames, filenames in os.walk(root, onerror=lambda _exc: None):
+                dirnames[:] = [d for d in dirnames if d not in DEFAULT_EXCLUDES]
+                seen += len(filenames)
+                if seen >= cls._PROBE_LIMIT:
+                    return cls._PROBE_LIMIT
+        return seen
+
     @classmethod
     def cache_roots_separately(cls, roots: list[Any], root_ids: Any, *, labelled: bool) -> bool:
         # Engine hook: each repository root is an independent incremental-cache unit.
@@ -1284,6 +1342,11 @@ class FilesystemConnector(BaseConnector):
         "use_git": (
             "opt in to offline git author/date enrichment for trusted metadata; requires Git 2.45+ "
             "(default false)"
+        ),
+        "max_coverage_gap": (
+            "share of examined entries that may be left unread before this scan reports itself "
+            "incomplete (default: the scan-wide options.max_coverage_gap, 0.02); 0 fails on any "
+            "gap. A gap the scanner cannot bound always fails closed, whatever this allows"
         ),
         "strict_coverage": (
             "report coverage gaps (unread analyzable oversize files, non-regular entries named like "
@@ -2070,11 +2133,16 @@ class FilesystemConnector(BaseConnector):
         if self.strict_coverage:
             self.ctx.error(f"{message}; coverage incomplete")
         else:
-            self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+            # One entry of known, bounded lost coverage: budgeted, not fatal.
+            self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1)
 
     def _count_entry(self, walk: _WalkCounters, root: Path) -> bool:
         """Count one examined entry (a file or a link); False once ``max_files`` is reached."""
         walk.examined += 1
+        # The denominator of the coverage-gap ratio: entries the walk reached,
+        # not findings, so a gap is judged against the tree it occurred in.
+        # Summed across roots, because walk counters restart at each one.
+        self.ctx.add_coverage_examined(1)
         if walk.examined > self.max_files:
             self.ctx.error(f"code.filesystem: max_files ({self.max_files}) reached under {root}")
             self._root_listing_incomplete = True
@@ -2106,18 +2174,20 @@ class FilesystemConnector(BaseConnector):
             self._lockfile_gap(rel, "symbolic link is not followed")
             return True
         # A single representative diagnostic per root keeps hostile trees
-        # from filling the report with thousands of link names.
+        # from filling the report with thousands of link names. The budget
+        # still counts every one of them, via the quiet ledger entries.
         walk.link_gaps += 1
-        if root not in self._symlink_warnings:
-            self._symlink_warnings.add(root)
-            # Stays fail-closed: the target's bytes exist and other tools may
-            # read them, so an unscanned target is lost coverage a repository
-            # could hide behind — not a file-attributable input defect.
-            message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
-            if self.strict_coverage:
+        first = root not in self._symlink_warnings
+        self._symlink_warnings.add(root)
+        # The target's bytes exist and other tools may read them, so an
+        # unscanned target is lost coverage a repository could hide behind —
+        # not a file-attributable input defect.
+        message = f"code.filesystem: skipped symbolic link {rel} whose target is unavailable or unscanned"
+        if self.strict_coverage:
+            if first:
                 self.ctx.error(f"{message}; coverage incomplete")
-            else:
-                self.ctx.warn(f"{message}; coverage incomplete", incomplete=True)
+            return True
+        self.ctx.coverage_gap(f"{message}; coverage gap", path=rel, entries=1, quiet=not first)
         return True
 
     def _reserved_budget(self, rel: str, path: Path, size: int, budget: float) -> float:
@@ -2674,16 +2744,32 @@ class FilesystemConnector(BaseConnector):
         for note in read_notes:
             self._note_file(rel, note)
         for issue in read_errors:
-            if issue == "file exceeds max_file_size" and not self.strict_coverage:
-                self.ctx.warn(
-                    f"code.filesystem: {rel}: skipped, {issue}; coverage incomplete",
-                    incomplete=True,
+            if self.strict_coverage:
+                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+            elif issue == "file exceeds max_file_size":
+                self.ctx.coverage_gap(
+                    f"code.filesystem: {rel}: skipped, {issue}; coverage gap", path=rel, entries=1
                 )
             else:
-                # Undecodable analyzable files stay fail-closed: editors and
-                # runtimes tolerate bytes the scanner cannot decode, so a NUL
-                # in a CLAUDE.md could otherwise hide content from the scan.
-                self.ctx.error(f"code.filesystem: {rel}: {issue}")
+                # Editors and runtimes tolerate bytes the scanner cannot
+                # decode, so undecodable content is how a definition would be
+                # hidden from it: a NUL in a settings.json, an agent document
+                # or a Dockerfile. That stays fail-closed.
+                #
+                # The exception is a path that by construction holds test
+                # inputs or vendored code, where a file of deliberately
+                # invalid bytes is ordinary and no deployed agent lives. Those
+                # are charged to the budget at full weight -- never discounted
+                # the way an unreadable fixture is -- so a tree seeded with
+                # them still exhausts it.
+                incidental = CoverageGap(detail="", path=rel).relevance() == "low"
+                self.ctx.coverage_gap(
+                    f"code.filesystem: {rel}: {issue}",
+                    path=rel,
+                    entries=1,
+                    blinding=not incidental,
+                    full_weight=True,
+                )
         if text is None:
             return None
         if len(text) <= LFS_POINTER_MAX_BYTES and text.startswith(_LFS_POINTER_TEXT):
@@ -2836,6 +2922,13 @@ class FilesystemConnector(BaseConnector):
         ``defect`` routes recognized input failures through
         :meth:`_input_defect` for a distinct diagnostic. Every issue marks
         coverage incomplete, regardless of diagnostic severity.
+
+        These stay errors rather than budgeted coverage gaps. A parser or
+        validator issue means a file the scanner *selected* -- a manifest, an
+        agent card, a tool catalog -- could not be read, and that is the one
+        place a definition would be hidden from it. The budget is for content
+        whose loss is incidental; this is not. Incidental unreadable content
+        is charged to the budget in :meth:`_read_source` instead.
         """
         for issue in issues:
             if defect and issue.startswith(self._SYNTAX_DEFECT_PREFIXES):

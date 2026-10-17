@@ -68,6 +68,62 @@ CAPABILITY_WEIGHTS: dict[str, tuple[int, str]] = {
     "rag": (3, "retrieves internal documents"),
 }
 
+#: Capability sets whose joint risk exceeds the sum of their parts.
+#:
+#: A purely additive model cannot express an interaction. ``code-exec`` plus
+#: ``browsing`` scores the same as any other two capabilities of those weights,
+#: yet that specific pair is the prompt-injection-to-execution path: untrusted
+#: text the agent fetches becomes instructions it runs. The combinations below
+#: add an explicit factor when every capability in the set is present, so the
+#: pairing is visible in the breakdown rather than hidden inside a total.
+#:
+#: These are author-chosen like every other weight here, and the same caveat in
+#: ``docs/severity.md`` applies: they are not fitted to incident outcomes. They
+#: are listed separately from ``CAPABILITY_WEIGHTS`` so an operator can tune or
+#: disable the interaction model without touching the base weights.
+COMBINATION_WEIGHTS: dict[str, tuple[frozenset[str], int, str]] = {
+    # Simon Willison's "lethal trifecta": private data, exposure to untrusted
+    # content, and a way to send data out. Any two are recoverable; all three
+    # make exfiltration a single prompt injection away.
+    "lethal-trifecta": (
+        frozenset({"data-access", "browsing", "saas-actions"}),
+        15,
+        "reads private data, consumes untrusted content and can send data outward: "
+        "a prompt injection can exfiltrate in one step",
+    ),
+    "injection-to-execution": (
+        frozenset({"browsing", "code-exec"}),
+        10,
+        "executes code and consumes untrusted web content: injected text reaches an interpreter",
+    ),
+    "unattended-execution": (
+        frozenset({"autonomous", "code-exec"}),
+        10,
+        "executes code with no human in the loop: nothing reviews what it runs",
+    ),
+    "unattended-write": (
+        frozenset({"autonomous", "saas-actions"}),
+        5,
+        "takes write actions in business systems with no human in the loop",
+    ),
+    "persistent-injection": (
+        frozenset({"memory", "browsing"}),
+        5,
+        "persists memory across sessions and consumes untrusted content: "
+        "an injection can outlive the session that delivered it",
+    ),
+    "delegated-execution": (
+        frozenset({"delegated-identity", "code-exec"}),
+        5,
+        "executes code while acting as someone else: actions attribute to the delegating identity",
+    ),
+    "fanout": (
+        frozenset({"multi-agent", "code-exec"}),
+        5,
+        "orchestrates other agents and executes code: one compromise reaches every delegate",
+    ),
+}
+
 TAG_WEIGHTS: dict[str, tuple[int, str]] = {
     "policy.privileged-scopes": (20, "holds privileged / administrative permissions"),
     "policy.data-access-scopes": (10, "holds broad data-read permissions (mail, files, chat, repos)"),
@@ -215,7 +271,15 @@ GOVERNANCE_FACTORS = frozenset(GOVERNANCE_WEIGHTS)
 # and the approval-bypass tags already score the evidence behind a high floor.
 AUTONOMY_WEIGHTS: dict[str, int] = {f"L{level.number}": 0 for level in LEVELS}
 RISK_BASES = frozenset({"combined", "danger"})
-_WEIGHT_GROUPS = ("kinds", "capabilities", "tags", "providers", "governance", "autonomy")
+_WEIGHT_GROUPS = (
+    "kinds",
+    "capabilities",
+    "combinations",
+    "tags",
+    "providers",
+    "governance",
+    "autonomy",
+)
 _KEY_RE = re.compile(r"[a-z0-9][a-z0-9._:-]{0,99}\Z")
 # Tags are open-ended (signature packs, plugins and identity types add their own), so an
 # unrecognised tag key cannot be rejected. It is reported once per process instead.
@@ -253,6 +317,12 @@ class RiskPolicy:
     capabilities: Mapping[str, tuple[int, str]] = field(default_factory=lambda: dict(CAPABILITY_WEIGHTS))
     tags: Mapping[str, tuple[int, str]] = field(default_factory=lambda: dict(TAG_WEIGHTS))
     providers: Mapping[str, tuple[int, str]] = field(default_factory=lambda: dict(PROVIDER_WEIGHTS))
+    # Capability sets whose joint risk exceeds the sum of their parts. Kept
+    # apart from ``capabilities`` so an operator can tune the interaction
+    # model without disturbing the base weights, or zero it out entirely.
+    combinations: Mapping[str, tuple[frozenset[str], int, str]] = field(
+        default_factory=lambda: dict(COMBINATION_WEIGHTS)
+    )
     governance: Mapping[str, int] = field(default_factory=lambda: dict(GOVERNANCE_WEIGHTS))
     basis: str = "combined"
     autonomy: Mapping[str, int] = field(default_factory=lambda: dict(AUTONOMY_WEIGHTS))
@@ -321,6 +391,19 @@ class RiskPolicy:
                     f"risk_weights.capabilities.{key} is not a capability{_did_you_mean(key, CAPABILITIES)}; "
                     f"use one of {', '.join(sorted(CAPABILITIES))}"
                 )
+        combinations = dict(COMBINATION_WEIGHTS)
+        for key, value in group("combinations", COMBINATION_WEIGHTS).items():
+            if key not in COMBINATION_WEIGHTS:
+                raise ValueError(
+                    f"risk_weights.combinations.{key} is not a capability "
+                    f"combination{_did_you_mean(key, COMBINATION_WEIGHTS)}; "
+                    f"use one of {', '.join(sorted(COMBINATION_WEIGHTS))}"
+                )
+            caps, _weight, description = COMBINATION_WEIGHTS[key]
+            # Only the weight is tunable: the capability set defines what the
+            # combination *is*, so redefining it would make one id mean two
+            # different things across reports.
+            combinations[key] = (caps, value, description)
         providers = group("providers")
         if known_providers is not None:
             for key in sorted(providers):
@@ -345,6 +428,7 @@ class RiskPolicy:
             capabilities=described(CAPABILITY_WEIGHTS, capabilities, "capability"),
             tags=described(TAG_WEIGHTS, tags, "tag"),
             providers=described(PROVIDER_WEIGHTS, providers, "provider"),
+            combinations=combinations,
             governance=governance,
             basis=basis,
             autonomy=autonomy,
@@ -533,6 +617,17 @@ def _weighted_factors(finding: Finding, index: SignatureIndex | None, policy: Ri
             w, d = policy.tags[tag]
             if w:
                 factors.append(RiskFactor(f"tag:{tag}", d, w))
+
+    # Interactions, after the individual capabilities so the breakdown reads
+    # as "these capabilities, and what holding them together enables".
+    # ``seen_caps`` holds only capabilities the policy weighs; match on the
+    # finding's own set so a combination still fires when an operator has
+    # zeroed one member's individual weight.
+    present = set(_strings(finding.capabilities))
+    for cid in sorted(policy.combinations):
+        caps, weight, description = policy.combinations[cid]
+        if weight and caps <= present:
+            factors.append(RiskFactor(f"combination:{cid}", description, weight))
 
     for pid in _strings(finding.model_providers):
         if pid in policy.providers:

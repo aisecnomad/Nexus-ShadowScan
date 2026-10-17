@@ -43,6 +43,33 @@ def scan(run_connector, root: Path, **config):
     return findings, ctx.stats
 
 
+def assert_coverage_gap(stats, rel: str | None = None) -> None:
+    """The file was not read, and the scan says so rather than looking clean.
+
+    Asserts the outcome, not the channel it arrives on. A skipped file is
+    named in a warning; the error, when the scan is incomplete, is the budget
+    verdict. In these tests one unread file of one or two examined is most of
+    the tree, so the budget is always exhausted -- which is the point: the
+    budget tolerates a few gaps in a large tree, never a gap that is the
+    tree. See shadowscan/coverage.py.
+    """
+    assert stats.incomplete, "an unread file must never leave the scan looking complete"
+    assert stats.warnings, "the skipped file must be named"
+    if rel is not None:
+        assert any(rel in warning for warning in stats.warnings), f"{rel} is not named in {stats.warnings}"
+    # Nothing but the budget verdict may be raised to error severity here.
+    assert all("budget" in error for error in stats.errors), stats.errors
+
+
+def assert_disclosed_without_a_gap(stats, rel: str | None = None) -> None:
+    """The file was skipped by policy, which costs no coverage and no exit code."""
+    assert not stats.incomplete, "a policy skip must not mark the scan incomplete"
+    assert not stats.errors, stats.errors
+    assert stats.warnings, "the skip must still be disclosed"
+    if rel is not None:
+        assert any(rel in warning for warning in stats.warnings), f"{rel} is not named in {stats.warnings}"
+
+
 def kinds(findings) -> list[Kind]:
     return [f.kind for f in findings]
 
@@ -233,7 +260,7 @@ def test_oversize_recorded_fixtures_stay_coverage_gaps(run_connector, tmp_path, 
     # silent default.
     write(tmp_path, rel, OVERSIZE)
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert stats.warnings and not stats.errors and stats.incomplete
+    assert_coverage_gap(stats)
 
 
 @pytest.mark.parametrize(
@@ -249,11 +276,11 @@ def test_oversize_test_fixtures_are_disclosed_without_a_gap(run_connector, tmp_p
     assert not stats.errors and not stats.incomplete
     assert [w for w in stats.warnings if rel in w and "skipped oversize test fixture" in w]
     _, stats = scan(run_connector, tmp_path, max_file_size=100, scan_secrets=False, include_tests=True)
-    assert stats.warnings and not stats.errors and stats.incomplete
+    assert_coverage_gap(stats)
     _, stats = scan(run_connector, tmp_path, max_file_size=100, scan_secrets=False, strict_coverage=True)
     assert stats.errors and stats.incomplete
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert stats.warnings and not stats.errors and stats.incomplete
+    assert_coverage_gap(stats)
 
 
 def test_oversize_test_fixtures_are_counted(run_connector, tmp_path, index):
@@ -291,7 +318,7 @@ def test_oversize_documentation_is_disclosed_without_a_gap(run_connector, tmp_pa
     assert [w for w in stats.warnings if rel in w and "max_file_size" in w]
     assert [f.frameworks for f in findings if f.resource_type == "project"] == [["framework.crewai"]]
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert stats.incomplete and not stats.errors
+    assert_coverage_gap(stats)
 
 
 @pytest.mark.parametrize(
@@ -312,8 +339,7 @@ def test_oversize_change_log_names_never_hide_read_content(run_connector, tmp_pa
     write(tmp_path, rel, f"import openai\nOPENAI_API_KEY = '{OPENAI_LIKE_KEY}'\n" + "#" * 2000 + "\n")
     findings, stats = scan(run_connector, tmp_path, max_file_size=1000)
     assert not findings
-    assert stats.incomplete and not stats.errors
-    assert [w for w in stats.warnings if rel in w and "coverage incomplete" in w]
+    assert_coverage_gap(stats, rel)
 
 
 def test_change_logs_are_not_documented_as_a_default_oversize_skip():
@@ -336,8 +362,7 @@ def test_oversize_documentation_and_fixtures_read_for_credentials_stay_gaps(run_
     write(tmp_path, rel, body + "x" * 2000)
     findings, stats = scan(run_connector, tmp_path, max_file_size=1000)
     assert Kind.SECRET not in kinds(findings)
-    assert stats.incomplete and not stats.errors
-    assert [w for w in stats.warnings if rel in w and "coverage incomplete" in w]
+    assert_coverage_gap(stats, rel)
 
 
 @pytest.mark.parametrize(
@@ -348,7 +373,7 @@ def test_oversize_agent_documents_stay_coverage_gaps(run_connector, tmp_path, re
     # could hide an agent, so they keep the gap whatever their extension.
     write(tmp_path, rel, OVERSIZE)
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert stats.warnings and not stats.errors and stats.incomplete
+    assert_coverage_gap(stats)
 
 
 @pytest.mark.parametrize(
@@ -363,7 +388,7 @@ def test_oversize_lockfiles_are_never_coverage_gaps(run_connector, tmp_path, rel
 def test_operator_skip_globs_declare_recorded_fixtures_omitted(run_connector, tmp_path):
     write(tmp_path, "tests/cassettes/session.yaml", OVERSIZE)
     _, stats = scan(run_connector, tmp_path, max_file_size=100, oversize_skip_globs=["*/cassettes/*"])
-    assert stats.warnings and not stats.errors and not stats.incomplete
+    assert_disclosed_without_a_gap(stats)
 
 
 @pytest.mark.parametrize(
@@ -378,7 +403,7 @@ def test_operator_skip_globs_declare_recorded_fixtures_omitted(run_connector, tm
 def test_oversize_source_and_config_stay_coverage_gaps(run_connector, tmp_path, rel):
     write(tmp_path, rel, OVERSIZE)
     _, stats = scan(run_connector, tmp_path, max_file_size=100)
-    assert stats.warnings and not stats.errors and stats.incomplete
+    assert_coverage_gap(stats)
     _, stats = scan(run_connector, tmp_path, max_file_size=100, strict_coverage=True)
     assert stats.errors and stats.incomplete
 

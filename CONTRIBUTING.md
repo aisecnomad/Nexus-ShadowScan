@@ -251,8 +251,12 @@ repository contains no secrets.
    changing the approved commit. The requirements below apply to the final commit.
 
 - Target `main`. Do not push reviewed security changes directly.
-- Keep findings fail-closed: a limit, malformed export, or denied API must mark
-  the scan incomplete (exit 3) rather than look empty.
+- Keep findings fail-closed: a malformed export, a denied API, an expired
+  deadline or any limit whose remainder the scanner cannot count must mark the
+  scan incomplete (exit 3) rather than look empty. A gap it *can* count --
+  one unreadable entry, one file over a size cap -- goes through
+  `ctx.coverage_gap()`, which charges it to the budget and reports it either
+  way; see `shadowscan/coverage.py` for which is which.
 - Do not log raw credentials, JWTs, or unsanitized connector configuration.
 - Pin GitHub Actions by full commit SHA. Do not leave `persist-credentials`
   enabled on checkouts that do not need to push.

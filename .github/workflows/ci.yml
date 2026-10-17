@@ -66,6 +66,10 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - name: Validate threat and control mapping catalogs
         run: python -m shadowscan.mappings.validate
+      - name: Check the vendored OCSF requirements match the reporter
+        run: python -m tools.ocsf_schema --check
+      - name: Ratchet cyclomatic complexity (no new or worsened functions)
+        run: python -m tools.complexity_gate
       - run: ruff check shadowscan tests tools benchmarks
       - run: ruff format --check shadowscan tests tools benchmarks
       - run: mypy shadowscan tools benchmarks
@@ -135,6 +139,10 @@ jobs:
         run: python -m shadowscan.signatures.validate
       - name: Validate threat and control mapping catalogs
         run: python -m shadowscan.mappings.validate
+      - name: Check the vendored OCSF requirements match the reporter
+        run: python -m tools.ocsf_schema --check
+      - name: Ratchet cyclomatic complexity (no new or worsened functions)
+        run: python -m tools.complexity_gate
       - run: ruff check shadowscan tests tools benchmarks
       - run: ruff format --check shadowscan tests tools benchmarks
       - run: mypy shadowscan tools benchmarks

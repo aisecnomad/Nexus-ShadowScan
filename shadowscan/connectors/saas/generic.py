@@ -144,6 +144,8 @@ def _scope_values(value: Any) -> list[str]:
 
 
 class GenericSaaSConnector(BaseConnector):
+    # No live API: reads an export; it has no API of its own to call.
+    live_collection: ClassVar[bool] = False
     name: ClassVar[str] = "saas.generic"
     surface: ClassVar[Surface] = Surface.SAAS
     provider: ClassVar[str | None] = "saas"

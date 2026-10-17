@@ -368,8 +368,8 @@ class N8nConnector(_AutomationBase):
             "/workflows",
             params={"limit": 250},
             items_key="data",
-            token_key="nextCursor",
-            token_param="cursor",
+            token_key="nextCursor",  # noqa: S106 - names a request field, not a credential
+            token_param="cursor",  # noqa: S106 - names a request field, not a credential
             max_pages=max_pages_limit(self.ctx.get("max_pages", 1000)),
         )
 

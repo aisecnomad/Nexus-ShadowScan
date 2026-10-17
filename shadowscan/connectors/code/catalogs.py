@@ -252,7 +252,7 @@ class _ProjectMatches(Protocol):
 
 
 # The addresses a hosts file or a resolver maps a blocked name to.
-_BLOCKING_ADDRESSES = frozenset({"0.0.0.0", "127.0.0.1", "127.0.1.1", "255.255.255.255", "::", "::1"})
+_BLOCKING_ADDRESSES = frozenset({"0.0.0.0", "127.0.0.1", "127.0.1.1", "255.255.255.255", "::", "::1"})  # noqa: S104 - a literal the scanner detects in scanned input; nothing binds here
 # Rule types of the proxy rule formats that route a host: Clash and Surge write them upper case,
 # Quantumult X lower case. Bare "host" and "domain" are not listed: `host, port = ...` is code.
 _PROXY_RULE_TYPES = frozenset(
