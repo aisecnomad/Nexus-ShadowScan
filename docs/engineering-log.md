@@ -831,7 +831,9 @@ public repositories with the tool and read the committed benchmark metrics.
   `_credential_literal` takes for an opaque key (`name=` inside a literal is
   not part of the token; a template with a replacement field is left alone,
   as the assignment passes leave it). Words, references, model names and
-  placeholders on the line stay. The variable name must not look
+  placeholders on the line stay. An XML or HTML comment counts as a comment
+  there too (`<add key="OpenaiApiKey" value="%OPENAI_API_KEY%" /> <!-- <key>
+  -->` showed the key, on main as well). The variable name must not look
   like an opaque key (`redaction_rules._opaque`: letters and digits alternating
   in a long run) and must not run to 16 characters or more without a `_`
   (`_PASTED_KEY_NAME`), so an upper-case key or base32 secret pasted as the
