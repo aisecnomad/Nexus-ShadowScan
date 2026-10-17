@@ -15,6 +15,8 @@ import tokenize
 from collections.abc import Callable
 from pathlib import PurePosixPath
 
+from shadowscan.utils.python_tokens import TokenizerFault, generate_tokens
+
 ImportResolver = Callable[[str, str], tuple[str, str] | None]
 MAX_SHIM_BYTES = 65_536
 MAX_SHIMS = 4096
@@ -50,7 +52,7 @@ def _may_be_import_only(text: str) -> bool:
     first = start = True
     imports = False
     try:
-        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+        for token in generate_tokens(io.StringIO(text).readline):
             if token.type in {tokenize.NL, tokenize.COMMENT}:
                 continue
             if token.type == tokenize.ENDMARKER:
@@ -63,7 +65,9 @@ def _may_be_import_only(text: str) -> bool:
                     return False
                 imports = imports or is_from
                 first = start = False
-    except (tokenize.TokenError, SyntaxError, ValueError):
+    except (tokenize.TokenError, SyntaxError, TokenizerFault, ValueError):
+        # A TokenizerFault is CPython 3.12's tokenizer failing on a NUL byte after an indented
+        # line; source it cannot read is no shim.
         return False
     return imports
 

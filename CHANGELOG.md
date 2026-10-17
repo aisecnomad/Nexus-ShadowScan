@@ -28,6 +28,16 @@ Look for the flags above before moving a baseline or a gate onto a newer commit.
 
 ### Security and redaction
 
+- Fuzzing the redactor and the source lexer (see Release, CI and supply chain) found a fault in
+  CPython 3.12's own tokenizer that reached two places in the scanner, and a third place that reads
+  tokens was hardened with them. All are fixed with regression tests; none exposed a credential. On
+  CPython 3.12 a NUL byte after an indented or malformed line makes the interpreter's own tokenizer
+  fail with an exception that says nothing about the text (python/cpython#140576; 3.12.13 still has
+  the fault). The assignment scanner of `sanitize_text`, the source lexer and the re-export
+  prefilter now read tokens through `shadowscan.utils.python_tokens`, which raises one
+  `TokenizerFault` for any failure the tokenizer does not document: the redactor treats the rest of
+  the text as undecided and withholds it, the lexer masks the rest of the file and marks it
+  incomplete (exit 3), and the prefilter calls the module no import-only shim. (Oct 17)
 - From #247: process-mode plugin workers inherited `SHADOWSCAN_IDENTITY_KEY`, so a connector not
   declaring `uses_run_identity_key` could read the raw operator key; it is now removed before
   import. Thread-mode plugins share the scanner's process and environment, so this does not apply to

@@ -125,3 +125,37 @@ def test_short_python_file_does_not_exhaust_the_budget(monkeypatch):
     monkeypatch.setattr(source_ranges, "pattern_timeout", counting_pattern_timeout)
     _, ambiguous = noncode_ranges("import openai\nx = client()\n", "python")
     assert ambiguous is False and calls >= 1
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        SystemError("<built-in method __new__> returned a result with an exception set"),
+        AttributeError("type object 'TokenInfo' has no attribute '_make'"),
+    ],
+    ids=lambda fault: type(fault).__name__,
+)
+def test_a_tokenizer_fault_masks_the_rest_of_the_file_and_reports_it_incomplete(monkeypatch, fault):
+    # CPython 3.12's tokenizer fails for a NUL byte after an indented line with one of these, whichever
+    # the process's caches make first notice (found by the fuzz target in tools/fuzz). Simulated here so
+    # every interpreter runs the path.
+    real = source_ranges.tokenize.generate_tokens
+
+    def faulty(readline):
+        for index, token in enumerate(real(readline)):
+            if index == 3:
+                raise fault
+            yield token
+
+    source = "\"a\" + 'b'\nimport openai\n"
+    monkeypatch.setattr(source_ranges.tokenize, "generate_tokens", faulty)
+    spans, incomplete = noncode_ranges(source, "python")
+    assert incomplete
+    # The strings read before the fault stay masked, and so does everything after the last token read.
+    assert spans == [(0, 3), (6, 9), (9, len(source))]
+
+
+def test_nul_on_the_line_after_an_indented_one_is_lexed_on_every_interpreter():
+    # The reproducer of the fault above: an exception on CPython 3.12, TokenError on 3.13 and fine on 3.11.
+    spans, _ = noncode_ranges('\t""\n\x00', "python")
+    assert (1, 3) in spans
