@@ -44,11 +44,14 @@ on:
 permissions:
   contents: read
 
-# A newer push or pull-request update supersedes a site build. A manual run,
-# which may publish, gets a group of its own: no push can cancel a deployment.
+# A newer pull-request update supersedes its site build. A push to main may
+# deploy (DOCS_PUBLISH) and a manual run may publish, so neither is cancelled:
+# a newer push waits for the running one (GitHub keeps only the newest waiting
+# run), and a manual run gets a group of its own. No push can cancel a
+# deployment.
 concurrency:
   group: docs-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -82,6 +85,11 @@ jobs:
       ((github.event_name == 'workflow_dispatch' && inputs.publish) ||
        (github.event_name == 'push' && vars.DOCS_PUBLISH == 'true'))
     needs: build
+    # A push run and a manual run are in different workflow groups; this one
+    # queues their deployments one at a time and never cancels one in progress.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

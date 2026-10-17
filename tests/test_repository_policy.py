@@ -58,11 +58,10 @@ COVERAGE_FLOOR = 80.0
 # workflow: a newer pull-request push supersedes the older run, while every
 # main push run finishes and leaves a complete record for its commit.
 PULL_REQUEST_ONLY_CANCELLATION = "${{ github.event_name == 'pull_request' }}"
-# Push-triggered workflows whose superseded push runs may be cancelled, and why.
-CANCELLABLE_PUSH_RUNS = {
-    "docs.yml": "it only rebuilds the site; CI's docs job builds every main commit, "
-    "and release evidence cites CI and CodeQL runs only",
-}
+# Push-triggered workflows whose superseded push runs may be cancelled, and why. The Docs
+# workflow was one until a push run could deploy Pages (``DOCS_PUBLISH``): a newer docs push
+# then cancelled the earlier run's deployment.
+CANCELLABLE_PUSH_RUNS: dict[str, str] = {}
 # Explicit, justified exceptions to the failure-suppression rule, keyed by the
 # workflow and the exact stripped `run:` line.
 SUPPRESSION_EXCEPTIONS: dict[tuple[str, str], str] = {}
@@ -2136,6 +2135,14 @@ def test_pages_requires_explicit_manual_publication_from_main() -> None:
         "(github.event_name == 'push' && vars.DOCS_PUBLISH == 'true'))"
     ), "Pages deployment must require main plus an explicit publish dispatch or the DOCS_PUBLISH variable"
     assert "build" in ([deploy["needs"]] if isinstance(deploy["needs"], str) else deploy["needs"])
+    # A push run may deploy, so no run that can deploy is cancelled by a newer one: the workflow
+    # cancels only superseded pull-request builds (test_push_runs_are_not_cancelled_by_a_newer_push),
+    # and the deploy jobs of a push run and a manual run queue in one non-cancelling group
+    # instead of publishing at once.
+    assert workflow["concurrency"]["cancel-in-progress"] == PULL_REQUEST_ONLY_CANCELLATION
+    assert deploy.get("concurrency") == {"group": "pages", "cancel-in-progress": False}, (
+        "the Pages deploy job must run in the non-cancelling `pages` concurrency group"
+    )
 
 
 def test_stale_automation_never_closes_issues_or_pull_requests() -> None:
