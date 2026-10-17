@@ -1257,7 +1257,11 @@ guides).
 ### `endpoint.host`, `endpoint.mcp`, `endpoint.ollama`, `endpoint.models` and `endpoint.ebpf`
 The offline inventories analyze host and runtime, MCP tool-list, Ollama, local
 model metadata and eBPF event exports; see the
-[endpoint guide](connectors/endpoint.md). They do not perform local host
+[endpoint guide](connectors/endpoint.md). `endpoint.ebpf` reads native
+Tetragon, Falco, Tracee and Hubble event shapes as well as flat records
+(see [eBPF event formats](connectors/endpoint.md#ebpf-event-formats)); a
+record matching none of them is reported, not silently dropped, and marks the
+scan incomplete. They do not perform local host
 filesystem discovery, and their findings carry no device name, so lifecycle
 links do not apply to them. The one live probe among them is opt-in:
 `endpoint.mcp` fetches the A2A Agent Cards listed in `agent_card_urls` (at most
