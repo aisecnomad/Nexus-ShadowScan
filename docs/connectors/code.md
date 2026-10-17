@@ -650,9 +650,12 @@ a short `sk-` value that does not look random take no place in that quota,
 so a `.env.example` of sample keys is complete. A file
 holding more credentials of one format is reported with that quota's worth of
 evidence, `metadata.secrets_limited` naming the formats, and the diagnostic
-`more than 5 credentials matched <format>; credential evidence incomplete`,
-which makes the scan incomplete: the count is a lower bound, never a complete
-inventory that happens to stop at five. With `scan_secrets: false`
+`credential quota limit reached: more than 5 credentials matched <format>;
+credential evidence incomplete`, which makes the scan incomplete
+(`incomplete_reasons.analysis-limit`): the count is a lower bound, never a
+complete inventory that happens to stop at five. The quota is the only
+limit: every candidate match is read and judged, so no candidate cap hides
+a credential behind rejected references. With `scan_secrets: false`
 two more kinds are skipped with a warning and the scan stays complete: a
 documentation file (`.md`, `.mdc`, `.mdx`, `.txt` that is not a manifest, a
 coding-agent instruction document such as `CLAUDE.md` or `AGENTS.md`, an

@@ -3894,10 +3894,11 @@ class FilesystemConnector(BaseConnector):
             return
         secrets_limited.setdefault(rel, set()).update(new)
         # A credential limit is never declared, discounted or budgeted, under any
-        # profile; its reason is fixed, so neither the path nor the format picks it.
+        # profile. Its reason is given, not read from the message, whose path may
+        # hold another category's word ('src/http_client/keys.py' read as upstream).
         self.ctx.error(
-            f"code.filesystem: {rel}: more than {MAX_SECRETS_PER_SIGNAL} credentials matched "
-            f"{', '.join(sorted(new))}; credential evidence incomplete",
+            f"code.filesystem: {rel}: credential quota limit reached: more than {MAX_SECRETS_PER_SIGNAL} "
+            f"credentials matched {', '.join(sorted(new))}; credential evidence incomplete",
             reason="analysis-limit",
         )
 
