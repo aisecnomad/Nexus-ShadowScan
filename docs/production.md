@@ -270,9 +270,15 @@ variables the operator exported for the built-in connectors (`*_TOKEN`,
 `*_SECRET`, `*_KEY`, `*_PASSWORD`, `*_PAT`, connection strings and URLs that
 carry a password, the CI and cloud SDK credential variables;
 `options.plugin_env` names the ones a plugin keeps), but a worker runs as the
-scanner's user, so a plugin that looks for them can still read the scanner's own
-environment (on Linux `/proc/<scanner pid>/environ`) and that user's credential
-files: keep a credential a plugin must not reach out of the job that runs it.
+scanner's user, so a plugin that looks for them can still read its parent's
+environment, every withheld variable and `SHADOWSCAN_IDENTITY_KEY` included,
+from `/proc/<ppid>/environ` on Linux, and every file that user can read. Pass
+the built-in connectors' credentials through files (such as the cloud SDKs'
+credential files) or a secrets manager rather than exported variables, which
+keeps them out of the environment the scanner and its programs carry; a plugin
+running as the scanner's user can still read a file the scanner can. To keep a
+credential from an untrusted plugin, run that plugin under a separate user or
+in a separate container, in a scan job that does not hold the credential.
 Killing a worker does not undo remote
 changes, completed cache/export writes, or terminate its independently spawned
 descendants. Continue to use an external job deadline and disposable workers

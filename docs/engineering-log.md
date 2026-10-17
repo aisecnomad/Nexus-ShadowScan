@@ -397,7 +397,12 @@ public repositories with the tool and read the committed benchmark metrics.
   `/proc/<scanner pid>/environ`: withholding keeps credentials from a plugin
   that does not look for them, not from one that does, and SECURITY.md, the
   production guide and the plugin contract now say so instead of saying a
-  worker "does not inherit" them. The same review found the first list
+  worker "does not inherit" them. They now name the route, the parent's
+  `/proc/<ppid>/environ`, which holds every withheld variable and the
+  identity key, and recommend passing credentials through files or a
+  secrets manager (out of the environment, though not out of a same-user
+  plugin's reach) and running an untrusted plugin under a separate user or
+  container in a job that does not hold the credential. The same review found the first list
   missed common CI and cloud credentials: `SYSTEM_ACCESSTOKEN` (the Azure
   Pipelines job token), `AZURE_DEVOPS_EXT_PAT`, `SENDGRID_APIKEY`, Azure
   connection strings, GitLab's `CI_JOB_JWT_V2`, the Azure managed-identity

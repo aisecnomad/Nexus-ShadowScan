@@ -2527,3 +2527,17 @@ def test_assurance_results_synthetic_case_count_matches_corpus() -> None:
         f"negatives) but tools/evaluation/corpus.json has {len(cases)} ({present} positives, "
         f"{absent} negatives)"
     )
+
+
+@pytest.mark.parametrize("name", ["SECURITY.md", "docs/production.md", "docs/connectors.md"])
+def test_plugin_isolation_docs_name_the_parent_environment_route(name: str) -> None:
+    """Regression: the guides said a process-mode worker is started without the credentials, but
+    not that a plugin running as the scanner's user still reads every one of them from its
+    parent's ``/proc/<ppid>/environ``, nor what keeps a credential from an untrusted plugin."""
+    text = " ".join(_read(ROOT / name).split())
+    assert "/proc/<ppid>/environ" in text, f"{name} must name the parent's /proc/<ppid>/environ"
+    assert "lifecycle isolation, not a" in text, f"{name} must say process mode is not a sandbox"
+    assert "secrets manager" in text, f"{name} must recommend files or a secrets manager"
+    assert "under a separate user or in a separate container" in text, (
+        f"{name} must recommend a separate user or container for an untrusted plugin"
+    )

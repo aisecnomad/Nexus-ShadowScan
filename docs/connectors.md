@@ -158,9 +158,12 @@ variables are left out of the worker's initial environment (on Linux
 `/proc/self/environ`) and so of the programs it starts; the scanner's
 `os.environ` is not changed, and thread-mode plugins share it. Withholding them
 keeps credentials from a plugin that does not look for them, not from one that
-does: the worker runs as the scanner's user, which can read the scanner's own
-environment (on Linux `/proc/<scanner pid>/environ`) and that user's credential
-files.
+does: the worker runs as the scanner's user, so it can read its parent's
+environment, every withheld variable included, from `/proc/<ppid>/environ` on
+Linux, and every file that user can read. Files or a secrets manager keep the
+built-in connectors' credentials out of the environment, but not from a plugin
+running as the same user; run an untrusted plugin under a separate user or in
+a separate container, in a scan job that does not hold the credential.
 Sibling connector configurations are not passed to the worker. Record exports go only
 to the private export directory the scanner prepared (expanded, symlink-free,
 owned, mode 0700); the worker never derives that path again. Descendant subprocesses

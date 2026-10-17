@@ -26,11 +26,18 @@ unless `options.plugin_env` names them, so they are neither in its
 environment (`os.environ`, on Linux `/proc/self/environ`) nor in that of the
 programs it starts; a thread-mode plugin shares the scanner's environment. This
 keeps credentials from a plugin that does not look for them, not from one that
-does: the worker runs as the scanner's user, which can read the scanner's own
-environment (on Linux `/proc/<scanner pid>/environ`; other systems have
-equivalents) and every credential file that user can. Process mode is lifecycle
-isolation, not a sandbox: run a plugin that must not reach a credential in a
-job that does not hold it. Built-in connector names cannot be replaced.
+does. Process mode is lifecycle isolation, not a sandbox: the worker runs as the
+scanner's user, so a plugin can still read its parent's environment, every
+withheld variable and `SHADOWSCAN_IDENTITY_KEY` included, from
+`/proc/<ppid>/environ` on Linux (other systems have equivalents), and every file
+that user can read. Pass the built-in connectors' credentials through files
+(such as the cloud SDKs' credential files) or a secrets manager rather than
+exported variables, which keeps them out of the environment the scanner and
+every program it starts carry; a plugin running as the scanner's user can
+still read a file the scanner can. To keep a credential from an untrusted
+plugin, run that plugin under a separate user or in a separate container, in a
+scan job that does not hold the credential. Built-in connector names cannot be
+replaced.
 
 Remote responses, scanned repositories and offline exports are untrusted inputs.
 Review signature packs before installation. Built-in signature IDs are reserved
