@@ -26,7 +26,12 @@ import regex
 from shadowscan.signatures.loader import Signal, Signature, load_signatures, normalise_package_name
 from shadowscan.utils.placeholders import possessive_phrase
 from shadowscan.utils.redaction import sanitize_text
-from shadowscan.utils.redaction_rules import environment_read_name, password_literal, pasted_key_name
+from shadowscan.utils.redaction_rules import (
+    environment_read_name,
+    opaque_key,
+    password_literal,
+    pasted_key_name,
+)
 
 _SCAN_EXECUTION_CAP: ContextVar[float | None] = ContextVar("signature_scan_execution_cap", default=None)
 REGEX_TIMEOUT_SECONDS = 0.1
@@ -1427,6 +1432,7 @@ class _CredentialJudge:
         self._key = os.urandom(32)
         self._seen: set[bytes] = set()
         self._locations: Counter[bytes] = Counter()
+        self._uncounted: Counter[str] = Counter()
 
     def _repeated(self, signature_id: str, credential: str) -> bool | None:
         """Whether ``signature_id`` already counted ``credential``; records it when not.
@@ -1445,20 +1451,31 @@ class _CredentialJudge:
         spans = self.accepted.get(signature_id, ())
         return any(start < other_end and other_start < end for other_start, other_end in spans)
 
+    def _credential(self, signature: Signature, match: Any) -> tuple[str | None, bool]:
+        """The credential a match stands for, or None, and whether it may count toward the quota.
+
+        A key pasted as a variable's name counts only when it looks like an
+        opaque key (``opaque_key``, the redactor's test): a long name without
+        separators ('SVC1OPENAIAPIKEYPROD') is reported but counts toward
+        nothing, so six of them leave a scan complete.
+        """
+        start, end = match.span()
+        value = match.group(0)
+        if signature.id == GENERIC_CREDENTIAL:
+            follower = self.text[end : end + _FOLLOWER_CHARS]
+            credential = _generic_literal(value, code=self.code, follower=follower, env_file=self.env_file)
+            pasted = credential is not None and credential == _pasted_key_read(value, follower)
+            return credential, not pasted or opaque_key(str(credential))
+        if signature.id == UNATTRIBUTED_KEY and len(value) - len("sk-") < _SHORT_KEY_BODY:
+            if self._covered(GENERIC_CREDENTIAL, start, end) or not _random_key_body(value[len("sk-") :]):
+                return None, True
+        return value, True
+
     def __call__(self, signature: Signature, signal: Signal, match: Any) -> bool:
         start, end = match.span()
         if self._covered(signature.id, start, end):
             return False
-        credential: str | None = match.group(0)
-        if signature.id == GENERIC_CREDENTIAL:
-            follower = self.text[end : end + _FOLLOWER_CHARS]
-            credential = _generic_literal(
-                match.group(0), code=self.code, follower=follower, env_file=self.env_file
-            )
-        elif signature.id == UNATTRIBUTED_KEY and len(match.group(0)) - len("sk-") < _SHORT_KEY_BODY:
-            body = match.group(0)[len("sk-") :]
-            if self._covered(GENERIC_CREDENTIAL, start, end) or not _random_key_body(body):
-                credential = None
+        credential, counted = self._credential(signature, match)
         if credential is None:
             return False
         if self.placeholder is not None and self.placeholder(credential):
@@ -1470,9 +1487,15 @@ class _CredentialJudge:
         repeated = self._repeated(signature.id, credential)
         if repeated is None:
             return False
+        if not (repeated or counted):
+            # Reported, as a location the quota does not count, a bounded number of them.
+            if self._uncounted[signature.id] >= MAX_SECRETS_PER_SIGNAL:
+                return False
+            self._uncounted[signature.id] += 1
+            repeated = True
         self.accepted.setdefault(signature.id, []).append((start, end))
         if repeated:
-            self.repeats.append((signature, signal, match))  # a location, not a credential
+            self.repeats.append((signature, signal, match))  # a location, not a counted credential
             return False
         return True
 

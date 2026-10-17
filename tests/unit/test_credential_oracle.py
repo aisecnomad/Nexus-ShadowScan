@@ -4049,6 +4049,23 @@ ROWS = [
         head=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5"), "complete", "withheld"),
         main=((".env:1", ".env:2", ".env:3", ".env:4", ".env:5"), "complete", "withheld"),
     ),
+    # --- r4-review-creds4.json: long names without separators read as pasted keys
+    Row(
+        "r4.9-seven-long-names",
+        "scan",
+        _numbered("src/config.ts", "export const svc{n}ApiKey = process.env.SVC{n}OPENAIAPIKEYPROD;\n", 7),
+        mode="",
+        head=(
+            ("src/config.ts:1", "src/config.ts:2", "src/config.ts:3", "src/config.ts:4", "src/config.ts:5"),
+            "complete",
+            "withheld",
+        ),
+        main=(
+            ("src/config.ts:1", "src/config.ts:2", "src/config.ts:3", "src/config.ts:4", "src/config.ts:5"),
+            "complete",
+            "withheld",
+        ),
+    ),
 ]
 
 

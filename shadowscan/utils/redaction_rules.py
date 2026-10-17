@@ -332,9 +332,21 @@ def pasted_key_name(name: str) -> bool:
     between its words, digits or none ('process.env.QWERTYUIOPASDFGHJKLZXCVBNM').
     Evidence withholds such a read (``_environment_lookup``) and the
     credential detector reports it (``shadowscan.signatures.matcher``), by
-    this one test.
+    this one test; the detector counts it toward its quota only when it is
+    opaque (``opaque_key``).
     """
-    return _opaque(name) or (len(name) >= _PASTED_KEY_NAME and "_" not in name)
+    return opaque_key(name) or (len(name) >= _PASTED_KEY_NAME and "_" not in name)
+
+
+def opaque_key(value: str) -> bool:
+    """Whether ``value`` looks like an opaque key: letters and digits alternate in a long run (``_opaque``).
+
+    The redactor withholds a literal after a credential's name by this test
+    (``_credential_literal``); the credential detector counts a key pasted as
+    a variable's name toward its quota only when it passes it, since a long
+    name without separators ('SVC1OPENAIAPIKEYPROD') does not.
+    """
+    return _opaque(value)
 
 
 # A literal shorter than this in a password's value is an argument or a flag ('a', 'utf8').
