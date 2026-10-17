@@ -37,7 +37,7 @@ as your first contribution.
 
 ## Getting started
 
-Use Python 3.11, 3.12, or 3.13 and Git on a POSIX system. Linux and macOS are
+Use Python 3.11, 3.12, 3.13, or 3.14 and Git on a POSIX system. Linux and macOS are
 CI-validated development and test targets; Linux x86_64 is the only validated
 deployment target for the production runtime lock. On Windows use WSL,
 because the scanner's confined file reader needs `O_NOFOLLOW`/`dir_fd` and the

@@ -1186,12 +1186,20 @@ _DATED_DOCS = frozenset({"engineering-log.md"})
 
 
 def _current_docs() -> list[Path]:
-    """Documents that describe the current tree; dated review and engineering logs may quote old numbers."""
+    """Documents that describe the current tree; dated review and engineering logs may quote old numbers.
+
+    ``docs/history/`` holds relocated dated logs (the production candidate
+    change history), which record numbers and defaults as they were at each
+    change, so they are history for these checks too. Their links, whitespace
+    and former-name hygiene are still checked by the walkers that enumerate
+    documents themselves.
+    """
     return [
         path
         for path in [*(ROOT / name for name in _CURRENT_ROOT_DOCS), *sorted((ROOT / "docs").rglob("*.md"))]
         if "hardening-logs" not in path.parts
         and path.name not in _DATED_DOCS
+        and "history" not in path.parts
         and not re.search(r"review-\d{4}-\d{2}-\d{2}", path.name)
     ]
 

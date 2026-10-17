@@ -148,7 +148,7 @@ coverage, even when a response includes an empty collection field.
   pseudonyms. Key rotation invalidates cache reuse and collection comparability.
   Resource finding IDs remain stable. Old public credential digests and private
   legacy gateway binding mappings remain sensitive; see the
-  [credential evidence migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#credential-evidence-identity-migration).
+  [credential evidence migration](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production-migrations.md#credential-evidence-identity-migration).
 * `options.connector_timeout_seconds` / `--connector-timeout-seconds` defaults
   to a 120-second cooperative completion deadline. Late connector results are
   discarded and coverage is incomplete. Legacy `connector_timeout` /

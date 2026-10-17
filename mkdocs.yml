@@ -1,8 +1,10 @@
 site_name: Nexus ShadowScan
 site_description: Discover shadow AI agents across your enterprise.
 # Reserved deployment URL; Pages currently serves the README, not this site.
-# Public documentation links point at docs/ until a maintainer publishes
-# the Docs workflow artifact with publish=true.
+# To publish: configure GitHub Pages to deploy from GitHub Actions, then run
+# the Docs workflow with publish=true once, or set the repository variable
+# DOCS_PUBLISH to "true" so every docs push to main republishes the site.
+# Public documentation links point at docs/ until then.
 site_url: https://aisecnomad.github.io/Nexus-ShadowScan/
 repo_url: https://github.com/aisecnomad/Nexus-ShadowScan
 repo_name: aisecnomad/Nexus-ShadowScan
@@ -116,6 +118,8 @@ nav:
       - Severity and enforcement: severity.md
   - Operations:
       - Production deployment: production.md
+      - Pending migration notes: production-migrations.md
+      - Candidate change history: history/production-change-history.md
       - CI integration: operations/ci.md
       - Operational controls: operations/operational-controls.md
       - Scheduled drift detection: operations/drift.md

@@ -295,7 +295,7 @@ dynamic factories, repeated assignments, unnamed calls or uncertain control
 flow. Unsupported identities remain visible in project metadata. Renaming a
 file or binding changes the identity. Review inventory stubs and rebuild
 comparison baselines when switching modes; see
-[migration](../production.md#unreleased-review-migration).
+[migration](../production-migrations.md#unreleased-review-migration).
 
 ### Construction and capability evidence
 

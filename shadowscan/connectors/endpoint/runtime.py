@@ -26,7 +26,7 @@ from shadowscan.connectors.code.semantic_config import (
     validate_agent_manifest,
 )
 from shadowscan.connectors.code.skill_audit import MAX_TEXT_BYTES, audit_skill_text
-from shadowscan.connectors.common import apply_matches, failure_summary, finalize
+from shadowscan.connectors.common import apply_matches, failure_summary, finalize, name_matches
 from shadowscan.connectors.endpoint import a2a
 from shadowscan.models import Evidence, Finding, Kind, Surface
 from shadowscan.utils.http import diagnostic_url
@@ -163,7 +163,12 @@ def _records(
                             warn("gateway.otel: aggregate span limit reached")
                         return
                     span_count += 1
-                    yield {"resource": resource, **span}
+                    # ``analyze`` reads ``resource["attributes"]``, the shape a raw
+                    # OTLP span record carries. Yielding the flattened mapping
+                    # directly dropped every resource attribute, so nested exports
+                    # lost ``service.name`` and distinct callers merged into
+                    # ``unknown-service``.
+                    yield {"resource": {"attributes": resource}, **span}
 
 
 class _EndpointConnector(BaseConnector):
@@ -230,11 +235,32 @@ class _EndpointConnector(BaseConnector):
         return finalize(finding, self.index)
 
 
+# Collector-declared categories that mark a host inventory row as AI-related.
+# Tokens, not substrings: "local-llm-runtime" qualifies, "email-client" and a
+# fleet-management "agent" product name do not reach this check at all.
+_AI_CATEGORY_TOKENS = frozenset(
+    {"ai", "agent", "agents", "assistant", "copilot", "genai", "llm", "mcp", "model", "models"}
+)
+_CATEGORY_TOKEN = re.compile(r"[a-z0-9]+")
+
+
+def _ai_category(category: str) -> bool:
+    return not _AI_CATEGORY_TOKENS.isdisjoint(_CATEGORY_TOKEN.findall(category.casefold()))
+
+
 class HostConnector(_EndpointConnector):
     name = "endpoint.host"
     provider = "host"
     description = "Offline host inventory of local AI agents, MCP clients, and model runtimes."
-    config_keys = {"input": "Offline host inventory JSON, JSONL, or YAML export."}
+    config_keys = {
+        "input": (
+            "Offline host inventory JSON, JSONL, or YAML export; rows are reported when the "
+            "name or path matches an AI product signature or the record's type/category names "
+            "an AI category (ai, agent, assistant, copilot, llm, mcp, model)."
+        )
+    }
+    # Whether rows without a recognized AI product were noted (one fixed-text note).
+    _skipped_records = False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
         for record in records:
@@ -242,6 +268,24 @@ class HostConnector(_EndpointConnector):
             category = self._text(record.get("type") or record.get("category") or "host-runtime")
             if not name:
                 self.ctx.warn("endpoint.host: record has no runtime or configuration name")
+                continue
+            # A general software inventory names every installed product; a row
+            # becomes a finding only when something ties it to AI: a product
+            # name or configuration path a signature recognizes, or an AI
+            # category the collector declared.
+            relevant = bool(name_matches(self.index, name)) or _ai_category(category)
+            if not relevant:
+                path = self._text(record.get("path") or record.get("name"))
+                relevant = bool(self.index.match_file(path.lstrip("~"))) if path else False
+            if not relevant:
+                if not self._skipped_records:
+                    self._skipped_records = True
+                    self.ctx.warn(
+                        "endpoint.host: inventory rows without a recognized AI product name, "
+                        "path or category were not reported",
+                        incomplete=False,
+                    )
+                self.ctx.examined()
                 continue
             yield self._finding(
                 name,
@@ -754,14 +798,196 @@ class ModelArtifactConnector(_EndpointConnector):
             )
 
 
+# endpoint.ebpf reads each producer's native export shape. A helper returns the
+# flat record ``EbpfConnector.analyze`` scores, or ``None`` when the record is
+# not that producer's format. Field names follow the producers' published
+# schemas; where exporters differ, both snake_case and lowerCamelCase
+# spellings are read. A record no reader recognizes is reported, not silently
+# dropped: an export full of unread events must not look like a clean scan.
+
+# The flat shape ``analyze`` scores, also accepted directly as an export format.
+_EBPF_FLAT_KEYS = frozenset(
+    {
+        "destination",
+        "remote_addr",
+        "hostname",
+        "server.address",
+        "url",
+        "binary",
+        "process_name",
+        "process",
+        "port",
+        "destination_port",
+    }
+)
+# Tetragon wraps each event under its type (``tetra getevents -o json``).
+_TETRAGON_EVENT_KEYS = (
+    "process_kprobe",
+    "processKprobe",
+    "process_exec",
+    "processExec",
+    "process_exit",
+    "processExit",
+    "process_tracepoint",
+    "processTracepoint",
+    "process_lsm",
+    "processLsm",
+)
+_EBPF_ARG_LIMIT = 100
+
+
+def _tetragon_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Tetragon event: ``{"process_kprobe": {"process": {...}, "args": [...]}}``."""
+    event = next(
+        (record[key] for key in _TETRAGON_EVENT_KEYS if isinstance(record.get(key), dict)),
+        None,
+    )
+    if event is None:
+        return None
+    process = event.get("process")
+    binary = pod_name = namespace = ""
+    if isinstance(process, dict):
+        binary = process.get("binary") or ""
+        pod = process.get("pod")
+        if isinstance(pod, dict):
+            namespace, pod_name = pod.get("namespace") or "", pod.get("name") or ""
+    destination: Any = ""
+    port: Any = None
+    args = event.get("args")
+    for arg in args[:_EBPF_ARG_LIMIT] if isinstance(args, list) else []:
+        if not isinstance(arg, dict):
+            continue
+        sock = arg.get("sock_arg") or arg.get("sockArg")
+        if isinstance(sock, dict):
+            destination, port = sock.get("daddr") or "", sock.get("dport")
+            break
+        sockaddr = arg.get("sockaddr_arg") or arg.get("sockaddrArg")
+        if isinstance(sockaddr, dict):
+            destination, port = sockaddr.get("addr") or "", sockaddr.get("port")
+            break
+    return {
+        "process_name": binary,
+        "destination": destination,
+        "destination_port": port,
+        "namespace": namespace,
+        "pod": pod_name,
+    }
+
+
+def _falco_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Falco JSON alert: dotted field names under ``output_fields``."""
+    fields = record.get("output_fields")
+    if not isinstance(fields, dict) or not ("rule" in record or "priority" in record):
+        return None
+    return {
+        "process_name": fields.get("proc.name"),
+        "destination": fields.get("fd.sip.name")
+        or fields.get("fd.rip.name")
+        or fields.get("fd.sip")
+        or fields.get("fd.rip"),
+        "destination_port": fields.get("fd.sport") or fields.get("fd.rport"),
+        "namespace": fields.get("k8s.ns.name"),
+        "pod": fields.get("k8s.pod.name"),
+    }
+
+
+def _tracee_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Tracee event: ``eventName``/``processName`` with sockaddr maps in ``args``."""
+    if not isinstance(record.get("eventName"), str):
+        return None
+    if "processName" not in record and "args" not in record:
+        return None
+    kubernetes = record.get("kubernetes")
+    if not isinstance(kubernetes, dict):
+        kubernetes = {}
+    destination: Any = ""
+    port: Any = None
+    args = record.get("args")
+    for arg in args[:_EBPF_ARG_LIMIT] if isinstance(args, list) else []:
+        if not isinstance(arg, dict):
+            continue
+        value = arg.get("value")
+        if isinstance(value, dict) and ("sin_addr" in value or "sin6_addr" in value):
+            destination = value.get("sin_addr") or value.get("sin6_addr") or ""
+            port = value.get("sin_port") or value.get("sin6_port")
+            break
+    return {
+        "process_name": record.get("processName"),
+        "destination": destination,
+        "destination_port": port,
+        "namespace": kubernetes.get("podNamespace") or record.get("podNamespace"),
+        "pod": kubernetes.get("podName") or record.get("podName"),
+    }
+
+
+def _hubble_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    """Hubble flow: the ``hubble observe -o json`` wrapper, or a bare flow."""
+    flow = record.get("flow")
+    if not isinstance(flow, dict):
+        bare = isinstance(record.get("IP"), dict) or (
+            isinstance(record.get("l4"), dict) and ("verdict" in record or "source" in record)
+        )
+        if not bare:
+            return None
+        flow = record
+    raw_ip = flow.get("IP")
+    ip: dict[str, Any] = raw_ip if isinstance(raw_ip, dict) else {}
+    destination: Any = ""
+    names = flow.get("destination_names")
+    if isinstance(names, list):
+        destination = next((name for name in names[:_EBPF_ARG_LIMIT] if isinstance(name, str)), "")
+    destination = destination or ip.get("destination") or ""
+    port: Any = None
+    l4 = flow.get("l4")
+    if isinstance(l4, dict):
+        for proto in ("TCP", "UDP", "tcp", "udp", "SCTP"):
+            entry = l4.get(proto)
+            if isinstance(entry, dict):
+                port = entry.get("destination_port")
+                break
+    raw_source = flow.get("source")
+    source: dict[str, Any] = raw_source if isinstance(raw_source, dict) else {}
+    return {
+        "process_name": "",
+        "destination": destination,
+        "destination_port": port,
+        "namespace": source.get("namespace"),
+        "pod": source.get("pod_name"),
+    }
+
+
+def _normalize_ebpf_record(record: dict[str, Any]) -> dict[str, Any] | None:
+    """The flat record to score, or None for a record no reader recognizes."""
+    for reader in (_tetragon_ebpf_record, _falco_ebpf_record, _tracee_ebpf_record, _hubble_ebpf_record):
+        normalized = reader(record)
+        if normalized is not None:
+            return normalized
+    if _EBPF_FLAT_KEYS.intersection(record):
+        return record
+    return None
+
+
 class EbpfConnector(_EndpointConnector):
     name = "endpoint.ebpf"
     provider = "runtime-telemetry"
     description = "Correlate offline eBPF runtime events with known AI hosts and local model ports."
-    config_keys = {"input": "Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export."}
+    config_keys = {"input": "Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export (native shapes)."}
+    # Whether an unrecognized record was reported (one fixed-text warning).
+    _unrecognized_records = False
 
     def analyze(self, records: Iterable[dict[str, Any]]) -> Iterable[Finding]:
-        for record in records:
+        for raw in records:
+            record = _normalize_ebpf_record(raw)
+            if record is None:
+                # The record was not analyzed, so the scan is incomplete; one
+                # fixed-text warning however many records are unrecognized.
+                if not self._unrecognized_records:
+                    self._unrecognized_records = True
+                    self.ctx.warn(
+                        "endpoint.ebpf: unrecognized event records were not analyzed; supported "
+                        "exports are Tetragon, Falco, Tracee, Hubble and the flat record shape"
+                    )
+                continue
             serialized = " ".join(
                 self._text(record.get(key), 512)
                 for key in ("destination", "remote_addr", "hostname", "server.address", "url")

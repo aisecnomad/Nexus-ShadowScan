@@ -688,7 +688,7 @@ Offline input: JSON / JSONL / YAML export.
 
 | Key | Description |
 | --- | --- |
-| `input` | Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export. |
+| `input` | Offline Tetragon, Falco, Tracee, or Hubble JSON / JSONL export (native shapes). |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |
@@ -703,7 +703,7 @@ Offline input: JSON / JSONL / YAML export.
 
 | Key | Description |
 | --- | --- |
-| `input` | Offline host inventory JSON, JSONL, or YAML export. |
+| `input` | Offline host inventory JSON, JSONL, or YAML export; rows are reported when the name or path matches an AI product signature or the record's type/category names an AI category (ai, agent, assistant, copilot, llm, mcp, model). |
 | `max_input_bytes` | offline: maximum expanded bytes read across all input files (default 256 MiB, hard ceiling 512 MiB) |
 | `max_input_file_bytes` | offline: maximum expanded bytes read from one input file (default 32 MiB, hard ceiling 64 MiB) |
 | `max_input_files` | offline: maximum files read from a directory input (default 10,000) |

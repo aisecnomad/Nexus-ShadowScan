@@ -18,6 +18,17 @@ JSONL record dump (a workload export for Kubernetes and OpenShift) and no
 extra. They use read-only
 list/describe/get calls only.
 
+!!! warning "Offline cloud input is ShadowScan's own dump format"
+    For `cloud.aws`, `cloud.gcp`, `cloud.azure` and `cloud.oci`, offline
+    `input` replays the `_kind`-tagged records a live scan wrote with
+    `--dump-records` (or `options.dump_records`) — not a provider's native
+    export. A raw CloudTrail, Cloud Audit Logs or Azure Activity Log file
+    carries no `_kind`, so every record is reported as unsupported and the
+    scan is incomplete (exit 3) rather than quietly empty. To analyze an
+    account offline, run a live scan once with `--dump-records DIR` and
+    replay that directory. Kubernetes and OpenShift are the exception:
+    their input is a native workload export (`kubectl get ... -o json`).
+
 See the [shared connector entry guide](../connectors.md#connector-entry-guide)
 for the common modes, permissions, options, fail-closed and evidence-limit
 references.

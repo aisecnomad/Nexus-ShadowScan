@@ -13,6 +13,57 @@ Counts and figures quoted in an entry are those of its date.
 
 ## Unreleased
 
+### Review fixes: connector correctness, CI check names, benchmark framing (October 17)
+
+- `gateway.otel` no longer loses resource attributes from nested OTLP
+  exports: `service.name` reaches the finding again, so distinct callers no
+  longer merge into one `unknown-service` finding. Regression-tested.
+- `endpoint.ebpf` reads the native Tetragon, Falco, Tracee and Hubble export
+  shapes it always claimed (snake_case and lowerCamelCase), keeps the flat
+  record shape, and reports one warning that marks the scan incomplete when
+  records match no known shape, so an unread export cannot look like a clean
+  scan. Fixtures cover all four producers, and the Falco example rule also
+  emits `fd.sip.name` so AI host names reach the alert.
+- `endpoint.host` reports a host inventory row only when its name or path
+  matches an AI product signature or its `type`/`category` names an AI
+  category; filtered rows add one informational note instead of becoming
+  0.7-confidence findings.
+- The CI coverage leg is selected by a job-level environment expression
+  instead of a matrix `include` key, so its check reports as `test (3.11)` —
+  the name the branch rulesets require — rather than `test (3.11, true)`,
+  and the required status can actually gate merges. The repository-policy
+  test pins the new mechanism.
+- The README carries its benchmark fine print in the results themselves: the
+  discovery row names the pre-tuning F1 beside the post-tuning, in-sample
+  figure, and the weakest per-surface precisions (identity and SaaS in the
+  2026-10-11 cases run) are stated next to the headline numbers.
+- Documentation restructuring: `docs/production.md` is the rollout guide
+  again, with the per-change migration notes in
+  `docs/production-migrations.md` and the dated candidate log in
+  `docs/history/production-change-history.md`. The branch also condensed
+  this log into a journal under `docs/history/`; the integration with #258
+  keeps #258's form instead (this engineering log, and a `CHANGELOG.md`
+  that names each change in a line), so there is one detailed log.
+- Docs publication: after GitHub Pages is configured for Actions, the
+  repository variable `DOCS_PUBLISH` set to `true` republishes the site on
+  every docs push to `main`, so publication no longer needs a manual
+  dispatch per update; the one-off `publish=true` dispatch still works and
+  the policy test pins both explicit paths.
+- Offline cloud input is stated loudly: the cloud connector guide and the
+  unsupported-`_kind` warning both say that `cloud.aws`, `cloud.gcp`,
+  `cloud.azure` and `cloud.oci` replay `--dump-records` exports, not a
+  provider's native log, so a CloudTrail file explains itself instead of
+  producing an incomplete scan with a cryptic warning.
+- Python 3.14 is supported: `requires-python` allows it, CI tests it on
+  Linux and macOS, and the hash locks already resolve on it. A PEP 263
+  cookie that Python 3.14's own `detect_encoding` refuses (`punycode`,
+  UTF-32) stays a coverage gap when it names a slow codec or one that does
+  not read ASCII as ASCII — the scanned estate's interpreter may still
+  honor it — instead of falling into the keep-default branch and being
+  silently analyzed; a bare `utf-16`/`utf-32` cookie is now a gap on every
+  interpreter for the same reason. Regression tests force the refusal path
+  so the pre-3.14 CI legs exercise it too.
+
 ### Review fixes: credential precision, the ci profile, incomplete reasons, the ownership move and plugin environments (October 17)
 
 Five fixes from an external review of `main` at 8c72467, which scanned five
@@ -1641,7 +1692,7 @@ endpoint and IP-range source references. Live DNS enrichment stays deferred
 
 Rescan after upgrading and keep earlier reports as historical observations;
 lower attribution is not evidence that a workload stopped. See the
-[migration notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#october-14-bounded-evidence-migration-unreleased).
+[migration notes](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production-migrations.md#october-14-bounded-evidence-migration-unreleased).
 The archived implementation record under
 `archive/reviews/evidence-depth-2026-10-14/` is author-written offline evidence;
 its full before/after reports were not committed.
@@ -1650,7 +1701,7 @@ its full before/after reports were not committed.
 
 Integrates the reviewed parts of three draft pull requests, #216, #203
 and #204, into one design. Rollout and migration notes are in the
-[deployment guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/production.md#october-14-detection-precision-ambiguous-app-names-and-scoped-correlation-unreleased).
+[deployment guide](https://github.com/aisecnomad/Nexus-ShadowScan/blob/main/docs/history/production-change-history.md#october-14-detection-precision-ambiguous-app-names-and-scoped-correlation-unreleased).
 
 - Name signals can be marked `ambiguous: true`. The Google Gemini identity
   signature uses it: a Gemini display name, publisher or description stays a

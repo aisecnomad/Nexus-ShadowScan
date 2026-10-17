@@ -2,7 +2,7 @@
 
 ## From PyPI
 
-Use Python 3.11, 3.12 or 3.13 in a fresh virtual environment:
+Use Python 3.11, 3.12, 3.13 or 3.14 in a fresh virtual environment:
 
 ```bash
 python -m pip install NexusShadowScan            # or: pipx install NexusShadowScan
@@ -25,8 +25,8 @@ deployment, prefer the hash-locked install.
 ## From a reviewed revision (hash-locked)
 
 For deployment on Linux x86_64, use a reviewed full commit SHA and the
-repository's hash-locked runtime dependencies. CI validates Python 3.11, 3.12
-and 3.13 on Linux x86_64; see
+repository's hash-locked runtime dependencies. CI validates Python 3.11, 3.12,
+3.13 and 3.14 on Linux x86_64; see
 [production deployment](../production.md#install-from-a-reviewed-revision)
 for the release evidence and platform limits.
 

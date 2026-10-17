@@ -62,7 +62,8 @@ class RecordDispatch:
         kind = rec.get("_kind") if isinstance(rec, dict) else None
         if not isinstance(kind, str) or kind not in self.kinds:
             self.connector.ctx.warn(
-                f"{self.connector.name}: record has missing, invalid, or unsupported _kind"
+                f"{self.connector.name}: record has missing, invalid, or unsupported _kind; "
+                "offline input replays a --dump-records export, not a provider's native log"
             )
             return None
         return kind
