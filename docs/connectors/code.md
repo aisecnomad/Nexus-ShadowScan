@@ -1145,10 +1145,20 @@ them. The check walks the checkout through open directory descriptors and follow
 no link; a directory nested more than 64 levels below the repository root, or an
 entry replaced while it is read, means the clone could not be checked.
 API mode reports LFS pointer files the same way.
-Coverage gaps in every checkout (a clone, an API snapshot or an offline clone)
-are charged to one coverage budget for the run (`--max-coverage-gap`) and
-judged after the last repository, as for a `code.filesystem` scan of several
-`paths`; with `--max-coverage-gap 0` any gap makes the scan incomplete.
+The partial coverage gaps of each checkout (a clone, an API snapshot or an
+offline clone) are charged to that repository's own coverage budget
+(`--max-coverage-gap`, 2% of the entries the repository examined, at most 100
+weighted entries) and judged after the last repository, as each root of a
+`code.filesystem` scan of several `paths` is: the scan is incomplete when any
+repository is over its own budget, and the verdict names it. A large clean
+repository therefore cannot dilute a small one's gaps, and an organisation of
+repositories each within its budget stays complete. The published
+`stats[].coverage` combines the repositories that recorded a gap; its
+`allowance` is the sum of theirs. Blinding gaps (an LFS pointer, a gitlink,
+a directory link) fail closed without a budget, `profile: ci` declarations
+are counted apart, and with `--max-coverage-gap 0`
+([strict accounting](../scanning.md#coverage-budget-and-strict-accounting))
+any gap makes the scan incomplete.
 Live API records cannot choose local scan paths. `use_git` has the same explicit
 opt-in policy as `code.filesystem`; cloning retains its separate HTTPS policy.
 `clone_max_bytes` (default 256 MiB) first checks the provider's repository

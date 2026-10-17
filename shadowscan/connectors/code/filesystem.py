@@ -2688,6 +2688,10 @@ class FilesystemConnector(BaseConnector):
         self.ownership.forget_root(root)
         # Each root's gates read only its own listing (scan_tree walks and emits one root at a time).
         self._root_listing_incomplete = self.tree_listing_incomplete
+        # Each root's gaps are judged against its own entries, as if it were
+        # scanned alone; a code.github or code.gitlab checkout shares its
+        # parent's ledger, so each repository is its own part there too.
+        self.ctx.begin_coverage_part(scan.label)
         try:
             if self.triage:
                 # Unconditional, per scanned root: a triage result is a subset

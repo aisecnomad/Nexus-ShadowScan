@@ -453,6 +453,18 @@ class ConnectorContext:
         # whole run's gaps in view.
         self.warn(msg, incomplete=False, reason=reason)
 
+    def begin_coverage_part(self, label: str) -> None:
+        """Judge the gaps recorded from now on against their own budget, as the part ``label``.
+
+        For a connector that scans several roots or repositories in one run
+        (``code.filesystem`` starts one per root, which a nested
+        ``code.github`` or ``code.gitlab`` checkout scan shares): each is
+        judged as it would be scanned alone, so one large clean root cannot
+        dilute a small root's gaps, and many roots each within budget do not
+        fail together. ``label`` names the part in the verdict line.
+        """
+        self._coverage.begin_part(label)
+
     def note_coverage_examined(self, count: int) -> None:
         """Raise the examined-entry floor used as the gap ratio's denominator."""
         self._coverage.note_examined(count)
@@ -473,21 +485,23 @@ class ConnectorContext:
             return
         if not self._coverage.gaps:
             return
-        if self._coverage.examined <= 0:
+        if len(self._coverage.parts) == 1 and self._coverage.examined <= 0:
+            # A connector that counts no entries of its own is judged against
+            # the objects it examined. A part of a multi-part run that reached
+            # no entry has nothing to dilute its gaps with, which fails closed.
             self._coverage.note_examined(self.stats.objects_examined)
         incomplete, summary = self._coverage.evaluate(self._coverage_policy)
         self.stats.coverage = summary
         if incomplete:
             self.stats.incomplete = True
-        if not summary["within_budget"]:
-            # Together the partial gaps left the scan incomplete, so each is
-            # counted under its own reason, as a blinding gap was when it was
-            # recorded: the verdict line below says how far over the budget
-            # the scan went, and the reasons say what the unread entries were.
-            counts = self.stats.incomplete_reasons
-            for gap in self._coverage.gaps:
-                if not gap.blinding:
-                    counts[gap.reason] = counts.get(gap.reason, 0) + 1
+        # Together the partial gaps of a part over its budget left the scan
+        # incomplete, so each is counted under its own reason, as a blinding
+        # gap was when it was recorded: the verdict line below says which
+        # part went how far over its budget, and the reasons say what the
+        # unread entries were. A part within its budget left nothing incomplete.
+        counts = self.stats.incomplete_reasons
+        for gap in self._coverage.over_budget_gaps(self._coverage_policy):
+            counts[gap.reason] = counts.get(gap.reason, 0) + 1
         message = self._coverage.verdict_message(self._coverage_policy)
         if message is not None:
             self._diagnostic(

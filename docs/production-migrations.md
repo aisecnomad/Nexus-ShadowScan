@@ -35,6 +35,14 @@ Expect these exit-code changes against the earlier October 17 behaviour:
   nothing counted. A handful still leave the scan complete; a tree where they
   are a large share of the entries exits 3, and a tiny tree (a lone fixture)
   exits 3 on one, as it does for any other gap.
+- **The budget is judged per root and per repository.** A `code.filesystem`
+  scan of several `paths`, and a `code.github` or `code.gitlab` scan of
+  several repositories, is incomplete when any root or repository is over its
+  own budget, even if the run as a whole is not, and is complete when each is
+  within its own, even if their sum passes the 100-entry ceiling. The
+  verdict line names the root or repository. `stats[].coverage` covers the
+  roots that recorded a gap, so its `examined` no longer counts clean roots,
+  and its `allowance` is the sum of theirs. Cached and uncached runs agree.
 
 ## October 17 engine review migration (Unreleased)
 

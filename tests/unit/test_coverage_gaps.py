@@ -547,3 +547,55 @@ class TestDocumentation:
         assert "published in full" not in text
         assert f"first {MAX_PUBLISHED_GAPS}" in text
         assert "`details_truncated` count" in text
+
+
+class TestParts:
+    """Each scan root or repository is judged against its own entries, as if scanned alone."""
+
+    @staticmethod
+    def _ledger(*parts: tuple[str, int, int]) -> CoverageLedger:
+        ledger = CoverageLedger()
+        for label, examined, gaps in parts:
+            ledger.begin_part(label)
+            ledger.add_examined(examined)
+            for i in range(gaps):
+                ledger.record(CoverageGap(detail="x", path=f"src/f{i}.py", reason="unresolved-link"))
+        return ledger
+
+    def test_a_large_clean_part_does_not_dilute_a_small_one(self) -> None:
+        ledger = self._ledger(("big", 10_000, 0), ("small", 10, 2))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        assert incomplete and summary["within_budget"] is False
+        # Only the part that recorded a gap is in the published summary.
+        assert summary["examined"] == 10 and summary["gaps"] == 2
+        assert ledger.examined == 10_010 and len(ledger.gaps) == 2
+        message = ledger.verdict_message(CoveragePolicy())
+        assert message is not None and "small: 2 entr(y/ies) unread of 10 examined" in message
+        assert "big" not in message
+
+    def test_parts_each_within_budget_stay_complete_and_their_allowances_add(self) -> None:
+        ledger = self._ledger(*((f"repo{i}", 100, 1) for i in range(150)))
+        incomplete, summary = ledger.evaluate(CoveragePolicy())
+        # Summed, 150 entries would pass the 100-entry ceiling.
+        assert not incomplete and summary["within_budget"] is True
+        assert summary["allowance"] == pytest.approx(150 * 2.0)
+        assert ledger.over_budget_gaps(CoveragePolicy()) == []
+        assert validate_coverage_summary(summary) is summary
+
+    def test_the_verdict_names_a_bounded_number_of_parts(self) -> None:
+        ledger = self._ledger(*((f"repo{i}", 10, 3) for i in range(coverage.MAX_NAMED_PARTS + 3)))
+        message = ledger.verdict_message(CoveragePolicy())
+        assert message is not None
+        assert "repo0:" in message and f"repo{coverage.MAX_NAMED_PARTS}:" not in message
+        assert "3 more over budget" in message
+        assert len(ledger.over_budget_gaps(CoveragePolicy())) == 3 * (coverage.MAX_NAMED_PARTS + 3)
+
+    def test_the_ceiling_is_named_when_it_binds(self) -> None:
+        ledger = self._ledger(("huge", 1_000_000, 150))
+        message = ledger.verdict_message(CoveragePolicy())
+        assert message is not None and "100-entry ceiling" in message
+
+    def test_an_unused_opening_part_is_taken_over(self) -> None:
+        ledger = CoverageLedger()
+        ledger.begin_part("root")
+        assert [part.label for part in ledger.parts] == ["root"]

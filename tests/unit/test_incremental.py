@@ -1400,3 +1400,32 @@ def test_default_excluded_probe_consumes_the_fingerprint_entry_budget(tmp_path, 
     monkeypatch.setattr("shadowscan.incremental._MAX_HASH_ENTRIES", 5)
     cache = IncrementalCache(cfg, index)
     assert cache.snapshot(cfg.connectors[0]) is None
+
+
+@pytest.mark.parametrize("small_gaps", [2, 0], ids=["small-root-over-budget", "within-budget"])
+def test_a_multi_root_scan_gives_one_coverage_verdict_with_and_without_the_cache(tmp_path, index, small_gaps):
+    # A small root with oversize source files beside a large clean root: judged
+    # alone the small root is over its budget. Summed, 2 gaps in 212 entries
+    # fitted 4.24 and the plain run was complete while the incremental run,
+    # which judges each root, was not. Both now take the per-root verdict.
+    big, small = tmp_path / "big", tmp_path / "small"
+    big.mkdir()
+    small.mkdir()
+    for number in range(200):
+        (big / f"mod{number}.py").write_text(f"VALUE = {number}\n")
+    for number in range(60 if not small_gaps else 10):
+        (small / f"mod{number}.py").write_text(f"VALUE = {number}\n")
+    for number in range(small_gaps):
+        (small / f"agent{number}.py").write_text("import langchain\n" + "#" * 2_000)
+    options = {"paths": [str(big), str(small)], "use_git": False, "max_file_size": 1_000}
+    results = {}
+    for incremental in (False, True):
+        cfg = config(tmp_path, incremental=incremental)
+        cfg.connectors[0].config = dict(options)
+        results[incremental] = Engine(cfg, index).run()
+    plain, split = results[False], results[True]
+    assert plain.complete == split.complete == (small_gaps == 0)
+    assert plain.stats[0].coverage == split.stats[0].coverage
+    if small_gaps:
+        assert plain.stats[0].coverage["within_budget"] is False
+        assert plain.stats[0].incomplete_reasons == split.stats[0].incomplete_reasons == {"oversize-file": 2}

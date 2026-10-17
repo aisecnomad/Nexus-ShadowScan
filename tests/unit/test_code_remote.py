@@ -1097,17 +1097,48 @@ def test_live_checkout_gap_flood_exceeds_the_coverage_budget(tmp_path, index, mo
 
 
 @pytest.mark.parametrize("cls", PROVIDERS)
-def test_checkout_gaps_are_judged_against_every_repository(tmp_path, run_connector, cls):
+def test_checkout_gaps_are_judged_per_repository(tmp_path, run_connector, cls):
     _clone_with_gaps(tmp_path, "acme__app", 200, ["tests/certs/ca"])
     _clone_with_gaps(tmp_path, "acme__lib", 50, [])
     _, ctx = run_connector(cls.name, input=str(tmp_path), use_git=False)
     assert not ctx.stats.incomplete
     assert ctx.stats.coverage is not None and ctx.stats.coverage["within_budget"] is True
-    # One ledger for the run: entries of both clones count towards the budget.
-    assert ctx.stats.coverage["gaps"] == 1 and ctx.stats.coverage["examined"] == 251
+    # Each repository is judged against its own entries; the summary covers the
+    # repositories that recorded a gap, as an incremental scan's roots are combined.
+    assert ctx.stats.coverage["gaps"] == 1 and ctx.stats.coverage["examined"] == 201
     _, strict = run_connector(cls.name, input=str(tmp_path), use_git=False, _max_coverage_gap=0.0)
     assert strict.stats.incomplete
     assert strict.stats.coverage is not None and strict.stats.coverage["within_budget"] is False
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_a_large_clean_repository_does_not_dilute_a_small_one(tmp_path, run_connector, cls):
+    # acme__evil leaves a third of its entries unread. Summed with acme__big,
+    # 10 gaps in 530 entries fitted a 2% budget of 10.6 and the scan exited 0.
+    _clone_with_gaps(tmp_path, "acme__big", 500, [])
+    _clone_with_gaps(tmp_path, "acme__evil", 20, [f"services/link{i}.py" for i in range(10)])
+    _, ctx = run_connector(cls.name, input=str(tmp_path), use_git=False)
+    assert ctx.stats.incomplete
+    assert ctx.stats.coverage is not None and ctx.stats.coverage["within_budget"] is False
+    assert ctx.stats.coverage["examined"] == 30 and ctx.stats.coverage["gaps"] == 10
+    # The verdict names the repository that went over its budget, not the run.
+    [verdict] = [error for error in ctx.stats.errors if "coverage incomplete" in error]
+    assert "evil" in verdict and "big" not in verdict
+    assert ctx.stats.incomplete_reasons == {"unresolved-link": 10}
+
+
+@pytest.mark.parametrize("cls", PROVIDERS)
+def test_repositories_each_within_budget_stay_complete_together(tmp_path, run_connector, cls):
+    # Each repository loses 1 entry of 61, within its own 2% budget; the run is
+    # complete however many there are, and the summary adds their allowances.
+    for number in range(4):
+        _clone_with_gaps(tmp_path, f"acme__svc{number}", 60, ["services/link.py"])
+    _, ctx = run_connector(cls.name, input=str(tmp_path), use_git=False)
+    assert not ctx.stats.incomplete
+    coverage = ctx.stats.coverage
+    assert coverage is not None and coverage["within_budget"] is True
+    assert coverage["gaps"] == 4 and coverage["examined"] == 244
+    assert coverage["allowance"] == pytest.approx(4 * 0.02 * 61)
 
 
 @pytest.mark.parametrize("cls", PROVIDERS)

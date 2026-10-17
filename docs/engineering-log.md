@@ -79,6 +79,28 @@ strict accounting, credentials, declaration, discount, budget.
   listed; a seeded tree exhausts the budget. Unparsed test source and a
   test file over the binder's budget stay warnings, as before #255, and an
   oversize fixture with `scan_secrets` off stays a counted warning.
+- **The budget is judged per root and per repository.** The ledger summed a
+  run: `code.github` and `code.gitlab` charged every checkout to one budget,
+  and `code.filesystem` every root of `paths`. A repository of 20 files with
+  60 dangling `services/` links (three quarters of it unread) beside one of
+  5,000 files was tolerated, while 150 repositories each losing one entry of
+  101 exited 3 against the run-wide 100-entry ceiling with a verdict that
+  said "over the 2.0% budget" at 0.99%. An incremental scan, which runs each
+  root alone, already judged per root, so the same tree could exit 3 with
+  `--incremental` and 0 without it, or the reverse. `CoverageLedger` now
+  keeps parts (`begin_part`, `ConnectorContext.begin_coverage_part`), each
+  with its own examined count and allowance; `scan_tree` starts one per root,
+  which covers a provider's nested checkout scan because it shares the outer
+  ledger. The run is incomplete when any part is over its budget or any gap
+  is blinding; the over-budget parts' gaps are counted under their reasons;
+  the verdict line names each over-budget root or repository (up to five,
+  then a count) and says whether the ratio or the ceiling bound; and the
+  published summary combines the parts with `combine_coverage_summaries`, as
+  the incremental split does, so its `allowance` is the sum of the parts' and
+  a cached and an uncached run publish the same summary. This is the decided
+  semantics: a multi-root scan is complete only if every root would be
+  complete scanned alone. The provider connectors keep handing their policy
+  to the nested connector, which now reads it (strict accounting above).
 
 ### Review fixes: what diff holds back under the ci profile (October 17)
 

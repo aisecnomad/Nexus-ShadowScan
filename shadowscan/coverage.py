@@ -31,6 +31,17 @@ how it reads the path (``code.filesystem`` reads a test path as source while
 segment for one that passes none. ``strict_coverage`` sets the budget to zero
 and restores the original behaviour exactly.
 
+The verdict is taken per *part* of the ledger, one per scan root (and one per
+repository for ``code.github`` and ``code.gitlab``), each against its own
+examined entries, and never over a summed run: a scan of several roots is
+complete only if every root would be complete scanned alone, so the ratio and
+the ceiling apply to each root, and N roots may each lose their own
+allowance. Summing would let one large clean root dilute a small root's gaps
+(a fail-open), and would make an organisation of ordinary repositories fail
+together. The published summary combines the parts as
+:func:`combine_coverage_summaries` combines an incremental scan's roots: its
+``allowance`` is the sum of the parts' allowances.
+
 Nothing here can *hide* a gap. Tolerated gaps are listed in
 ``stats[].coverage.details`` (the first :data:`MAX_PUBLISHED_GAPS`, with
 ``details_truncated`` counting the rest), counted in ``gaps`` and
@@ -213,10 +224,12 @@ def validate_coverage_summary(value: object) -> dict[str, Any] | None:
 
 
 def combine_coverage_summaries(summaries: Iterable[dict[str, Any] | None]) -> dict[str, Any] | None:
-    """One summary for a scan judged in parts, such as an incremental scan's repository roots.
+    """One summary for a scan judged in parts: a run's roots or repositories, or an incremental scan's.
 
     Each part was judged against its own allowance, so the counts and the
-    allowances add up and the whole is within budget only if every part was.
+    allowances add up and the whole is within budget only if every part was:
+    the published ``allowance`` is the sum of the per-root allowances, and may
+    exceed the per-root ceiling of :data:`DEFAULT_MAX_GAP_ENTRIES`.
     Only a part that recorded a gap has a summary, so ``examined`` counts the
     entries those verdicts were taken over. Details are kept in order up to
     :data:`MAX_PUBLISHED_GAPS`; every gap is still counted. None when no part
@@ -323,45 +336,23 @@ class CoveragePolicy:
         return min(float(self.max_gap_entries), self.max_gap_ratio * max(examined, 0))
 
 
-@dataclass(slots=True)
-class CoverageLedger:
-    """Collect gaps during a connector run and decide the verdict once at the end."""
+#: Parts named in one over-budget verdict line; the rest are counted.
+MAX_NAMED_PARTS = 5
 
+
+@dataclass(slots=True)
+class _LedgerPart:
+    """The gaps of one scan root or repository and the entries it examined, judged on their own."""
+
+    label: str = ""
     gaps: list[CoverageGap] = field(default_factory=list)
     examined: int = 0
 
-    def record(self, gap: CoverageGap) -> None:
-        self.gaps.append(gap)
-
-    def add_examined(self, delta: int = 1) -> None:
-        """Count entries the scan reached. Summed across roots, not maxed."""
-        if delta > 0:
-            self.examined += delta
-
-    def note_examined(self, count: int) -> None:
-        """Raise the floor of the examined count to *count*.
-
-        For a caller that knows a total rather than a delta; it never lowers
-        the count, so mixing it with :meth:`add_examined` cannot shrink the
-        denominator and make a gap look worse than it was.
-        """
-        if count > self.examined:
-            self.examined = count
-
-    def weighted_entries(self) -> float:
-        return sum(gap.weight() for gap in self.gaps if not gap.blinding)
-
     def evaluate(self, policy: CoveragePolicy) -> tuple[bool, dict[str, Any]]:
-        """Return ``(incomplete, summary)`` for the gaps recorded so far.
-
-        The summary is published on the scan stats whether or not the scan is
-        incomplete, so a tolerated gap is never invisible.
-        """
         blinding = [gap for gap in self.gaps if gap.blinding]
-        weighted = self.weighted_entries()
+        weighted = sum(gap.weight() for gap in self.gaps if not gap.blinding)
         allowance = policy.allowance(self.examined)
         over_budget = bool(self.gaps) and weighted > allowance
-        incomplete = bool(blinding) or over_budget
         # A hostile tree can plant thousands of gaps. Every one is counted
         # against the budget; only the published list is bounded.
         details = [gap.to_dict() for gap in self.gaps[:MAX_PUBLISHED_GAPS]]
@@ -378,7 +369,108 @@ class CoverageLedger:
         }
         if len(self.gaps) > MAX_PUBLISHED_GAPS:
             summary["details_truncated"] = len(self.gaps) - MAX_PUBLISHED_GAPS
-        return incomplete, summary
+        return bool(blinding) or over_budget, summary
+
+
+def _over_budget(label: str, summary: dict[str, Any], policy: CoveragePolicy) -> str:
+    """How far one part went over its own budget, named by its root or repository when it has one."""
+    where = f"{label}: " if label else ""
+    if summary["allowance"] >= policy.max_gap_entries > 0:
+        bound = f"the {policy.max_gap_entries}-entry ceiling"
+    else:
+        bound = f"the {policy.max_gap_ratio:.1%} budget"
+    return (
+        f"{where}{summary['gap_entries']} entr(y/ies) unread of {summary['examined']} examined, "
+        f"over {bound} ({summary['weighted_gap_entries']:g} weighted of {summary['allowance']:g} allowed)"
+    )
+
+
+@dataclass(slots=True)
+class CoverageLedger:
+    """Collect gaps during a connector run and decide the verdict once at the end.
+
+    The ledger is kept in *parts*, one per scan root or repository
+    (:meth:`begin_part`), each judged against its own examined count and
+    allowance. A connector that starts none has a single part, so its run is
+    judged as a whole. The run is incomplete when any part is over its budget
+    or any gap is blinding: summing the parts would let one large clean root
+    dilute a small root's gaps, and would make an organisation of ordinary
+    repositories, each within its own budget, fail together. The published
+    summary combines the parts as :func:`combine_coverage_summaries` combines
+    an incremental scan's roots, so ``allowance`` is the sum of the parts'.
+    """
+
+    parts: list[_LedgerPart] = field(default_factory=lambda: [_LedgerPart()])
+
+    @property
+    def gaps(self) -> list[CoverageGap]:
+        """Every gap recorded so far, in every part."""
+        return [gap for part in self.parts for gap in part.gaps]
+
+    @property
+    def examined(self) -> int:
+        """Entries reached so far, summed across the parts."""
+        return sum(part.examined for part in self.parts)
+
+    def begin_part(self, label: str) -> None:
+        """Judge the gaps and entries recorded from now on as their own part, named ``label``.
+
+        An opening part that recorded nothing is taken over rather than
+        left empty beside the new one.
+        """
+        current = self.parts[-1]
+        if not current.gaps and not current.examined and not current.label:
+            current.label = label
+        else:
+            self.parts.append(_LedgerPart(label))
+
+    def record(self, gap: CoverageGap) -> None:
+        self.parts[-1].gaps.append(gap)
+
+    def add_examined(self, delta: int = 1) -> None:
+        """Count entries the current part reached. Its roots are summed, not maxed."""
+        if delta > 0:
+            self.parts[-1].examined += delta
+
+    def note_examined(self, count: int) -> None:
+        """Raise the floor of the current part's examined count to *count*.
+
+        For a caller that knows a total rather than a delta; it never lowers
+        the count, so mixing it with :meth:`add_examined` cannot shrink the
+        denominator and make a gap look worse than it was.
+        """
+        part = self.parts[-1]
+        if count > part.examined:
+            part.examined = count
+
+    def weighted_entries(self) -> float:
+        return sum(gap.weight() for gap in self.gaps if not gap.blinding)
+
+    def _verdicts(self, policy: CoveragePolicy) -> list[tuple[_LedgerPart, bool, dict[str, Any]]]:
+        """Each part that recorded a gap with its verdict; the last part alone when none did."""
+        judged = [part for part in self.parts if part.gaps] or self.parts[-1:]
+        return [(part, *part.evaluate(policy)) for part in judged]
+
+    def evaluate(self, policy: CoveragePolicy) -> tuple[bool, dict[str, Any]]:
+        """Return ``(incomplete, summary)`` for the gaps recorded so far.
+
+        Each part is judged on its own; the summary combines them and is
+        published on the scan stats whether or not the scan is incomplete, so
+        a tolerated gap is never invisible.
+        """
+        verdicts = self._verdicts(policy)
+        summary = combine_coverage_summaries(summary for _, _, summary in verdicts) or verdicts[0][2]
+        return any(incomplete for _, incomplete, _ in verdicts), summary
+
+    def over_budget_gaps(self, policy: CoveragePolicy) -> list[CoverageGap]:
+        """The partial gaps of every part over its own budget: the ones that left the run incomplete."""
+        return [
+            gap
+            for part, _, summary in self._verdicts(policy)
+            if not summary["within_budget"]
+            for gap in part.gaps
+            if not gap.blinding
+        ]
 
     def verdict_message(self, policy: CoveragePolicy) -> str | None:
         """One line summarising the budget, or None when it has nothing to add.
@@ -388,7 +480,7 @@ class CoverageLedger:
         would be noise on top of the diagnostics that named each one. The line
         exists for what the individual diagnostics cannot say -- that partial
         gaps were tolerated within the budget, or that together they exceeded
-        it.
+        it, in which root or repository.
         """
         partial = [gap for gap in self.gaps if not gap.blinding]
         if not partial:
@@ -396,10 +488,14 @@ class CoverageLedger:
         incomplete, summary = self.evaluate(policy)
         lost = summary["gap_entries"]
         if not summary["within_budget"]:
-            return (
-                f"coverage incomplete: {lost} entr(y/ies) unread, over the "
-                f"{policy.max_gap_ratio:.1%} budget for {summary['examined']} examined"
-            )
+            over = [
+                _over_budget(part.label, part_summary, policy)
+                for part, _, part_summary in self._verdicts(policy)
+                if not part_summary["within_budget"]
+            ]
+            more = len(over) - MAX_NAMED_PARTS
+            named = "; ".join(over[:MAX_NAMED_PARTS]) + (f"; {more} more over budget" if more > 0 else "")
+            return f"coverage incomplete: {named}; see stats[].coverage.details"
         if incomplete:
             # Within budget, but a blinding gap condemned the scan anyway.
             # Say what was tolerated so the two are not confused.

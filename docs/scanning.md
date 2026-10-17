@@ -258,6 +258,20 @@ test path is source and its gaps weigh in full. Within the budget the scan
 stays complete; every gap is still listed in `stats[].coverage.details`, with
 its path, reason and `relevance` (`low` for a quarter-weight gap).
 
+The budget is judged per scan root, and per repository for `code.github` and
+`code.gitlab`, never over a summed run: a scan of several roots is complete
+only if every root would be complete scanned alone. The 2% ratio and the
+100-entry ceiling apply to each root's own examined entries, so several roots
+may each lose up to their own allowance, and the verdict line names each root
+or repository that went over its budget. Summing them would let one large
+clean root dilute a small root's gaps, and would make an organisation of
+ordinary repositories exit 3 with no setting to fix it. The published
+`stats[].coverage` combines the roots that recorded a gap: counts add, the
+`allowance` is the sum of their allowances, and `within_budget` is true only
+if every root was. An incremental scan (`--incremental`), which runs and
+caches each root on its own, reaches the same verdict and publishes the same
+summary.
+
 Every gap a `code.filesystem` scan records (and every gap in a `code.github`
 or `code.gitlab` checkout, which that connector scans) is decided by one rule,
 applied in this order:
